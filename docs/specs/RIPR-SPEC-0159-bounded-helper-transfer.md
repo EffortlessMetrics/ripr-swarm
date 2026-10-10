@@ -3,7 +3,8 @@
 Status: proposed
 
 Issue: #3296 (parent #3215; builds on #3294 / RIPR-SPEC-0157 and
-#3295 / RIPR-SPEC-0158)
+#3295 / RIPR-SPEC-0158). Classification of a uniqueness-only refusal:
+#7080.
 
 ## Problem
 
@@ -50,7 +51,14 @@ can only hint that a caller "may lead here" without changing anything.
   of `<name>` from a foreign crate. Known gap (#3727): the parser path
   collects only `let` statements, so `if let`/`while let`, match-arm,
   closure-parameter, `for` and macro-introduced bindings do not shadow on
-  parser-backed files.
+  parser-backed files. That uniqueness refusal stays fail-closed for
+  relation and row transfer. When no other relation remains *and* a test
+  calls the ambiguous name (or a non-unique caller of it, such as
+  `from_str` wrapping a non-unique `parse`), the finding is
+  `static_unknown` naming that function, not `no_static_path` (#7080).
+  A uniqueness stop that no test enters — including a unique wrapper of a
+  non-unique helper (`outer` wrapping a second `inner`) — stays
+  `no_static_path`.
 - Hop propagation (#6780): for probe families observed through the
   owner's returned value (every family except `side_effect` and
   `call_deletion`), when the related tests reach the owner only
@@ -106,7 +114,9 @@ classification. The 0159 transfer is a different, stronger relation —
 typed callee identity, workspace-complete uniqueness, and exact
 argument binding — and only that relation relates tests and carries
 values. A chain the typed relation cannot fully resolve keeps the 0114
-limitation unchanged.
+limitation unchanged, except the #7080 uniqueness-only case: when a
+test calls the ambiguous entry, classification becomes `static_unknown`
+instead of leaving a false `no_static_path` for 0114 to annotate.
 
 ## Required Evidence
 
@@ -125,8 +135,10 @@ limitation unchanged.
   `must_not_promote` and every repair guard stay intact.
   `rust_transitive_reach_positive` keeps its SPEC-0114 pin exactly: a
   second same-name `inner` makes the callee non-unique, the typed
-  transfer refuses, and the lexical-walk limitation stays the pinned
-  outcome (golden byte-identical to main).
+  transfer refuses, tests call the unique wrapper `outer` rather than
+  `inner`, and the lexical-walk limitation stays the pinned
+  `no_static_path` outcome. A test that instead calls the non-unique
+  entry reads `static_unknown` naming that entry (#7080).
 - The fixture corpus: one-hop positive/negative with exact tests,
   bounded multi-hop, the fail-closed controls (same-name helper in
   another module, computed argument, wrong-sink assertion).
@@ -139,7 +151,10 @@ limitation unchanged.
   the oracle still has to observe the sink through the ordinary
   evidence stages.
 - A chain that stops keeps the pre-#3296 output exactly (the 0114
-  limitation remains).
+  limitation remains), except a uniqueness-only stop that a test
+  actually enters, which abstains as `static_unknown` naming the
+  ambiguous function (#7080) rather than claiming no test reaches the
+  owner.
 - The workspace-completeness gate is mandatory: a partial index never
   transfers (a same-named function in an unindexed file would make the
   name falsely unique).
@@ -162,6 +177,8 @@ limitation unchanged.
 ## Test Mapping
 
 `analysis/classify/helper_transfer.rs` `tests`;
+`analysis/classifier.rs` (`given_helper_chain_refused_for_non_unique_entry_when_tests_call_it_then_static_unknown`,
+`given_helper_chain_refused_for_non_unique_callee_when_tests_call_a_unique_wrapper_then_no_static_path`);
 `analysis/classify/related_tests.rs` (the `HelperOwnerCall` relation
 branch); `analysis/classify/activation.rs` (transferred rows and the
 call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`;

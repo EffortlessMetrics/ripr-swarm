@@ -3,6 +3,19 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-10: A helper-chain uniqueness refusal is not `no_static_path` (#7080)
+
+`callee_is_unique` / `test_call_is_shadowed` correctly refuse a hop when
+the callee name has more than one workspace definition. That refusal is
+not "no test reaches the owner": tests may call `parse` / `from_str`
+while ripr cannot tell which same-named function they invoke. When no
+other relation remains, classify as `static_unknown` naming the
+ambiguous entry. Keep `no_static_path` only when no test enters that
+name — a unique wrapper of a non-unique helper (`outer` → second
+`inner`) is the negative control (`helper_chain_controls`,
+`rust_transitive_reach_positive`). Do not credit `helper_owner_call`
+through the ambiguous name.
+
 ## 2026-10-08: A green PR head plus clean mergeability does not prove the squash result compiles (#7150)
 
 #6836 was reviewed and gated on an Oct-5 tree. By merge time, main had changed

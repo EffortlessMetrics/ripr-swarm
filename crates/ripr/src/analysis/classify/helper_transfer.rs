@@ -149,6 +149,62 @@ impl HelperChain {
     }
 }
 
+const UNIQUENESS_STOP_PREFIX: &str = "callee `";
+const UNIQUENESS_STOP_SUFFIX: &str = "` is not a unique function in the workspace";
+
+fn uniqueness_stop_edge(callee_name: &str) -> String {
+    format!("{UNIQUENESS_STOP_PREFIX}{callee_name}{UNIQUENESS_STOP_SUFFIX}")
+}
+
+/// The callee named by a uniqueness refusal on `chain`, if that is the
+/// stop. Relation and row transfer stay refused; this only names the
+/// ambiguous function so classification can abstain instead of claiming
+/// that no test reaches the owner (#7080).
+pub(crate) fn uniqueness_refusal_callee(chain: &HelperChain) -> Option<&str> {
+    let name = chain
+        .stop_above
+        .as_deref()?
+        .strip_prefix(UNIQUENESS_STOP_PREFIX)?
+        .strip_suffix(UNIQUENESS_STOP_SUFFIX)?;
+    (!name.is_empty() && !name.contains('`')).then_some(name)
+}
+
+/// The ambiguous helper-chain entry a test actually calls, when the chain
+/// stopped only because a callee name is not unique.
+///
+/// A unique caller of that name (`outer` wrapping a non-unique `inner`) is
+/// not an entry: tests that call the unique wrapper still read
+/// `no_static_path` (the `helper_chain_controls` and
+/// `rust_transitive_reach_positive` pins). A non-unique caller
+/// (`from_str` wrapping a non-unique `parse`) is another ambiguous entry
+/// the tests may invoke; naming it is the same uniqueness refusal.
+pub(crate) fn ambiguous_helper_entry_called_by_tests<'a>(
+    chain: &'a HelperChain,
+    index: &'a RustIndex,
+) -> Option<&'a str> {
+    let stop_name = uniqueness_refusal_callee(chain)?;
+    if tests_call_name(index, stop_name) {
+        return Some(stop_name);
+    }
+    let mut extras: Vec<&str> = direct_callers(stop_name, index)
+        .into_iter()
+        .filter(|caller| {
+            !callee_is_unique(&caller.name, index) && tests_call_name(index, &caller.name)
+        })
+        .map(|caller| caller.name.as_str())
+        .collect();
+    extras.sort_unstable();
+    extras.first().copied()
+}
+
+fn tests_call_name(index: &RustIndex, name: &str) -> bool {
+    !name.is_empty()
+        && index
+            .tests()
+            .iter()
+            .any(|test| test.calls.iter().any(|call| call.name == name))
+}
+
 /// Whether `callee_name` names exactly one function in the index (the
 /// #2971 uniqueness rule; the caller must already have established
 /// workspace completeness — a partial index would make a same-named
@@ -311,9 +367,7 @@ pub(crate) fn resolve_chain(
         ));
     }
     if !callee_is_unique(callee_name, index) {
-        return stopped(format!(
-            "callee `{callee_name}` is not a unique function in the workspace"
-        ));
+        return stopped(uniqueness_stop_edge(callee_name));
     }
     if visited.contains(&callee_name.to_string()) {
         return stopped(format!(
@@ -1106,8 +1160,16 @@ mod tests {
     }
 
     fn index(functions: Vec<FunctionSummary>) -> RustIndex {
+        index_with_tests(functions, Vec::new())
+    }
+
+    fn index_with_tests(
+        functions: Vec<FunctionSummary>,
+        tests: Vec<crate::analysis::facts::TestSummary>,
+    ) -> RustIndex {
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions,
+            tests,
             ..Default::default()
         })
     }
@@ -1144,6 +1206,7 @@ mod tests {
         let idx = index(vec![a, b]);
         let chain = resolve_chain("helper", &idx, true, &[]);
         assert!(chain.hops.is_empty());
+        assert_eq!(uniqueness_refusal_callee(&chain), Some("helper"));
         assert!(
             chain
                 .stop_above
@@ -1151,6 +1214,57 @@ mod tests {
                 .is_some_and(|edge| edge.contains("not a unique function"))
         );
         Ok(())
+    }
+
+    // #7080: tests that call the ambiguous name enter the refused chain;
+    // tests that only call a unique wrapper of it do not.
+    #[test]
+    fn uniqueness_stop_names_the_ambiguous_entry_tests_call() {
+        let owner = function("src/op.rs", "op", &[]);
+        let parse = function("src/parse.rs", "parse", &[("op", "op(bytes)")]);
+        let twin = function("src/other.rs", "parse", &[]);
+        let with_test = |call: &str, text: &str| {
+            let mut test = test_summary_calling(call, text);
+            test.name = format!("calls_{call}");
+            test
+        };
+        let calling_parse = index_with_tests(
+            vec![owner.clone(), parse.clone(), twin.clone()],
+            vec![with_test("parse", "parse(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_parse, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_parse),
+            Some("parse")
+        );
+
+        let from_str = function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        let from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        let calling_from_str = index_with_tests(
+            vec![owner.clone(), parse.clone(), twin, from_str, from_str_twin],
+            vec![with_test("from_str", "VersionReq::from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_from_str, true, &[]);
+        assert_eq!(uniqueness_refusal_callee(&chain), Some("parse"));
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_from_str),
+            Some("from_str")
+        );
+
+        let outer = function("src/lib.rs", "outer", &[("inner", "internal::inner(a, b)")]);
+        let inner = function("src/internal.rs", "inner", &[]);
+        let inner_twin = function("src/lib.rs", "inner", &[]);
+        let calling_outer = index_with_tests(
+            vec![inner, inner_twin, outer],
+            vec![with_test("outer", "outer(10, 3)")],
+        );
+        let chain = resolve_chain("inner", &calling_outer, true, &[]);
+        assert_eq!(uniqueness_refusal_callee(&chain), Some("inner"));
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_outer),
+            None,
+            "a unique wrapper of a non-unique helper is not an ambiguous entry"
+        );
     }
 
     #[test]
