@@ -138,6 +138,9 @@ fn missing_and_unreadable_required_policy_inputs_fail() -> Result<(), String> {
 #[test]
 fn retained_binary_rejects_changed_implementation_and_wrong_source() -> Result<(), String> {
     let fixture = Fixture::new()?;
+    assert!(fixture.run("preflight")?.status.success());
+    let receipt = fixture.0.join("target/ripr/reports/policy-preflight.json");
+    assert!(receipt.exists());
     let path = fixture.0.join("tools/repo-policy/src/agent_skills.rs");
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     std::fs::write(&path, format!("{text}\n// changed implementation\n"))
@@ -145,6 +148,13 @@ fn retained_binary_rejects_changed_implementation_and_wrong_source() -> Result<(
     let output = fixture.run("check-agent-skills")?;
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("policy executable is stale"));
+    let output = fixture.run("preflight")?;
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("policy executable is stale"));
+    assert!(
+        !receipt.exists(),
+        "stale producer retained a success receipt"
+    );
     std::fs::remove_file(path).map_err(|e| e.to_string())?;
     assert!(!fixture.run("check-workflows")?.status.success());
     Ok(())
