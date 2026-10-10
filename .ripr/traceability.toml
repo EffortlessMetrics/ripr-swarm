@@ -9997,6 +9997,8 @@ tests = [
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::harness_verdict_discriminates_declared_enabled_and_missing_targets",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::test_false_target_is_not_harness_enabled",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::test_false_parent_path_spelling_is_not_harness_enabled",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::required_features_unmet_target_is_not_harness_enabled",
+  "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::default_feature_expansion_is_transitive_and_local_only",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs::tests::virtual_manifest_root_declares_no_autodiscovered_targets",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::misdeclared_target_keeps_per_function_roles_and_records_the_conflict",
   "crates/ripr/src/analysis/facts/harness_registry/tests.rs::harness_enabled_target_records_conflict_and_keeps_executable_tests",

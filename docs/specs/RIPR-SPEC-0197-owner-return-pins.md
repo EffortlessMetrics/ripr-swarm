@@ -35,6 +35,9 @@ Linked issues:
 - #7265 (`ManifestInventory` carries cargo metadata `test = false` so a
   skipped `[[test]]` is not `HarnessEnabled`, including `tests/../tests/`
   path spellings)
+- #7266 (`ManifestInventory` skips a `[[test]]` whose `required-features`
+  are unmet under cargo defaults; the same target stays live when those
+  features are default-enabled)
 
 Linked PRs:
 
@@ -628,12 +631,15 @@ rule only for an assertion whose context was admitted.
      manifest is not the workspace root) is credited only when Cargo's
      metadata inventory lists that autotest as a libtest-enabled workspace
      test target, so `[workspace] exclude` and `harness = false` cannot
-     become test evidence. A declared `[[test]]` with `test = false` is
-     skipped by `cargo test` and is not credited, including when the
-     manifest spells `path = "tests/../tests/gate.rs"`. The skip is owned
-     by `ManifestInventory` from cargo metadata's per-target `test` flag,
-     not a producer-local TOML matcher; unavailable metadata is not a
-     skip (#7265, #7125). The
+     become test evidence. A declared `[[test]]` with `test = false` or
+     with `required-features` unmet under cargo defaults is skipped by
+     `cargo test` and is not credited, including when the manifest spells
+     `path = "tests/../tests/gate.rs"`. The skip is owned by
+     `ManifestInventory` from cargo metadata's per-target `test` flag and
+     default-feature `required-features` comparison, not a producer-local
+     TOML matcher; unavailable metadata is not a skip (#7265, #7266,
+     #7125). The same target stays live when every required feature is
+     default-enabled. The
      producer does not reclassify that `Production` helper; it only copies
      the helper's calls and parser-backed assertions onto the calling
      test. A `Production` function in a production file, including a
@@ -643,8 +649,9 @@ rule only for an assertion whose context was admitted.
      stay uncredited. An undeclared `tests/<name>.rs` file in a package
      that sets `autotests = false` is not a Cargo target; diff analysis
      drops it before helper crediting (#6965). Root-package autotest
-     roots stay path-shape except an established `harness = false` or
-     `test = false` target; nested-package membership uses the existing
+     roots stay path-shape except an established `harness = false`,
+     `test = false`, or unmet-`required-features` target; nested-package
+     membership uses the existing
      Cargo metadata authority and fails closed when the probe is
      unavailable. A module item
      cannot coexist with a
@@ -1340,11 +1347,14 @@ assertions. This repair shares the existing callback without that larger migrati
   retains its separate contract. Out-of-line resolution remains owned by
   existing `FileFacts::role_provenance`, not by the admission consumer.
 - `crates/ripr/src/analysis/workspace/cargo_targets.rs`: `ManifestInventory`
-  carries cargo metadata's per-target `test` flag (#7265). A
-  `[[test]] test = false` target, including `path = "tests/../tests/gate.rs"`,
-  is not `HarnessEnabled`; `cargo_test_collection_skipped` is the producer
-  skip query. Unavailable metadata is not a skip. `required-features` is
-  not read here (#7266).
+  carries cargo metadata's per-target `test` flag (#7265) and compares
+  `required-features` against the package's default-enabled features from
+  the same metadata document (#7266). A `[[test]] test = false` target,
+  or one whose required features are unmet under cargo defaults,
+  including `path = "tests/../tests/gate.rs"`, is not `HarnessEnabled`;
+  `cargo_test_collection_skipped` is the producer skip query. Unavailable
+  metadata is not a skip. ripr does not thread `--features` /
+  `--all-features` into the metadata probe.
 - `crates/ripr/src/analysis/facts/test_helpers.rs`: same-file helper
   crediting. Rule 7 (#7125) also credits a unique top-level `Production`
   helper in a crate-root integration-test target (`tests/<name>.rs` or
@@ -1360,7 +1370,8 @@ assertions. This repair shares the existing callback without that larger migrati
   are dropped before this producer (#6965). Nested-package credit
   additionally requires Cargo metadata membership so `[workspace] exclude`
   cannot become test evidence; an established `harness = false` or
-  `test = false` target is not credited. Root-package autotest roots
+  `test = false` or unmet-`required-features` target is not credited.
+  Root-package autotest roots
   otherwise stay path-shape.
 - `crates/ripr/src/analysis/seam_cache.rs`: classified `1.25`, sharded `0.31`,
   compact `0.31` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;

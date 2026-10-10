@@ -481,6 +481,48 @@ fn test_false_parent_path_spelling_helper_does_not_expose() -> Result<(), String
 }
 
 #[test]
+fn required_features_unmet_integration_helper_does_not_expose() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        (
+            "Cargo.toml",
+            package_manifest(
+                "\n[features]\ndefault = []\nspecial = []\n[[test]]\nname = \"gate\"\nrequired-features = [\"special\"]\n",
+            ),
+        ),
+        ("src/lib.rs", GATE.to_string()),
+        ("tests/gate.rs", integration_source(check_eq_helper())),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "unmet required-features is skipped by cargo test and must not become evidence: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn required_features_default_enabled_integration_helper_exposes() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        (
+            "Cargo.toml",
+            package_manifest(
+                "\n[features]\ndefault = [\"special\"]\nspecial = []\n[[test]]\nname = \"gate\"\nrequired-features = [\"special\"]\n",
+            ),
+        ),
+        ("src/lib.rs", GATE.to_string()),
+        ("tests/gate.rs", integration_source(check_eq_helper())),
+    ])?
+    .predicate()?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "the same target stays live when special is a default feature: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn declared_integration_helper_with_autotests_false_still_exposes() -> Result<(), String> {
     let finding = TempRepo::create_files(&[
         (
