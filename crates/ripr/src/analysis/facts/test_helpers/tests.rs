@@ -308,6 +308,61 @@ fn integration_target_top_level_helper_stays_production_and_is_credited()
 }
 
 #[test]
+fn integration_target_assert_macro_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // #7125 is the assert_eq! check-helper cell. Copying assert!(owner(..))
+    // from a tests/*.rs Production helper rewrites RIPR-SPEC-0114's last
+    // established edge onto the public API the helper calls.
+    let index = index_for_files(&[
+        ("src/lib.rs", GATE),
+        (
+            "tests/gate.rs",
+            concat!(
+                "fn check(input: u32) {\n",
+                "    assert!(gate(input));\n",
+                "}\n\n",
+                "#[test]\n",
+                "fn boundary() {\n",
+                "    check(11);\n",
+                "}\n",
+            ),
+        ),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn integration_target_contains_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // RIPR-SPEC-0155: a tests/*.rs harness helper's .contains() is not
+    // exact-oracle evidence. Copying its owner call still inflates
+    // related_tests.
+    let index = index_for_files(&[
+        ("src/lib.rs", GATE),
+        (
+            "tests/gate.rs",
+            concat!(
+                "fn driver() {\n",
+                "    let output = gate(11).to_string();\n",
+                "    if !output.contains(\"true\") {\n",
+                "        panic!(\"{output}\");\n",
+                "    }\n",
+                "}\n\n",
+                "#[test]\n",
+                "fn boundary() {\n",
+                "    driver();\n",
+                "}\n",
+            ),
+        ),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
 fn production_file_top_level_helper_beside_a_top_level_test_is_not_credited()
 -> Result<(), Box<dyn Error>> {
     // Same-module Production helpers in src/ are production code under

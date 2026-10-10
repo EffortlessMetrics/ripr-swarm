@@ -194,6 +194,55 @@ fn integration_target_check_helper_exposes_the_changed_predicate() -> Result<(),
 }
 
 #[test]
+fn integration_assert_macro_helper_does_not_expose() -> Result<(), String> {
+    // RIPR-SPEC-0114: tests/*.rs assert!(public_api(..)) is a named
+    // limitation witness, not #7125 check-helper credit.
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/gate.rs",
+            integration_source(
+                "fn check(input: u32, want: bool) {\n    assert!(gate(input) == want);\n}\n",
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "assert! integration helpers are not the #7125 assert_eq! cell: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn integration_contains_helper_does_not_expose() -> Result<(), String> {
+    // RIPR-SPEC-0155: a tests/*.rs harness .contains() helper is not
+    // exact-oracle evidence for the production owner.
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/gate.rs",
+            integration_source(concat!(
+                "fn check(input: u32, want: bool) {\n",
+                "    let output = gate(input).to_string();\n",
+                "    if !output.contains(\"true\") && want {\n",
+                "        panic!(\"{output}\");\n",
+                "    }\n",
+                "}\n",
+            )),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "harness contains helpers must not become exact evidence: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn production_top_level_check_helper_does_not_expose() -> Result<(), String> {
     let finding = TempRepo::create(&format!(
         "{}#[test]\nfn boundary() {{\n{}}}",

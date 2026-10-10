@@ -1337,15 +1337,18 @@ assertions. This repair shares the existing callback without that larger migrati
   helper in a crate-root integration-test target (`tests/<name>.rs` or
   `tests/<name>/main.rs` relative to the nearest owning manifest,
   including a package nested under `tests/`) without changing its item
-  role; nested `tests/support/` (including `tests/support/tests/`),
-  `benches/`, `examples/` (including `examples/tests/`),
-  `src/tests/`, and other production-file helpers stay out. Undeclared
-  `tests/*.rs` files left unbuilt by `autotests = false` are dropped
-  before this producer (#6965). Nested-package credit additionally
-  requires Cargo metadata membership so `[workspace] exclude` cannot
-  become test evidence; an established `harness = false` or `test = false`
-  target is not credited. Root-package autotest roots otherwise stay
-  path-shape.
+  role, and only when that helper's parser-backed oracles include
+  `assert_eq!`. `assert!` and harness `.contains()` helpers stay
+  uncredited so RIPR-SPEC-0114's last-established edge and
+  RIPR-SPEC-0155's harness oracles stay intact. Nested `tests/support/`
+  (including `tests/support/tests/`), `benches/`, `examples/` (including
+  `examples/tests/`), `src/tests/`, and other production-file helpers stay
+  out. Undeclared `tests/*.rs` files left unbuilt by `autotests = false`
+  are dropped before this producer (#6965). Nested-package credit
+  additionally requires Cargo metadata membership so `[workspace] exclude`
+  cannot become test evidence; an established `harness = false` or
+  `test = false` target is not credited. Root-package autotest roots
+  otherwise stay path-shape.
 - `crates/ripr/src/analysis/seam_cache.rs`: classified `1.25`, sharded `0.31`,
   compact `0.31` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;
   the query reads existing indexed source, so no file-fact migration is needed.
@@ -1355,8 +1358,8 @@ assertions. This repair shares the existing callback without that larger migrati
   Rule 7 (#6482) moves classified full `1.54`, sharded and compact `0.60`, so
   a warm hit cannot keep a check helper's assertion uncredited; file facts
   are unchanged. Integration-target helpers (#7125) move classified full
-  `1.60`, sharded and compact `0.66` so a warm `1.59` hit cannot keep a
-  `test = false` integration helper over-credited.
+  `1.61`, sharded and compact `0.67` so a warm `1.60` hit cannot keep a
+  `tests/*.rs` `assert!` / `.contains()` helper over-credited.
 
 ## Metrics
 

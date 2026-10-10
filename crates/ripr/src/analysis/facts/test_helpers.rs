@@ -34,8 +34,12 @@
 //!   `cargo test` skips it, so this producer refuses it from the owning
 //!   manifest rather than treating `HarnessEnabled` as executable
 //!   evidence. This producer does not reclassify that
-//!   `Production` helper; it only copies the helper's calls and
-//!   parser-backed assertions onto the calling test. A `Production`
+//!   `Production` helper; it copies the helper's calls and
+//!   parser-backed `assert_eq!` oracles onto the calling test. A
+//!   `Production` helper whose body has only `assert!`, `.contains()`,
+//!   or other non-`assert_eq!` oracles is not credited, so a
+//!   `tests/*.rs` helper cannot rewrite a named public-API limitation
+//!   witness or a harness `.contains()` oracle. A `Production`
 //!   function in a production file, including a `src/tests/` module
 //!   directory (#6979), a nested `tests/support/` file Cargo does not
 //!   run, or a helper in `benches/` or `examples/` (including
@@ -63,8 +67,9 @@
 //!   closure over the owner's name), and does not share a line with the
 //!   test;
 //! - one hop: the helper's calls and parser-backed assertions are added
-//!   with the helper's own line numbers; the assertions of helpers the
-//!   helper calls are not followed.
+//!   with the helper's own line numbers (`assert_eq!` only when the helper
+//!   is a `Production` integration-target item); the assertions of helpers
+//!   the helper calls are not followed.
 //!
 //! The credited calls sit outside the test's line span. Value resolution
 //! reads only [`TestFact::body_calls`], because a helper call's arguments
@@ -216,6 +221,25 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             else {
                 continue;
             };
+            // #7125 Production integration helpers are the check-helper
+            // cell: copy `assert_eq!` only. `assert!` / `.contains()` in
+            // `tests/*.rs` must not rewrite RIPR-SPEC-0114's last
+            // established edge or RIPR-SPEC-0155 harness oracles.
+            // CfgTestModule keeps every parser-backed oracle (#6482
+            // remaining cells).
+            let assertions = match helper.source_role {
+                FunctionSourceRole::Production => {
+                    let eq = assertions
+                        .into_iter()
+                        .filter(is_assert_eq_oracle)
+                        .collect::<Vec<_>>();
+                    if eq.is_empty() {
+                        continue;
+                    }
+                    eq
+                }
+                _ => assertions,
+            };
             credited_helpers.push(&helper.name);
             credited.calls.extend(helper.calls.iter().cloned());
             credited.assertions.extend(assertions);
@@ -256,15 +280,23 @@ fn unique_assertion_helper<'facts>(
     }
 }
 
+/// Parser-backed `assert_eq!` invocation, as RIPR-SPEC-0197 rule 7 names
+/// the check-helper cell. Comments are already excluded by the parser
+/// producer; a leading `assert_eq!` is the admitted shape.
+fn is_assert_eq_oracle(oracle: &OracleFact) -> bool {
+    oracle.text.trim_start().starts_with("assert_eq!")
+}
+
 /// Whether `helper` may lend its assertions to a same-file test.
 ///
 /// `CfgTestModule` is the ordinary `#[cfg(test)]` helper. A `Production`
 /// function in a crate-root integration-test target is the same
 /// evidence-only shape for this producer (#7125): Cargo never treats
 /// `tests/*.rs` as a production subject, but item role stays `Production`
-/// because the helper is not inside a cfg-test module. Executable test
-/// roles and production files stay out, so a `src/` helper — including
-/// `src/tests/` (#6979) — cannot become test evidence here.
+/// because the helper is not inside a cfg-test module. Credit still
+/// requires a parser-backed `assert_eq!` in the helper body. Executable
+/// test roles and production files stay out, so a `src/` helper —
+/// including `src/tests/` (#6979) — cannot become test evidence here.
 fn is_assertion_helper(
     helper: &FunctionFact,
     workspace_root: Option<&Path>,
