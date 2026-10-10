@@ -1881,8 +1881,12 @@ fn authored_test_changed(
 /// Recovery narration for an after phase whose attempt did not finish
 /// compliant and current. Such an attempt is terminal: re-running it, or the
 /// receipt command `agent status` projects from the workflow artifacts,
-/// refuses. The lines name each cage violation (bounded) and the one route
-/// that recovers: a new attempt prepared while the gap still exists.
+/// refuses. With real violations the lines name each refused path (bounded)
+/// and the undo route that recovers: a new attempt prepared while the gap
+/// still exists. With an empty violations list nothing was refused (#7204),
+/// so the lines name the incomparability cause the artifacts record — a
+/// baseline born ambiguous when one was — and the fresh-attempt route from a
+/// clean state.
 fn repair_after_cage_recovery_lines(
     root: &Path,
     store: Option<&Path>,
@@ -1938,6 +1942,29 @@ fn repair_after_cage_recovery_lines(
     } else {
         "if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree), "
     };
+    // #7204: an empty violations list means nothing was refused. The refusal
+    // is then the attempt's comparability, not the edit: an ambiguous
+    // baseline is the recorded cause when the artifacts carry one, and any
+    // other incomparable delta still must not narrate refused changes that
+    // do not exist. Both recover through a fresh attempt from a clean state.
+    if violations.is_empty() {
+        let ambiguous_baseline = crate::app::repair_attempt::load_edit_cage_baseline_from(
+            root,
+            store,
+            &after.attempt_id,
+        )
+        .map(|baseline| baseline.is_ambiguous())
+        .unwrap_or(false);
+        if ambiguous_baseline {
+            lines.push("the attempt's before-phase baseline was recorded ambiguous (its `attempt-baseline.json` artifact has `\"ambiguous\": true`), so the cage cannot prove the exact worktree state the attempt measured; the attempt is unscorable even though the edit broke no cage rule.".to_string());
+        } else {
+            lines.push("the edit cage could not compare the attempt's before and after states, so the attempt is unscorable; no path change was refused.".to_string());
+        }
+        lines.push(format!(
+            "to recover: {uncommit}start a fresh attempt from a clean state: set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` from the clean state, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+        ));
+        return lines;
+    }
     lines.push(format!(
         "to recover: {uncommit}undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
     ));
@@ -2651,6 +2678,238 @@ mod tests {
             HeadMovement::AdmitDescendantCommits,
         )?;
         Ok(prepared.manifest)
+    }
+
+    /// Initializes the minimal real repository the attempt authority needs:
+    /// an exact Git top-level with one committed file.
+    fn init_sample_repo(root: &Path) -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+        run_git(root, &["init"]).map_err(|error| format!("fixture git init: {error}"))?;
+        run_git(root, &["config", "user.email", "ripr-test@example.invalid"])
+            .map_err(|error| format!("fixture git email: {error}"))?;
+        run_git(root, &["config", "user.name", "RIPR Test"])
+            .map_err(|error| format!("fixture git name: {error}"))?;
+        std::fs::write(root.join("README.md"), "# test\n")
+            .map_err(|error| format!("write README failed: {error}"))?;
+        run_git(root, &["add", "."]).map_err(|error| format!("fixture git add: {error}"))?;
+        run_git(root, &["commit", "--no-gpg-sign", "-m", "initial"])
+            .map_err(|error| format!("fixture git commit: {error}"))?;
+        Ok(())
+    }
+
+    /// Stages two tracked index entries that collide case-insensitively, the
+    /// ambiguity class a real ambiguous workspace presents to the baseline
+    /// capture (#7204). Index-only, so it works on case-insensitive
+    /// filesystems.
+    fn stage_case_collision_index_entries(root: &Path) -> Result<(), String> {
+        use crate::testing::fixture_git::{FIXTURE_GIT_DEADLINE, fixture_git_ok as run_git};
+        let output = crate::git::run_git_output_with_deadline_and_limit(
+            root,
+            &["rev-parse", "HEAD:README.md"],
+            FIXTURE_GIT_DEADLINE,
+            4 * 1024 * 1024,
+        )
+        .map_err(|error| format!("fixture git rev-parse failed: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "fixture git rev-parse failed: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let oid = String::from_utf8(output.stdout)
+            .map_err(|error| format!("fixture git rev-parse stdout is not UTF-8: {error}"))?
+            .trim()
+            .to_string();
+        for path in ["README.ripr-case", "readme.RIPR-CASE"] {
+            run_git(
+                root,
+                &[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    &format!("100644,{oid},{path}"),
+                ],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// The #7204 after-phase narration: an attempt whose baseline was born
+    /// ambiguous finishes Incomparable with an empty violations list. The
+    /// narration must name the recorded ambiguity and route to a fresh
+    /// attempt from a clean state, and must not narrate refused changes that
+    /// do not exist. The control keeps the undo narration for a genuinely
+    /// violated attempt, where refused changes are real.
+    #[test]
+    fn incomparable_empty_violation_narration_names_the_ambiguous_baseline() -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeginRepairAttemptOptions, begin_repair_attempt_with,
+            edit_cage_policy_from_packet, finish_repair_attempt, write_edit_cage_baseline,
+        };
+        use crate::edit_cage::{EditCageVerdictStatus, HeadMovement};
+
+        let begin_attempt =
+            |root: &Path,
+             label: &str|
+             -> Result<crate::app::repair_attempt::BeginRepairAttemptResult, String> {
+                let workflow = root.join("target/ripr/workflow");
+                std::fs::create_dir_all(&workflow)
+                    .map_err(|error| format!("create {} failed: {error}", workflow.display()))?;
+                let before = workflow.join(format!("before-{label}.json"));
+                let packet = workflow.join(format!("packet-{label}.json"));
+                let baseline = workflow.join(format!("baseline-{label}.json"));
+                std::fs::write(&before, b"{}")
+                    .map_err(|error| format!("write {} failed: {error}", before.display()))?;
+                let packet_text = serde_json::json!({
+                    "seam_id": "seam:sample",
+                    "allowed_edit_surface": ["tests/target.rs"],
+                    "forbidden_files": []
+                })
+                .to_string();
+                std::fs::write(&packet, packet_text.as_bytes())
+                    .map_err(|error| format!("write {} failed: {error}", packet.display()))?;
+                let policy = edit_cage_policy_from_packet(&packet_text, "seam:sample")?;
+                write_edit_cage_baseline(root, &baseline, &policy)?;
+                begin_repair_attempt_with(BeginRepairAttemptOptions {
+                    root,
+                    root_argument: root,
+                    seam_id: "seam:sample",
+                    sources: &[
+                        BeforeArtifactSource {
+                            role: "before_snapshot",
+                            path: &before,
+                        },
+                        BeforeArtifactSource {
+                            role: "agent_packet",
+                            path: &packet,
+                        },
+                        BeforeArtifactSource {
+                            role: "edit_cage_baseline",
+                            path: &baseline,
+                        },
+                    ],
+                    expected_repository_head: None,
+                    next_command_suffix: None,
+                    store: None,
+                })
+            };
+        let make_allowed_edit = |root: &Path| -> Result<(), String> {
+            let test_path = root.join("tests/target.rs");
+            std::fs::create_dir_all(
+                test_path
+                    .parent()
+                    .ok_or_else(|| "test path has no parent".to_string())?,
+            )
+            .map_err(|error| format!("create tests dir failed: {error}"))?;
+            std::fs::write(&test_path, "#[test]\nfn focused() {}\n")
+                .map_err(|error| format!("write {} failed: {error}", test_path.display()))
+        };
+        let finish_after_edit =
+            |root: &Path,
+             prepared: &crate::app::repair_attempt::BeginRepairAttemptResult|
+             -> Result<crate::app::repair_attempt::RepairAttemptAfter, String> {
+                let retained_packet = root.join(
+                    crate::app::repair_attempt::find_manifest_artifact_by_role(
+                        &prepared.manifest,
+                        "agent_packet",
+                    )
+                    .ok_or("attempt has no retained agent_packet")?
+                    .path
+                    .clone(),
+                );
+                finish_repair_attempt(
+                    root,
+                    &prepared.manifest.repair_attempt_id,
+                    &retained_packet,
+                    HeadMovement::AdmitDescendantCommits,
+                )
+            };
+
+        // The discriminating case: an ambiguous baseline makes the attempt
+        // Incomparable with nothing refused.
+        let ambiguous_root = unique_command_test_dir("incomparable-ambiguous-narration");
+        std::fs::create_dir_all(&ambiguous_root)
+            .map_err(|error| format!("create {} failed: {error}", ambiguous_root.display()))?;
+        let ambiguous_result = (|| -> Result<(), String> {
+            init_sample_repo(&ambiguous_root)?;
+            stage_case_collision_index_entries(&ambiguous_root)?;
+            let prepared = begin_attempt(&ambiguous_root, "ambiguous")?;
+            make_allowed_edit(&ambiguous_root)?;
+            let after = finish_after_edit(&ambiguous_root, &prepared)?;
+            if after.verdict.status != EditCageVerdictStatus::Incomparable {
+                return Err(format!(
+                    "an ambiguous-baseline attempt must finish Incomparable, got {:?}",
+                    after.verdict.status
+                ));
+            }
+            if !after.verdict.violations.is_empty() {
+                return Err(format!(
+                    "the #7204 refusal carries no violations, got {:?}",
+                    after.verdict.violations
+                ));
+            }
+            let lines = repair_after_cage_recovery_lines(
+                &ambiguous_root,
+                None,
+                "seam:sample",
+                &prepared.manifest.repository_head,
+                &after,
+            );
+            let joined = lines.join("\n");
+            if joined.contains("undo the refused changes") {
+                return Err(format!(
+                    "an Incomparable refusal with empty violations must not narrate refused changes that do not exist:\n{joined}"
+                ));
+            }
+            if !joined.contains("ambiguous") {
+                return Err(format!(
+                    "the narration must name the recorded baseline ambiguity:\n{joined}"
+                ));
+            }
+            if !joined.contains("--phase before") {
+                return Err(format!(
+                    "the narration must keep the fresh-attempt before-phase route:\n{joined}"
+                ));
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&ambiguous_root)
+            .map_err(|error| format!("remove {} failed: {error}", ambiguous_root.display()))?;
+        ambiguous_result?;
+
+        // The control: a violated attempt has real refused changes and keeps
+        // the undo narration.
+        let violated_root = unique_command_test_dir("violated-keeps-undo-narration");
+        std::fs::create_dir_all(&violated_root)
+            .map_err(|error| format!("create {} failed: {error}", violated_root.display()))?;
+        let violated_result = (|| -> Result<(), String> {
+            init_sample_repo(&violated_root)?;
+            let prepared = begin_attempt(&violated_root, "violated")?;
+            // An edit outside the allowed test surface: real refused changes.
+            std::fs::write(violated_root.join("outside.rs"), "fn stray() {}\n")
+                .map_err(|error| format!("write outside edit failed: {error}"))?;
+            let after = finish_after_edit(&violated_root, &prepared)?;
+            if after.verdict.violations.is_empty() {
+                return Err("the control edit must produce real violations".to_string());
+            }
+            let lines = repair_after_cage_recovery_lines(
+                &violated_root,
+                None,
+                "seam:sample",
+                &prepared.manifest.repository_head,
+                &after,
+            );
+            let joined = lines.join("\n");
+            if !joined.contains("undo the refused changes") {
+                return Err(format!(
+                    "a violated attempt with real violations keeps the undo narration:\n{joined}"
+                ));
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&violated_root)
+            .map_err(|error| format!("remove {} failed: {error}", violated_root.display()))?;
+        violated_result
     }
 
     /// The recording dispatch routes by refusal family (#5262 review): the

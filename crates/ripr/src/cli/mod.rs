@@ -234,6 +234,22 @@ fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOpt
     }
 }
 
+/// The before-phase disclosure for an attempt whose captured baseline is
+/// already ambiguous (#7204): the cage cannot prove the exact worktree state
+/// the attempt measures, so the attempt can never earn a compliant verdict.
+/// The agent hears that before investing the focused test edit, and the
+/// attempt manifest records the same limitation.
+fn baseline_ambiguous_disclosure_lines(baseline_path: &Path) -> Vec<String> {
+    vec![
+        format!(
+            "warning: the captured edit-cage baseline for this attempt records `ambiguous: true` ({}); the cage cannot prove the exact worktree state the attempt measures, so its after phase can refuse the attempt as Incomparable with an empty violations list even when the focused test edit breaks no cage rule.",
+            baseline_path.display()
+        ),
+        "the attempt manifest records this limitation. To invest the edit in a scorable attempt instead, resolve the workspace condition that made the baseline ambiguous (a stale target/ state is a common Windows trigger) and run the same --phase before command again from the clean state; continuing with this attempt ends in a terminal refusal either way."
+            .to_string(),
+    ]
+}
+
 /// Publish one before attempt and return its success stdout: the exact
 /// document the caller prints (or holds, façade-side, until its follow-on
 /// card renders). Composing the document without printing keeps one owner
@@ -270,7 +286,8 @@ fn persist_before_repair_attempt(
     crate::edit_cage::validate_build_output_precondition(root, &policy)
         .map_err(|error| format!("{error} No repair attempt was started."))?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
-    crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
+    let baseline_ambiguous =
+        crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
 
     // The Python repair-trust binding (#3568, RIPR-SPEC-0176) is verified
     // BEFORE the durable attempt is published: every drift, ambiguity, unsafe
@@ -384,6 +401,18 @@ fn persist_before_repair_attempt(
     eprintln!(
         "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at target/ripr/workflow/agent-packet.json; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
     );
+    // #7204: an attempt whose captured baseline is already ambiguous can
+    // never be scored, so the agent hears that before investing the focused
+    // test edit — not only after the after phase refuses the attempt
+    // Incomparable. The manifest records the same disclosure.
+    if baseline_ambiguous {
+        for line in baseline_ambiguous_disclosure_lines(&edit_cage_baseline) {
+            eprintln!(
+                "{}",
+                crate::output::human::terminal_safe(format!("ripr: {line}"))
+            );
+        }
+    }
     eprintln!(
         "ripr: repair attempt {} is awaiting the focused test edit",
         result.manifest.repair_attempt_id.as_str()
@@ -464,6 +493,26 @@ mod tests {
         assert_eq!(EXIT_COMPLETED, 0);
         assert_eq!(EXIT_COULD_NOT_COMPLETE, 2);
         assert_eq!(EXIT_DECISION_OR_REFUSAL, 3);
+    }
+
+    /// The #7204 before-phase disclosure names the recorded ambiguity, the
+    /// artifact that records it, and the honest consequence, so an agent can
+    /// choose a clean state before investing the focused test edit.
+    #[test]
+    fn baseline_ambiguous_disclosure_names_flag_artifact_and_consequence() {
+        let baseline = Path::new("target/ripr/workflow/attempt-baseline.json");
+        let joined = baseline_ambiguous_disclosure_lines(baseline).join("\n");
+        for fragment in [
+            "ambiguous: true",
+            "attempt-baseline.json",
+            "Incomparable",
+            "--phase before",
+        ] {
+            assert!(
+                joined.contains(fragment),
+                "ambiguity disclosure must name `{fragment}`:\n{joined}"
+            );
+        }
     }
 
     #[test]
