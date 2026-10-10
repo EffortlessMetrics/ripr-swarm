@@ -23,12 +23,14 @@
 //!   module as the test (or both sit at the file's top level). Eligible
 //!   helpers are an evidence-role (`CfgTestModule`) function, or a
 //!   top-level `Production` function in a crate-root integration-test
-//!   target (`tests/**`, including `crates/*/tests/**`, #7125). This
-//!   producer does not reclassify that `Production` helper; it only
-//!   copies the helper's calls and parser-backed assertions onto the
-//!   calling test. A `Production` function in a production file,
-//!   including a `src/tests/` module directory (#6979), or a helper in
-//!   `benches/` or `examples/`, is not credited. A module item cannot
+//!   target (`tests/<name>.rs` or `tests/<name>/main.rs`, including
+//!   `crates/*/tests/…`, #7125). This producer does not reclassify that
+//!   `Production` helper; it only copies the helper's calls and
+//!   parser-backed assertions onto the calling test. A `Production`
+//!   function in a production file, including a `src/tests/` module
+//!   directory (#6979), a nested `tests/support/` file Cargo does not
+//!   run, or a helper in `benches/` or `examples/` (including
+//!   `examples/tests/`), is not credited. A module item cannot
 //!   coexist with a
 //!   same-named `use` import and wins over a glob, so the call resolves to
 //!   it. A helper in a sibling or parent module (`use super::*`), or nested
@@ -243,28 +245,37 @@ fn is_assertion_helper(helper: &FunctionFact) -> bool {
     }
 }
 
-/// Cargo integration-test targets live in a crate-root `tests/` directory
-/// (`tests/gate.rs`, `crates/demo/tests/gate.rs`). `src/tests/` is a
-/// module directory, not a target (#6979). The shared `is_test_file`
-/// layout check matches any `/tests/` component, so this producer must
-/// not reuse it: a `src/tests/` Production helper beside a `#[test]`
-/// would otherwise become test evidence.
+/// Cargo's default autotest roots are `tests/<name>.rs` and
+/// `tests/<name>/main.rs` beside the package (including
+/// `crates/demo/tests/…`). Nested files such as `tests/support/gate.rs`
+/// are not targets unless a root `mod`s them, and this producer is
+/// same-file only, so they stay uncredited. `src/tests/` is a module
+/// directory (#6979). `examples/tests/` and `benches/tests/` are not
+/// package autotest roots. The shared `is_test_file` layout check
+/// matches any `/tests/` component and is not reused here.
 fn is_crate_root_integration_test_file(path: &Path) -> bool {
     let normalized = path.to_string_lossy().replace('\\', "/");
-    let mut saw_src = false;
-    for component in normalized.split('/') {
-        if component.is_empty() || component == "." {
-            continue;
-        }
-        if component == "src" {
-            saw_src = true;
-            continue;
-        }
-        if component == "tests" {
-            return !saw_src;
-        }
+    let components: Vec<&str> = normalized
+        .split('/')
+        .filter(|component| !component.is_empty() && *component != ".")
+        .collect();
+    let Some(tests_at) = components
+        .iter()
+        .position(|component| *component == "tests")
+    else {
+        return false;
+    };
+    if components[..tests_at]
+        .iter()
+        .any(|component| matches!(*component, "src" | "examples" | "benches"))
+    {
+        return false;
     }
-    false
+    match components.get(tests_at + 1..) {
+        Some([name]) => name.ends_with(".rs"),
+        Some([_, "main.rs"]) => true,
+        _ => false,
+    }
 }
 
 /// A nested `fn` item or a `let` binding with the helper's name means the

@@ -146,9 +146,10 @@ first value to the call's input row: it drops the cases it cannot read, so its
 slots do not line up with another column's.
 
 An assertion RIPR-SPEC-0197 rule 7 borrows from a test-local check helper
-(#6482, including a top-level helper in a crate-root `tests/*.rs`
-integration target, #7125; not a `src/tests/` module) names the helper's
-parameters, not the test's inputs:
+(#6482, including a top-level helper in a crate-root `tests/<name>.rs`
+integration target, #7125; not a `src/tests/` module or nested
+`tests/support/` file) names the helper's parameters, not the test's
+inputs:
 
 ```rust
 fn check_pass(score: u32, want: bool) { assert_eq!(passes(score), want); }

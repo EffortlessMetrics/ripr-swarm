@@ -399,9 +399,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// a warm entry written from a CRLF working tree carries the
 /// byte-spelling-shifted ID, so cross-checkout snapshot joins must
 /// cold-recompute instead of replaying it.
-/// `1.56`: a crate-root `tests/*.rs` integration-target check helper's
-/// `assert_eq!` is credited like a `#[cfg(test)]` helper (#7125).
-/// `src/tests/` module helpers stay uncredited. Old entries keep those
+/// `1.56`: a crate-root `tests/<name>.rs` / `tests/<name>/main.rs`
+/// integration-target check helper's `assert_eq!` is credited like a
+/// `#[cfg(test)]` helper (#7125). `src/tests/`, nested `tests/support/`,
+/// and `examples/tests/` stay uncredited. Old entries keep those
 /// findings under-credited.
 pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.56";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /

@@ -397,6 +397,9 @@ fn crate_root_integration_layout_rejects_src_tests_and_keeps_tests_roots() {
     assert!(super::is_crate_root_integration_test_file(Path::new(
         "tests\\gate.rs"
     )));
+    assert!(super::is_crate_root_integration_test_file(Path::new(
+        "tests/foo/main.rs"
+    )));
     assert!(!super::is_crate_root_integration_test_file(Path::new(
         "src/tests/gate.rs"
     )));
@@ -412,6 +415,53 @@ fn crate_root_integration_layout_rejects_src_tests_and_keeps_tests_roots() {
     assert!(!super::is_crate_root_integration_test_file(Path::new(
         "benches/gate.rs"
     )));
+    assert!(!super::is_crate_root_integration_test_file(Path::new(
+        "tests/support/gate.rs"
+    )));
+    assert!(!super::is_crate_root_integration_test_file(Path::new(
+        "examples/tests/gate.rs"
+    )));
+    assert!(!super::is_crate_root_integration_test_file(Path::new(
+        "benches/tests/gate.rs"
+    )));
+    assert!(!super::is_crate_root_integration_test_file(Path::new(
+        "tests/foo/mod.rs"
+    )));
+}
+
+#[test]
+fn nested_or_example_tests_helpers_are_not_credited() -> Result<(), Box<dyn Error>> {
+    // Cargo does not treat nested tests/support/*.rs or examples/tests/**
+    // as default autotest roots. Path-only credit must not promote them.
+    for path in [
+        "tests/support/gate.rs",
+        "examples/tests/gate.rs",
+        "benches/tests/gate.rs",
+    ] {
+        let index = index_for_files(&[
+            ("src/lib.rs", GATE),
+            (
+                path,
+                concat!(
+                    "fn check(input: u32, want: bool) {\n",
+                    "    assert_eq!(gate(input), want);\n",
+                    "}\n\n",
+                    "#[test]\n",
+                    "fn boundary() {\n",
+                    "    check(10, false);\n",
+                    "}\n",
+                ),
+            ),
+        ])?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{path}: {:?}",
+            assertion_texts(test)
+        );
+        assert!(!calls(test).contains(&"gate"), "{path}: {:?}", calls(test));
+    }
+    Ok(())
 }
 
 #[test]

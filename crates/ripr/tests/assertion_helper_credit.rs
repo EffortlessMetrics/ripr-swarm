@@ -204,6 +204,50 @@ fn production_top_level_check_helper_does_not_expose() -> Result<(), String> {
 }
 
 #[test]
+fn nested_tests_support_check_helper_does_not_expose() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/support/gate.rs",
+            format!(
+                "use assertion_helper_credit::gate;\n\n{}#[test]\nfn boundary() {{\n{}}}",
+                check_eq_helper(),
+                boundary_calls()
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "tests/support/ is not a Cargo autotest root: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn examples_tests_check_helper_does_not_expose() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "examples/tests/gate.rs",
+            format!(
+                "use assertion_helper_credit::gate;\n\n{}#[test]\nfn boundary() {{\n{}}}",
+                check_eq_helper(),
+                boundary_calls()
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "examples/tests/ is not a package autotest root: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn src_tests_module_check_helper_does_not_expose() -> Result<(), String> {
     let finding = TempRepo::create_files(&[
         ("src/lib.rs", format!("{GATE}mod tests;\n")),
