@@ -4,7 +4,7 @@ Status: proposed
 
 Issue: #3296 (parent #3215; builds on #3294 / RIPR-SPEC-0157 and
 #3295 / RIPR-SPEC-0158). Classification of a uniqueness-only refusal:
-#7080.
+#7080. Raw-identifier receiver/path not an entry: #7270.
 
 ## Problem
 
@@ -59,9 +59,12 @@ can only hint that a caller "may lead here" without changing anything.
   `static_unknown` naming that function, not `no_static_path` (#7080).
   A uniqueness stop that no test enters — including a unique wrapper of a
   non-unique helper (`outer` wrapping a second `inner`), or a receiver
-  call that only shares the bare name (`req.parse()`) even when that
-  line also contains the string or comment text `parse(` — stays
-  `no_static_path`. Spaced and turbofish calls the extractor records
+  call that only shares the bare name (`req.parse()`, `req.r#parse()`)
+  even when that line also contains the string or comment text `parse(` —
+  stays `no_static_path`. A foreign-qualified raw identifier
+  (`foreign::r#parse()`) is not a workspace free-function entry. Bare
+  `r#parse(...)` is the same identifier as `parse(...)` and still enters
+  (#7270). Spaced and turbofish calls the extractor records
   (`parse (...)`, `parse::<T>(...)`) still enter. A path-qualified call
   enters only when some workspace function of that name could be the `T`
   in `T::name(` (`VersionReq::from_str` yes; `serde_json::from_str` no).

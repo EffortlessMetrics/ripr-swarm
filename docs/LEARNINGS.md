@@ -14,7 +14,12 @@ ambiguous entry. Keep `no_static_path` only when no test enters that
 name — a unique wrapper of a non-unique helper (`outer` → second
 `inner`) is the negative control (`helper_chain_controls`,
 `rust_transitive_reach_positive`). A receiver call of the same name
-(`req.parse()`) is not an entry; `Version::parse(...)` is. `CallFact.text`
+(`req.parse()`, including the raw-identifier spelling `req.r#parse()`)
+is not an entry; `Version::parse(...)` is. `call_name_bounds_before_paren`
+walks only `[A-Za-z0-9_]`, so skip one preceding `r#` before the
+receiver / path / `fn`-item checks or `raw_before` is `#` and the
+occurrence falls through to Free (#7270). Bare `r#parse(` stays an
+entry. `CallFact.text`
 is the original source line, so match after masking comments and strings
 and reuse the extractor's call-paren bounds (`parse (...)`,
 `parse::<T>(...)`); a receiver sharing a line with `"parse("` is still

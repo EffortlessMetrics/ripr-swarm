@@ -337,8 +337,9 @@ fn caller_invokes_named_entry(
 /// Whether a recorded test call invokes `callee_name` as a free function
 /// (`parse(...)`, `parse (...)`, `parse::<T>(...)`) or a path-qualified
 /// associated function (`Version::parse(...)`). A receiver call
-/// (`req.parse()`) shares the bare name but is not that entry (#7080 /
-/// identity, not token coincidence). Comments and strings are masked
+/// (`req.parse()`, `req.r#parse()`) shares the bare name but is not that
+/// entry (#7080 / #7270 / identity, not token coincidence). Comments and
+/// strings are masked
 /// first because `CallFact.text` is the original source line: a receiver
 /// on the same line as `"parse("` must not look like an entry.
 #[cfg(test)]
@@ -411,8 +412,11 @@ fn named_entry_kinds(text: &str, callee_name: &str) -> Vec<NamedEntryKind> {
                 crate::analysis::extract::call_name_bounds_before_paren(&masked, i)
             && masked[start..end] == *callee_name
         {
-            let raw_before = masked[..start].chars().next_back();
-            let prefix = masked[..start].trim_end();
+            // `r#parse` is the same ident as `parse`. Skip one preceding
+            // `r#` so `.` / `::` / `fn` see the qualifier, not `#` (#7270).
+            let before_name = skip_raw_ident_prefix_before(&masked, start);
+            let raw_before = masked[..before_name].chars().next_back();
+            let prefix = masked[..before_name].trim_end();
             let enters = match raw_before {
                 Some(character) if character.is_ascii_alphanumeric() || character == '_' => false,
                 _ => {
@@ -427,6 +431,17 @@ fn named_entry_kinds(text: &str, callee_name: &str) -> Vec<NamedEntryKind> {
         i += 1;
     }
     kinds
+}
+
+/// Byte index immediately before one preceding `r#`, or `name_start` when
+/// none is present. `call_name_bounds_before_paren` does not consume `r#`,
+/// so `req.r#parse()` would otherwise see `raw_before = '#'` and miss the
+/// receiver (same for `foreign::r#parse()` and `fn r#parse`) (#7270).
+fn skip_raw_ident_prefix_before(text: &str, name_start: usize) -> usize {
+    match text.get(..name_start) {
+        Some(prefix) if prefix.ends_with("r#") => name_start.saturating_sub(2),
+        _ => name_start,
+    }
 }
 
 /// `fn parse()` / `pub fn parse()` is an item, not a call. `CallFact.text`
@@ -1571,6 +1586,41 @@ mod tests {
             None,
             "a receiver call of the same name is not the ambiguous entry"
         );
+        let calling_raw_receiver = index_with_tests(
+            vec![owner.clone(), parse.clone(), twin.clone()],
+            vec![with_test("parse", r#"req.r#parse(">=1.0")"#)],
+        );
+        let chain = resolve_chain("op", &calling_raw_receiver, true, &[]);
+        assert_eq!(uniqueness_refusal_callee(&chain), Some("parse"));
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_raw_receiver),
+            None,
+            "a raw-identifier receiver of the same name is not the ambiguous entry"
+        );
+        let mut raw_foreign_parse = parse.clone();
+        raw_foreign_parse.impl_context = FunctionImplContext::Free;
+        let mut raw_foreign_twin = twin.clone();
+        raw_foreign_twin.impl_context = FunctionImplContext::Free;
+        let calling_raw_foreign = index_with_tests(
+            vec![owner.clone(), raw_foreign_parse, raw_foreign_twin],
+            vec![with_test("parse", r#"foreign::r#parse(">=1.0")"#)],
+        );
+        let chain = resolve_chain("op", &calling_raw_foreign, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_raw_foreign),
+            None,
+            "a raw-identifier foreign path is not a free-function entry"
+        );
+        let calling_bare_raw = index_with_tests(
+            vec![owner.clone(), parse.clone(), twin.clone()],
+            vec![with_test("parse", r#"r#parse(">=1.0")"#)],
+        );
+        let chain = resolve_chain("op", &calling_bare_raw, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_bare_raw),
+            Some("parse"),
+            "bare r#parse is still the ambiguous entry"
+        );
         assert!(test_call_invokes_named_entry(
             "Version::parse(\">=1.0\")",
             "parse"
@@ -1610,6 +1660,18 @@ mod tests {
         assert!(
             !test_call_invokes_named_entry("req. parse()", "parse"),
             "whitespace after a receiver dot is still a receiver call"
+        );
+        assert!(
+            !test_call_invokes_named_entry(r#"req.r#parse(">=1.0")"#, "parse"),
+            "a raw-identifier receiver is still a receiver call (#7270)"
+        );
+        assert!(
+            test_call_invokes_named_entry(r#"r#parse(">=1.0")"#, "parse"),
+            "bare r#parse is the same identifier as parse (#7270 / #7080)"
+        );
+        assert!(
+            !test_call_invokes_named_entry("fn r#parse() {}", "parse"),
+            "fn r#parse is still an item, not a free-function entry"
         );
         assert!(
             !test_call_invokes_named_entry(
