@@ -1188,14 +1188,13 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // so the sink threads through rendering to bracket those walks with
     // repo-scope stage boundaries; diff-scoped arms ignore it.
     // The canonical triage adapter binds its diff-source mode from this
-    // declared provenance (#6304): base presence cannot identify it.
-    let provenance = if worktree_explicitly_provided {
-        app::CheckDiffProvenance::Worktree
-    } else if input_diff_file_is_some || candidate_tree.is_some() {
-        app::CheckDiffProvenance::SuppliedScope
-    } else {
-        app::CheckDiffProvenance::CommittedHistory
-    };
+    // declared provenance (#6304/#7257): the effective analysis source,
+    // never the `--worktree` flag alone and never base presence. A dirty
+    // default shares `worktree_run` with explicit `--worktree`.
+    let provenance = app::CheckDiffProvenance::from_effective_source(
+        worktree_run,
+        input_diff_file_is_some || candidate_tree.is_some(),
+    );
     write_stdout_chunked(
         &app::render_check_with_config_and_navigation_and_progress(
             &output,

@@ -3,17 +3,39 @@ use super::{CheckInput, Mode};
 use crate::agent::loop_commands::{bound_root, bound_root_path, root_path_display, shell_arg};
 use std::path::Path;
 
-/// What tree content a check run analyzed (#6304): the live working tree
-/// (`--worktree`), a fixed supplied scope (`--diff`, `--candidate-tree`),
-/// or committed history (an explicit or resolved base). The canonical triage
+/// What tree content a check run analyzed (#6304, #7257): the live working
+/// tree (explicit `--worktree` or the dirty-workspace default), a fixed
+/// supplied scope (`--diff`, `--candidate-tree`), or committed history (an
+/// explicit or resolved base, including `--committed`). The canonical triage
 /// adapter binds the DTO diff-source from this, never by deriving it from
 /// `output.base`: both committed and worktree runs resolve a base, while a
-/// supplied scope has none — base presence identifies neither mode.
+/// supplied scope has none — base presence identifies neither mode. Bind it
+/// from the effective analysis source, not from the `--worktree` flag alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CheckDiffProvenance {
     Worktree,
     SuppliedScope,
     CommittedHistory,
+}
+
+impl CheckDiffProvenance {
+    /// Provenance of the tree this check actually analyzed (#7257).
+    ///
+    /// `worktree_run` is the effective live source already used for analysis
+    /// (explicit `--worktree` **or** the dirty-workspace default). Selecting
+    /// from the `--worktree` flag alone misattributes that dirty default as
+    /// committed history. `--diff` / `--candidate-tree` stay a supplied
+    /// scope even when the checkout is dirty. Explicit `--committed` keeps
+    /// `worktree_run` false.
+    pub(crate) fn from_effective_source(worktree_run: bool, supplied_scope: bool) -> Self {
+        if worktree_run {
+            Self::Worktree
+        } else if supplied_scope {
+            Self::SuppliedScope
+        } else {
+            Self::CommittedHistory
+        }
+    }
 }
 
 /// Copy-pasteable sibling commands for a selected finding.
@@ -398,6 +420,44 @@ mod tests {
         assert!(
             command.contains("--diff -"),
             "stdin sentinel must stay `-`: {command}"
+        );
+    }
+
+    /// #7257: selecting provenance from `worktree_explicitly_provided` alone
+    /// labels a dirty-default run `CommittedHistory` while analysis used the
+    /// working tree. The effective-source helper must disagree with that
+    /// flag-only selector on this case.
+    #[test]
+    fn worktree_flag_alone_misattributes_a_dirty_default_run() {
+        let worktree_explicitly_provided = false;
+        let worktree_run = true;
+        let supplied_scope = false;
+        let flag_only = if worktree_explicitly_provided {
+            CheckDiffProvenance::Worktree
+        } else if supplied_scope {
+            CheckDiffProvenance::SuppliedScope
+        } else {
+            CheckDiffProvenance::CommittedHistory
+        };
+        assert_eq!(flag_only, CheckDiffProvenance::CommittedHistory);
+        assert_eq!(
+            CheckDiffProvenance::from_effective_source(worktree_run, supplied_scope),
+            CheckDiffProvenance::Worktree
+        );
+        // Explicit `--committed` and a clean default stay committed.
+        assert_eq!(
+            CheckDiffProvenance::from_effective_source(false, false),
+            CheckDiffProvenance::CommittedHistory
+        );
+        // `--diff` / `--candidate-tree` cannot become live-tree claims.
+        assert_eq!(
+            CheckDiffProvenance::from_effective_source(false, true),
+            CheckDiffProvenance::SuppliedScope
+        );
+        // Explicit `--worktree` agrees with the dirty default.
+        assert_eq!(
+            CheckDiffProvenance::from_effective_source(true, false),
+            CheckDiffProvenance::Worktree
         );
     }
 }

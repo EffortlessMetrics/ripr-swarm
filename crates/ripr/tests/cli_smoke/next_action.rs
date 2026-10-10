@@ -1,6 +1,15 @@
 use super::{
-    assert_success, init_git_fixture_repo, run_command, run_git, run_ripr, unique_temp_workspace,
+    assert_success, first_finding_id, init_git_fixture_repo, printed_ripr_args, run_command,
+    run_git, run_ripr, unique_temp_workspace,
 };
+use std::process::Output;
+
+fn drill_in_lines(human: &str) -> impl Iterator<Item = &str> {
+    human
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("ripr explain ") || line.starts_with("ripr context "))
+}
 
 /// #6304: the wire card embeds the canonical decision its `next_action`
 /// reference is projected from. The reference and the decision agree on
@@ -122,6 +131,199 @@ fn agent_card_json_embeds_the_canonical_decision() -> Result<(), Box<dyn std::er
                 human_stdout.contains(&needle),
                 "prose must render the canonical block ({needle:?}):\n{human_stdout}"
             );
+        }
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&root)?;
+    result
+}
+
+/// #7257: a default dirty-workspace `check` analyzes the working tree, binds
+/// the same effective source as explicit `--worktree`, and its printed
+/// follow-up reopens that finding. `--committed` and `--diff` stay their
+/// existing scopes. Provenance itself is bound in the producer; this public
+/// path proves analysis, action identity, and the follow-up agree.
+#[test]
+fn default_dirty_check_binds_worktree_provenance_and_reopens_the_finding()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = unique_temp_workspace("check-dirty-default-provenance");
+    let result: Result<(), Box<dyn std::error::Error>> = (|| {
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"dirty-default-provenance\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+        )?;
+        init_git_fixture_repo(&root)?;
+        run_git(&root, &["add", "Cargo.toml", "src"])?;
+        let commit = run_command(
+            "git",
+            Some(&root),
+            &[
+                "-c",
+                "user.name=RIPR test",
+                "-c",
+                "user.email=ripr@example.invalid",
+                "commit",
+                "-m",
+                "fixture source",
+            ],
+        )?;
+        assert!(
+            commit.status.success(),
+            "fixture source commit failed: {commit:?}"
+        );
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+        )?;
+
+        let root_arg = root.display().to_string();
+        let parse = |output: &Output| -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+            assert_success(output);
+            Ok(serde_json::from_slice(&output.stdout)?)
+        };
+        let ids = |report: &serde_json::Value| -> Vec<String> {
+            report["findings"]
+                .as_array()
+                .map(|findings| {
+                    findings
+                        .iter()
+                        .filter_map(|finding| finding["id"].as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
+        let worktree = parse(&run_ripr(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--worktree",
+            "--json",
+        ]))?;
+        let worktree_ids = ids(&worktree);
+        if worktree_ids.is_empty() {
+            return Err(format!(
+                "fixture must carry an analyzable uncommitted edit; --worktree found none:\n{worktree}"
+            )
+            .into());
+        }
+
+        let default = parse(&run_ripr(&["check", "--root", &root_arg, "--json"]))?;
+        if ids(&default) != worktree_ids {
+            return Err(format!(
+                "dirty default must analyze the working tree like --worktree:\n{default}"
+            )
+            .into());
+        }
+        if default["head"]["source"] != "working_tree" {
+            return Err(format!("dirty default must name a working-tree head:\n{default}").into());
+        }
+        if default.get("unanalyzed_working_tree").is_some() {
+            return Err(
+                format!("dirty default must not claim the edit was excluded:\n{default}").into(),
+            );
+        }
+
+        let listing = run_ripr(&["check", "--root", &root_arg]);
+        assert_success(&listing);
+        let human = String::from_utf8_lossy(&listing.stdout).into_owned();
+        let worktree_listing = run_ripr(&["check", "--root", &root_arg, "--worktree"]);
+        assert_success(&worktree_listing);
+        let worktree_human = String::from_utf8_lossy(&worktree_listing.stdout).into_owned();
+        if !human.contains(" --worktree ") || !worktree_human.contains(" --worktree ") {
+            return Err(format!(
+                "dirty default and explicit --worktree must both print --worktree follow-ups:\ndefault:\n{human}\n--worktree:\n{worktree_human}"
+            )
+            .into());
+        }
+
+        let finding_id =
+            first_finding_id(&run_ripr(&["check", "--root", &root_arg, "--json"]).stdout)?;
+        let printed_explain = human
+            .lines()
+            .map(str::trim)
+            .find(|line| line.starts_with("ripr explain "))
+            .map(str::to_string)
+            .ok_or_else(|| format!("dirty default must print an explain follow-up:\n{human}"))?;
+        if !printed_explain.contains("--worktree") || !printed_explain.contains(&finding_id) {
+            return Err(format!(
+                "explain follow-up must keep --worktree and the finding id:\n{printed_explain}"
+            )
+            .into());
+        }
+
+        let decoy = unique_temp_workspace("check-dirty-default-provenance-decoy");
+        std::fs::create_dir_all(&decoy)?;
+        let args = printed_ripr_args(&printed_explain)?;
+        let args: Vec<&str> = args.iter().map(String::as_str).collect();
+        let explained = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&decoy), &args)?;
+        assert_success(&explained);
+        let explanation = String::from_utf8_lossy(&explained.stdout).into_owned();
+        if !explanation.contains(&format!("id: {finding_id}")) {
+            let _ = std::fs::remove_dir_all(&decoy);
+            return Err(format!(
+                "the printed explain must reopen finding {finding_id}:\n{explanation}"
+            )
+            .into());
+        }
+        let _ = std::fs::remove_dir_all(&decoy);
+
+        let committed = parse(&run_ripr(&[
+            "check",
+            "--root",
+            &root_arg,
+            "--committed",
+            "--json",
+        ]))?;
+        if committed.get("unanalyzed_working_tree") != Some(&serde_json::Value::Bool(true)) {
+            return Err(format!(
+                "--committed on a dirty tree must retain the unanalysed-worktree disclosure:\n{committed}"
+            )
+            .into());
+        }
+        let committed_human = run_ripr(&["check", "--root", &root_arg, "--committed"]);
+        assert_success(&committed_human);
+        let committed_out = String::from_utf8_lossy(&committed_human.stdout).into_owned();
+        if drill_in_lines(&committed_out).any(|line| line.contains("--worktree")) {
+            return Err(format!(
+                "--committed follow-ups must not carry --worktree:\n{committed_out}"
+            )
+            .into());
+        }
+
+        let diff = run_command("git", Some(&root), &["diff", "HEAD"])?;
+        if !diff.status.success() || diff.stdout.is_empty() {
+            return Err(format!("fixture git diff must capture the dirty edit: {diff:?}").into());
+        }
+        let diff_path = root.join("change.diff");
+        std::fs::write(&diff_path, &diff.stdout)?;
+        let diff_arg = diff_path.display().to_string();
+        let supplied = parse(&run_ripr(&[
+            "check", "--root", &root_arg, "--diff", &diff_arg, "--json",
+        ]))?;
+        if ids(&supplied).is_empty() {
+            return Err(format!("--diff of the dirty edit must still find it:\n{supplied}").into());
+        }
+        let supplied_human = run_ripr(&["check", "--root", &root_arg, "--diff", &diff_arg]);
+        assert_success(&supplied_human);
+        let supplied_out = String::from_utf8_lossy(&supplied_human.stdout).into_owned();
+        let supplied_drill_ins: Vec<&str> = drill_in_lines(&supplied_out).collect();
+        if supplied_drill_ins
+            .iter()
+            .any(|line| line.contains("--worktree"))
+            || !supplied_drill_ins
+                .iter()
+                .any(|line| line.contains("--diff"))
+        {
+            return Err(format!(
+                "--diff on a dirty checkout must stay a supplied scope, not a live-tree claim:\n{supplied_out}"
+            )
+            .into());
         }
         Ok(())
     })();

@@ -12,7 +12,7 @@ Linked ADRs:
 
 Linked plan:
 
-Linked issues: #6304
+Linked issues: #6304, #7257
 
 Linked PRs:
 
@@ -50,7 +50,9 @@ One shared selector, `select_canonical_next_action`, projects exactly one
   committed), and one bound item — or no item exactly when the action is a
   selection among stop-carried candidates. Diff-source names the subject
   the action acts on: the analyzed diff for check replay (bound from the
-  producer's declared provenance, never derived from base presence), the
+  producer's declared provenance of the effective analysis source —
+  explicit `--worktree` or the dirty-workspace default — never from the
+  `--worktree` flag alone and never derived from base presence), the
   tree state the route reads for card and status.
 - Typed prerequisites and stops instead of best-effort strings: check/card
   disagreement, stale head or config, route refusal, missing platform
@@ -128,7 +130,10 @@ with each gate owning one focused negative.
 - `crates/ripr/src/app/repair_card.rs::tests::canonical_decision_and_reference_agree`
 - `crates/ripr/src/app/agent_status.rs::tests::canonical_decision_selects_the_status_arm`
 - `crates/ripr/src/output/human/triage.rs::tests::check_adapter_binds_the_ranked_winner_with_bounded_alternatives`
+- `crates/ripr/src/output/human/triage.rs::tests::worktree_flag_selector_misattributes_dirty_default_as_committed_history`
+- `crates/ripr/src/app/navigation.rs::tests::worktree_flag_alone_misattributes_a_dirty_default_run`
 - `crates/ripr/tests/cli_smoke/next_action.rs::agent_card_json_embeds_the_canonical_decision`
+- `crates/ripr/tests/cli_smoke/next_action.rs::default_dirty_check_binds_worktree_provenance_and_reopens_the_finding`
 
 ## Implementation Mapping
 
@@ -140,7 +145,12 @@ with each gate owning one focused negative.
 - `crates/ripr/src/app/agent_status.rs`: status adapter; arm dispatch from
   the canonical decision; `canonical_next_action` JSON key.
 - `crates/ripr/src/output/human/triage.rs`: check adapter; line-family
-  dispatch from the canonical case.
+  dispatch from the canonical case; diff-source bound from declared
+  provenance of the effective analysis source.
+- `crates/ripr/src/app/navigation.rs`: `CheckDiffProvenance::from_effective_source`
+  for the check producer.
+- `crates/ripr/src/cli/commands/check.rs`: binds provenance from `worktree_run`,
+  not from the `--worktree` flag alone.
 - `crates/ripr/src/cli/commands/agent_card.rs`: prose renders the canonical
   block with a legacy fallback.
 - `crates/ripr/src/repair_card_digest.rs`: digest pins the portable
