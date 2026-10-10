@@ -30,9 +30,11 @@
 //!   function in a production file, including a `src/tests/` module
 //!   directory (#6979), a nested `tests/support/` file Cargo does not
 //!   run, or a helper in `benches/` or `examples/` (including
-//!   `examples/tests/`), is not credited. A module item cannot
-//!   coexist with a
-//!   same-named `use` import and wins over a glob, so the call resolves to
+//!   `examples/tests/`), is not credited. An undeclared `tests/*.rs`
+//!   file that `autotests = false` leaves unbuilt is dropped before this
+//!   producer (#6965); this pass does not re-infer Cargo targets. A
+//!   module item cannot coexist with a same-named `use` import and wins
+//!   over a glob, so the call resolves to
 //!   it. A helper in a sibling or parent module (`use super::*`), or nested
 //!   in another fn's body, is not credited, and neither is any helper for a
 //!   test whose body holds a `use` item or any `cfg`/`cfg_attr` attribute;
@@ -253,6 +255,11 @@ fn is_assertion_helper(helper: &FunctionFact) -> bool {
 /// directory (#6979). `examples/tests/` and `benches/tests/` are not
 /// package autotest roots. The shared `is_test_file` layout check
 /// matches any `/tests/` component and is not reused here.
+///
+/// `autotests = false` leaving an undeclared `tests/*.rs` unbuilt is
+/// owned by the analysis-pipeline drop (#6965), which removes that file
+/// before this producer runs. This check stays path-only and does not
+/// re-infer Cargo target identity.
 fn is_crate_root_integration_test_file(path: &Path) -> bool {
     let normalized = path.to_string_lossy().replace('\\', "/");
     let components: Vec<&str> = normalized

@@ -150,6 +150,12 @@ fn check_eq_helper() -> &'static str {
     "fn check(input: u32, want: bool) {\n    assert_eq!(gate(input), want);\n}\n"
 }
 
+fn package_manifest(extra: &str) -> String {
+    format!(
+        "[package]\nname = \"assertion-helper-credit\"\nversion = \"0.0.0\"\nedition = \"2024\"\n{extra}\n[workspace]\n"
+    )
+}
+
 fn boundary_calls() -> &'static str {
     "    check(10, true);\n    check(9, false);\n"
 }
@@ -243,6 +249,45 @@ fn examples_tests_check_helper_does_not_expose() -> Result<(), String> {
         finding.class,
         ExposureClass::Exposed,
         "examples/tests/ is not a package autotest root: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn undeclared_integration_helper_with_autotests_false_does_not_expose() -> Result<(), String> {
+    // #6965: autotests=false leaves undeclared tests/*.rs unbuilt. Diff
+    // analysis drops that file before helper credit, so this producer
+    // must not promote the owner to exposed. Cargo-target identity stays
+    // with that drop, not a second inference here.
+    let finding = TempRepo::create_files(&[
+        ("Cargo.toml", package_manifest("autotests = false\n")),
+        ("src/lib.rs", GATE.to_string()),
+        ("tests/unbuilt.rs", integration_source(check_eq_helper())),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "autotests=false leaves tests/unbuilt.rs unbuilt (#6965): {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn declared_integration_helper_with_autotests_false_still_exposes() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        (
+            "Cargo.toml",
+            package_manifest("autotests = false\n\n[[test]]\nname = \"gate\"\n"),
+        ),
+        ("src/lib.rs", GATE.to_string()),
+        ("tests/gate.rs", integration_source(check_eq_helper())),
+    ])?
+    .predicate()?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a declared [[test]] target remains a Cargo test under autotests=false: {finding:?}"
     );
     Ok(())
 }

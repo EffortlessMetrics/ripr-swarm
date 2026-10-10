@@ -625,7 +625,11 @@ rule only for an assertion whose context was admitted.
      test. A `Production` function in a production file, including a
      `src/tests/` module directory, a nested `tests/support/` file, and a
      helper in `benches/` or `examples/` (including `examples/tests/`),
-     stay uncredited. A module item cannot coexist with a
+     stay uncredited. An undeclared `tests/<name>.rs` file in a package
+     that sets `autotests = false` is not a Cargo target; diff analysis
+     drops it before helper crediting (#6965). This producer stays
+     path-only and does not re-infer Cargo target identity. A module item
+     cannot coexist with a
      same-named import and wins over a glob. The test contains no `use` item
      and binds no name equal to the helper (pattern, parameter, closure
      parameter or nested item). A helper in a parent or sibling module, a
@@ -1322,7 +1326,10 @@ assertions. This repair shares the existing callback without that larger migrati
   helper in a crate-root integration-test target (`tests/<name>.rs` or
   `tests/<name>/main.rs`) without changing its item role; nested
   `tests/support/`, `benches/`, `examples/` (including `examples/tests/`),
-  `src/tests/`, and other production-file helpers stay out.
+  `src/tests/`, and other production-file helpers stay out. Undeclared
+  `tests/*.rs` files left unbuilt by `autotests = false` are dropped
+  before this producer (#6965); Cargo-target identity is not re-inferred
+  here.
 - `crates/ripr/src/analysis/seam_cache.rs`: classified `1.25`, sharded `0.31`,
   compact `0.31` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;
   the query reads existing indexed source, so no file-fact migration is needed.
