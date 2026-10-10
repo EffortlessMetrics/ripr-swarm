@@ -260,27 +260,40 @@ fn write_agent_start_with_report(
 }
 
 fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
+    let rendered = render_agent_brief(&options)?;
+    println!("{rendered}");
+    Ok(())
+}
+
+fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, String> {
     ensure_command_root(&options.root, "agent brief")?;
     let (input, config) = load_root_input_and_config(&options.root)?;
 
     let working_set = resolve_agent_brief_working_set(&input.root, &options.working_set)?;
     let (classified, _) =
         analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
-    let selection = select_agent_brief_seams(
+    let mut selection = select_agent_brief_seams(
         &classified,
         &working_set,
         options.max_seams,
         AgentBriefPolicy::from_config(&config),
     );
-    let rendered = output::agent_brief::render_agent_brief_json(
+    // A supplied diff has no base even in a committed Git checkout. Probe the
+    // same concrete HEAD adapter used by the artifact producer instead of
+    // inferring verification provenance from the working-set selector.
+    if let Err(error) = crate::agent::artifact::current_git_head(&input.root) {
+        selection.warnings.push(format!(
+            "{} This root's revision provenance is unavailable: {error}. Saved-patch analysis and agent brief remain supported; use an existing Git checkout with a committed HEAD for the snapshot/verify flow.",
+            crate::agent::artifact::VERIFY_GIT_PROVENANCE_REQUIREMENT,
+        ));
+    }
+    output::agent_brief::render_agent_brief_json(
         &input.root,
         &input.mode,
         &config,
         &working_set,
         &selection,
-    )?;
-    println!("{rendered}");
-    Ok(())
+    )
 }
 
 fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {

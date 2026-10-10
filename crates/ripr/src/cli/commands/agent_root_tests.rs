@@ -441,3 +441,239 @@ fn cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy() -> Res
     );
     Ok(())
 }
+
+/// Copy the retained patch fixture outside Cargo's workspace-local TMPDIR.
+/// Otherwise a nominally Git-less fixture would inherit this checkout's Git
+/// repository and never exercise unavailable provenance.
+fn boundary_patch_root(label: &str) -> Result<OwnedRoot, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root =
+        PathBuf::from("/tmp").join(format!("ripr-cli-{label}-{}-{stamp}", std::process::id()));
+    std::fs::create_dir(&root).map_err(|error| error.to_string())?;
+    let owned = OwnedRoot(root);
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap");
+    for name in ["Cargo.toml", "src/lib.rs", "tests/pricing.rs"] {
+        let destination = owned.0.join(name);
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        }
+        std::fs::copy(fixture.join("input").join(name), destination)
+            .map_err(|error| error.to_string())?;
+    }
+    std::fs::copy(fixture.join("diff.patch"), owned.0.join("diff.patch"))
+        .map_err(|error| error.to_string())?;
+    Ok(owned)
+}
+
+fn patch_brief(root: &Path) -> Result<serde_json::Value, String> {
+    let rendered = render_agent_brief(&AgentBriefOptions {
+        root: root.to_path_buf(),
+        working_set: crate::cli::agent::AgentBriefWorkingSet::Diff(PathBuf::from("diff.patch")),
+        json: true,
+        max_seams: 3,
+    })?;
+    serde_json::from_str(&rendered).map_err(|error| error.to_string())
+}
+
+fn close_boundary_gap(root: &Path) -> Result<(), String> {
+    let path = root.join("tests/pricing.rs");
+    let mut tests = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    tests.push_str(
+        "\n#[test]\nfn exact_threshold_discounts() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+    );
+    std::fs::write(path, tests).map_err(|error| error.to_string())
+}
+
+#[test]
+fn cli_non_git_patch_brief_discloses_verify_provenance_limit() -> Result<(), String> {
+    let owned = boundary_patch_root("non-git-brief")?;
+    let root = &owned.0;
+    assert!(!root.join(".git").exists());
+    assert!(crate::agent::artifact::current_git_head(root).is_err());
+    let brief = patch_brief(root)?;
+    assert_eq!(brief["working_set"]["source"], "diff");
+    assert!(brief["working_set"]["base"].is_null());
+    assert!(
+        !brief["top_seams"]
+            .as_array()
+            .ok_or("missing top seams")?
+            .is_empty()
+    );
+    let warnings = brief["warnings"].as_array().ok_or("missing warnings")?;
+    assert!(
+        warnings.iter().any(|warning| {
+            warning.as_str().is_some_and(|text| {
+                text.contains("agent verify")
+                    && text.contains("Git/revision provenance")
+                    && text.contains("patch analysis")
+                    && text.contains("remain supported")
+            })
+        }),
+        "the supported patch brief must disclose its verification limitation: {warnings:?}"
+    );
+    assert!(!root.join(".git").exists(), "brief must not initialize Git");
+    Ok(())
+}
+
+#[test]
+fn cli_non_git_patch_snapshots_refuse_missing_git_revision_provenance() -> Result<(), String> {
+    let owned = boundary_patch_root("non-git-verify")?;
+    let root = &owned.0;
+    assert!(crate::agent::artifact::current_git_head(root).is_err());
+    let before = root.join("target/identity/before.json");
+    let after = root.join("target/identity/after.json");
+    write_agent_repo_exposure_snapshot(root, &before)?;
+    close_boundary_gap(root)?;
+    write_agent_repo_exposure_snapshot(root, &after)?;
+    for path in [&before, &after] {
+        let raw = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
+        let artifact: serde_json::Value =
+            serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+        assert_eq!(artifact["artifact"]["producer"]["tool"], "ripr");
+        assert_eq!(artifact["artifact"]["repository"]["head"], "unavailable");
+        assert_eq!(artifact["artifact"]["analysis"]["worktree"], "unavailable");
+        assert!(
+            !artifact["seams"]
+                .as_array()
+                .ok_or("missing snapshot seams")?
+                .is_empty()
+        );
+        let declared = artifact["artifact"]["content_sha256"]
+            .as_str()
+            .ok_or("missing commitment")?;
+        assert_eq!(raw.matches(declared).count(), 1);
+        let mut commitment = crate::agent::artifact::Sha256Writer::new();
+        commitment
+            .write_all(
+                raw.replacen(
+                    declared,
+                    crate::agent::artifact::CONTENT_SHA256_PLACEHOLDER,
+                    1,
+                )
+                .as_bytes(),
+            )
+            .map_err(|error| error.to_string())?;
+        assert_eq!(commitment.finish(), declared);
+        let refusal =
+            crate::agent::artifact::validate_repo_exposure_artifact(root, &raw, "snapshot")
+                .err()
+                .ok_or("non-Git artifact was admitted")?;
+        assert!(
+            refusal.contains("Git/revision provenance"),
+            "actual missing provenance must be named: {refusal}"
+        );
+        assert!(refusal.contains("Git repository") && refusal.contains("concrete HEAD"));
+        assert!(!refusal.contains("invalid or unknown producer identity"));
+    }
+    let refusal = render_agent_verify(&AgentVerifyOptions {
+        root: root.to_path_buf(),
+        before,
+        after,
+        json: true,
+    })
+    .err()
+    .ok_or("non-Git verify was admitted")?;
+    assert!(
+        refusal.contains("agent verify before artifact")
+            && refusal.contains("Git/revision provenance")
+    );
+    assert!(!root.join(".git").exists());
+    Ok(())
+}
+
+#[test]
+fn cli_git_patch_brief_without_base_verifies_real_boundary_edit() -> Result<(), String> {
+    let owned = boundary_patch_root("git-patch-verify")?;
+    let root = &owned.0;
+    std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
+    git(root, &["init"])?;
+    git(root, &["config", "user.name", "RIPR test"])?;
+    git(root, &["config", "user.email", "ripr-test@example.invalid"])?;
+    git(root, &["add", "."])?;
+    git(root, &["commit", "--no-gpg-sign", "-m", "baseline"])?;
+    let head = crate::agent::artifact::current_git_head(root)?;
+    let brief = patch_brief(root)?;
+    assert!(brief["working_set"]["base"].is_null());
+    assert_eq!(brief["working_set"]["source"], "diff");
+    assert!(
+        !brief["top_seams"]
+            .as_array()
+            .ok_or("missing top seams")?
+            .is_empty()
+    );
+    let warnings = brief["warnings"].as_array().ok_or("missing warnings")?;
+    assert!(
+        !warnings.iter().any(|warning| warning
+            .as_str()
+            .is_some_and(|text| text.contains("Git/revision provenance"))),
+        "a null diff base must not claim missing Git: {warnings:?}"
+    );
+    let before = root.join("target/identity/before.json");
+    let after = root.join("target/identity/after.json");
+    write_agent_repo_exposure_snapshot(root, &before)?;
+    close_boundary_gap(root)?;
+    write_agent_repo_exposure_snapshot(root, &after)?;
+    assert_eq!(crate::agent::artifact::current_git_head(root)?, head);
+    let verify = render_agent_verify(&AgentVerifyOptions {
+        root: root.to_path_buf(),
+        before,
+        after,
+        json: true,
+    })?;
+    let value: serde_json::Value =
+        serde_json::from_str(&verify).map_err(|error| error.to_string())?;
+    let movement = value["changed_seams"]
+        .as_array()
+        .ok_or("missing changed seams")?;
+    assert!(
+        movement
+            .iter()
+            .any(|seam| seam["change"] == "improved" && seam["gap_movement"] == "closed"),
+        "real boundary test must improve and close the static gap: {verify}"
+    );
+    Ok(())
+}
+
+#[test]
+fn cli_unborn_git_patch_brief_and_snapshot_disclose_missing_revision() -> Result<(), String> {
+    let owned = boundary_patch_root("unborn-git")?;
+    let root = &owned.0;
+    git(root, &["init"])?;
+    assert!(crate::agent::artifact::current_git_head(root).is_err());
+    let brief = patch_brief(root)?;
+    assert!(
+        !brief["top_seams"]
+            .as_array()
+            .ok_or("missing top seams")?
+            .is_empty()
+    );
+    assert!(
+        brief["warnings"]
+            .as_array()
+            .ok_or("missing warnings")?
+            .iter()
+            .any(|warning| {
+                warning.as_str().is_some_and(|text| {
+                    text.contains("Git/revision provenance") && text.contains("concrete HEAD")
+                })
+            })
+    );
+    let snapshot = root.join("target/identity/unborn.json");
+    write_agent_repo_exposure_snapshot(root, &snapshot)?;
+    let raw = std::fs::read_to_string(snapshot).map_err(|error| error.to_string())?;
+    let artifact: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    assert_eq!(artifact["artifact"]["repository"]["head"], "unavailable");
+    assert_eq!(artifact["artifact"]["analysis"]["worktree"], "clean");
+    let refusal = crate::agent::artifact::validate_repo_exposure_artifact(root, &raw, "unborn")
+        .err()
+        .ok_or("unborn snapshot was admitted")?;
+    assert!(
+        refusal.contains("Git/revision provenance") && refusal.contains("concrete HEAD"),
+        "revision-only unavailability must be named: {refusal}"
+    );
+    Ok(())
+}
