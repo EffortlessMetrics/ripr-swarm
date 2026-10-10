@@ -227,6 +227,15 @@ impl AttemptBaseline {
                 _ => None,
             })
     }
+
+    /// Whether the capture recorded a condition that left the exact measured
+    /// worktree state unprovable. The flag already serializes into
+    /// `attempt-baseline.json`; this accessor lets the attempt publication
+    /// disclose it at before-time and the after-phase narration name it
+    /// instead of leaving it artifact-only (#7204).
+    pub(crate) fn is_ambiguous(&self) -> bool {
+        self.ambiguous
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

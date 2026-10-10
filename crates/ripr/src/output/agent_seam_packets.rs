@@ -513,11 +513,16 @@ pub(crate) fn render_agent_seam_packet_json_with_context(
 /// stdout gets the attempt identity, the retained manifest, and the exact
 /// `--phase after` command — the same facts the stderr narration names —
 /// so the before → edit → after loop closes without reading stderr.
+/// `baseline_ambiguous` marks an attempt the capture already knows it
+/// cannot score (#7204): the rendered document discloses it and the plain
+/// summary replaces the after-edit directive with the ambiguity warning
+/// and the clean-state restart route.
 pub(crate) struct BeforePhaseAttemptContinuation {
     pub(crate) attempt_id: String,
     pub(crate) manifest_path: String,
     pub(crate) next_command: String,
     pub(crate) packet_path: String,
+    pub(crate) baseline_ambiguous: bool,
 }
 
 /// Augment one rendered agent-packet envelope with the additive
@@ -552,15 +557,18 @@ pub(crate) fn render_before_phase_attempt_stdout(
             "rendered agent packet envelope already carries a repair_attempt block".to_string(),
         );
     }
-    object.insert(
-        "repair_attempt".to_string(),
-        json!({
-            "attempt_id": continuation.attempt_id,
-            "manifest_path": continuation.manifest_path,
-            "next_command": continuation.next_command,
-            "packet_path": continuation.packet_path,
-        }),
-    );
+    let mut attempt_block = json!({
+        "attempt_id": continuation.attempt_id,
+        "manifest_path": continuation.manifest_path,
+        "next_command": continuation.next_command,
+        "packet_path": continuation.packet_path,
+    });
+    // #7204: additive and present only when true, so every scorable
+    // attempt's stdout bytes stay exactly as before.
+    if continuation.baseline_ambiguous {
+        attempt_block["baseline_ambiguous"] = json!(true);
+    }
+    object.insert("repair_attempt".to_string(), attempt_block);
     let mut rendered = serde_json::to_string_pretty(&value)
         .map_err(|error| format!("render before-phase attempt stdout failed: {error}"))?;
     rendered.push('\n');

@@ -1881,8 +1881,12 @@ fn authored_test_changed(
 /// Recovery narration for an after phase whose attempt did not finish
 /// compliant and current. Such an attempt is terminal: re-running it, or the
 /// receipt command `agent status` projects from the workflow artifacts,
-/// refuses. The lines name each cage violation (bounded) and the one route
-/// that recovers: a new attempt prepared while the gap still exists.
+/// refuses. With real violations the lines name each refused path (bounded)
+/// and the undo route that recovers: a new attempt prepared while the gap
+/// still exists. With an empty violations list nothing was refused (#7204),
+/// so the lines name the incomparability cause the artifacts record — a
+/// baseline born ambiguous when one was — and the fresh-attempt route from a
+/// clean state.
 fn repair_after_cage_recovery_lines(
     root: &Path,
     store: Option<&Path>,
@@ -1938,6 +1942,57 @@ fn repair_after_cage_recovery_lines(
     } else {
         "if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree), "
     };
+    // #7204: an empty violations list means nothing was refused. The refusal
+    // is then the attempt's comparability, not a verdict on the edit: an
+    // ambiguous baseline is the recorded cause when the artifacts carry one,
+    // and any other incomparable delta still must not narrate refused
+    // changes that do not exist. Both recover through a fresh attempt from a
+    // clean state.
+    if violations.is_empty() {
+        let ambiguous_baseline = crate::app::repair_attempt::load_edit_cage_baseline_from(
+            root,
+            store,
+            &after.attempt_id,
+        )
+        .map(|baseline| baseline.is_ambiguous())
+        .unwrap_or(false);
+        if ambiguous_baseline {
+            lines.push("the attempt's before-phase baseline was recorded ambiguous (its `attempt-baseline.json` artifact has `\"ambiguous\": true`), so the cage cannot prove the exact worktree state the attempt measured and stopped before judging the edit; the attempt is unscorable.".to_string());
+        } else {
+            lines.push("the edit cage could not compare the attempt's before and after states, so the attempt is unscorable; no path change was refused.".to_string());
+        }
+        // An incomparable delta skips policy evaluation, so an empty
+        // violations list is not a compliance finding: name every change the
+        // cage never judged, so an outside-surface edit is not silently
+        // carried into the next baseline. Untracked files survive a plain
+        // `git stash`, so the route names them explicitly.
+        if !after.verdict.changed_paths.is_empty() {
+            let listed = after
+                .verdict
+                .changed_paths
+                .iter()
+                .take(CAGE_RECOVERY_MAX_VIOLATIONS)
+                .map(|path| format!("`{path}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = if after.verdict.changed_paths.len() > CAGE_RECOVERY_MAX_VIOLATIONS {
+                format!(
+                    " (and {} more; see the attempt manifest)",
+                    after.verdict.changed_paths.len() - CAGE_RECOVERY_MAX_VIOLATIONS
+                )
+            } else {
+                String::new()
+            };
+            lines.push(format!(
+                "the cage stopped before judging the attempt's {} changed path(s): {listed}{more}. Inspect every change outside the attempt's allowed test surface and remove or set it aside before restarting; note `git stash` leaves untracked files in place (use `git stash -u` or delete them).",
+                after.verdict.changed_paths.len()
+            ));
+        }
+        lines.push(format!(
+            "to recover: {uncommit}start a fresh attempt from a clean state: set your test edit aside (for example `git stash -u`, which also takes untracked files), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` from the clean state, restore your test edit (`git stash pop`), then run the new --attempt command it prints."
+        ));
+        return lines;
+    }
     lines.push(format!(
         "to recover: {uncommit}undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
     ));
@@ -2175,7 +2230,10 @@ fn before_phase_refusal(seam_id: &str, error: &str) -> String {
 /// `--json`, the packet envelope augmented with the additive `repair_attempt`
 /// continuation (#4329) so a driver that captures only stdout can complete
 /// the loop; without it, a short summary. A packet the summary cannot read
-/// falls back to a line naming the packet file, so nothing is hidden.
+/// falls back to a line naming the packet file, so nothing is hidden. The
+/// trailer names the after-edit command — or, for an attempt born with an
+/// ambiguous baseline (#7204), the ambiguity warning and the clean-state
+/// restart route replace that directive.
 pub(in crate::cli) fn before_phase_stdout(
     packet: &str,
     packet_path: &str,
@@ -2188,10 +2246,36 @@ pub(in crate::cli) fn before_phase_stdout(
             continuation,
         );
     }
-    Ok(
-        before_phase_summary(packet, packet_path).unwrap_or_else(|| {
+    let mut document = before_phase_summary(packet, packet_path, !continuation.baseline_ambiguous)
+        .unwrap_or_else(|| {
             format!("Repair packet (JSON): {packet_path}; add --json to print it here\n")
-        }),
+        });
+    if continuation.baseline_ambiguous {
+        document.push_str(&before_phase_ambiguous_stdout_lines(
+            &continuation.next_command,
+        ));
+    } else {
+        document.push_str(&format!(
+            "Next, after the test edit: {}\n",
+            continuation.next_command
+        ));
+        if let Some(form) =
+            crate::output::markdown::powershell_text_variant(&continuation.next_command)
+        {
+            document.push_str(&format!("(PowerShell) {form}\n"));
+        }
+    }
+    Ok(document)
+}
+
+/// The stdout trailer for an attempt born with an ambiguous baseline
+/// (#7204): a driver that captures only stdout must not read the after
+/// command as the unqualified next action, so the warning and the
+/// clean-state restart route replace it and the continuation stays possible
+/// only as an explicitly acknowledged fallback.
+fn before_phase_ambiguous_stdout_lines(next_command: &str) -> String {
+    format!(
+        "warning: this attempt's captured edit-cage baseline records `ambiguous: true`; its after phase can refuse the attempt as Incomparable with an empty violations list even when the edit stays inside the allowed test surface.\nto invest the edit in a scorable attempt instead, resolve the workspace condition that made the baseline ambiguous and run the same --phase before command again from the clean state. if you continue with this attempt anyway, after the test edit run: {next_command}\n"
     )
 }
 
@@ -2223,7 +2307,7 @@ fn after_phase_human_stdout(
     out
 }
 
-fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
+fn before_phase_summary(packet: &str, packet_path: &str, edit_directive: bool) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(packet).ok()?;
     let item = value.get("packets")?.as_array()?.first()?;
     let text = |pointer: &str| {
@@ -2256,21 +2340,30 @@ fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
         lines.push(format!("  missing discriminator: {missing}"));
     }
     let inline_module_target = !crate::analysis::is_test_surface_path(test_file);
-    match text("/recommended_test/name") {
-        // #5210: a production file is routed only as its inline test module,
-        // where the cage admits nothing but newly inserted test functions.
-        Some(name) if inline_module_target => lines.push(format!(
-            "  add one new test function (suggested `{name}`) inside the existing `#[cfg(test)]` module of {test_file}; leave production code, the module declaration, and existing tests unchanged"
-        )),
-        None if inline_module_target => lines.push(format!(
-            "  add one new test function inside the existing `#[cfg(test)]` module of {test_file}; leave production code, the module declaration, and existing tests unchanged"
-        )),
-        Some(name) => lines.push(format!(
-            "  edit one test file: {test_file} (suggested test `{name}`); leave production code unchanged"
-        )),
-        None => lines.push(format!(
-            "  edit one test file: {test_file}; leave production code unchanged"
-        )),
+    // #7204: an unscorable attempt's summary may not hand out an unqualified
+    // edit instruction; it names the target and defers to the baseline
+    // warning instead.
+    if edit_directive {
+        match text("/recommended_test/name") {
+            // #5210: a production file is routed only as its inline test module,
+            // where the cage admits nothing but newly inserted test functions.
+            Some(name) if inline_module_target => lines.push(format!(
+                "  add one new test function (suggested `{name}`) inside the existing `#[cfg(test)]` module of {test_file}; leave production code, the module declaration, and existing tests unchanged"
+            )),
+            None if inline_module_target => lines.push(format!(
+                "  add one new test function inside the existing `#[cfg(test)]` module of {test_file}; leave production code, the module declaration, and existing tests unchanged"
+            )),
+            Some(name) => lines.push(format!(
+                "  edit one test file: {test_file} (suggested test `{name}`); leave production code unchanged"
+            )),
+            None => lines.push(format!(
+                "  edit one test file: {test_file}; leave production code unchanged"
+            )),
+        }
+    } else {
+        lines.push(format!(
+            "  the focused test edit would target {test_file}; see the ambiguous-baseline warning below before editing"
+        ));
     }
     // #4330: state the terminality, not just the preference. The cage kills
     // the attempt when any other file changes, so the narration that names
@@ -2651,6 +2744,223 @@ mod tests {
             HeadMovement::AdmitDescendantCommits,
         )?;
         Ok(prepared.manifest)
+    }
+
+    /// Initializes the minimal real repository the attempt authority needs:
+    /// an exact Git top-level with one committed file.
+    fn init_sample_repo(root: &Path) -> Result<(), String> {
+        use crate::testing::fixture_git::fixture_git_ok as run_git;
+        run_git(root, &["init"]).map_err(|error| format!("fixture git init: {error}"))?;
+        run_git(root, &["config", "user.email", "ripr-test@example.invalid"])
+            .map_err(|error| format!("fixture git email: {error}"))?;
+        run_git(root, &["config", "user.name", "RIPR Test"])
+            .map_err(|error| format!("fixture git name: {error}"))?;
+        std::fs::write(root.join("README.md"), "# test\n")
+            .map_err(|error| format!("write README failed: {error}"))?;
+        run_git(root, &["add", "."]).map_err(|error| format!("fixture git add: {error}"))?;
+        run_git(root, &["commit", "--no-gpg-sign", "-m", "initial"])
+            .map_err(|error| format!("fixture git commit: {error}"))?;
+        Ok(())
+    }
+
+    /// The #7204 after-phase narration: an attempt whose baseline was born
+    /// ambiguous finishes Incomparable with an empty violations list, even
+    /// when the edit carries an outside-surface file the incomparable delta
+    /// never judged. The narration must name the recorded ambiguity and that
+    /// unjudged path, route to a fresh attempt from a clean state, and must
+    /// not narrate refused changes that do not exist or claim compliance the
+    /// cage never evaluated. The control keeps the undo narration for a
+    /// genuinely violated attempt, where refused changes are real.
+    #[test]
+    fn incomparable_empty_violation_narration_names_the_ambiguous_baseline() -> Result<(), String> {
+        use crate::app::repair_attempt::{
+            BeforeArtifactSource, BeginRepairAttemptOptions, begin_repair_attempt_with,
+            edit_cage_policy_from_packet, finish_repair_attempt, write_edit_cage_baseline,
+        };
+        use crate::edit_cage::{EditCageVerdictStatus, HeadMovement};
+
+        let begin_attempt =
+            |root: &Path,
+             label: &str|
+             -> Result<crate::app::repair_attempt::BeginRepairAttemptResult, String> {
+                let workflow = root.join("target/ripr/workflow");
+                std::fs::create_dir_all(&workflow)
+                    .map_err(|error| format!("create {} failed: {error}", workflow.display()))?;
+                let before = workflow.join(format!("before-{label}.json"));
+                let packet = workflow.join(format!("packet-{label}.json"));
+                let baseline = workflow.join(format!("baseline-{label}.json"));
+                std::fs::write(&before, b"{}")
+                    .map_err(|error| format!("write {} failed: {error}", before.display()))?;
+                let packet_text = serde_json::json!({
+                    "seam_id": "seam:sample",
+                    "allowed_edit_surface": ["tests/target.rs"],
+                    "forbidden_files": []
+                })
+                .to_string();
+                std::fs::write(&packet, packet_text.as_bytes())
+                    .map_err(|error| format!("write {} failed: {error}", packet.display()))?;
+                let policy = edit_cage_policy_from_packet(&packet_text, "seam:sample")?;
+                write_edit_cage_baseline(root, &baseline, &policy)?;
+                begin_repair_attempt_with(BeginRepairAttemptOptions {
+                    root,
+                    root_argument: root,
+                    seam_id: "seam:sample",
+                    sources: &[
+                        BeforeArtifactSource {
+                            role: "before_snapshot",
+                            path: &before,
+                        },
+                        BeforeArtifactSource {
+                            role: "agent_packet",
+                            path: &packet,
+                        },
+                        BeforeArtifactSource {
+                            role: "edit_cage_baseline",
+                            path: &baseline,
+                        },
+                    ],
+                    expected_repository_head: None,
+                    next_command_suffix: None,
+                    store: None,
+                })
+            };
+        let make_allowed_edit = |root: &Path| -> Result<(), String> {
+            let test_path = root.join("tests/target.rs");
+            std::fs::create_dir_all(
+                test_path
+                    .parent()
+                    .ok_or_else(|| "test path has no parent".to_string())?,
+            )
+            .map_err(|error| format!("create tests dir failed: {error}"))?;
+            std::fs::write(&test_path, "#[test]\nfn focused() {}\n")
+                .map_err(|error| format!("write {} failed: {error}", test_path.display()))
+        };
+        let finish_after_edit =
+            |root: &Path,
+             prepared: &crate::app::repair_attempt::BeginRepairAttemptResult|
+             -> Result<crate::app::repair_attempt::RepairAttemptAfter, String> {
+                let retained_packet = root.join(
+                    crate::app::repair_attempt::find_manifest_artifact_by_role(
+                        &prepared.manifest,
+                        "agent_packet",
+                    )
+                    .ok_or("attempt has no retained agent_packet")?
+                    .path
+                    .clone(),
+                );
+                finish_repair_attempt(
+                    root,
+                    &prepared.manifest.repair_attempt_id,
+                    &retained_packet,
+                    HeadMovement::AdmitDescendantCommits,
+                )
+            };
+
+        // The discriminating case: an ambiguous baseline makes the attempt
+        // Incomparable with nothing refused, and the edit carries an
+        // outside-surface file the incomparable delta never judged.
+        let ambiguous_root = unique_command_test_dir("incomparable-ambiguous-narration");
+        std::fs::create_dir_all(&ambiguous_root)
+            .map_err(|error| format!("create {} failed: {error}", ambiguous_root.display()))?;
+        let ambiguous_result = (|| -> Result<(), String> {
+            init_sample_repo(&ambiguous_root)?;
+            crate::testing::fixture_git::stage_case_collision_index_entries(&ambiguous_root)?;
+            let prepared = begin_attempt(&ambiguous_root, "ambiguous")?;
+            make_allowed_edit(&ambiguous_root)?;
+            std::fs::create_dir_all(ambiguous_root.join("src"))
+                .map_err(|error| format!("create src dir failed: {error}"))?;
+            std::fs::write(ambiguous_root.join("src/extra.rs"), "fn extra() {}\n")
+                .map_err(|error| format!("write outside edit failed: {error}"))?;
+            let after = finish_after_edit(&ambiguous_root, &prepared)?;
+            if after.verdict.status != EditCageVerdictStatus::Incomparable {
+                return Err(format!(
+                    "an ambiguous-baseline attempt must finish Incomparable, got {:?}",
+                    after.verdict.status
+                ));
+            }
+            if !after.verdict.violations.is_empty() {
+                return Err(format!(
+                    "the #7204 refusal carries no violations, got {:?}",
+                    after.verdict.violations
+                ));
+            }
+            let lines = repair_after_cage_recovery_lines(
+                &ambiguous_root,
+                None,
+                "seam:sample",
+                &prepared.manifest.repository_head,
+                &after,
+            );
+            let joined = lines.join("\n");
+            if joined.contains("undo the refused changes") {
+                return Err(format!(
+                    "an Incomparable refusal with empty violations must not narrate refused changes that do not exist:\n{joined}"
+                ));
+            }
+            if joined.contains("broke no cage rule") {
+                return Err(format!(
+                    "an incomparable delta skipped policy evaluation, so the narration must not claim compliance:\n{joined}"
+                ));
+            }
+            if !joined.contains("`src/extra.rs`") {
+                return Err(format!(
+                    "the narration must name the changed path the cage never judged:\n{joined}"
+                ));
+            }
+            if !joined.contains("git stash -u") {
+                return Err(format!(
+                    "the narration must warn that a plain git stash leaves untracked files behind:\n{joined}"
+                ));
+            }
+            if !joined.contains("ambiguous") {
+                return Err(format!(
+                    "the narration must name the recorded baseline ambiguity:\n{joined}"
+                ));
+            }
+            if !joined.contains("--phase before") {
+                return Err(format!(
+                    "the narration must keep the fresh-attempt before-phase route:\n{joined}"
+                ));
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&ambiguous_root)
+            .map_err(|error| format!("remove {} failed: {error}", ambiguous_root.display()))?;
+        ambiguous_result?;
+
+        // The control: a violated attempt has real refused changes and keeps
+        // the undo narration.
+        let violated_root = unique_command_test_dir("violated-keeps-undo-narration");
+        std::fs::create_dir_all(&violated_root)
+            .map_err(|error| format!("create {} failed: {error}", violated_root.display()))?;
+        let violated_result = (|| -> Result<(), String> {
+            init_sample_repo(&violated_root)?;
+            let prepared = begin_attempt(&violated_root, "violated")?;
+            // An edit outside the allowed test surface: real refused changes.
+            std::fs::write(violated_root.join("outside.rs"), "fn stray() {}\n")
+                .map_err(|error| format!("write outside edit failed: {error}"))?;
+            let after = finish_after_edit(&violated_root, &prepared)?;
+            if after.verdict.violations.is_empty() {
+                return Err("the control edit must produce real violations".to_string());
+            }
+            let lines = repair_after_cage_recovery_lines(
+                &violated_root,
+                None,
+                "seam:sample",
+                &prepared.manifest.repository_head,
+                &after,
+            );
+            let joined = lines.join("\n");
+            if !joined.contains("undo the refused changes") {
+                return Err(format!(
+                    "a violated attempt with real violations keeps the undo narration:\n{joined}"
+                ));
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&violated_root)
+            .map_err(|error| format!("remove {} failed: {error}", violated_root.display()))?;
+        violated_result
     }
 
     /// The recording dispatch routes by refusal family (#5262 review): the
@@ -3260,6 +3570,7 @@ mod before_phase_stdout_tests {
                 "ripr agent repair --root . --attempt repair-attempt-0123456789abcdef01234567 --phase after"
                     .to_string(),
             packet_path: "target/ripr/workflow/agent-packet.json".to_string(),
+            baseline_ambiguous: false,
         }
     }
 
@@ -3294,6 +3605,57 @@ mod before_phase_stdout_tests {
             value["repair_attempt"]["packet_path"],
             "target/ripr/workflow/agent-packet.json"
         );
+        // A scorable baseline adds no ambiguity member: the scorable stdout
+        // bytes stay exactly as before (#7204).
+        assert!(value["repair_attempt"].get("baseline_ambiguous").is_none());
+        Ok(())
+    }
+
+    /// #7204: a stdout-only driver must see the ambiguity, so the `--json`
+    /// continuation carries the additive flag and the plain summary replaces
+    /// the bare after-edit directive with the warning and the clean-state
+    /// restart route.
+    #[test]
+    fn ambiguous_baseline_is_disclosed_on_stdout_in_both_modes() -> Result<(), String> {
+        let ambiguous = BeforePhaseAttemptContinuation {
+            baseline_ambiguous: true,
+            ..continuation()
+        };
+        let document = before_phase_stdout(
+            PACKET,
+            "target/ripr/workflow/agent-packet.json",
+            true,
+            &ambiguous,
+        )?;
+        let value: serde_json::Value = serde_json::from_str(&document)
+            .map_err(|error| format!("stdout document must parse: {error}"))?;
+        assert_eq!(value["repair_attempt"]["baseline_ambiguous"], true);
+
+        let summary = before_phase_stdout(
+            PACKET,
+            "target/ripr/workflow/agent-packet.json",
+            false,
+            &ambiguous,
+        )?;
+        assert!(!summary.contains("Next, after the test edit:"), "{summary}");
+        // An unscorable attempt's summary must not hand out an unqualified
+        // edit instruction (#7253 review).
+        assert!(!summary.contains("edit one test file:"), "{summary}");
+        assert!(
+            summary.contains("the focused test edit would target tests/pricing.rs"),
+            "{summary}"
+        );
+        for expected in [
+            "ambiguous: true",
+            "Incomparable",
+            "--phase before command again from the clean state",
+            "if you continue with this attempt anyway, after the test edit run:",
+        ] {
+            assert!(
+                summary.contains(expected),
+                "ambiguous stdout must name `{expected}`:\n{summary}"
+            );
+        }
         Ok(())
     }
 
@@ -3345,7 +3707,10 @@ mod before_phase_stdout_tests {
         let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
         assert_eq!(
             before_phase_stdout(packet, "p", false, &continuation())?,
-            "Repair packet (JSON): p; add --json to print it here\n"
+            format!(
+                "Repair packet (JSON): p; add --json to print it here\nNext, after the test edit: {}\n",
+                continuation().next_command
+            )
         );
         Ok(())
     }

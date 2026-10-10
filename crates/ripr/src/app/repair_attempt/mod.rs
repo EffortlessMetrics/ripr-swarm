@@ -837,6 +837,13 @@ pub(crate) struct BeforeArtifactSource<'a> {
 pub(crate) struct BeginRepairAttemptResult {
     pub(crate) manifest: RepairAttemptManifest,
     pub(crate) manifest_path: PathBuf,
+    /// Whether the staged `edit_cage_baseline` artifact itself records the
+    /// ambiguity — the same staged-bytes read that decided the manifest's
+    /// limitations entry (#7204). Narration renders from this value, so the
+    /// CLI disclosure cannot drift from the artifact the attempt retains
+    /// when the workflow-path capture is replaced between capture and
+    /// staging.
+    pub(crate) baseline_ambiguous: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1073,6 +1080,49 @@ fn complete_repair_attempt(
                     final_identity.head
                 ));
             }
+            // #7204: the staged baseline is the authority on whether this
+            // attempt was born scorable. An ambiguous baseline can only end
+            // in an Incomparable verdict, so the manifest discloses that at
+            // before-time instead of leaving the fact inside the baseline
+            // artifact while the command exits 0 "awaiting the edit". A
+            // publication with no baseline artifact has nothing to disclose
+            // (every production before phase stages one; an attempt without
+            // a baseline refuses at its after phase regardless), but a
+            // baseline that IS staged cannot silently dodge the read: these
+            // bytes were just bound by digest, so a failure here is
+            // publication trouble.
+            let baseline_ambiguous = artifacts
+                .iter()
+                .find(|artifact| artifact.role == "edit_cage_baseline")
+                .map(|artifact| {
+                    let bytes = std::fs::read(canonical_root.join(&artifact.path)).map_err(
+                        |error| {
+                            format!(
+                                "read staged edit-cage baseline {} failed: {error}",
+                                artifact.path
+                            )
+                        },
+                    )?;
+                    if u64::try_from(bytes.len()).map_err(|error| error.to_string())?
+                        != artifact.bytes
+                        || sha256_bytes(&bytes) != artifact.sha256
+                    {
+                        return Err("staged edit-cage baseline binding failed".to_string());
+                    }
+                    let baseline: crate::edit_cage::AttemptBaseline =
+                        serde_json::from_slice(&bytes).map_err(|error| {
+                            format!("decode staged edit-cage baseline failed: {error}")
+                        })?;
+                    Ok(baseline.is_ambiguous())
+                })
+                .transpose()?
+                .unwrap_or(false);
+            let mut limitations = vec![
+                "after-phase verify and receipt outputs remain mirrored through target/ripr/workflow compatibility paths; those files are compatibility projections and not the sole surviving copy of an attempt result".to_string(),
+            ];
+            if baseline_ambiguous {
+                limitations.push("the captured edit-cage baseline recorded `ambiguous: true`, so the cage cannot prove the exact worktree state this attempt measures: the after phase can refuse the attempt as Incomparable with an empty violations list even when the edit stays inside the allowed test surface. Resolve the workspace condition that made the baseline ambiguous (a stale target/ state is a common Windows trigger) and start a fresh attempt if a scorable result is needed".to_string());
+            }
             let manifest = RepairAttemptManifest {
                 schema_version: REPAIR_ATTEMPT_SCHEMA_VERSION.to_string(),
                 kind: "repair_attempt".to_string(),
@@ -1085,9 +1135,7 @@ fn complete_repair_attempt(
                 created_unix_ms: publication.created_unix_ms,
                 artifacts,
                 next_command,
-                limitations: vec![
-                    "after-phase verify and receipt outputs remain mirrored through target/ripr/workflow compatibility paths; those files are compatibility projections and not the sole surviving copy of an attempt result".to_string(),
-                ],
+                limitations,
                 non_claims: vec![
                     "RIPR does not author or apply the focused test edit".to_string(),
                     "prepared evidence does not mean the gap is fixed or verified".to_string(),
@@ -1102,6 +1150,7 @@ fn complete_repair_attempt(
             Ok(BeginRepairAttemptResult {
                 manifest,
                 manifest_path,
+                baseline_ambiguous,
             })
         });
     if result.is_err() {
@@ -2024,7 +2073,10 @@ pub(crate) fn include_explicit_store_operational_write(
 /// every before phase (the durable authority is the baseline staged inside
 /// the attempt), so an existing projection is replaced. The captured baseline
 /// is dropped before the replacement so its Windows write authorities cannot
-/// block the removal of the file it just probed.
+/// block the removal of the file it just probed. The staged artifact — not
+/// this in-flight copy — is the disclosure authority: attempt publication
+/// re-derives the ambiguity from the staged bytes and returns it on
+/// `BeginRepairAttemptResult` (#7204).
 pub(crate) fn write_edit_cage_baseline(
     root: &Path,
     path: &Path,
@@ -5545,6 +5597,79 @@ mod tests {
 
     fn bound_receipt_bytes(manifest: &RepairAttemptManifest) -> Result<Vec<u8>, String> {
         bound_receipt_bytes_with_verify(manifest, None)
+    }
+
+    /// An attempt whose captured baseline already records `ambiguous: true`
+    /// is born unscorable: the manifest must say so in its limitations at
+    /// before-time (#7204), not exit 0 with the ambiguity living only in the
+    /// baseline artifact.
+    #[test]
+    fn ambiguous_baseline_attempt_discloses_the_ambiguity_in_its_manifest() -> Result<(), String> {
+        let root = test_repo_root("ambiguous-baseline-disclosure")?;
+        let result = (|| -> Result<(), String> {
+            crate::testing::fixture_git::stage_case_collision_index_entries(&root)?;
+            let prepared = prepare_sample_attempt(&root, "seam:sample", "ambiguous")?;
+            // Control 1: the staged baseline really is the ambiguous one, so
+            // the limitation below cannot drift from the artifact it cites.
+            let baseline_artifact =
+                find_manifest_artifact(&prepared.manifest, "edit_cage_baseline")?;
+            let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
+                .map_err(|error| format!("read staged baseline failed: {error}"))?;
+            // Control 2: the bytes this test decodes are the exact bytes the
+            // manifest binds, so a capture-side artifact swap or rename
+            // cannot bypass the disclosure without failing here.
+            if u64::try_from(baseline_bytes.len()).map_err(|error| error.to_string())?
+                != baseline_artifact.bytes
+                || sha256_bytes(&baseline_bytes) != baseline_artifact.sha256
+            {
+                return Err(
+                    "the manifest's edit_cage_baseline binding does not match the staged bytes"
+                        .to_string(),
+                );
+            }
+            let baseline: serde_json::Value = serde_json::from_slice(&baseline_bytes)
+                .map_err(|error| format!("decode staged baseline failed: {error}"))?;
+            if baseline["ambiguous"] != serde_json::Value::Bool(true) {
+                return Err(format!(
+                    "fixture baseline must record the ambiguity, got: {baseline}"
+                ));
+            }
+            let joined = prepared.manifest.limitations.join("\n");
+            if !joined.contains("ambiguous") {
+                return Err(format!(
+                    "an attempt born with an ambiguous baseline must disclose it in the manifest limitations: {joined}"
+                ));
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        result
+    }
+
+    /// The disclosure is earned, not unconditional: a clean baseline keeps
+    /// the manifest's happy-path limitations exactly as before (#7204).
+    #[test]
+    fn clean_baseline_attempt_manifest_stays_without_an_ambiguity_disclosure() -> Result<(), String>
+    {
+        let root = test_repo_root("clean-baseline-disclosure")?;
+        let result = (|| -> Result<(), String> {
+            let prepared = prepare_sample_attempt(&root, "seam:sample", "clean")?;
+            let ambiguous_limitation = prepared
+                .manifest
+                .limitations
+                .iter()
+                .find(|limitation| limitation.contains("ambiguous"));
+            if let Some(limitation) = ambiguous_limitation {
+                return Err(format!(
+                    "a clean baseline must not carry an ambiguity disclosure: {limitation}"
+                ));
+            }
+            Ok(())
+        })();
+        std::fs::remove_dir_all(&root)
+            .map_err(|error| format!("remove {} failed: {error}", root.display()))?;
+        result
     }
 
     /// Retain a receipt/verify pair through the production path and return
