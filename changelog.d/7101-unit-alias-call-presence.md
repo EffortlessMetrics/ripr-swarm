@@ -4,7 +4,7 @@
   Qualified paths, chained aliases, associated types, same-named type
   parameters (`Unit` or `r#Unit`), nested functions, `#[cfg]` aliases
   (including trivia and `r#cfg`), `cfg_attr` that introduces `cfg`,
-  competing same-name imports, and `const`/`static` block shadows stay
-  consumed. A same-named const generic, `#[cfg_attr(_, allow(..))]`, and
-  a one-prefix raw-ident unit alias or return path still count as unit
-  (#7101).
+  competing same-name imports, unknown or proc-macro-like attributes,
+  and `const`/`static` block shadows stay consumed. A same-named const
+  generic, `#[cfg_attr(_, allow(..))]`, `#[doc]`, and a one-prefix
+  raw-ident unit alias or return path still count as unit (#7101).

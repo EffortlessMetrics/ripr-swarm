@@ -1968,23 +1968,31 @@ fn meta_ident_name(meta: &ast::Meta) -> Option<String> {
     Some(ident_name(&name).to_string())
 }
 
-/// A `#[cfg]` path, or a `cfg_attr` that introduces `cfg`. Uses the parsed
-/// attr path (`simple_name` / `CfgMeta` / `skip_cfg_attrs`) so trivia between
-/// `cfg` and `(` and a raw `r#cfg` path still refuse. An unparsed
-/// `r#cfg_attr` leaf is also refused. `cfg_attr` that only introduces
-/// `allow` is not a gate.
-fn attr_is_cfg(attribute: &ast::Attr) -> bool {
-    attribute.skip_cfg_attrs().iter().any(|meta| {
-        matches!(meta, ast::Meta::CfgMeta(_))
-            || matches!(
-                meta_ident_name(meta).as_deref(),
-                Some("cfg") | Some("cfg_attr")
-            )
-    })
+/// Built-in attrs that cannot rewrite a type alias. Anything else — `cfg`,
+/// an unparsed `cfg_attr` leaf, a qualified path, or a proc-macro-like
+/// ident — is refused. `cfg_attr` is unwrapped first so introduced `allow`
+/// / `doc` still count as unit.
+fn attr_refuses_unit_alias(attribute: &ast::Attr) -> bool {
+    attribute
+        .skip_cfg_attrs()
+        .iter()
+        .any(meta_refuses_unit_alias)
 }
 
-fn type_alias_has_cfg(alias: &ast::TypeAlias) -> bool {
-    alias.attrs().any(|attribute| attr_is_cfg(&attribute))
+fn meta_refuses_unit_alias(meta: &ast::Meta) -> bool {
+    if matches!(meta, ast::Meta::CfgMeta(_)) {
+        return true;
+    }
+    !matches!(
+        meta_ident_name(meta).as_deref(),
+        Some("doc" | "allow" | "warn" | "deny" | "forbid" | "deprecated" | "must_use")
+    )
+}
+
+fn type_alias_has_refusing_attr(alias: &ast::TypeAlias) -> bool {
+    alias
+        .attrs()
+        .any(|attribute| attr_refuses_unit_alias(&attribute))
 }
 
 fn path_last_segment_name(path: &ast::Path) -> Option<String> {
@@ -2023,7 +2031,8 @@ fn item_list_use_binds_name(items: &ra_ap_syntax::SyntaxNode, name: &str) -> boo
 /// matches a bare return path, including one `r#` prefix. Aliases in other
 /// modules, associated types, a function or impl/trait type parameter of
 /// the same name, a further alias of that name, nested functions,
-/// cfg-gated aliases, and a competing same-name `use` stay unresolved.
+/// cfg-gated aliases, unknown or proc-macro-like attributes, and a
+/// competing same-name `use` stay unresolved.
 fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::SyntaxNode) -> bool {
     let Some(name) = bare_type_path_name(path_type) else {
         return false;
@@ -2050,7 +2059,7 @@ fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::Sy
         }
         if alias.generic_param_list().is_some()
             || !type_is_unit_tuple(alias.ty())
-            || type_alias_has_cfg(&alias)
+            || type_alias_has_refusing_attr(&alias)
         {
             return false;
         }
@@ -2893,6 +2902,18 @@ pub fn raw_generic_shadow<r#Unit>() -> Unit {
     raw_generic_notify()
 }
 
+#[rewrite_unit]
+type Rewritten = ();
+pub fn rewritten_alias_tail() -> Rewritten {
+    rewritten_notify()
+}
+
+#[cfg_attr(test, rewrite_unit)]
+type CfgAttrRewritten = ();
+pub fn cfg_attr_rewritten_tail() -> CfgAttrRewritten {
+    cfg_attr_rewritten_notify()
+}
+
 #[cfg_attr(test, doc = "note, cfg(test)")]
 type DocComma = ();
 pub fn doc_comma_tail() -> DocComma {
@@ -3006,6 +3027,8 @@ static SHADOW: () = {
             "commented_cfg_notify()",
             "raw_cfg_notify()",
             "commented_nested_cfg_notify()",
+            "rewritten_notify()",
+            "cfg_attr_rewritten_notify()",
         ] {
             assert!(
                 consumed(call),

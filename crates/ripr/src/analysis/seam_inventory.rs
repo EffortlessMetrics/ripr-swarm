@@ -4197,6 +4197,18 @@ pub fn raw_generic_shadow<r#Unit>() -> Unit {
     raw_generic_notify()
 }
 
+#[rewrite_unit]
+type Rewritten = ();
+pub fn rewritten_alias_tail() -> Rewritten {
+    rewritten_notify()
+}
+
+#[cfg_attr(test, rewrite_unit)]
+type CfgAttrRewritten = ();
+pub fn cfg_attr_rewritten_tail() -> CfgAttrRewritten {
+    cfg_attr_rewritten_notify()
+}
+
 #[cfg_attr(test, doc = "note, cfg(test)")]
 type DocComma = ();
 pub fn doc_comma_tail() -> DocComma {
