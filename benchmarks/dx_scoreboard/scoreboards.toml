@@ -309,8 +309,11 @@ direction = "higher_is_better"
 # Coverage, not correctness: the verdict rates above say whether ripr is
 # right on the covered cases. `verdict-corpus check` separately fails when
 # the covered count falls below the floor in spec-coverage.toml. Scoping in
-# a new spec lowers this rate without lowering the count: the advisory
-# regression flags it on purpose, because new uncovered examples are work.
+# a new spec lowers this displayed rate without lowering the count. The
+# committed `metrics/dx-scoreboard/baseline.json` snapshot does not yet
+# include this metric, so `--gate` reports it incomparable rather than as a
+# regression. The hard gate remains the ledger floor; seeding that snapshot
+# is a separate receipt refresh, not this producer.
 target = 1.0
 regression_pct = 0
 regression_floor = 0
