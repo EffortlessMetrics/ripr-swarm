@@ -2854,6 +2854,163 @@ fn speed_ms(samples: &[Sample]) -> Option<&Sample> {
         .find(|sample| sample.metric == "speed.warm_check_ms")
 }
 
+fn speed_rss(samples: &[Sample]) -> Option<&Sample> {
+    samples
+        .iter()
+        .find(|sample| sample.metric == "speed.warm_check_peak_rss_mb")
+}
+
+fn warm_check_pair<'a>(samples: &'a [Sample]) -> Result<(&'a Sample, &'a Sample), String> {
+    Ok((
+        speed_ms(samples).ok_or("speed.warm_check_ms missing")?,
+        speed_rss(samples).ok_or("speed.warm_check_peak_rss_mb missing")?,
+    ))
+}
+
+/// MINIMAL plus the RSS sibling so a gated report can see both Failed samples.
+fn warm_check_gate_config() -> Result<super::Config, String> {
+    parse_config(&format!(
+        "{MINIMAL}
+[[metric]]
+id = \"speed.warm_check_peak_rss_mb\"
+board = \"speed\"
+title = \"Warm check RSS\"
+unit = \"MB\"
+direction = \"lower_is_better\"
+target = 512
+regression_pct = 15
+regression_floor = 64
+runner_dependent = true
+source = \"measured\"
+per_repo = true
+"
+    ))
+}
+
+fn both_incomplete(ms: &Sample, rss: &Sample) -> bool {
+    matches!(ms.outcome, SampleOutcome::Incomplete(_))
+        && matches!(rss.outcome, SampleOutcome::Incomplete(_))
+}
+
+fn failed_instrument_ids(report: &Value) -> Vec<String> {
+    report["gate"]["failed_instruments"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+/// #7275: `Ok(warmup), Err(capture)` is a broken instrument, not Incomplete
+/// warmup timings. `--gate` must fail even with no baseline.
+#[test]
+fn a_measured_capture_error_fails_both_warm_check_metrics_and_the_gate() -> Result<(), String> {
+    let warmup = measured(false, Some(64 * 1024 * 1024));
+    let (samples, _, missing) = record_pair(Ok(warmup), Err("pipe drain failed".to_string()));
+    let (ms, rss) = warm_check_pair(&samples)?;
+    assert!(
+        matches!(ms.outcome, SampleOutcome::Failed),
+        "measured capture error must not keep warmup duration as Incomplete: {:?}",
+        ms.outcome
+    );
+    assert!(
+        matches!(rss.outcome, SampleOutcome::Failed),
+        "measured capture error must not keep warmup RSS as Incomplete: {:?}",
+        rss.outcome
+    );
+    assert!(
+        ms.detail
+            .contains("measured capture failed: pipe drain failed"),
+        "{}",
+        ms.detail
+    );
+    assert_eq!(rss.detail, "pipe drain failed");
+    assert!(
+        missing.contains(&"warm check JSON"),
+        "capture error must keep trust incomplete: {missing:?}"
+    );
+
+    let config = warm_check_gate_config()?;
+    let gated = build_report(
+        &config,
+        &all_boards(),
+        &samples,
+        &context("runner-a"),
+        None,
+        true,
+    );
+    assert_eq!(gated["gate"]["status"].as_str(), Some("fail"));
+    let failed = failed_instrument_ids(&gated);
+    assert!(
+        failed.contains(&"speed.warm_check_ms".to_string()),
+        "{failed:?}"
+    );
+    assert!(
+        failed.contains(&"speed.warm_check_peak_rss_mb".to_string()),
+        "{failed:?}"
+    );
+    Ok(())
+}
+
+/// Timeout (warmup timed out → measured run not taken) and an explicit
+/// `Ok(None)` stay Incomplete. Incomplete does not fail `--gate` without a
+/// baseline — that is why the capture-error arm must be Failed instead.
+#[test]
+fn timeout_and_unmeasured_second_run_stay_incomplete() -> Result<(), String> {
+    let timed_out = measured(true, Some(64 * 1024 * 1024));
+    let (timeout_samples, _, _) = record_pair(Ok(timed_out), Ok(None));
+    let (timeout_ms, timeout_rss) = warm_check_pair(&timeout_samples)?;
+    assert!(
+        both_incomplete(timeout_ms, timeout_rss),
+        "timeout must stay Incomplete, got {:?} / {:?}",
+        timeout_ms.outcome,
+        timeout_rss.outcome
+    );
+    assert!(
+        timeout_ms.detail.contains("measured run not taken"),
+        "{}",
+        timeout_ms.detail
+    );
+
+    let warmup = measured(false, Some(64 * 1024 * 1024));
+    let (skipped_samples, _, _) = record_pair(Ok(warmup), Ok(None));
+    let (skipped_ms, skipped_rss) = warm_check_pair(&skipped_samples)?;
+    assert!(
+        both_incomplete(skipped_ms, skipped_rss),
+        "measured run not taken must stay Incomplete, got {:?} / {:?}",
+        skipped_ms.outcome,
+        skipped_rss.outcome
+    );
+    assert!(
+        skipped_ms.detail.contains("measured run not taken"),
+        "{}",
+        skipped_ms.detail
+    );
+
+    let config = warm_check_gate_config()?;
+    let gated = build_report(
+        &config,
+        &all_boards(),
+        &skipped_samples,
+        &context("runner-a"),
+        None,
+        true,
+    );
+    assert_eq!(
+        gated["gate"]["status"].as_str(),
+        Some("no_baseline"),
+        "Incomplete without a baseline must not fail --gate: {}",
+        gated["gate"]
+    );
+    assert!(
+        failed_instrument_ids(&gated).is_empty(),
+        "{}",
+        gated["gate"]
+    );
+    Ok(())
+}
+
 #[test]
 fn restoring_the_permissive_predicate_admits_empty_json() {
     let subject = admission_subject();
