@@ -191,7 +191,7 @@ fn property_safe_call_text(
     text
 }
 
-pub(super) fn call_name_bounds_before_paren(
+pub(crate) fn call_name_bounds_before_paren(
     line: &str,
     paren_index: usize,
 ) -> Option<(usize, usize)> {

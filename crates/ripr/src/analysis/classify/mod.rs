@@ -41,8 +41,9 @@ pub(in crate::analysis) use gap_admission::{
     REFUSALS_ARE_ANALYZER_LIMITS, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{
-    HELPER_RESULT_NOT_FORWARDED, callee_is_unique, chain_forwards_to_observed_hops,
-    chain_passes_effect_target_to_observed_hops, helper_only_reach, resolve_chain,
+    HELPER_RESULT_NOT_FORWARDED, HelperChain, ambiguous_helper_entry_called_by_tests,
+    callee_is_unique, chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops,
+    helper_only_reach, resolve_chain,
 };
 pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
 pub(in crate::analysis) use operand_pin::operand_only_pin;

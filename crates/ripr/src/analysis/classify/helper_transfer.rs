@@ -29,7 +29,7 @@
 //! still has to observe the sink through the ordinary evidence stages.
 
 use super::value_transfer::ExactInputs;
-use crate::analysis::facts::{CallFact, FunctionSummary, RustIndex};
+use crate::analysis::facts::{CallFact, FunctionImplContext, FunctionSummary, RustIndex};
 
 /// The configured hop bound for helper transfer. Exceeding it yields a
 /// typed limitation naming the chain's stop, never a silent drop.
@@ -147,6 +147,349 @@ impl HelperChain {
     pub(crate) fn entry_name(&self) -> Option<&str> {
         self.hops.last().map(|hop| hop.caller.name.as_str())
     }
+}
+
+const UNIQUENESS_STOP_PREFIX: &str = "callee `";
+const UNIQUENESS_STOP_SUFFIX: &str = "` is not a unique function in the workspace";
+
+fn uniqueness_stop_edge(callee_name: &str) -> String {
+    format!("{UNIQUENESS_STOP_PREFIX}{callee_name}{UNIQUENESS_STOP_SUFFIX}")
+}
+
+/// The callee named by a uniqueness refusal on `chain`, if that is the
+/// stop. Relation and row transfer stay refused; this only names the
+/// ambiguous function so classification can abstain instead of claiming
+/// that no test reaches the owner (#7080).
+pub(crate) fn uniqueness_refusal_callee(chain: &HelperChain) -> Option<&str> {
+    let name = chain
+        .stop_above
+        .as_deref()?
+        .strip_prefix(UNIQUENESS_STOP_PREFIX)?
+        .strip_suffix(UNIQUENESS_STOP_SUFFIX)?;
+    (!name.is_empty() && !name.contains('`')).then_some(name)
+}
+
+/// The ambiguous helper-chain entry a test actually calls, when the chain
+/// stopped only because a callee name is not unique.
+///
+/// A unique caller of that name (`outer` wrapping a non-unique `inner`) is
+/// not an entry: tests that call the unique wrapper still read
+/// `no_static_path` (the `helper_chain_controls` and
+/// `rust_transitive_reach_positive` pins). A non-unique caller
+/// (`from_str` wrapping a non-unique `parse`) is another ambiguous entry
+/// the tests may invoke; naming it is the same uniqueness refusal.
+pub(crate) fn ambiguous_helper_entry_called_by_tests<'a>(
+    chain: &'a HelperChain,
+    index: &'a RustIndex,
+) -> Option<&'a str> {
+    let stop_name = uniqueness_refusal_callee(chain)?;
+    if tests_call_name(index, stop_name) {
+        return Some(stop_name);
+    }
+    let mut extras: Vec<&str> = direct_callers(stop_name, index)
+        .into_iter()
+        .filter(|caller| {
+            !callee_is_unique(&caller.name, index)
+                && tests_call_function(index, caller)
+                && caller_invokes_named_entry(caller, stop_name, index)
+        })
+        .map(|caller| caller.name.as_str())
+        .collect();
+    extras.sort_unstable();
+    extras.first().copied()
+}
+
+fn tests_call_name(index: &RustIndex, name: &str) -> bool {
+    tests_call_matching(index, name, |kind| {
+        kind_is_workspace_entry(index, name, kind)
+    })
+}
+
+/// The extras wrapper is one `FunctionSummary`. A same-named sibling
+/// that tests call (`VersionReq::from_str`) must not credit a free
+/// `from_str` that actually wraps the uniqueness stop.
+fn tests_call_function(index: &RustIndex, function: &FunctionSummary) -> bool {
+    tests_call_matching(index, &function.name, |kind| {
+        kind_targets_function(function, kind)
+    })
+}
+
+fn tests_call_matching(
+    index: &RustIndex,
+    name: &str,
+    kind_matches: impl Fn(&NamedEntryKind) -> bool,
+) -> bool {
+    !name.is_empty()
+        && index.tests().iter().any(|test| {
+            let file_facts = index.files().get(&test.file);
+            let source = match &file_facts {
+                Some(facts) => facts.source.as_ref(),
+                None => test.body.as_str(),
+            };
+            let imports = source_imports_foreign_entry(index, source, name);
+            test.calls.iter().any(|call| {
+                call.name == name
+                    && named_entry_kinds(&call.text, name).iter().any(|kind| {
+                        let free_shadowed = matches!(kind, NamedEntryKind::Free)
+                            && (imports
+                                || local_binding_shadows(
+                                    index,
+                                    LocalBindingSubject {
+                                        file: &test.file,
+                                        body: test.body.as_str(),
+                                        start_line: test.start_line,
+                                        nested_fn_names: &test.nested_fn_names,
+                                        let_bindings: &test.let_bindings,
+                                    },
+                                    name,
+                                    call.line,
+                                ));
+                        !free_shadowed && kind_matches(kind)
+                    })
+            })
+        })
+}
+
+/// Import identity only. Do not reuse `test_call_is_shadowed`: uniqueness
+/// would hide every #7080 entry.
+fn source_imports_foreign_entry(index: &RustIndex, source: &str, name: &str) -> bool {
+    let renamed_import = super::reveal::flattened_use_paths(source)
+        .iter()
+        .any(|import| {
+            import.alias.as_deref() == Some(name) && import.path.rsplit("::").next() != Some(name)
+        });
+    renamed_import
+        || super::reveal::file_imports_foreign_callee_name(source, name, &index.package_names)
+}
+
+struct LocalBindingSubject<'a> {
+    file: &'a std::path::Path,
+    body: &'a str,
+    start_line: usize,
+    nested_fn_names: &'a [String],
+    let_bindings: &'a [crate::analysis::facts::LetBindingFact],
+}
+
+/// Local `fn` / `let` bindings only. Do not reuse `test_call_is_shadowed`:
+/// that function also treats a non-unique workspace name as shadowed, which
+/// would make every #7080 entry look unentered. Lexical-fallback files use
+/// the masked-body scanners because their parser facts are empty.
+fn local_binding_shadows(
+    index: &RustIndex,
+    subject: LocalBindingSubject<'_>,
+    name: &str,
+    call_line: usize,
+) -> bool {
+    let body_line = call_line.saturating_sub(subject.start_line);
+    let lexical = index
+        .files()
+        .get(subject.file)
+        .is_some_and(|facts| facts.used_lexical_fallback);
+    if lexical {
+        let masked = crate::analysis::extract::mask_comments_and_strings(subject.body);
+        crate::analysis::extract::ShadowAuthority::LexicalMaskedBody
+            .body_shadows_callee_at_line(&masked, name, body_line)
+    } else {
+        crate::analysis::extract::ShadowAuthority::ParserBodyFacts {
+            nested_fn_names: subject.nested_fn_names,
+            let_bindings: subject.let_bindings,
+        }
+        .body_shadows_callee_at_line("", name, body_line)
+    }
+}
+
+/// The wrapper invokes `stop_name` as a free or path-qualified function,
+/// not as a receiver call (`req.parse()` is not wrapping helper `parse`).
+/// A wrapper-local `fn`/`let` of that name is not the refused helper.
+fn caller_invokes_named_entry(
+    caller: &FunctionSummary,
+    stop_name: &str,
+    index: &RustIndex,
+) -> bool {
+    let file_facts = index.files().get(&caller.file);
+    let source = match &file_facts {
+        Some(facts) => facts.source.as_ref(),
+        None => caller.body.as_str(),
+    };
+    let imports = source_imports_foreign_entry(index, source, stop_name);
+    caller.calls.iter().any(|call| {
+        call.name == stop_name
+            && named_entry_kinds(&call.text, stop_name).iter().any(|kind| {
+                let free_shadowed = matches!(kind, NamedEntryKind::Free)
+                    && (imports
+                        || local_binding_shadows(
+                            index,
+                            LocalBindingSubject {
+                                file: &caller.file,
+                                body: caller.body.as_str(),
+                                start_line: caller.start_line,
+                                nested_fn_names: &caller.nested_fn_names,
+                                let_bindings: &caller.let_bindings,
+                            },
+                            stop_name,
+                            call.line,
+                        ));
+                !free_shadowed && kind_is_workspace_entry(index, stop_name, kind)
+            })
+    })
+}
+
+/// Whether a recorded test call invokes `callee_name` as a free function
+/// (`parse(...)`, `parse (...)`, `parse::<T>(...)`) or a path-qualified
+/// associated function (`Version::parse(...)`). A receiver call
+/// (`req.parse()`) shares the bare name but is not that entry (#7080 /
+/// identity, not token coincidence). Comments and strings are masked
+/// first because `CallFact.text` is the original source line: a receiver
+/// on the same line as `"parse("` must not look like an entry.
+#[cfg(test)]
+fn test_call_invokes_named_entry(text: &str, callee_name: &str) -> bool {
+    named_entry_self_type(text, callee_name).is_some()
+}
+
+/// A path-qualified call (`serde_json::from_str`) is an entry only when
+/// some workspace function of that name could be the `T` in `T::name(`
+/// (`FunctionImplContext::may_be_target_of_type_path`). Free-function
+/// calls have no `T` and still enter. Every matching occurrence on the
+/// line is considered: a leading foreign qualify must not hide a later
+/// workspace entry on the same `CallFact.text`.
+fn kind_is_workspace_entry(index: &RustIndex, name: &str, kind: &NamedEntryKind) -> bool {
+    match kind {
+        NamedEntryKind::Free => true,
+        NamedEntryKind::TypePath(self_type) => index
+            .functions()
+            .iter()
+            .filter(|function| function.name == name)
+            .any(|function| function.impl_context.may_be_target_of_type_path(self_type)),
+        NamedEntryKind::UnparsedQualifier => false,
+    }
+}
+
+fn kind_targets_function(function: &FunctionSummary, kind: &NamedEntryKind) -> bool {
+    match kind {
+        NamedEntryKind::Free => matches!(
+            function.impl_context,
+            FunctionImplContext::Free | FunctionImplContext::Unknown
+        ),
+        NamedEntryKind::TypePath(self_type) => {
+            function.impl_context.may_be_target_of_type_path(self_type)
+        }
+        NamedEntryKind::UnparsedQualifier => false,
+    }
+}
+
+/// `Some(None)` is a free-function call of `callee_name`. `Some(Some(T))`
+/// is `T::callee_name(`. `None` means the text does not invoke that entry.
+#[cfg(test)]
+fn named_entry_self_type(text: &str, callee_name: &str) -> Option<Option<String>> {
+    named_entry_kinds(text, callee_name)
+        .into_iter()
+        .find_map(|kind| match kind {
+            NamedEntryKind::Free => Some(None),
+            NamedEntryKind::TypePath(self_type) => Some(Some(self_type)),
+            NamedEntryKind::UnparsedQualifier => None,
+        })
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum NamedEntryKind {
+    Free,
+    TypePath(String),
+    UnparsedQualifier,
+}
+
+fn named_entry_kinds(text: &str, callee_name: &str) -> Vec<NamedEntryKind> {
+    if callee_name.is_empty() {
+        return Vec::new();
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let mut kinds = Vec::new();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'('
+            && let Some((start, end)) =
+                crate::analysis::extract::call_name_bounds_before_paren(&masked, i)
+            && masked[start..end] == *callee_name
+        {
+            let raw_before = masked[..start].chars().next_back();
+            let prefix = masked[..start].trim_end();
+            let enters = match raw_before {
+                Some(character) if character.is_ascii_alphanumeric() || character == '_' => false,
+                _ => {
+                    !matches!(prefix.chars().next_back(), Some('.'))
+                        && !prefix_introduces_fn_item(prefix)
+                }
+            };
+            if enters {
+                kinds.push(named_entry_kind_from_prefix(prefix));
+            }
+        }
+        i += 1;
+    }
+    kinds
+}
+
+/// `fn parse()` / `pub fn parse()` is an item, not a call. `CallFact.text`
+/// is the original source line, so a test named after the ambiguous
+/// helper would otherwise look like a free-function entry (#7080 /
+/// `property_macro_noop_named_test`).
+fn prefix_introduces_fn_item(prefix: &str) -> bool {
+    prefix.split_whitespace().next_back() == Some("fn")
+}
+
+fn named_entry_kind_from_prefix(prefix: &str) -> NamedEntryKind {
+    let trimmed = prefix.trim_end();
+    let Some(before_colon) = trimmed.strip_suffix("::") else {
+        return NamedEntryKind::Free;
+    };
+    let before = before_colon.trim_end();
+    if before.is_empty() {
+        return NamedEntryKind::Free;
+    }
+    match type_path_self_type(before) {
+        Some(self_type) => NamedEntryKind::TypePath(self_type),
+        None => NamedEntryKind::UnparsedQualifier,
+    }
+}
+
+fn type_path_self_type(before_colon: &str) -> Option<String> {
+    let stripped = strip_trailing_generic_args(before_colon)?;
+    let bytes = stripped.as_bytes();
+    let mut start = bytes.len();
+    while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+        start -= 1;
+    }
+    let ident = &stripped[start..];
+    (!ident.is_empty()).then(|| ident.to_string())
+}
+
+/// Drop a trailing `::<T>` / `<T>` so `Parser::<u8>` yields `Parser`.
+/// Unbalanced brackets fail closed.
+fn strip_trailing_generic_args(text: &str) -> Option<&str> {
+    let trimmed = text.trim_end();
+    if !trimmed.ends_with('>') {
+        return Some(trimmed);
+    }
+    let bytes = trimmed.as_bytes();
+    let mut depth = 0usize;
+    for (index, byte) in bytes.iter().enumerate().rev() {
+        match byte {
+            b'>' => depth += 1,
+            b'<' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    let before = trimmed[..index].trim_end();
+                    let before = before.strip_suffix("::").unwrap_or(before).trim_end();
+                    return strip_trailing_generic_args(before);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Whether `callee_name` names exactly one function in the index (the
@@ -311,9 +654,7 @@ pub(crate) fn resolve_chain(
         ));
     }
     if !callee_is_unique(callee_name, index) {
-        return stopped(format!(
-            "callee `{callee_name}` is not a unique function in the workspace"
-        ));
+        return stopped(uniqueness_stop_edge(callee_name));
     }
     if visited.contains(&callee_name.to_string()) {
         return stopped(format!(
@@ -1053,8 +1394,9 @@ fn contains_word(text: &str, word: &str) -> bool {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
-    use crate::analysis::facts::{CallFact, FunctionSummary};
+    use crate::analysis::facts::{CallFact, FileFacts, FunctionImplContext, FunctionSummary};
     use crate::domain::{RelationReason, SymbolId};
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     fn test_summary_calling(name: &str, text: &str) -> crate::analysis::facts::TestSummary {
@@ -1106,8 +1448,16 @@ mod tests {
     }
 
     fn index(functions: Vec<FunctionSummary>) -> RustIndex {
+        index_with_tests(functions, Vec::new())
+    }
+
+    fn index_with_tests(
+        functions: Vec<FunctionSummary>,
+        tests: Vec<crate::analysis::facts::TestSummary>,
+    ) -> RustIndex {
         RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions,
+            tests,
             ..Default::default()
         })
     }
@@ -1144,6 +1494,7 @@ mod tests {
         let idx = index(vec![a, b]);
         let chain = resolve_chain("helper", &idx, true, &[]);
         assert!(chain.hops.is_empty());
+        assert_eq!(uniqueness_refusal_callee(&chain), Some("helper"));
         assert!(
             chain
                 .stop_above
@@ -1151,6 +1502,441 @@ mod tests {
                 .is_some_and(|edge| edge.contains("not a unique function"))
         );
         Ok(())
+    }
+
+    // #7080: tests that call the ambiguous name enter the refused chain;
+    // tests that only call a unique wrapper of it do not.
+    #[test]
+    fn uniqueness_stop_names_the_ambiguous_entry_tests_call() {
+        let owner = function("src/op.rs", "op", &[]);
+        let parse = function("src/parse.rs", "parse", &[("op", "op(bytes)")]);
+        let twin = function("src/other.rs", "parse", &[]);
+        let with_test = |call: &str, text: &str| {
+            let mut test = test_summary_calling(call, text);
+            test.name = format!("calls_{call}");
+            test
+        };
+        let calling_parse = index_with_tests(
+            vec![owner.clone(), parse.clone(), twin.clone()],
+            vec![with_test("parse", "parse(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_parse, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_parse),
+            Some("parse")
+        );
+
+        let from_str = function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        let from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        let calling_from_str = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                from_str,
+                from_str_twin,
+            ],
+            vec![with_test("from_str", "VersionReq::from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_from_str, true, &[]);
+        assert_eq!(uniqueness_refusal_callee(&chain), Some("parse"));
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_from_str),
+            Some("from_str")
+        );
+
+        let outer = function("src/lib.rs", "outer", &[("inner", "internal::inner(a, b)")]);
+        let inner = function("src/internal.rs", "inner", &[]);
+        let inner_twin = function("src/lib.rs", "inner", &[]);
+        let calling_outer = index_with_tests(
+            vec![inner, inner_twin, outer],
+            vec![with_test("outer", "outer(10, 3)")],
+        );
+        let chain = resolve_chain("inner", &calling_outer, true, &[]);
+        assert_eq!(uniqueness_refusal_callee(&chain), Some("inner"));
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_outer),
+            None,
+            "a unique wrapper of a non-unique helper is not an ambiguous entry"
+        );
+
+        let calling_receiver = index_with_tests(
+            vec![owner.clone(), parse.clone(), twin.clone()],
+            vec![with_test("parse", "req.parse()")],
+        );
+        let chain = resolve_chain("op", &calling_receiver, true, &[]);
+        assert_eq!(uniqueness_refusal_callee(&chain), Some("parse"));
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_receiver),
+            None,
+            "a receiver call of the same name is not the ambiguous entry"
+        );
+        assert!(test_call_invokes_named_entry(
+            "Version::parse(\">=1.0\")",
+            "parse"
+        ));
+        assert!(test_call_invokes_named_entry(r#"parse (">=1.0")"#, "parse"));
+        assert!(test_call_invokes_named_entry(
+            r#"parse::<&str>(">=1.0")"#,
+            "parse"
+        ));
+        assert!(test_call_invokes_named_entry(
+            "Version::parse::<&str>(v)",
+            "parse"
+        ));
+        assert!(!test_call_invokes_named_entry("req.parse()", "parse"));
+        assert!(test_call_invokes_named_entry(
+            r#"match parse(">=1.0") { _ => {} }"#,
+            "parse"
+        ));
+        assert!(
+            !test_call_invokes_named_entry("fn parse() {}", "parse"),
+            "a fn item is not a free-function entry"
+        );
+        assert!(
+            !test_call_invokes_named_entry("pub(crate) async fn parse() {}", "parse"),
+            "a qualified fn item is not a free-function entry"
+        );
+        assert!(test_call_invokes_named_entry("return parse(x)", "parse"));
+        assert!(test_call_invokes_named_entry(
+            "if parse(x).is_err()",
+            "parse"
+        ));
+        assert!(test_call_invokes_named_entry("::parse(\">=1.0\")", "parse"));
+        assert!(test_call_invokes_named_entry(
+            "foreign::Parser::<u8>::parse(value)",
+            "parse"
+        ));
+        assert!(
+            !test_call_invokes_named_entry("req. parse()", "parse"),
+            "whitespace after a receiver dot is still a receiver call"
+        );
+        assert!(
+            !test_call_invokes_named_entry(
+                r#"req.parse(); assert_eq!(message, "parse(")"#,
+                "parse"
+            ),
+            "a string occurrence of parse( is not the free-function entry"
+        );
+        assert!(
+            !test_call_invokes_named_entry("req.parse(); // parse(", "parse"),
+            "a comment occurrence of parse( is not the free-function entry"
+        );
+
+        let receiver_from_str =
+            function("src/from_str.rs", "from_str", &[("parse", "req.parse()")]);
+        let from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        let calling_from_str_receiver = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                receiver_from_str,
+                from_str_twin,
+            ],
+            vec![with_test("from_str", "VersionReq::from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_from_str_receiver, true, &[]);
+        assert_eq!(uniqueness_refusal_callee(&chain), Some("parse"));
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_from_str_receiver),
+            None,
+            "a non-unique wrapper that only receiver-calls the helper is not an entry"
+        );
+
+        let mut workspace_from_str =
+            function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        workspace_from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let mut workspace_from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        workspace_from_str_twin.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let calling_foreign = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                workspace_from_str,
+                workspace_from_str_twin,
+            ],
+            vec![with_test("from_str", "serde_json::from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_foreign, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_foreign),
+            None,
+            "an unrelated qualified from_str is not the workspace entry"
+        );
+
+        let foreign_wrapper = function(
+            "src/from_str.rs",
+            "from_str",
+            &[("parse", "serde_json::parse(text)")],
+        );
+        let mut parse_free = parse.clone();
+        parse_free.impl_context = FunctionImplContext::Free;
+        let mut twin_free = twin.clone();
+        twin_free.impl_context = FunctionImplContext::Free;
+        let from_str_twin_foreign = function("src/other_from_str.rs", "from_str", &[]);
+        let calling_foreign_wrapper = index_with_tests(
+            vec![
+                owner.clone(),
+                parse_free,
+                twin_free,
+                foreign_wrapper,
+                from_str_twin_foreign,
+            ],
+            vec![with_test("from_str", "VersionReq::from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_foreign_wrapper, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_foreign_wrapper),
+            None,
+            "a wrapper that only foreign-qualifies parse is not an entry"
+        );
+
+        let mut local_wrapper =
+            function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        local_wrapper.nested_fn_names = vec!["parse".to_string()];
+        let from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        let calling_local_wrapper = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                local_wrapper,
+                from_str_twin,
+            ],
+            vec![with_test("from_str", "VersionReq::from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_local_wrapper, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_local_wrapper),
+            None,
+            "a wrapper-local parse binding is not the refused helper"
+        );
+
+        let mut fallback = with_test("parse", "parse(\">=1.0\")");
+        fallback.file = PathBuf::from("tests/fallback.rs");
+        fallback.body = "fn parse() {}\nparse(\">=1.0\")".into();
+        fallback.calls[0].line = 2;
+        let calling_fallback = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), parse.clone(), twin.clone()],
+            tests: vec![fallback],
+            files: BTreeMap::from([(
+                PathBuf::from("tests/fallback.rs"),
+                FileFacts {
+                    path: PathBuf::from("tests/fallback.rs"),
+                    source: "fn parse() {}\nparse(\">=1.0\")".into(),
+                    used_lexical_fallback: true,
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+        let chain = resolve_chain("op", &calling_fallback, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_fallback),
+            None,
+            "a lexical-fallback local fn parse is not the workspace entry"
+        );
+
+        let mut imported = with_test("from_str", "from_str(\">=1.0\")");
+        imported.body = "use serde_json::from_str;\nfrom_str(\">=1.0\")".into();
+        let calling_imported = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]),
+                function("src/other_from_str.rs", "from_str", &[]),
+            ],
+            vec![imported],
+        );
+        let chain = resolve_chain("op", &calling_imported, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_imported),
+            None,
+            "a foreign import of from_str is not the workspace entry"
+        );
+
+        let mut imported_qualified = with_test("from_str", "VersionReq::from_str(\">=1.0\")");
+        imported_qualified.body =
+            "use serde_json::from_str;\nVersionReq::from_str(\">=1.0\")".into();
+        let mut workspace_from_str =
+            function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        workspace_from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let mut workspace_from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        workspace_from_str_twin.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let calling_imported_qualified = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                workspace_from_str,
+                workspace_from_str_twin,
+            ],
+            vec![imported_qualified],
+        );
+        let chain = resolve_chain("op", &calling_imported_qualified, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_imported_qualified),
+            Some("from_str"),
+            "a foreign import does not shadow VersionReq::from_str"
+        );
+
+        let mut local_and_qualified = with_test("from_str", "VersionReq::from_str(\">=1.0\")");
+        local_and_qualified.nested_fn_names = vec!["from_str".to_string()];
+        let mut workspace_from_str =
+            function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        workspace_from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let mut workspace_from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        workspace_from_str_twin.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let calling_local_and_qualified = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                workspace_from_str,
+                workspace_from_str_twin,
+            ],
+            vec![local_and_qualified],
+        );
+        let chain = resolve_chain("op", &calling_local_and_qualified, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_local_and_qualified),
+            Some("from_str"),
+            "a local from_str binding does not shadow VersionReq::from_str"
+        );
+
+        let mut wrapping_imported_parse =
+            function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        wrapping_imported_parse.body = "use serde_json::parse;\nparse(text)".into();
+        wrapping_imported_parse.impl_context = FunctionImplContext::Free;
+        let calling_wrapping_imported = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                wrapping_imported_parse,
+                function("src/other_from_str.rs", "from_str", &[]),
+            ],
+            vec![with_test("from_str", "from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_wrapping_imported, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_wrapping_imported),
+            None,
+            "a wrapper that imports foreign parse is not an extras entry"
+        );
+
+        let mut parse_free = parse.clone();
+        parse_free.impl_context = FunctionImplContext::Free;
+        let mut twin_free = twin.clone();
+        twin_free.impl_context = FunctionImplContext::Free;
+        let calling_generic = index_with_tests(
+            vec![owner.clone(), parse_free, twin_free],
+            vec![with_test("parse", "foreign::Parser::<u8>::parse(value)")],
+        );
+        let chain = resolve_chain("op", &calling_generic, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_generic),
+            None,
+            "a generic-qualified foreign parse is not a free-function entry"
+        );
+
+        let mut wrapping_from_str =
+            function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        wrapping_from_str.impl_context = FunctionImplContext::Free;
+        let mut associated_from_str = function("src/version_req.rs", "from_str", &[]);
+        associated_from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let calling_associated_sibling = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                wrapping_from_str,
+                associated_from_str,
+            ],
+            vec![with_test("from_str", "VersionReq::from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_associated_sibling, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_associated_sibling),
+            None,
+            "VersionReq::from_str must not credit a free from_str wrapper"
+        );
+
+        let mut workspace_from_str =
+            function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        workspace_from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let mut workspace_from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        workspace_from_str_twin.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        for text in [
+            r#"serde_json::from_str(a); VersionReq::from_str(b)"#,
+            r#"VersionReq::from_str(b); serde_json::from_str(a)"#,
+        ] {
+            let calling_same_line = index_with_tests(
+                vec![
+                    owner.clone(),
+                    parse.clone(),
+                    twin.clone(),
+                    workspace_from_str.clone(),
+                    workspace_from_str_twin.clone(),
+                ],
+                vec![with_test("from_str", text)],
+            );
+            let chain = resolve_chain("op", &calling_same_line, true, &[]);
+            assert_eq!(
+                ambiguous_helper_entry_called_by_tests(&chain, &calling_same_line),
+                Some("from_str"),
+                "a later workspace from_str on the same line still enters: {text}"
+            );
+        }
+
+        let mut free_parse = parse.clone();
+        free_parse.impl_context = FunctionImplContext::Free;
+        let mut free_twin = twin.clone();
+        free_twin.impl_context = FunctionImplContext::Free;
+        let calling_fn_item = index_with_tests(
+            vec![owner.clone(), free_parse, free_twin],
+            vec![with_test(
+                "parse",
+                "fn parse() { prop_assert_eq!(super::parse(1), 1); }",
+            )],
+        );
+        let chain = resolve_chain("op", &calling_fn_item, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_fn_item),
+            None,
+            "a fn item on CallFact.text is not a free-function entry"
+        );
+
+        let mut local_parse = with_test("parse", "parse(\">=1.0\")");
+        local_parse.nested_fn_names = vec!["parse".to_string()];
+        let calling_local = index_with_tests(vec![owner, parse, twin], vec![local_parse]);
+        let chain = resolve_chain("op", &calling_local, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_local),
+            None,
+            "a test-local fn parse is not the workspace entry"
+        );
     }
 
     #[test]

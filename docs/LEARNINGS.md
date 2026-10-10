@@ -3,6 +3,34 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-10: A helper-chain uniqueness refusal is not `no_static_path` (#7080)
+
+`callee_is_unique` / `test_call_is_shadowed` correctly refuse a hop when
+the callee name has more than one workspace definition. That refusal is
+not "no test reaches the owner": tests may call `parse` / `from_str`
+while ripr cannot tell which same-named function they invoke. When no
+other relation remains, classify as `static_unknown` naming the
+ambiguous entry. Keep `no_static_path` only when no test enters that
+name — a unique wrapper of a non-unique helper (`outer` → second
+`inner`) is the negative control (`helper_chain_controls`,
+`rust_transitive_reach_positive`). A receiver call of the same name
+(`req.parse()`) is not an entry; `Version::parse(...)` is. `CallFact.text`
+is the original source line, so match after masking comments and strings
+and reuse the extractor's call-paren bounds (`parse (...)`,
+`parse::<T>(...)`); a receiver sharing a line with `"parse("` is still
+not an entry. A path-qualified call enters only when some workspace
+function of that name could be the `T` in `T::name(`
+(`VersionReq::from_str` yes; `serde_json::from_str` no). A non-unique
+wrapper counts only when it invokes the refused helper the same way, not
+a wrapper-local `parse`. A test-local `fn`/`let` of that name is not an
+entry, including on lexical-fallback files. A `fn parse()` item on
+`CallFact.text` is not a call (`property_macro_noop_named_test` names
+its test after the owner). Do not credit `helper_owner_call` through
+the ambiguous name. Bless only verdict-corpus rows `verdict-corpus check`
+actually moves: neighboring `semver-max-comparators` and the rusqlite
+`no_static_path` sibling stay as labeled, because they are not
+uniqueness-only refusals that tests enter.
+
 ## 2026-10-08: A green PR head plus clean mergeability does not prove the squash result compiles (#7150)
 
 #6836 was reviewed and gated on an Oct-5 tree. By merge time, main had changed
