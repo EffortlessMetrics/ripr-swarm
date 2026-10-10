@@ -249,8 +249,12 @@ pub(crate) fn admit_check_document(value: &Value, subject: &CheckSubject) -> Che
     if !analysis_complete {
         return rejected(&format!("analysis is not complete (`{kind}`)"));
     }
+    let counts = match require_outcome_counts(outcome) {
+        Ok(counts) => counts,
+        Err(reason) => return rejected(reason),
+    };
     let findings = finding_count(object, outcome);
-    if let Some(reason) = complete_kind_counts_contradict(kind, outcome, findings) {
+    if let Some(reason) = complete_kind_counts_contradict(kind, counts, findings) {
         return rejected(reason);
     }
     let truncated = findings_rendering_truncated(value);
@@ -377,10 +381,31 @@ fn summary_finding_count(envelope: &serde_json::Map<String, Value>) -> Option<u6
         .and_then(Value::as_u64)
 }
 
-fn count_field(counts: Option<&serde_json::Map<String, Value>>, name: &str) -> Option<u64> {
-    counts
-        .and_then(|counts| counts.get(name))
-        .and_then(Value::as_u64)
+const OUTCOME_COUNT_FIELDS: [&str; 5] = [
+    "changed_file_count",
+    "changed_line_count",
+    "candidate_line_count",
+    "probe_count",
+    "finding_count",
+];
+
+fn require_outcome_counts(
+    outcome: &serde_json::Map<String, Value>,
+) -> Result<&serde_json::Map<String, Value>, &'static str> {
+    let Some(counts) = outcome.get("counts").and_then(Value::as_object) else {
+        return Err("missing analysis outcome counts object");
+    };
+    if OUTCOME_COUNT_FIELDS
+        .iter()
+        .any(|field| counts.get(*field).and_then(Value::as_u64).is_none())
+    {
+        return Err("analysis outcome counts are missing or not unsigned integers");
+    }
+    Ok(counts)
+}
+
+fn count_field(counts: &serde_json::Map<String, Value>, name: &str) -> u64 {
+    counts.get(name).and_then(Value::as_u64).unwrap_or(0)
 }
 
 /// Local copy of the producer `validate_outcome` per-kind count
@@ -388,18 +413,17 @@ fn count_field(counts: Option<&serde_json::Map<String, Value>>, name: &str) -> O
 /// complete-work baseline.
 fn complete_kind_counts_contradict(
     kind: &str,
-    outcome: &serde_json::Map<String, Value>,
+    counts: &serde_json::Map<String, Value>,
     declared_findings: Option<u64>,
 ) -> Option<&'static str> {
-    let counts = outcome.get("counts").and_then(Value::as_object);
-    let finding = declared_findings.or_else(|| count_field(counts, "finding_count"));
-    let changed_file = count_field(counts, "changed_file_count").unwrap_or(0);
-    let changed_line = count_field(counts, "changed_line_count").unwrap_or(0);
-    let candidate = count_field(counts, "candidate_line_count").unwrap_or(0);
-    let probe = count_field(counts, "probe_count").unwrap_or(0);
+    let finding = declared_findings.unwrap_or_else(|| count_field(counts, "finding_count"));
+    let changed_file = count_field(counts, "changed_file_count");
+    let changed_line = count_field(counts, "changed_line_count");
+    let candidate = count_field(counts, "candidate_line_count");
+    let probe = count_field(counts, "probe_count");
     match kind {
         "no_scope" => {
-            if finding.unwrap_or(0) != 0
+            if finding != 0
                 || changed_file != 0
                 || changed_line != 0
                 || candidate != 0
@@ -411,7 +435,7 @@ fn complete_kind_counts_contradict(
             }
         }
         "no_changed_lines" => {
-            if finding.unwrap_or(0) != 0 || changed_line != 0 || candidate != 0 || probe != 0 {
+            if finding != 0 || changed_line != 0 || candidate != 0 || probe != 0 {
                 Some(
                     "no_changed_lines requires zero changed-line, candidate, probe, and finding counts",
                 )
@@ -420,7 +444,7 @@ fn complete_kind_counts_contradict(
             }
         }
         "no_behavioral_candidates" => {
-            if changed_line == 0 || candidate != 0 || probe != 0 || finding.unwrap_or(0) != 0 {
+            if changed_line == 0 || candidate != 0 || probe != 0 || finding != 0 {
                 Some(
                     "no_behavioral_candidates requires changed lines and zero candidate, probe, and finding counts",
                 )
@@ -429,7 +453,7 @@ fn complete_kind_counts_contradict(
             }
         }
         "complete_no_findings" => {
-            if finding.unwrap_or(0) != 0 {
+            if finding != 0 {
                 Some("complete_no_findings requires finding_count = 0")
             } else if candidate == 0 && probe == 0 {
                 Some("complete_no_findings requires a behavioral candidate or probe subject")
@@ -438,7 +462,7 @@ fn complete_kind_counts_contradict(
             }
         }
         "complete_with_findings" => {
-            if finding.unwrap_or(0) == 0 {
+            if finding == 0 {
                 Some("complete_with_findings requires a findings count")
             } else {
                 None
@@ -604,7 +628,7 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_and_contradictory_outcomes_are_rejected() {
+    fn incomplete_and_contradictory_outcomes_are_rejected() -> Result<(), String> {
         let subject = subject();
         let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
         doc["analysis_outcome"]["analysis_complete"] = json!(false);
@@ -680,6 +704,37 @@ mod tests {
             admit_check_document(&no_scope, &subject).is_complete(),
             "valid no_scope must still admit"
         );
+        let mut doc = complete_document("no_scope", Vec::new());
+        let Some(outcome) = doc["analysis_outcome"]["outcome"].as_object_mut() else {
+            return Err("outcome fixture is not an object".to_string());
+        };
+        outcome.remove("counts");
+        assert!(
+            !admit_check_document(&doc, &subject).is_complete(),
+            "missing counts must not invent a complete no_scope"
+        );
+        let mut doc = complete_document("no_scope", Vec::new());
+        doc["analysis_outcome"]["outcome"]["counts"] = json!(null);
+        assert!(
+            !admit_check_document(&doc, &subject).is_complete(),
+            "null counts must not invent a complete no_scope"
+        );
+        let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
+        let Some(counts) = doc["analysis_outcome"]["outcome"]["counts"].as_object_mut() else {
+            return Err("counts fixture is not an object".to_string());
+        };
+        counts.remove("finding_count");
+        assert!(
+            !admit_check_document(&doc, &subject).is_complete(),
+            "a missing finding_count field must not improve the baseline"
+        );
+        let mut doc = complete_document("complete_no_findings", Vec::new());
+        doc["analysis_outcome"]["outcome"]["counts"]["probe_count"] = json!("1");
+        assert!(
+            !admit_check_document(&doc, &subject).is_complete(),
+            "a non-numeric count field must not improve the baseline"
+        );
+        Ok(())
     }
 
     #[test]
