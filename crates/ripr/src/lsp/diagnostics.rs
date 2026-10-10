@@ -5726,7 +5726,7 @@ mod delivery_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
-            unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
         })
     }
 
