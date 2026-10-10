@@ -1,5 +1,5 @@
 {
-  "status": "REVIEW_INCOMPLETE",
+  "status": "EXTERNAL_BLOCKER",
   "repository": "/workspace/ripr-swarm",
   "head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
   "branch": "codex/issue7158-policy-bootstrap",
@@ -12,7 +12,7 @@
     "hosted_workflow_runs": 0,
     "pr_created": false
   },
-  "blocker": null,
+  "blocker": "Automaticapprovalreview rejecteddraftcreation twice: a trusteduserpublicationapproval isrequired; noPR created",
   "checks": {
     "workflow_producer": "xtask/src/main.rs::check_workflows_impl via xtask/src/policy/workflows.rs",
     "workflow_nested": [
@@ -71,13 +71,14 @@
       "inherited_root_target": "awaiting owner verification; untouched",
       "no_further_driver": "parent requested pause; baseline final script prepared but never launched"
     },
-    "baseline_completion": "inactive owned privateincremental5.16GBapparent reclaimedbeforeadmission; 25.9GBfree met12GiB+8GiB; nativefloorcompleted28.1947s,no furthercompilerallocation"
+    "baseline_completion": "inactive owned privateincremental5.16GBapparent reclaimedbeforeadmission; 25.9GBfree met12GiB+8GiB; nativefloorcompleted28.1947s,no furthercompilerallocation",
+    "worktree_reports": "all baseline/candidate target/ripr reports copied to evidence/worktree-reports and included in remoteproof before closeout"
   },
   "not_established": [
     "exact published-head hosted checks and combined-tree execution",
     "substantive merge review"
   ],
-  "next_transition": "Latest parent publication guidance explicitly authorizes a focused Draft PR after locally green/reviewed acceptance; Ready and merge remain separately withheld. First PR creation auto-review rejected citing earlierhold; no PR created. Preserve completedconditions and retry same authorizedaction once; no workaround.",
+  "next_transition": "Obtain trusteduserapproval for preparedDraft PR atd902; use existing sourcebranch andbody, then inspect naturalhostedjobs. Ready/merge remainwithheld. No localbroadlooprequired.",
   "baseline_result": {
     "command": "cargo check -p xtask --all-targets --locked --message-format=json",
     "exit_code": 0,

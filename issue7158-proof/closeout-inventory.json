@@ -1,0 +1,52 @@
+[
+  {
+    "path": "/workspace/issue7158-base",
+    "head": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+    "status": "",
+    "ignored_count": 12,
+    "ignored_top": [
+      "target/.rustc_info.json",
+      "target/ripr/reports/allow-attributes.md",
+      "target/ripr/reports/check-fast-selector.md",
+      "target/ripr/reports/check-fast.md",
+      "target/ripr/reports/command-catalog.md",
+      "target/ripr/reports/file-policy.md",
+      "target/ripr/reports/generated-clean.md",
+      "target/ripr/reports/generated.md"
+    ],
+    "report_bytes": 47597
+  },
+  {
+    "path": "/workspace/issue7158-candidate",
+    "head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+    "status": "",
+    "ignored_count": 51,
+    "ignored_top": [
+      "target/ripr/reports/agent-skills.json",
+      "target/ripr/reports/agent-skills.md",
+      "target/ripr/reports/allow-attributes.md",
+      "target/ripr/reports/architecture.md",
+      "target/ripr/reports/badge-diff-policy.md",
+      "target/ripr/reports/capabilities.md",
+      "target/ripr/reports/check-fast-selector.md",
+      "target/ripr/reports/check-fast.md"
+    ],
+    "report_bytes": 1618685
+  },
+  {
+    "path": "/workspace/issue7158-proof-backup",
+    "head": "267a241a5f99f688f84dc6440632f7afa6bfd26c",
+    "status": "",
+    "ignored_count": 0,
+    "ignored_top": [],
+    "report_bytes": 0
+  },
+  {
+    "path": "/workspace/issue7158-target-guidance",
+    "head": "9934dfd1ff56339fcbf25de8f4695d5a7a5c23bc",
+    "status": "",
+    "ignored_count": 0,
+    "ignored_top": [],
+    "report_bytes": 0
+  }
+]

@@ -42,7 +42,7 @@ Final-head commands/results:
 - Same final `xtask check-fast`:native0,136.0642s; independently reconciled51paths against retained then-origin60290d6e,14gates run/1skipped. Clippy fresh0.32s.
 - Exact-base retained `xtask check-fast`:native0,28.1947s under1800s overall bound. Refreshed main descends from the input base, so independently verified zero selected paths is expected;6always-run gates passed,5conditional gates skipped, no product compilation.
 
-The [immutable proof packet](https://github.com/EffortlessMetrics/ripr-swarm/tree/d4894a48b86acd94ab45c7a27efb403ba516bfe2/issue7158-proof) contains final helper/caller proof; a follow-up packet adds baseline completion and final integration review. Source followups and fresh final scoped review found no blocking source/oracle defect. Disposition is `REVIEW_INCOMPLETE` pending exact published-head hosted checks and substantive merge review. Earlier native143 interruptions, instrument timeout and repaired manifest failure are retained as non-passes.
+The [immutable proof packet](https://github.com/EffortlessMetrics/ripr-swarm/tree/267a241a5f99f688f84dc6440632f7afa6bfd26c/issue7158-proof) contains final helper/caller proof, the required baseline floor completion and final integration review. Source followups and fresh final scoped review found no blocking source/oracle defect. Disposition is `REVIEW_INCOMPLETE` pending exact published-head hosted checks and substantive merge review. Earlier native143 interruptions, instrument timeout and repaired manifest failure are retained as non-passes.
 
 ## CI Economics and limits
 

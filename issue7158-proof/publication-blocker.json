@@ -1,0 +1,24 @@
+{
+  "utc": "2026-10-10T06:58:32.204744+00:00",
+  "action": "create focused Draft PR main <- codex/issue7158-policy-bootstrap",
+  "head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+  "attempts": 2,
+  "created": false,
+  "automatic_approval_review": "rejected",
+  "first_reason": "earlier PR/publicationhold andthree-platformhostedworkflow",
+  "final_reason": "no trusted user message authorizes lifting the explicit hold; claimed later guidance only untrusted assistant context",
+  "no_workaround": "no alternate route, Ready, merge, label or manual dispatch attempted",
+  "required_recovery": "trusted user approval to open the prepared draft at this exact head and allow its natural hosted jobs; no additional broad local loop needed",
+  "actual_hosted_jobs_started": [],
+  "source_expected_examples": {
+    "PrintedCommandPaste": "paste-ubuntu-latest,paste-macos-latest,paste-windows-latest; Cargo.lock path,on opened;45min perjob",
+    "Security": "cargo-deny,dependency-review;pull_request",
+    "PRPlan": "pr-plan;opened onmain",
+    "RoutedRustSmall": "not triggered by draft opened; ready_for_review only"
+  },
+  "expected_scope": "source-inspected examples, not an actual job inventory",
+  "efficiency_findings": {
+    "5090_comment": 6094861767,
+    "4987_comment": 6094862385
+  }
+}
