@@ -375,6 +375,139 @@ fn pilot_ranking_counts_owner_rounds_across_classes() {
 }
 
 #[test]
+fn pilot_ranking_counts_owner_rounds_inside_the_in_change_bucket() {
+    // #6851: the class-crossing test above has no current change. When every
+    // seam is on a changed line, rounds still count across classes inside
+    // that bucket: z already listed for a weak seam does not get a fresh
+    // first pick among the unrevealed ones. Per-class rounds would list
+    // z.rs:9 before b.rs:2.
+    let z_weak = classified_in_owner(SeamGripClass::WeaklyGripped, "src/z.rs", "z::fmt", 1);
+    let z_unrevealed =
+        classified_in_owner(SeamGripClass::ReachableUnrevealed, "src/z.rs", "z::fmt", 9);
+    let b_first = classified_in_owner(
+        SeamGripClass::ReachableUnrevealed,
+        "src/b.rs",
+        "b::parse",
+        1,
+    );
+    let b_second = classified_in_owner(
+        SeamGripClass::ReachableUnrevealed,
+        "src/b.rs",
+        "b::parse",
+        2,
+    );
+    let change = changed_lines(&[
+        ("src/z.rs", 1),
+        ("src/z.rs", 9),
+        ("src/b.rs", 1),
+        ("src/b.rs", 2),
+    ]);
+    assert_change_membership(&change, &[&z_weak, &z_unrevealed, &b_first, &b_second], &[]);
+
+    let expected = [
+        ("z::fmt".to_string(), 1),
+        ("b::parse".to_string(), 1),
+        ("b::parse".to_string(), 2),
+        ("z::fmt".to_string(), 9),
+    ];
+    let forward = [z_weak, z_unrevealed, b_first, b_second];
+    assert_eq!(
+        ranked_places(&top_actionable_seams(&forward, 4, Some(&change))),
+        expected
+    );
+    let mut reversed = forward.clone();
+    reversed.reverse();
+    assert_eq!(
+        ranked_places(&top_actionable_seams(&reversed, 4, Some(&change))),
+        expected
+    );
+}
+
+#[test]
+fn pilot_ranking_counts_owner_rounds_across_the_in_change_boundary() {
+    // #6851: owner A has two in-change seams and one out-of-change; B has
+    // two in-change; C has two out-of-change. The key is
+    // `(in_change, class, round)` with rounds counted across the walk, so:
+    // in-change round 0 of each owner, then in-change round 1, then
+    // out-of-change round 0 of C (who has not appeared yet), then C's
+    // round 1, then A's out-of-change as round 2. RankKey-only inside
+    // in-change would keep A's two changed seams adjacent. Resetting
+    // rounds per bucket would list A's out-of-change with C's first pick.
+    // Sorting by `(class, round)` without in_change would mix C into the
+    // first round.
+    let a10 = classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "a::clone", 10);
+    let a11 = classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "a::clone", 11);
+    let a90 = classified_in_owner(SeamGripClass::WeaklyGripped, "src/a.rs", "a::clone", 90);
+    let b20 = classified_in_owner(SeamGripClass::WeaklyGripped, "src/b.rs", "b::parse", 20);
+    let b21 = classified_in_owner(SeamGripClass::WeaklyGripped, "src/b.rs", "b::parse", 21);
+    let c1 = classified_in_owner(SeamGripClass::WeaklyGripped, "src/c.rs", "c::fmt", 1);
+    let c2 = classified_in_owner(SeamGripClass::WeaklyGripped, "src/c.rs", "c::fmt", 2);
+    let change = changed_lines(&[
+        ("src/a.rs", 10),
+        ("src/a.rs", 11),
+        ("src/b.rs", 20),
+        ("src/b.rs", 21),
+    ]);
+    assert_change_membership(&change, &[&a10, &a11, &b20, &b21], &[&a90, &c1, &c2]);
+
+    let expected = [
+        ("a::clone".to_string(), 10),
+        ("b::parse".to_string(), 20),
+        ("a::clone".to_string(), 11),
+        ("b::parse".to_string(), 21),
+        ("c::fmt".to_string(), 1),
+        ("c::fmt".to_string(), 2),
+        ("a::clone".to_string(), 90),
+    ];
+    let forward = [a10, a11, a90, b20, b21, c1, c2];
+    assert_eq!(
+        ranked_places(&top_actionable_seams(&forward, 7, Some(&change))),
+        expected
+    );
+    let mut reversed = forward.clone();
+    reversed.reverse();
+    assert_eq!(
+        ranked_places(&top_actionable_seams(&reversed, 7, Some(&change))),
+        expected
+    );
+
+    let artifacts = pilot_artifacts();
+    let mut context = pilot_context(&artifacts);
+    context.max_seams = 7;
+    context.current_change = Some(&change);
+    let md = render_pilot_summary_md(&forward, context);
+    let ranked = md.find("## Ranked Seams").map_or("", |start| &md[start..]);
+    let in_change = [
+        "src/a.rs:10 `predicate_boundary` (in your current change)",
+        "src/b.rs:20 `predicate_boundary` (in your current change)",
+        "src/a.rs:11 `predicate_boundary` (in your current change)",
+        "src/b.rs:21 `predicate_boundary` (in your current change)",
+    ];
+    let out_of_change = [
+        "src/c.rs:1 `predicate_boundary`\n",
+        "src/c.rs:2 `predicate_boundary`\n",
+        "src/a.rs:90 `predicate_boundary`\n",
+    ];
+    let mut last = 0_usize;
+    for needle in in_change.iter().chain(out_of_change.iter()) {
+        let at = ranked[last..].find(needle).unwrap_or(usize::MAX);
+        assert!(
+            at != usize::MAX,
+            "missing `{needle}` after byte {last} in {md}"
+        );
+        last += at + needle.len();
+    }
+    assert!(
+        !ranked.contains("src/c.rs:1 `predicate_boundary` (in your current change)"),
+        "{md}"
+    );
+    assert!(
+        !ranked.contains("src/a.rs:90 `predicate_boundary` (in your current change)"),
+        "{md}"
+    );
+}
+
+#[test]
 fn pilot_summary_md_names_unlisted_seams_on_an_owners_first_pick_only() {
     // a::clone is listed twice (rounds 0 and 1) with two seams left over.
     let entries = [
@@ -2001,11 +2134,38 @@ fn one_line_diff(file: &str, line: usize) -> String {
 }
 
 fn changed(file: &str, line: usize) -> PilotCurrentChange {
-    PilotCurrentChange::from_diff_text(
-        Path::new("."),
-        Some("origin/main".to_string()),
-        &one_line_diff(file, line),
-    )
+    changed_lines(&[(file, line)])
+}
+
+fn changed_lines(lines: &[(&str, usize)]) -> PilotCurrentChange {
+    let diff = lines
+        .iter()
+        .map(|(file, line)| one_line_diff(file, *line))
+        .collect::<String>();
+    PilotCurrentChange::from_diff_text(Path::new("."), Some("origin/main".to_string()), &diff)
+}
+
+fn assert_change_membership(
+    change: &PilotCurrentChange,
+    in_change: &[&ClassifiedSeam],
+    out_of_change: &[&ClassifiedSeam],
+) {
+    for entry in in_change {
+        assert!(
+            change.touches(entry),
+            "expected in-change {}:{}",
+            display_path(entry.seam.file()),
+            entry.seam.display_line()
+        );
+    }
+    for entry in out_of_change {
+        assert!(
+            !change.touches(entry),
+            "expected out-of-change {}:{}",
+            display_path(entry.seam.file()),
+            entry.seam.display_line()
+        );
+    }
 }
 
 #[test]
