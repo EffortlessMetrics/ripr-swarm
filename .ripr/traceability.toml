@@ -11248,6 +11248,7 @@ tests = [
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::mutably_borrowed_boundary_binding_does_not_pair",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::unmutated_let_mut_binding_still_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::newline_split_reassignment_voids_the_binding",
+  "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::quoted_boundary_argument_on_a_let_bound_call_still_pairs",
   "crates/ripr/src/analysis/classify/boundary_pairing.rs::tests::segment_mutation_detector_reads_assignments_and_borrows"
 ]
 fixtures = [

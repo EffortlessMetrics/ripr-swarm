@@ -501,19 +501,23 @@ fn boundary_bound_locals(
     // the assertion no longer observes the boundary call's result (#7004).
     // Mask the whole body, then scan `;` statements in order, so a
     // newline-split reassignment (`got\n= true;`) still voids (#7042 item 4).
-    // `let` detection stays line-start so an unmutated binding inside a
-    // block still pairs; only mutation looks across the statement.
+    // `let` detection and CallFact text stay on the original line so a
+    // quoted boundary argument (`gate("alpha")`) is still visible;
+    // only mutation looks at the mask. Line-start `let` keeps an
+    // unmutated binding inside a block pairing.
     let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
+    let masked_lines: Vec<&str> = masked.lines().collect();
     let mut last: Vec<(String, bool)> = Vec::new();
     let mut pending = String::new();
-    for (offset, line) in masked.lines().enumerate() {
-        let bound = let_binding_name(line);
+    for (offset, original_line) in test.body.lines().enumerate() {
+        let masked_line = masked_lines.get(offset).copied().unwrap_or(original_line);
+        let bound = let_binding_name(original_line);
         if let Some(name) = bound.as_deref() {
             let line_number = test.start_line + offset;
             let call = CallFact {
                 line: line_number,
                 name: owner.name.clone(),
-                text: line.trim().to_string(),
+                text: original_line.trim().to_string(),
             };
             let is_boundary = owner_call_activates_boundary(probe, owner, test, &call, activation);
             if let Some(existing) = last.iter_mut().find(|(tracked, _)| tracked == name) {
@@ -522,9 +526,9 @@ fn boundary_bound_locals(
                 last.push((name.to_string(), is_boundary));
             }
         }
-        pending.push_str(line);
+        pending.push_str(masked_line);
         pending.push('\n');
-        if !line.contains(';') {
+        if !masked_line.contains(';') {
             continue;
         }
         let mut statements: Vec<&str> = pending.split(';').collect();
@@ -2086,6 +2090,36 @@ mod tests {
                 &ActivationEvidence::default(),
             ),
             "an unmutated let on its own line inside a block must still pair"
+        );
+    }
+
+    #[test]
+    fn quoted_boundary_argument_on_a_let_bound_call_still_pairs() {
+        let probe = predicate_probe("input == \"alpha\"");
+        let mut owner = gate_owner();
+        owner.body = "pub fn gate(input: &str) -> bool { input == \"alpha\" }".into();
+        let mut bound = test_summary(
+            "quoted_bound",
+            "let got = gate(\"alpha\");\nassert_eq!(got, true);",
+            vec![call("gate", "let got = gate(\"alpha\");")],
+            vec![exact("assert_eq!(got, true);")],
+            &[],
+        );
+        bound.calls[0].line = 1;
+        bound.assertions[0].line = 2;
+        bound.end_line = 3;
+        let activation = ActivationEvidence {
+            observed_values: vec![ValueFact {
+                line: 1,
+                text: String::new(),
+                value: "input == \"alpha\"".to_string(),
+                context: ValueContext::FunctionArgument,
+            }],
+            missing_discriminators: Vec::new(),
+        };
+        assert!(
+            pairing_with_admitted_oracles(&probe, Some(&owner), &[&bound], &activation),
+            "gate(\"alpha\") must keep the let-bound call on the boundary; masking is only for mutation"
         );
     }
 
