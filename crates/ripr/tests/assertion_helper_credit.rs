@@ -146,11 +146,18 @@ fn helper_asserting_on_something_else_reads_as_the_inline_assertion() -> Result<
 }
 
 fn check_eq_helper() -> &'static str {
-    "fn check(input: u32, want: bool) {\n    assert_eq!(assertion_helper_credit::gate(input), want);\n}\n"
+    "fn check(input: u32, want: bool) {\n    assert_eq!(gate(input), want);\n}\n"
 }
 
 fn boundary_calls() -> &'static str {
     "    check(10, true);\n    check(9, false);\n"
+}
+
+fn integration_source(helper: &str) -> String {
+    format!(
+        "use assertion_helper_credit::gate;\n\n{helper}#[test]\nfn boundary() {{\n{}}}",
+        boundary_calls()
+    )
 }
 
 #[test]
@@ -168,14 +175,7 @@ fn integration_target_check_helper_exposes_the_changed_predicate() -> Result<(),
 
     let integration = TempRepo::create_files(&[
         ("src/lib.rs", GATE.to_string()),
-        (
-            "tests/gate.rs",
-            format!(
-                "{}#[test]\nfn boundary() {{\n{}}}",
-                check_eq_helper(),
-                boundary_calls()
-            ),
-        ),
+        ("tests/gate.rs", integration_source(check_eq_helper())),
     ])?
     .predicate()?;
     assert_eq!(
@@ -190,7 +190,7 @@ fn integration_target_check_helper_exposes_the_changed_predicate() -> Result<(),
 fn production_top_level_check_helper_does_not_expose() -> Result<(), String> {
     let finding = TempRepo::create(&format!(
         "{}#[test]\nfn boundary() {{\n{}}}",
-        check_eq_helper().replace("assertion_helper_credit::", ""),
+        check_eq_helper(),
         boundary_calls()
     ))?
     .predicate()?;
@@ -208,9 +208,8 @@ fn integration_helper_that_names_the_owner_twice_does_not_expose() -> Result<(),
         ("src/lib.rs", GATE.to_string()),
         (
             "tests/gate.rs",
-            format!(
-                "fn check(input: u32, want: bool) {{\n    let _ = assertion_helper_credit::gate(input);\n    assert_eq!(assertion_helper_credit::gate(input), want);\n}}\n#[test]\nfn boundary() {{\n{}}}",
-                boundary_calls()
+            integration_source(
+                "fn check(input: u32, want: bool) {\n    let _ = gate(input);\n    assert_eq!(gate(input), want);\n}\n",
             ),
         ),
     ])?
@@ -219,6 +218,30 @@ fn integration_helper_that_names_the_owner_twice_does_not_expose() -> Result<(),
         finding.class,
         ExposureClass::Exposed,
         "#6482 single-owner-mention gate must still refuse: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn integration_helper_path_qualified_owner_does_not_expose() -> Result<(), String> {
+    // #6482 borrows only a bare owner call. `mylib::gate` in the issue
+    // write-up is the crate-path spelling; the cfg(test) equivalent is
+    // `use super::*; gate(..)`, which the positive test uses.
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/gate.rs",
+            format!(
+                "fn check(input: u32, want: bool) {{\n    assert_eq!(assertion_helper_credit::gate(input), want);\n}}\n#[test]\nfn boundary() {{\n{}}}",
+                boundary_calls()
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a path-qualified owner call is not the #6482 bare-call loan: {finding:?}"
     );
     Ok(())
 }
