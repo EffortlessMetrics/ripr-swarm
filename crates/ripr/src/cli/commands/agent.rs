@@ -2697,43 +2697,6 @@ mod tests {
         Ok(())
     }
 
-    /// Stages two tracked index entries that collide case-insensitively, the
-    /// ambiguity class a real ambiguous workspace presents to the baseline
-    /// capture (#7204). Index-only, so it works on case-insensitive
-    /// filesystems.
-    fn stage_case_collision_index_entries(root: &Path) -> Result<(), String> {
-        use crate::testing::fixture_git::{FIXTURE_GIT_DEADLINE, fixture_git_ok as run_git};
-        let output = crate::git::run_git_output_with_deadline_and_limit(
-            root,
-            &["rev-parse", "HEAD:README.md"],
-            FIXTURE_GIT_DEADLINE,
-            4 * 1024 * 1024,
-        )
-        .map_err(|error| format!("fixture git rev-parse failed: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "fixture git rev-parse failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        let oid = String::from_utf8(output.stdout)
-            .map_err(|error| format!("fixture git rev-parse stdout is not UTF-8: {error}"))?
-            .trim()
-            .to_string();
-        for path in ["README.ripr-case", "readme.RIPR-CASE"] {
-            run_git(
-                root,
-                &[
-                    "update-index",
-                    "--add",
-                    "--cacheinfo",
-                    &format!("100644,{oid},{path}"),
-                ],
-            )?;
-        }
-        Ok(())
-    }
-
     /// The #7204 after-phase narration: an attempt whose baseline was born
     /// ambiguous finishes Incomparable with an empty violations list. The
     /// narration must name the recorded ambiguity and route to a fresh
@@ -2832,7 +2795,7 @@ mod tests {
             .map_err(|error| format!("create {} failed: {error}", ambiguous_root.display()))?;
         let ambiguous_result = (|| -> Result<(), String> {
             init_sample_repo(&ambiguous_root)?;
-            stage_case_collision_index_entries(&ambiguous_root)?;
+            crate::testing::fixture_git::stage_case_collision_index_entries(&ambiguous_root)?;
             let prepared = begin_attempt(&ambiguous_root, "ambiguous")?;
             make_allowed_edit(&ambiguous_root)?;
             let after = finish_after_edit(&ambiguous_root, &prepared)?;

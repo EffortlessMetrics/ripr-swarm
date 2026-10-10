@@ -5591,48 +5591,6 @@ mod tests {
         bound_receipt_bytes_with_verify(manifest, None)
     }
 
-    /// Returns one fixture git command's trimmed stdout, through the shared
-    /// deadline-bounded git authority (no raw spawn site). The hardened
-    /// `fixture_git_ok` discards output, and staging index-only ambiguity
-    /// needs the blob id of an existing file.
-    fn git_stdout(root: &Path, args: &[&str]) -> Result<String, String> {
-        let output = crate::git::run_git_output_with_deadline_and_limit(
-            root,
-            args,
-            crate::testing::fixture_git::FIXTURE_GIT_DEADLINE,
-            4 * 1024 * 1024,
-        )
-        .map_err(|error| format!("fixture git {args:?} failed: {error}"))?;
-        if !output.status.success() {
-            return Err(format!(
-                "fixture git {args:?} failed: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            ));
-        }
-        String::from_utf8(output.stdout)
-            .map_err(|error| format!("fixture git {args:?} stdout is not UTF-8: {error}"))
-            .map(|text| text.trim().to_string())
-    }
-
-    /// Stages two tracked index entries that collide case-insensitively, the
-    /// same ambiguity class a real workspace presents to the baseline capture
-    /// (#7204). Index-only, so it works on case-insensitive filesystems.
-    fn stage_case_collision_index_entries(root: &Path) -> Result<(), String> {
-        let oid = git_stdout(root, &["rev-parse", "HEAD:README.md"])?;
-        for path in ["README.ripr-case", "readme.RIPR-CASE"] {
-            run_git(
-                root,
-                &[
-                    "update-index",
-                    "--add",
-                    "--cacheinfo",
-                    &format!("100644,{oid},{path}"),
-                ],
-            )?;
-        }
-        Ok(())
-    }
-
     /// An attempt whose captured baseline already records `ambiguous: true`
     /// is born unscorable: the manifest must say so in its limitations at
     /// before-time (#7204), not exit 0 with the ambiguity living only in the
@@ -5641,14 +5599,26 @@ mod tests {
     fn ambiguous_baseline_attempt_discloses_the_ambiguity_in_its_manifest() -> Result<(), String> {
         let root = test_repo_root("ambiguous-baseline-disclosure")?;
         let result = (|| -> Result<(), String> {
-            stage_case_collision_index_entries(&root)?;
+            crate::testing::fixture_git::stage_case_collision_index_entries(&root)?;
             let prepared = prepare_sample_attempt(&root, "seam:sample", "ambiguous")?;
-            // Control: the staged baseline really is the ambiguous one, so
+            // Control 1: the staged baseline really is the ambiguous one, so
             // the limitation below cannot drift from the artifact it cites.
             let baseline_artifact =
                 find_manifest_artifact(&prepared.manifest, "edit_cage_baseline")?;
             let baseline_bytes = std::fs::read(root.join(&baseline_artifact.path))
                 .map_err(|error| format!("read staged baseline failed: {error}"))?;
+            // Control 2: the bytes this test decodes are the exact bytes the
+            // manifest binds, so a capture-side artifact swap or rename
+            // cannot bypass the disclosure without failing here.
+            if u64::try_from(baseline_bytes.len()).map_err(|error| error.to_string())?
+                != baseline_artifact.bytes
+                || sha256_bytes(&baseline_bytes) != baseline_artifact.sha256
+            {
+                return Err(
+                    "the manifest's edit_cage_baseline binding does not match the staged bytes"
+                        .to_string(),
+                );
+            }
             let baseline: serde_json::Value = serde_json::from_slice(&baseline_bytes)
                 .map_err(|error| format!("decode staged baseline failed: {error}"))?;
             if baseline["ambiguous"] != serde_json::Value::Bool(true) {

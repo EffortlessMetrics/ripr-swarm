@@ -221,6 +221,53 @@ fn fixture_head(root: &Path, deadline: Duration) -> Result<Option<String>, Strin
     ))
 }
 
+/// Returns one fixture `git` invocation's trimmed stdout under the same
+/// isolated, deadline-bounded authority as [`fixture_git_ok`]. Fixture
+/// routing that must name an existing object (a blob id, a revision) reads
+/// it through this helper instead of spawning git directly.
+pub(crate) fn fixture_git_stdout(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = crate::git::run_git_output_with_deadline_and_limit_isolated(
+        root,
+        args,
+        FIXTURE_GIT_DEADLINE,
+        FIXTURE_GIT_OUTPUT_LIMIT,
+    )?;
+    if !output.status.success() {
+        return Err(format!(
+            "isolated fixture git {args:?} failed in {}: {}",
+            root.display(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|error| format!("isolated fixture git {args:?} stdout is not UTF-8: {error}"))
+        .map(|text| text.trim().to_string())
+}
+
+/// Stages two tracked index entries that collide case-insensitively, the
+/// ambiguity class `capture_attempt_baseline` records from an inventory
+/// whose lowercased paths repeat (#7204). Index-only, so the fixture reads
+/// identically on case-sensitive and case-insensitive filesystems. Requires
+/// `README.md` committed at HEAD. Callers that depend on the resulting
+/// ambiguity must assert the captured baseline's own `ambiguous` flag
+/// before relying on it, so a host that somehow does not reproduce the
+/// collision fails the control instead of passing vacuously.
+pub(crate) fn stage_case_collision_index_entries(root: &Path) -> Result<(), String> {
+    let oid = fixture_git_stdout(root, &["rev-parse", "HEAD:README.md"])?;
+    for path in ["README.ripr-case", "readme.RIPR-CASE"] {
+        fixture_git_ok(
+            root,
+            &[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("100644,{oid},{path}"),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
 /// Remove a real-git fixture tree, clearing the Windows readonly attribute
 /// git sets on object files first (shared by real-git regression tests so
 /// the cleanup helper is not hand-copied per module). A missing tree is
