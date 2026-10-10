@@ -391,6 +391,13 @@ pub(crate) fn spec_example_coverage_for_corpus(
     let corpus = super::load_corpus(corpus_dir)?;
     let ledger = load_ledger(corpus_dir)?;
     let specs = scan_specs(&specs_dir_for_corpus(corpus_dir)?)?;
+    let violations = coverage_violations(&corpus, &ledger, &specs);
+    if !violations.is_empty() {
+        return Err(format!(
+            "verdict corpus coverage is invalid:\n- {}",
+            violations.join("\n- ")
+        ));
+    }
     Ok(spec_example_coverage(&corpus, &ledger, &specs))
 }
 

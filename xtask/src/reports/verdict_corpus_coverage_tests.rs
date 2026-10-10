@@ -370,3 +370,42 @@ floor = 0
     );
     Ok(())
 }
+
+#[test]
+fn spec_example_coverage_for_corpus_fails_when_the_ledger_omits_a_numbered_spec()
+-> Result<(), String> {
+    let root = crate::tests::temp_dir("spec-example-coverage-omitted-spec");
+    let corpus_dir = root.join("fixtures/omitted-spec-corpus");
+    crate::tests::write(
+        &corpus_dir.join("corpus.json"),
+        r#"{
+  "schema_version": "ripr_verdict_corpus.v1",
+  "kind": "ripr_verdict_corpus",
+  "spec": "RIPR-SPEC-0219",
+  "description": "isolated",
+  "label_method": "isolated",
+  "verdict_projection": "isolated",
+  "non_claims": []
+}"#,
+    );
+    std::fs::create_dir(corpus_dir.join("subjects")).map_err(|err| err.to_string())?;
+    std::fs::create_dir(corpus_dir.join("cases")).map_err(|err| err.to_string())?;
+    crate::tests::write(
+        &corpus_dir.join(LEDGER_FILE),
+        r#"schema_version = "ripr_verdict_corpus_spec_coverage.v1"
+floor = 0
+"#,
+    );
+    crate::tests::write(
+        &root.join("docs/specs/RIPR-SPEC-0900-omitted.md"),
+        "# Omitted\n\n## Acceptance Examples\n\n1. A numbered example.\n",
+    );
+    let err = spec_example_coverage_for_corpus(&corpus_dir)
+        .err()
+        .ok_or("an omitted numbered spec must fail the board producer")?;
+    assert!(
+        err.contains("RIPR-SPEC-0900") && err.contains("missing from"),
+        "omitted spec must fail closed, got {err}"
+    );
+    Ok(())
+}
