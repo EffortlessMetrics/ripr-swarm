@@ -2010,8 +2010,9 @@ fn type_alias_has_refusing_attr(alias: &ast::TypeAlias) -> bool {
     attrs_refuse_unit_alias(alias.attrs())
 }
 
-/// A proc-macro on the function or enclosing impl/trait can rewrite the
-/// return type while leaving `-> Unit` in the unexpanded tree.
+/// A proc-macro on the function or an enclosing impl/trait/module can
+/// rewrite the return type while leaving `-> Unit` in the unexpanded tree.
+/// Continue through `ITEM_LIST` so an inline `mod` attribute is visible.
 fn fn_or_enclosing_item_refuses_unit_alias(function: &ra_ap_syntax::SyntaxNode) -> bool {
     use ra_ap_syntax::SyntaxKind as K;
     if ast::Fn::cast(function.clone()).is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) {
@@ -2019,14 +2020,25 @@ fn fn_or_enclosing_item_refuses_unit_alias(function: &ra_ap_syntax::SyntaxNode) 
     }
     for ancestor in function.ancestors().skip(1) {
         match ancestor.kind() {
-            K::FN | K::SOURCE_FILE | K::ITEM_LIST => return false,
-            K::IMPL => {
-                return ast::Impl::cast(ancestor)
-                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs()));
+            K::FN | K::SOURCE_FILE => return false,
+            K::ITEM_LIST => {}
+            K::MODULE
+                if ast::Module::cast(ancestor.clone())
+                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) =>
+            {
+                return true;
             }
-            K::TRAIT => {
-                return ast::Trait::cast(ancestor)
-                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs()));
+            K::IMPL
+                if ast::Impl::cast(ancestor.clone())
+                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) =>
+            {
+                return true;
+            }
+            K::TRAIT
+                if ast::Trait::cast(ancestor.clone())
+                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) =>
+            {
+                return true;
             }
             _ => {}
         }
@@ -2071,8 +2083,8 @@ fn item_list_use_binds_name(items: &ra_ap_syntax::SyntaxNode, name: &str) -> boo
 /// modules, associated types, a function or impl/trait type parameter of
 /// the same name, a further alias of that name, nested functions,
 /// cfg-gated aliases, unknown or proc-macro-like attributes on the alias,
-/// function, or enclosing impl/trait, and a competing same-name `use`
-/// stay unresolved.
+/// function, or enclosing impl/trait/module, and a competing same-name
+/// `use` stay unresolved.
 fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::SyntaxNode) -> bool {
     let Some(name) = bare_type_path_name(path_type) else {
         return false;
@@ -2991,6 +3003,14 @@ impl Holder {
     }
 }
 
+#[rewrite_mod]
+mod rewritten {
+    type Unit = ();
+    pub fn rewritten_mod_tail() -> Unit {
+        rewritten_mod_notify()
+    }
+}
+
 #[cfg_attr(test, doc = "note, cfg(test)")]
 type DocComma = ();
 pub fn doc_comma_tail() -> DocComma {
@@ -3112,6 +3132,7 @@ static SHADOW: () = {
             "rewritten_fn_notify()",
             "cfg_attr_rewritten_fn_notify()",
             "rewritten_impl_notify()",
+            "rewritten_mod_notify()",
         ] {
             assert!(
                 consumed(call),

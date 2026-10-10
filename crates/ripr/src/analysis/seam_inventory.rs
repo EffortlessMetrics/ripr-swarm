@@ -4243,6 +4243,14 @@ impl Holder {
     }
 }
 
+#[rewrite_mod]
+mod rewritten {
+    type Unit = ();
+    pub fn rewritten_mod_tail() -> Unit {
+        rewritten_mod_notify()
+    }
+}
+
 #[cfg_attr(test, doc = "note, cfg(test)")]
 type DocComma = ();
 pub fn doc_comma_tail() -> DocComma {

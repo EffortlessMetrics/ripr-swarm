@@ -53,7 +53,7 @@ name, a function or impl/trait type parameter of the same name (including
 `r#Unit` vs `Unit`), associated types, nested functions, `#[cfg]` aliases
 (including trivia between `cfg` and `(` and a raw `r#cfg` path), a
 `cfg_attr` that introduces `cfg`, an unknown or proc-macro-like attribute
-on the alias, the function, or an enclosing impl/trait (including one
+on the alias, the function, or an enclosing impl/trait/module (including one
 introduced through `cfg_attr`), a competing same-name `use`,
 and aliases shadowed in a `const` or `static` block stay unresolved and
 read as a value. A same-named const generic, `#[cfg_attr(_, allow(..))]`,
