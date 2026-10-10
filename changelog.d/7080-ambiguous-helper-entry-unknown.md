@@ -7,10 +7,10 @@
   still reads `no_static_path`, as does a receiver call that only shares
   the bare name (`req.parse()`), including when that line also contains
   the string or comment `parse(`, or an `fn parse()` item on the same
-  `CallFact.text` line (#7080). Verdict-corpus rows
-  `semver-op-greater-eq` and `semver-max-comparators` move from
-  `no_static_path` to `static_unknown` because tests call non-unique
-  `parse`/`from_str`; neighboring `semver-*` rows stay `no_static_path`.
-  `rusqlite-singlethreaded-magic` drops the `no_static_path` sibling of
-  its existing `static_unknown` finding for the same uniqueness-only
-  refusal; the verdict stays `limited` / abstained.
+  `CallFact.text` line (#7080). Verdict-corpus row `semver-op-greater-eq`
+  (the #7080 repro) moves from `no_static_path` to `static_unknown`
+  because tests enter the uniqueness-stopped `parse`/`from_str` entry.
+  Neighboring `semver-*` rows, including `semver-max-comparators`, stay
+  `no_static_path`. `rusqlite-singlethreaded-magic` keeps both its
+  `no_static_path` and `static_unknown` siblings; that `no_static_path`
+  finding is not a uniqueness-only refusal that tests enter.

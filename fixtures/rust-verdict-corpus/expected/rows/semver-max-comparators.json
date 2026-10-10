@@ -10,9 +10,9 @@
   "ideal_verdict": "gap",
   "observed_verdict": "limited",
   "followed_retarget": false,
-  "changed_since_labeling": true,
+  "changed_since_labeling": false,
   "observed_classifications": [
-    "static_unknown"
+    "no_static_path"
   ],
   "outcome": "abstained",
   "contradictions": [],
