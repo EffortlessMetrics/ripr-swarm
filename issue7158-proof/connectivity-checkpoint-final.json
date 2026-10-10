@@ -1,0 +1,30 @@
+{
+  "utc": "2026-10-10T06:39:42.356519+00:00",
+  "executor": "connected; native exec and retained session responsive",
+  "head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+  "session": 87550,
+  "precommit": {
+    "exit_code": 0,
+    "wall_seconds": 1398.3903,
+    "report": "d902-precommit-v2.json",
+    "digest": "sha256:41603962643fda8312ee4fc85f25b625af001673a6048a408c6a22450723576f"
+  },
+  "current_command": "existing driver check-fast; no restart",
+  "processes": [
+    "  83331   83330       24:57 00:00:04 11872 S    python3 /tmp/issue7158-final-qualify.py",
+    "  86414   83331       01:25 00:01:08 69928 Rl   /workspace/issue7158-evidence/xtask-d902 check-fast"
+  ],
+  "timeout_bound": {
+    "driver_overall": "no wall-clock deadline configured",
+    "check_fast_cargo_clippy": "repository run helper has no per-step wall-clock cap",
+    "file_policy_enumeration": "300s per supported enumeration command",
+    "tool_build_default": "read source constants separately; no override introduced"
+  },
+  "free_bytes": 20902735872,
+  "reserve_bytes": 12884901888,
+  "requested_safe_boundary": "finish already-running check-fast then pause; no baseline driver or other broad loop",
+  "pending": [
+    "baseline check-fast completion (prior native143 preserved)",
+    "published-head CI/review"
+  ]
+}

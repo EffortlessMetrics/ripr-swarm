@@ -1,0 +1,10 @@
+{
+  "utc": "2026-10-10T06:18:38.111223+00:00",
+  "driver_pid": 83602,
+  "cargo_pid": 83754,
+  "rustc_pid": 84111,
+  "crate": "xtask",
+  "crate_type": "bin",
+  "out_dir": "/workspace/issue7158-build/debug/deps",
+  "emit": "--emit=dep-info,link"
+}
