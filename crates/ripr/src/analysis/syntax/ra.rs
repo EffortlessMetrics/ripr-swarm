@@ -348,18 +348,7 @@ pub(crate) fn module_item_scopes_in(
                 .filter_map(ast::CallExpr::cast)
                 // A call inside a closure, `async` block or nested `fn` may
                 // never run.
-                .filter(|call| {
-                    !call
-                        .syntax()
-                        .ancestors()
-                        .take_while(|node| node != body.syntax())
-                        .any(|node| {
-                            ast::ClosureExpr::can_cast(node.kind())
-                                || ast::Fn::can_cast(node.kind())
-                                || ast::BlockExpr::cast(node)
-                                    .is_some_and(|block| block.async_token().is_some())
-                        })
-                })
+                .filter(|call| !enclosed_by_nested_fn_like(call.syntax(), &body))
                 .filter_map(|call| match call.expr()? {
                     ast::Expr::PathExpr(path) => {
                         let path = path.path()?;
@@ -1282,6 +1271,19 @@ fn collect_impl_attr_syntax(function: &ast::Fn) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Whether `node` sits under a closure, nested `fn`, or `async` block of
+/// `body`. Those constructs have their own return target; the owner `fn`
+/// itself is outside `body`, so its returns and direct calls stay.
+fn enclosed_by_nested_fn_like(node: &ra_ap_syntax::SyntaxNode, body: &ast::BlockExpr) -> bool {
+    node.ancestors()
+        .take_while(|ancestor| ancestor != body.syntax())
+        .any(|ancestor| {
+            ast::ClosureExpr::can_cast(ancestor.kind())
+                || ast::Fn::can_cast(ancestor.kind())
+                || ast::BlockExpr::cast(ancestor).is_some_and(|block| block.async_token().is_some())
+        })
+}
+
 fn extract_parser_probe_shapes(
     function: &ast::Fn,
     text: &str,
@@ -1348,6 +1350,7 @@ fn extract_parser_probe_shapes(
         }
     }
 
+    let body = function.body();
     for return_expr in function
         .syntax()
         .descendants()
@@ -1364,7 +1367,13 @@ fn extract_parser_probe_shapes(
             range.end(),
         );
         let return_text = slice_text(text, range.start(), range.end());
-        if has_error_path_text(&return_text) {
+        // #6904: a `return` inside a closure, `async` block or nested `fn`
+        // leaves that body, not the owner. Share the `direct_calls` filter.
+        if has_error_path_text(&return_text)
+            && !body
+                .as_ref()
+                .is_some_and(|body| enclosed_by_nested_fn_like(return_expr.syntax(), body))
+        {
             push_probe_shape(
                 &mut shapes,
                 line_index,
@@ -1377,7 +1386,7 @@ fn extract_parser_probe_shapes(
         }
     }
 
-    if let Some(tail_expr) = function.body().and_then(|body| body.tail_expr()) {
+    if let Some(tail_expr) = body.as_ref().and_then(|body| body.tail_expr()) {
         let range = tail_expr.syntax().text_range();
         let tail_text = slice_text(text, range.start(), range.end());
         if is_tail_return_value_text(&tail_text) {
@@ -3548,6 +3557,82 @@ mod shadow_fact_equivalence_tests {
         for shape in &facts.probe_shapes {
             assert!(!shape.text.is_empty());
         }
+        Ok(())
+    }
+
+    fn return_error_path_texts(source: &str) -> Result<Vec<String>, String> {
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        Ok(facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ErrorPath)
+            .map(|shape| shape.text.as_str().to_string())
+            .filter(|text| text.trim_start().starts_with("return"))
+            .collect())
+    }
+
+    /// #6904: a `return` inside a closure or `async` block leaves that body,
+    /// so it must not add an owner `ErrorPath`. Function-level returns stay.
+    #[test]
+    fn return_error_path_shapes_skip_closure_and_async_block() -> Result<(), String> {
+        let source = concat!(
+            "pub enum E { Bad, Other }\n",
+            "pub fn parse(x: Option<u8>, flag: bool) -> Result<u8, E> {\n",
+            "    let _c = |c: Option<u8>| -> Result<u8, E> {\n",
+            "        if c.is_none() { return Err(E::Bad); }\n",
+            "        return c.ok_or(E::Bad)?;\n",
+            "    };\n",
+            "    let _a = async {\n",
+            "        if flag { return Err(E::Bad); }\n",
+            "        return x.ok_or(E::Bad)?;\n",
+            "    };\n",
+            "    if flag { return Err(E::Other); }\n",
+            "    return x.ok_or(E::Other)?;\n",
+            "}\n",
+        );
+        let return_errors = return_error_path_texts(source)?;
+        assert_eq!(
+            return_errors,
+            vec![
+                "return Err(E::Other)".to_string(),
+                "return x.ok_or(E::Other)?".to_string(),
+            ],
+            "closure/async returns must not add owner ErrorPath: {return_errors:?}"
+        );
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        let nested_returns: Vec<&str> = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::ReturnValue)
+            .map(|shape| shape.text.as_str())
+            .filter(|text| text.contains("E::Bad"))
+            .collect();
+        assert!(
+            nested_returns
+                .iter()
+                .any(|text| text.contains("return Err(E::Bad)")),
+            "ReturnValue for a nested return Err must stay: {nested_returns:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nested_fn_still_emits_its_own_return_error_path() -> Result<(), String> {
+        let source = concat!(
+            "pub enum E { Bad }\n",
+            "pub fn parse() -> Result<u8, E> {\n",
+            "    fn inner() -> Result<u8, E> {\n",
+            "        return Err(E::Bad);\n",
+            "    }\n",
+            "    inner()\n",
+            "}\n",
+        );
+        let return_errors = return_error_path_texts(source)?;
+        assert_eq!(
+            return_errors,
+            vec!["return Err(E::Bad)".to_string()],
+            "the nested fn's own walk must still emit its return: {return_errors:?}"
+        );
         Ok(())
     }
 }
