@@ -411,7 +411,10 @@ pub(in crate::analysis) fn is_direct_collection_state_write(
 /// True when the assertion's primary observed subject is `receiver`.
 ///
 /// `assert_eq!(items, expected)` observes `items`. `assert_eq!(other, items)`
-/// observes `other` and must not credit a token on the expected side.
+/// observes `other` and must not credit a token on the expected side. The
+/// subject must be exactly `receiver`, `receiver[..]` (or another index that
+/// ends there), or `receiver.<value-read>(..)`. A trailing operator after the
+/// first read, or `capacity`, does not observe the collection (#7135).
 pub(in crate::analysis) fn assertion_observes_direct_collection(
     assertion_text: &str,
     receiver: &str,
@@ -444,25 +447,20 @@ fn macro_payload<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 }
 
 fn balanced_inner(after_open: &str) -> Option<&str> {
-    let mut depth = 1usize;
-    for (index, character) in after_open.char_indices() {
-        match character {
-            '(' | '[' | '{' => depth = depth.saturating_add(1),
-            ')' | ']' | '}' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return after_open.get(..index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
+    after_open.get(..delimited_group_closer_index(after_open)?)
 }
 
 fn first_call_argument(payload: &str) -> Option<String> {
     let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
     for (index, character) in payload.char_indices() {
+        let rest_after = payload
+            .get(index.saturating_add(character.len_utf8())..)
+            .unwrap_or("");
+        if in_quoted_literal(&mut quote, &mut escaped, character, rest_after) {
+            continue;
+        }
         match character {
             '(' | '[' | '{' => depth = depth.saturating_add(1),
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
@@ -485,9 +483,27 @@ fn subject_names_collection(subject: &str, receiver: &str) -> bool {
         return false;
     };
     if rest.starts_with('[') {
-        return true;
+        return remainder_after_delimited_group(rest).is_some_and(|tail| tail.trim().is_empty());
     }
-    collection_read_method(rest).is_some_and(is_collection_read_method)
+    collection_value_read_ends(rest)
+}
+
+/// True when `rest` is exactly `.<value-read>(..)` with no trailing operator.
+fn collection_value_read_ends(rest: &str) -> bool {
+    let Some(method) = collection_read_method(rest) else {
+        return false;
+    };
+    if !is_collection_read_method(method) {
+        return false;
+    }
+    let Some(after_name) = rest
+        .strip_prefix('.')
+        .and_then(|text| text.get(method.len()..))
+        .map(str::trim_start)
+    else {
+        return false;
+    };
+    remainder_after_delimited_group(after_name).is_some_and(|tail| tail.trim().is_empty())
 }
 
 fn collection_read_method(rest: &str) -> Option<&str> {
@@ -498,6 +514,84 @@ fn collection_read_method(rest: &str) -> Option<&str> {
         .map(|(index, _)| index)
         .unwrap_or(rest.len());
     rest.get(..end).filter(|name| !name.is_empty())
+}
+
+fn remainder_after_delimited_group(text: &str) -> Option<&str> {
+    let open = text.chars().next()?;
+    if !matches!(open, '(' | '[' | '{') {
+        return None;
+    }
+    let after_open = text.get(open.len_utf8()..)?;
+    let closer_at = delimited_group_closer_index(after_open)?;
+    let closer_len = after_open.get(closer_at..)?.chars().next()?.len_utf8();
+    after_open.get(closer_at.checked_add(closer_len)?..)
+}
+
+/// Byte index of the closer that returns depth to 0 in `after_open`.
+/// Quoted literals are scanned as units so a `)` inside a string is not a closer.
+fn delimited_group_closer_index(after_open: &str) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in after_open.char_indices() {
+        let rest_after = after_open
+            .get(index.saturating_add(character.len_utf8())..)
+            .unwrap_or("");
+        if in_quoted_literal(&mut quote, &mut escaped, character, rest_after) {
+            continue;
+        }
+        match character {
+            '(' | '[' | '{' => depth = depth.saturating_add(1),
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// True when `character` is inside a quoted literal and must not count as a delimiter.
+///
+/// A `'` starts a character literal only when lookahead shows `'\…'` or `'x'`.
+/// Lifetime ticks such as `'static` are not quotes.
+fn in_quoted_literal(
+    quote: &mut Option<char>,
+    escaped: &mut bool,
+    character: char,
+    rest_after: &str,
+) -> bool {
+    if let Some(q) = *quote {
+        if *escaped {
+            *escaped = false;
+            return true;
+        }
+        if character == '\\' {
+            *escaped = true;
+            return true;
+        }
+        if character == q {
+            *quote = None;
+        }
+        return true;
+    }
+    if character == '"' || (character == '\'' && starts_char_literal(rest_after)) {
+        *quote = Some(character);
+        return true;
+    }
+    false
+}
+
+fn starts_char_literal(after_tick: &str) -> bool {
+    let mut chars = after_tick.chars();
+    match chars.next() {
+        Some('\\') => true,
+        Some(_) => chars.next() == Some('\''),
+        None => false,
+    }
 }
 
 fn is_collection_read_method(name: &str) -> bool {
@@ -513,7 +607,6 @@ fn is_collection_read_method(name: &str) -> bool {
             | "as_slice"
             | "as_ref"
             | "to_vec"
-            | "capacity"
     )
 }
 
@@ -1462,6 +1555,93 @@ mod tests {
             "a quoted assert_eq! must not supply the collection observer"
         );
         Ok(())
+    }
+
+    /// #7135: a collection subject is only the root, an index/slice of the
+    /// root, or one value-read of the root, and it must end there. Trailing
+    /// operators and `capacity` are not discriminators.
+    #[test]
+    fn collection_subject_must_end_after_root_index_or_value_read() {
+        for assertion in [
+            "assert_eq!(items.capacity() >= 1, true);",
+            "assert_eq!(items.capacity(), 4);",
+            "assert_eq!(items.is_empty() || true, true);",
+            "assert_eq!(items.len() * 0, 0);",
+            "assert_eq!(items[0] + 1, 6);",
+            "assert_eq!(items.len().min(1), 1);",
+        ] {
+            assert!(
+                !assertion_observes_direct_collection(assertion, "items"),
+                "non-discriminating subject must not observe the collection: {assertion}"
+            );
+        }
+
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items.len(), 1);", "items"),
+            "an exact len() read must still observe the collection"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items[0], 5);", "items"),
+            "an index into the collection must still observe it"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items[..], expected);", "items"),
+            "a whole-slice read must still observe the collection"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items, expected);", "items"),
+            "a whole-collection equality must still observe it"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(&items[..], expected);", "items"),
+            "a borrowed whole-slice read must still observe the collection"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert!(items.is_empty());", "items"),
+            "a bare is_empty() read must still observe the collection"
+        );
+        assert!(
+            assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&\")\".to_string()), true);",
+                "items"
+            ),
+            "a value-read whose argument string holds a parenthesis must still observe the collection"
+        );
+        assert!(
+            !assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&\")\".to_string()) || true, true);",
+                "items"
+            ),
+            "a trailing operator after a string-bearing value-read must still refuse"
+        );
+        assert!(
+            assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&\"(\".to_string()), true);",
+                "items"
+            ),
+            "a value-read whose argument string holds an opening parenthesis must still observe the collection"
+        );
+        assert!(
+            !assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&\"(\".to_string()) || true, true);",
+                "items"
+            ),
+            "a trailing operator after an opening-paren string value-read must still refuse"
+        );
+        assert!(
+            assertion_observes_direct_collection(
+                "assert_eq!(items, Vec::<&'static str>::new());",
+                "items"
+            ),
+            "a lifetime on the expected side must not prevent a whole-collection observer"
+        );
+        assert!(
+            assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&')'), true);",
+                "items"
+            ),
+            "a char-literal value-read argument must still observe the collection"
+        );
     }
 
     #[test]
