@@ -426,6 +426,27 @@ mod tests {
     }
 
     #[test]
+    fn given_helper_chain_refused_when_tests_call_spaced_receiver_then_no_static_path() {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "parses_on_the_value",
+                "parse",
+                "req. parse()",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
     fn given_helper_chain_refused_when_tests_call_a_local_parse_binding_then_no_static_path() {
         let mut local = test_calling(
             "tests/req.rs",

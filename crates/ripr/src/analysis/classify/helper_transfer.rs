@@ -325,13 +325,14 @@ fn named_entry_self_type(text: &str, callee_name: &str) -> Option<Option<String>
                 crate::analysis::extract::call_name_bounds_before_paren(&masked, i)
             && masked[start..end] == *callee_name
         {
-            let enters = match masked[..start].chars().next_back() {
+            let prefix = masked[..start].trim_end();
+            let enters = match prefix.chars().next_back() {
                 None => true,
                 Some('.') => false,
                 Some(before) => !before.is_ascii_alphanumeric() && before != '_',
             };
             if enters {
-                return Some(type_path_self_type(&masked[..start]));
+                return Some(type_path_self_type(prefix));
             }
         }
         i += 1;
@@ -1444,6 +1445,10 @@ mod tests {
             "parse"
         ));
         assert!(!test_call_invokes_named_entry("req.parse()", "parse"));
+        assert!(
+            !test_call_invokes_named_entry("req. parse()", "parse"),
+            "whitespace after a receiver dot is still a receiver call"
+        );
         assert!(
             !test_call_invokes_named_entry(
                 r#"req.parse(); assert_eq!(message, "parse(")"#,
