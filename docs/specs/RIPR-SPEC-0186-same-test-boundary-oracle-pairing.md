@@ -149,7 +149,8 @@ An assertion RIPR-SPEC-0197 rule 7 borrows from a test-local check helper
 (#6482, including a top-level helper in a crate-root `tests/<name>.rs`
 integration target relative to the owning manifest, #7125; not a
 `src/tests/` module, nested `tests/support/` file, a nested package
-the workspace `[workspace] exclude`s, or a `harness = false` target)
+the workspace `[workspace] exclude`s, a `harness = false` target, or a
+`test = false` target)
 names the helper's
 parameters, not the test's inputs:
 

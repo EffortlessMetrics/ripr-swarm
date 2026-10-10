@@ -414,7 +414,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `exposed` from a warm `1.57` hit (#7125).
 /// `1.59`: a `harness = false` integration target cannot stay `exposed`
 /// from a warm `1.58` hit (#7125).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.59";
+/// `1.60`: a declared `[[test]]` with `test = false` cannot stay
+/// `exposed` from a warm `1.59` hit (#7125).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.60";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -516,7 +518,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.59";
 /// (#7125).
 /// `0.64`: same nested-package membership gate as full `1.58` (#7125).
 /// `0.65`: same `harness = false` refusal as full `1.59` (#7125).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.65";
+/// `0.66`: same `test = false` refusal as full `1.60` (#7125).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.66";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -620,7 +623,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.65";
 /// (#7125).
 /// `0.64`: same nested-package membership gate as full `1.58` (#7125).
 /// `0.65`: same `harness = false` refusal as full `1.59` (#7125).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.65";
+/// `0.66`: same `test = false` refusal as full `1.60` (#7125).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.66";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4253,7 +4257,9 @@ mod tests {
         // so an excluded package cannot stay exposed (#7125).
         // 1.58 -> 1.59: harness=false integration helpers stay uncredited
         // (#7125).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.59");
+        // 1.59 -> 1.60: test=false integration helpers stay uncredited
+        // (#7125).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.60");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4305,8 +4311,9 @@ mod tests {
         // 0.62 -> 0.63: same nested-member transition as full 1.57.
         // 0.63 -> 0.64: same nested-package membership gate as full 1.58.
         // 0.64 -> 0.65: same harness=false refusal as full 1.59.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.65");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.65");
+        // 0.65 -> 0.66: same test=false refusal as full 1.60.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.66");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.66");
     }
 
     #[test]

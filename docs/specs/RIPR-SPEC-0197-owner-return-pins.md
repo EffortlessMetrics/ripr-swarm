@@ -625,7 +625,8 @@ rule only for an assertion whose context was admitted.
      manifest is not the workspace root) is credited only when Cargo's
      metadata inventory lists that autotest as a libtest-enabled workspace
      test target, so `[workspace] exclude` and `harness = false` cannot
-     become test evidence. The
+     become test evidence. A declared `[[test]]` with `test = false` is
+     skipped by `cargo test` and is not credited. The
      producer does not reclassify that `Production` helper; it only copies
      the helper's calls and parser-backed assertions onto the calling
      test. A `Production` function in a production file, including a
@@ -635,8 +636,8 @@ rule only for an assertion whose context was admitted.
      stay uncredited. An undeclared `tests/<name>.rs` file in a package
      that sets `autotests = false` is not a Cargo target; diff analysis
      drops it before helper crediting (#6965). Root-package autotest
-     roots stay path-shape except an established `harness = false` target;
-     nested-package membership uses the existing
+     roots stay path-shape except an established `harness = false` or
+     `test = false` target; nested-package membership uses the existing
      Cargo metadata authority and fails closed when the probe is
      unavailable. A module item
      cannot coexist with a
@@ -1342,8 +1343,9 @@ assertions. This repair shares the existing callback without that larger migrati
   `tests/*.rs` files left unbuilt by `autotests = false` are dropped
   before this producer (#6965). Nested-package credit additionally
   requires Cargo metadata membership so `[workspace] exclude` cannot
-  become test evidence; an established `harness = false` target is not
-  credited. Root-package autotest roots otherwise stay path-shape.
+  become test evidence; an established `harness = false` or `test = false`
+  target is not credited. Root-package autotest roots otherwise stay
+  path-shape.
 - `crates/ripr/src/analysis/seam_cache.rs`: classified `1.25`, sharded `0.31`,
   compact `0.31` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;
   the query reads existing indexed source, so no file-fact migration is needed.
@@ -1353,8 +1355,8 @@ assertions. This repair shares the existing callback without that larger migrati
   Rule 7 (#6482) moves classified full `1.54`, sharded and compact `0.60`, so
   a warm hit cannot keep a check helper's assertion uncredited; file facts
   are unchanged. Integration-target helpers (#7125) move classified full
-  `1.59`, sharded and compact `0.65` so a warm `1.58` hit cannot keep a
-  `harness = false` integration helper over-credited.
+  `1.60`, sharded and compact `0.66` so a warm `1.59` hit cannot keep a
+  `test = false` integration helper over-credited.
 
 ## Metrics
 
