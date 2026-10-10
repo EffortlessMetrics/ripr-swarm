@@ -520,7 +520,12 @@ boundary `let` does not void the fresh binding. Compound assignment voids
 even when the shift preserves the value (`got += 1`): without value
 analysis the rule cannot tell a preserving shift from a destroying one
 (`*= 0`), so it fail-closes. Do not "fix" this with dataflow; alias and
-field/index mutation stay unmodeled by design.
+field/index mutation stay unmodeled by design. A per-line `;` scan still
+missed `got` then `= true;` on the next line (#7042 item 4): identifier and
+operator never shared a segment, so the later exact assertion kept pairing.
+Voiding now masks the whole body and walks `;` statements in order. Do not
+reintroduce a line-at-a-time mutation scan; unmutated bindings, including a
+`let` on its own line inside a block, must keep pairing.
 
 ## 2026-09-29: Whole-object equality is not an effect observer of a different collection (#4575)
 

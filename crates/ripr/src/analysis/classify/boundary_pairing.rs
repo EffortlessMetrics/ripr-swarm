@@ -499,8 +499,14 @@ fn boundary_bound_locals(
     // does not keep the shadowed boundary result. A post-let mutation
     // (`got = ...`, `got += ...`, `&mut got`) voids the binding fail-closed:
     // the assertion no longer observes the boundary call's result (#7004).
+    // Mask the whole body, then scan `;` statements in order, so a
+    // newline-split reassignment (`got\n= true;`) still voids (#7042 item 4).
+    // `let` detection stays line-start so an unmutated binding inside a
+    // block still pairs; only mutation looks across the statement.
+    let masked = crate::analysis::extract::mask_comments_and_strings(&test.body);
     let mut last: Vec<(String, bool)> = Vec::new();
-    for (offset, line) in test.body.lines().enumerate() {
+    let mut pending = String::new();
+    for (offset, line) in masked.lines().enumerate() {
         let bound = let_binding_name(line);
         if let Some(name) = bound.as_deref() {
             let line_number = test.start_line + offset;
@@ -516,29 +522,42 @@ fn boundary_bound_locals(
                 last.push((name.to_string(), is_boundary));
             }
         }
-        // Mask first so a quoted or commented `got = ...` cannot void the
-        // binding. `let_binding_name` only matches a line-start `let`, so
-        // the defining `let name = ...` occurrence always sits in the first
-        // `;` segment; later segments on the same line still void it.
-        let masked = crate::analysis::extract::mask_comments_and_strings(line);
-        let segments: Vec<&str> = masked.split(';').collect();
-        for (tracked, live) in last.iter_mut() {
-            if !*live {
-                continue;
-            }
-            let skip_defining = bound.as_deref() == Some(tracked.as_str());
-            if segments
-                .iter()
-                .skip(usize::from(skip_defining))
-                .any(|segment| segment_mutates_bound_name(segment, tracked))
-            {
-                *live = false;
-            }
+        pending.push_str(line);
+        pending.push('\n');
+        if !line.contains(';') {
+            continue;
         }
+        let mut statements: Vec<&str> = pending.split(';').collect();
+        let incomplete = statements.pop().unwrap_or("");
+        for statement in statements {
+            void_mutated_bound_names(statement, &mut last);
+        }
+        pending = incomplete.to_string();
+    }
+    if !pending.trim().is_empty() {
+        void_mutated_bound_names(&pending, &mut last);
     }
     last.into_iter()
         .filter_map(|(name, is_boundary)| is_boundary.then_some(name))
         .collect()
+}
+
+/// Void live bindings that this `;` statement reassigns or mutably borrows.
+/// The defining `let name = ...` line is an assignment of the boundary
+/// result, not a later mutation, so it is skipped for that name.
+fn void_mutated_bound_names(statement: &str, last: &mut [(String, bool)]) {
+    let defining = statement.lines().find_map(let_binding_name);
+    for (tracked, live) in last.iter_mut() {
+        if !*live {
+            continue;
+        }
+        if defining.as_deref() == Some(tracked.as_str()) {
+            continue;
+        }
+        if segment_mutates_bound_name(statement, tracked) {
+            *live = false;
+        }
+    }
 }
 
 fn let_binding_name(line: &str) -> Option<String> {
@@ -2004,6 +2023,69 @@ mod tests {
                 &ActivationEvidence::default(),
             ),
             "a mutation before the boundary let must not void the fresh binding"
+        );
+    }
+
+    #[test]
+    fn newline_split_reassignment_voids_the_binding() {
+        let probe = predicate_probe("input >= 10");
+        let owner = gate_owner();
+        let mut split = test_summary(
+            "newline_split_rebound",
+            "let mut got = gate(10);\ngot\n= true;\nassert_eq!(got, true);",
+            vec![call("gate", "let mut got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        split.calls[0].line = 1;
+        split.assertions[0].line = 4;
+        split.end_line = 5;
+        assert!(
+            !pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&split],
+                &ActivationEvidence::default(),
+            ),
+            "got\\n= true must void the binding the same way got = true does"
+        );
+        let mut unmutated_multiline = test_summary(
+            "unmutated_multiline",
+            "let got = gate(10);\nassert_eq!(\n    got,\n    true\n);",
+            vec![call("gate", "let got = gate(10);")],
+            vec![exact("assert_eq!(\n    got,\n    true\n);")],
+            &["10"],
+        );
+        unmutated_multiline.calls[0].line = 1;
+        unmutated_multiline.assertions[0].line = 2;
+        unmutated_multiline.end_line = 6;
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&unmutated_multiline],
+                &ActivationEvidence::default(),
+            ),
+            "a multiline exact assertion on an unmutated binding must still pair"
+        );
+        let mut unmutated_block = test_summary(
+            "unmutated_block",
+            "if true {\n    let got = gate(10);\n    assert_eq!(got, true);\n}",
+            vec![call("gate", "let got = gate(10);")],
+            vec![exact("assert_eq!(got, true);")],
+            &["10"],
+        );
+        unmutated_block.calls[0].line = 2;
+        unmutated_block.assertions[0].line = 3;
+        unmutated_block.end_line = 5;
+        assert!(
+            pairing_with_admitted_oracles(
+                &probe,
+                Some(&owner),
+                &[&unmutated_block],
+                &ActivationEvidence::default(),
+            ),
+            "an unmutated let on its own line inside a block must still pair"
         );
     }
 
