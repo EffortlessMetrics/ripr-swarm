@@ -64,7 +64,7 @@ private target earlier is not evidence that its later children use that target.
 Budget the entire selected workload before launch. A Rust source diff makes
 `check-fast` run workspace Clippy with all targets; its short name does not
 promise a small compiler graph. Independently inspect the selector and follow
-[bounded storage admission and closeout](../../PR_AUTOMATION.md#bounded-local-storage-and-proof-retention),
+[bounded storage admission and closeout](../PR_AUTOMATION.md#bounded-local-storage-and-proof-retention),
 including linker temporary output, build state, frozen witnesses and overlapping
 consumers. Serialize commands sharing a target. If admission fails, reclaim only
 confirmed inactive, reproducible task-owned output while retaining required
