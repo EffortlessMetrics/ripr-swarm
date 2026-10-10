@@ -167,6 +167,15 @@ classification = "config"
 reason = "xtask package manifest."
 covered_by = ["cargo check -p xtask --locked"]
 
+[[allow]]
+glob = "tools/repo-policy/Cargo.toml"
+kind = "rust_manifest"
+owner = "rust"
+surface = "rust"
+classification = "config"
+reason = "Product-independent workflow and agent policy package manifest."
+covered_by = ["cargo check -p repo-policy --locked"]
+
 # ---------------------------------------------------------------------------
 # Distribution adapters
 # ---------------------------------------------------------------------------
