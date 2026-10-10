@@ -641,15 +641,34 @@ fn git_reason_line(stderr: &[u8]) -> Option<String> {
 /// Displayed length limit for Git's reason line, after escaping.
 const GIT_REASON_MAX_CHARS: usize = 300;
 
-/// Gitfile line: `gitdir: <path>`, with optional trailing CR so a Windows
-/// gitfile parses the same as an LF one. Empty targets are not this case.
+/// Git's gitfile format (`setup.c` `read_gitfile_gently`): a trailing
+/// newline, then the prefix `gitdir: ` and the remainder as the path.
+/// A lone CR before that newline is stripped so a Windows CRLF gitfile
+/// parses the same as an LF one. Extra lines stay in the path. Empty
+/// targets and a missing space after the colon are invalid gitfiles,
+/// not this case (#6911).
 fn parse_gitfile_gitdir(contents: &str) -> Option<&str> {
-    let line = contents.lines().next()?.trim_end_matches('\r');
-    let target = line.strip_prefix("gitdir:")?.trim();
+    let body = contents
+        .strip_suffix("\r\n")
+        .or_else(|| contents.strip_suffix('\n'))?;
+    let target = body.strip_prefix("gitdir: ")?;
     if target.is_empty() {
         return None;
     }
     Some(target)
+}
+
+/// Follow the gitdir path the way Git does. A dangling symlink and a
+/// path blocked by a non-directory component are both a missing gitdir;
+/// other filesystem errors stay on the existing fallback.
+fn gitdir_target_is_missing(path: &Path) -> bool {
+    match std::fs::metadata(path) {
+        Err(err) => matches!(
+            err.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+        ),
+        Ok(_) => false,
+    }
 }
 
 /// A checkout whose `.git` is a gitfile pointing at a vanished gitdir
@@ -669,9 +688,8 @@ fn missing_gitdir_target_message(root: &Path) -> Option<String> {
     // Windows drive-letter spelling, so relative and absolute gitfiles
     // resolve against the gitfile's directory the way Git does.
     let resolved = root.join(target);
-    match std::fs::symlink_metadata(&resolved) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-        _ => return None,
+    if !gitdir_target_is_missing(&resolved) {
+        return None;
     }
     Some(format!(
         "The checkout at `{}` points at a gitdir that is missing (`{}`) (the analysis \
@@ -3586,6 +3604,10 @@ mod tests {
             Some("vanished")
         );
         assert_eq!(
+            parse_gitfile_gitdir("gitdir: vanished\nextra\n"),
+            Some("vanished\nextra")
+        );
+        assert_eq!(
             parse_gitfile_gitdir("gitdir: /abs/path\n"),
             Some("/abs/path")
         );
@@ -3598,9 +3620,13 @@ mod tests {
             parse_gitfile_gitdir(&windows_gitfile),
             Some(windows_gitdir.as_str())
         );
+        // Git keeps spaces after the required `gitdir: ` prefix.
+        assert_eq!(parse_gitfile_gitdir("gitdir:   \n"), Some("  "));
         assert_eq!(parse_gitfile_gitdir("not a gitfile\n"), None);
         assert_eq!(parse_gitfile_gitdir("gitdir:\n"), None);
-        assert_eq!(parse_gitfile_gitdir("gitdir:   \n"), None);
+        assert_eq!(parse_gitfile_gitdir("gitdir:vanished\n"), None);
+        assert_eq!(parse_gitfile_gitdir("gitdir: vanished"), None);
+        assert_eq!(parse_gitfile_gitdir("gitdir: \n"), None);
         assert_eq!(parse_gitfile_gitdir(""), None);
     }
 
@@ -3627,8 +3653,39 @@ mod tests {
             "a directory without a gitfile is not this case"
         );
 
+        let no_space = unique_fixture_root("missing-gitdir-disk-no-space")?;
+        fs::write(no_space.join(".git"), "gitdir:vanished\n")?;
+        assert!(
+            missing_gitdir_target_message(&no_space).is_none(),
+            "a gitfile missing the required space after gitdir: is invalid, not missing"
+        );
+
+        let blocked = unique_fixture_root("missing-gitdir-disk-notadir")?;
+        fs::write(blocked.join("blocker"), "not a directory")?;
+        fs::write(blocked.join(".git"), "gitdir: blocker/nested\n")?;
+        let blocked_message = missing_gitdir_target_message(&blocked).unwrap_or_default();
+        assert!(
+            blocked_message.contains("git worktree repair"),
+            "a gitdir path blocked by a non-directory component is missing, got: {blocked_message}"
+        );
+
+        #[cfg(unix)]
+        {
+            let dangling = unique_fixture_root("missing-gitdir-disk-dangling")?;
+            std::os::unix::fs::symlink("vanished-symlink-target", dangling.join("dangling-admin"))?;
+            fs::write(dangling.join(".git"), "gitdir: dangling-admin\n")?;
+            let dangling_message = missing_gitdir_target_message(&dangling).unwrap_or_default();
+            assert!(
+                dangling_message.contains("git worktree repair"),
+                "a dangling gitdir symlink is missing, got: {dangling_message}"
+            );
+            ignore_remove_dir_all(&dangling);
+        }
+
         ignore_remove_dir_all(&root);
         ignore_remove_dir_all(&plain);
+        ignore_remove_dir_all(&no_space);
+        ignore_remove_dir_all(&blocked);
         Ok(())
     }
 
@@ -3706,6 +3763,8 @@ mod tests {
         // `outside_a_work_tree_names_the_missing_repository_not_a_missing_ref`.
         let invalid = unique_fixture_root("missing-gitdir-invalid")?;
         fs::write(invalid.join(".git"), "not a gitfile\n")?;
+        let no_space = unique_fixture_root("missing-gitdir-no-space")?;
+        fs::write(no_space.join(".git"), "gitdir:vanished\n")?;
         let present_target = unique_fixture_root("missing-gitdir-present-target")?;
         let existing_admin = unique_fixture_root("existing-admin-not-git")?;
         fs::write(
@@ -3715,6 +3774,10 @@ mod tests {
 
         for (dir, label) in [
             (&invalid, "invalid gitfile"),
+            (
+                &no_space,
+                "gitfile missing the required space after gitdir:",
+            ),
             (&present_target, "gitfile whose gitdir exists"),
         ] {
             let err = load_diff(dir, Some("origin/main"), None, None)
@@ -3734,6 +3797,7 @@ mod tests {
         ignore_remove_dir_all(&absolute);
         ignore_remove_dir_all(&crlf);
         ignore_remove_dir_all(&invalid);
+        ignore_remove_dir_all(&no_space);
         ignore_remove_dir_all(&present_target);
         ignore_remove_dir_all(&existing_admin);
         Ok(())
