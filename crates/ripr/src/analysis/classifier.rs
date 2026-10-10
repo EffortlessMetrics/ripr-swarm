@@ -426,6 +426,29 @@ mod tests {
     }
 
     #[test]
+    fn given_helper_chain_refused_when_tests_call_a_local_parse_binding_then_no_static_path() {
+        let mut local = test_calling(
+            "tests/req.rs",
+            "uses_local_parse",
+            "parse",
+            "parse(\">=1.0\")",
+        );
+        local.nested_fn_names = vec!["parse".to_string()];
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![local],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
     fn given_three_character_probe_token_in_test_name_when_owner_is_not_called_then_test_is_related()
      {
         let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {

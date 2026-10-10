@@ -189,7 +189,9 @@ pub(crate) fn ambiguous_helper_entry_called_by_tests<'a>(
     let mut extras: Vec<&str> = direct_callers(stop_name, index)
         .into_iter()
         .filter(|caller| {
-            !callee_is_unique(&caller.name, index) && tests_call_name(index, &caller.name)
+            !callee_is_unique(&caller.name, index)
+                && tests_call_name(index, &caller.name)
+                && caller_invokes_named_entry(caller, stop_name)
         })
         .map(|caller| caller.name.as_str())
         .collect();
@@ -200,10 +202,37 @@ pub(crate) fn ambiguous_helper_entry_called_by_tests<'a>(
 fn tests_call_name(index: &RustIndex, name: &str) -> bool {
     !name.is_empty()
         && index.tests().iter().any(|test| {
-            test.calls
-                .iter()
-                .any(|call| call.name == name && test_call_invokes_named_entry(&call.text, name))
+            test.calls.iter().any(|call| {
+                call.name == name
+                    && test_call_invokes_named_entry(&call.text, name)
+                    && !test_local_binding_shadows(test, name, call.line)
+            })
         })
+}
+
+/// Local `fn` / `let` bindings only. Do not reuse `test_call_is_shadowed`:
+/// that function also treats a non-unique workspace name as shadowed, which
+/// would make every #7080 entry look unentered.
+fn test_local_binding_shadows(
+    test: &crate::analysis::facts::TestSummary,
+    name: &str,
+    call_line: usize,
+) -> bool {
+    let body_line = call_line.saturating_sub(test.start_line);
+    crate::analysis::extract::ShadowAuthority::ParserBodyFacts {
+        nested_fn_names: &test.nested_fn_names,
+        let_bindings: &test.let_bindings,
+    }
+    .body_shadows_callee_at_line("", name, body_line)
+}
+
+/// The wrapper invokes `stop_name` as a free or path-qualified function,
+/// not as a receiver call (`req.parse()` is not wrapping helper `parse`).
+fn caller_invokes_named_entry(caller: &FunctionSummary, stop_name: &str) -> bool {
+    caller
+        .calls
+        .iter()
+        .any(|call| call.name == stop_name && test_call_invokes_named_entry(&call.text, stop_name))
 }
 
 /// Whether a recorded test call invokes `callee_name` as a free function
@@ -1297,7 +1326,7 @@ mod tests {
         );
 
         let calling_receiver = index_with_tests(
-            vec![owner, parse, twin],
+            vec![owner.clone(), parse.clone(), twin.clone()],
             vec![with_test("parse", "req.parse()")],
         );
         let chain = resolve_chain("op", &calling_receiver, true, &[]);
@@ -1312,6 +1341,37 @@ mod tests {
             "parse"
         ));
         assert!(!test_call_invokes_named_entry("req.parse()", "parse"));
+
+        let receiver_from_str =
+            function("src/from_str.rs", "from_str", &[("parse", "req.parse()")]);
+        let from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        let calling_from_str_receiver = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                receiver_from_str,
+                from_str_twin,
+            ],
+            vec![with_test("from_str", "VersionReq::from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_from_str_receiver, true, &[]);
+        assert_eq!(uniqueness_refusal_callee(&chain), Some("parse"));
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_from_str_receiver),
+            None,
+            "a non-unique wrapper that only receiver-calls the helper is not an entry"
+        );
+
+        let mut local_parse = with_test("parse", "parse(\">=1.0\")");
+        local_parse.nested_fn_names = vec!["parse".to_string()];
+        let calling_local = index_with_tests(vec![owner, parse, twin], vec![local_parse]);
+        let chain = resolve_chain("op", &calling_local, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_local),
+            None,
+            "a test-local fn parse is not the workspace entry"
+        );
     }
 
     #[test]
