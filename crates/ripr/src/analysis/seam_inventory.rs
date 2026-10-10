@@ -4134,6 +4134,21 @@ impl Make for Holder {
         impl_notify()
     }
 }
+
+pub fn outer_with_shadow() {
+    type Unit = u32;
+    fn inner_shadow() -> Unit {
+        nested_shadow_notify()
+    }
+    let _ = inner_shadow();
+}
+
+pub fn outer_nested_unit() {
+    fn inner_unit() -> Unit {
+        nested_unit_notify()
+    }
+    inner_unit()
+}
 "#;
         let index = index_from_files(&[(path.clone(), source)])?;
         let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
@@ -4149,6 +4164,8 @@ impl Make for Holder {
             "reset()".to_string(),
             "work()".to_string(),
             "inner_notify()".to_string(),
+            "inner_shadow()".to_string(),
+            "inner_unit()".to_string(),
         ];
         expected.sort();
         assert_eq!(

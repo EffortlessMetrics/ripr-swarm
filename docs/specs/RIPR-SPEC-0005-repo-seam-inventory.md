@@ -49,7 +49,8 @@ emitted only for a call whose value is discarded: a call statement, `let _ =`,
 unit function, or `return f()` in a unit function. A same-module
 `type X = ();` alias used as a bare return path is unit too (#7101).
 Qualified paths (`other::Unit`, `Self::Output`), a further alias of that
-name, generics, and associated types stay unresolved and read as a value.
+name, generics, associated types, and nested functions stay unresolved
+and read as a value.
 A call whose value feeds a consumer (a condition or scrutinee, a named binding,
 an operand, an argument, a receiver, a field or index base, an element, a
 `for` iterable, or a non-unit return through block tails, `if` branches and

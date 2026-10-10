@@ -1888,10 +1888,20 @@ fn enclosing_module_item_list(
     function: &ra_ap_syntax::SyntaxNode,
 ) -> Option<ra_ap_syntax::SyntaxNode> {
     use ra_ap_syntax::SyntaxKind as K;
-    function
-        .ancestors()
-        .skip(1)
-        .find(|ancestor| matches!(ancestor.kind(), K::SOURCE_FILE | K::ITEM_LIST))
+    // Nested `fn` items can see an outer function's body aliases, which this
+    // syntax walk does not resolve. Stop at the enclosing `fn` so a
+    // block-local `type Unit = u32` cannot be overridden by a module
+    // `type Unit = ()`. Methods still continue through `ASSOC_ITEM_LIST`
+    // to the module list. Extern blocks use `EXTERN_ITEM_LIST`, not
+    // `ITEM_LIST`.
+    for ancestor in function.ancestors().skip(1) {
+        match ancestor.kind() {
+            K::FN => return None,
+            K::SOURCE_FILE | K::ITEM_LIST => return Some(ancestor),
+            _ => {}
+        }
+    }
+    None
 }
 
 fn assoc_type_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
@@ -1911,7 +1921,8 @@ fn assoc_type_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
 
 /// Syntax-only: a same-module `type Name = ();` (or `( )`) whose name
 /// matches a bare return path. Aliases in other modules, associated types,
-/// generics, and a further alias of that name stay unresolved.
+/// generics, a further alias of that name, and nested functions stay
+/// unresolved.
 fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::SyntaxNode) -> bool {
     let Some(name) = bare_type_path_name(path_type) else {
         return false;
@@ -2711,6 +2722,21 @@ impl Make for Holder {
         impl_notify()
     }
 }
+
+pub fn outer_with_shadow() {
+    type Unit = u32;
+    fn inner_shadow() -> Unit {
+        nested_shadow_notify()
+    }
+    let _ = inner_shadow();
+}
+
+pub fn outer_nested_unit() {
+    fn inner_unit() -> Unit {
+        nested_unit_notify()
+    }
+    inner_unit()
+}
 "#;
         let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
         let consumed = |name: &str| {
@@ -2751,6 +2777,8 @@ impl Make for Holder {
             "chained_notify()",
             "other_notify()",
             "impl_notify()",
+            "nested_shadow_notify()",
+            "nested_unit_notify()",
         ] {
             assert!(
                 consumed(call),
