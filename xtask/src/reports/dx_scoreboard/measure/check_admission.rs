@@ -13,6 +13,11 @@
 //! findings-array rendering cap does not by itself make the analysis
 //! incomplete, but a trust scan that needs omitted findings cannot appear
 //! clean.
+//!
+//! Root identity is compared after unifying `\\` to `/` and decoding the
+//! producer `%25` escape. That is a local compare, not a copy of ripr's
+//! private `stable_path_text`. Head is checked only when the producer
+//! emits `head.commit`; a missing head is unknown, not a mismatch.
 
 use serde_json::Value;
 
@@ -40,6 +45,9 @@ const INCOMPLETE_KINDS: [&str; 3] = [
     "unsupported_input",
     "analysis_failed",
 ];
+/// The only typed outcome limitation a complete kind may carry
+/// (`validate_outcome` in `crates/ripr/src/analysis_outcome.rs`).
+const COMPLETE_KIND_ALLOWED_LIMITATION: &str = "eol_only_churn";
 
 /// Identity the measured child was asked to analyze.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -156,7 +164,7 @@ pub(crate) fn admit_check_document(value: &Value, subject: &CheckSubject) -> Che
         ("base", subject.base.as_str()),
     ] {
         match object.get(field).and_then(Value::as_str) {
-            Some(actual) if actual == expected => {}
+            Some(actual) if field_matches(field, actual, expected) => {}
             Some(actual) => {
                 return rejected(&format!(
                     "producer {field} `{actual}` does not match expected `{expected}`"
@@ -222,6 +230,9 @@ pub(crate) fn admit_check_document(value: &Value, subject: &CheckSubject) -> Che
     }
     if analysis_complete != kind_complete {
         return rejected("analysis_complete does not match typed outcome kind");
+    }
+    if kind_complete && complete_kind_has_incomplete_limitation(outcome) {
+        return rejected("complete analysis cannot carry incomplete-analysis limitations");
     }
     if let Some(actual) = outcome
         .get("identity")
@@ -301,6 +312,34 @@ pub(crate) fn findings_rendering_truncated(check: &Value) -> bool {
         .any(|limitation| {
             limitation["run_status"].as_str() == Some(FINDINGS_BOUND_STATUS)
                 || limitation["category"].as_str() == Some(FINDINGS_BOUND_STATUS)
+        })
+}
+
+fn field_matches(field: &str, actual: &str, expected: &str) -> bool {
+    if field == "root" {
+        portable_root(actual) == portable_root(expected)
+    } else {
+        actual == expected
+    }
+}
+
+/// Unify Windows separators and the producer `%` escape so the same
+/// checkout is not rejected as the wrong root.
+fn portable_root(value: &str) -> String {
+    value.replace('\\', "/").replace("%25", "%")
+}
+
+fn complete_kind_has_incomplete_limitation(outcome: &serde_json::Map<String, Value>) -> bool {
+    outcome
+        .get("limitations")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|limitation| {
+            matches!(
+                limitation.get("kind").and_then(Value::as_str),
+                Some(kind) if kind != COMPLETE_KIND_ALLOWED_LIMITATION
+            )
         })
 }
 
@@ -482,6 +521,24 @@ mod tests {
         let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
         doc["analysis_outcome"]["analysis_complete"] = json!("yes");
         assert!(!admit_check_document(&doc, &subject).is_complete());
+        let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
+        doc["analysis_outcome"]["outcome"]["limitations"] = json!([{
+            "kind": "producer_failure",
+            "producer_stage": "analysis_pipeline"
+        }]);
+        assert!(
+            !admit_check_document(&doc, &subject).is_complete(),
+            "complete kind with producer_failure must not improve the baseline"
+        );
+        let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
+        doc["analysis_outcome"]["outcome"]["limitations"] = json!([{
+            "kind": "eol_only_churn",
+            "producer_stage": "diff_parse"
+        }]);
+        assert!(
+            admit_check_document(&doc, &subject).is_complete(),
+            "eol_only_churn is a complete-analysis disclosure"
+        );
     }
 
     #[test]
@@ -499,6 +556,22 @@ mod tests {
         let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
         doc["head"]["commit"] = json!("fff999");
         assert!(!admit_check_document(&doc, &subject).is_complete());
+        let mut windows_subject = subject.clone();
+        windows_subject.root = r"tmp\corpus-a".to_string();
+        let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
+        doc["root"] = json!("tmp/corpus-a");
+        assert!(
+            admit_check_document(&doc, &windows_subject).is_complete(),
+            "Windows checkout spelling must match producer slashes"
+        );
+        let mut percent_subject = subject.clone();
+        percent_subject.root = "/tmp/corpus%a".to_string();
+        let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
+        doc["root"] = json!("/tmp/corpus%25a");
+        assert!(
+            admit_check_document(&doc, &percent_subject).is_complete(),
+            "producer %25 escape must match a literal % checkout"
+        );
     }
 
     #[test]
