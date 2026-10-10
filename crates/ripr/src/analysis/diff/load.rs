@@ -641,11 +641,6 @@ fn git_reason_line(stderr: &[u8]) -> Option<String> {
 /// Displayed length limit for Git's reason line, after escaping.
 const GIT_REASON_MAX_CHARS: usize = 300;
 
-/// The repair message when Git itself failed (exit 128) for a reason that is
-/// not an absent ref: a damaged repository answers a ref probe with `fatal:`,
-/// where an absent ref answers exit 1 without a message. Without this a
-/// corrupt `packed-refs` read as a missing remote, and a bad `.git/config` as
-/// "not inside a Git work tree" (#6908).
 /// Gitfile line: `gitdir: <path>`, with optional trailing CR so a Windows
 /// gitfile parses the same as an LF one. Empty targets are not this case.
 fn parse_gitfile_gitdir(contents: &str) -> Option<&str> {
@@ -687,6 +682,11 @@ fn missing_gitdir_target_message(root: &Path) -> Option<String> {
     ))
 }
 
+/// The repair message when Git itself failed (exit 128) for a reason that is
+/// not an absent ref: a damaged repository answers a ref probe with `fatal:`,
+/// where an absent ref answers exit 1 without a message. Without this a
+/// corrupt `packed-refs` read as a missing remote, and a bad `.git/config` as
+/// "not inside a Git work tree" (#6908).
 fn unreadable_repository_message(root: &Path, output: &std::process::Output) -> Option<String> {
     // Disk check first: Git names a missing gitdir as "not a git repository"
     // or "invalid gitfile", which #6911 left on the work-tree message.
