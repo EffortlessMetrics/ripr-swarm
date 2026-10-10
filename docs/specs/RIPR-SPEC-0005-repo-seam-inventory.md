@@ -50,9 +50,10 @@ unit function, or `return f()` in a unit function. A same-module
 `type X = ();` alias used as a bare return path is unit too (#7101).
 Qualified paths (`other::Unit`, `Self::Output`), a further alias of that
 name, a function or impl/trait type parameter of the same name, associated
-types, nested functions, cfg-gated aliases, a competing same-name `use`,
-and aliases shadowed in a `const` or `static` block stay unresolved and
-read as a value.
+types, nested functions, `#[cfg]` aliases, a `cfg_attr` that introduces
+`cfg`, a competing same-name `use`, and aliases shadowed in a `const` or
+`static` block stay unresolved and read as a value. A same-named const
+generic and `#[cfg_attr(_, allow(..))]` do not refuse the alias.
 A call whose value feeds a consumer (a condition or scrutinee, a named binding,
 an operand, an argument, a receiver, a field or index base, an element, a
 `for` iterable, or a non-unit return through block tails, `if` branches and
