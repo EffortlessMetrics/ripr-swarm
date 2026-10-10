@@ -1,12 +1,14 @@
 #[cfg(unix)]
 use super::measure::linked_target;
 use super::measure::{
-    PasteVerdict, Probe, builds_ripr_from_source, check_contradictions, classify_replay,
-    contradiction_outcome, extract_commands, hostile_outcome, parse_test_result, probe_result,
-    repo_exposure_contradictions, rss_sample,
+    CHECK_SCHEMA_VERSION, CheckAdmission, CheckSubject, OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL,
+    PasteVerdict, Probe, admit_check_document, builds_ripr_from_source, check_contradictions,
+    classify_replay, contradiction_outcome, extract_commands, hostile_outcome, parse_test_result,
+    permissive_json_exit_zero, probe_result, record_warm_check, repo_exposure_contradictions,
+    rss_sample, scan_check_contradictions,
 };
 use super::*;
-use crate::run::{MeasuredOutput, TimedOutput};
+use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
 
 /// The committed config, resolved from the crate root so a test that moves
 /// the working directory cannot break the lookup.
@@ -405,7 +407,7 @@ fn classify_replay_separates_bound_unbound_and_split_roots() {
 }
 
 #[test]
-fn contradiction_rules_fire_only_on_self_inconsistent_rows() {
+fn contradiction_rules_fire_only_on_self_inconsistent_rows() -> Result<(), String> {
     let exposure = json!({"seams": [
         {"file": "a.rs", "line": 1, "evidence": {"reach": "no"}, "related_tests_total": 81},
         {"file": "b.rs", "line": 2, "evidence": {"reach": "no"}, "related_tests_total": 0},
@@ -420,10 +422,14 @@ fn contradiction_rules_fire_only_on_self_inconsistent_rows() {
         {"id": "p3", "classification": "weakly_exposed", "related_tests_total": 3,
          "evidence": ["Related tests were found, but no assertion appears to observe the changed value"]},
     ]});
-    let (count, examples) = check_contradictions(&check);
+    let (count, examples) = check_contradictions(&check)?;
     assert_eq!(count, 2);
     assert!(examples.iter().any(|e| e.starts_with("R2 p1")));
     assert!(examples.iter().any(|e| e.starts_with("R3 p2")));
+    assert!(
+        check_contradictions(&json!({})).is_err_and(|err| err.contains("missing a findings array"))
+    );
+    Ok(())
 }
 
 #[test]
@@ -2722,4 +2728,287 @@ fn file_sources_point_at_committed_receipts() -> Result<(), String> {
     }
     assert_eq!(seen, 1, "the committed file-backed receipts");
     Ok(())
+}
+
+fn admission_subject() -> CheckSubject {
+    CheckSubject {
+        root: "/tmp/corpus-a".to_string(),
+        mode: "draft".to_string(),
+        base: "HEAD~1".to_string(),
+        head: Some("abc123".to_string()),
+    }
+}
+
+fn complete_check_json(findings: usize) -> Value {
+    let kind = if findings == 0 {
+        "complete_no_findings"
+    } else {
+        "complete_with_findings"
+    };
+    let finding_rows: Vec<Value> = (0..findings)
+        .map(|index| {
+            json!({
+                "id": format!("p{index}"),
+                "classification": "weakly_exposed",
+                "related_tests_total": 1,
+                "evidence": []
+            })
+        })
+        .collect();
+    json!({
+        "schema_version": CHECK_SCHEMA_VERSION,
+        "tool": PRODUCER_TOOL,
+        "mode": "draft",
+        "root": "/tmp/corpus-a",
+        "base": "HEAD~1",
+        "head": { "source": "commit", "commit": "abc123" },
+        "summary": { "findings": findings },
+        "findings": finding_rows,
+        "analysis_outcome": {
+            "analysis_complete": true,
+            "outcome": {
+                "schema_version": "0.1",
+                "kind": kind,
+                "identity": {
+                    "base_revision": "HEAD~1"
+                },
+                "counts": {
+                    "changed_file_count": 1,
+                    "changed_line_count": 1,
+                    "candidate_line_count": 1,
+                    "probe_count": 1,
+                    "finding_count": findings
+                },
+                "limitations": [],
+                "claim_boundary": OUTCOME_CLAIM_BOUNDARY
+            }
+        }
+    })
+}
+
+fn repo_sample(metric: &str, outcome: SampleOutcome, detail: String) -> Sample {
+    Sample {
+        metric: metric.to_string(),
+        repo: Some("serde".to_string()),
+        outcome,
+        detail,
+    }
+}
+
+fn record_pair(
+    warmup: Result<MeasuredOutput, String>,
+    measured: Result<Option<MeasuredOutput>, String>,
+) -> (Vec<Sample>, Option<(usize, Vec<String>)>, Vec<&'static str>) {
+    let mut samples = Vec::new();
+    let mut contradictions = None;
+    let mut missing = Vec::new();
+    let subject = admission_subject();
+    record_warm_check(
+        &repo_sample,
+        &subject,
+        warmup,
+        measured,
+        &mut samples,
+        &mut contradictions,
+        &mut missing,
+    );
+    (samples, contradictions, missing)
+}
+
+#[cfg(unix)]
+fn capture_stub_stdout(stdout: &str) -> Result<MeasuredOutput, String> {
+    static STUB_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = crate::tests::temp_dir(&format!(
+        "dx-check-admission-stub-{}",
+        STUB_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let payload = dir.join("stdout.json");
+    let script = dir.join("ripr-stub");
+    crate::tests::write(&payload, stdout);
+    crate::tests::write(&script, &format!("#!/bin/sh\ncat {}\n", payload.display()));
+    use std::os::unix::fs::PermissionsExt as _;
+    let mut permissions = std::fs::metadata(&script)
+        .map_err(|err| format!("stat stub: {err}"))?
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&script, permissions).map_err(|err| format!("chmod stub: {err}"))?;
+    capture_output_measured(
+        &script.display().to_string(),
+        &[
+            "check".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+        ],
+        None,
+        &[],
+        std::time::Duration::from_secs(5),
+        "dx-scoreboard admission stub",
+    )
+}
+
+fn speed_ms(samples: &[Sample]) -> Option<&Sample> {
+    samples
+        .iter()
+        .find(|sample| sample.metric == "speed.warm_check_ms")
+}
+
+#[test]
+fn restoring_the_permissive_predicate_admits_empty_json() {
+    let subject = admission_subject();
+    assert!(permissive_json_exit_zero(false, true, "{}"));
+    assert!(permissive_json_exit_zero(false, true, "null"));
+    assert!(!admit_check_document(&json!({}), &subject).is_complete());
+    assert!(!admit_check_document(&json!(null), &subject).is_complete());
+}
+
+#[cfg(unix)]
+#[test]
+fn an_injected_empty_json_child_cannot_beat_a_valid_warm_baseline() -> Result<(), String> {
+    let empty = capture_stub_stdout("{}")?;
+    assert!(
+        permissive_json_exit_zero(empty.output.timed_out, true, &empty.output.stdout),
+        "the old predicate must still accept the injected child so the discriminator is live"
+    );
+    let (samples, contradictions, missing) =
+        record_pair(Ok(empty), Ok(Some(capture_stub_stdout("{}")?)));
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    assert!(
+        matches!(warm.outcome, SampleOutcome::Incomplete(_)),
+        "empty JSON must keep raw timing as incomplete, got {:?}",
+        warm.outcome
+    );
+    assert!(
+        contradictions.is_none(),
+        "invalid JSON must not contribute a contradiction count: {contradictions:?}"
+    );
+    assert!(
+        missing.contains(&"warm check JSON"),
+        "invalid JSON must keep trust incomplete: {missing:?}"
+    );
+
+    let config = parse_config(MINIMAL)?;
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &[sample(
+            "speed.warm_check_ms",
+            Some("serde"),
+            SampleOutcome::Value(8_000.0),
+        )],
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let rejected = build_report(
+        &config,
+        &all_boards(),
+        &samples,
+        &context("runner-a"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(rejected["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        render_markdown(&rejected).contains("incomplete")
+            || gate_failure_message(&rejected).contains("did not complete"),
+        "{}",
+        render_markdown(&rejected)
+    );
+
+    let permissive = build_report(
+        &config,
+        &all_boards(),
+        &[sample(
+            "speed.warm_check_ms",
+            Some("serde"),
+            SampleOutcome::Value(5.0),
+        )],
+        &context("runner-a"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(
+        permissive["gate"]["status"].as_str(),
+        Some("pass"),
+        "the old Value(5) admission would beat the baseline; the new predicate must not"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_valid_complete_child_is_admitted_as_warm_success() -> Result<(), String> {
+    let stdout = complete_check_json(1).to_string();
+    let (samples, contradictions, missing) = record_pair(
+        Ok(capture_stub_stdout(&stdout)?),
+        Ok(Some(capture_stub_stdout(&stdout)?)),
+    );
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    assert!(
+        matches!(warm.outcome, SampleOutcome::Value(_)),
+        "{:?} {}",
+        warm.outcome,
+        warm.detail
+    );
+    assert!(missing.is_empty(), "{missing:?}");
+    assert_eq!(contradictions.as_ref().map(|(count, _)| *count), Some(0));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_warmup_does_not_establish_a_warm_population() -> Result<(), String> {
+    let empty = capture_stub_stdout("{}")?;
+    let valid = capture_stub_stdout(&complete_check_json(1).to_string())?;
+    let (samples, _, _) = record_pair(Ok(empty), Ok(Some(valid)));
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    assert!(
+        matches!(warm.outcome, SampleOutcome::Incomplete(_)),
+        "{:?}",
+        warm.outcome
+    );
+    assert!(
+        warm.detail
+            .contains("warm-up did not establish a valid warm population"),
+        "{}",
+        warm.detail
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_complete_empty_workload_is_admitted() -> Result<(), String> {
+    let stdout = complete_check_json(0).to_string();
+    let (samples, _, missing) = record_pair(
+        Ok(capture_stub_stdout(&stdout)?),
+        Ok(Some(capture_stub_stdout(&stdout)?)),
+    );
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    assert!(
+        matches!(warm.outcome, SampleOutcome::Value(_)),
+        "{:?} {}",
+        warm.outcome,
+        warm.detail
+    );
+    assert!(missing.is_empty(), "{missing:?}");
+    Ok(())
+}
+
+#[test]
+fn truncated_findings_keep_speed_and_hold_trust() {
+    let mut document = complete_check_json(1);
+    document["run_limitations"] = json!([{
+        "category": "limited_findings_bound",
+        "run_status": "limited_findings_bound"
+    }]);
+    let subject = admission_subject();
+    match admit_check_document(&document, &subject) {
+        CheckAdmission::Complete {
+            rendering_truncated,
+            ..
+        } => assert!(rendering_truncated),
+        other => panic!("expected complete-with-truncation, got {other:?}"),
+    }
+    assert!(scan_check_contradictions(&document).is_err());
 }
