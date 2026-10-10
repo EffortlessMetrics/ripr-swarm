@@ -3,7 +3,7 @@ use crate::analysis::facts::{FunctionItemFact, SourceRoleProvenance, SourceRoleP
 use crate::analysis::rust_index::summarize_file;
 use crate::analysis::syntax::macro_binding_candidates;
 use crate::domain::{DeltaKind, ProbeId, SourceLocation, SymbolId};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const LIB: &str = "src/lib.rs";
 const TESTS: &str = "tests/buf_tests.rs";
@@ -293,7 +293,10 @@ fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
     let lib = kept_default_with_tests("        assert_eq!(Unit.advance(), 8);");
     let decide = |extra: &str| {
         let index = index(&[(LIB, &lib), (HELPERS, extra)]);
-        unit_struct_value("Unit", Path::new(LIB), &index)
+        // The memo is scoped to its index, so each fresh index decides
+        // with a fresh run-scoped state, as production does per run.
+        let syntax = OwnerPinSyntax::default();
+        unit_struct_value("Unit", Path::new(LIB), &index, &syntax)
     };
     // Comments, other names, method calls and `let` initializers.
     assert!(decide(
@@ -366,12 +369,142 @@ fn unit_struct_value_admits_only_spellings_nothing_else_can_bind() {
     let prelude =
         kept_default_with_tests("        assert_eq!(None.advance(), 8);").replace("Unit", "None");
     let prelude_index = index(&[(LIB, &prelude)]);
-    assert!(!unit_struct_value("None", Path::new(LIB), &prelude_index));
+    let prelude_syntax = OwnerPinSyntax::default();
+    assert!(!unit_struct_value(
+        "None",
+        Path::new(LIB),
+        &prelude_index,
+        &prelude_syntax
+    ));
     let own = index(&[(LIB, &lib)]);
-    assert!(!unit_struct_value("Unit", Path::new(HELPERS), &own));
+    let own_syntax = OwnerPinSyntax::default();
+    assert!(!unit_struct_value(
+        "Unit",
+        Path::new(HELPERS),
+        &own,
+        &own_syntax
+    ));
     let glob = lib.replace("use super::*;", "use super::*;\n    use std::u32::*;");
     let foreign = index(&[(LIB, &glob)]);
-    assert!(!unit_struct_value("Unit", Path::new(LIB), &foreign));
+    let foreign_syntax = OwnerPinSyntax::default();
+    assert!(!unit_struct_value(
+        "Unit",
+        Path::new(LIB),
+        &foreign,
+        &foreign_syntax
+    ));
+}
+
+/// #7172: per-assertion unit-struct pin admission must not rescan the
+/// workspace. `ASSERTIONS` admissions over one `FILLER_FILES`-file index
+/// share one run-scoped [`OwnerPinSyntax`], exactly as production shares
+/// it across probes; without memoization each admission pays a full
+/// workspace scan, so the repeats cost `ASSERTIONS` x one cold admission.
+/// Self-calibrating: both sides scale with machine speed, and the bound
+/// sits far from both shapes (tens of x when rescanning, low single
+/// digits when memoized).
+#[test]
+fn unit_struct_admission_memoizes_workspace_scans() {
+    const FILLER_FILES: usize = 300;
+    const ASSERTIONS: usize = 40;
+    const RATIO_BOUND: u32 = 10;
+    let mut body = String::new();
+    for receiver in 0..ASSERTIONS {
+        body.push_str(&format!(
+            "        let unit{receiver} = Unit;\n        assert_eq!(unit{receiver}.advance(), 8);\n"
+        ));
+    }
+    let lib = kept_default_with_tests(&body);
+    let mut owned: Vec<(String, String)> = Vec::with_capacity(FILLER_FILES + 1);
+    owned.push((LIB.to_string(), lib));
+    for file in 0..FILLER_FILES {
+        let mut filler = format!("mod filler_{file} {{\n    use super::filler_{file}::*;\n");
+        for function in 0..25 {
+            filler.push_str(&format!(
+                "    pub fn work_{function}(n: u32) -> u32 {{\n        let path_len = n + {file};\n        path_len + {function}\n    }}\n"
+            ));
+        }
+        filler.push_str("}\n");
+        owned.push((format!("src/filler_{file}.rs"), filler));
+    }
+    let refs: Vec<(&str, &str)> = owned
+        .iter()
+        .map(|(path, source)| (path.as_str(), source.as_str()))
+        .collect();
+    let index = index(&refs);
+    let pin = establish(&index, "advance", "4 * self.step()");
+    assert!(pin.is_some(), "the kept default must establish a pin");
+    let Some(pin) = pin else { return };
+    assert_eq!(index.tests().len(), 1, "fixture must hold exactly one test");
+    let test = index.tests().at(0);
+    assert_eq!(
+        test.assertions.len(),
+        ASSERTIONS,
+        "fixture must hold one assertion per receiver"
+    );
+    let imports_foreign = |file: &Path, name: &str| {
+        index.files().get(file).is_some_and(|facts| {
+            file_imports_foreign_callee_name(&facts.source, name, &index.package_names)
+        })
+    };
+    let syntax = OwnerPinSyntax::default();
+    assert!(
+        pin.admits(test, &test.assertions[0], &index, &imports_foreign, &syntax),
+        "the fixture must admit on the success path"
+    );
+    let started = std::time::Instant::now();
+    for assertion in &test.assertions {
+        assert!(
+            pin.admits(test, assertion, &index, &imports_foreign, &syntax),
+            "every receiver assertion must admit on the success path"
+        );
+    }
+    let repeated = started.elapsed();
+    // Structural pin for the same claim: the shared run-scoped state now
+    // holds the workspace scan, so the repeats above reused it instead of
+    // rescanning. This holds regardless of machine timing noise.
+    assert!(
+        syntax.unit_struct_facts.get().is_some(),
+        "the shared syntax state must memoize the workspace scan"
+    );
+    let cold = OwnerPinSyntax::default();
+    let started = std::time::Instant::now();
+    assert!(pin.admits(test, &test.assertions[0], &index, &imports_foreign, &cold));
+    let single = started.elapsed();
+    eprintln!(
+        "#7172: {ASSERTIONS} shared-syntax admissions took {repeated:?}; one cold admission took {single:?}"
+    );
+    assert!(
+        repeated < single * RATIO_BOUND,
+        "{ASSERTIONS} shared-syntax admissions took {repeated:?}, more than {RATIO_BOUND}x one cold admission ({single:?}): the workspace scan is not memoized"
+    );
+}
+
+#[test]
+fn unit_struct_fact_collection_stops_at_the_first_refusal() {
+    // The refusal predicates are name-independent, so the scan stops once
+    // one holds and the caller refuses before reading `macro_files`. A
+    // later macro-defining file must never be scanned into the set, which
+    // pins the early stop structurally instead of by timing.
+    let index = index(&[
+        (
+            "src/a_refusing.rs",
+            "macro_rules! takes_name { ($t:tt) => {}; }\n",
+        ),
+        ("src/z_macro.rs", "macro_rules! later { () => {}; }\n"),
+    ]);
+    let facts = UnitStructFacts::collect(&index);
+    assert!(facts.refused(), "the `:tt` matcher must refuse every name");
+    let refusing = PathBuf::from("src/a_refusing.rs");
+    let later = PathBuf::from("src/z_macro.rs");
+    assert!(
+        facts.macro_files.contains(&refusing),
+        "the file that set the refusal must be recorded as macro-defining"
+    );
+    assert!(
+        !facts.macro_files.contains(&later),
+        "the scan must stop at the first refusal: the later macro file (scanned second in the sorted index) must not be recorded"
+    );
 }
 
 #[test]
