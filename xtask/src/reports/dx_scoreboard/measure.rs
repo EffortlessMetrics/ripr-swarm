@@ -26,6 +26,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const CACHE_ENV: &str = "RIPR_CACHE_DIR";
 const GIT_TIMEOUT: Duration = Duration::from_mins(10);
 const SHORT_TIMEOUT: Duration = Duration::from_mins(2);
+/// Warm-check samples are always draft. The flag is explicit so a checkout
+/// `ripr.toml` cannot retarget the producer away from the admission subject
+/// (#7273). Shared with `warm_check_args` so command and subject cannot drift.
+pub(crate) const WARM_CHECK_MODE: &str = "draft";
 /// Directory name of the paste-safety fixture root. It holds a space, a
 /// command substitution that would create `PWNED` if a printed command left
 /// it unquoted, an apostrophe and double quotes.
@@ -300,26 +304,13 @@ fn measure_corpus_entry(
         .base_sha
         .clone()
         .unwrap_or_else(|| "HEAD~1".to_string());
-    let check_args = vec![
-        "check".to_string(),
-        "--root".to_string(),
-        root.clone(),
-        "--base".to_string(),
-        base.clone(),
-        "--format".to_string(),
-        "json".to_string(),
-    ];
-    let subject = CheckSubject {
-        root: root.clone(),
-        // `ripr check` without `--mode` is draft; do not invent another mode.
-        mode: "draft".to_string(),
-        base,
-        // Known checkout HEAD only. Missing means unknown, not "any head".
-        head: git(Some(&checkout), &["rev-parse", "HEAD"])
-            .ok()
-            .map(|output| output.trim().to_string())
-            .filter(|value| !value.is_empty()),
-    };
+    // Known checkout HEAD only. Missing means unknown, not "any head".
+    let head = git(Some(&checkout), &["rev-parse", "HEAD"])
+        .ok()
+        .map(|output| output.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let check_args = warm_check_args(&root, &base);
+    let subject = warm_check_subject(root, base, head);
     // The first run warms the cache for this exact diff; the second is the
     // edit-check loop a developer repeats. Warm-up success is required
     // before the measured population may be described as warm.
@@ -356,6 +347,47 @@ fn measure_corpus_entry(
     let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
     samples.push(sample("trust.self_contradictions", outcome, detail));
     json!({"id": entry.id, "sha": entry.sha, "url": entry.url, "status": "measured"})
+}
+
+/// Measured `ripr check` argv for a warm-check sample. `--mode draft` is
+/// explicit (same precedent as the corpus pilot's `--mode ready`) so the
+/// producer cannot inherit a non-draft checkout `ripr.toml`.
+pub(crate) fn warm_check_args(root: &str, base: &str) -> Vec<String> {
+    vec![
+        "check".to_string(),
+        "--root".to_string(),
+        root.to_string(),
+        "--base".to_string(),
+        base.to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+        "--mode".to_string(),
+        WARM_CHECK_MODE.to_string(),
+    ]
+}
+
+pub(crate) fn warm_check_subject(root: String, base: String, head: Option<String>) -> CheckSubject {
+    CheckSubject {
+        root,
+        mode: WARM_CHECK_MODE.to_string(),
+        base,
+        head,
+    }
+}
+
+/// Pre-#7273 argv: no `--mode`, so a checkout `ripr.toml` can retarget the
+/// producer. Restoring this as `warm_check_args` must fail the discriminator.
+#[cfg(test)]
+pub(crate) fn check_args_without_explicit_mode(root: &str, base: &str) -> Vec<String> {
+    vec![
+        "check".to_string(),
+        "--root".to_string(),
+        root.to_string(),
+        "--base".to_string(),
+        base.to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+    ]
 }
 
 /// Admit a warm-up plus measured check pair. Incomplete children keep raw
