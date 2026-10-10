@@ -358,10 +358,11 @@ fn measure_corpus_entry(
     json!({"id": entry.id, "sha": entry.sha, "url": entry.url, "status": "measured"})
 }
 
-/// Admit a warm-up plus measured check pair. Raw duration/RSS/exit are
-/// retained for failed or incomplete children; only a successful warm-up
-/// and a completed intended-subject analysis may enter the comparable
-/// complete-work population.
+/// Admit a warm-up plus measured check pair. Incomplete children keep raw
+/// duration/RSS; a measured capture error after warm-up is `Failed` on both
+/// warm-check metrics so `--gate` sees a broken instrument. Only a
+/// successful warm-up and a completed intended-subject analysis may enter
+/// the comparable complete-work population.
 pub(crate) fn record_warm_check(
     sample: &dyn Fn(&str, SampleOutcome, String) -> Sample,
     subject: &CheckSubject,
@@ -392,22 +393,20 @@ pub(crate) fn record_warm_check(
                 err,
             ));
         }
-        (Ok(warmup), Err(err)) => {
+        (Ok(_), Err(err)) => {
             missing_sources.push("warm check JSON");
-            let ms = duration_ms(&warmup);
             samples.push(sample(
                 "speed.warm_check_ms",
-                SampleOutcome::Incomplete(ms),
+                SampleOutcome::Failed,
                 format!(
                     "warm-up {}; measured capture failed: {err}",
                     warmup_admission.reason()
                 ),
             ));
-            samples.push(rss_sample(
-                sample,
+            samples.push(sample(
                 "speed.warm_check_peak_rss_mb",
-                &warmup,
-                false,
+                SampleOutcome::Failed,
+                err,
             ));
         }
         (Ok(warmup), Ok(None)) => {
