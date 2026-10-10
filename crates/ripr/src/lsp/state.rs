@@ -788,10 +788,12 @@ impl UnavailableAdapterCoverage {
         // Document relatives go through `stable_path_text`, which reserves
         // `%XX` and therefore encodes that `%` as `%25`. Encode both sides
         // with the same helper so a complete listing still names the file.
-        let named = self
-            .named_paths
-            .iter()
-            .any(|path| normalize_unavailable_adapter_path(Path::new(path)) == normalized);
+        let named = self.named_paths.iter().any(|path| {
+            unavailable_adapter_paths_eq(
+                &normalize_unavailable_adapter_path(Path::new(path)),
+                &normalized,
+            )
+        });
         let incomplete = self
             .incomplete_languages
             .iter()
@@ -819,6 +821,22 @@ fn normalize_unavailable_adapter_path(path: &Path) -> String {
         .replace('\\', "/")
         .trim_start_matches("./")
         .to_string()
+}
+
+/// Named-path membership for #7205. Windows file identity is
+/// case-insensitive at the URI layer (`file_uris_match`, root
+/// containment); Git/producer samples keep the on-disk casing while the
+/// editor URI may differ. Linux stays case-sensitive.
+fn unavailable_adapter_paths_eq(left: &str, right: &str) -> bool {
+    unavailable_adapter_paths_eq_impl(left, right, cfg!(windows))
+}
+
+fn unavailable_adapter_paths_eq_impl(left: &str, right: &str, ignore_ascii_case: bool) -> bool {
+    if ignore_ascii_case {
+        left.eq_ignore_ascii_case(right)
+    } else {
+        left == right
+    }
 }
 
 impl AnalysisSnapshot {
@@ -3256,5 +3274,68 @@ mod tests {
                 enabled: false,
             }]);
         assert_eq!(incomplete.incomplete_languages, vec!["python".to_string()]);
+    }
+
+    #[test]
+    fn unavailable_adapter_paths_eq_impl_matches_mixed_case_only_when_asked() -> Result<(), String>
+    {
+        let git = normalize_unavailable_adapter_path(Path::new("zpy/pricing.py"));
+        let editor = normalize_unavailable_adapter_path(Path::new("ZPY/Pricing.py"));
+        if git == editor {
+            return Err("the mixed-case fixture must actually differ before matching".into());
+        }
+        if !unavailable_adapter_paths_eq_impl(&git, &editor, true) {
+            return Err(
+                "Windows named-path identity must treat Git casing and editor URI casing as the same file"
+                    .into(),
+            );
+        }
+        if unavailable_adapter_paths_eq_impl(&git, &editor, false) {
+            return Err("Linux named-path identity must stay case-sensitive".into());
+        }
+        if !unavailable_adapter_paths_eq_impl(&git, &git, false)
+            || !unavailable_adapter_paths_eq_impl(&git, &git, true)
+        {
+            return Err("an exact sample must match in both modes".into());
+        }
+        let other = normalize_unavailable_adapter_path(Path::new("zpy/helpers.py"));
+        if unavailable_adapter_paths_eq_impl(&git, &other, true) {
+            return Err("a distinct filename must not match even when ignoring ascii case".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_adapter_named_path_mixed_case_follows_host_file_identity() -> Result<(), String>
+    {
+        let coverage = UnavailableAdapterCoverage {
+            named_paths: vec!["zpy/pricing.py".to_string()],
+            incomplete_languages: Vec::new(),
+        };
+        let outcome = python_unavailable_outcome()?;
+        let mixed = coverage.not_enabled_language(Path::new("ZPY/Pricing.py"), Some(&outcome));
+        let expected = cfg!(windows).then_some(LanguageId::Python);
+        if mixed != expected {
+            return Err(format!(
+                "named-path mixed-case identity must follow host file identity, got {mixed:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_adapter_paths_eq_impl_keeps_percent_and_case_distinct() -> Result<(), String> {
+        let literal = normalize_unavailable_adapter_path(Path::new("zpy/pricing_%.py"));
+        let encoded = normalize_unavailable_adapter_path(Path::new("zpy/pricing_%25.py"));
+        if unavailable_adapter_paths_eq_impl(&literal, &encoded, true)
+            || unavailable_adapter_paths_eq_impl(&literal, &encoded, false)
+        {
+            return Err("a literal % sample must not bind a distinct %25 filename".into());
+        }
+        let mixed_literal = normalize_unavailable_adapter_path(Path::new("ZPY/Pricing_%.py"));
+        if !unavailable_adapter_paths_eq_impl(&literal, &mixed_literal, true) {
+            return Err("Windows must still bind mixed-case names that contain a literal %".into());
+        }
+        Ok(())
     }
 }

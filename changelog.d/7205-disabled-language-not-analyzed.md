@@ -10,4 +10,6 @@
   rebuild/prerequisite guidance when the adapter is not compiled in.
   Matching uses the same path-text authority on advisory samples and
   document relatives, so a literal `%` in the filename cannot revive the
-  clean/served lie (#7205).
+  clean/served lie, and Windows named-path identity ignores ASCII case the
+  same way URI identity does, so Git casing versus editor URI casing cannot
+  revive it either (#7205).
