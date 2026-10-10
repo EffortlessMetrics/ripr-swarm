@@ -3,7 +3,7 @@ use crate::domain::{OracleKind, OracleStrength, SymbolId};
 use ra_ap_syntax::Edition;
 use ra_ap_syntax::{
     AstNode, SourceFile, TextSize,
-    ast::{self, HasAttrs, HasGenericParams, HasName},
+    ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
 mod property_macros;
 
@@ -1731,7 +1731,8 @@ fn push_call_deletion_probe_shape(
 /// the consumer's own seam carries the behavior (#6677). Any other
 /// position, including a statement, `let _ =`, `_ =`, a `_`-prefixed
 /// binding, a closure or async block body and a `return` from a unit
-/// function, reads as unconsumed so the `call_presence` seam is kept.
+/// function (including a same-module `type X = ();` alias, #7101), reads
+/// as unconsumed so the `call_presence` seam is kept.
 fn call_value_is_consumed(call: &ra_ap_syntax::SyntaxNode) -> bool {
     use ra_ap_syntax::SyntaxKind as K;
     let mut node = call.clone();
@@ -1846,15 +1847,98 @@ fn call_value_is_consumed(call: &ra_ap_syntax::SyntaxNode) -> bool {
 }
 
 /// Whether a function declares a non-unit return type. `()` written with
-/// spaces or comments is still unit.
+/// spaces or comments is still unit. A same-module `type X = ();` alias
+/// used as a bare path is unit too (#7101); qualified paths, generics,
+/// chained aliases, and associated types stay unresolved and read as a
+/// value.
 fn fn_returns_value(function: &ra_ap_syntax::SyntaxNode) -> bool {
     ast::Fn::cast(function.clone())
         .and_then(|function| function.ret_type())
         .and_then(|ret| ret.ty())
-        .is_some_and(|ty| match ty {
-            ast::Type::TupleType(tuple) => tuple.fields().next().is_some(),
-            _ => true,
-        })
+        .is_some_and(|ty| type_returns_value(&ty, function))
+}
+
+fn type_returns_value(ty: &ast::Type, function: &ra_ap_syntax::SyntaxNode) -> bool {
+    match ty {
+        ast::Type::TupleType(tuple) => tuple.fields().next().is_some(),
+        ast::Type::PathType(path) => !same_module_unit_alias(path, function),
+        _ => true,
+    }
+}
+
+fn type_is_unit_tuple(ty: Option<ast::Type>) -> bool {
+    matches!(ty, Some(ast::Type::TupleType(tuple)) if tuple.fields().next().is_none())
+}
+
+/// Bare `Unit` in `fn run() -> Unit`, with no qualifier, turbofish, or `Self`.
+fn bare_type_path_name(path_type: &ast::PathType) -> Option<String> {
+    let path = path_type.path()?;
+    if path.qualifier().is_some() {
+        return None;
+    }
+    let segment = path.segment()?;
+    if segment.generic_arg_list().is_some() {
+        return None;
+    }
+    let name = segment.name_ref()?.text().to_string();
+    (name != "Self").then_some(name)
+}
+
+fn enclosing_module_item_list(
+    function: &ra_ap_syntax::SyntaxNode,
+) -> Option<ra_ap_syntax::SyntaxNode> {
+    use ra_ap_syntax::SyntaxKind as K;
+    function
+        .ancestors()
+        .skip(1)
+        .find(|ancestor| matches!(ancestor.kind(), K::SOURCE_FILE | K::ITEM_LIST))
+}
+
+fn assoc_type_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    function.parent().is_some_and(|parent| {
+        parent.kind() == K::ASSOC_ITEM_LIST
+            && parent
+                .children()
+                .filter_map(ast::TypeAlias::cast)
+                .any(|alias| {
+                    alias
+                        .name()
+                        .is_some_and(|alias_name| alias_name.text() == name)
+                })
+    })
+}
+
+/// Syntax-only: a same-module `type Name = ();` (or `( )`) whose name
+/// matches a bare return path. Aliases in other modules, associated types,
+/// generics, and a further alias of that name stay unresolved.
+fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::SyntaxNode) -> bool {
+    let Some(name) = bare_type_path_name(path_type) else {
+        return false;
+    };
+    if assoc_type_named(function, &name) {
+        return false;
+    }
+    let Some(items) = enclosing_module_item_list(function) else {
+        return false;
+    };
+    let mut saw_unit = false;
+    for child in items.children() {
+        let Some(alias) = ast::TypeAlias::cast(child) else {
+            continue;
+        };
+        let Some(alias_name) = alias.name() else {
+            continue;
+        };
+        if alias_name.text() != name.as_str() {
+            continue;
+        }
+        if alias.generic_param_list().is_some() || !type_is_unit_tuple(alias.ty()) {
+            return false;
+        }
+        saw_unit = true;
+    }
+    saw_unit
 }
 
 /// Whether the function a `return` leaves returns a value. A `return`
@@ -2565,6 +2649,120 @@ pub fn validate(value: i32) -> Result<i32, String> {
                 .any(|p| p.kind == ProbeShapeKind::ErrorPath),
             "Should extract error_path probe shapes"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn same_module_unit_type_alias_return_is_not_a_consumed_tail() -> Result<(), Box<dyn Error>> {
+        // #7101: `type Unit = (); fn run() -> Unit { notify() }` still
+        // compiles as `fn run() -> Unit {}`, so the tail is unconsumed.
+        let source = r#"
+type Unit = ();
+type Spaced = ( );
+type Value = u32;
+type Nested = Unit;
+
+pub fn unit_alias_tail() -> Unit {
+    notify()
+}
+
+pub fn spaced_alias_tail() -> Spaced {
+    spaced_notify()
+}
+
+pub fn early_unit_alias(x: u32) -> Unit {
+    if x == 0 {
+        return reset();
+    }
+    work()
+}
+
+pub fn non_unit_alias_tail() -> Value {
+    produce()
+}
+
+pub fn qualified_alias_tail() -> self::Unit {
+    crate_notify()
+}
+
+pub fn chained_alias_tail() -> Nested {
+    chained_notify()
+}
+
+mod other {
+    type Unit = ();
+    pub fn inner_unit_tail() -> Unit {
+        inner_notify()
+    }
+}
+
+pub fn other_module_alias() -> other::Unit {
+    other_notify()
+}
+
+struct Holder;
+trait Make {
+    type Output;
+    fn assoc_unit() -> Self::Output;
+}
+impl Make for Holder {
+    type Output = ();
+    fn assoc_unit() -> Self::Output {
+        impl_notify()
+    }
+}
+"#;
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        let consumed = |name: &str| {
+            facts.probe_shapes.iter().any(|shape| {
+                shape.kind == ProbeShapeKind::CallDeletion
+                    && shape.text.as_str() == name
+                    && shape.value_consumed
+            })
+        };
+        let unconsumed = |name: &str| {
+            facts.probe_shapes.iter().any(|shape| {
+                shape.kind == ProbeShapeKind::CallDeletion
+                    && shape.text.as_str() == name
+                    && !shape.value_consumed
+            })
+        };
+        for call in [
+            "notify()",
+            "spaced_notify()",
+            "reset()",
+            "work()",
+            "inner_notify()",
+        ] {
+            assert!(
+                unconsumed(call),
+                "{call} should be an unconsumed unit-alias tail: {:?}",
+                facts
+                    .probe_shapes
+                    .iter()
+                    .filter(|shape| shape.kind == ProbeShapeKind::CallDeletion)
+                    .map(|shape| (shape.text.as_str(), shape.value_consumed))
+                    .collect::<Vec<_>>()
+            );
+        }
+        for call in [
+            "produce()",
+            "crate_notify()",
+            "chained_notify()",
+            "other_notify()",
+            "impl_notify()",
+        ] {
+            assert!(
+                consumed(call),
+                "{call} should stay consumed: {:?}",
+                facts
+                    .probe_shapes
+                    .iter()
+                    .filter(|shape| shape.kind == ProbeShapeKind::CallDeletion)
+                    .map(|shape| (shape.text.as_str(), shape.value_consumed))
+                    .collect::<Vec<_>>()
+            );
+        }
         Ok(())
     }
 

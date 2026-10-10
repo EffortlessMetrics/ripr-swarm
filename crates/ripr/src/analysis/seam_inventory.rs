@@ -4073,6 +4073,92 @@ pub fn positions(x: u32, v: &[u32]) -> u32 {
     }
 
     #[test]
+    fn seam_inventory_keeps_call_presence_for_a_same_module_unit_type_alias() -> Result<(), String>
+    {
+        // #7101: a same-module `type X = ();` return is unit, so the tail
+        // call keeps `call_presence`. A non-unit alias, a qualified path,
+        // a chained alias, and `Self::Output` stay consumed.
+        let path = PathBuf::from("src/alias.rs");
+        let source = r#"
+type Unit = ();
+type Spaced = ( );
+type Value = u32;
+type Nested = Unit;
+
+pub fn unit_alias_tail() -> Unit {
+    notify()
+}
+
+pub fn spaced_alias_tail() -> Spaced {
+    spaced_notify()
+}
+
+pub fn early_unit_alias(x: u32) -> Unit {
+    if x == 0 {
+        return reset();
+    }
+    work()
+}
+
+pub fn non_unit_alias_tail() -> Value {
+    produce()
+}
+
+pub fn qualified_alias_tail() -> self::Unit {
+    crate_notify()
+}
+
+pub fn chained_alias_tail() -> Nested {
+    chained_notify()
+}
+
+mod other {
+    type Unit = ();
+    pub fn inner_unit_tail() -> Unit {
+        inner_notify()
+    }
+}
+
+pub fn other_module_alias() -> other::Unit {
+    other_notify()
+}
+
+struct Holder;
+trait Make {
+    type Output;
+    fn assoc_unit() -> Self::Output;
+}
+impl Make for Holder {
+    type Output = ();
+    fn assoc_unit() -> Self::Output {
+        impl_notify()
+    }
+}
+"#;
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let mut call_presence = seams
+            .iter()
+            .filter(|seam| seam.kind() == SeamKind::CallPresence)
+            .map(|seam| seam.expression().to_string())
+            .collect::<Vec<_>>();
+        call_presence.sort();
+        let mut expected = vec![
+            "notify()".to_string(),
+            "spaced_notify()".to_string(),
+            "reset()".to_string(),
+            "work()".to_string(),
+            "inner_notify()".to_string(),
+        ];
+        expected.sort();
+        assert_eq!(
+            call_presence, expected,
+            "call_presence seams: {call_presence:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn seam_inventory_skips_inline_test_functions_inside_production_files() -> Result<(), String> {
         let path = PathBuf::from("src/lib.rs");
         let source = r#"
