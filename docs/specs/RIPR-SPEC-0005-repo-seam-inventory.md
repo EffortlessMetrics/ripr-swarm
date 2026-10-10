@@ -53,10 +53,11 @@ name, a function or impl/trait type parameter of the same name (including
 `r#Unit` vs `Unit`), associated types, nested functions, `#[cfg]` aliases
 (including trivia between `cfg` and `(` and a raw `r#cfg` path), a
 `cfg_attr` that introduces `cfg`, an unknown or proc-macro-like attribute
-(including one introduced through `cfg_attr`), a competing same-name `use`,
+on the alias, the function, or an enclosing impl/trait (including one
+introduced through `cfg_attr`), a competing same-name `use`,
 and aliases shadowed in a `const` or `static` block stay unresolved and
 read as a value. A same-named const generic, `#[cfg_attr(_, allow(..))]`,
-`#[doc]`, `#[expect(..)]`, and a one-prefix raw-ident spelling of a unit
+`#[doc]`, `#[expect(..)]`, `#[inline]`, and a one-prefix raw-ident spelling of a unit
 alias or return path do not refuse the alias.
 A call whose value feeds a consumer (a condition or scrutinee, a named binding,
 an operand, an argument, a receiver, a field or index base, an element, a

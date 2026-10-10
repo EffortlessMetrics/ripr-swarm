@@ -4221,6 +4221,28 @@ pub fn cfg_attr_rewritten_tail() -> CfgAttrRewritten {
     cfg_attr_rewritten_notify()
 }
 
+#[rewrite_fn]
+pub fn rewritten_fn_tail() -> Unit {
+    rewritten_fn_notify()
+}
+
+#[cfg_attr(test, rewrite_fn)]
+pub fn cfg_attr_rewritten_fn_tail() -> Unit {
+    cfg_attr_rewritten_fn_notify()
+}
+
+#[inline]
+pub fn inline_alias_tail() -> Unit {
+    inline_notify()
+}
+
+#[rewrite_impl]
+impl Holder {
+    fn rewritten_impl_method() -> Unit {
+        rewritten_impl_notify()
+    }
+}
+
 #[cfg_attr(test, doc = "note, cfg(test)")]
 type DocComma = ();
 pub fn doc_comma_tail() -> DocComma {
@@ -4301,6 +4323,7 @@ static SHADOW: () = {
             "doc_comma_notify()".to_string(),
             "expect_notify()".to_string(),
             "cfg_attr_expect_notify()".to_string(),
+            "inline_notify()".to_string(),
         ];
         expected.sort();
         assert_eq!(

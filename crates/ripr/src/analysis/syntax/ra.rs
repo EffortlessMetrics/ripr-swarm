@@ -1968,10 +1968,10 @@ fn meta_ident_name(meta: &ast::Meta) -> Option<String> {
     Some(ident_name(&name).to_string())
 }
 
-/// Built-in attrs that cannot rewrite a type alias. Anything else — `cfg`,
-/// an unparsed `cfg_attr` leaf, a qualified path, or a proc-macro-like
-/// ident — is refused. `cfg_attr` is unwrapped first so introduced `allow`
-/// / `doc` / `expect` still count as unit.
+/// Built-in attrs that cannot rewrite a type alias or a function return.
+/// Anything else — `cfg`, an unparsed `cfg_attr` leaf, a qualified path,
+/// or a proc-macro-like ident — is refused. `cfg_attr` is unwrapped first
+/// so introduced `allow` / `doc` / `expect` / `inline` still count as unit.
 fn attr_refuses_unit_alias(attribute: &ast::Attr) -> bool {
     attribute
         .skip_cfg_attrs()
@@ -1985,14 +1985,53 @@ fn meta_refuses_unit_alias(meta: &ast::Meta) -> bool {
     }
     !matches!(
         meta_ident_name(meta).as_deref(),
-        Some("doc" | "allow" | "expect" | "warn" | "deny" | "forbid" | "deprecated" | "must_use",)
+        Some(
+            "doc"
+                | "allow"
+                | "expect"
+                | "warn"
+                | "deny"
+                | "forbid"
+                | "deprecated"
+                | "must_use"
+                | "inline"
+                | "cold"
+                | "track_caller"
+                | "no_mangle"
+        ),
     )
 }
 
+fn attrs_refuse_unit_alias(mut attrs: impl Iterator<Item = ast::Attr>) -> bool {
+    attrs.any(|attribute| attr_refuses_unit_alias(&attribute))
+}
+
 fn type_alias_has_refusing_attr(alias: &ast::TypeAlias) -> bool {
-    alias
-        .attrs()
-        .any(|attribute| attr_refuses_unit_alias(&attribute))
+    attrs_refuse_unit_alias(alias.attrs())
+}
+
+/// A proc-macro on the function or enclosing impl/trait can rewrite the
+/// return type while leaving `-> Unit` in the unexpanded tree.
+fn fn_or_enclosing_item_refuses_unit_alias(function: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    if ast::Fn::cast(function.clone()).is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) {
+        return true;
+    }
+    for ancestor in function.ancestors().skip(1) {
+        match ancestor.kind() {
+            K::FN | K::SOURCE_FILE | K::ITEM_LIST => return false,
+            K::IMPL => {
+                return ast::Impl::cast(ancestor)
+                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs()));
+            }
+            K::TRAIT => {
+                return ast::Trait::cast(ancestor)
+                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs()));
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn path_last_segment_name(path: &ast::Path) -> Option<String> {
@@ -2031,13 +2070,17 @@ fn item_list_use_binds_name(items: &ra_ap_syntax::SyntaxNode, name: &str) -> boo
 /// matches a bare return path, including one `r#` prefix. Aliases in other
 /// modules, associated types, a function or impl/trait type parameter of
 /// the same name, a further alias of that name, nested functions,
-/// cfg-gated aliases, unknown or proc-macro-like attributes, and a
-/// competing same-name `use` stay unresolved.
+/// cfg-gated aliases, unknown or proc-macro-like attributes on the alias,
+/// function, or enclosing impl/trait, and a competing same-name `use`
+/// stay unresolved.
 fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::SyntaxNode) -> bool {
     let Some(name) = bare_type_path_name(path_type) else {
         return false;
     };
-    if assoc_type_named(function, &name) || generic_type_param_named(function, &name) {
+    if assoc_type_named(function, &name)
+        || generic_type_param_named(function, &name)
+        || fn_or_enclosing_item_refuses_unit_alias(function)
+    {
         return false;
     }
     let Some(items) = enclosing_module_item_list(function) else {
@@ -2926,6 +2969,28 @@ pub fn cfg_attr_rewritten_tail() -> CfgAttrRewritten {
     cfg_attr_rewritten_notify()
 }
 
+#[rewrite_fn]
+pub fn rewritten_fn_tail() -> Unit {
+    rewritten_fn_notify()
+}
+
+#[cfg_attr(test, rewrite_fn)]
+pub fn cfg_attr_rewritten_fn_tail() -> Unit {
+    cfg_attr_rewritten_fn_notify()
+}
+
+#[inline]
+pub fn inline_alias_tail() -> Unit {
+    inline_notify()
+}
+
+#[rewrite_impl]
+impl Holder {
+    fn rewritten_impl_method() -> Unit {
+        rewritten_impl_notify()
+    }
+}
+
 #[cfg_attr(test, doc = "note, cfg(test)")]
 type DocComma = ();
 pub fn doc_comma_tail() -> DocComma {
@@ -3011,6 +3076,7 @@ static SHADOW: () = {
             "doc_comma_notify()",
             "expect_notify()",
             "cfg_attr_expect_notify()",
+            "inline_notify()",
         ] {
             assert!(
                 unconsumed(call),
@@ -3043,6 +3109,9 @@ static SHADOW: () = {
             "commented_nested_cfg_notify()",
             "rewritten_notify()",
             "cfg_attr_rewritten_notify()",
+            "rewritten_fn_notify()",
+            "cfg_attr_rewritten_fn_notify()",
+            "rewritten_impl_notify()",
         ] {
             assert!(
                 consumed(call),
