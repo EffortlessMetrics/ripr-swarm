@@ -92,7 +92,13 @@ leading `./`).
 4. **Local coordinates**: byte offset or line/column pair of the seam origin
 within the file. Byte offset is preferred for stability across formatting
 changes; line/column may be used only if the syntax adapter already normalizes
-whitespace.
+whitespace. The byte offset is hashed as the offset the seam has in the
+file's CRLF→LF-normalized text (#7203): a `core.autocrlf=true` checkout and
+an LF checkout of the same commit must produce one seam ID, so a standalone
+CR shifts nothing while each CRLF pair before the seam shifts the hashed
+coordinate by one. The stored raw offset keeps rendering, span geometry and
+placement indexed to the actual file bytes; only the ID reads the normalized
+coordinate.
 5. **Hash**: a deterministic hash (e.g. FxHash) of the concatenation of the
 above fields, encoded as a fixed-length lowercase hex string.
 

@@ -593,7 +593,11 @@ fn preflight_output_check(root: &Path, options: &FirstPrOptions) -> PreflightChe
     }
 }
 
-#[cfg(test)]
+// Every test below is unix-only (symlink/FIFO semantics), so on Windows the
+// module compiles empty and the glob import would be unused under
+// `-D warnings`. Gate the module itself; Linux compilation is unchanged.
+// Inherited Windows-only clippy repair, reproduced on the untouched base.
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
 
