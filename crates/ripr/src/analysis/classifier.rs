@@ -526,6 +526,37 @@ mod tests {
     }
 
     #[test]
+    fn given_helper_chain_refused_when_wrapper_only_foreign_qualifies_parse_then_no_static_path() {
+        let mut parse = function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]);
+        parse.impl_context = FunctionImplContext::Free;
+        let mut twin = function("src/other.rs", "parse");
+        twin.impl_context = FunctionImplContext::Free;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                parse,
+                twin,
+                function_with_calls(
+                    "src/from_str.rs",
+                    "from_str",
+                    &[("parse", "serde_json::parse(text)")],
+                ),
+                function("src/other_from_str.rs", "from_str"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "from_req",
+                "from_str",
+                "VersionReq::from_str(\">=1.0\")",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
     fn given_helper_chain_refused_when_tests_call_spaced_or_turbofish_parse_then_static_unknown() {
         for text in [r#"parse (">=1.0")"#, r#"parse::<&str>(">=1.0")"#] {
             let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {

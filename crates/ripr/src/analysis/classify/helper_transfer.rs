@@ -267,7 +267,7 @@ fn caller_invokes_named_entry(
 ) -> bool {
     caller.calls.iter().any(|call| {
         call.name == stop_name
-            && test_call_invokes_named_entry(&call.text, stop_name)
+            && call_is_workspace_entry(index, stop_name, &call.text)
             && !local_binding_shadows(
                 index,
                 LocalBindingSubject {
@@ -1506,6 +1506,33 @@ mod tests {
             ambiguous_helper_entry_called_by_tests(&chain, &calling_foreign),
             None,
             "an unrelated qualified from_str is not the workspace entry"
+        );
+
+        let foreign_wrapper = function(
+            "src/from_str.rs",
+            "from_str",
+            &[("parse", "serde_json::parse(text)")],
+        );
+        let mut parse_free = parse.clone();
+        parse_free.impl_context = FunctionImplContext::Free;
+        let mut twin_free = twin.clone();
+        twin_free.impl_context = FunctionImplContext::Free;
+        let from_str_twin_foreign = function("src/other_from_str.rs", "from_str", &[]);
+        let calling_foreign_wrapper = index_with_tests(
+            vec![
+                owner.clone(),
+                parse_free,
+                twin_free,
+                foreign_wrapper,
+                from_str_twin_foreign,
+            ],
+            vec![with_test("from_str", "VersionReq::from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_foreign_wrapper, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_foreign_wrapper),
+            None,
+            "a wrapper that only foreign-qualifies parse is not an entry"
         );
 
         let mut local_wrapper =
