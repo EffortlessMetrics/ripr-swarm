@@ -4184,6 +4184,43 @@ pub fn const_generic_unit<const Unit: usize>() -> Unit {
     const_generic_notify()
 }
 
+type r#RawUnit = ();
+pub fn raw_alias_tail() -> RawUnit {
+    raw_alias_notify()
+}
+
+pub fn raw_return_tail() -> r#Unit {
+    raw_return_notify()
+}
+
+pub fn raw_generic_shadow<r#Unit>() -> Unit {
+    raw_generic_notify()
+}
+
+#[cfg_attr /* keep */ (test, allow(dead_code))]
+type CommentedAllow = ();
+pub fn commented_cfg_attr_allow_tail() -> CommentedAllow {
+    commented_cfg_attr_allow_notify()
+}
+
+#[cfg /* off */ (windows)]
+type CommentedCfg = ();
+pub fn commented_cfg_tail() -> CommentedCfg {
+    commented_cfg_notify()
+}
+
+#[r#cfg(windows)]
+type RawCfg = ();
+pub fn raw_cfg_tail() -> RawCfg {
+    raw_cfg_notify()
+}
+
+#[cfg_attr /* off */ (windows, cfg(test))]
+type CommentedNestedCfg = ();
+pub fn commented_nested_cfg_tail() -> CommentedNestedCfg {
+    commented_nested_cfg_notify()
+}
+
 #[cfg(windows)]
 type CfgUnit = ();
 mod cfg_other {
@@ -4228,6 +4265,9 @@ static SHADOW: () = {
             "allowed_notify()".to_string(),
             "cfg_attr_allow_notify()".to_string(),
             "const_generic_notify()".to_string(),
+            "raw_alias_notify()".to_string(),
+            "raw_return_notify()".to_string(),
+            "commented_cfg_attr_allow_notify()".to_string(),
         ];
         expected.sort();
         assert_eq!(

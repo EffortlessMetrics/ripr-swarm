@@ -49,11 +49,13 @@ emitted only for a call whose value is discarded: a call statement, `let _ =`,
 unit function, or `return f()` in a unit function. A same-module
 `type X = ();` alias used as a bare return path is unit too (#7101).
 Qualified paths (`other::Unit`, `Self::Output`), a further alias of that
-name, a function or impl/trait type parameter of the same name, associated
-types, nested functions, `#[cfg]` aliases, a `cfg_attr` that introduces
-`cfg`, a competing same-name `use`, and aliases shadowed in a `const` or
-`static` block stay unresolved and read as a value. A same-named const
-generic and `#[cfg_attr(_, allow(..))]` do not refuse the alias.
+name, a function or impl/trait type parameter of the same name (including
+`r#Unit` vs `Unit`), associated types, nested functions, `#[cfg]` aliases
+(including trivia between `cfg` and `(` and a raw `r#cfg` path), a
+`cfg_attr` that introduces `cfg`, a competing same-name `use`, and aliases
+shadowed in a `const` or `static` block stay unresolved and read as a value.
+A same-named const generic, `#[cfg_attr(_, allow(..))]`, and a one-prefix
+raw-ident spelling of a unit alias or return path do not refuse the alias.
 A call whose value feeds a consumer (a condition or scrutinee, a named binding,
 an operand, an argument, a receiver, a field or index base, an element, a
 `for` iterable, or a non-unit return through block tails, `if` branches and

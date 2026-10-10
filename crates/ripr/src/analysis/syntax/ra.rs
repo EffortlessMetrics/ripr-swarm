@@ -1870,6 +1870,12 @@ fn type_is_unit_tuple(ty: Option<ast::Type>) -> bool {
     matches!(ty, Some(ast::Type::TupleType(tuple)) if tuple.fields().next().is_none())
 }
 
+/// Identifier spelling with one optional `r#` prefix removed. `Unit` and
+/// `r#Unit` are the same ident; two prefixes are left as-is.
+fn ident_name(spelling: &str) -> &str {
+    cfg_predicates::rust_ident_name(spelling)
+}
+
 /// Bare `Unit` in `fn run() -> Unit`, with no qualifier, turbofish, or `Self`.
 fn bare_type_path_name(path_type: &ast::PathType) -> Option<String> {
     let path = path_type.path()?;
@@ -1880,7 +1886,8 @@ fn bare_type_path_name(path_type: &ast::PathType) -> Option<String> {
     if segment.generic_arg_list().is_some() {
         return None;
     }
-    let name = segment.name_ref()?.text().to_string();
+    let name_ref = segment.name_ref()?;
+    let name = ident_name(name_ref.text()).to_string();
     (name != "Self").then_some(name)
 }
 
@@ -1909,7 +1916,7 @@ fn generic_params_include_name(params: &ast::GenericParamList, name: &str) -> bo
     params.type_or_const_params().any(|param| match param {
         ast::TypeOrConstParam::Type(type_param) => type_param
             .name()
-            .is_some_and(|param_name| param_name.text() == name),
+            .is_some_and(|param_name| ident_name(param_name.text()) == name),
         ast::TypeOrConstParam::Const(_) => false,
     })
 }
@@ -1951,60 +1958,29 @@ fn assoc_type_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
                 .any(|alias| {
                     alias
                         .name()
-                        .is_some_and(|alias_name| alias_name.text() == name)
+                        .is_some_and(|alias_name| ident_name(alias_name.text()) == name)
                 })
     })
 }
 
-fn compact_attr_inner(attribute: &ast::Attr) -> String {
-    let compact: String = attribute
-        .syntax()
-        .text()
-        .to_string()
-        .chars()
-        .filter(|character| !character.is_whitespace())
-        .collect();
-    compact
-        .strip_prefix("#![")
-        .or_else(|| compact.strip_prefix("#["))
-        .and_then(|rest| rest.strip_suffix(']'))
-        .unwrap_or(&compact)
-        .to_string()
+fn meta_ident_name(meta: &ast::Meta) -> Option<String> {
+    let name = meta.simple_name()?;
+    Some(ident_name(&name).to_string())
 }
 
+/// A `#[cfg]` path, or a `cfg_attr` that introduces `cfg`. Uses the parsed
+/// attr path (`simple_name` / `CfgMeta` / `skip_cfg_attrs`) so trivia between
+/// `cfg` and `(` and a raw `r#cfg` path still refuse. An unparsed
+/// `r#cfg_attr` leaf is also refused. `cfg_attr` that only introduces
+/// `allow` is not a gate.
 fn attr_is_cfg(attribute: &ast::Attr) -> bool {
-    introduced_attr_is_cfg(&compact_attr_inner(attribute))
-}
-
-fn introduced_attr_is_cfg(inner: &str) -> bool {
-    if inner.starts_with("cfg(") {
-        return true;
-    }
-    inner
-        .strip_prefix("cfg_attr(")
-        .and_then(|rest| rest.strip_suffix(')'))
-        .is_some_and(cfg_attr_introduces_cfg)
-}
-
-fn cfg_attr_introduces_cfg(body: &str) -> bool {
-    let mut depth = 0usize;
-    let mut start = 0usize;
-    let mut first = true;
-    for (index, character) in body.char_indices() {
-        match character {
-            '(' | '[' | '{' => depth = depth.saturating_add(1),
-            ')' | ']' | '}' => depth = depth.saturating_sub(1),
-            ',' if depth == 0 => {
-                if !first && body.get(start..index).is_some_and(introduced_attr_is_cfg) {
-                    return true;
-                }
-                first = false;
-                start = index.saturating_add(1);
-            }
-            _ => {}
-        }
-    }
-    !first && body.get(start..).is_some_and(introduced_attr_is_cfg)
+    attribute.skip_cfg_attrs().iter().any(|meta| {
+        matches!(meta, ast::Meta::CfgMeta(_))
+            || matches!(
+                meta_ident_name(meta).as_deref(),
+                Some("cfg") | Some("cfg_attr")
+            )
+    })
 }
 
 fn type_alias_has_cfg(alias: &ast::TypeAlias) -> bool {
@@ -2012,14 +1988,15 @@ fn type_alias_has_cfg(alias: &ast::TypeAlias) -> bool {
 }
 
 fn path_last_segment_name(path: &ast::Path) -> Option<String> {
-    Some(path.segment()?.name_ref()?.text().to_string())
+    let name_ref = path.segment()?.name_ref()?;
+    Some(ident_name(name_ref.text()).to_string())
 }
 
 fn use_tree_binds_name(tree: &ast::UseTree, name: &str) -> bool {
     if let Some(rename) = tree.rename() {
         return rename
             .name()
-            .is_some_and(|rename_name| rename_name.text() == name);
+            .is_some_and(|rename_name| ident_name(rename_name.text()) == name);
     }
     if tree.star_token().is_some() {
         return false;
@@ -2043,10 +2020,10 @@ fn item_list_use_binds_name(items: &ra_ap_syntax::SyntaxNode, name: &str) -> boo
 }
 
 /// Syntax-only: a same-module `type Name = ();` (or `( )`) whose name
-/// matches a bare return path. Aliases in other modules, associated types,
-/// a function or impl/trait type parameter of the same name, a further
-/// alias of that name, nested functions, cfg-gated aliases, and a competing
-/// same-name `use` stay unresolved.
+/// matches a bare return path, including one `r#` prefix. Aliases in other
+/// modules, associated types, a function or impl/trait type parameter of
+/// the same name, a further alias of that name, nested functions,
+/// cfg-gated aliases, and a competing same-name `use` stay unresolved.
 fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::SyntaxNode) -> bool {
     let Some(name) = bare_type_path_name(path_type) else {
         return false;
@@ -2068,7 +2045,7 @@ fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::Sy
         let Some(alias_name) = alias.name() else {
             continue;
         };
-        if alias_name.text() != name.as_str() {
+        if ident_name(alias_name.text()) != name.as_str() {
             continue;
         }
         if alias.generic_param_list().is_some()
@@ -2903,6 +2880,43 @@ pub fn const_generic_unit<const Unit: usize>() -> Unit {
     const_generic_notify()
 }
 
+type r#RawUnit = ();
+pub fn raw_alias_tail() -> RawUnit {
+    raw_alias_notify()
+}
+
+pub fn raw_return_tail() -> r#Unit {
+    raw_return_notify()
+}
+
+pub fn raw_generic_shadow<r#Unit>() -> Unit {
+    raw_generic_notify()
+}
+
+#[cfg_attr /* keep */ (test, allow(dead_code))]
+type CommentedAllow = ();
+pub fn commented_cfg_attr_allow_tail() -> CommentedAllow {
+    commented_cfg_attr_allow_notify()
+}
+
+#[cfg /* off */ (windows)]
+type CommentedCfg = ();
+pub fn commented_cfg_tail() -> CommentedCfg {
+    commented_cfg_notify()
+}
+
+#[r#cfg(windows)]
+type RawCfg = ();
+pub fn raw_cfg_tail() -> RawCfg {
+    raw_cfg_notify()
+}
+
+#[cfg_attr /* off */ (windows, cfg(test))]
+type CommentedNestedCfg = ();
+pub fn commented_nested_cfg_tail() -> CommentedNestedCfg {
+    commented_nested_cfg_notify()
+}
+
 #[cfg(windows)]
 type CfgUnit = ();
 mod cfg_other {
@@ -2952,6 +2966,9 @@ static SHADOW: () = {
             "allowed_notify()",
             "cfg_attr_allow_notify()",
             "const_generic_notify()",
+            "raw_alias_notify()",
+            "raw_return_notify()",
+            "commented_cfg_attr_allow_notify()",
         ] {
             assert!(
                 unconsumed(call),
@@ -2978,6 +2995,10 @@ static SHADOW: () = {
             "const_shadow_notify()",
             "static_shadow_notify()",
             "nested_cfg_notify()",
+            "raw_generic_notify()",
+            "commented_cfg_notify()",
+            "raw_cfg_notify()",
+            "commented_nested_cfg_notify()",
         ] {
             assert!(
                 consumed(call),
