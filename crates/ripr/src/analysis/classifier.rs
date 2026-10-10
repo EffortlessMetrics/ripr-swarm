@@ -578,6 +578,90 @@ mod tests {
     }
 
     #[test]
+    fn given_helper_chain_refused_when_tests_call_generic_qualified_parse_then_no_static_path() {
+        let mut parse = function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]);
+        parse.impl_context = FunctionImplContext::Free;
+        let mut twin = function("src/other.rs", "parse");
+        twin.impl_context = FunctionImplContext::Free;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![function("src/op.rs", "op"), parse, twin],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "from_foreign_parser",
+                "parse",
+                "foreign::Parser::<u8>::parse(value)",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_same_line_has_foreign_then_workspace_from_str_then_static_unknown()
+     {
+        let mut from_str =
+            function_with_calls("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let mut twin = function("src/other_from_str.rs", "from_str");
+        twin.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        for text in [
+            r#"serde_json::from_str(a); VersionReq::from_str(b)"#,
+            r#"VersionReq::from_str(b); serde_json::from_str(a)"#,
+        ] {
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![
+                    function("src/op.rs", "op"),
+                    function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                    function("src/other.rs", "parse"),
+                    from_str.clone(),
+                    twin.clone(),
+                ],
+                tests: vec![test_calling("tests/req.rs", "from_req", "from_str", text)],
+                ..Default::default()
+            });
+            let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+            assert_eq!(finding.class, ExposureClass::StaticUnknown, "{text}");
+        }
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_associated_sibling_of_wrapping_from_str_then_no_static_path()
+     {
+        let mut wrapping =
+            function_with_calls("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        wrapping.impl_context = FunctionImplContext::Free;
+        let mut associated = function("src/version_req.rs", "from_str");
+        associated.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+                wrapping,
+                associated,
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "from_req",
+                "from_str",
+                "VersionReq::from_str(\">=1.0\")",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
     fn given_helper_chain_refused_when_tests_import_foreign_from_str_then_no_static_path() {
         let mut imported = test_calling(
             "tests/req.rs",
