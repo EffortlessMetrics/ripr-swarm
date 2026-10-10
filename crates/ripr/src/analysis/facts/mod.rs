@@ -22,6 +22,22 @@ use std::path::{Path, PathBuf};
 
 use crate::config::TestHarnessRegistration;
 
+/// Normalize local roles in reconstructed source with the same authorities as
+/// ordinary indexing. External composition is intentionally supplied separately
+/// by the caller's indexed context, rather than guessed from an isolated file.
+pub(crate) fn normalize_reconstructed_source_roles(
+    index: &mut RustIndex,
+    root: &Path,
+    registrations: &[TestHarnessRegistration],
+) -> Result<(), String> {
+    parameterized_tests::promote_explicit_test_case_functions(index);
+    index.refresh_memberships()?;
+    test_styles::normalize_index_test_styles(index)?;
+    index.refresh_memberships()?;
+    harness_registry::apply_registrations(index, root, registrations);
+    index.finalize()
+}
+
 pub fn build_index(root: &Path, files: &[PathBuf]) -> Result<model::RustIndex, String> {
     build_index_with_test_harnesses(root, files, &[])
 }

@@ -150,12 +150,10 @@ use static_limits::{
 };
 
 mod workspace;
+use crate::analysis::diff::reconstruct_old_source;
 #[cfg(test)]
 use workspace::visit_workspace;
-use workspace::{
-    collect_workspace_python_files, line_is_in_ranges, owner_for_changed_line,
-    reconstruct_old_source,
-};
+use workspace::{collect_workspace_python_files, line_is_in_ranges, owner_for_changed_line};
 
 /// Python preview adapter.
 ///

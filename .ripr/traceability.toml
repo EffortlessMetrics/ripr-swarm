@@ -9,6 +9,34 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_struct_bound_added_stays_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_struct_bound_removed_stays_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_impl_bound_added_stays_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_impl_bound_removed_stays_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_type_alias_bound_added_stays_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_type_alias_bound_removed_stays_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_bound_owner_cannot_admit_shared_runtime_or_type_expressions",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_inline_test_bound_preserves_old_test_exclusion",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_bounds_use_normalized_test_attributes",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_bounds_use_registered_old_attributes",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_bound_preserves_composed_test_file_exclusion",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_bound_cannot_borrow_candidate_test_role",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_test_bound_cannot_borrow_candidate_production_role",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::where_bound_lines_retain_unknown_subjects",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::where_bound_shared_body_and_uppercase_fields_keep_runtime_shapes",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::bound_spelling_in_macro_or_string_has_no_declaration_authority",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_field_cannot_borrow_candidate_bound_authority",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::edited_existing_bound_keeps_before_and_static_limitation",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::multiline_generic_parameters_and_where_predicates_stay_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::malformed_bound_is_not_silently_dropped_or_credited",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::collapsed_bound_replacement_retains_every_removed_predicate",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::expression_and_macro_bounds_keep_fallback_evidence",
+  "crates/ripr/src/analysis/probes/classify/declarations.rs::bound_fallback_rejects_const_expression_and_macro_authority",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_only_bound_uses_old_parser_context",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::new_function_diff_keeps_bounds_unknown_and_body_executable",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::changed_source_mismatch_cannot_admit_a_removed_bound",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_bound_after_earlier_insertion_uses_old_coordinates",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::identical_added_bound_cannot_hide_removed_runtime_field",
   "crates/ripr/src/analysis/extract/oracles/wildcard_tests.rs::unguarded_wildcard_patterns_are_not_exact_oracles",
   "crates/ripr/src/analysis/extract/oracles/wildcard_tests.rs::wildcard_downgrade_preserves_patterns_guards_and_other_conditions",
   "crates/ripr/src/analysis/extract/oracles/wildcard_tests.rs::wildcard_runtime_control_accepts_wrong_behavior_while_exact_pin_distinguishes_it",
@@ -118,6 +146,7 @@ tests = [
   "crates/ripr/src/output/human/sections.rs::classification_hint_tests::infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes"
 ]
 fixtures = [
+  "fixtures/rust_where_bound_declarations",
   "fixtures/benches_harness_evidence",
   "fixtures/boundary_gap",
   "fixtures/boundary_gap_multiline_assert",

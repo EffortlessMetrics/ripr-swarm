@@ -5,6 +5,20 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_where_bound_has_no_runtime_exposure_credit",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_where_bound_declarations",
+      "vector": "parser_owned_type_bound_keeps_static_limitation",
+      "probe_family": "static_unknown",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" }
+      ]
+    },
+    {
       "id": "rust_discarded_matcher_bare_wildcard_original",
       "language": "rust",
       "tier": "pure",
