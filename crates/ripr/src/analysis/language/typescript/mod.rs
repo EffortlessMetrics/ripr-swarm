@@ -63,6 +63,9 @@ mod classifier;
 mod discovery;
 #[cfg(test)]
 mod line_index_tests;
+mod message_check;
+#[cfg(test)]
+mod message_check_tests;
 mod module_entries;
 #[cfg(test)]
 mod new_declaration_tests;
@@ -102,6 +105,7 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use discovery::*;
+pub(crate) use message_check::*;
 pub(crate) use module_entries::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
@@ -501,10 +505,21 @@ impl TypeScriptAdapter {
                 {
                     continue;
                 }
+                // Rule 4's message-only guard needs the old line this one
+                // replaced, by position inside the replaced block. Every
+                // removed line of a block shares the block's first new-side
+                // line, so a plain `new_side_line` match would pair only the
+                // first added line, and sometimes with the wrong removed line.
+                let old_line = match changed.replaced_line_counterpart(added.line) {
+                    Some(removed) => ReplacedLine::Paired(&removed.text),
+                    None if changed.replaces_removed_lines(added.line) => ReplacedLine::Unpaired,
+                    None => ReplacedLine::Inserted,
+                };
                 if let Some(mut finding) = classify_change_with_alias_state(
                     &changed.path,
                     added.line,
                     &added.text,
+                    old_line,
                     &all_owners,
                     &all_tests,
                     Some(&options.root),

@@ -531,6 +531,11 @@ pub(crate) enum TypeScriptMockPayloadKind {
 pub(crate) struct TypeScriptErrorPayload {
     pub(crate) expected: String,
     pub(crate) kind: TypeScriptErrorPayloadKind,
+    /// The message text a RIPR-SPEC-0243 rule 10 payload checks: the chai
+    /// string, the object's `message`, or the regex pattern between its
+    /// anchors. The message-only guard compares it with the old message.
+    /// `None` for the RIPR-SPEC-0097 Jest payloads.
+    pub(crate) message_check: Option<String>,
 }
 
 impl TypeScriptErrorPayload {
@@ -548,6 +553,17 @@ impl TypeScriptErrorPayload {
             }
             TypeScriptErrorPayloadKind::RejectsMatchObject => {
                 format!("await expect(...).rejects.toMatchObject({})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::ChaiThrowLiteral => {
+                format!("expect(...).to.throw({})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::AssertThrowsRegex
+            | TypeScriptErrorPayloadKind::AssertThrowsObject => {
+                format!("assert.throws(..., {})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::AssertRejectsRegex
+            | TypeScriptErrorPayloadKind::AssertRejectsObject => {
+                format!("assert.rejects(..., {})", self.expected)
             }
         }
     }
@@ -572,4 +588,38 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     RejectsThrowClass,
     /// `await expect(...).rejects.toMatchObject({ code: "X" })`.
     RejectsMatchObject,
+    /// chai `expect(fn).to.throw("message")`: a substring check of the
+    /// message (RIPR-SPEC-0243 rule 10).
+    ChaiThrowLiteral,
+    /// `node:assert` `throws(fn, /^...$/)`: an anchored regex tested against
+    /// `String(err)` (rule 10).
+    AssertThrowsRegex,
+    /// `node:assert` `throws(fn, { message: "..." })`: an all-literal object
+    /// with a string `message` (rule 10).
+    AssertThrowsObject,
+    /// `node:assert` `rejects(promise, /^...$/)` (rule 10).
+    AssertRejectsRegex,
+    /// `node:assert` `rejects(promise, { message: "..." })` (rule 10).
+    AssertRejectsObject,
+}
+
+impl TypeScriptErrorPayloadKind {
+    /// Whether RIPR-SPEC-0243 rule 10 governs this payload, so the
+    /// message-only guard applies to it.
+    pub(crate) fn is_message_check(self) -> bool {
+        matches!(
+            self,
+            Self::ChaiThrowLiteral
+                | Self::AssertThrowsRegex
+                | Self::AssertThrowsObject
+                | Self::AssertRejectsRegex
+                | Self::AssertRejectsObject
+        )
+    }
+
+    /// Whether this is a `node:assert` `throws`/`rejects` message check,
+    /// whose rendered text keeps the test's own callee.
+    pub(crate) fn is_node_assert_message_check(self) -> bool {
+        self.is_message_check() && self != Self::ChaiThrowLiteral
+    }
 }

@@ -753,6 +753,14 @@ pub(crate) fn module_assert_assertion_from_expression(
     if matches!(oracle_kind, OracleKind::Unknown) {
         return None;
     }
+    // RIPR-SPEC-0243 rule 10: a `{ message }` object or an anchored regex
+    // pins the thrown error's message.
+    let error_payload = node_assert_message_payload(method, flavor, call, source);
+    let (oracle_kind, oracle_strength) = if error_payload.is_some() {
+        (OracleKind::ExactErrorVariant, OracleStrength::Strong)
+    } else {
+        (oracle_kind, oracle_strength)
+    };
     // Argument order is (actual, expected[, message]). Only equality and
     // relational methods carry an expected argument; a truthiness or error
     // assertion's second argument is a message or error matcher.
@@ -765,10 +773,18 @@ pub(crate) fn module_assert_assertion_from_expression(
         OracleKind::ExactValue | OracleKind::RelationalCheck
     );
     let expected_arg = call.arguments.get(1).filter(|_| takes_expected);
-    let (expected_value_or_variant, has_dynamic_matcher_arg) =
-        expected_argument_metadata(expected_arg, source);
+    let (expected_value_or_variant, has_dynamic_matcher_arg) = match &error_payload {
+        Some(payload) => (Some(payload.expected.clone()), false),
+        None => expected_argument_metadata(expected_arg, source),
+    };
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, method);
+    // Keep the real callee (`strict.throws`, a bare `throws`) in the
+    // rendered message-check payload.
+    let rendered_call = match &error_payload {
+        Some(payload) => format!("{callee_text}(..., {})", payload.expected),
+        None => format!("{callee_text}(...)"),
+    };
     Some(TypeScriptAssertion {
         matcher: method.to_string(),
         argument_count: call.arguments.len(),
@@ -776,12 +792,12 @@ pub(crate) fn module_assert_assertion_from_expression(
         oracle_kind,
         oracle_strength,
         mock_payload: None,
-        error_payload: None,
+        error_payload,
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
         oracle_confidence,
-        rendered_call: Some(format!("{callee_text}(...)")),
+        rendered_call: Some(rendered_call),
     })
 }
 
@@ -883,6 +899,14 @@ pub(crate) fn chai_expect_assertion_from_expression(
     if matches!(oracle_kind, OracleKind::Unknown) {
         return None;
     }
+    // RIPR-SPEC-0243 rule 10: `to.throw("msg")` checks the message.
+    let error_payload =
+        chai_throw_message_payload(terminal, negated, terminal_call.map(|call| &**call), source);
+    let (oracle_kind, oracle_strength) = if error_payload.is_some() {
+        (OracleKind::ExactErrorVariant, OracleStrength::Strong)
+    } else {
+        (oracle_kind, oracle_strength)
+    };
     let observed_expression = expect_call
         .arguments
         .first()
@@ -894,8 +918,10 @@ pub(crate) fn chai_expect_assertion_from_expression(
     let expected_arg = terminal_call
         .and_then(|call| call.arguments.first())
         .filter(|_| takes_expected);
-    let (expected_value_or_variant, has_dynamic_matcher_arg) =
-        expected_argument_metadata(expected_arg, source);
+    let (expected_value_or_variant, has_dynamic_matcher_arg) = match &error_payload {
+        Some(payload) => (Some(payload.expected.clone()), false),
+        None => expected_argument_metadata(expected_arg, source),
+    };
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, terminal);
     let mut rendered = format!("{expect_text}(...)");
@@ -916,7 +942,7 @@ pub(crate) fn chai_expect_assertion_from_expression(
         oracle_kind,
         oracle_strength,
         mock_payload: None,
-        error_payload: None,
+        error_payload,
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
@@ -1011,16 +1037,19 @@ pub(crate) fn error_payload_from_assertion(
                 Some(TypeScriptErrorPayload {
                     expected,
                     kind: TypeScriptErrorPayloadKind::ThrowsLiteral,
+                    message_check: None,
                 })
             } else if let Some(expected) = safe_error_object_payload_text(arg, source) {
                 Some(TypeScriptErrorPayload {
                     expected,
                     kind: TypeScriptErrorPayloadKind::ThrowsObject,
+                    message_check: None,
                 })
             } else {
                 safe_error_class_payload_text(arg, source).map(|expected| TypeScriptErrorPayload {
                     expected,
                     kind: TypeScriptErrorPayloadKind::ThrowsClass,
+                    message_check: None,
                 })
             }
         }
@@ -1030,16 +1059,19 @@ pub(crate) fn error_payload_from_assertion(
                 Some(TypeScriptErrorPayload {
                     expected,
                     kind: TypeScriptErrorPayloadKind::RejectsThrowLiteral,
+                    message_check: None,
                 })
             } else if let Some(expected) = safe_error_object_payload_text(arg, source) {
                 Some(TypeScriptErrorPayload {
                     expected,
                     kind: TypeScriptErrorPayloadKind::RejectsThrowObject,
+                    message_check: None,
                 })
             } else {
                 safe_error_class_payload_text(arg, source).map(|expected| TypeScriptErrorPayload {
                     expected,
                     kind: TypeScriptErrorPayloadKind::RejectsThrowClass,
+                    message_check: None,
                 })
             }
         }
@@ -1048,6 +1080,7 @@ pub(crate) fn error_payload_from_assertion(
             Some(TypeScriptErrorPayload {
                 expected,
                 kind: TypeScriptErrorPayloadKind::RejectsMatchObject,
+                message_check: None,
             })
         }
         _ => None,
@@ -1291,6 +1324,11 @@ pub(crate) fn assertion_oracle_text(assertion: &TypeScriptAssertion) -> String {
         return mock_payload.oracle_text();
     }
     if let Some(error_payload) = &assertion.error_payload {
+        if error_payload.kind.is_node_assert_message_check()
+            && let Some(rendered_call) = &assertion.rendered_call
+        {
+            return rendered_call.clone();
+        }
         return error_payload.oracle_text();
     }
     if let Some(rendered_call) = &assertion.rendered_call {
