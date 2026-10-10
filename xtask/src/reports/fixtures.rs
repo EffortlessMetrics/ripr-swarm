@@ -979,7 +979,11 @@ fn strip_canonical_next_action_member(value: &str) -> String {
         return value.to_string();
     };
     let rest = &value[start + MARKER.len()..];
-    let Some(end) = rest.rfind('\n') else {
+    // The check JSON adapter appends a compact one-line value, then the
+    // object's closing brace. The first newline after the marker is that
+    // terminator (`\n}` plus an optional trailing newline), not a later
+    // trailing newline that would drop the brace.
+    let Some(end) = rest.find('\n') else {
         return value.to_string();
     };
     let mut stripped = value[..start].to_string();
@@ -2161,6 +2165,10 @@ mod tests {
             serde_json::from_str(&out).expect("stripped output must remain JSON");
         assert!(parsed.get("canonical_next_action").is_none());
         assert_eq!(parsed["findings"][0]["id"], "gap-1");
+        assert_eq!(
+            parsed["source_subject"]["digest_algorithm"], "sha256",
+            "closing brace after the compact member must survive strip: {out}"
+        );
     }
 
     use std::sync::atomic::{AtomicUsize, Ordering};
