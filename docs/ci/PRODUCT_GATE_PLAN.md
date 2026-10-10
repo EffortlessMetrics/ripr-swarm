@@ -156,3 +156,12 @@ reject a source or compiler identity mismatch. Writable target directories remai
 private to their execution owner. This extraction does not make the remaining
 precommit table or the full docs lane product-independent. Workspace nextest and
 Cargo doctests include the new package in the existing required test lane.
+
+The policy executable anchors identity and policy reads to the nearest repository
+workspace when started in a repository or member subdirectory. Cargo selects a
+manifest before starting the executable: a separate or malformed nested fixture
+package can therefore reject both `cargo policy` and the existing `cargo xtask`
+alias before either binary runs. Invoke from the repository root, or use
+`cargo run --locked --manifest-path /path/to/repository/Cargo.toml -p repo-policy -- preflight`
+with the actual repository manifest when working inside such a fixture. The alias
+does not promise to override nested Cargo package selection.
