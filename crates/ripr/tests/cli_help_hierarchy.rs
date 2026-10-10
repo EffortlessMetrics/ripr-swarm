@@ -370,6 +370,35 @@ fn help_screens_state_the_surfaces_the_parsers_accept() -> Result<(), String> {
     Ok(())
 }
 
+/// #7202 drift guard. `ripr outcome --help` must describe the canonical-gap
+/// refusal as it is enforced: Rust `ripr check --json` findings carry
+/// `canonical_gap_id` and are compared by it, and the refusal keys on
+/// findings that lack one. The help once claimed Rust check JSON "is refused
+/// rather than compared" outright, sending agents down a needless
+/// `repo-exposure-json` detour for a path that already worked.
+#[test]
+fn outcome_help_matches_the_enforced_canonical_gap_contract() -> Result<(), String> {
+    let help = normalized(&rendered_help(&["outcome", "--help"])?);
+    assert_contains(
+        "outcome help (`ripr outcome --help`)",
+        &help,
+        "Rust `ripr check --json` findings carry canonical_gap_id and are compared by it",
+    )?;
+    assert_contains(
+        "outcome help (`ripr outcome --help`)",
+        &help,
+        "Check output whose findings carry no canonical_gap_id is refused rather than compared",
+    )?;
+    if help.contains("no canonical_gap_id (Rust") {
+        return Err(
+            "outcome help claims Rust check JSON findings lack canonical_gap_id; they carry \
+             it and are compared by it (#7202)"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn agent_help_makes_repair_primary_without_removing_control_surfaces() -> Result<(), String> {
     for args in [["agent", "--help"].as_slice(), ["agent"].as_slice()] {

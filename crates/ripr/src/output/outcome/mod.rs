@@ -543,9 +543,10 @@ fn parse_check_output_findings(findings: &[Value]) -> Result<Vec<StaticSeamRecor
         .filter_map(static_seam_record_from_check_finding)
         .collect();
     // Check-output findings are matched by canonical gap id. When a snapshot
-    // has findings but none carries one (Rust `ripr check --json` today), an
-    // empty comparison would read as "nothing moved"; refuse instead so the
-    // receipt cannot hide real movement.
+    // has findings but none carries one (preview-language check output
+    // without an id — Rust findings carry one), an empty comparison would
+    // read as "nothing moved"; refuse instead so the receipt cannot hide
+    // real movement.
     if records.is_empty() && !findings.is_empty() {
         return Err(format!(
             "check-output snapshot has {} finding(s) but none carries a canonical gap id, so `ripr outcome` cannot match them; for Rust, capture both snapshots with `ripr check --format repo-exposure-json` instead; preview-language findings (Python, TypeScript) without a canonical gap id have no comparable outcome receipt",
