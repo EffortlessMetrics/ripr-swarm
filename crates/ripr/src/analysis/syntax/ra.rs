@@ -2858,7 +2858,7 @@ impl<Unit> GenericHolder<Unit> {
     }
 }
 
-#[allow(dead_code)]
+#[doc = "unconditional"]
 type Allowed = ();
 pub fn allowed_alias_tail() -> Allowed {
     allowed_notify()
