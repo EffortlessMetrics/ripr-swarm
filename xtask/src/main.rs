@@ -793,7 +793,10 @@ struct ChangedFileCategories {
 fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
     ChangedFileCategories {
         rust_src: files.iter().any(|f| {
-            f.ends_with(".rs") && (f.contains("crates/ripr/src") || f.contains("xtask/src"))
+            f.ends_with(".rs")
+                && (f.contains("crates/ripr/src")
+                    || f.contains("xtask/src")
+                    || f.starts_with("tools/repo-policy/"))
         }),
         workflow: files.iter().any(|f| f.starts_with(".github/workflows/")),
         policy: files

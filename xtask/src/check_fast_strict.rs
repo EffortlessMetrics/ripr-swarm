@@ -253,29 +253,37 @@ mod tests {
 
     #[test]
     fn selected_rust_path_requires_rust_gate_receipt() -> Result<(), String> {
-        let receipt = RefCell::new(String::new());
-        let selected = vec!["xtask/src/check_fast_strict.rs".to_string()];
-        let mut discover = || Ok(selected.clone());
-        let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
-            *receipt.borrow_mut() = selector_report(status, reason, count, detail);
-            Ok(())
-        };
+        for path in [
+            "xtask/src/check_fast_strict.rs",
+            "tools/repo-policy/src/lib.rs",
+            "tools/repo-policy/build.rs",
+            "tools/repo-policy/source_identity.rs",
+            "tools/repo-policy/tests/frontdoor.rs",
+        ] {
+            let receipt = RefCell::new(String::new());
+            let selected = vec![path.to_string()];
+            let mut discover = || Ok(selected.clone());
+            let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
+                *receipt.borrow_mut() = selector_report(status, reason, count, detail);
+                Ok(())
+            };
 
-        let result = run_transaction(
-            &mut discover,
-            || Ok(()),
-            || Ok(EMPTY_FAST_REPORT.to_string()),
-            &mut write,
-        );
-        let error = match result {
-            Ok(()) => return Err("missing Rust gate receipt unexpectedly passed".to_string()),
-            Err(error) => error,
-        };
-        if !error.contains("check-no-panic-family") || !error.contains("clippy") {
-            return Err(format!("missing Rust gates were not identified: {error}"));
-        }
-        if !receipt.borrow().contains("Selector: fast_report_mismatch") {
-            return Err(format!("unexpected mismatch receipt: {}", receipt.borrow()));
+            let result = run_transaction(
+                &mut discover,
+                || Ok(()),
+                || Ok(EMPTY_FAST_REPORT.to_string()),
+                &mut write,
+            );
+            let error = match result {
+                Ok(()) => return Err("missing Rust gate receipt unexpectedly passed".to_string()),
+                Err(error) => error,
+            };
+            if !error.contains("check-no-panic-family") || !error.contains("clippy") {
+                return Err(format!("missing Rust gates were not identified: {error}"));
+            }
+            if !receipt.borrow().contains("Selector: fast_report_mismatch") {
+                return Err(format!("unexpected mismatch receipt: {}", receipt.borrow()));
+            }
         }
         Ok(())
     }
