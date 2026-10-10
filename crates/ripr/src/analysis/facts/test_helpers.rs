@@ -25,8 +25,11 @@
 //!   top-level `Production` function in a crate-root integration-test
 //!   target (`tests/<name>.rs` or `tests/<name>/main.rs` relative to the
 //!   nearest owning manifest, including `crates/*/tests/…` and a package
-//!   nested under `tests/` such as `tests/harness/tests/…`, #7125). This
-//!   producer does not reclassify that
+//!   nested under `tests/` such as `tests/harness/tests/…`, #7125). A
+//!   nested package (nearest manifest is not the workspace root) is
+//!   credited only when Cargo's metadata inventory lists that autotest
+//!   as a workspace test target, so `[workspace] exclude` cannot become
+//!   test evidence. This producer does not reclassify that
 //!   `Production` helper; it only copies the helper's calls and
 //!   parser-backed assertions onto the calling test. A `Production`
 //!   function in a production file, including a `src/tests/` module
@@ -34,7 +37,9 @@
 //!   run, or a helper in `benches/` or `examples/` (including
 //!   `examples/tests/`), is not credited. An undeclared `tests/*.rs`
 //!   file that `autotests = false` leaves unbuilt is dropped before this
-//!   producer (#6965); this pass does not re-infer Cargo targets. A
+//!   producer (#6965); root-package autotest roots stay path-shape.
+//!   Nested-package membership uses the existing Cargo metadata
+//!   authority and fails closed when the probe is unavailable. A
 //!   module item cannot coexist with a same-named `use` import and wins
 //!   over a glob, so the call resolves to
 //!   it. A helper in a sibling or parent module (`use super::*`), or nested
@@ -68,6 +73,7 @@
 
 use super::{FunctionFact, FunctionSourceRole, OracleFact, RustIndex, TestFact};
 use crate::analysis::syntax::{ModuleItemScopes, module_item_scopes, parser_oracles_for_function};
+use crate::analysis::workspace::{CargoHarnessVerdict, ManifestInventory};
 use rayon::prelude::*;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
@@ -83,6 +89,9 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
         .workspace_authority
         .as_ref()
         .map(|authority| authority.root.as_path());
+    // One inventory for the whole pass: nested-package membership is
+    // cargo metadata, and that probe must run at most once (#3634).
+    let mut manifests = ManifestInventory::default();
     let mut names_by_file: BTreeMap<&PathBuf, BTreeMap<&str, Vec<&FunctionFact>>> = BTreeMap::new();
     let mut test_files: BTreeSet<&PathBuf> = BTreeSet::new();
     for test in index.tests().iter() {
@@ -105,7 +114,7 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
         let candidate = test.calls.iter().any(|call| {
             matches!(
                 names.get(call.name.as_str()).map(Vec::as_slice),
-                Some([helper]) if is_assertion_helper(helper, workspace_root)
+                Some([helper]) if is_assertion_helper(helper, workspace_root, &mut manifests)
                     && !test_shadows(test, &call.name)
                     && !spans_overlap(helper, test)
             )
@@ -172,9 +181,12 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             if credited_helpers.contains(&call.name.as_str()) {
                 continue;
             }
-            let Some(helper) =
-                unique_assertion_helper(functions_by_name, &call.name, workspace_root)
-            else {
+            let Some(helper) = unique_assertion_helper(
+                functions_by_name,
+                &call.name,
+                workspace_root,
+                &mut manifests,
+            ) else {
                 continue;
             };
             let helper_key = (helper.start_line, helper.name.clone());
@@ -232,9 +244,10 @@ fn unique_assertion_helper<'facts>(
     functions_by_name: &BTreeMap<String, Vec<&'facts FunctionFact>>,
     name: &str,
     workspace_root: Option<&Path>,
+    manifests: &mut ManifestInventory,
 ) -> Option<&'facts FunctionFact> {
     match functions_by_name.get(name)?.as_slice() {
-        [helper] if is_assertion_helper(helper, workspace_root) => Some(helper),
+        [helper] if is_assertion_helper(helper, workspace_root, manifests) => Some(helper),
         _ => None,
     }
 }
@@ -248,11 +261,15 @@ fn unique_assertion_helper<'facts>(
 /// because the helper is not inside a cfg-test module. Executable test
 /// roles and production files stay out, so a `src/` helper — including
 /// `src/tests/` (#6979) — cannot become test evidence here.
-fn is_assertion_helper(helper: &FunctionFact, workspace_root: Option<&Path>) -> bool {
+fn is_assertion_helper(
+    helper: &FunctionFact,
+    workspace_root: Option<&Path>,
+    manifests: &mut ManifestInventory,
+) -> bool {
     match helper.source_role {
         FunctionSourceRole::CfgTestModule => true,
         FunctionSourceRole::Production => {
-            is_crate_root_integration_test_file(&helper.file, workspace_root)
+            is_crate_root_integration_test_file(&helper.file, workspace_root, manifests)
         }
         _ => false,
     }
@@ -274,15 +291,29 @@ fn is_assertion_helper(helper: &FunctionFact, workspace_root: Option<&Path>) -> 
 /// root. No manifest found (synthetic indexes) falls back to the
 /// repository-relative first-`tests` shape. Finding a manifest whose
 /// remaining path is not an autotest root stays refused: `tests/support/`
-/// and `src/tests/` cannot become test evidence. `autotests = false`
-/// leaving an undeclared `tests/*.rs` unbuilt is owned by the
-/// analysis-pipeline drop (#6965); this check does not re-infer whether
-/// Cargo builds the target.
-fn is_crate_root_integration_test_file(path: &Path, workspace_root: Option<&Path>) -> bool {
+/// and `src/tests/` cannot become test evidence. Root-package
+/// `tests/<name>.rs` stays path-shape; `autotests = false` leaving an
+/// undeclared file unbuilt is owned by the analysis-pipeline drop
+/// (#6965). A nested package (nearest manifest is not the workspace
+/// root) additionally requires Cargo's metadata inventory to list the
+/// path as a workspace test target, so `[workspace] exclude` cannot
+/// become test evidence. `NotDeclared` and `ManifestUnavailable` fail
+/// closed (under-credit, never over-credit).
+fn is_crate_root_integration_test_file(
+    path: &Path,
+    workspace_root: Option<&Path>,
+    manifests: &mut ManifestInventory,
+) -> bool {
     if let Some(root) = workspace_root
-        && let Some(relative) = path_from_nearest_manifest(root, path)
+        && let Some((manifest_dir, relative)) = path_from_nearest_manifest(root, path)
     {
-        return is_package_autotest_root(&relative);
+        if !is_package_autotest_root(&relative) {
+            return false;
+        }
+        if manifest_dir == root {
+            return true;
+        }
+        return nested_package_autotest_is_workspace_member(root, path, manifests);
     }
     is_repository_relative_autotest_root(path)
 }
@@ -291,7 +322,10 @@ fn is_crate_root_integration_test_file(path: &Path, workspace_root: Option<&Path
 /// above it, stopping at `workspace_root`. `None` when no manifest exists
 /// in that walk, so callers can fall back to the repository-relative
 /// layout check used by synthetic indexes.
-fn path_from_nearest_manifest(workspace_root: &Path, file: &Path) -> Option<Vec<String>> {
+fn path_from_nearest_manifest(
+    workspace_root: &Path,
+    file: &Path,
+) -> Option<(PathBuf, Vec<String>)> {
     let full = if file.is_absolute() {
         file.to_path_buf()
     } else {
@@ -303,13 +337,30 @@ fn path_from_nearest_manifest(workspace_root: &Path, file: &Path) -> Option<Vec<
             return None;
         }
         if dir.join("Cargo.toml").is_file() {
-            return Some(path_components(full.strip_prefix(&dir).ok()?));
+            let relative = path_components(full.strip_prefix(&dir).ok()?);
+            return Some((dir, relative));
         }
         if dir == workspace_root {
             return None;
         }
         dir = dir.parent()?.to_path_buf();
     }
+}
+
+/// Nested-package autotest credit uses Cargo's own membership and
+/// test-target inventory. `HarnessEnabled` and `HarnessDisabled` both
+/// mean the path is a workspace test target; the harness flag is not
+/// this producer's concern. Missing or unprobeable inventory grants
+/// nothing.
+fn nested_package_autotest_is_workspace_member(
+    workspace_root: &Path,
+    file: &Path,
+    manifests: &mut ManifestInventory,
+) -> bool {
+    matches!(
+        manifests.verdict(workspace_root, file),
+        CargoHarnessVerdict::HarnessEnabled | CargoHarnessVerdict::HarnessDisabled
+    )
 }
 
 fn path_components(path: &Path) -> Vec<String> {

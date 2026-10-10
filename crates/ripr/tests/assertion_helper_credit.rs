@@ -242,6 +242,37 @@ fn nested_package_integration_helper_exposes_the_changed_predicate() -> Result<(
 }
 
 #[test]
+fn excluded_nested_package_integration_helper_does_not_expose() -> Result<(), String> {
+    // A tests/harness package that the workspace excludes is not a Cargo
+    // member. Its tests/*.rs helper must not promote the root owner.
+    let finding = TempRepo::create_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = \"assertion-helper-credit\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\nexclude = [\"tests/harness\"]\n"
+                .to_string(),
+        ),
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/harness/Cargo.toml",
+            "[package]\nname = \"harness\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nassertion-helper-credit = { path = \"../..\" }\n"
+                .to_string(),
+        ),
+        ("tests/harness/src/lib.rs", String::new()),
+        (
+            "tests/harness/tests/gate.rs",
+            integration_source(check_eq_helper()),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "an excluded nested package is not workspace test evidence: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn nested_tests_support_tests_check_helper_does_not_expose() -> Result<(), String> {
     // Same remaining-path shape as tests/harness/tests/gate.rs without a
     // nested package manifest must not become exposed.

@@ -409,7 +409,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// is no longer under-credited. `tests/support/tests/` without that
 /// manifest stays uncredited. Warm `1.56` entries keep the nested-member
 /// under-credit.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.57";
+/// `1.58`: nested-package autotest helpers additionally require Cargo
+/// metadata membership, so a `[workspace] exclude` package cannot stay
+/// `exposed` from a warm `1.57` hit (#7125).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.58";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -509,7 +512,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.57";
 /// (#7125).
 /// `0.63`: same nested-member autotest-root transition as full `1.57`
 /// (#7125).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.63";
+/// `0.64`: same nested-package membership gate as full `1.58` (#7125).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.64";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -611,7 +615,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.63";
 /// (#7125).
 /// `0.63`: same nested-member autotest-root transition as full `1.57`
 /// (#7125).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.63";
+/// `0.64`: same nested-package membership gate as full `1.58` (#7125).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.64";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4240,7 +4245,9 @@ mod tests {
         // byte-spelling-shifted ID and must cold-recompute.
         // 1.55 -> 1.56: integration-target check helpers credited (#7125).
         // 1.56 -> 1.57: nested-member autotest helpers credited (#7125).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.57");
+        // 1.57 -> 1.58: nested-package helpers require Cargo membership
+        // so an excluded package cannot stay exposed (#7125).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.58");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4290,8 +4297,9 @@ mod tests {
         // full 1.55 (#7203).
         // 0.61 -> 0.62: same #7125 transition as full 1.56.
         // 0.62 -> 0.63: same nested-member transition as full 1.57.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.63");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.63");
+        // 0.63 -> 0.64: same nested-package membership gate as full 1.58.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.64");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.64");
     }
 
     #[test]

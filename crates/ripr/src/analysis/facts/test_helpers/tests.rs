@@ -391,7 +391,11 @@ fn workspace_crate_integration_helper_is_credited() -> Result<(), Box<dyn Error>
 #[test]
 fn crate_root_integration_layout_rejects_src_tests_and_keeps_tests_roots() {
     fn layout(path: &str) -> bool {
-        super::is_crate_root_integration_test_file(Path::new(path), None)
+        super::is_crate_root_integration_test_file(
+            Path::new(path),
+            None,
+            &mut super::ManifestInventory::default(),
+        )
     }
     assert!(layout("tests/gate.rs"));
     assert!(layout("crates/demo/tests/gate.rs"));
@@ -438,6 +442,7 @@ fn nested_package_integration_helper_is_credited() -> Result<(), Box<dyn Error>>
             "tests/harness/Cargo.toml",
             "[package]\nname = 'harness'\nversion = '0.1.0'\nedition = '2021'\n",
         ),
+        ("tests/harness/src/lib.rs", ""),
         ("tests/harness/tests/gate.rs", INTEGRATION_CHECK),
     ])?;
     let helper = index
@@ -457,6 +462,30 @@ fn nested_package_integration_helper_is_credited() -> Result<(), Box<dyn Error>>
         assertion_texts(test),
         vec!["assert_eq!(gate(input), want);"]
     );
+    Ok(())
+}
+
+#[test]
+fn excluded_nested_package_integration_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // Same autotest remaining-path as the nested-member pin, but the
+    // workspace excludes tests/harness. Cargo metadata does not list
+    // that package; nearest-manifest path shape alone would over-credit.
+    let index = index_for_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = 'root'\nversion = '0.1.0'\nedition = '2021'\n[workspace]\nexclude = ['tests/harness']\n",
+        ),
+        ("src/lib.rs", GATE),
+        (
+            "tests/harness/Cargo.toml",
+            "[package]\nname = 'harness'\nversion = '0.1.0'\nedition = '2021'\n",
+        ),
+        ("tests/harness/src/lib.rs", ""),
+        ("tests/harness/tests/gate.rs", INTEGRATION_CHECK),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
     Ok(())
 }
 
