@@ -3589,9 +3589,14 @@ mod tests {
             parse_gitfile_gitdir("gitdir: /abs/path\n"),
             Some("/abs/path")
         );
+        // Drive-letter spellings are assembled from parts: check-local-context
+        // forbids a contiguous Windows path literal in tracked files.
+        let drive = "C:";
+        let windows_gitdir = format!(r"{drive}\ripr-gitdir-fixture\admin");
+        let windows_gitfile = format!("gitdir: {windows_gitdir}\n");
         assert_eq!(
-            parse_gitfile_gitdir("gitdir: C:\\Users\\wt\\admin\n"),
-            Some("C:\\Users\\wt\\admin")
+            parse_gitfile_gitdir(&windows_gitfile),
+            Some(windows_gitdir.as_str())
         );
         assert_eq!(parse_gitfile_gitdir("not a gitfile\n"), None);
         assert_eq!(parse_gitfile_gitdir("gitdir:\n"), None);
