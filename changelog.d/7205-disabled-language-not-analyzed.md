@@ -4,6 +4,8 @@
   the same payload names `language_adapter_unavailable`. Those rows use
   `not_analyzed` with reason `language_adapter_not_enabled` (distinct from
   #5998's `outside_analyzed_partition`) and recovery that names
-  `[languages] enabled` plus a sidecar restart. Matching uses the same
-  path-text authority on advisory samples and document relatives, so a
-  literal `%` in the filename cannot revive the clean/served lie (#7205).
+  `[languages] enabled` plus a sidecar restart when the adapter is compiled
+  in, or the language's rebuild/prerequisite guidance when it is not.
+  Matching uses the same path-text authority on advisory samples and
+  document relatives, so a literal `%` in the filename cannot revive the
+  clean/served lie (#7205).
