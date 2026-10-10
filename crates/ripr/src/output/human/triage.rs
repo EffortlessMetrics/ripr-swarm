@@ -444,10 +444,11 @@ pub(crate) fn canonical_next_action_for_triage(
         producer: NextActionProducer::CheckTopResult,
         root,
         // The diff-source mode comes from the producer's declared
-        // provenance, never from base presence: a `--worktree` run
-        // resolves a base yet analyzes the live tree, while a supplied
-        // scope has no base yet is fixed replayable content, not the
-        // live tree.
+        // provenance of the effective analysis source (#7257), never
+        // from base presence and never re-inferred here: a `--worktree`
+        // run or dirty-default worktree run resolves a base yet analyzes
+        // the live tree, while a supplied scope has no base yet is fixed
+        // replayable content, not the live tree.
         diff_source: match provenance {
             CheckDiffProvenance::Worktree => NextActionDiffSource::WorkingTree { head: None },
             CheckDiffProvenance::SuppliedScope => NextActionDiffSource::Committed {
@@ -1234,6 +1235,62 @@ mod tests {
                 head: None,
             } if base == "HEAD~1" => {}
             other => return Err(format!("committed run mislabeled: {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// #7257: the pre-fix producer chose provenance from
+    /// `worktree_explicitly_provided`. A dirty-default run has that flag
+    /// false and `worktree_run` true; the adapter must not hide that the
+    /// flag-only selector yields committed history.
+    #[test]
+    fn worktree_flag_selector_misattributes_dirty_default_as_committed_history()
+    -> Result<(), String> {
+        let worktree_explicitly_provided = false;
+        let worktree_run = true;
+        let supplied_scope = false;
+        let flag_only = if worktree_explicitly_provided {
+            CheckDiffProvenance::Worktree
+        } else if supplied_scope {
+            CheckDiffProvenance::SuppliedScope
+        } else {
+            CheckDiffProvenance::CommittedHistory
+        };
+        if flag_only != CheckDiffProvenance::CommittedHistory {
+            return Err("flag-only selector must still misattribute the dirty default".to_string());
+        }
+        let effective = CheckDiffProvenance::from_effective_source(worktree_run, supplied_scope);
+        if effective != CheckDiffProvenance::Worktree {
+            return Err("effective source must be the working tree".to_string());
+        }
+
+        let top = test_finding("finding:top");
+        let triage = HumanTriage {
+            state: HumanTriageState::TopGap,
+            selected: Some(&top),
+            omitted: Vec::new(),
+        };
+        let output = test_output(vec![top.clone()]);
+        let misattributed = canonical_next_action_for_triage(&triage, &output, None, flag_only)?;
+        match &misattributed.subject().diff_source {
+            NextActionDiffSource::Committed { .. } => {}
+            other => {
+                return Err(format!(
+                    "flag-only provenance must claim committed history: {other:?}"
+                ));
+            }
+        }
+        let bound = canonical_next_action_for_triage(&triage, &output, None, effective)?;
+        match &bound.subject().diff_source {
+            NextActionDiffSource::WorkingTree { .. } => {}
+            other => {
+                return Err(format!(
+                    "effective provenance must claim the working tree: {other:?}"
+                ));
+            }
+        }
+        if bound.subject().item != misattributed.subject().item {
+            return Err("item identity must not depend on provenance".to_string());
         }
         Ok(())
     }
