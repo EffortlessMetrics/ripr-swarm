@@ -4077,7 +4077,8 @@ pub fn positions(x: u32, v: &[u32]) -> u32 {
     {
         // #7101: a same-module `type X = ();` return is unit, so the tail
         // call keeps `call_presence`. A non-unit alias, a qualified path,
-        // a chained alias, and `Self::Output` stay consumed.
+        // a chained alias, `Self::Output`, cfg-gated aliases, competing
+        // same-name imports, and const/static block shadows stay consumed.
         let path = PathBuf::from("src/alias.rs");
         let source = r#"
 type Unit = ();
@@ -4160,6 +4161,37 @@ impl<Unit> GenericHolder<Unit> {
         method_generic_notify()
     }
 }
+
+#[allow(dead_code)]
+type Allowed = ();
+pub fn allowed_alias_tail() -> Allowed {
+    allowed_notify()
+}
+
+#[cfg(windows)]
+type CfgUnit = ();
+mod cfg_other {
+    pub type CfgUnit = u32;
+}
+#[cfg(not(windows))]
+use cfg_other::CfgUnit;
+pub fn cfg_alias_tail() -> CfgUnit {
+    cfg_notify()
+}
+
+const _: () = {
+    type Unit = u32;
+    fn inner_const() -> Unit {
+        const_shadow_notify()
+    }
+};
+
+static SHADOW: () = {
+    type Unit = u32;
+    fn inner_static() -> Unit {
+        static_shadow_notify()
+    }
+};
 "#;
         let index = index_from_files(&[(path.clone(), source)])?;
         let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
@@ -4177,6 +4209,7 @@ impl<Unit> GenericHolder<Unit> {
             "inner_notify()".to_string(),
             "inner_shadow()".to_string(),
             "inner_unit()".to_string(),
+            "allowed_notify()".to_string(),
         ];
         expected.sort();
         assert_eq!(

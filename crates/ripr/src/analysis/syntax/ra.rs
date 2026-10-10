@@ -1891,12 +1891,13 @@ fn enclosing_module_item_list(
     // Nested `fn` items can see an outer function's body aliases, which this
     // syntax walk does not resolve. Stop at the enclosing `fn` so a
     // block-local `type Unit = u32` cannot be overridden by a module
-    // `type Unit = ()`. Methods still continue through `ASSOC_ITEM_LIST`
-    // to the module list. Extern blocks use `EXTERN_ITEM_LIST`, not
-    // `ITEM_LIST`.
+    // `type Unit = ()`. Const/static initializer blocks and other block
+    // expressions can also bind a local alias; stop there too. Methods
+    // still continue through `ASSOC_ITEM_LIST` to the module list. Extern
+    // blocks use `EXTERN_ITEM_LIST`, not `ITEM_LIST`.
     for ancestor in function.ancestors().skip(1) {
         match ancestor.kind() {
-            K::FN => return None,
+            K::FN | K::BLOCK_EXPR | K::CONST | K::STATIC => return None,
             K::SOURCE_FILE | K::ITEM_LIST => return Some(ancestor),
             _ => {}
         }
@@ -1956,10 +1957,57 @@ fn assoc_type_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
     })
 }
 
+fn attr_is_cfg(attribute: &ast::Attr) -> bool {
+    let compact: String = attribute
+        .syntax()
+        .text()
+        .to_string()
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect();
+    compact.starts_with("#[cfg") || compact.starts_with("#![cfg")
+}
+
+fn type_alias_has_cfg(alias: &ast::TypeAlias) -> bool {
+    alias.attrs().any(|attribute| attr_is_cfg(&attribute))
+}
+
+fn path_last_segment_name(path: &ast::Path) -> Option<String> {
+    Some(path.segment()?.name_ref()?.text().to_string())
+}
+
+fn use_tree_binds_name(tree: &ast::UseTree, name: &str) -> bool {
+    if let Some(rename) = tree.rename() {
+        return rename
+            .name()
+            .is_some_and(|rename_name| rename_name.text() == name);
+    }
+    if tree.star_token().is_some() {
+        return false;
+    }
+    if let Some(list) = tree.use_tree_list() {
+        return list
+            .use_trees()
+            .any(|child| use_tree_binds_name(&child, name));
+    }
+    tree.path()
+        .and_then(|path| path_last_segment_name(&path))
+        .is_some_and(|segment| segment == name)
+}
+
+fn item_list_use_binds_name(items: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    items.children().filter_map(ast::Use::cast).any(|use_item| {
+        use_item
+            .use_tree()
+            .is_some_and(|tree| use_tree_binds_name(&tree, name))
+    })
+}
+
 /// Syntax-only: a same-module `type Name = ();` (or `( )`) whose name
 /// matches a bare return path. Aliases in other modules, associated types,
 /// a function or impl/trait type parameter of the same name, a further
-/// alias of that name, and nested functions stay unresolved.
+/// alias of that name, nested functions, cfg-gated aliases, and a competing
+/// same-name `use` stay unresolved.
 fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::SyntaxNode) -> bool {
     let Some(name) = bare_type_path_name(path_type) else {
         return false;
@@ -1970,6 +2018,9 @@ fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::Sy
     let Some(items) = enclosing_module_item_list(function) else {
         return false;
     };
+    if item_list_use_binds_name(&items, &name) {
+        return false;
+    }
     let mut saw_unit = false;
     for child in items.children() {
         let Some(alias) = ast::TypeAlias::cast(child) else {
@@ -1981,7 +2032,10 @@ fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::Sy
         if alias_name.text() != name.as_str() {
             continue;
         }
-        if alias.generic_param_list().is_some() || !type_is_unit_tuple(alias.ty()) {
+        if alias.generic_param_list().is_some()
+            || !type_is_unit_tuple(alias.ty())
+            || type_alias_has_cfg(&alias)
+        {
             return false;
         }
         saw_unit = true;
@@ -2704,6 +2758,8 @@ pub fn validate(value: i32) -> Result<i32, String> {
     fn same_module_unit_type_alias_return_is_not_a_consumed_tail() -> Result<(), Box<dyn Error>> {
         // #7101: `type Unit = (); fn run() -> Unit { notify() }` still
         // compiles as `fn run() -> Unit {}`, so the tail is unconsumed.
+        // cfg-gated aliases, competing imports, and const/static shadows
+        // stay consumed.
         let source = r#"
 type Unit = ();
 type Spaced = ( );
@@ -2785,6 +2841,37 @@ impl<Unit> GenericHolder<Unit> {
         method_generic_notify()
     }
 }
+
+#[allow(dead_code)]
+type Allowed = ();
+pub fn allowed_alias_tail() -> Allowed {
+    allowed_notify()
+}
+
+#[cfg(windows)]
+type CfgUnit = ();
+mod cfg_other {
+    pub type CfgUnit = u32;
+}
+#[cfg(not(windows))]
+use cfg_other::CfgUnit;
+pub fn cfg_alias_tail() -> CfgUnit {
+    cfg_notify()
+}
+
+const _: () = {
+    type Unit = u32;
+    fn inner_const() -> Unit {
+        const_shadow_notify()
+    }
+};
+
+static SHADOW: () = {
+    type Unit = u32;
+    fn inner_static() -> Unit {
+        static_shadow_notify()
+    }
+};
 "#;
         let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
         let consumed = |name: &str| {
@@ -2807,6 +2894,7 @@ impl<Unit> GenericHolder<Unit> {
             "reset()",
             "work()",
             "inner_notify()",
+            "allowed_notify()",
         ] {
             assert!(
                 unconsumed(call),
@@ -2829,6 +2917,9 @@ impl<Unit> GenericHolder<Unit> {
             "nested_unit_notify()",
             "generic_notify()",
             "method_generic_notify()",
+            "cfg_notify()",
+            "const_shadow_notify()",
+            "static_shadow_notify()",
         ] {
             assert!(
                 consumed(call),
