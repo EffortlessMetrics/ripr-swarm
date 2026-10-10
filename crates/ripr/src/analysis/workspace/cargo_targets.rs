@@ -380,7 +380,7 @@ impl ManifestInventory {
                         // contribute its flag to a live target that
                         // another entry owns.
                         let matched = match &target.name {
-                            Some(name) => name == owner.name,
+                            Some(name) => name == &owner.name,
                             None => target.path == anchored,
                         };
                         if matched {
