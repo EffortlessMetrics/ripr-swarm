@@ -1,0 +1,17 @@
+{
+  "head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+  "independent_paths": 51,
+  "independent_categories": {
+    "rust": true,
+    "workflow": true,
+    "policy": true,
+    "fixture": false
+  },
+  "report": "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n\nRan:\n- fmt --check\n- check-static-language\n- check-command-catalog\n- check-no-panic-family\n- check-allow-attributes\n- check-file-policy\n- clippy\n- check-workflows\n- check-covered-by\n- check-process-policy\n- check-network-policy\n- check-generated\n- check-generated-clean\n- check-lint-policy\n\nSkipped:\n- check-fixture-contracts\n",
+  "reported_ran_count": 14,
+  "expected_ran_count": 14,
+  "expected_skipped": [
+    "check-fixture-contracts"
+  ],
+  "selector_matches": true
+}

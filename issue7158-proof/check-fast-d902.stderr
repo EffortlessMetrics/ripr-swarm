@@ -1,0 +1,4 @@
+$ cargo fmt --check
+$ cargo clippy --workspace --all-targets -- -D warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.32s
+check-fast: ran 14 gate(s), skipped 1 (check-fixture-contracts), base=origin/main, 51 file(s) changed

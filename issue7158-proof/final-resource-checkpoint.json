@@ -1,0 +1,17 @@
+{
+  "utc": "2026-10-10T06:41:48.053645+00:00",
+  "active_compiler_or_owned_xtask_processes": [],
+  "retained_session": {
+    "id": 87550,
+    "native_exit": 0,
+    "completed": true
+  },
+  "free_bytes": 20902576128,
+  "reserve_bytes": 12884901888,
+  "private_target_apparent_bytes": 9364148518,
+  "baseline_next_admission_bytes": 8589934592,
+  "current_baseline_admission_permitted": false,
+  "resource_status": "all owned source, frozen binaries, reports, target outputs retained with reason; no cleanup after pause request",
+  "inherited_root_target": "awaiting owner verification; untouched",
+  "no_further_driver": "parent requested pause; baseline final script prepared but never launched"
+}

@@ -16,9 +16,10 @@
   ],
   "timeout_bound": {
     "driver_overall": "no wall-clock deadline configured",
-    "check_fast_cargo_clippy": "repository run helper has no per-step wall-clock cap",
-    "file_policy_enumeration": "300s per supported enumeration command",
-    "tool_build_default": "read source constants separately; no override introduced"
+    "precommit_and_check_fast_clippy": "repository capture/run helper has no per-step wall-clock cap",
+    "file_policy_compile": "1800s per compile command",
+    "file_policy_list": "300s per list command",
+    "general_tool_build_default": "900s; no override introduced"
   },
   "free_bytes": 20902735872,
   "reserve_bytes": 12884901888,
@@ -26,5 +27,11 @@
   "pending": [
     "baseline check-fast completion (prior native143 preserved)",
     "published-head CI/review"
-  ]
+  ],
+  "safe_boundary_result": {
+    "driver_native_exit": 0,
+    "check_fast_native_exit": 0,
+    "check_fast_wall_seconds": 136.0642,
+    "active_processes": []
+  }
 }

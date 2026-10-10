@@ -7,9 +7,8 @@
   "disposition": "REVIEW_INCOMPLETE",
   "blocking_source_findings": [],
   "remaining": [
-    "final-head whole-candidate gates",
-    "baseline check-fast completion",
-    "published-head CI/review"
+    "baseline check-fast completion (parent paused new admission)",
+    "exact published-head CI/review"
   ],
   "trust_boundary": "Receipt hashes establish currentness, not authenticity against another writer able to forge a receipt in the private trusted target directory.",
   "guidance_followup": {
@@ -40,5 +39,6 @@
       "claim": "one identity-owning dispatch boundary; stale preflight removes old receipt",
       "blocking_findings": []
     }
-  ]
+  ],
+  "local_gates": "final d902 precommit and check-fast both native exit0"
 }
