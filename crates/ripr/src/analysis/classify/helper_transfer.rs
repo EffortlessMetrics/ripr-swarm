@@ -221,11 +221,12 @@ fn tests_call_matching(
 ) -> bool {
     !name.is_empty()
         && index.tests().iter().any(|test| {
-            let imports = source_imports_foreign_entry(
-                index,
-                indexed_source(index, &test.file, test.body.as_str()),
-                name,
-            );
+            let file_facts = index.files().get(&test.file);
+            let source = match &file_facts {
+                Some(facts) => facts.source.as_ref(),
+                None => test.body.as_str(),
+            };
+            let imports = source_imports_foreign_entry(index, source, name);
             test.calls.iter().any(|call| {
                 call.name == name
                     && named_entry_kinds(&call.text, name).iter().any(|kind| {
@@ -247,14 +248,6 @@ fn tests_call_matching(
                     })
             })
         })
-}
-
-fn indexed_source<'a>(index: &'a RustIndex, file: &std::path::Path, fallback: &'a str) -> &'a str {
-    index
-        .files()
-        .get(file)
-        .map(|facts| facts.source.as_ref())
-        .unwrap_or(fallback)
 }
 
 /// Import identity only. Do not reuse `test_call_is_shadowed`: uniqueness
@@ -313,11 +306,12 @@ fn caller_invokes_named_entry(
     stop_name: &str,
     index: &RustIndex,
 ) -> bool {
-    let imports = source_imports_foreign_entry(
-        index,
-        indexed_source(index, &caller.file, caller.body.as_str()),
-        stop_name,
-    );
+    let file_facts = index.files().get(&caller.file);
+    let source = match &file_facts {
+        Some(facts) => facts.source.as_ref(),
+        None => caller.body.as_str(),
+    };
+    let imports = source_imports_foreign_entry(index, source, stop_name);
     caller.calls.iter().any(|call| {
         call.name == stop_name
             && named_entry_kinds(&call.text, stop_name).iter().any(|kind| {
