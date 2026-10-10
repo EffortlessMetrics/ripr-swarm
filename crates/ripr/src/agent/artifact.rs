@@ -248,16 +248,7 @@ fn analysis_artifact_metadata(
 ) -> Result<Value, String> {
     let root = canonical_root(&context.root)?;
     let head = current_git_head(&root).unwrap_or_else(|_| "unavailable".to_string());
-    let status = git_output(&root, &["status", "--porcelain", "--untracked-files=no"])
-        .ok()
-        .map(|value| {
-            if value.trim().is_empty() {
-                "clean"
-            } else {
-                "dirty"
-            }
-        })
-        .unwrap_or("unavailable");
+    let status = current_git_worktree_status(&root).unwrap_or("unavailable");
     Ok(json!({
         "kind": artifact_kind,
         "schema_version": ARTIFACT_IDENTITY_SCHEMA_VERSION,
@@ -788,6 +779,17 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
         ));
     }
     Ok(head.to_string())
+}
+
+/// The artifact producer's bounded worktree probe, shared with limitation
+/// disclosure. A successful HEAD read alone does not establish this status.
+pub(crate) fn current_git_worktree_status(root: &Path) -> Result<&'static str, String> {
+    let status = git_output(root, &["status", "--porcelain", "--untracked-files=no"])?;
+    Ok(if status.trim().is_empty() {
+        "clean"
+    } else {
+        "dirty"
+    })
 }
 
 /// A HEAD read that also detects an A-B-A swap between two reads (#5930).

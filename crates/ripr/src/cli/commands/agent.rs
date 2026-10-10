@@ -279,11 +279,13 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, String> {
         AgentBriefPolicy::from_config(&config),
     );
     // A supplied diff has no base even in a committed Git checkout. Probe the
-    // same concrete HEAD adapter used by the artifact producer instead of
+    // same HEAD/worktree adapters used by the artifact producer instead of
     // inferring verification provenance from the working-set selector.
-    if let Err(error) = crate::agent::artifact::current_git_head(&input.root) {
+    let provenance = crate::agent::artifact::current_git_head(&input.root)
+        .and_then(|_| crate::agent::artifact::current_git_worktree_status(&input.root));
+    if let Err(error) = provenance {
         selection.warnings.push(format!(
-            "{} This root's revision provenance is unavailable: {error}. Saved-patch analysis and agent brief remain supported; use an existing Git checkout with a committed HEAD for the snapshot/verify flow.",
+            "{} This root's Git/revision provenance is unavailable: {error}. Saved-patch analysis and agent brief remain supported; use an existing Git checkout with a committed HEAD and available worktree status for the snapshot/verify flow.",
             crate::agent::artifact::VERIFY_GIT_PROVENANCE_REQUIREMENT,
         ));
     }
