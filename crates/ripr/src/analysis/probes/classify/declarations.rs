@@ -30,7 +30,7 @@ pub(super) fn type_bound_lines(
             };
             root.syntax()
                 .descendants()
-                .filter(supported_type_bound)
+                .filter(supported_bound_declaration)
                 .any(|node| {
                     let range = node.text_range();
                     u32::from(range.start()) as usize <= span.start
@@ -89,9 +89,9 @@ pub(super) fn declaration_shape<'a>(
 fn supported_declaration(node: &SyntaxNode) -> bool {
     // Where predicates (including lifetime and higher-ranked bounds) and
     // generic parameters are type syntax. Admission still requires every
-    // nontrivia token of this exact changed line to fit the parser node;
+    // nontrivia token of this exact changed line to fit its declaration owner;
     // shared runtime bodies and macro token trees cannot borrow its authority.
-    if supported_type_bound(node) {
+    if supported_bound_declaration(node) {
         return true;
     }
     if ast::Param::can_cast(node.kind()) || ast::SelfParam::can_cast(node.kind()) {
@@ -122,6 +122,22 @@ fn supported_type_bound(node: &SyntaxNode) -> bool {
         || ast::WherePred::can_cast(node.kind())
         || ast::TypeParam::can_cast(node.kind())
         || ast::LifetimeParam::can_cast(node.kind()))
+        && !node.descendants().any(|child| {
+            ast::Expr::can_cast(child.kind()) || ast::MacroCall::can_cast(child.kind())
+        })
+}
+
+fn supported_bound_declaration(node: &SyntaxNode) -> bool {
+    if supported_type_bound(node) {
+        return true;
+    }
+    // An inline bound occupies only part of its item. The complete item may
+    // own a changed line only when it contains no executable or macro syntax.
+    // Function bodies and code sharing the item line cannot borrow this range.
+    (ast::Struct::can_cast(node.kind())
+        || ast::Impl::can_cast(node.kind())
+        || ast::TypeAlias::can_cast(node.kind()))
+        && node.descendants().any(|child| supported_type_bound(&child))
         && !node.descendants().any(|child| {
             ast::Expr::can_cast(child.kind()) || ast::MacroCall::can_cast(child.kind())
         })

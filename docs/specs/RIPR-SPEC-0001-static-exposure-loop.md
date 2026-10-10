@@ -40,7 +40,10 @@ never reads as "no behavioral candidates" (#4216 row 5).
 Parser-confirmed Rust where clauses and generic type/lifetime bounds without
 expression or macro descendants are compile-time syntax, not runtime field
 construction (#7251). Declaration-only changed lines retain `static_unknown`
-probes. Const expressions and macro types retain existing fallback evidence.
+probes. An inline bound may use its enclosing struct, impl or type-alias item
+as declaration authority only when the whole changed line is contained by that
+item and the item has no expression or macro descendants. Const expressions
+and macro types retain existing fallback evidence.
 Real expressions on a shared line
 keep their existing parser-owned runtime probes. Comments, strings and macro
 token trees cannot establish declaration authority. Removed bounds require

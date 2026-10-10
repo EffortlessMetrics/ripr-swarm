@@ -659,3 +659,232 @@ fn removed_bounds_use_registered_old_attributes() -> Result<(), String> {
     std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
     result
 }
+
+fn inline_item_subject(
+    item: &str,
+    prefix: &str,
+    removed: bool,
+) -> Result<(String, ChangedFile), String> {
+    let old_source = format!("{prefix}{item}\nfn anchor() {{}}\n");
+    RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &old_source)?;
+    let source = if removed {
+        format!("{prefix}fn anchor() {{}}\n")
+    } else {
+        old_source
+    };
+    let retained = prefix
+        .lines()
+        .map(|line| format!(" {line}\n"))
+        .collect::<String>();
+    let context_lines = prefix.lines().count() + 1;
+    let (old_count, new_count, marker) = if removed {
+        (context_lines + 1, context_lines, '-')
+    } else {
+        (context_lines, context_lines + 1, '+')
+    };
+    let diff = format!(
+        "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{old_count} +1,{new_count} @@\n{retained}{marker}{item}\n fn anchor() {{}}\n"
+    );
+    let changed = crate::analysis::diff::parse_unified_diff(&diff)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "inline item diff has no subject".to_string())?;
+    assert_eq!(changed.added_lines.len(), usize::from(!removed));
+    assert_eq!(changed.removed_lines.len(), usize::from(removed));
+    Ok((source, changed))
+}
+
+fn inline_item_probes(item: &str, prefix: &str, removed: bool) -> Result<Vec<Probe>, String> {
+    let (source, changed) = inline_item_subject(item, prefix, removed)?;
+    probes(&source, changed)
+}
+
+fn inline_item_bound(item: &str, prefix: &str, removed: bool) -> Result<(), String> {
+    let result = inline_item_probes(item, prefix, removed)?;
+    assert_eq!(
+        result.len(),
+        1,
+        "inline item must retain exactly its subject: {result:?}"
+    );
+    let probe = &result[0];
+    assert_eq!(
+        probe.family,
+        ProbeFamily::StaticUnknown,
+        "inline declaration became executable: {item}, removed={removed}"
+    );
+    assert_eq!(probe.expression, item);
+    assert_eq!(probe.before.as_deref(), removed.then_some(item));
+    assert_eq!(probe.after.as_deref(), (!removed).then_some(item));
+    Ok(())
+}
+
+#[test]
+fn inline_struct_bound_added_stays_unknown() -> Result<(), String> {
+    inline_item_bound("struct Packet<T: Clone>;", "", false)
+}
+
+#[test]
+fn inline_struct_bound_removed_stays_unknown() -> Result<(), String> {
+    inline_item_bound("struct Packet<T: Clone>;", "", true)
+}
+
+#[test]
+fn inline_impl_bound_added_stays_unknown() -> Result<(), String> {
+    inline_item_bound(
+        "impl<T: Clone> Packet<T> {}",
+        "struct Packet<T>(T);\n",
+        false,
+    )
+}
+
+#[test]
+fn inline_impl_bound_removed_stays_unknown() -> Result<(), String> {
+    inline_item_bound(
+        "impl<T: Clone> Packet<T> {}",
+        "struct Packet<T>(T);\n",
+        true,
+    )
+}
+
+#[test]
+fn inline_type_alias_bound_added_stays_unknown() -> Result<(), String> {
+    inline_item_bound("type Packet<T: Clone> = Vec<T>;", "", false)
+}
+
+#[test]
+fn inline_type_alias_bound_removed_stays_unknown() -> Result<(), String> {
+    inline_item_bound("type Packet<T: Clone> = Vec<T>;", "", true)
+}
+
+#[test]
+fn inline_bound_owner_cannot_admit_shared_runtime_or_type_expressions() -> Result<(), String> {
+    for (prefix, item) in [
+        (
+            "struct Packet { Upper: u8 }\n",
+            "fn f<T: Clone>() { Packet { Upper: 7 }; }",
+        ),
+        (
+            "struct Packet<T>(T);\n",
+            "impl<T: Clone> Packet<T> { fn build(value: T) -> Self { Self(value) } }",
+        ),
+        (
+            "struct Other { Upper: u8 }\n",
+            "struct Packet<T: Clone>; fn run() { Other { Upper: 7 }; }",
+        ),
+        (
+            "trait Trait<const N: usize> {}\nconst fn width() -> usize { 4 }\n",
+            "type Packet<T: Trait<{ width() }>> = T;",
+        ),
+        ("trait Trait<U> {}\n", "struct Packet<T: Trait<types!()>>;"),
+        ("", "type Packet<T: Clone> = [T; 4];"),
+        ("", "struct Packet<T: Clone> { value: [T; 4] }"),
+    ] {
+        for removed in [false, true] {
+            let (source, changed) = inline_item_subject(item, prefix, removed)?;
+            let facts = RaRustSyntaxAdapter.summarize_file(&changed.path, &source)?;
+            let index = RustIndex::from_owned(OwnedRustIndex {
+                files: BTreeMap::from([(changed.path.clone(), facts)]),
+                ..Default::default()
+            });
+            let admitted = if removed {
+                super::classify::removed_type_bounds(Path::new("."), &[], &index, &changed).lines
+            } else {
+                super::classify::added_type_bound_lines(&index, &changed)
+            };
+            assert_eq!(
+                admitted,
+                [false],
+                "runtime/type-expression control acquired bound authority: {item}, removed={removed}"
+            );
+            let result = inline_item_probes(item, prefix, removed)?;
+            assert!(
+                !result.is_empty(),
+                "runtime/type-expression control vanished: {item}, removed={removed}"
+            );
+            if removed && item.starts_with("fn ") {
+                // The existing removed-line lexical fallback keeps a whole
+                // function declaration unknown, including its inline body.
+                // Bound admission above must remain false independently.
+                assert_eq!(result.len(), 1);
+                assert_eq!(result[0].family, ProbeFamily::StaticUnknown);
+                assert_eq!(result[0].before.as_deref(), Some(item));
+                assert_eq!(result[0].after, None);
+                assert_eq!(result[0].expression, item);
+            } else {
+                assert!(
+                    result
+                        .iter()
+                        .any(|p| p.family != ProbeFamily::StaticUnknown),
+                    "inline owner fabricated declaration-only authority: {item}, removed={removed}: {result:?}"
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn removed_inline_test_bound_preserves_old_test_exclusion() -> Result<(), String> {
+    for item in [
+        "struct Packet<T: Clone>;",
+        "impl<T: Clone> Packet<T> {}",
+        "type Packet<T: Clone> = Vec<T>;",
+    ] {
+        for test_only in [false, true] {
+            let attribute = if test_only { "#[cfg(test)]\n" } else { "" };
+            let prefix = if item.starts_with("impl<") {
+                "struct Packet<T>(T);\n"
+            } else {
+                ""
+            };
+            let deleted = format!("{attribute}mod checks {{\n{prefix}{item}\n}}\n");
+            let source = "fn retained() {}\n";
+            let old_source = format!("{deleted}{source}");
+            RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &old_source)?;
+            let deletions = deleted
+                .lines()
+                .map(|line| format!("-{line}\n"))
+                .collect::<String>();
+            let diff = format!(
+                "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{} +1,1 @@\n{deletions} {source}",
+                deleted.lines().count() + 1
+            );
+            let changed = crate::analysis::diff::parse_unified_diff(&diff)
+                .into_iter()
+                .next()
+                .ok_or_else(|| "no removed inline item subject".to_string())?;
+            let subject_index = changed
+                .removed_lines
+                .iter()
+                .position(|line| line.text == item)
+                .ok_or_else(|| "missing inline item changed line".to_string())?;
+            let facts = RaRustSyntaxAdapter.summarize_file(&changed.path, source)?;
+            let index = RustIndex::from_owned(OwnedRustIndex {
+                files: BTreeMap::from([(changed.path.clone(), facts)]),
+                ..Default::default()
+            });
+            let admission =
+                super::classify::removed_type_bounds(Path::new("."), &[], &index, &changed);
+            assert!(
+                admission.lines[subject_index],
+                "old inline item did not reach declaration admission: {item}"
+            );
+            let result = probes(source, changed)?;
+            let subject = result.iter().find(|p| p.before.as_deref() == Some(item));
+            if test_only {
+                assert!(
+                    subject.is_none(),
+                    "old inline test bound acquired production authority: {item}: {result:?}"
+                );
+            } else {
+                assert!(
+                    subject.is_some_and(
+                        |p| p.family == ProbeFamily::StaticUnknown && p.after.is_none()
+                    ),
+                    "production control lost its inline bound: {item}: {result:?}"
+                );
+            }
+        }
+    }
+    Ok(())
+}

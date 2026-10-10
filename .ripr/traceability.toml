@@ -9,6 +9,14 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_struct_bound_added_stays_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_struct_bound_removed_stays_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_impl_bound_added_stays_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_impl_bound_removed_stays_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_type_alias_bound_added_stays_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_type_alias_bound_removed_stays_unknown",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::inline_bound_owner_cannot_admit_shared_runtime_or_type_expressions",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_inline_test_bound_preserves_old_test_exclusion",
   "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_bounds_use_normalized_test_attributes",
   "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_bounds_use_registered_old_attributes",
   "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_bound_preserves_composed_test_file_exclusion",
