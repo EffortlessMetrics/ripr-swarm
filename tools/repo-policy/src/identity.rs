@@ -6,6 +6,46 @@ use std::path::Path;
 mod source_identity;
 const RECEIPT: &str = "target/ripr/reports/policy-preflight.json";
 
+pub fn enter_workspace_root() -> Result<(), String> {
+    let current = std::env::current_dir().map_err(|e| format!("policy workspace root: {e}"))?;
+    for root in current.ancestors() {
+        let manifest = root.join("Cargo.toml");
+        let helper = root.join("tools/repo-policy").is_dir();
+        let missing_manifest_boundary = !manifest.exists()
+            && root.join("Cargo.lock").exists()
+            && root.join("rust-toolchain.toml").exists();
+        let workspace = if helper || missing_manifest_boundary {
+            true
+        } else if manifest.is_file() {
+            std::fs::read_to_string(&manifest)
+                .map_err(|e| format!("policy workspace root: {}: {e}", manifest.display()))?
+                .lines()
+                .any(|line| {
+                    let header = line
+                        .split_once('#')
+                        .map_or(line, |(header, _)| header)
+                        .trim();
+                    header
+                        .strip_prefix('[')
+                        .and_then(|table| table.strip_suffix(']'))
+                        .and_then(|table| table.split('.').next())
+                        .is_some_and(|table| {
+                            matches!(table.trim(), "workspace" | "\"workspace\"" | "'workspace'")
+                        })
+                })
+        } else {
+            false
+        };
+        if workspace {
+            // A damaged nearest workspace must fail its identity check here,
+            // rather than falling through to a different enclosing checkout.
+            return std::env::set_current_dir(root)
+                .map_err(|e| format!("policy workspace root: {}: {e}", root.display()));
+        }
+    }
+    Err("policy workspace root not found from the current directory".into())
+}
+
 pub fn verify_executable_identity() -> Result<(), String> {
     let current = source_identity::source_identity(Path::new("."))?;
     if current != env!("REPO_POLICY_SOURCE_ID") {

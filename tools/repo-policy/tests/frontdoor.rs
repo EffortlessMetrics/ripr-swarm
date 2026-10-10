@@ -74,6 +74,201 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn nested_frontdoors_use_runtime_workspace_root() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let nested = fixture.0.join("tools/repo-policy/src");
+    for command in [
+        "check-workflows",
+        "check-agent-skills",
+        "preflight",
+        "verify-preflight",
+    ] {
+        let root_output = fixture.run(command)?;
+        assert!(
+            root_output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&root_output.stderr)
+        );
+        let nested_output = fixture
+            .command(command)
+            .current_dir(&nested)
+            .output()
+            .map_err(|e| e.to_string())?;
+        assert!(
+            nested_output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&nested_output.stderr)
+        );
+        assert_eq!(nested_output.stdout, root_output.stdout);
+        assert_eq!(nested_output.stderr, root_output.stderr);
+    }
+    assert!(
+        fixture
+            .0
+            .join("target/ripr/reports/policy-preflight.json")
+            .is_file()
+    );
+    assert!(!nested.join("target").exists());
+    let incidental = fixture.0.join("scratch/nested");
+    std::fs::create_dir_all(&incidental).map_err(|e| e.to_string())?;
+    for (file, text) in [
+        ("Cargo.lock", "incidental lock"),
+        ("rust-toolchain.toml", "incidental override"),
+        ("Cargo.toml", "[package]\nname = \"nested\"\n"),
+    ] {
+        std::fs::write(incidental.join(file), text).map_err(|e| e.to_string())?;
+    }
+    assert!(
+        fixture
+            .command("preflight")
+            .current_dir(&incidental)
+            .output()
+            .map_err(|e| e.to_string())?
+            .status
+            .success()
+    );
+    assert!(!incidental.join("target").exists());
+    std::fs::write(
+        fixture.0.join(".github/workflows/broken.yml"),
+        "jobs:\n  broken:\n    steps:\n      - run: echo broken\n",
+    )
+    .map_err(|e| e.to_string())?;
+    for command in ["check-workflows", "preflight", "verify-preflight"] {
+        let root_output = fixture.run(command)?;
+        let nested_output = fixture
+            .command(command)
+            .current_dir(&nested)
+            .output()
+            .map_err(|e| e.to_string())?;
+        assert!(!root_output.status.success());
+        assert_eq!(nested_output.status.code(), root_output.status.code());
+        assert_eq!(nested_output.stderr, root_output.stderr);
+    }
+    assert!(
+        !fixture
+            .0
+            .join("target/ripr/reports/policy-preflight.json")
+            .exists()
+    );
+    std::fs::remove_file(fixture.0.join(".github/workflows/broken.yml"))
+        .map_err(|e| e.to_string())?;
+    let skill = fixture.0.join(".agents/skills/build-candidate/SKILL.md");
+    let original = std::fs::read_to_string(&skill).map_err(|e| e.to_string())?;
+    std::fs::write(
+        &skill,
+        original.replace(
+            "candidate_contract:one_writer_worktree",
+            "candidate_contract:wrong_writer",
+        ),
+    )
+    .map_err(|e| e.to_string())?;
+    for command in ["check-agent-skills", "preflight"] {
+        let root_output = fixture.run(command)?;
+        let nested_output = fixture
+            .command(command)
+            .current_dir(&nested)
+            .output()
+            .map_err(|e| e.to_string())?;
+        assert!(!root_output.status.success());
+        assert_eq!(nested_output.status.code(), root_output.status.code());
+        assert_eq!(nested_output.stdout, root_output.stdout);
+        assert_eq!(nested_output.stderr, root_output.stderr);
+    }
+    std::fs::write(skill, original).map_err(|e| e.to_string())?;
+    assert!(fixture.run("preflight")?.status.success());
+    let source = fixture.0.join("tools/repo-policy/src/main.rs");
+    let mut bytes = std::fs::read(&source).map_err(|e| e.to_string())?;
+    bytes.extend_from_slice(b"\n// deliberate stale source control\n");
+    std::fs::write(source, bytes).map_err(|e| e.to_string())?;
+    let output = fixture
+        .command("preflight")
+        .current_dir(&nested)
+        .output()
+        .map_err(|e| e.to_string())?;
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("stale or belongs to a different source tree")
+    );
+    assert!(
+        !fixture
+            .0
+            .join("target/ripr/reports/policy-preflight.json")
+            .exists()
+    );
+    Ok(())
+}
+
+#[test]
+fn damaged_workspace_and_outside_directory_do_not_use_enclosing_source() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    assert!(fixture.run("preflight")?.status.success());
+    std::fs::remove_file(fixture.0.join("tools/repo-policy/Cargo.toml"))
+        .map_err(|e| e.to_string())?;
+    let output = fixture
+        .command("preflight")
+        .current_dir(fixture.0.join("tools/repo-policy/src"))
+        .output()
+        .map_err(|e| e.to_string())?;
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("stale or belongs to a different source tree")
+    );
+    assert!(
+        !fixture
+            .0
+            .join("target/ripr/reports/policy-preflight.json")
+            .exists()
+    );
+    let manifest = fixture.0.join("Cargo.toml");
+    let original = std::fs::read_to_string(&manifest).map_err(|e| e.to_string())?;
+    assert!(original.contains("[workspace]\n"));
+    std::fs::remove_dir_all(fixture.0.join("tools/repo-policy")).map_err(|e| e.to_string())?;
+    let receipt = fixture.0.join("target/ripr/reports/policy-preflight.json");
+    for header in [
+        "[workspace] # comment",
+        "[ workspace ] # comment",
+        "[\"workspace\"] # comment",
+        "['workspace'] # comment",
+    ] {
+        std::fs::write(
+            &manifest,
+            original.replace("[workspace]\n", &format!("{header}\n")),
+        )
+        .map_err(|e| e.to_string())?;
+        std::fs::write(&receipt, "obsolete control receipt").map_err(|e| e.to_string())?;
+        let output = fixture
+            .command("preflight")
+            .current_dir(fixture.0.join(".agents"))
+            .output()
+            .map_err(|e| e.to_string())?;
+        assert!(
+            !output.status.success(),
+            "damaged workspace skipped: {header}"
+        );
+        assert!(String::from_utf8_lossy(&output.stderr).contains("policy source identity:"));
+        assert!(
+            !receipt.exists(),
+            "damaged workspace retained its receipt: {header}"
+        );
+    }
+    let filesystem_root = Path::new(std::path::MAIN_SEPARATOR_STR);
+    assert!(
+        !filesystem_root.join("Cargo.toml").exists(),
+        "outside control requires a filesystem root without a workspace"
+    );
+    let output = fixture
+        .command("check-workflows")
+        .current_dir(filesystem_root)
+        .output()
+        .map_err(|e| e.to_string())?;
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("policy workspace root not found"));
+    Ok(())
+}
+
+#[test]
 fn real_frontdoors_accept_then_reject_workflow_and_agent_contracts() -> Result<(), String> {
     let fixture = Fixture::new()?;
     for command in ["check-workflows", "check-agent-skills"] {

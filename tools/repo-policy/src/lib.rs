@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 pub mod agent_skills;
 pub mod ci_scratch;
 mod identity;
-pub use identity::{preflight, verify_executable_identity, verify_preflight};
+pub use identity::{enter_workspace_root, preflight, verify_executable_identity, verify_preflight};
 pub const ROUTED_RUST_REQUIRED_RESULT_NAME: &str = "Ripr Rust Small Result";
 
 pub fn json_summary_count(value: &Value, key: &str) -> usize {
