@@ -7156,12 +7156,12 @@ mod language_adapter_recovery_tests {
                 ));
             }
         }
-        if let Some(prerequisite) = language.enable_prerequisite() {
-            if !recovery.contains(&prerequisite) {
-                return Err(format!(
-                    "compiled-in recovery must append enable_prerequisite: {recovery}"
-                ));
-            }
+        if let Some(prerequisite) = language.enable_prerequisite()
+            && !recovery.contains(&prerequisite)
+        {
+            return Err(format!(
+                "compiled-in recovery must append enable_prerequisite: {recovery}"
+            ));
         }
         Ok(())
     }
