@@ -6204,6 +6204,12 @@ impl Backend {
     /// snapshot's analyzed partition is reported `not_analyzed` — never
     /// `clean`/`served` — with the budget raise and sidecar restart as the
     /// recovery, so "no diagnostics" can never read as "analyzed and clean".
+    ///
+    /// #7205: a changed document whose language is configured but not
+    /// enabled has the same honesty gap when no budget stop exists (the
+    /// selector skips disabled languages, so `partial_scope` is never
+    /// recorded). Those rows use a distinct `language_adapter_not_enabled`
+    /// reason so they cannot be mistaken for the #5998 partition case.
     fn open_document_statuses_json(
         &self,
         snapshot: Option<&AnalysisSnapshot>,
@@ -6216,22 +6222,34 @@ impl Backend {
             .values()
             .map(|state| {
                 let quarantined = state.is_quarantined();
-                let outside_partition = snapshot
-                    .and_then(|snapshot| {
-                        super::uri::file_uri_relative_to_root(&snapshot.root, &state.uri)
-                    })
-                    .is_some_and(|relative| {
-                        snapshot
-                            .and_then(|snapshot| snapshot.partial_scope.as_ref())
-                            .is_some_and(|scope| scope.changed_outside_partition(&relative))
+                let relative = snapshot.and_then(|snapshot| {
+                    super::uri::file_uri_relative_to_root(&snapshot.root, &state.uri)
+                });
+                let outside_partition = relative.as_ref().is_some_and(|relative| {
+                    snapshot
+                        .and_then(|snapshot| snapshot.partial_scope.as_ref())
+                        .is_some_and(|scope| scope.changed_outside_partition(relative))
+                });
+                // #5998 wins when both apply: a budget-bound partial run
+                // already named the file `outside_analyzed_partition`.
+                let adapter_language = (!outside_partition)
+                    .then_some(relative.as_ref())
+                    .flatten()
+                    .and_then(|relative| {
+                        snapshot.and_then(|snapshot| {
+                            snapshot
+                                .unavailable_adapter
+                                .not_enabled_language(relative, snapshot.analysis_outcome.as_ref())
+                        })
                     });
+                let not_analyzed = outside_partition || adapter_language.is_some();
                 serde_json::json!({
                     "uri": state.uri.as_str(),
                     "path": state.path.display().to_string(),
                     "version": state.version,
                     "state": if quarantined {
                         "quarantined"
-                    } else if outside_partition {
+                    } else if not_analyzed {
                         "not_analyzed"
                     } else {
                         "clean"
@@ -6239,21 +6257,34 @@ impl Backend {
                     "diagnostics_authority": "saved_workspace",
                     "line_local_diagnostics": if quarantined {
                         "withdrawn"
-                    } else if outside_partition {
+                    } else if not_analyzed {
                         "not_analyzed"
                     } else {
                         "served"
                     },
-                    "not_analyzed_reason": if outside_partition {
+                    "not_analyzed_reason": if quarantined {
+                        serde_json::Value::Null
+                    } else if outside_partition {
                         serde_json::Value::String("outside_analyzed_partition".to_string())
+                    } else if adapter_language.is_some() {
+                        serde_json::Value::String("language_adapter_not_enabled".to_string())
                     } else {
                         serde_json::Value::Null
                     },
-                    "not_analyzed_recovery": match (outside_partition, snapshot) {
-                        (true, Some(snapshot)) => serde_json::Value::String(
-                            outside_partition_recovery(snapshot.partial_scope.as_ref()),
-                        ),
-                        _ => serde_json::Value::Null,
+                    "not_analyzed_recovery": if quarantined {
+                        serde_json::Value::Null
+                    } else if outside_partition {
+                        snapshot
+                            .map(|snapshot| {
+                                serde_json::Value::String(outside_partition_recovery(
+                                    snapshot.partial_scope.as_ref(),
+                                ))
+                            })
+                            .unwrap_or(serde_json::Value::Null)
+                    } else if let Some(language) = adapter_language {
+                        serde_json::Value::String(language_adapter_not_enabled_recovery(language))
+                    } else {
+                        serde_json::Value::Null
                     },
                     "staleness_reason": state
                         .quarantine
@@ -7078,6 +7109,17 @@ fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDif
     )
 }
 
+/// #7205: recovery for a changed document whose adapter was not enabled.
+/// Refreshing the session cannot enable a language the process did not
+/// load; the route names `[languages] enabled` and the sidecar restart.
+fn language_adapter_not_enabled_recovery(language: crate::domain::LanguageId) -> String {
+    format!(
+        "add \"{}\" to [languages] enabled in ripr.toml, then restart the language server \
+         so the enabled adapter is read",
+        language.as_str()
+    )
+}
+
 fn workspace_status_run_status(snapshot: &AnalysisSnapshot) -> &'static str {
     super::diagnostics::derive_run_status_with_outcome(
         &snapshot.findings,
@@ -7665,6 +7707,7 @@ mod top_limitation_selection_tests {
             partial_scope,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
         }
     }
 
@@ -10302,6 +10345,7 @@ mod delivery_selection_parity_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
         };
         WorkspaceDiagnostics { snapshot, batches }
     }
@@ -11282,6 +11326,7 @@ mod list_actionable_items_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
         }
     }
 

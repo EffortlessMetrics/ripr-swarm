@@ -2,11 +2,11 @@ use super::component_outcome::ComponentOutcome;
 use super::gap_artifacts::{GapArtifactRejection, ValidatedGapArtifact};
 use super::input_identity::LspAnalysisInputIdentity;
 use super::uri::{file_uri_relative_to_root, file_uris_match, path_from_file_uri};
-use crate::analysis::ClassifiedSeam;
-use crate::analysis_outcome::AnalysisOutcome;
+use crate::analysis::{ClassifiedSeam, PreviewLanguageAdvisory};
+use crate::analysis_outcome::{AnalysisLimitationKind, AnalysisOutcome};
 use crate::app::Mode;
 use crate::config::LspDiagnosticProfile;
-use crate::domain::Finding;
+use crate::domain::{Finding, LanguageId};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
@@ -725,6 +725,92 @@ pub(super) struct AnalysisSnapshot {
     /// and status counts agree; this count is the disclosure that the
     /// suppression happened — it is never silent.
     pub(super) out_of_scope_test_file_findings: usize,
+    /// #7205: changed files whose language adapter was not enabled or
+    /// available. The per-document workspace-status row uses this so those
+    /// opened documents cannot read as `clean`/`served` while the same
+    /// payload's `language_adapter_unavailable` limitation names them.
+    /// Distinct from [`Self::partial_scope`] / #5998: disabled-language
+    /// files are skipped before the selector can record a budget stop.
+    pub(super) unavailable_adapter: UnavailableAdapterCoverage,
+}
+
+/// Changed-file coverage for languages the run did not analyze because the
+/// adapter was not enabled or not compiled in (#7205).
+///
+/// `named_paths` are the exact repo-relative paths the producer listed
+/// (preview-advisory `sample_paths`). `incomplete_languages` is set when
+/// that listing is shorter than `file_count`, so the projection fail-closes
+/// for every opened document routed to those languages rather than leaving
+/// unnamed changed files as `clean`/`served`.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(super) struct UnavailableAdapterCoverage {
+    pub(super) named_paths: Vec<String>,
+    pub(super) incomplete_languages: Vec<String>,
+}
+
+impl UnavailableAdapterCoverage {
+    /// Project the disabled preview advisories the pipeline already produced.
+    /// Enabled advisories are analyzed preview runs, not this gap.
+    pub(super) fn from_preview_advisories(advisories: &[PreviewLanguageAdvisory]) -> Self {
+        let mut named_paths = Vec::new();
+        let mut incomplete_languages = Vec::new();
+        for advisory in advisories {
+            if advisory.enabled {
+                continue;
+            }
+            named_paths.extend(advisory.sample_paths.iter().cloned());
+            if advisory.sample_paths.len() < advisory.file_count {
+                incomplete_languages.push(advisory.language.clone());
+            }
+        }
+        Self {
+            named_paths,
+            incomplete_languages,
+        }
+    }
+
+    /// The routed language of an opened changed document that this coverage
+    /// plus a matching `language_adapter_unavailable` limitation bind to.
+    /// `None` unless both the limitation and the changed-file membership
+    /// hold, so a dangling path list cannot invent `not_analyzed`.
+    pub(super) fn not_enabled_language(
+        &self,
+        relative: &Path,
+        outcome: Option<&AnalysisOutcome>,
+    ) -> Option<LanguageId> {
+        let language = crate::analysis::route(relative)?;
+        if !limitation_covers_language(outcome, language) {
+            return None;
+        }
+        let normalized = normalize_unavailable_adapter_path(relative);
+        let named = self.named_paths.iter().any(|path| path == &normalized);
+        let incomplete = self
+            .incomplete_languages
+            .iter()
+            .any(|name| name == language.as_str());
+        (named || incomplete).then_some(language)
+    }
+}
+
+fn limitation_covers_language(outcome: Option<&AnalysisOutcome>, language: LanguageId) -> bool {
+    let Some(outcome) = outcome else {
+        return false;
+    };
+    let prefix = format!("{} changed", language.as_str());
+    outcome.limitations.iter().any(|limitation| {
+        limitation.kind == AnalysisLimitationKind::LanguageAdapterUnavailable
+            && limitation
+                .bounded_detail
+                .as_deref()
+                .is_some_and(|detail| detail.starts_with(&prefix))
+    })
+}
+
+fn normalize_unavailable_adapter_path(path: &Path) -> String {
+    crate::analysis::stable_path_text(path)
+        .replace('\\', "/")
+        .trim_start_matches("./")
+        .to_string()
 }
 
 impl AnalysisSnapshot {
@@ -2645,6 +2731,7 @@ mod tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: UnavailableAdapterCoverage::default(),
         };
 
         if !snapshot.is_consistent() {
@@ -2680,6 +2767,7 @@ mod tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: UnavailableAdapterCoverage::default(),
         };
 
         if snapshot.is_consistent() {
@@ -2725,6 +2813,7 @@ mod tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: UnavailableAdapterCoverage::default(),
         };
 
         if !snapshot.is_consistent() {
@@ -3017,5 +3106,120 @@ mod tests {
             return Err("an unparseable list must not be consistent".to_string());
         }
         Ok(())
+    }
+
+    fn python_unavailable_outcome() -> Result<AnalysisOutcome, String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+            AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+        };
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageAdapterUnavailable,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::EnableLanguage,
+                "Enable the python preview adapter and re-run the analysis.",
+            )?,
+        )
+        .with_affected_items(1)?
+        .with_detail(
+            "python changed 1 file(s), but the preview adapter was not enabled or available",
+        )?;
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity {
+                input_identity: Some("sha256:lsp-7205".to_string()),
+                ..AnalysisIdentity::default()
+            },
+            AnalysisOutcomeCounts {
+                changed_file_count: 2,
+                changed_line_count: 2,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![limitation],
+        )
+    }
+
+    #[test]
+    fn unavailable_adapter_named_path_requires_matching_limitation() -> Result<(), String> {
+        let coverage = UnavailableAdapterCoverage {
+            named_paths: vec!["zpy/pricing.py".to_string()],
+            incomplete_languages: Vec::new(),
+        };
+        let relative = Path::new("zpy/pricing.py");
+        if coverage.not_enabled_language(relative, None).is_some() {
+            return Err(
+                "named paths without a matching limitation must not invent not_analyzed".into(),
+            );
+        }
+        let outcome = python_unavailable_outcome()?;
+        if coverage.not_enabled_language(relative, Some(&outcome)) != Some(LanguageId::Python) {
+            return Err("a named changed python file must bind to python".into());
+        }
+        if coverage
+            .not_enabled_language(Path::new("src/main.rs"), Some(&outcome))
+            .is_some()
+        {
+            return Err("a rust sibling must not inherit the python limitation".into());
+        }
+        if coverage
+            .not_enabled_language(Path::new("zpy/unchanged.py"), Some(&outcome))
+            .is_some()
+        {
+            return Err("an unnamed python file must stay outside a complete listing".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_adapter_incomplete_listing_fail_closes_by_language() -> Result<(), String> {
+        let coverage = UnavailableAdapterCoverage {
+            named_paths: vec!["zpy/a.py".to_string()],
+            incomplete_languages: vec!["python".to_string()],
+        };
+        let outcome = python_unavailable_outcome()?;
+        if coverage.not_enabled_language(Path::new("zpy/b.py"), Some(&outcome))
+            != Some(LanguageId::Python)
+        {
+            return Err("an incomplete listing must fail closed for other python files".into());
+        }
+        if coverage
+            .not_enabled_language(Path::new("web/discount.ts"), Some(&outcome))
+            .is_some()
+        {
+            return Err("an incomplete python listing must not cover typescript".into());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_adapter_from_preview_advisories_skips_enabled_runs() {
+        let coverage = UnavailableAdapterCoverage::from_preview_advisories(&[
+            PreviewLanguageAdvisory {
+                language: "python".to_string(),
+                file_count: 1,
+                sample_paths: vec!["zpy/pricing.py".to_string()],
+                javascript_file_count: 0,
+                enabled: false,
+            },
+            PreviewLanguageAdvisory {
+                language: "typescript".to_string(),
+                file_count: 1,
+                sample_paths: vec!["web/discount.ts".to_string()],
+                javascript_file_count: 0,
+                enabled: true,
+            },
+        ]);
+        assert_eq!(coverage.named_paths, vec!["zpy/pricing.py".to_string()]);
+        assert!(coverage.incomplete_languages.is_empty());
+        let incomplete =
+            UnavailableAdapterCoverage::from_preview_advisories(&[PreviewLanguageAdvisory {
+                language: "python".to_string(),
+                file_count: 4,
+                sample_paths: vec!["a.py".to_string(), "b.py".to_string(), "c.py".to_string()],
+                javascript_file_count: 0,
+                enabled: false,
+            }]);
+        assert_eq!(incomplete.incomplete_languages, vec!["python".to_string()]);
     }
 }

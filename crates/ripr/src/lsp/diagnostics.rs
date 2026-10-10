@@ -1258,6 +1258,9 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         partial_scope,
         component_outcomes,
         out_of_scope_test_file_findings,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::from_preview_advisories(
+            &output.preview_language_advisories,
+        ),
     };
     Ok(WorkspaceDiagnostics { snapshot, batches })
 }
@@ -1419,6 +1422,7 @@ fn git_timeout_limited_diagnostics(
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -1523,6 +1527,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
     };
     WorkspaceDiagnostics { snapshot, batches }
 }
@@ -5721,6 +5726,7 @@ mod delivery_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
         })
     }
 

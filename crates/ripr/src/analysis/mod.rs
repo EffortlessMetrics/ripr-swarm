@@ -67,7 +67,7 @@ pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payl
 pub(crate) use language::{
     DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
     TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
-    is_ts_js_source_extension, ts_js_source_kind,
+    is_ts_js_source_extension, route, ts_js_source_kind,
 };
 pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
