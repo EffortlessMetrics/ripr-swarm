@@ -2,6 +2,29 @@ use super::{
     Digest, Sha256, run_matcher_calibration_with_deadline, unique_temp_workspace, workspace_root,
 };
 
+/// Classification reports pin findings, not the check-JSON canonical
+/// next-action projection (#7258). Strip that last member so embedding it
+/// on the public CLI path does not force a report-wide golden refresh.
+fn strip_check_json_canonical_next_action(bytes: &[u8]) -> Vec<u8> {
+    let Ok(value) = std::str::from_utf8(bytes) else {
+        return bytes.to_vec();
+    };
+    const MARKER: &str = "\n  \"canonical_next_action\": ";
+    let Some(start) = value.rfind(MARKER) else {
+        return bytes.to_vec();
+    };
+    let rest = &value[start + MARKER.len()..];
+    let Some(end) = rest.find('\n') else {
+        return bytes.to_vec();
+    };
+    let mut stripped = value[..start].to_string();
+    if stripped.ends_with(',') {
+        stripped.pop();
+    }
+    stripped.push_str(&rest[end..]);
+    stripped.into_bytes()
+}
+
 /// The independent contract is score(1) == 2. Original/wrong sources differ
 /// only in the returned offset; their patches each describe the actual source.
 /// Discarding a matcher accepts either value, while exact/guarded assertions
@@ -161,7 +184,10 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                 // producing directory (#3948); the canonical reports were
                 // captured from the workspace root, so that prefix projects
                 // back to their relative spelling on those lines only, and
-                // a host path anywhere else still fails. JSON stays byte-exact.
+                // a host path anywhere else still fails. JSON analysis stays
+                // byte-exact after stripping the check-JSON canonical
+                // next-action member (#7258); dedicated CLI/schema tests own
+                // that field, and these reports are not corpus.json.
                 let bound_prefix = format!(
                     "{}/",
                     workspace_root().display().to_string().replace('\\', "/")
@@ -186,6 +212,11 @@ fn discarded_matcher_cli_controls_reject_false_credit_and_retain_consumers() -> 
                 ] {
                     let expected_bytes = std::fs::read(canonical.join(file))
                         .map_err(|error| format!("{id}: missing canonical {file}: {error}"))?;
+                    let actual = if file == "check.json" {
+                        strip_check_json_canonical_next_action(&actual)
+                    } else {
+                        actual
+                    };
                     assert_eq!(
                         actual.as_slice(),
                         expected_bytes.as_slice(),
