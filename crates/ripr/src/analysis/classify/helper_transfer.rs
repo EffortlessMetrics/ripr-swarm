@@ -207,16 +207,26 @@ fn tests_call_name(index: &RustIndex, name: &str) -> bool {
                     && call_is_workspace_entry(index, name, &call.text)
                     && !local_binding_shadows(
                         index,
-                        &test.file,
-                        test.body.as_str(),
-                        test.start_line,
-                        &test.nested_fn_names,
-                        &test.let_bindings,
+                        LocalBindingSubject {
+                            file: &test.file,
+                            body: test.body.as_str(),
+                            start_line: test.start_line,
+                            nested_fn_names: &test.nested_fn_names,
+                            let_bindings: &test.let_bindings,
+                        },
                         name,
                         call.line,
                     )
             })
         })
+}
+
+struct LocalBindingSubject<'a> {
+    file: &'a std::path::Path,
+    body: &'a str,
+    start_line: usize,
+    nested_fn_names: &'a [String],
+    let_bindings: &'a [crate::analysis::facts::LetBindingFact],
 }
 
 /// Local `fn` / `let` bindings only. Do not reuse `test_call_is_shadowed`:
@@ -225,27 +235,23 @@ fn tests_call_name(index: &RustIndex, name: &str) -> bool {
 /// the masked-body scanners because their parser facts are empty.
 fn local_binding_shadows(
     index: &RustIndex,
-    file: &std::path::Path,
-    body: &str,
-    start_line: usize,
-    nested_fn_names: &[String],
-    let_bindings: &[crate::analysis::facts::LetBindingFact],
+    subject: LocalBindingSubject<'_>,
     name: &str,
     call_line: usize,
 ) -> bool {
-    let body_line = call_line.saturating_sub(start_line);
+    let body_line = call_line.saturating_sub(subject.start_line);
     let lexical = index
         .files()
-        .get(file)
+        .get(subject.file)
         .is_some_and(|facts| facts.used_lexical_fallback);
     if lexical {
-        let masked = crate::analysis::extract::mask_comments_and_strings(body);
+        let masked = crate::analysis::extract::mask_comments_and_strings(subject.body);
         crate::analysis::extract::ShadowAuthority::LexicalMaskedBody
             .body_shadows_callee_at_line(&masked, name, body_line)
     } else {
         crate::analysis::extract::ShadowAuthority::ParserBodyFacts {
-            nested_fn_names,
-            let_bindings,
+            nested_fn_names: subject.nested_fn_names,
+            let_bindings: subject.let_bindings,
         }
         .body_shadows_callee_at_line("", name, body_line)
     }
@@ -264,11 +270,13 @@ fn caller_invokes_named_entry(
             && test_call_invokes_named_entry(&call.text, stop_name)
             && !local_binding_shadows(
                 index,
-                &caller.file,
-                caller.body.as_str(),
-                caller.start_line,
-                &caller.nested_fn_names,
-                &caller.let_bindings,
+                LocalBindingSubject {
+                    file: &caller.file,
+                    body: caller.body.as_str(),
+                    start_line: caller.start_line,
+                    nested_fn_names: &caller.nested_fn_names,
+                    let_bindings: &caller.let_bindings,
+                },
                 stop_name,
                 call.line,
             )
