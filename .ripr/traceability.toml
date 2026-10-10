@@ -10235,6 +10235,7 @@ tests = [
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::uniqueness_stop_does_not_credit_qualified_sibling_of_the_hop",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_for_non_unique_entry_when_tests_call_it_then_static_unknown",
   "crates/ripr/src/output/human/explain.rs::tests::helper_identity_unresolved_explain_uses_domain_describe",
+  "crates/ripr/src/output/human.rs::tests::uniqueness_unknown_human_names_identity_not_probe_shape",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_for_non_unique_callee_when_tests_call_a_unique_wrapper_then_no_static_path",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_for_non_unique_entry_when_tests_only_call_a_receiver_then_no_static_path",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_only_call_a_raw_ident_receiver_then_no_static_path",

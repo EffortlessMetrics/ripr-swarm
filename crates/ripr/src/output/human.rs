@@ -915,7 +915,8 @@ mod tests {
         Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId,
         LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, OracleKind,
         OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, Summary, SymbolId, ValueContext, ValueFact,
+        SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId, ValueContext,
+        ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -4564,6 +4565,47 @@ mod tests {
             ),
             "{output}"
         );
+    }
+
+    fn uniqueness_unknown_finding() -> Finding {
+        let mut finding = unknown_finding();
+        finding.class = ExposureClass::StaticUnknown;
+        finding.ripr.reach = StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "ripr cannot tell which `parse` a test calls because that name is not unique in the workspace",
+        );
+        finding.stop_reasons = vec![StopReason::HelperIdentityUnresolved];
+        finding.missing = vec![
+            "helper chain abstains: `parse` is not a unique function in the workspace".to_string(),
+        ];
+        finding
+    }
+
+    #[test]
+    fn uniqueness_unknown_human_names_identity_not_probe_shape() {
+        let finding = uniqueness_unknown_finding();
+        let output = render_finding(&finding);
+        assert!(output.contains("reach unknown:"), "{output}");
+        assert!(!output.contains("reach no:"), "{output}");
+        assert!(!output.contains("No static test path"), "{output}");
+        assert!(output.contains("helper_identity_unresolved"), "{output}");
+        assert!(
+            output.contains("which workspace function") && output.contains("not unique"),
+            "{output}"
+        );
+        assert!(
+            !output.contains("no probe shape") && !output.contains("probe shape"),
+            "{output}"
+        );
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(digest.contains("Evidence: reach unknown"), "{digest}");
+        assert!(!digest.contains("Evidence: reach no"), "{digest}");
     }
 
     /// #4323 review: guidance just under the budget must count the label, so

@@ -454,19 +454,6 @@ mod tests {
             "{:?}",
             finding.recommended_next_step
         );
-        let human = crate::output::human::render_finding(&finding);
-        assert!(human.contains("reach unknown:"), "{human}");
-        assert!(!human.contains("reach no:"), "{human}");
-        assert!(!human.contains("No static test path"), "{human}");
-        assert!(human.contains("helper_identity_unresolved"), "{human}");
-        assert!(
-            human.contains("which workspace function") && human.contains("not unique"),
-            "{human}"
-        );
-        assert!(
-            !human.contains("no probe shape") && !human.contains("probe shape"),
-            "{human}"
-        );
     }
 
     // #7080 negative: tests call a unique wrapper of a non-unique helper.
