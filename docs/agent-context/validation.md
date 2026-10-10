@@ -36,6 +36,40 @@ necessary, capture its native command status before another command overwrites
 it; `echo done` is not a test result. Do not discard a failed step because a
 later command returned zero.
 
+## Nested Cargo target ownership
+
+A retained `xtask` executable does not retain the Cargo target directory used
+when it was compiled. Commands such as `check-fast` launch Cargo children;
+without an explicit target in the invocation environment, those children use
+Cargo's configured default for the current worktree and can create a second
+large build tree. The command runner inherits `CARGO_TARGET_DIR`; keep that
+supported ownership boundary explicit when running a retained executable.
+
+Before launching qualification, resolve an absolute owned target path and
+propagate it to the driver, including retained-binary invocations. For example,
+in Bash after choosing and admitting the task-owned destination:
+
+```bash
+export CARGO_TARGET_DIR="$task_target_dir"
+export CARGO_BUILD_JOBS=1
+"$qualified_xtask" check-fast
+command_exit=$?
+```
+
+Record the effective target, source and executable identities, native exit
+status, and output destinations in the task handoff. A relative target changes
+meaning when the working directory changes. Building an executable into a
+private target earlier is not evidence that its later children use that target.
+
+Budget the entire selected workload before launch. A Rust source diff makes
+`check-fast` run workspace Clippy with all targets; its short name does not
+promise a small compiler graph. Independently inspect the selector and follow
+[bounded storage admission and closeout](../../PR_AUTOMATION.md#bounded-local-storage-and-proof-retention),
+including linker temporary output, build state, frozen witnesses and overlapping
+consumers. Serialize commands sharing a target. If admission fails, reclaim only
+confirmed inactive, reproducible task-owned output while retaining required
+proof and shared caches, then remeasure capacity before resuming.
+
 ## Workspace linker temp redirect
 
 `.cargo/config.toml` in this repository force-redirects the linker temp
