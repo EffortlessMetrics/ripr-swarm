@@ -2202,7 +2202,10 @@ fn before_phase_refusal(seam_id: &str, error: &str) -> String {
 /// `--json`, the packet envelope augmented with the additive `repair_attempt`
 /// continuation (#4329) so a driver that captures only stdout can complete
 /// the loop; without it, a short summary. A packet the summary cannot read
-/// falls back to a line naming the packet file, so nothing is hidden.
+/// falls back to a line naming the packet file, so nothing is hidden. The
+/// trailer names the after-edit command — or, for an attempt born with an
+/// ambiguous baseline (#7204), the ambiguity warning and the clean-state
+/// restart route replace that directive.
 pub(in crate::cli) fn before_phase_stdout(
     packet: &str,
     packet_path: &str,
@@ -2215,10 +2218,35 @@ pub(in crate::cli) fn before_phase_stdout(
             continuation,
         );
     }
-    Ok(
-        before_phase_summary(packet, packet_path).unwrap_or_else(|| {
-            format!("Repair packet (JSON): {packet_path}; add --json to print it here\n")
-        }),
+    let mut document = before_phase_summary(packet, packet_path).unwrap_or_else(|| {
+        format!("Repair packet (JSON): {packet_path}; add --json to print it here\n")
+    });
+    if continuation.baseline_ambiguous {
+        document.push_str(&before_phase_ambiguous_stdout_lines(
+            &continuation.next_command,
+        ));
+    } else {
+        document.push_str(&format!(
+            "Next, after the test edit: {}\n",
+            continuation.next_command
+        ));
+        if let Some(form) =
+            crate::output::markdown::powershell_text_variant(&continuation.next_command)
+        {
+            document.push_str(&format!("(PowerShell) {form}\n"));
+        }
+    }
+    Ok(document)
+}
+
+/// The stdout trailer for an attempt born with an ambiguous baseline
+/// (#7204): a driver that captures only stdout must not read the after
+/// command as the unqualified next action, so the warning and the
+/// clean-state restart route replace it and the continuation stays possible
+/// only as an explicitly acknowledged fallback.
+fn before_phase_ambiguous_stdout_lines(next_command: &str) -> String {
+    format!(
+        "warning: this attempt's captured edit-cage baseline records `ambiguous: true`; its after phase can refuse the attempt as Incomparable with an empty violations list even when the focused test edit breaks no cage rule.\nto invest the edit in a scorable attempt instead, resolve the workspace condition that made the baseline ambiguous and run the same --phase before command again from the clean state. if you continue with this attempt anyway, after the test edit run: {next_command}\n"
     )
 }
 
@@ -3482,6 +3510,7 @@ mod before_phase_stdout_tests {
                 "ripr agent repair --root . --attempt repair-attempt-0123456789abcdef01234567 --phase after"
                     .to_string(),
             packet_path: "target/ripr/workflow/agent-packet.json".to_string(),
+            baseline_ambiguous: false,
         }
     }
 
@@ -3516,6 +3545,50 @@ mod before_phase_stdout_tests {
             value["repair_attempt"]["packet_path"],
             "target/ripr/workflow/agent-packet.json"
         );
+        // A scorable baseline adds no ambiguity member: the scorable stdout
+        // bytes stay exactly as before (#7204).
+        assert!(value["repair_attempt"].get("baseline_ambiguous").is_none());
+        Ok(())
+    }
+
+    /// #7204: a stdout-only driver must see the ambiguity, so the `--json`
+    /// continuation carries the additive flag and the plain summary replaces
+    /// the bare after-edit directive with the warning and the clean-state
+    /// restart route.
+    #[test]
+    fn ambiguous_baseline_is_disclosed_on_stdout_in_both_modes() -> Result<(), String> {
+        let ambiguous = BeforePhaseAttemptContinuation {
+            baseline_ambiguous: true,
+            ..continuation()
+        };
+        let document = before_phase_stdout(
+            PACKET,
+            "target/ripr/workflow/agent-packet.json",
+            true,
+            &ambiguous,
+        )?;
+        let value: serde_json::Value = serde_json::from_str(&document)
+            .map_err(|error| format!("stdout document must parse: {error}"))?;
+        assert_eq!(value["repair_attempt"]["baseline_ambiguous"], true);
+
+        let summary = before_phase_stdout(
+            PACKET,
+            "target/ripr/workflow/agent-packet.json",
+            false,
+            &ambiguous,
+        )?;
+        assert!(!summary.contains("Next, after the test edit:"), "{summary}");
+        for expected in [
+            "ambiguous: true",
+            "Incomparable",
+            "--phase before command again from the clean state",
+            "if you continue with this attempt anyway, after the test edit run:",
+        ] {
+            assert!(
+                summary.contains(expected),
+                "ambiguous stdout must name `{expected}`:\n{summary}"
+            );
+        }
         Ok(())
     }
 
@@ -3567,7 +3640,10 @@ mod before_phase_stdout_tests {
         let packet = r#"{"packets":[{"seam_id":"x"}]}"#;
         assert_eq!(
             before_phase_stdout(packet, "p", false, &continuation())?,
-            "Repair packet (JSON): p; add --json to print it here\n"
+            format!(
+                "Repair packet (JSON): p; add --json to print it here\nNext, after the test edit: {}\n",
+                continuation().next_command
+            )
         );
         Ok(())
     }

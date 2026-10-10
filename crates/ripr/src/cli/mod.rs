@@ -379,6 +379,7 @@ fn persist_before_repair_attempt(
         manifest_path: crate::agent::loop_commands::display_path(&result.manifest_path),
         next_command: result.manifest.next_command.clone(),
         packet_path: crate::agent::loop_commands::display_path(&agent_packet),
+        baseline_ambiguous,
     };
     if let Some(binding) = &binding {
         eprintln!(
@@ -440,22 +441,15 @@ fn persist_before_repair_attempt(
     if let Some(form) = &next_powershell {
         eprintln!("ripr: attempt next command (PowerShell): {form}");
     }
-    let mut stdout_document = commands::before_phase_stdout(
+    // The stdout document owns its trailer: the after-edit directive, or the
+    // #7204 ambiguity warning and clean-state restart for an unscorable
+    // attempt.
+    commands::before_phase_stdout(
         &packet_text,
         &agent_packet.display().to_string(),
         options.json,
         &continuation,
-    )?;
-    if !options.json {
-        stdout_document.push_str(&format!(
-            "Next, after the test edit: {}\n",
-            result.manifest.next_command
-        ));
-        if let Some(form) = &next_powershell {
-            stdout_document.push_str(&format!("(PowerShell) {form}\n"));
-        }
-    }
-    Ok(stdout_document)
+    )
 }
 
 #[cfg(test)]

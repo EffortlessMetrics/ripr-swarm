@@ -15161,13 +15161,22 @@ Field contract:
   the authorization placeholder suffix for trust-bound attempts), and
   `packet_path` (the root-resolved workflow packet path the document was
   rendered from, ending in `target/ripr/workflow/agent-packet.json`).
+  `baseline_ambiguous` is an additive member present only when `true`
+  (#7204): the captured edit-cage baseline recorded `ambiguous: true`, so
+  the after phase can refuse the attempt as `Incomparable` with an empty
+  violations list even when the focused test edit breaks no cage rule; the
+  scorable route is to resolve the workspace condition that made the
+  baseline ambiguous and rerun the same `--phase before` command from a
+  clean state. Without `--json`, stdout is a short prose summary whose
+  final line names the same next command — or, for such an ambiguous
+  baseline, the ambiguity warning and the clean-state restart route, with
+  the after-edit command only as an explicitly acknowledged fallback.
   Every other envelope member
   is the retained packet envelope unchanged; the stdout document is not an
   input to the attempt's digest bindings — the packet file is. Both the
   document and the stderr narration print only after the attempt is
   durably published, so a refused preparation never emits a success
-  document. Without `--json`, stdout is a short prose summary whose final
-  line names the same next command.
+  document.
 - `scope` — always `"repo"`, including the one-seam `ripr agent packet`
   expansion. The one-seam command is a filtered view of the repo packet
   contract, not a second packet schema.
