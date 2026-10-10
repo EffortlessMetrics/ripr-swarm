@@ -1,0 +1,11 @@
+{
+  "observed_utc": "2026-10-10T07:06:11.784823+00:00",
+  "source_head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+  "pulls_for_source_branch": [],
+  "actions_runs_for_source_branch": {
+    "total_count": 0,
+    "workflow_runs": []
+  },
+  "publication_attempts": 2,
+  "disposition": "automatic approval review blocked; no workaround; trusted user approval required"
+}

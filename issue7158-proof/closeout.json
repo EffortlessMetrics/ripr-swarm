@@ -1,0 +1,30 @@
+{
+  "utc": "2026-10-10T07:05:37.056555+00:00",
+  "active_compiler_or_owned_xtask_processes": [],
+  "removed_owned_idle_paths": [
+    "/workspace/issue7158-base",
+    "/workspace/issue7158-candidate",
+    "/workspace/issue7158-target-guidance",
+    "/workspace/issue7158-build",
+    "/workspace/issue7158-policy-cold",
+    "/workspace/issue7158-policy-measured",
+    "/workspace/issue7158-agent-cold",
+    "/workspace/issue7158-policy-final-cold",
+    "/workspace/issue7158-agent-final-cold"
+  ],
+  "last_worktree_pending": "/workspace/issue7158-proof-backup: remove after final packet push verification",
+  "preserved": [
+    "/workspace/ripr-swarm primary checkout and common Git store",
+    "all branch refs and remote source/proof/guidance heads",
+    "/workspace/ripr-swarm/target inherited owner outputs",
+    "/workspace/.ripr-toolchain and shared caches",
+    "/workspace/issue7158-evidence reports, recipes, identities",
+    "/workspace/issue7158-witnesses.tar.gz verified compressed frozen executable witnesses",
+    "small parity/stale fixtures for reproducibility"
+  ],
+  "free_bytes": 31219236864,
+  "archive_manifest": "witness-archive-manifest.json",
+  "source_head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+  "review_status": "REVIEW_INCOMPLETE: local acceptance complete; hosted published-head / combined-tree execution and substantive merge review remain",
+  "publication": "no PR; two automatic approval rejections; trusted user authorization required"
+}

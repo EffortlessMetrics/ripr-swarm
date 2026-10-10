@@ -1,0 +1,68 @@
+{
+  "archive": "/workspace/issue7158-witnesses.tar.gz",
+  "archive_sha256": "4f4783f77f22ba0d3fc12fb3bfe3d5e8d09f26cc1cfec6d8523be50a0dbbb7a3",
+  "archive_bytes": 288004895,
+  "witnesses": [
+    {
+      "name": "old-xtask",
+      "sha256": "7024df2da752ad7951dbc5d45ccd1f7a11a883bdb8b2fca38bc6078ea52766de",
+      "bytes": 285434016,
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1791608348260178264
+    },
+    {
+      "name": "candidate-xtask",
+      "sha256": "0345b7ea05f04ecb3af6c83b9638d9649c066da7a0055c122978e727aaf26d17",
+      "bytes": 286328744,
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1791609424066351246
+    },
+    {
+      "name": "candidate-repo-policy",
+      "sha256": "8f87bf97c273196a46e3b33331393d37fd720fc412026804848119c6bd380a08",
+      "bytes": 7083688,
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1791609424942310699
+    },
+    {
+      "name": "final-xtask",
+      "sha256": "d34f25aac6243a895dbf437453bacb26c01b13e8ae02b56d53e4122825d213d3",
+      "bytes": 286328840,
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1791611118916137983
+    },
+    {
+      "name": "repo-policy-d902",
+      "sha256": "b80783c98b4755c3ade24ed4cfe8ce2dfe9414a805836dd245a71c922a77105f",
+      "bytes": 7084552,
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1791612418095524972
+    },
+    {
+      "name": "xtask-d902",
+      "sha256": "e6a4b1d41b3e558feada6782c441a36dc79a5b26f8791adc5982ed83b96d7b61",
+      "bytes": 286328840,
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1791612881046065585
+    }
+  ],
+  "verification": "all restored bytes,SHA256,size,mode,uid,gid match;mtime within1microsecondPAXfloatrepresentation",
+  "free_before": 25924337664,
+  "peak_additional_admission_bytes": 2317177360,
+  "reserve_bytes": 12884901888,
+  "restore": "mkdir -p /workspace/issue7158-evidence-restored && tar -xzf /workspace/issue7158-witnesses.tar.gz -C /workspace/issue7158-evidence-restored; compare restoredSHA256againstthismanifest; recreate sourceworktreefromrecordedGitSHA before running",
+  "disposition": "compressed quarantine retained for open claim; do not purge without separate authority",
+  "originals": "replacedonlyafterverifiedrestoration; frozenbytespreservedinarchive"
+}
