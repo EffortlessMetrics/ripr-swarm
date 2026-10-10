@@ -100,8 +100,9 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
 /// is not "no test reaches the owner". Relation stays refused (fail closed);
 /// when a test actually calls that ambiguous name, the finding abstains as
 /// `static_unknown` and names the function. A uniqueness stop that no test
-/// enters, including a unique wrapper of a non-unique helper, stays
-/// `no_static_path`.
+/// enters, including a unique wrapper of a non-unique helper or a
+/// receiver/foreign path that only shares the bare name (`req.parse()`,
+/// `req.r#parse()`, `foreign::r#parse()`), stays `no_static_path` (#7270).
 fn withhold_helper_uniqueness_as_unknown(
     finding: &mut Finding,
     chain: &HelperChain,
@@ -292,6 +293,23 @@ mod tests {
         }
     }
 
+    fn uniqueness_parse_index(call_text: &str) -> RustIndex {
+        RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "digit_after_wildcard",
+                "parse",
+                call_text,
+            )],
+            ..Default::default()
+        })
+    }
+
     fn helper_probe(file: &str, owner: &str) -> Probe {
         Probe {
             id: ProbeId(format!("probe:{file}:{owner}")),
@@ -422,6 +440,76 @@ mod tests {
                 .any(|line| line.contains("No static test path")),
             "{:?}",
             finding.missing
+        );
+    }
+
+    // #7270: `req.r#parse()` is the same receiver call with a raw-identifier
+    // method spelling. `CallFact.name` is still `parse`; the `r#` must not
+    // make `named_entry_kinds` treat it as a free workspace `parse`.
+    #[test]
+    fn given_helper_chain_refused_when_tests_only_call_a_raw_ident_receiver_then_no_static_path() {
+        let index = uniqueness_parse_index(r#"req.r#parse(">=1.0")"#);
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason != Some(RelationReason::HelperOwnerCall)),
+            "relation stays refused: {:?}",
+            finding.related_tests
+        );
+    }
+
+    // #7270: `foreign::r#parse()` is a foreign-qualified path, not a
+    // workspace free `parse`. Pin Free like the `foreign::Parser::<u8>::parse`
+    // control: Unknown would still admit any TypePath.
+    #[test]
+    fn given_helper_chain_refused_when_tests_only_call_a_raw_ident_foreign_path_then_no_static_path()
+     {
+        let mut parse = function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]);
+        parse.impl_context = FunctionImplContext::Free;
+        let mut twin = function("src/other.rs", "parse");
+        twin.impl_context = FunctionImplContext::Free;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![function("src/op.rs", "op"), parse, twin],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "from_foreign_parser",
+                "parse",
+                r#"foreign::r#parse(">=1.0")"#,
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    // #7270 / retain #7080: bare `r#parse(...)` is the same identifier as
+    // `parse(...)` and still enters the uniqueness rewrite.
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_bare_raw_ident_parse_then_static_unknown() {
+        let index = uniqueness_parse_index(r#"r#parse(">=1.0")"#);
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("`parse`") && line.contains("not a unique function")),
+            "{:?}",
+            finding.missing
+        );
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason != Some(RelationReason::HelperOwnerCall)),
+            "uniqueness refusal stays fail-closed: {:?}",
+            finding.related_tests
         );
     }
 
