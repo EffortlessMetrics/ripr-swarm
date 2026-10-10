@@ -4,6 +4,8 @@
 //! unchanged.
 
 mod discarded_matcher_honesty;
+#[path = "precommit_source_oracle.rs"]
+mod precommit_source_oracle;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
@@ -52406,35 +52408,11 @@ fn precommit_gate_commands_match_executed_precommit_source() -> Result<(), Strin
     let path = repo_root()?.join("xtask/src/main.rs");
     let source =
         std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
-    let start = source
-        .find("\nfn precommit() -> Result<(), String> {")
-        .ok_or("xtask/src/main.rs must define `fn precommit()`")?;
-    let body = &source[start..];
-    let end = body
-        .find("precommit_report_body")
-        .ok_or("precommit body extraction must stop before `precommit_report_body`")?;
-    let body = &body[..end];
-    let executed: Vec<String> = body
-        .lines()
-        .filter_map(|line| {
-            let call = line.trim().strip_suffix("()?;")?;
-            if call == "markdown_links" || call.starts_with("check_") {
-                Some(call.replace('_', "-"))
-            } else {
-                None
-            }
-        })
-        .collect();
     let expected: Vec<String> = super::PRECOMMIT_GATE_COMMANDS
         .iter()
         .map(|gate| (*gate).to_string())
         .collect();
-    if executed != expected {
-        return Err(format!(
-            "gates executed by `precommit()` {executed:?} must match PRECOMMIT_GATE_COMMANDS {expected:?}"
-        ));
-    }
-    Ok(())
+    precommit_source_oracle::require_catalogue(&source, &expected)
 }
 
 /// Advisory-only `cargo xtask precommit` invocations (`continue-on-error`

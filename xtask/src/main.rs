@@ -611,9 +611,7 @@ fn precommit() -> Result<(), String> {
     check_text_encoding()?;
     match std::env::var_os("RIPR_POLICY_PREFLIGHT_RECEIPT") {
         Some(path) => repo_policy::verify_preflight(Path::new(&path))?,
-        None => {
-            check_workflows()?;
-        }
+        None => check_workflows()?,
     }
     check_droid_review_config()?;
     check_spec_format()?;
