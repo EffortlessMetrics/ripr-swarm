@@ -3,7 +3,7 @@ use crate::domain::{OracleKind, OracleStrength, SymbolId};
 use ra_ap_syntax::Edition;
 use ra_ap_syntax::{
     AstNode, SourceFile, TextSize,
-    ast::{self, HasAttrs, HasGenericParams, HasName},
+    ast::{self, HasAttrs, HasGenericArgs, HasGenericParams, HasName},
 };
 mod property_macros;
 
@@ -1731,7 +1731,8 @@ fn push_call_deletion_probe_shape(
 /// the consumer's own seam carries the behavior (#6677). Any other
 /// position, including a statement, `let _ =`, `_ =`, a `_`-prefixed
 /// binding, a closure or async block body and a `return` from a unit
-/// function, reads as unconsumed so the `call_presence` seam is kept.
+/// function (including a same-module `type X = ();` alias, #7101), reads
+/// as unconsumed so the `call_presence` seam is kept.
 fn call_value_is_consumed(call: &ra_ap_syntax::SyntaxNode) -> bool {
     use ra_ap_syntax::SyntaxKind as K;
     let mut node = call.clone();
@@ -1846,15 +1847,280 @@ fn call_value_is_consumed(call: &ra_ap_syntax::SyntaxNode) -> bool {
 }
 
 /// Whether a function declares a non-unit return type. `()` written with
-/// spaces or comments is still unit.
+/// spaces or comments is still unit. A same-module `type X = ();` alias
+/// used as a bare path is unit too (#7101); qualified paths, generics,
+/// chained aliases, and associated types stay unresolved and read as a
+/// value.
 fn fn_returns_value(function: &ra_ap_syntax::SyntaxNode) -> bool {
     ast::Fn::cast(function.clone())
         .and_then(|function| function.ret_type())
         .and_then(|ret| ret.ty())
-        .is_some_and(|ty| match ty {
-            ast::Type::TupleType(tuple) => tuple.fields().next().is_some(),
-            _ => true,
-        })
+        .is_some_and(|ty| type_returns_value(&ty, function))
+}
+
+fn type_returns_value(ty: &ast::Type, function: &ra_ap_syntax::SyntaxNode) -> bool {
+    match ty {
+        ast::Type::TupleType(tuple) => tuple.fields().next().is_some(),
+        ast::Type::PathType(path) => !same_module_unit_alias(path, function),
+        _ => true,
+    }
+}
+
+fn type_is_unit_tuple(ty: Option<ast::Type>) -> bool {
+    matches!(ty, Some(ast::Type::TupleType(tuple)) if tuple.fields().next().is_none())
+}
+
+/// Identifier spelling with one optional `r#` prefix removed. `Unit` and
+/// `r#Unit` are the same ident; two prefixes are left as-is.
+fn ident_name(spelling: &str) -> &str {
+    cfg_predicates::rust_ident_name(spelling)
+}
+
+/// Bare `Unit` in `fn run() -> Unit`, with no qualifier, turbofish, or `Self`.
+fn bare_type_path_name(path_type: &ast::PathType) -> Option<String> {
+    let path = path_type.path()?;
+    if path.qualifier().is_some() {
+        return None;
+    }
+    let segment = path.segment()?;
+    if segment.generic_arg_list().is_some() {
+        return None;
+    }
+    let name_ref = segment.name_ref()?;
+    let name = ident_name(name_ref.text()).to_string();
+    (name != "Self").then_some(name)
+}
+
+fn enclosing_module_item_list(
+    function: &ra_ap_syntax::SyntaxNode,
+) -> Option<ra_ap_syntax::SyntaxNode> {
+    use ra_ap_syntax::SyntaxKind as K;
+    // Nested `fn` items can see an outer function's body aliases, which this
+    // syntax walk does not resolve. Stop at the enclosing `fn` so a
+    // block-local `type Unit = u32` cannot be overridden by a module
+    // `type Unit = ()`. Const/static initializer blocks and other block
+    // expressions can also bind a local alias; stop there too. Methods
+    // still continue through `ASSOC_ITEM_LIST` to the module list. Extern
+    // blocks use `EXTERN_ITEM_LIST`, not `ITEM_LIST`.
+    for ancestor in function.ancestors().skip(1) {
+        match ancestor.kind() {
+            K::FN | K::BLOCK_EXPR | K::CONST | K::STATIC => return None,
+            K::SOURCE_FILE | K::ITEM_LIST => return Some(ancestor),
+            _ => {}
+        }
+    }
+    None
+}
+
+fn generic_params_include_name(params: &ast::GenericParamList, name: &str) -> bool {
+    params.type_or_const_params().any(|param| match param {
+        ast::TypeOrConstParam::Type(type_param) => type_param
+            .name()
+            .is_some_and(|param_name| ident_name(param_name.text()) == name),
+        ast::TypeOrConstParam::Const(_) => false,
+    })
+}
+
+fn generic_type_param_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    if ast::Fn::cast(function.clone())
+        .and_then(|function| function.generic_param_list())
+        .is_some_and(|params| generic_params_include_name(&params, name))
+    {
+        return true;
+    }
+    for ancestor in function.ancestors().skip(1) {
+        match ancestor.kind() {
+            K::FN | K::SOURCE_FILE | K::ITEM_LIST => return false,
+            K::IMPL => {
+                return ast::Impl::cast(ancestor)
+                    .and_then(|item| item.generic_param_list())
+                    .is_some_and(|params| generic_params_include_name(&params, name));
+            }
+            K::TRAIT => {
+                return ast::Trait::cast(ancestor)
+                    .and_then(|item| item.generic_param_list())
+                    .is_some_and(|params| generic_params_include_name(&params, name));
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn assoc_type_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    function.parent().is_some_and(|parent| {
+        parent.kind() == K::ASSOC_ITEM_LIST
+            && parent
+                .children()
+                .filter_map(ast::TypeAlias::cast)
+                .any(|alias| {
+                    alias
+                        .name()
+                        .is_some_and(|alias_name| ident_name(alias_name.text()) == name)
+                })
+    })
+}
+
+fn meta_ident_name(meta: &ast::Meta) -> Option<String> {
+    let name = meta.simple_name()?;
+    Some(ident_name(&name).to_string())
+}
+
+/// Built-in attrs that cannot rewrite a type alias or a function return.
+/// Anything else — `cfg`, an unparsed `cfg_attr` leaf, a qualified path,
+/// or a proc-macro-like ident — is refused. `cfg_attr` is unwrapped first
+/// so introduced `allow` / `doc` / `expect` / `inline` still count as unit.
+fn attr_refuses_unit_alias(attribute: &ast::Attr) -> bool {
+    attribute
+        .skip_cfg_attrs()
+        .iter()
+        .any(meta_refuses_unit_alias)
+}
+
+fn meta_refuses_unit_alias(meta: &ast::Meta) -> bool {
+    if matches!(meta, ast::Meta::CfgMeta(_)) {
+        return true;
+    }
+    !matches!(
+        meta_ident_name(meta).as_deref(),
+        Some(
+            "doc"
+                | "allow"
+                | "expect"
+                | "warn"
+                | "deny"
+                | "forbid"
+                | "deprecated"
+                | "must_use"
+                | "inline"
+                | "cold"
+                | "track_caller"
+                | "no_mangle"
+        ),
+    )
+}
+
+fn attrs_refuse_unit_alias(mut attrs: impl Iterator<Item = ast::Attr>) -> bool {
+    attrs.any(|attribute| attr_refuses_unit_alias(&attribute))
+}
+
+fn type_alias_has_refusing_attr(alias: &ast::TypeAlias) -> bool {
+    attrs_refuse_unit_alias(alias.attrs())
+}
+
+/// A proc-macro on the function or an enclosing impl/trait/module can
+/// rewrite the return type while leaving `-> Unit` in the unexpanded tree.
+/// Continue through `ITEM_LIST` so an inline `mod` attribute is visible.
+fn fn_or_enclosing_item_refuses_unit_alias(function: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    if ast::Fn::cast(function.clone()).is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) {
+        return true;
+    }
+    for ancestor in function.ancestors().skip(1) {
+        match ancestor.kind() {
+            K::FN | K::SOURCE_FILE => return false,
+            K::ITEM_LIST => {}
+            K::MODULE
+                if ast::Module::cast(ancestor.clone())
+                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) =>
+            {
+                return true;
+            }
+            K::IMPL
+                if ast::Impl::cast(ancestor.clone())
+                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) =>
+            {
+                return true;
+            }
+            K::TRAIT
+                if ast::Trait::cast(ancestor.clone())
+                    .is_some_and(|item| attrs_refuse_unit_alias(item.attrs())) =>
+            {
+                return true;
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
+fn path_last_segment_name(path: &ast::Path) -> Option<String> {
+    let name_ref = path.segment()?.name_ref()?;
+    Some(ident_name(name_ref.text()).to_string())
+}
+
+fn use_tree_binds_name(tree: &ast::UseTree, name: &str) -> bool {
+    if let Some(rename) = tree.rename() {
+        return rename
+            .name()
+            .is_some_and(|rename_name| ident_name(rename_name.text()) == name);
+    }
+    if tree.star_token().is_some() {
+        return false;
+    }
+    if let Some(list) = tree.use_tree_list() {
+        return list
+            .use_trees()
+            .any(|child| use_tree_binds_name(&child, name));
+    }
+    tree.path()
+        .and_then(|path| path_last_segment_name(&path))
+        .is_some_and(|segment| segment == name)
+}
+
+fn item_list_use_binds_name(items: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    items.children().filter_map(ast::Use::cast).any(|use_item| {
+        use_item
+            .use_tree()
+            .is_some_and(|tree| use_tree_binds_name(&tree, name))
+    })
+}
+
+/// Syntax-only: a same-module `type Name = ();` (or `( )`) whose name
+/// matches a bare return path, including one `r#` prefix. Aliases in other
+/// modules, associated types, a function or impl/trait type parameter of
+/// the same name, a further alias of that name, nested functions,
+/// cfg-gated aliases, unknown or proc-macro-like attributes on the alias,
+/// function, or enclosing impl/trait/module, and a competing same-name
+/// `use` stay unresolved.
+fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::SyntaxNode) -> bool {
+    let Some(name) = bare_type_path_name(path_type) else {
+        return false;
+    };
+    if assoc_type_named(function, &name)
+        || generic_type_param_named(function, &name)
+        || fn_or_enclosing_item_refuses_unit_alias(function)
+    {
+        return false;
+    }
+    let Some(items) = enclosing_module_item_list(function) else {
+        return false;
+    };
+    if item_list_use_binds_name(&items, &name) {
+        return false;
+    }
+    let mut saw_unit = false;
+    for child in items.children() {
+        let Some(alias) = ast::TypeAlias::cast(child) else {
+            continue;
+        };
+        let Some(alias_name) = alias.name() else {
+            continue;
+        };
+        if ident_name(alias_name.text()) != name.as_str() {
+            continue;
+        }
+        if alias.generic_param_list().is_some()
+            || !type_is_unit_tuple(alias.ty())
+            || type_alias_has_refusing_attr(&alias)
+        {
+            return false;
+        }
+        saw_unit = true;
+    }
+    saw_unit
 }
 
 /// Whether the function a `return` leaves returns a value. A `return`
@@ -2565,6 +2831,320 @@ pub fn validate(value: i32) -> Result<i32, String> {
                 .any(|p| p.kind == ProbeShapeKind::ErrorPath),
             "Should extract error_path probe shapes"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn same_module_unit_type_alias_return_is_not_a_consumed_tail() -> Result<(), Box<dyn Error>> {
+        // #7101: `type Unit = (); fn run() -> Unit { notify() }` still
+        // compiles as `fn run() -> Unit {}`, so the tail is unconsumed.
+        // cfg-gated aliases, competing imports, and const/static shadows
+        // stay consumed.
+        let source = r#"
+type Unit = ();
+type Spaced = ( );
+type Value = u32;
+type Nested = Unit;
+
+pub fn unit_alias_tail() -> Unit {
+    notify()
+}
+
+pub fn spaced_alias_tail() -> Spaced {
+    spaced_notify()
+}
+
+pub fn early_unit_alias(x: u32) -> Unit {
+    if x == 0 {
+        return reset();
+    }
+    work()
+}
+
+pub fn non_unit_alias_tail() -> Value {
+    produce()
+}
+
+pub fn qualified_alias_tail() -> self::Unit {
+    crate_notify()
+}
+
+pub fn chained_alias_tail() -> Nested {
+    chained_notify()
+}
+
+mod other {
+    type Unit = ();
+    pub fn inner_unit_tail() -> Unit {
+        inner_notify()
+    }
+}
+
+pub fn other_module_alias() -> other::Unit {
+    other_notify()
+}
+
+struct Holder;
+trait Make {
+    type Output;
+    fn assoc_unit() -> Self::Output;
+}
+impl Make for Holder {
+    type Output = ();
+    fn assoc_unit() -> Self::Output {
+        impl_notify()
+    }
+}
+
+pub fn outer_with_shadow() {
+    type Unit = u32;
+    fn inner_shadow() -> Unit {
+        nested_shadow_notify()
+    }
+    let _ = inner_shadow();
+}
+
+pub fn outer_nested_unit() {
+    fn inner_unit() -> Unit {
+        nested_unit_notify()
+    }
+    inner_unit()
+}
+
+pub fn generic_shadow<Unit>() -> Unit {
+    generic_notify()
+}
+
+struct GenericHolder<Unit>(Unit);
+impl<Unit> GenericHolder<Unit> {
+    fn method_generic() -> Unit {
+        method_generic_notify()
+    }
+}
+
+#[doc = "unconditional"]
+type Allowed = ();
+pub fn allowed_alias_tail() -> Allowed {
+    allowed_notify()
+}
+
+#[cfg_attr(test, allow(dead_code))]
+type CfgAttrAllowed = ();
+pub fn cfg_attr_allow_tail() -> CfgAttrAllowed {
+    cfg_attr_allow_notify()
+}
+
+#[cfg_attr(windows, cfg(test))]
+type NestedCfg = ();
+pub fn nested_cfg_tail() -> NestedCfg {
+    nested_cfg_notify()
+}
+
+pub fn const_generic_unit<const Unit: usize>() -> Unit {
+    const_generic_notify()
+}
+
+type r#RawUnit = ();
+pub fn raw_alias_tail() -> RawUnit {
+    raw_alias_notify()
+}
+
+pub fn raw_return_tail() -> r#Unit {
+    raw_return_notify()
+}
+
+pub fn raw_generic_shadow<r#Unit>() -> Unit {
+    raw_generic_notify()
+}
+
+#[expect(non_camel_case_types)]
+type unit = ();
+pub fn expect_alias_tail() -> unit {
+    expect_notify()
+}
+
+#[cfg_attr(test, expect(non_camel_case_types))]
+type cfg_attr_expect = ();
+pub fn cfg_attr_expect_tail() -> cfg_attr_expect {
+    cfg_attr_expect_notify()
+}
+
+#[rewrite_unit]
+type Rewritten = ();
+pub fn rewritten_alias_tail() -> Rewritten {
+    rewritten_notify()
+}
+
+#[cfg_attr(test, rewrite_unit)]
+type CfgAttrRewritten = ();
+pub fn cfg_attr_rewritten_tail() -> CfgAttrRewritten {
+    cfg_attr_rewritten_notify()
+}
+
+#[rewrite_fn]
+pub fn rewritten_fn_tail() -> Unit {
+    rewritten_fn_notify()
+}
+
+#[cfg_attr(test, rewrite_fn)]
+pub fn cfg_attr_rewritten_fn_tail() -> Unit {
+    cfg_attr_rewritten_fn_notify()
+}
+
+#[inline]
+pub fn inline_alias_tail() -> Unit {
+    inline_notify()
+}
+
+#[rewrite_impl]
+impl Holder {
+    fn rewritten_impl_method() -> Unit {
+        rewritten_impl_notify()
+    }
+}
+
+#[rewrite_mod]
+mod rewritten {
+    type Unit = ();
+    pub fn rewritten_mod_tail() -> Unit {
+        rewritten_mod_notify()
+    }
+}
+
+#[cfg_attr(test, doc = "note, cfg(test)")]
+type DocComma = ();
+pub fn doc_comma_tail() -> DocComma {
+    doc_comma_notify()
+}
+
+#[cfg_attr /* keep */ (test, allow(dead_code))]
+type CommentedAllow = ();
+pub fn commented_cfg_attr_allow_tail() -> CommentedAllow {
+    commented_cfg_attr_allow_notify()
+}
+
+#[cfg /* off */ (windows)]
+type CommentedCfg = ();
+pub fn commented_cfg_tail() -> CommentedCfg {
+    commented_cfg_notify()
+}
+
+#[r#cfg(windows)]
+type RawCfg = ();
+pub fn raw_cfg_tail() -> RawCfg {
+    raw_cfg_notify()
+}
+
+#[cfg_attr /* off */ (windows, cfg(test))]
+type CommentedNestedCfg = ();
+pub fn commented_nested_cfg_tail() -> CommentedNestedCfg {
+    commented_nested_cfg_notify()
+}
+
+#[cfg(windows)]
+type CfgUnit = ();
+mod cfg_other {
+    pub type CfgUnit = u32;
+}
+#[cfg(not(windows))]
+use cfg_other::CfgUnit;
+pub fn cfg_alias_tail() -> CfgUnit {
+    cfg_notify()
+}
+
+const _: () = {
+    type Unit = u32;
+    fn inner_const() -> Unit {
+        const_shadow_notify()
+    }
+};
+
+static SHADOW: () = {
+    type Unit = u32;
+    fn inner_static() -> Unit {
+        static_shadow_notify()
+    }
+};
+"#;
+        let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
+        let consumed = |name: &str| {
+            facts.probe_shapes.iter().any(|shape| {
+                shape.kind == ProbeShapeKind::CallDeletion
+                    && shape.text.as_str() == name
+                    && shape.value_consumed
+            })
+        };
+        let unconsumed = |name: &str| {
+            facts.probe_shapes.iter().any(|shape| {
+                shape.kind == ProbeShapeKind::CallDeletion
+                    && shape.text.as_str() == name
+                    && !shape.value_consumed
+            })
+        };
+        for call in [
+            "notify()",
+            "spaced_notify()",
+            "reset()",
+            "work()",
+            "inner_notify()",
+            "allowed_notify()",
+            "cfg_attr_allow_notify()",
+            "const_generic_notify()",
+            "raw_alias_notify()",
+            "raw_return_notify()",
+            "commented_cfg_attr_allow_notify()",
+            "doc_comma_notify()",
+            "expect_notify()",
+            "cfg_attr_expect_notify()",
+            "inline_notify()",
+        ] {
+            assert!(
+                unconsumed(call),
+                "{call} should be an unconsumed unit-alias tail: {:?}",
+                facts
+                    .probe_shapes
+                    .iter()
+                    .filter(|shape| shape.kind == ProbeShapeKind::CallDeletion)
+                    .map(|shape| (shape.text.as_str(), shape.value_consumed))
+                    .collect::<Vec<_>>()
+            );
+        }
+        for call in [
+            "produce()",
+            "crate_notify()",
+            "chained_notify()",
+            "other_notify()",
+            "impl_notify()",
+            "nested_shadow_notify()",
+            "nested_unit_notify()",
+            "generic_notify()",
+            "method_generic_notify()",
+            "cfg_notify()",
+            "const_shadow_notify()",
+            "static_shadow_notify()",
+            "nested_cfg_notify()",
+            "raw_generic_notify()",
+            "commented_cfg_notify()",
+            "raw_cfg_notify()",
+            "commented_nested_cfg_notify()",
+            "rewritten_notify()",
+            "cfg_attr_rewritten_notify()",
+            "rewritten_fn_notify()",
+            "cfg_attr_rewritten_fn_notify()",
+            "rewritten_impl_notify()",
+            "rewritten_mod_notify()",
+        ] {
+            assert!(
+                consumed(call),
+                "{call} should stay consumed: {:?}",
+                facts
+                    .probe_shapes
+                    .iter()
+                    .filter(|shape| shape.kind == ProbeShapeKind::CallDeletion)
+                    .map(|shape| (shape.text.as_str(), shape.value_consumed))
+                    .collect::<Vec<_>>()
+            );
+        }
         Ok(())
     }
 

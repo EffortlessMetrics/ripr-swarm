@@ -46,8 +46,20 @@ facts built from existing test/oracle analysis.
 A `call_presence` seam asks whether tests notice that a call is gone. It is
 emitted only for a call whose value is discarded: a call statement, `let _ =`,
 `_ =` or a `_`-prefixed binding, a closure or async block body, the tail of a
-unit function, or `return f()` in a unit function. A
-call whose value feeds a consumer (a condition or scrutinee, a named binding,
+unit function, or `return f()` in a unit function. A same-module
+`type X = ();` alias used as a bare return path is unit too (#7101).
+Qualified paths (`other::Unit`, `Self::Output`), a further alias of that
+name, a function or impl/trait type parameter of the same name (including
+`r#Unit` vs `Unit`), associated types, nested functions, `#[cfg]` aliases
+(including trivia between `cfg` and `(` and a raw `r#cfg` path), a
+`cfg_attr` that introduces `cfg`, an unknown or proc-macro-like attribute
+on the alias, the function, or an enclosing impl/trait/module (including one
+introduced through `cfg_attr`), a competing same-name `use`,
+and aliases shadowed in a `const` or `static` block stay unresolved and
+read as a value. A same-named const generic, `#[cfg_attr(_, allow(..))]`,
+`#[doc]`, `#[expect(..)]`, `#[inline]`, and a one-prefix raw-ident spelling of a unit
+alias or return path do not refuse the alias.
+A call whose value feeds a consumer (a condition or scrutinee, a named binding,
 an operand, an argument, a receiver, a field or index base, an element, a
 `for` iterable, or a non-unit return through block tails, `if` branches and
 match arms) emits no `call_presence` seam: deleting it does not compile, so no

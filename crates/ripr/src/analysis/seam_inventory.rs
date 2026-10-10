@@ -4073,6 +4073,275 @@ pub fn positions(x: u32, v: &[u32]) -> u32 {
     }
 
     #[test]
+    fn seam_inventory_keeps_call_presence_for_a_same_module_unit_type_alias() -> Result<(), String>
+    {
+        // #7101: a same-module `type X = ();` return is unit, so the tail
+        // call keeps `call_presence`. A non-unit alias, a qualified path,
+        // a chained alias, `Self::Output`, cfg-gated aliases, competing
+        // same-name imports, and const/static block shadows stay consumed.
+        let path = PathBuf::from("src/alias.rs");
+        let source = r#"
+type Unit = ();
+type Spaced = ( );
+type Value = u32;
+type Nested = Unit;
+
+pub fn unit_alias_tail() -> Unit {
+    notify()
+}
+
+pub fn spaced_alias_tail() -> Spaced {
+    spaced_notify()
+}
+
+pub fn early_unit_alias(x: u32) -> Unit {
+    if x == 0 {
+        return reset();
+    }
+    work()
+}
+
+pub fn non_unit_alias_tail() -> Value {
+    produce()
+}
+
+pub fn qualified_alias_tail() -> self::Unit {
+    crate_notify()
+}
+
+pub fn chained_alias_tail() -> Nested {
+    chained_notify()
+}
+
+mod other {
+    type Unit = ();
+    pub fn inner_unit_tail() -> Unit {
+        inner_notify()
+    }
+}
+
+pub fn other_module_alias() -> other::Unit {
+    other_notify()
+}
+
+struct Holder;
+trait Make {
+    type Output;
+    fn assoc_unit() -> Self::Output;
+}
+impl Make for Holder {
+    type Output = ();
+    fn assoc_unit() -> Self::Output {
+        impl_notify()
+    }
+}
+
+pub fn outer_with_shadow() {
+    type Unit = u32;
+    fn inner_shadow() -> Unit {
+        nested_shadow_notify()
+    }
+    let _ = inner_shadow();
+}
+
+pub fn outer_nested_unit() {
+    fn inner_unit() -> Unit {
+        nested_unit_notify()
+    }
+    inner_unit()
+}
+
+pub fn generic_shadow<Unit>() -> Unit {
+    generic_notify()
+}
+
+struct GenericHolder<Unit>(Unit);
+impl<Unit> GenericHolder<Unit> {
+    fn method_generic() -> Unit {
+        method_generic_notify()
+    }
+}
+
+#[doc = "unconditional"]
+type Allowed = ();
+pub fn allowed_alias_tail() -> Allowed {
+    allowed_notify()
+}
+
+#[cfg_attr(test, allow(dead_code))]
+type CfgAttrAllowed = ();
+pub fn cfg_attr_allow_tail() -> CfgAttrAllowed {
+    cfg_attr_allow_notify()
+}
+
+#[cfg_attr(windows, cfg(test))]
+type NestedCfg = ();
+pub fn nested_cfg_tail() -> NestedCfg {
+    nested_cfg_notify()
+}
+
+pub fn const_generic_unit<const Unit: usize>() -> Unit {
+    const_generic_notify()
+}
+
+type r#RawUnit = ();
+pub fn raw_alias_tail() -> RawUnit {
+    raw_alias_notify()
+}
+
+pub fn raw_return_tail() -> r#Unit {
+    raw_return_notify()
+}
+
+pub fn raw_generic_shadow<r#Unit>() -> Unit {
+    raw_generic_notify()
+}
+
+#[expect(non_camel_case_types)]
+type unit = ();
+pub fn expect_alias_tail() -> unit {
+    expect_notify()
+}
+
+#[cfg_attr(test, expect(non_camel_case_types))]
+type cfg_attr_expect = ();
+pub fn cfg_attr_expect_tail() -> cfg_attr_expect {
+    cfg_attr_expect_notify()
+}
+
+#[rewrite_unit]
+type Rewritten = ();
+pub fn rewritten_alias_tail() -> Rewritten {
+    rewritten_notify()
+}
+
+#[cfg_attr(test, rewrite_unit)]
+type CfgAttrRewritten = ();
+pub fn cfg_attr_rewritten_tail() -> CfgAttrRewritten {
+    cfg_attr_rewritten_notify()
+}
+
+#[rewrite_fn]
+pub fn rewritten_fn_tail() -> Unit {
+    rewritten_fn_notify()
+}
+
+#[cfg_attr(test, rewrite_fn)]
+pub fn cfg_attr_rewritten_fn_tail() -> Unit {
+    cfg_attr_rewritten_fn_notify()
+}
+
+#[inline]
+pub fn inline_alias_tail() -> Unit {
+    inline_notify()
+}
+
+#[rewrite_impl]
+impl Holder {
+    fn rewritten_impl_method() -> Unit {
+        rewritten_impl_notify()
+    }
+}
+
+#[rewrite_mod]
+mod rewritten {
+    type Unit = ();
+    pub fn rewritten_mod_tail() -> Unit {
+        rewritten_mod_notify()
+    }
+}
+
+#[cfg_attr(test, doc = "note, cfg(test)")]
+type DocComma = ();
+pub fn doc_comma_tail() -> DocComma {
+    doc_comma_notify()
+}
+
+#[cfg_attr /* keep */ (test, allow(dead_code))]
+type CommentedAllow = ();
+pub fn commented_cfg_attr_allow_tail() -> CommentedAllow {
+    commented_cfg_attr_allow_notify()
+}
+
+#[cfg /* off */ (windows)]
+type CommentedCfg = ();
+pub fn commented_cfg_tail() -> CommentedCfg {
+    commented_cfg_notify()
+}
+
+#[r#cfg(windows)]
+type RawCfg = ();
+pub fn raw_cfg_tail() -> RawCfg {
+    raw_cfg_notify()
+}
+
+#[cfg_attr /* off */ (windows, cfg(test))]
+type CommentedNestedCfg = ();
+pub fn commented_nested_cfg_tail() -> CommentedNestedCfg {
+    commented_nested_cfg_notify()
+}
+
+#[cfg(windows)]
+type CfgUnit = ();
+mod cfg_other {
+    pub type CfgUnit = u32;
+}
+#[cfg(not(windows))]
+use cfg_other::CfgUnit;
+pub fn cfg_alias_tail() -> CfgUnit {
+    cfg_notify()
+}
+
+const _: () = {
+    type Unit = u32;
+    fn inner_const() -> Unit {
+        const_shadow_notify()
+    }
+};
+
+static SHADOW: () = {
+    type Unit = u32;
+    fn inner_static() -> Unit {
+        static_shadow_notify()
+    }
+};
+"#;
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let mut call_presence = seams
+            .iter()
+            .filter(|seam| seam.kind() == SeamKind::CallPresence)
+            .map(|seam| seam.expression().to_string())
+            .collect::<Vec<_>>();
+        call_presence.sort();
+        let mut expected = vec![
+            "notify()".to_string(),
+            "spaced_notify()".to_string(),
+            "reset()".to_string(),
+            "work()".to_string(),
+            "inner_notify()".to_string(),
+            "inner_shadow()".to_string(),
+            "inner_unit()".to_string(),
+            "allowed_notify()".to_string(),
+            "cfg_attr_allow_notify()".to_string(),
+            "const_generic_notify()".to_string(),
+            "raw_alias_notify()".to_string(),
+            "raw_return_notify()".to_string(),
+            "commented_cfg_attr_allow_notify()".to_string(),
+            "doc_comma_notify()".to_string(),
+            "expect_notify()".to_string(),
+            "cfg_attr_expect_notify()".to_string(),
+            "inline_notify()".to_string(),
+        ];
+        expected.sort();
+        assert_eq!(
+            call_presence, expected,
+            "call_presence seams: {call_presence:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn seam_inventory_skips_inline_test_functions_inside_production_files() -> Result<(), String> {
         let path = PathBuf::from("src/lib.rs");
         let source = r#"
