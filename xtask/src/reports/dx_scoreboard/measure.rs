@@ -5,8 +5,18 @@
 //! a fresh `RIPR_CACHE_DIR` per repository so "cold" means no ripr cache,
 //! and the warm check reuses that same cache.
 
+mod check_admission;
+
 use super::{Config, CorpusEntry, Options, RunContext, Sample, SampleOutcome};
 use crate::run::{MeasuredOutput, capture_bytes_in_dir_with_timeout, capture_output_measured};
+#[cfg(test)]
+pub(crate) use check_admission::{
+    CHECK_SCHEMA_VERSION, OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL, admit_check_document,
+    permissive_json_exit_zero,
+};
+pub(crate) use check_admission::{
+    CheckAdmission, CheckSubject, admit_check_sample, scan_check_contradictions,
+};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
@@ -286,20 +296,33 @@ fn measure_corpus_entry(
         }
     }
 
+    let base = entry
+        .base_sha
+        .clone()
+        .unwrap_or_else(|| "HEAD~1".to_string());
     let check_args = vec![
         "check".to_string(),
         "--root".to_string(),
         root.clone(),
         "--base".to_string(),
-        entry
-            .base_sha
-            .clone()
-            .unwrap_or_else(|| "HEAD~1".to_string()),
+        base.clone(),
         "--format".to_string(),
         "json".to_string(),
     ];
+    let subject = CheckSubject {
+        root: root.clone(),
+        // `ripr check` without `--mode` is draft; do not invent another mode.
+        mode: "draft".to_string(),
+        base,
+        // Known checkout HEAD only. Missing means unknown, not "any head".
+        head: git(Some(&checkout), &["rev-parse", "HEAD"])
+            .ok()
+            .map(|output| output.trim().to_string())
+            .filter(|value| !value.is_empty()),
+    };
     // The first run warms the cache for this exact diff; the second is the
-    // edit-check loop a developer repeats.
+    // edit-check loop a developer repeats. Warm-up success is required
+    // before the measured population may be described as warm.
     let warmup = capture_output_measured(
         &binary.display().to_string(),
         &check_args,
@@ -308,8 +331,8 @@ fn measure_corpus_entry(
         timeout,
         "dx-scoreboard warm-up check",
     );
-    let measured = warmup.and_then(|_| {
-        capture_output_measured(
+    let measured = match &warmup {
+        Ok(warmup) if !warmup.output.timed_out => capture_output_measured(
             &binary.display().to_string(),
             &check_args,
             None,
@@ -317,49 +340,51 @@ fn measure_corpus_entry(
             timeout,
             "dx-scoreboard warm check",
         )
-    });
-    match measured {
-        Ok(measured) => {
-            let ms = duration_ms(&measured);
-            let parsed = serde_json::from_str::<Value>(&measured.output.stdout).ok();
-            let ok = exited_zero(&measured) && parsed.is_some();
-            let findings = parsed
-                .as_ref()
-                .and_then(|json| json["summary"]["findings"].as_u64())
-                .unwrap_or(0);
-            samples.push(sample(
-                "speed.warm_check_ms",
-                if ok {
-                    SampleOutcome::Value(ms)
-                } else {
-                    SampleOutcome::Incomplete(ms)
-                },
-                format!(
-                    "exit {}, {findings} finding(s) on HEAD~1..HEAD",
-                    exit_label(&measured)
-                ),
-            ));
-            samples.push(rss_sample(
-                &sample,
-                "speed.warm_check_peak_rss_mb",
-                &measured,
-                ok,
-            ));
-            if let Some(json) = parsed {
-                contradictions = Some(merge_contradictions(
-                    contradictions,
-                    check_contradictions(&json),
-                ));
-            } else {
-                missing_sources.push("warm check JSON");
-            }
-        }
-        Err(err) => {
+        .map(Some),
+        Ok(_) | Err(_) => Ok(None),
+    };
+    record_warm_check(
+        &sample,
+        &subject,
+        warmup,
+        measured,
+        samples,
+        &mut contradictions,
+        &mut missing_sources,
+    );
+
+    let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
+    samples.push(sample("trust.self_contradictions", outcome, detail));
+    json!({"id": entry.id, "sha": entry.sha, "url": entry.url, "status": "measured"})
+}
+
+/// Admit a warm-up plus measured check pair. Raw duration/RSS/exit are
+/// retained for failed or incomplete children; only a successful warm-up
+/// and a completed intended-subject analysis may enter the comparable
+/// complete-work population.
+pub(crate) fn record_warm_check(
+    sample: &dyn Fn(&str, SampleOutcome, String) -> Sample,
+    subject: &CheckSubject,
+    warmup: Result<MeasuredOutput, String>,
+    measured: Result<Option<MeasuredOutput>, String>,
+    samples: &mut Vec<Sample>,
+    contradictions: &mut Option<(usize, Vec<String>)>,
+    missing_sources: &mut Vec<&str>,
+) {
+    let warmup_admission = match &warmup {
+        Ok(warmup) => admit_measured(warmup, subject),
+        Err(_) => CheckAdmission::Rejected {
+            reason: "warm-up capture failed".to_string(),
+        },
+    };
+    let warmup_ok = warmup_admission.is_complete();
+    match (warmup, measured) {
+        (Err(err), _) => {
             missing_sources.push("warm check JSON");
             samples.push(sample(
                 "speed.warm_check_ms",
                 SampleOutcome::Failed,
-                err.clone(),
+                format!("warm-up capture failed: {err}"),
             ));
             samples.push(sample(
                 "speed.warm_check_peak_rss_mb",
@@ -367,11 +392,110 @@ fn measure_corpus_entry(
                 err,
             ));
         }
+        (Ok(warmup), Err(err)) => {
+            missing_sources.push("warm check JSON");
+            let ms = duration_ms(&warmup);
+            samples.push(sample(
+                "speed.warm_check_ms",
+                SampleOutcome::Incomplete(ms),
+                format!(
+                    "warm-up {}; measured capture failed: {err}",
+                    warmup_admission.reason()
+                ),
+            ));
+            samples.push(rss_sample(
+                sample,
+                "speed.warm_check_peak_rss_mb",
+                &warmup,
+                false,
+            ));
+        }
+        (Ok(warmup), Ok(None)) => {
+            missing_sources.push("warm check JSON");
+            let ms = duration_ms(&warmup);
+            samples.push(sample(
+                "speed.warm_check_ms",
+                SampleOutcome::Incomplete(ms),
+                format!(
+                    "exit {}, warm-up {}; measured run not taken",
+                    exit_label(&warmup),
+                    warmup_admission.reason()
+                ),
+            ));
+            samples.push(rss_sample(
+                sample,
+                "speed.warm_check_peak_rss_mb",
+                &warmup,
+                false,
+            ));
+        }
+        (Ok(_warmup), Ok(Some(measured))) => {
+            let admission = admit_measured(&measured, subject);
+            let complete = warmup_ok && admission.is_complete();
+            let ms = duration_ms(&measured);
+            let findings = admission
+                .findings()
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let mut detail = format!(
+                "exit {}, {findings} finding(s) on {}..HEAD",
+                exit_label(&measured),
+                subject.base
+            );
+            if !warmup_ok {
+                detail.push_str(&format!(
+                    "; warm-up did not establish a valid warm population ({})",
+                    warmup_admission.reason()
+                ));
+            }
+            if !admission.is_complete() {
+                detail.push_str(&format!("; {}", admission.reason()));
+            }
+            if admission.rendering_truncated() {
+                detail.push_str("; findings array rendering was truncated");
+            }
+            samples.push(sample(
+                "speed.warm_check_ms",
+                if complete {
+                    SampleOutcome::Value(ms)
+                } else {
+                    SampleOutcome::Incomplete(ms)
+                },
+                detail,
+            ));
+            samples.push(rss_sample(
+                sample,
+                "speed.warm_check_peak_rss_mb",
+                &measured,
+                complete,
+            ));
+            // Trust may scan only an admitted complete document. A rejected
+            // subject or incomplete analysis cannot contribute a clean zero.
+            if admission.is_complete() {
+                match serde_json::from_str::<Value>(&measured.output.stdout) {
+                    Ok(json) => match check_contradictions(&json) {
+                        Ok(found) => {
+                            *contradictions =
+                                Some(merge_contradictions(contradictions.take(), found));
+                        }
+                        Err(_) => missing_sources.push("warm check JSON"),
+                    },
+                    Err(_) => missing_sources.push("warm check JSON"),
+                }
+            } else {
+                missing_sources.push("warm check JSON");
+            }
+        }
     }
+}
 
-    let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
-    samples.push(sample("trust.self_contradictions", outcome, detail));
-    json!({"id": entry.id, "sha": entry.sha, "url": entry.url, "status": "measured"})
+fn admit_measured(measured: &MeasuredOutput, subject: &CheckSubject) -> CheckAdmission {
+    admit_check_sample(
+        measured.output.timed_out,
+        exited_zero(measured),
+        &measured.output.stdout,
+        subject,
+    )
 }
 
 /// Why earlier ripr state in `checkout` must not be cleared, if it must not.
@@ -551,36 +675,10 @@ pub(crate) fn repo_exposure_contradictions(exposure: &Value) -> (usize, Vec<Stri
 /// Self-contradiction rules over one `ripr check --format json` result:
 /// `R2` classification `no_static_path` while listing related tests;
 /// `R3` evidence says related tests were found while listing none.
-pub(crate) fn check_contradictions(check: &Value) -> (usize, Vec<String>) {
-    let mut count = 0;
-    let mut examples = Vec::new();
-    for finding in check["findings"].as_array().into_iter().flatten() {
-        let related = finding["related_tests_total"].as_u64().unwrap_or(0);
-        let id = finding["id"].as_str().unwrap_or("?");
-        let rule = if finding["classification"].as_str() == Some("no_static_path") && related > 0 {
-            Some(format!(
-                "R2 {id} no_static_path with {related} related tests"
-            ))
-        } else if related == 0
-            && finding["evidence"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .any(|line| line.starts_with("Related tests were found"))
-        {
-            Some(format!("R3 {id} says related tests were found but lists 0"))
-        } else {
-            None
-        };
-        if let Some(rule) = rule {
-            count += 1;
-            if examples.len() < 3 {
-                examples.push(rule);
-            }
-        }
-    }
-    (count, examples)
+/// A missing findings array or a declared rendering prefix cannot be
+/// scanned as a clean empty population.
+pub(crate) fn check_contradictions(check: &Value) -> Result<(usize, Vec<String>), String> {
+    scan_check_contradictions(check)
 }
 
 fn merge_contradictions(
