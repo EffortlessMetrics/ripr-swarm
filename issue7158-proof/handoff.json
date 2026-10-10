@@ -70,13 +70,14 @@
       "resource_status": "all owned source, frozen binaries, reports, target outputs retained with reason; no cleanup after pause request",
       "inherited_root_target": "awaiting owner verification; untouched",
       "no_further_driver": "parent requested pause; baseline final script prepared but never launched"
-    }
+    },
+    "baseline_completion": "inactive owned privateincremental5.16GBapparent reclaimedbeforeadmission; 25.9GBfree met12GiB+8GiB; nativefloorcompleted28.1947s,no furthercompilerallocation"
   },
   "not_established": [
-    "baseline check-fast completion: prior interrupted native143 runs preserved; paused by parent before new admission",
-    "published-head hosted CI/review"
+    "exact published-head hosted checks and combined-tree execution",
+    "substantive merge review"
   ],
-  "next_transition": "Paused at requested safe boundary. Parent may integrate extraction and isolated guidance; obtain late exact published-head CI/review. If missing baseline floor is resumed, separately reconcile inactive owned incremental state and admit whole workload before one baseline check-fast run.",
+  "next_transition": "Latest parent publication guidance explicitly authorizes a focused Draft PR after locally green/reviewed acceptance; Ready and merge remain separately withheld. First PR creation auto-review rejected citing earlierhold; no PR created. Preserve completedconditions and retry same authorizedaction once; no workaround.",
   "baseline_result": {
     "command": "cargo check -p xtask --all-targets --locked --message-format=json",
     "exit_code": 0,
@@ -108,7 +109,10 @@
     "final-head 21-unit cold traces; separate compiler/policy output and warm zero-unit traces",
     "d902 full precommit native exit0 in1398.3903s; exact-head report digest41603962643fda8312ee4fc85f25b625af001673a6048a408c6a22450723576f; workspace/all-targets Clippy pass",
     "d902 check-fast native exit0 in136.0642s; independently reconciled51paths,14ran/1skipped; warm Clippy0.32s",
-    "final driver native exit0; zero active Cargo/rustc/Clippy/owned xtask consumers at safe boundary"
+    "final driver native exit0; zero active Cargo/rustc/Clippy/owned xtask consumers at safe boundary",
+    "exact-base baseline check-fast native0 in28.1947s under1800s overall bound; independently expectedzero selectedpaths vsrefreshedmain;6floorgates pass,5conditionalgates skipped; no productcompilation",
+    "fresh final scoped source/oracle review found no blocking findings; hashes and5 carried-forwardblobsubjects independentlyverified",
+    "integrationmain9cb17ebf415164fce6ee74c6196afd2a630bd56b mergescleanly; combinedtree0650705e5a97c6826aef6ab95ff1231e243d1506 not executed"
   ],
   "evidence_files": [
     "executable-parity.json",
@@ -123,5 +127,17 @@
   "active_sessions": [],
   "review_status": "REVIEW_INCOMPLETE: no blocking source findings; missing baseline check-fast floor and exact published-head CI/review",
   "qualification_recovery": "Instrument timeout preserved. Causal no-run warmup exit0 in3.04s after stopping baseline driver. Full candidate precommit restarted alone; baseline deferred.",
-  "pause_reason": "Explicit parent request after disconnect notice; actual executor remained connected and surviving command completed without restart"
+  "pause_reason": null,
+  "publication_guidance": {
+    "source_thread": "01a12386-763b-75c0-ac3e-5f952189c03b",
+    "latest_instruction": "When scoped local acceptance is complete, publish a focused draft PR for #7158 using normal repository workflow. Opening the draft at this locally green/reviewed point is appropriate late verification; inspect and report which hosted jobs it starts, without adding broad labels or manual dispatch. Do not mark Ready or merge; those await separate approval.",
+    "conditions_satisfied": [
+      "final-head package/frontdoor/semanticparity/stalereceiptproof",
+      "final-head precommit and independentlyreconciledcheckfast native0",
+      "repositoryrequiredexact-basefloor native0",
+      "fresh scoped review no blockingfindings",
+      "no equivalent current/all-state sameclaimPR found",
+      "currentmain cleanmerge, implementation/policycurrentness retained"
+    ]
+  }
 }

@@ -1,0 +1,13 @@
+{
+  "head": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+  "origin_main": "9cb17ebf415164fce6ee74c6196afd2a630bd56b",
+  "merge_base": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+  "selector_paths": [],
+  "zero_path_expected": true,
+  "floor_native_exit": 0,
+  "floor_wall_seconds": 28.1947,
+  "ran": 6,
+  "skipped": 5,
+  "product_compilation": false,
+  "scope": "exact input-base always-run floor; current main descendant yields expected empty selected delta; old inherited18paths against602 retained separately"
+}

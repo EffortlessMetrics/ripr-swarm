@@ -1,0 +1,2 @@
+$ cargo fmt --check
+check-fast: ran 6 gate(s), skipped 5 (check-no-panic-family, check-allow-attributes, check-file-policy, clippy, check-fixture-contracts), base=origin/main, 0 file(s) changed

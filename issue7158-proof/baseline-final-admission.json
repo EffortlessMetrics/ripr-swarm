@@ -1,0 +1,16 @@
+{
+  "utc": "2026-10-10T06:47:01.076578+00:00",
+  "free_before": 20901810176,
+  "free_after": 25928847360,
+  "reserve_bytes": 12884901888,
+  "whole_workload_additional_budget_bytes": 8589934592,
+  "removed": {
+    "path": "/workspace/issue7158-build/debug/incremental",
+    "apparent_bytes": 5157558875,
+    "reason": "inactive reproducible owned incremental state; all source, dependencies, reports and frozen witnesses preserved"
+  },
+  "head": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+  "target": "/workspace/issue7158-build",
+  "jobs": 1,
+  "overall_timeout_seconds": 1800
+}

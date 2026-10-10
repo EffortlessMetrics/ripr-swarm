@@ -7,8 +7,8 @@
   "disposition": "REVIEW_INCOMPLETE",
   "blocking_source_findings": [],
   "remaining": [
-    "baseline check-fast completion (parent paused new admission)",
-    "exact published-head CI/review"
+    "exact published-head hosted checks",
+    "substantive merge review"
   ],
   "trust_boundary": "Receipt hashes establish currentness, not authenticity against another writer able to forge a receipt in the private trusted target directory.",
   "guidance_followup": {
@@ -40,5 +40,24 @@
       "blocking_findings": []
     }
   ],
-  "local_gates": "final d902 precommit and check-fast both native exit0"
+  "local_gates": "final d902 precommit and check-fast both native exit0",
+  "fresh_final_review": {
+    "head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+    "main": "9cb17ebf415164fce6ee74c6196afd2a630bd56b",
+    "reviewer": "policy_review",
+    "model": "gpt-6.1-sol",
+    "effort": "medium",
+    "blocking_source_or_oracle_findings": [],
+    "reviewed": [
+      "semanticowners/consumers",
+      "receipt currentness/cleanup andprivate-target trust",
+      "defaultprecommit/CIcaller routing",
+      "catalog/product-plan/selector/manifestmetadata",
+      "realpositive/negativeexecutableproof",
+      "retainedwitnesshashes andfive unchangedproofsubjectblobs",
+      "normal/build andcoldcompilergraph",
+      "currentintegrationdiff andunexecutedcombinedtree"
+    ],
+    "baseline_floor": "completedafterreview; no sourcechanged"
+  }
 }

@@ -1,0 +1,12 @@
+{
+  "head": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+  "command": [
+    "/workspace/issue7158-evidence/old-xtask",
+    "check-fast"
+  ],
+  "exit_code": 0,
+  "wall_seconds": 28.1947,
+  "free_after": 25928814592,
+  "target": "/workspace/issue7158-build",
+  "jobs": 1
+}

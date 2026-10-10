@@ -1,0 +1,22 @@
+{
+  "head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+  "input_base": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+  "integration_main": "9cb17ebf415164fce6ee74c6196afd2a630bd56b",
+  "combined_tree": "0650705e5a97c6826aef6ab95ff1231e243d1506",
+  "merge_tree_exit": 0,
+  "combined_tree_execution": "NOT_ESTABLISHED; hosted verification after draft publication",
+  "implementation_currentness": "no extraction implementation/policy wiring changed upstream; docs/LEARNINGS merged cleanly with unrelated7042 evidence",
+  "fresh_scoped_review": {
+    "reviewer": "policy_review",
+    "model": "gpt-6.1-sol",
+    "effort": "medium",
+    "disposition": "REVIEW_INCOMPLETE",
+    "blocking_source_or_oracle_findings": [],
+    "artifact_hashes_and_carried_forward_blobs": "independently reverified",
+    "remaining": [
+      "exact published-head hosted checks",
+      "substantive merge review"
+    ],
+    "baseline_floor": "now native0; exactbase independently reconciled"
+  }
+}
