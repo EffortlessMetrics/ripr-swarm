@@ -191,7 +191,7 @@ pub(crate) fn ambiguous_helper_entry_called_by_tests<'a>(
         .filter(|caller| {
             !callee_is_unique(&caller.name, index)
                 && tests_call_name(index, &caller.name)
-                && caller_invokes_named_entry(caller, stop_name)
+                && caller_invokes_named_entry(caller, stop_name, index)
         })
         .map(|caller| caller.name.as_str())
         .collect();
@@ -204,35 +204,75 @@ fn tests_call_name(index: &RustIndex, name: &str) -> bool {
         && index.tests().iter().any(|test| {
             test.calls.iter().any(|call| {
                 call.name == name
-                    && test_call_invokes_named_entry(&call.text, name)
-                    && !test_local_binding_shadows(test, name, call.line)
+                    && call_is_workspace_entry(index, name, &call.text)
+                    && !local_binding_shadows(
+                        index,
+                        &test.file,
+                        test.body.as_str(),
+                        test.start_line,
+                        &test.nested_fn_names,
+                        &test.let_bindings,
+                        name,
+                        call.line,
+                    )
             })
         })
 }
 
 /// Local `fn` / `let` bindings only. Do not reuse `test_call_is_shadowed`:
 /// that function also treats a non-unique workspace name as shadowed, which
-/// would make every #7080 entry look unentered.
-fn test_local_binding_shadows(
-    test: &crate::analysis::facts::TestSummary,
+/// would make every #7080 entry look unentered. Lexical-fallback files use
+/// the masked-body scanners because their parser facts are empty.
+fn local_binding_shadows(
+    index: &RustIndex,
+    file: &std::path::Path,
+    body: &str,
+    start_line: usize,
+    nested_fn_names: &[String],
+    let_bindings: &[crate::analysis::facts::LetBindingFact],
     name: &str,
     call_line: usize,
 ) -> bool {
-    let body_line = call_line.saturating_sub(test.start_line);
-    crate::analysis::extract::ShadowAuthority::ParserBodyFacts {
-        nested_fn_names: &test.nested_fn_names,
-        let_bindings: &test.let_bindings,
+    let body_line = call_line.saturating_sub(start_line);
+    let lexical = index
+        .files()
+        .get(file)
+        .is_some_and(|facts| facts.used_lexical_fallback);
+    if lexical {
+        let masked = crate::analysis::extract::mask_comments_and_strings(body);
+        crate::analysis::extract::ShadowAuthority::LexicalMaskedBody
+            .body_shadows_callee_at_line(&masked, name, body_line)
+    } else {
+        crate::analysis::extract::ShadowAuthority::ParserBodyFacts {
+            nested_fn_names,
+            let_bindings,
+        }
+        .body_shadows_callee_at_line("", name, body_line)
     }
-    .body_shadows_callee_at_line("", name, body_line)
 }
 
 /// The wrapper invokes `stop_name` as a free or path-qualified function,
 /// not as a receiver call (`req.parse()` is not wrapping helper `parse`).
-fn caller_invokes_named_entry(caller: &FunctionSummary, stop_name: &str) -> bool {
-    caller
-        .calls
-        .iter()
-        .any(|call| call.name == stop_name && test_call_invokes_named_entry(&call.text, stop_name))
+/// A wrapper-local `fn`/`let` of that name is not the refused helper.
+fn caller_invokes_named_entry(
+    caller: &FunctionSummary,
+    stop_name: &str,
+    index: &RustIndex,
+) -> bool {
+    caller.calls.iter().any(|call| {
+        call.name == stop_name
+            && test_call_invokes_named_entry(&call.text, stop_name)
+            && !local_binding_shadows(
+                index,
+                &caller.file,
+                caller.body.as_str(),
+                caller.start_line,
+                &caller.nested_fn_names,
+                &caller.let_bindings,
+                stop_name,
+                call.line,
+            )
+    })
 }
 
 /// Whether a recorded test call invokes `callee_name` as a free function
@@ -243,8 +283,30 @@ fn caller_invokes_named_entry(caller: &FunctionSummary, stop_name: &str) -> bool
 /// first because `CallFact.text` is the original source line: a receiver
 /// on the same line as `"parse("` must not look like an entry.
 fn test_call_invokes_named_entry(text: &str, callee_name: &str) -> bool {
+    named_entry_self_type(text, callee_name).is_some()
+}
+
+/// A path-qualified call (`serde_json::from_str`) is an entry only when
+/// some workspace function of that name could be the `T` in `T::name(`
+/// (`FunctionImplContext::may_be_target_of_type_path`). Free-function
+/// calls have no `T` and still enter.
+fn call_is_workspace_entry(index: &RustIndex, name: &str, text: &str) -> bool {
+    match named_entry_self_type(text, name) {
+        None => false,
+        Some(None) => true,
+        Some(Some(self_type)) => index
+            .functions()
+            .iter()
+            .filter(|function| function.name == name)
+            .any(|function| function.impl_context.may_be_target_of_type_path(&self_type)),
+    }
+}
+
+/// `Some(None)` is a free-function call of `callee_name`. `Some(Some(T))`
+/// is `T::callee_name(`. `None` means the text does not invoke that entry.
+fn named_entry_self_type(text: &str, callee_name: &str) -> Option<Option<String>> {
     if callee_name.is_empty() {
-        return false;
+        return None;
     }
     let masked = crate::analysis::extract::mask_comments_and_strings(text);
     let bytes = masked.as_bytes();
@@ -261,12 +323,24 @@ fn test_call_invokes_named_entry(text: &str, callee_name: &str) -> bool {
                 Some(before) => !before.is_ascii_alphanumeric() && before != '_',
             };
             if enters {
-                return true;
+                return Some(type_path_self_type(&masked[..start]));
             }
         }
         i += 1;
     }
-    false
+    None
+}
+
+fn type_path_self_type(prefix: &str) -> Option<String> {
+    let trimmed = prefix.trim_end();
+    let before_colon = trimmed.strip_suffix("::")?.trim_end();
+    let bytes = before_colon.as_bytes();
+    let mut start = bytes.len();
+    while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+        start -= 1;
+    }
+    let ident = &before_colon[start..];
+    (!ident.is_empty()).then(|| ident.to_string())
 }
 
 /// Whether `callee_name` names exactly one function in the index (the
@@ -1171,8 +1245,9 @@ fn contains_word(text: &str, word: &str) -> bool {
 mod tests {
     use super::*;
     use crate::analysis::facts::FunctionSourceRole;
-    use crate::analysis::facts::{CallFact, FunctionSummary};
+    use crate::analysis::facts::{CallFact, FileFacts, FunctionImplContext, FunctionSummary};
     use crate::domain::{RelationReason, SymbolId};
+    use std::collections::BTreeMap;
     use std::path::PathBuf;
 
     fn test_summary_calling(name: &str, text: &str) -> crate::analysis::facts::TestSummary {
@@ -1392,6 +1467,78 @@ mod tests {
             ambiguous_helper_entry_called_by_tests(&chain, &calling_from_str_receiver),
             None,
             "a non-unique wrapper that only receiver-calls the helper is not an entry"
+        );
+
+        let mut workspace_from_str =
+            function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        workspace_from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let mut workspace_from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        workspace_from_str_twin.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let calling_foreign = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                workspace_from_str,
+                workspace_from_str_twin,
+            ],
+            vec![with_test("from_str", "serde_json::from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_foreign, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_foreign),
+            None,
+            "an unrelated qualified from_str is not the workspace entry"
+        );
+
+        let mut local_wrapper =
+            function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        local_wrapper.nested_fn_names = vec!["parse".to_string()];
+        let from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        let calling_local_wrapper = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                local_wrapper,
+                from_str_twin,
+            ],
+            vec![with_test("from_str", "VersionReq::from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_local_wrapper, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_local_wrapper),
+            None,
+            "a wrapper-local parse binding is not the refused helper"
+        );
+
+        let mut fallback = with_test("parse", "parse(\">=1.0\")");
+        fallback.file = PathBuf::from("tests/fallback.rs");
+        fallback.body = "fn parse() {}\nparse(\">=1.0\")".into();
+        fallback.calls[0].line = 2;
+        let calling_fallback = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![owner.clone(), parse.clone(), twin.clone()],
+            tests: vec![fallback],
+            files: BTreeMap::from([(
+                PathBuf::from("tests/fallback.rs"),
+                FileFacts {
+                    path: PathBuf::from("tests/fallback.rs"),
+                    source: "fn parse() {}\nparse(\">=1.0\")".into(),
+                    used_lexical_fallback: true,
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+        let chain = resolve_chain("op", &calling_fallback, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_fallback),
+            None,
+            "a lexical-fallback local fn parse is not the workspace entry"
         );
 
         let mut local_parse = with_test("parse", "parse(\">=1.0\")");

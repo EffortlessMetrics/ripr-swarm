@@ -62,7 +62,11 @@ can only hint that a caller "may lead here" without changing anything.
   call that only shares the bare name (`req.parse()`) even when that
   line also contains the string or comment text `parse(` — stays
   `no_static_path`. Spaced and turbofish calls the extractor records
-  (`parse (...)`, `parse::<T>(...)`) still enter.
+  (`parse (...)`, `parse::<T>(...)`) still enter. A path-qualified call
+  enters only when some workspace function of that name could be the `T`
+  in `T::name(` (`VersionReq::from_str` yes; `serde_json::from_str` no).
+  A wrapper-local or test-local `fn`/`let` of the refused name, including
+  on a lexical-fallback file, is not an entry.
 - Hop propagation (#6780): for probe families observed through the
   owner's returned value (every family except `side_effect` and
   `call_deletion`), when the related tests reach the owner only

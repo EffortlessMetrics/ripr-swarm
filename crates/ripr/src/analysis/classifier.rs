@@ -160,7 +160,7 @@ fn withhold_helper_uniqueness_as_unknown(
 mod tests {
     use super::*;
     use crate::analysis::classify::{recommended_next_step, stop_reasons};
-    use crate::analysis::facts::FunctionSourceRole;
+    use crate::analysis::facts::{FunctionImplContext, FunctionSourceRole};
     use crate::analysis::rust_index::{
         CallFact, FileFacts, FunctionSummary, LiteralFact, OracleFact, ProbeShapeFact,
         ProbeShapeKind, ReturnFact, TestSummary, extract_identifier_tokens,
@@ -464,6 +464,38 @@ mod tests {
                 "parses_on_the_value",
                 "parse",
                 r#"req.parse(); assert_eq!(message, "parse(")"#,
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_foreign_qualified_from_str_then_no_static_path() {
+        let mut from_str =
+            function_with_calls("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let mut twin = function("src/other_from_str.rs", "from_str");
+        twin.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+                from_str,
+                twin,
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "from_json",
+                "from_str",
+                r#"serde_json::from_str(">=1.0")"#,
             )],
             ..Default::default()
         });
