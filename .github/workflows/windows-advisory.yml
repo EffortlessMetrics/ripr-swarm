@@ -310,13 +310,57 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@1.95
 
+      - name: Own stable same-volume Cargo target before cache and subset builds
+        shell: pwsh
+        env:
+          SELECTOR_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $target_setup = @'
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+
+          def own_target(stock_bin, root, head):
+              owned = stock_bin / "selector-subset-cache"
+              alias = root / "target" / "selector-cargo-cache"
+              if alias.exists() or alias.is_symlink() or getattr(alias, "is_junction", lambda: False)():
+                  raise RuntimeError("occupied cache target alias")
+              owned.mkdir()  # Atomic, exclusive acquisition; occupied roots are terminal.
+              target = owned / "target"
+              target.mkdir()
+              owner = {"head": head, "root": str(root), "target": str(target), "alias": str(alias)}
+              (owned / "owner.json").write_text(json.dumps(owner), encoding="utf-8")
+              alias.parent.mkdir(exist_ok=True)
+              return owner
+
+          root = Path.cwd().resolve()
+          cargo = shutil.which("cargo")
+          if not cargo:
+              raise RuntimeError("stock Cargo unavailable")
+          owner = own_target(Path(cargo).resolve().parent, root, os.environ["SELECTOR_EXPECTED_HEAD"])
+          print(json.dumps(owner))
+          '@
+          $owner = $target_setup | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $owner = $owner | ConvertFrom-Json
+          New-Item -ItemType Junction -Path $owner.alias -Target $owner.target -ErrorAction Stop | Out-Null
+          "CARGO_TARGET_DIR=$($owner.target)" >> $env:GITHUB_ENV
+          "SELECTOR_TARGET_OWNER=$($owner.target | Split-Path)/owner.json" >> $env:GITHUB_ENV
+
       # Distinct cache key on purpose: this job and the full suite build
       # different target subsets, and GitHub cache keys are immutable, so one
       # shared key would let whichever job saves first on `main` starve the
       # other of its artifacts.
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ripr-windows-advisory-subset-1.95-${{ runner.os }}
+          # v2 joins target to workspace root; cross-drive absolute targets cannot
+          # be mapped directly. Prune through the junction, archive the real path
+          # once, and retain the checkout root for workspace crate classification.
+          shared-key: ripr-windows-advisory-subset-1.95-${{ runner.os }}-stock-volume-v1
+          workspaces: ". -> target/selector-cargo-cache"
+          cache-targets: false
+          cache-directories: ${{ env.CARGO_TARGET_DIR }}
           cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -362,7 +406,7 @@ jobs:
               tree = ast.parse('\n'.join(line[10:] for line in raw.splitlines()))
               ast.increment_lineno(tree, prefix.count('\n') + 1)
               names = {'require', 'digest', 'remove_staged', 'stage_single_allocation',
-                       'finalize_evidence', 'record_failure', 'payload_allocation'}
+                       'finalize_evidence', 'record_failure', 'payload_allocation', 'remove_aliases'}
               nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
               ns = dict(Path=Path, hashlib=hashlib, json=json, shutil=shutil, os=os, sys=sys)
               exec(compile(ast.Module(nodes, []), str(WORKFLOW), 'exec'), ns)
@@ -412,6 +456,94 @@ jobs:
                   exec(compile(ast.Module(nodes[start:-2], []), str(WORKFLOW), 'exec'), ns)
                   return receipt
 
+              def test_cache_target_is_owned_before_restore_and_all_subset_builds(self):
+                  text = WORKFLOW.read_text()
+                  section = text[text.index('      - name: Own stable same-volume Cargo target'):]
+                  self.assertLess(section.index('$target_setup'), section.index('uses: Swatinem/rust-cache@v2'))
+                  self.assertLess(section.index('uses: Swatinem/rust-cache@v2'), section.index('cargo test -p ripr'))
+                  self.assertIn('"CARGO_TARGET_DIR=$($owner.target)" >> $env:GITHUB_ENV', section)
+                  self.assertIn('workspaces: ". -> target/selector-cargo-cache"', section)
+                  self.assertIn('cache-targets: false', section)
+                  self.assertIn('cache-directories: ${{ env.CARGO_TARGET_DIR }}', section)
+                  self.assertIn('shared-key: ripr-windows-advisory-subset-1.95-${{ runner.os }}-stock-volume-v1', section)
+                  self.assertIn("save-if: ${{ github.ref == 'refs/heads/main' }}", section)
+                  self.assertIn('cache-bin: false', section)
+                  source = ast.unparse(self.tree)
+                  self.assertIn("target = Path(os.environ['CARGO_TARGET_DIR'])", source)
+                  self.assertNotIn('selector-build-', source)
+                  self.assertNotIn('rmtree(target)', source)
+                  self.assertIn('alias.is_junction() and alias.resolve() == target', source)
+
+              def acquire(self):
+                  text = WORKFLOW.read_text().split("$target_setup = @'\n", 1)[1].split("\n          '@", 1)[0]
+                  tree = ast.parse('\n'.join(line[10:] for line in text.splitlines()))
+                  nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'own_target']
+                  ns = dict(Path=Path, json=json)
+                  exec(compile(ast.Module(nodes, []), str(WORKFLOW), 'exec'), ns)
+                  return ns['own_target'](self.stock, self.root, 'a' * 40)
+
+              def test_stable_target_is_exclusively_owned_and_marker_outside_cached_graph(self):
+                  owner = self.acquire()
+                  self.assertEqual(Path(owner['target']), self.stock / 'selector-subset-cache/target')
+                  self.assertEqual(Path(owner['alias']), self.root / 'target/selector-cargo-cache')
+                  self.assertEqual(json.loads((Path(owner['target']).parent / 'owner.json').read_text()), owner)
+                  with self.assertRaises(FileExistsError):
+                      self.acquire()
+
+              def test_occupied_target_alias_is_preserved_before_acquisition(self):
+                  occupied = self.root / 'target/selector-cargo-cache'
+                  occupied.mkdir(parents=True)
+                  (occupied / 'sentinel').write_bytes(b'keep')
+                  with self.assertRaisesRegex(RuntimeError, 'occupied'):
+                      self.acquire()
+                  self.assertFalse((self.stock / 'selector-subset-cache').exists())
+                  self.assertEqual((occupied / 'sentinel').read_bytes(), b'keep')
+
+              def test_dependencies_survive_selected_alias_cleanup(self):
+                  dependency = self.build / 'libdependency.rlib'
+                  dependency.write_bytes(b'cached dependency')
+                  self.stage()
+                  self.assertEqual(dependency.read_bytes(), b'cached dependency')
+
+              def test_cache_dependencies_and_unrelated_harness_survive_alias_cleanup(self):
+                  dependency = self.build / 'deps/libdependency.rlib'
+                  dependency.parent.mkdir()
+                  dependency.write_bytes(b'cached dependency')
+                  harness = self.build / 'deps/ripr-test.exe'
+                  harness.write_bytes(b'unrelated test harness')
+                  alias = self.build / 'deps/ripr-selected.exe'
+                  os.link(self.binary, alias)
+                  self.stage()
+                  self.assertFalse(alias.exists())
+                  self.assertEqual(dependency.read_bytes(), b'cached dependency')
+                  self.assertEqual(harness.read_bytes(), b'unrelated test harness')
+                  self.assertEqual(self.ns['remove_aliases'](self.ownership)['state'], 'REMOVED')
+
+              def test_alias_cleanup_retry_preserves_graph_and_first_failure(self):
+                  alias = self.build / 'ripr-alias.exe'
+                  os.link(self.binary, alias)
+                  with patch.object(Path, 'unlink', side_effect=PermissionError('alias locked')):
+                      with self.assertRaises(PermissionError):
+                          self.stage()
+                  receipt = {'state': 'FAIL', 'error_type': 'Producer', 'error': 'first reason'}
+                  self.ns['record_failure'](receipt, 'ProducerCleanup', 'alias locked')
+                  self.assertEqual(self.ns['remove_aliases'](self.ownership)['state'], 'REMOVED')
+                  self.assertTrue(self.build.is_dir())
+                  self.assertEqual(receipt['primary_error'], 'first reason')
+                  self.ns['remove_staged'](self.staged, True)
+
+              def test_alias_identity_drift_refuses_unrelated_deletion(self):
+                  alias = self.build / 'ripr-alias.exe'
+                  os.link(self.binary, alias)
+                  with patch.object(Path, 'unlink', side_effect=PermissionError('alias locked')):
+                      with self.assertRaises(PermissionError):
+                          self.stage()
+                  alias.unlink()
+                  alias.write_bytes(b'replacement occupant')
+                  with self.assertRaisesRegex(RuntimeError, 'alias identity drift'):
+                      self.ns['remove_aliases'](self.ownership)
+                  self.assertEqual(alias.read_bytes(), b'replacement occupant')
+
               def test_verified_run_arithmetic_and_old_admission_boundary(self):
                   self.assertEqual(2 * 67278336, 134556672)
                   self.assertEqual(134802028 - 128 * 1024**2, 584300)
@@ -429,7 +561,7 @@ jobs:
                   self.assertEqual(self.staged.stat().st_dev, identity.st_dev)
                   self.assertEqual(result['charged_bytes'], 67278336)
                   self.assertFalse(self.binary.exists())
-                  self.assertFalse(self.build.exists())
+                  self.assertTrue(self.build.is_dir())
                   self.assertEqual(self.staged.stat().st_nlink, 1)
                   receipt = self.finalize({'state': 'PASS'}, result['charged_bytes'])
                   self.assertEqual(receipt['state'], 'PASS')
@@ -496,7 +628,8 @@ jobs:
                   self.assertFalse(self.staged.exists())
 
               def test_producer_cleanup_failure_keeps_staged_ownership(self):
-                  with patch.object(shutil, 'rmtree', side_effect=PermissionError('producer locked')):
+                  os.link(self.binary, self.build / 'ripr-alias.exe')
+                  with patch.object(Path, 'unlink', side_effect=PermissionError('producer locked')):
                       with self.assertRaisesRegex(PermissionError, 'producer locked'):
                           self.stage()
                   self.assertTrue(self.ownership['staged'])
@@ -647,10 +780,25 @@ jobs:
               info = binary.stat()
               aliases = [p for p in target.rglob("*") if p.is_file() and p.samefile(binary)]
               require(len(aliases) == info.st_nlink and all(not p.is_symlink() for p in aliases), "unowned executable alias")
-              require(all(p.samefile(binary) for p in target.rglob("ripr*.exe")), "separate producer executable allocation")
+              expected = digest(binary)
+              require(all(p.samefile(binary) or p.stat().st_size != info.st_size or digest(p) != expected
+                          for p in target.rglob("ripr*.exe")), "separate producer executable allocation")
               return {"charged_bytes": info.st_size, "device": info.st_dev, "file_id": info.st_ino,
                       "producer_aliases": [str(p) for p in aliases], "admitted_payload_allocations": 1, "transfer_payload_allocations": 1,
                       "accounting_scope": "selected artifact after producer exit through staging cleanup; compiler intermediates excluded"}
+
+          def remove_aliases(ownership):
+              allocation = ownership.get("allocation")
+              if allocation is None:
+                  return {"state": "NOT_CREATED"}
+              for raw in allocation["producer_aliases"]:
+                  path = Path(raw)
+                  if path.exists():
+                      require(not path.is_symlink() and (path.stat().st_dev, path.stat().st_ino) ==
+                              (allocation["device"], allocation["file_id"]), "producer alias identity drift")
+                      path.unlink()
+              require(all(not Path(p).exists() for p in allocation["producer_aliases"]), "producer aliases remain")
+              return {"state": "REMOVED"}
 
           def stage_single_allocation(binary, staged, target, expected_digest, out, ownership):
               require(not staged.exists() and not staged.is_symlink() and shutil.which("ripr") is None, "unexpected existing stock ripr occupant")
@@ -660,13 +808,13 @@ jobs:
               require(allocation["charged_bytes"] + sum(p.stat().st_size for p in out.glob("*") if p.is_file()) < 128 * 1024**2, "staging/evidence budget exceeded")
               # Windows rename refuses an occupied destination. EXDEV/any failure is terminal;
               # never use shutil.move, which silently copies across volumes.
+              ownership["allocation"] = allocation
               os.rename(binary, staged)
               ownership["staged"] = True
               require((staged.stat().st_dev, staged.stat().st_ino) == (allocation["device"], allocation["file_id"]), "rename changed allocation identity")
-              # The stopped producer owns this exclusive target. Remove every mutable alias
-              # and all intermediates before admitting journeys; the stock file survives.
-              shutil.rmtree(target)
-              ownership["target"] = False
+              # Retire only verified selected aliases. Dependencies and unrelated test
+              # harnesses remain available to the cache post-action.
+              remove_aliases(ownership)
               require(staged.stat().st_nlink == 1 and digest(staged) == expected_digest, "staged identity/digest drift")
               return allocation
 
@@ -831,10 +979,18 @@ jobs:
               require(str(stock_bin).lower() in [p.rstrip("\\/").lower() for p in os.environ["PATH"].split(os.pathsep)], "Cargo bin is not a stock PATH slot")
               staged = stock_bin / "ripr.exe"
               require(not staged.exists() and not staged.is_symlink() and shutil.which("ripr") is None, "unexpected existing stock ripr occupant")
-              target = stock_bin / ("selector-build-" + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"])
-              target.mkdir()  # Exclusive ownership; never reuse mutable/cache output.
+              owner_path = Path(os.environ["SELECTOR_TARGET_OWNER"])
+              owner = json.loads(owner_path.read_text(encoding="utf-8"))
+              target = Path(os.environ["CARGO_TARGET_DIR"])
+              require(target == stock_bin / "selector-subset-cache" / "target" and target.is_dir()
+                      and not target.is_symlink() and not target.is_junction(), "unowned shared Cargo target")
+              require(owner_path == target.parent / "owner.json" and owner ==
+                      {"head": actual_head, "root": str(root), "target": str(target),
+                       "alias": str(root / "target" / "selector-cargo-cache")}, "shared target owner mismatch")
+              alias = Path(owner["alias"])
+              require(alias.is_junction() and alias.resolve() == target, "cache target mapping drift")
               ownership["target"] = True
-              receipt["owned_producer_target"] = str(target)
+              receipt["owned_producer_target"] = {"path": str(target), "state": "RETAINED_FOR_CACHE", "owner_sha256": digest(owner_path)}
               status, stdout, _ = run("build", [cargo, "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--target-dir", str(target), "--message-format=json"],
                                       root, seconds=600, memory=8 * 1024**3, output_cap=16 * 1024**2, active=0)
               require(status == 0, "exact-head CLI build failed")
@@ -883,7 +1039,7 @@ jobs:
               diff = fixture / "fixture change.diff"
               diff.write_text("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn price(amount: i32, threshold: i32) -> i32 {\n-    if amount > threshold { amount - 100 } else { amount }\n+    if amount >= threshold { amount - 100 } else { amount }\n }\n")
               frozen_env = dict(os.environ)
-              frozen = {str(p): digest(p) for p in (fixture / "Cargo.toml", source, diff, staged)}
+              frozen = {str(p): digest(p) for p in (fixture / "Cargo.toml", source, diff, staged, owner_path)}
               shell_digest = digest(shell)
               status, shell_path, _ = run("shell-resolution", [shell, "-NoProfile", "-NonInteractive", "-Command", "(Get-Command ripr).Source"], foreign)
               require(status == 0 and Path(shell_path.decode().strip()).resolve() == staged.resolve(), "actual PowerShell resolution mismatch")
@@ -958,19 +1114,17 @@ jobs:
               record_failure(receipt, type(error).__name__, str(error))
           finally:
               try:
+                  receipt["producer_cleanup"] = remove_aliases(ownership)
+              except Exception as cleanup_error:
+                  receipt["producer_cleanup"] = {"state": "FAILED", "error": str(cleanup_error)}
+                  record_failure(receipt, "ProducerCleanup", str(cleanup_error))
+              try:
                   if immutable_handle not in (None, c.c_void_p(-1).value):
                       require(k.CloseHandle(immutable_handle), "immutable handle close failed")
                   receipt["staging_cleanup"] = remove_staged(globals().get("staged"), ownership["staged"])
               except Exception as cleanup_error:
                   receipt["staging_cleanup"] = {"state": "FAILED", "error": str(cleanup_error)}
                   record_failure(receipt, "StagingCleanup", str(cleanup_error))
-              try:
-                  if ownership["target"]:
-                      shutil.rmtree(target)
-                  receipt["producer_cleanup"] = {"state": "REMOVED" if "target" in globals() and not target.exists() else "NOT_CREATED"}
-              except Exception as cleanup_error:
-                  receipt["producer_cleanup"] = {"state": "FAILED", "error": str(cleanup_error)}
-                  record_failure(receipt, "ProducerCleanup", str(cleanup_error))
               finalize_evidence(receipt, out, globals().get("fixture"), payload_charge)
               (out / "receipt.json").write_bytes(json.dumps(receipt, indent=2).encode())
               print(json.dumps(receipt), flush=True)
@@ -1050,13 +1204,15 @@ jobs:
           cleanup = receipt.get("staging_cleanup", {}).get("state")
           producer_cleanup = receipt.get("producer_cleanup", {}).get("state")
           if producer_cleanup not in ("NOT_CREATED", "REMOVED") or (receipt["state"] == "PASS" and producer_cleanup != "REMOVED"):
-              raise SystemExit("selector exclusive producer cleanup missing or failed")
+              raise SystemExit("selector selected producer alias cleanup missing or failed")
           if cleanup not in ("NOT_CREATED", "REMOVED") or (receipt["state"] == "PASS" and cleanup != "REMOVED"):
               raise SystemExit("selector staged executable cleanup missing or failed")
           if receipt["state"] == "FAIL":
               if not receipt.get("error"):
                   raise SystemExit("selector FAIL has no retained failure")
           else:
+              if receipt.get("owned_producer_target", {}).get("state") != "RETAINED_FOR_CACHE":
+                  raise SystemExit("selector PASS lacks retained shared dependency cache")
               if receipt.get("payload_allocation", {}).get("admitted_payload_allocations") != 1 or not receipt.get("immutable_executable", {}).get("write_open_refused"):
                   raise SystemExit("selector PASS lacks single immutable allocation")
               cases = {c["label"]: c for c in receipt.get("cases", [])}
