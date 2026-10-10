@@ -10,6 +10,4 @@
   rebuild/prerequisite guidance when the adapter is not compiled in.
   Matching uses the same path-text authority on advisory samples and
   document relatives, so a literal `%` in the filename cannot revive the
-  clean/served lie. Rust is never a preview advisory: when the producer
-  emits the rust-excluded-by-config limitation, opened `.rs` rows fail
-  closed the same way rather than remaining `clean`/`served` (#7205).
+  clean/served lie (#7205).
