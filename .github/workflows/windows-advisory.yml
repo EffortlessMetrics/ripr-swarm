@@ -849,6 +849,7 @@ jobs:
               require(Path(artifact["manifest_path"]).resolve() == root / "crates" / "ripr" / "Cargo.toml", "wrong producer manifest")
               binary = Path(artifact["executable"]).resolve()
               binary_digest = digest(binary)
+              receipt["producer"] = {"artifact": artifact, "bytes": binary.stat().st_size, "sha256": binary_digest}
               # Until real aliases are verified, retain the conservative two-payload charge.
               payload_charge = 2 * binary.stat().st_size
               allocation = payload_allocation(binary, target)
@@ -870,8 +871,7 @@ jobs:
               rejected("wrong-digest-before-launch", lambda: admit(actual_head, expected_head, digest(resolved), "0" * 64, resolved, staged))
               rejected("stale-source-receipt-before-launch", lambda: admit(actual_head, "0" * 40, digest(resolved), binary_digest, resolved, staged))
               admit(actual_head, expected_head, digest(resolved), binary_digest, resolved, staged)
-              receipt["producer"] = {"artifact": artifact, "bytes": payload_charge, "sha256": binary_digest,
-                                     "stock_resolution": resolved, "staging_before_journey_admission": True}
+              receipt["producer"].update(stock_resolution=resolved, staging_before_journey_admission=True)
               fixture = Path(os.environ["RUNNER_TEMP"]) / ("selector literal " + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"])
               require(not fixture.exists(), "fixture collision")
               (fixture / "src").mkdir(parents=True)
