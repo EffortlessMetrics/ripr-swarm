@@ -372,6 +372,7 @@ fn call_targets_function(function: &FunctionSummary, text: &str) -> bool {
 
 /// `Some(None)` is a free-function call of `callee_name`. `Some(Some(T))`
 /// is `T::callee_name(`. `None` means the text does not invoke that entry.
+#[cfg(test)]
 fn named_entry_self_type(text: &str, callee_name: &str) -> Option<Option<String>> {
     named_entry_kinds(text, callee_name)
         .into_iter()
