@@ -1,0 +1,1 @@
+check-lint-policy: pass (target/ripr/reports/lint-policy.md)

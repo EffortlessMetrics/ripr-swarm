@@ -1,0 +1,35 @@
+{
+  "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+  "files": {
+    "xtask": {
+      "source": "/workspace/issue7158-process-target/debug/xtask",
+      "size": 285789520,
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1791622241636077013,
+      "sha256": "51ad35d4ce096571fe7cdfdfd74b878b32533a33635a142de49f8c2b55394238",
+      "restore_path": "/workspace/issue7158-process-evidence/witness-restore/xtask",
+      "restoration_verified": true
+    },
+    "repo-policy": {
+      "source": "/workspace/issue7158-process-target/debug/repo-policy",
+      "size": 7032904,
+      "mode": 448,
+      "uid": 1000,
+      "gid": 1000,
+      "mtime_ns": 1791621507694091862,
+      "sha256": "27cbd5c7eed2e28f82936400d9598e34e3c4d2c6ab040245155401c9f9a3f9b6",
+      "restore_path": "/workspace/issue7158-process-evidence/witness-restore/repo-policy",
+      "restoration_verified": true
+    }
+  },
+  "owned_bytes_before_archive": 3882654804,
+  "admitted_archive_restore_upper_bound": 585644848,
+  "disposition": "source worktree, target, archive and restored witnesses retained; no unpublished work removed",
+  "archive": {
+    "path": "/workspace/issue7158-process-evidence/current-executable-witnesses.tar.gz",
+    "bytes": 72732930,
+    "sha256": "0dda9b062ba3b0327f048c322e0d8d41e8b0c813e72861565a28cca949887a89"
+  }
+}

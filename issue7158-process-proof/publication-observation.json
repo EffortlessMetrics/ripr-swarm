@@ -1,0 +1,10 @@
+{
+  "observed_at": "2026-10-10T09:16:02.724Z",
+  "pr": 7256,
+  "head": "fa68da2600e88800025ca17b72d5e9d7ab532ea0",
+  "base": "9cb17ebf415164fce6ee74c6196afd2a630bd56b",
+  "draft": false,
+  "merged": false,
+  "auto_merge": null,
+  "mergeable": true
+}

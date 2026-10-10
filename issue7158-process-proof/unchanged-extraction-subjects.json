@@ -1,0 +1,68 @@
+[
+  {
+    "path": "Cargo.toml",
+    "original_blob": "6388eff6e9aa2a529170a7a431cf278d7ff90649",
+    "current_blob": "6388eff6e9aa2a529170a7a431cf278d7ff90649",
+    "unchanged": true
+  },
+  {
+    "path": "Cargo.lock",
+    "original_blob": "5d8db000603c11bc8554c63611f9e57df534847e",
+    "current_blob": "5d8db000603c11bc8554c63611f9e57df534847e",
+    "unchanged": true
+  },
+  {
+    "path": "tools/repo-policy/Cargo.toml",
+    "original_blob": "aca10b70817dfb2a953b578dfab73ce4f0e036fd",
+    "current_blob": "aca10b70817dfb2a953b578dfab73ce4f0e036fd",
+    "unchanged": true
+  },
+  {
+    "path": "xtask/Cargo.toml",
+    "original_blob": "63b3affc539d0a7b4eae6b7aad9073cacf70cc4b",
+    "current_blob": "63b3affc539d0a7b4eae6b7aad9073cacf70cc4b",
+    "unchanged": true
+  },
+  {
+    "path": ".github/workflows/rust-gates.yml",
+    "original_blob": "7e1cc56a51bc884eee8e6b4e9d6809a8a669f5b8",
+    "current_blob": "7e1cc56a51bc884eee8e6b4e9d6809a8a669f5b8",
+    "unchanged": true
+  },
+  {
+    "path": ".github/workflows/routed-rust.yml",
+    "original_blob": "da3ab9753a33434112379580ba998d9a559cf438",
+    "current_blob": "da3ab9753a33434112379580ba998d9a559cf438",
+    "unchanged": true
+  },
+  {
+    "path": "tools/repo-policy/src/agent_skills.rs",
+    "original_blob": "265972b5f4ee973d633db165df76073cc33dbdd3",
+    "current_blob": "265972b5f4ee973d633db165df76073cc33dbdd3",
+    "unchanged": true
+  },
+  {
+    "path": "tools/repo-policy/src/ci_scratch.rs",
+    "original_blob": "f97aea9403581445dda1397d9c7d3f73f956f7c9",
+    "current_blob": "f97aea9403581445dda1397d9c7d3f73f956f7c9",
+    "unchanged": true
+  },
+  {
+    "path": "tools/repo-policy/src/workflow_tests.rs",
+    "original_blob": "546d540833afc8ce04746ec5afb06c15fac3a691",
+    "current_blob": "546d540833afc8ce04746ec5afb06c15fac3a691",
+    "unchanged": true
+  },
+  {
+    "path": "xtask/tests/rust_gate_workflow_contract.rs",
+    "original_blob": "ce13ad6099195f1070a5a16730470c5932ee598b",
+    "current_blob": "ce13ad6099195f1070a5a16730470c5932ee598b",
+    "unchanged": true
+  },
+  {
+    "path": "xtask/src/check_fast_strict.rs",
+    "original_blob": "0b8dfaef904992efc317f731a3c649c19ea2df84",
+    "current_blob": "0b8dfaef904992efc317f731a3c649c19ea2df84",
+    "unchanged": true
+  }
+]

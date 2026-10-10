@@ -1,0 +1,49 @@
+diff --git a/.agents/skills/build-candidate/SKILL.md b/.agents/skills/build-candidate/SKILL.md
+index cebb2d38f..14527d383 100644
+--- a/.agents/skills/build-candidate/SKILL.md
++++ b/.agents/skills/build-candidate/SKILL.md
+@@ -53,7 +53,7 @@ Bind background commands to retained task/session handles, candidate identities
+ 9. Challenge authority/provenance, failure and rollback paths, transaction boundaries, concurrency, oracle grip, runtime/schema/docs/output parity, platforms, packaging and user-facing claims. Use an independent source/oracle/reviewer when it adds detection value, not merely a different persona.
+ 10. Repair accepted findings in the same candidate. Commit coherent changes without another routine permission pause so verification can bind to a real Git object.
+ 11. Run `check-fast` on the committed candidate and compare its selector report and ran/skipped categories with the independently resolved path set. Reconcile a changed basis or run base-aware gates directly. Unexpected zero, omitted categories or selector failure is `INSTRUMENT_FAILURE`, not pass.
+-12. Run `precommit`, focused tests and the relevant changed-surface checks. Keep proof proportional: full local runs are for named failures or explicit qualification, not automatic duplication of the entire hosted matrix before publishing.
++12. Run focused tests and relevant changed-surface checks before `precommit`. For process-launch API or test-harness command-builder changes, explicitly run `cargo xtask check-process-policy` before the aggregate and reconcile call sites with their existing allowance; Rust tests and Clippy do not validate that allowance. Keep proof proportional: full local runs are for named failures or explicit qualification, not automatic duplication of the entire hosted matrix before publishing.
+ 13. Hand the committed candidate to `review-pr`. Missing hosted evidence normally yields `REVIEW_INCOMPLETE`; enter `finish-pr` to publish and obtain that evidence, then return to exact published-head review before merge.
+ 14. On `REPAIR_REQUIRED`, repair the same candidate and refresh affected proof/review dimensions. Before resolving an integration conflict, check whether upstream already delivered the claim; preserve only a genuine unique residual.
+ 
+diff --git a/tools/repo-policy/tests/frontdoor.rs b/tools/repo-policy/tests/frontdoor.rs
+index 485a7cc51..3420a02bc 100644
+--- a/tools/repo-policy/tests/frontdoor.rs
++++ b/tools/repo-policy/tests/frontdoor.rs
+@@ -56,12 +56,13 @@ impl Fixture {
+         }
+         Ok(fixture)
+     }
++    fn command(&self, argument: &str) -> Command {
++        let mut command = Command::new(env!("CARGO_BIN_EXE_repo-policy"));
++        command.arg(argument).current_dir(&self.0);
++        command
++    }
+     fn run(&self, command: &str) -> Result<Output, String> {
+-        Command::new(env!("CARGO_BIN_EXE_repo-policy"))
+-            .arg(command)
+-            .current_dir(&self.0)
+-            .output()
+-            .map_err(|e| e.to_string())
++        self.command(command).output().map_err(|e| e.to_string())
+     }
+ }
+ impl Drop for Fixture {
+@@ -224,10 +225,9 @@ fn partial_fixture_is_removed_after_copy_error() -> Result<(), String> {
+ fn runtime_compiler_selection_rejects_a_changed_compiler() -> Result<(), String> {
+     let fixture = Fixture::new()?;
+     let run = |compiler: &str| {
+-        Command::new(env!("CARGO_BIN_EXE_repo-policy"))
+-            .arg("preflight")
++        fixture
++            .command("preflight")
+             .env("RUSTC", compiler)
+-            .current_dir(&fixture.0)
+             .output()
+             .map_err(|e| e.to_string())
+     };

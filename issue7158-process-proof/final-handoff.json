@@ -1,0 +1,320 @@
+{
+  "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+  "disposition": "CANDIDATE_REPAIRED; REVIEW_INCOMPLETE",
+  "source_branch": "codex/issue7158-process-builder",
+  "repair_base": "fa68da2600e88800025ca17b72d5e9d7ab532ea0",
+  "source_clean": true,
+  "validation": [
+    {
+      "name": "xtask-warm-build",
+      "command": [
+        "cargo",
+        "build",
+        "-p",
+        "xtask",
+        "--locked",
+        "--offline",
+        "--message-format=json"
+      ],
+      "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+      "native_exit": 0,
+      "elapsed_seconds": 2.087050686999646,
+      "timeout": false,
+      "resource_stop": false,
+      "stdout_bytes": 224657,
+      "stderr_bytes": 72
+    },
+    {
+      "name": "current-process-policy",
+      "command": [
+        "/workspace/issue7158-process-target/debug/xtask",
+        "check-process-policy"
+      ],
+      "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+      "native_exit": 0,
+      "elapsed_seconds": 1.0019316179987072,
+      "timeout": false,
+      "resource_stop": false,
+      "stdout_bytes": 67,
+      "stderr_bytes": 0
+    },
+    {
+      "name": "current-policy-preflight",
+      "command": [
+        "cargo",
+        "policy",
+        "preflight"
+      ],
+      "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+      "native_exit": 0,
+      "elapsed_seconds": 2.0013478890014085,
+      "timeout": false,
+      "resource_stop": false,
+      "stdout_bytes": 120,
+      "stderr_bytes": 151
+    },
+    {
+      "name": "current-check-fast",
+      "command": [
+        "/workspace/issue7158-process-target/debug/xtask",
+        "check-fast"
+      ],
+      "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+      "native_exit": 0,
+      "elapsed_seconds": 836.4046180589994,
+      "timeout": false,
+      "resource_stop": false,
+      "stdout_bytes": 38607,
+      "stderr_bytes": 7572
+    },
+    {
+      "name": "current-precommit",
+      "command": [
+        "/workspace/issue7158-process-target/debug/xtask",
+        "precommit"
+      ],
+      "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+      "native_exit": 0,
+      "elapsed_seconds": 198.1652300780006,
+      "timeout": false,
+      "resource_stop": false,
+      "stdout_bytes": 41998,
+      "stderr_bytes": 20
+    }
+  ],
+  "cold_warm_measurements": [
+    {
+      "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+      "command": [
+        "cargo",
+        "run",
+        "--locked",
+        "--offline",
+        "-p",
+        "repo-policy",
+        "--message-format=json",
+        "--",
+        "check-workflows"
+      ],
+      "state": "cold",
+      "target": "/workspace/issue7158-process-cold-workflows",
+      "native_exit": 0,
+      "wall_seconds": 10.794796951002354,
+      "nonfresh_compiler_units": 21,
+      "fresh_compiler_units": 0,
+      "compiler_targets": [
+        "block_buffer",
+        "build-script-build",
+        "cfg_if",
+        "cpufeatures",
+        "crypto_common",
+        "digest",
+        "generic_array",
+        "itoa",
+        "memchr",
+        "repo-policy",
+        "repo_policy",
+        "serde_core",
+        "serde_json",
+        "sha2",
+        "typenum",
+        "version_check",
+        "zmij"
+      ],
+      "compiler_json_bytes": 18969,
+      "policy_stdout_bytes": 57,
+      "stderr_bytes": 678,
+      "executable": "/workspace/issue7158-process-cold-workflows/debug/repo-policy",
+      "executable_sha256": "27cbd5c7eed2e28f82936400d9598e34e3c4d2c6ab040245155401c9f9a3f9b6",
+      "conditions": "jobs1; private initially absent target for cold; shared populated dependency download cache; offline; no product profiles changed"
+    },
+    {
+      "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+      "command": [
+        "cargo",
+        "run",
+        "--locked",
+        "--offline",
+        "-p",
+        "repo-policy",
+        "--message-format=json",
+        "--",
+        "check-workflows"
+      ],
+      "state": "warm",
+      "target": "/workspace/issue7158-process-cold-workflows",
+      "native_exit": 0,
+      "wall_seconds": 0.968004860002111,
+      "nonfresh_compiler_units": 0,
+      "fresh_compiler_units": 21,
+      "compiler_targets": [
+        "block_buffer",
+        "build-script-build",
+        "cfg_if",
+        "cpufeatures",
+        "crypto_common",
+        "digest",
+        "generic_array",
+        "itoa",
+        "memchr",
+        "repo-policy",
+        "repo_policy",
+        "serde_core",
+        "serde_json",
+        "sha2",
+        "typenum",
+        "version_check",
+        "zmij"
+      ],
+      "compiler_json_bytes": 18948,
+      "policy_stdout_bytes": 57,
+      "stderr_bytes": 165,
+      "executable": "/workspace/issue7158-process-cold-workflows/debug/repo-policy",
+      "executable_sha256": "27cbd5c7eed2e28f82936400d9598e34e3c4d2c6ab040245155401c9f9a3f9b6",
+      "conditions": "jobs1; private initially absent target for cold; shared populated dependency download cache; offline; no product profiles changed"
+    },
+    {
+      "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+      "command": [
+        "cargo",
+        "run",
+        "--locked",
+        "--offline",
+        "-p",
+        "repo-policy",
+        "--message-format=json",
+        "--",
+        "check-agent-skills"
+      ],
+      "state": "cold",
+      "target": "/workspace/issue7158-process-cold-skills",
+      "native_exit": 0,
+      "wall_seconds": 9.285804223000014,
+      "nonfresh_compiler_units": 21,
+      "fresh_compiler_units": 0,
+      "compiler_targets": [
+        "block_buffer",
+        "build-script-build",
+        "cfg_if",
+        "cpufeatures",
+        "crypto_common",
+        "digest",
+        "generic_array",
+        "itoa",
+        "memchr",
+        "repo-policy",
+        "repo_policy",
+        "serde_core",
+        "serde_json",
+        "sha2",
+        "typenum",
+        "version_check",
+        "zmij"
+      ],
+      "compiler_json_bytes": 18843,
+      "policy_stdout_bytes": 63,
+      "stderr_bytes": 678,
+      "executable": "/workspace/issue7158-process-cold-skills/debug/repo-policy",
+      "executable_sha256": "27cbd5c7eed2e28f82936400d9598e34e3c4d2c6ab040245155401c9f9a3f9b6",
+      "conditions": "jobs1; private initially absent target for cold; shared populated dependency download cache; offline; no product profiles changed"
+    },
+    {
+      "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+      "command": [
+        "cargo",
+        "run",
+        "--locked",
+        "--offline",
+        "-p",
+        "repo-policy",
+        "--message-format=json",
+        "--",
+        "check-agent-skills"
+      ],
+      "state": "warm",
+      "target": "/workspace/issue7158-process-cold-skills",
+      "native_exit": 0,
+      "wall_seconds": 0.21475778899912257,
+      "nonfresh_compiler_units": 0,
+      "fresh_compiler_units": 21,
+      "compiler_targets": [
+        "block_buffer",
+        "build-script-build",
+        "cfg_if",
+        "cpufeatures",
+        "crypto_common",
+        "digest",
+        "generic_array",
+        "itoa",
+        "memchr",
+        "repo-policy",
+        "repo_policy",
+        "serde_core",
+        "serde_json",
+        "sha2",
+        "typenum",
+        "version_check",
+        "zmij"
+      ],
+      "compiler_json_bytes": 18822,
+      "policy_stdout_bytes": 63,
+      "stderr_bytes": 165,
+      "executable": "/workspace/issue7158-process-cold-skills/debug/repo-policy",
+      "executable_sha256": "27cbd5c7eed2e28f82936400d9598e34e3c4d2c6ab040245155401c9f9a3f9b6",
+      "conditions": "jobs1; private initially absent target for cold; shared populated dependency download cache; offline; no product profiles changed"
+    }
+  ],
+  "independent_review": {
+    "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+    "reviewer": "/root/policy_review",
+    "disposition": "REVIEW_INCOMPLETE",
+    "blocking_source_findings": [],
+    "local_qualification": "complete; independent evidence inspection verified selected artifact, native exits,36path selector,receipt no-duplicate handoff,process gate and cold dependency cut",
+    "remaining": [
+      "current published-head hosted checks",
+      "merge review"
+    ],
+    "no_builds_or_mutations": true
+  },
+  "process_allowance": "unchanged1; pre-repair2constructorfailure reproduced; shared factory returnsfreshbuilder; current compilerselectedvalidator native0 before and duringaggregate",
+  "handoff": "unpublished successor retained; publication/Ready guidance is next boundary; no remote mutations,CIlaunch or cleanup in this continuation",
+  "supported_ready_route": "normal Draft\u2192Ready once after final head publication; routed-rust subscribes ready_for_review only; confirm no active same-head Ready run before transition; synchronize alone does notrequestrequiredResult; no manualdispatch or blindtoggle",
+  "prior_hosted_failure": {
+    "run": 38037666970,
+    "head": "fa68da2600e88800025ca17b72d5e9d7ab532ea0",
+    "extracted_step_seconds": 5,
+    "failed_full_precommit_seconds": 395,
+    "failed_guard": "Command::new2 allowed1",
+    "required_result": "failure"
+  },
+  "limits": [
+    "no current21fa hostedproof",
+    "initialcoldxtasknativeexitNOT_ESTABLISHED;warmnative0andselectedartifactverified",
+    "WindowsselectorNOT_PROVEN inherited128MiBadmission;UBNOT_PROVEN sensor/publication limits"
+  ],
+  "resource": {
+    "observed_at": "2026-10-10T09:16:28.802644+00:00",
+    "sizes": {
+      "/workspace/issue7158-process-target": 3378010959,
+      "/workspace/issue7158-process-repair": 92139292,
+      "/workspace/issue7158-process-evidence": 654512057,
+      "/workspace/issue7158-process-cold-workflows": 61931963,
+      "/workspace/issue7158-process-cold-skills": 61931742
+    },
+    "total": 4248526013,
+    "peak_budget": 8589934592,
+    "free_bytes": 27050938368,
+    "reserve_bytes": 12884901888,
+    "disposition": "all owned source,targets,evidence,witness archive and restores retained; no active owned Cargo/test driver; no cleanup of unpublishedwork"
+  },
+  "publication_observation": {
+    "observed_at": "2026-10-10T09:16:02.724Z",
+    "pr": 7256,
+    "head": "fa68da2600e88800025ca17b72d5e9d7ab532ea0",
+    "base": "9cb17ebf415164fce6ee74c6196afd2a630bd56b",
+    "draft": false,
+    "merged": false,
+    "auto_merge": null,
+    "mergeable": true
+  }
+}

@@ -1,0 +1,78 @@
+[
+  {
+    "name": "xtask-warm-build",
+    "command": [
+      "cargo",
+      "build",
+      "-p",
+      "xtask",
+      "--locked",
+      "--offline",
+      "--message-format=json"
+    ],
+    "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+    "native_exit": 0,
+    "elapsed_seconds": 2.087050686999646,
+    "timeout": false,
+    "resource_stop": false,
+    "stdout_bytes": 224657,
+    "stderr_bytes": 72
+  },
+  {
+    "name": "current-process-policy",
+    "command": [
+      "/workspace/issue7158-process-target/debug/xtask",
+      "check-process-policy"
+    ],
+    "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+    "native_exit": 0,
+    "elapsed_seconds": 1.0019316179987072,
+    "timeout": false,
+    "resource_stop": false,
+    "stdout_bytes": 67,
+    "stderr_bytes": 0
+  },
+  {
+    "name": "current-policy-preflight",
+    "command": [
+      "cargo",
+      "policy",
+      "preflight"
+    ],
+    "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+    "native_exit": 0,
+    "elapsed_seconds": 2.0013478890014085,
+    "timeout": false,
+    "resource_stop": false,
+    "stdout_bytes": 120,
+    "stderr_bytes": 151
+  },
+  {
+    "name": "current-check-fast",
+    "command": [
+      "/workspace/issue7158-process-target/debug/xtask",
+      "check-fast"
+    ],
+    "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+    "native_exit": 0,
+    "elapsed_seconds": 836.4046180589994,
+    "timeout": false,
+    "resource_stop": false,
+    "stdout_bytes": 38607,
+    "stderr_bytes": 7572
+  },
+  {
+    "name": "current-precommit",
+    "command": [
+      "/workspace/issue7158-process-target/debug/xtask",
+      "precommit"
+    ],
+    "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+    "native_exit": 0,
+    "elapsed_seconds": 198.1652300780006,
+    "timeout": false,
+    "resource_stop": false,
+    "stdout_bytes": 41998,
+    "stderr_bytes": 20
+  }
+]

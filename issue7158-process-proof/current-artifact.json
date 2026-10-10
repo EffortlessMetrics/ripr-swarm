@@ -1,0 +1,37 @@
+{
+  "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+  "artifact": {
+    "reason": "compiler-artifact",
+    "package_id": "path+file:///workspace/issue7158-process-repair/xtask#0.1.0",
+    "manifest_path": "/workspace/issue7158-process-repair/xtask/Cargo.toml",
+    "target": {
+      "kind": [
+        "bin"
+      ],
+      "crate_types": [
+        "bin"
+      ],
+      "name": "xtask",
+      "src_path": "/workspace/issue7158-process-repair/xtask/src/main.rs",
+      "edition": "2024",
+      "doc": true,
+      "doctest": false,
+      "test": true
+    },
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": "line-tables-only",
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "features": [],
+    "filenames": [
+      "/workspace/issue7158-process-target/debug/xtask"
+    ],
+    "executable": "/workspace/issue7158-process-target/debug/xtask",
+    "fresh": true
+  },
+  "sha256": "51ad35d4ce096571fe7cdfdfd74b878b32533a33635a142de49f8c2b55394238",
+  "initial_build_native_exit": "NOT_ESTABLISHED: previous session unavailable; Finished terminal and warm native rerun retained"
+}

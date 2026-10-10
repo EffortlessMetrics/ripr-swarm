@@ -1,0 +1,344 @@
+{
+  "schema_version": "0.2",
+  "status": "pass",
+  "failure_kind": null,
+  "repository_root": "$REPO",
+  "head_sha": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+  "merge_base_ref": "origin/main",
+  "merge_base_sha": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+  "change_set": {
+    "changes": [
+      {
+        "kind": "added",
+        "path": "tools/repo-policy/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "tools/repo-policy/build.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "tools/repo-policy/source_identity.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "tools/repo-policy/src/agent_skills.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "tools/repo-policy/src/identity.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "tools/repo-policy/src/lib.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "tools/repo-policy/src/main.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "tools/repo-policy/src/workflow_tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "added",
+        "path": "tools/repo-policy/tests/frontdoor.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": ".agents/skills/build-candidate/SKILL.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": ".cargo/config.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": ".github/workflows/routed-rust.yml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": ".github/workflows/rust-gates.yml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": ".ripr/allow-attributes.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "Cargo.lock",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "docs/LEARNINGS.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "docs/ci/PRODUCT_GATE_PLAN.md",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "policy/dependency_allowlist.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "policy/non-rust-allowlist.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "policy/process_allowlist.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "policy/workflow_allowlist.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "policy/workspace_shape.txt",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/Cargo.toml",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/src/agent_skills.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/src/check_fast_strict.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/src/dogfood.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/src/fixture_contracts/report_validators.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/src/main.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/src/policy/mod.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/src/product_gate_plan.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/src/tests.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/src/types.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "modified",
+        "path": "xtask/tests/rust_gate_workflow_contract.rs",
+        "old_path": null,
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "renamed",
+        "path": "tools/repo-policy/src/ci_scratch.rs",
+        "old_path": "xtask/src/policy/ci_scratch.rs",
+        "origins": [
+          "committed"
+        ]
+      },
+      {
+        "kind": "renamed",
+        "path": "tools/repo-policy/src/ci_scratch/tests.rs",
+        "old_path": "xtask/src/policy/ci_scratch/tests.rs",
+        "origins": [
+          "committed"
+        ]
+      }
+    ],
+    "complete": true,
+    "limitations": []
+  },
+  "impact_plan": {
+    "impacted_packages": [],
+    "workspace_clippy": true,
+    "workspace_widening_reason": "workspace-wide Rust policy changed: .cargo/config.toml",
+    "skipped_reason": null
+  },
+  "commands": [
+    {
+      "command": "cargo metadata --format-version 1 --manifest-path $REPO/Cargo.toml",
+      "outcome": "pass",
+      "detail": null
+    },
+    {
+      "command": "existing repository policy precommit",
+      "outcome": "pass",
+      "detail": null
+    },
+    {
+      "command": "git diff --check 331176f6cf6405ba9688b7a5dbca6654453eaad1...HEAD",
+      "outcome": "pass",
+      "detail": null
+    },
+    {
+      "command": "git diff --cached --check",
+      "outcome": "pass",
+      "detail": null
+    },
+    {
+      "command": "git diff --check",
+      "outcome": "pass",
+      "detail": null
+    },
+    {
+      "command": "cargo clippy --manifest-path $REPO/Cargo.toml --workspace --all-targets -- -D warnings",
+      "outcome": "pass",
+      "detail": null
+    }
+  ],
+  "skipped": [],
+  "limitations": [],
+  "report_digest": "sha256:126067c2ac3ab7e75eafd9990735b1b8df79879e7f5096eb06d5818c46cc10ae"
+}

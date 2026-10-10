@@ -1,0 +1,26 @@
+{
+  "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+  "repair_base": "fa68da2600e88800025ca17b72d5e9d7ab532ea0",
+  "aggregate_input_base": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+  "integration_main": "9cb17ebf415164fce6ee74c6196afd2a630bd56b",
+  "selected_paths": 36,
+  "process_allowance_unchanged": true,
+  "single_constructor": true,
+  "original_xtask_sha256": "e6a4b1d41b3e558feada6782c441a36dc79a5b26f8791adc5982ed83b96d7b61",
+  "cheap_validator_owner": "xtask check_process_policy_impl/check_count_policy unchanged in d902..HEAD; original compilerselected witness reused only for quick source guard before fresh exact-head compilerbuild/aggregate",
+  "baseline_process_native_exit": 1,
+  "repair_cheap_process_native_exit": 0,
+  "helper_tests": "34library+7frontdoor native0",
+  "strict_helper_clippy": "native0",
+  "fmt_all": "native0",
+  "miss_reason": "fa68 repair validated runtime/tests/Clippy but missed process-launch static count allowance as an affected surface; original d902 fullaggregate was explicitly carried only for unchanged dimensions and did not prove changed fa68 test code",
+  "prevention": "build-candidate step12 nowexplicitly runs existing processpolicy beforeprecommit for process/harness changes, with no duplicatedvalidator or allowanceincrease",
+  "separate_previous_CI_costs": {
+    "run": 38037666970,
+    "extracted_policy_checks_seconds": 5,
+    "failed_full_precommit_seconds": 395,
+    "required_result": "failure"
+  },
+  "requalification_route": "routed-rust pull_request types onlyready_for_review; synchronize does notrequestrequiredResult. Previous Ready-run terminalfailure. After qualifiedpush,convertDraft thenReadyonce with no active sameheadReadyrun; no manualdispatch or blindretoggle",
+  "publication": "not yetpushed; aggregate andfreshreview required first"
+}

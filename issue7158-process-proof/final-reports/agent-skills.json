@@ -1,0 +1,17 @@
+{
+  "findings": [],
+  "not_enforced": [
+    "prose identity",
+    "section-order symmetry",
+    "equal agent counts",
+    "equal model choices",
+    "one role per pass",
+    "one provider as generated canonical source",
+    "mandatory separate reviewer identity",
+    "semantic truth of declared review and operating contract markers",
+    "full prose identity beyond the checked operating markers",
+    "provider runtime loading and compliance"
+  ],
+  "schema_version": "0.1",
+  "status": "pass"
+}

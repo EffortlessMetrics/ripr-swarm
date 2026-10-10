@@ -1,0 +1,133 @@
+{
+  "candidate_registry": {
+    "current_authority": [
+      {
+        "exact_candidate": null,
+        "release": "0.11.0",
+        "selection_rule": "docs/release-candidates/0.11.0-live-head-selection.json"
+      }
+    ],
+    "files": [
+      {
+        "path": "docs/release-candidates/0.11.0-hard-cut.json",
+        "permitted_operations": [
+          "cite_history"
+        ],
+        "registered_path": "docs/release-candidates/0.11.0-hard-cut.json",
+        "sha256": "a706647fe1642f211c33f16bd849487524ad621eea38b5cacb3159afeb40fdc7",
+        "state": "historical_evidence_only"
+      },
+      {
+        "path": "docs/release-candidates/0.11.0-hard-cut.md",
+        "permitted_operations": [
+          "cite_history"
+        ],
+        "registered_path": "docs/release-candidates/0.11.0-hard-cut.md",
+        "sha256": "6f09c026e1e649958eff244349e4b12e624baae803dcbbc4e58518ac3b904ae5",
+        "state": "historical_evidence_only"
+      },
+      {
+        "path": "docs/release-candidates/0.11.0-live-head-selection.json",
+        "permitted_operations": [
+          "cite_history",
+          "selection_rule"
+        ],
+        "registered_path": "docs/release-candidates/0.11.0-live-head-selection.json",
+        "sha256": "1a65a687ce7749341f45da2088459e04e07d8d1b18264e5d058c597a6b0fa25b",
+        "state": "active_selection_template"
+      },
+      {
+        "path": "docs/release-candidates/0.11.0-live-head-selection.md",
+        "permitted_operations": [
+          "cite_history"
+        ],
+        "registered_path": "docs/release-candidates/0.11.0-live-head-selection.md",
+        "sha256": "79a819e10d1204ba37034780d16a9fc212378f378d3f7f16f9dc1d692884901a",
+        "state": "active_selection_template"
+      },
+      {
+        "path": "docs/release-candidates/0.11.0-replacement-freeze.json",
+        "permitted_operations": [
+          "cite_history"
+        ],
+        "registered_path": "docs/release-candidates/0.11.0-replacement-freeze.json",
+        "sha256": "f5b59af6cb8a7062c77744102eab185e6f0c14174708510af60c0861f35b88b0",
+        "state": "historical_evidence_only"
+      }
+    ],
+    "non_claim": "Lifecycle classification of retained release-candidate artifacts only. It does not select, construct, qualify, sync, tag, or publish a candidate.",
+    "projection": "docs/release-candidates/README.md",
+    "registry": "docs/release-candidates/index.json",
+    "rules": [
+      "candidate_registry_input",
+      "candidate_registration",
+      "candidate_digest",
+      "candidate_state_identity",
+      "candidate_currentness",
+      "candidate_succession",
+      "candidate_projection"
+    ],
+    "status": "established"
+  },
+  "check": "check-release-targets",
+  "manifest": "policy/release-targets.toml",
+  "network_used": false,
+  "non_claim": "Offline manifest integrity only. This report does not read GitHub, does not establish milestone parity, and does not qualify or publish any release candidate.",
+  "parents_outside_committed_sets": 9,
+  "prerequisite_edges": 17,
+  "releases": [
+    {
+      "claim_blockers": 2,
+      "committed_total": 3,
+      "companions": 0,
+      "conditional_total": 0,
+      "goal_issue": 2379,
+      "milestone": "0.11.0 candidate",
+      "proof_blockers": 0,
+      "version": "0.11.0"
+    },
+    {
+      "claim_blockers": 0,
+      "committed_total": 1,
+      "companions": 0,
+      "conditional_total": 2,
+      "goal_issue": 3004,
+      "milestone": "0.11.1 candidate",
+      "proof_blockers": 0,
+      "version": "0.11.1"
+    },
+    {
+      "claim_blockers": 5,
+      "committed_total": 19,
+      "companions": 10,
+      "conditional_total": 1,
+      "goal_issue": 3005,
+      "milestone": "0.12.0 candidate",
+      "proof_blockers": 3,
+      "version": "0.12.0"
+    },
+    {
+      "claim_blockers": 11,
+      "committed_total": 16,
+      "companions": 0,
+      "conditional_total": 16,
+      "goal_issue": 3006,
+      "milestone": "0.13.0 candidate",
+      "proof_blockers": 4,
+      "version": "0.13.0"
+    }
+  ],
+  "rolling_issues": 1,
+  "rules": [
+    "schema",
+    "release_identity",
+    "role_uniqueness",
+    "committed_disjointness",
+    "non_committed_exclusion",
+    "prerequisite_ordering",
+    "parent_accounting",
+    "referential_closure"
+  ],
+  "status": "pass",
+  "violations": []
+}

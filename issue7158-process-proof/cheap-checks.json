@@ -1,0 +1,42 @@
+[
+  {
+    "check": "check-process-policy",
+    "native_exit": 0,
+    "elapsed_seconds": 0.8261034990009648
+  },
+  {
+    "check": "check-no-panic-family",
+    "native_exit": 0,
+    "elapsed_seconds": 29.564311678001104
+  },
+  {
+    "check": "check-allow-attributes",
+    "native_exit": 0,
+    "elapsed_seconds": 57.9524123200008
+  },
+  {
+    "check": "check-local-context",
+    "native_exit": 0,
+    "elapsed_seconds": 13.47581585700027
+  },
+  {
+    "check": "check-agent-skills",
+    "native_exit": 0,
+    "elapsed_seconds": 0.06525317600062408
+  },
+  {
+    "check": "check-workflows",
+    "native_exit": 0,
+    "elapsed_seconds": 0.8694686059989181
+  },
+  {
+    "check": "check-network-policy",
+    "native_exit": 0,
+    "elapsed_seconds": 2.426109139998516
+  },
+  {
+    "check": "check-lint-policy",
+    "native_exit": 0,
+    "elapsed_seconds": 0.03487632900032622
+  }
+]

@@ -1,0 +1,4 @@
+xtask: check-process-policy failed; see target/ripr/reports/process-policy.md
+tools/repo-policy/tests/frontdoor.rs contains `Command::new` 2 time(s), allowed 1
+  to allowlist, add to policy/process_allowlist.txt:
+  tools/repo-policy/tests/frontdoor.rs|Command::new|2|owner|reason

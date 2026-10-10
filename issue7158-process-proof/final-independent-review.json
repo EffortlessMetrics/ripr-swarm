@@ -1,0 +1,12 @@
+{
+  "head": "21fada8b88428a0ea90216e590dd3304fcbec1f1",
+  "reviewer": "/root/policy_review",
+  "disposition": "REVIEW_INCOMPLETE",
+  "blocking_source_findings": [],
+  "local_qualification": "complete; independent evidence inspection verified selected artifact, native exits,36path selector,receipt no-duplicate handoff,process gate and cold dependency cut",
+  "remaining": [
+    "current published-head hosted checks",
+    "merge review"
+  ],
+  "no_builds_or_mutations": true
+}
