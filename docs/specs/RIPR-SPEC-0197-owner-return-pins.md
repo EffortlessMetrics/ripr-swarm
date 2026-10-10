@@ -618,11 +618,13 @@ rule only for an assertion whose context was admitted.
      visible anywhere in the file, and it is a direct item of the test's own
      module (or both are top-level items). The helper is either a
      `CfgTestModule` function or a top-level non-test `Production` function
-     in an integration-test target (`tests/*.rs`, #7125). The producer does
+     in a crate-root integration-test target (`tests/*.rs`, including
+     `crates/*/tests/*.rs`, #7125). The producer does
      not reclassify that `Production` helper; it only copies the helper's
      calls and parser-backed assertions onto the calling test. A
-     `Production` function in a production file, and a helper in `benches/`
-     or `examples/`, stay uncredited. A module item cannot coexist with a
+     `Production` function in a production file, including a `src/tests/`
+     module directory, and a helper in `benches/` or `examples/`, stay
+     uncredited. A module item cannot coexist with a
      same-named import and wins over a glob. The test contains no `use` item
      and binds no name equal to the helper (pattern, parameter, closure
      parameter or nested item). A helper in a parent or sibling module, a
@@ -1316,8 +1318,9 @@ assertions. This repair shares the existing callback without that larger migrati
   existing `FileFacts::role_provenance`, not by the admission consumer.
 - `crates/ripr/src/analysis/facts/test_helpers.rs`: same-file helper
   crediting. Rule 7 (#7125) also credits a unique top-level `Production`
-  helper in an integration-test target (`tests/*.rs`) without changing its
-  item role; `benches/`, `examples/`, and production-file helpers stay out.
+  helper in a crate-root integration-test target (`tests/*.rs`) without
+  changing its item role; `benches/`, `examples/`, `src/tests/`, and other
+  production-file helpers stay out.
 - `crates/ripr/src/analysis/seam_cache.rs`: classified `1.25`, sharded `0.31`,
   compact `0.31` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;
   the query reads existing indexed source, so no file-fact migration is needed.

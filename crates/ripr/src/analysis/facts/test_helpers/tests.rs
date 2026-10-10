@@ -322,6 +322,99 @@ fn production_file_top_level_helper_beside_a_top_level_test_is_not_credited()
 }
 
 #[test]
+fn src_tests_module_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // `src/tests/gate.rs` is a production module directory (#6979). The
+    // shared is_test_file check matches any `/tests/` component; this
+    // producer must still refuse, or the helper's assert_eq! would
+    // become test evidence and the owner could read exposed.
+    let index = index_for_files(&[
+        ("src/lib.rs", GATE),
+        (
+            "src/tests/gate.rs",
+            concat!(
+                "fn check(input: u32, want: bool) {\n",
+                "    assert_eq!(gate(input), want);\n",
+                "}\n\n",
+                "#[test]\n",
+                "fn boundary() {\n",
+                "    check(10, false);\n",
+                "}\n",
+            ),
+        ),
+    ])?;
+    let helper = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "check" && function.file.ends_with("gate.rs"))
+        .ok_or("premise: the src/tests helper is indexed")?;
+    assert_eq!(
+        helper.source_role,
+        FunctionSourceRole::Production,
+        "premise: item role stays Production: {:?}",
+        helper.source_role
+    );
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn workspace_crate_integration_helper_is_credited() -> Result<(), Box<dyn Error>> {
+    // `crates/*/tests/*.rs` is still a crate-root integration target.
+    let index = index_for_files(&[
+        ("crates/demo/src/lib.rs", GATE),
+        (
+            "crates/demo/tests/gate.rs",
+            concat!(
+                "fn check(input: u32, want: bool) {\n",
+                "    assert_eq!(gate(input), want);\n",
+                "}\n\n",
+                "#[test]\n",
+                "fn boundary() {\n",
+                "    check(10, false);\n",
+                "}\n",
+            ),
+        ),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(calls(test).contains(&"gate"), "{:?}", calls(test));
+    assert_eq!(
+        assertion_texts(test),
+        vec!["assert_eq!(gate(input), want);"]
+    );
+    Ok(())
+}
+
+#[test]
+fn crate_root_integration_layout_rejects_src_tests_and_keeps_tests_roots() {
+    assert!(super::is_crate_root_integration_test_file(Path::new(
+        "tests/gate.rs"
+    )));
+    assert!(super::is_crate_root_integration_test_file(Path::new(
+        "crates/demo/tests/gate.rs"
+    )));
+    assert!(super::is_crate_root_integration_test_file(Path::new(
+        "tests\\gate.rs"
+    )));
+    assert!(!super::is_crate_root_integration_test_file(Path::new(
+        "src/tests/gate.rs"
+    )));
+    assert!(!super::is_crate_root_integration_test_file(Path::new(
+        "src\\tests\\gate.rs"
+    )));
+    assert!(!super::is_crate_root_integration_test_file(Path::new(
+        "crates/demo/src/tests/gate.rs"
+    )));
+    assert!(!super::is_crate_root_integration_test_file(Path::new(
+        "src/lib.rs"
+    )));
+    assert!(!super::is_crate_root_integration_test_file(Path::new(
+        "benches/gate.rs"
+    )));
+}
+
+#[test]
 fn bench_and_example_helpers_are_not_credited() -> Result<(), Box<dyn Error>> {
     for path in ["benches/gate.rs", "examples/gate.rs"] {
         let index = index_for_files(&[

@@ -22,12 +22,14 @@
 //!   defined exactly once there, and it is a direct item of the same inline
 //!   module as the test (or both sit at the file's top level). Eligible
 //!   helpers are an evidence-role (`CfgTestModule`) function, or a
-//!   top-level `Production` function in an integration-test target
-//!   (`tests/**`, #7125). This producer does not reclassify that
-//!   `Production` helper; it only copies the helper's calls and
-//!   parser-backed assertions onto the calling test. A `Production`
-//!   function in a production file, or a helper in `benches/` or
-//!   `examples/`, is not credited. A module item cannot coexist with a
+//!   top-level `Production` function in a crate-root integration-test
+//!   target (`tests/**`, including `crates/*/tests/**`, #7125). This
+//!   producer does not reclassify that `Production` helper; it only
+//!   copies the helper's calls and parser-backed assertions onto the
+//!   calling test. A `Production` function in a production file,
+//!   including a `src/tests/` module directory (#6979), or a helper in
+//!   `benches/` or `examples/`, is not credited. A module item cannot
+//!   coexist with a
 //!   same-named `use` import and wins over a glob, so the call resolves to
 //!   it. A helper in a sibling or parent module (`use super::*`), or nested
 //!   in another fn's body, is not credited, and neither is any helper for a
@@ -59,12 +61,11 @@
 //! evidence the helper body really contains.
 
 use super::{FunctionFact, FunctionSourceRole, OracleFact, RustIndex, TestFact};
-use crate::analysis::rust_index::is_test_file;
 use crate::analysis::syntax::{ModuleItemScopes, module_item_scopes, parser_oracles_for_function};
 use rayon::prelude::*;
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
     // Only files that hold a test can credit a helper, so only those are
@@ -228,17 +229,42 @@ fn unique_assertion_helper<'facts>(
 /// Whether `helper` may lend its assertions to a same-file test.
 ///
 /// `CfgTestModule` is the ordinary `#[cfg(test)]` helper. A `Production`
-/// function in an integration-test target is the same evidence-only shape
-/// for this producer (#7125): Cargo never treats `tests/*.rs` as a
-/// production subject, but item role stays `Production` because the helper
-/// is not inside a cfg-test module. Executable test roles and production
-/// files stay out, so a `src/` helper cannot become test evidence here.
+/// function in a crate-root integration-test target is the same
+/// evidence-only shape for this producer (#7125): Cargo never treats
+/// `tests/*.rs` as a production subject, but item role stays `Production`
+/// because the helper is not inside a cfg-test module. Executable test
+/// roles and production files stay out, so a `src/` helper — including
+/// `src/tests/` (#6979) — cannot become test evidence here.
 fn is_assertion_helper(helper: &FunctionFact) -> bool {
     match helper.source_role {
         FunctionSourceRole::CfgTestModule => true,
-        FunctionSourceRole::Production => is_test_file(&helper.file),
+        FunctionSourceRole::Production => is_crate_root_integration_test_file(&helper.file),
         _ => false,
     }
+}
+
+/// Cargo integration-test targets live in a crate-root `tests/` directory
+/// (`tests/gate.rs`, `crates/demo/tests/gate.rs`). `src/tests/` is a
+/// module directory, not a target (#6979). The shared `is_test_file`
+/// layout check matches any `/tests/` component, so this producer must
+/// not reuse it: a `src/tests/` Production helper beside a `#[test]`
+/// would otherwise become test evidence.
+fn is_crate_root_integration_test_file(path: &Path) -> bool {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    let mut saw_src = false;
+    for component in normalized.split('/') {
+        if component.is_empty() || component == "." {
+            continue;
+        }
+        if component == "src" {
+            saw_src = true;
+            continue;
+        }
+        if component == "tests" {
+            return !saw_src;
+        }
+    }
+    false
 }
 
 /// A nested `fn` item or a `let` binding with the helper's name means the

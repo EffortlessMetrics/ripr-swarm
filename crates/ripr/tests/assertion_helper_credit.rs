@@ -38,15 +38,16 @@ impl TempRepo {
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(root.join("src"))
+        let this = Self { root };
+        std::fs::create_dir_all(this.root.join("src"))
             .map_err(|error| format!("create source directory failed: {error}"))?;
         std::fs::write(
-            root.join("Cargo.toml"),
+            this.root.join("Cargo.toml"),
             "[package]\nname = \"assertion-helper-credit\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
         )
         .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
         for (relative, source) in files {
-            let path = root.join(relative);
+            let path = this.root.join(relative);
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|error| format!("create {relative} parent failed: {error}"))?;
@@ -54,9 +55,9 @@ impl TempRepo {
             std::fs::write(&path, source)
                 .map_err(|error| format!("write {relative} failed: {error}"))?;
         }
-        std::fs::write(root.join("diff.patch"), DIFF)
+        std::fs::write(this.root.join("diff.patch"), DIFF)
             .map_err(|error| format!("write diff failed: {error}"))?;
-        Ok(Self { root })
+        Ok(this)
     }
 
     /// The finding for the changed `input >= 10` predicate.
@@ -198,6 +199,29 @@ fn production_top_level_check_helper_does_not_expose() -> Result<(), String> {
         finding.class,
         ExposureClass::Exposed,
         "a src/ helper must not become test evidence: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn src_tests_module_check_helper_does_not_expose() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", format!("{GATE}mod tests;\n")),
+        ("src/tests/mod.rs", "mod gate;\n".to_string()),
+        (
+            "src/tests/gate.rs",
+            format!(
+                "use crate::gate;\n\n{}#[test]\nfn boundary() {{\n{}}}",
+                check_eq_helper(),
+                boundary_calls()
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "src/tests/ is a module directory, not an integration target: {finding:?}"
     );
     Ok(())
 }
