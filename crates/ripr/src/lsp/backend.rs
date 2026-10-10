@@ -7133,11 +7133,16 @@ mod language_adapter_recovery_tests {
 
     #[test]
     fn compiled_in_preview_recovery_names_languages_enabled() -> Result<(), String> {
-        if !LanguageId::Python.is_available() {
-            return Err("default features include lang-python".to_string());
-        }
-        let recovery = language_adapter_not_enabled_recovery(LanguageId::Python);
-        for needle in ["[languages] enabled", "restart", "python"] {
+        // rust-only (`--features lang-rust`) has no preview adapter compiled
+        // in; that lane is covered by the uncompiled-adapter sibling.
+        let Some(language) = LanguageId::ALL
+            .into_iter()
+            .find(|language| *language != LanguageId::Rust && language.is_available())
+        else {
+            return Ok(());
+        };
+        let recovery = language_adapter_not_enabled_recovery(language);
+        for needle in ["[languages] enabled", "restart", language.as_str()] {
             if !recovery.contains(needle) {
                 return Err(format!(
                     "compiled-in recovery must name {needle:?}: {recovery}"
@@ -7149,13 +7154,15 @@ mod language_adapter_recovery_tests {
 
     #[test]
     fn uncompiled_adapter_recovery_reuses_language_owner_text() -> Result<(), String> {
-        let language = LanguageId::ALL
+        // `--all-features` compiles every adapter, so there is no uncompiled
+        // preview language to prove here; the compiled-in sibling covers that
+        // lane.
+        let Some(language) = LanguageId::ALL
             .into_iter()
             .find(|language| *language != LanguageId::Rust && !language.is_available())
-            .ok_or_else(|| {
-                "default features omit at least lang-perl, so one preview adapter is unavailable"
-                    .to_string()
-            })?;
+        else {
+            return Ok(());
+        };
         let recovery = language_adapter_not_enabled_recovery(language);
         let expected = language.unavailable_adapter_recovery();
         if recovery != expected {
