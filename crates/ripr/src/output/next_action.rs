@@ -21,6 +21,31 @@ pub(crate) fn render_next_action_json_value(action: &CanonicalNextActionV1) -> s
     serde_json::to_value(action).unwrap_or(serde_json::Value::Null)
 }
 
+/// Append `"canonical_next_action"` as the last top-level member of a
+/// rendered JSON object, keeping the document's own formatting. Used by the
+/// navigation-aware check JSON adapter after stamping `source_subject`, so
+/// classification goldens can strip this one suffix without a round-trip.
+pub(crate) fn append_canonical_next_action_member(
+    rendered: String,
+    action: &CanonicalNextActionV1,
+) -> String {
+    let Ok(value) = serde_json::to_string(action) else {
+        return rendered;
+    };
+    append_top_level_json_object_member(rendered, "canonical_next_action", &value)
+}
+
+fn append_top_level_json_object_member(rendered: String, name: &str, compact_json: &str) -> String {
+    let trimmed = rendered.trim_end();
+    let Some(body) = trimmed.strip_suffix('}') else {
+        return rendered;
+    };
+    let body = body.trim_end();
+    let separator = if body.ends_with('{') { "" } else { "," };
+    let newline = if rendered.ends_with('\n') { "\n" } else { "" };
+    format!("{body}{separator}\n  \"{name}\": {compact_json}\n}}{newline}")
+}
+
 /// Render the machine projection as pretty JSON with one trailing newline,
 /// the same normalization every renderer emits. Envelopes embed
 /// [`render_next_action_json_value`]; this is the standalone document form.
@@ -328,7 +353,17 @@ fn render_stop(stop: &NextActionStop, bound: Option<&str>) -> Vec<String> {
             let route = bind_route_root(detail_route, bound);
             (format!("see {route}"), Some(route))
         }
-        NextActionStop::CheckTriage { case } => (format!("check case {}", case.as_str()), None),
+        NextActionStop::CheckTriage { case, detail_route } => {
+            let route = bind_route_root(detail_route, bound);
+            if route.is_empty() {
+                (format!("check case {}", case.as_str()), None)
+            } else {
+                (
+                    format!("check case {}; see {route}", case.as_str()),
+                    Some(route),
+                )
+            }
+        }
         NextActionStop::DoctorRecovery {
             check_name,
             recovery_route,
@@ -729,6 +764,7 @@ mod tests {
             },
             NextActionStop::CheckTriage {
                 case: crate::domain::NextActionCheckCase::TopGap,
+                detail_route: "r".to_string(),
             },
             NextActionStop::DoctorRecovery {
                 check_name: "c".to_string(),
@@ -748,6 +784,25 @@ mod tests {
             assert!(!line.contains('\n'), "kind {}", stop.kind());
             let human = render_next_action_human(&stopped_action(stop.clone())?);
             assert!(human.contains(&format!("stop [{}]", stop.kind())));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn append_canonical_next_action_member_keeps_one_json_document() -> Result<(), String> {
+        let action = stopped_action(NextActionStop::CheckTriage {
+            case: crate::domain::NextActionCheckCase::TopGap,
+            detail_route: "ripr explain finding:top".to_string(),
+        })?;
+        let rendered = "{\n  \"schema_version\": \"0.2\",\n  \"findings\": []\n}\n".to_string();
+        let attached = append_canonical_next_action_member(rendered, &action);
+        let parsed: serde_json::Value = serde_json::from_str(&attached)
+            .map_err(|error| format!("appended document must stay JSON: {error}"))?;
+        if parsed["canonical_next_action"]["action_class"] != "inspect_details" {
+            return Err(format!("appended action is wrong: {parsed}"));
+        }
+        if parsed["findings"].as_array().map(Vec::len) != Some(0) {
+            return Err("existing members must survive the append".to_string());
         }
         Ok(())
     }

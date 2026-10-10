@@ -12,7 +12,7 @@ Linked ADRs:
 
 Linked plan:
 
-Linked issues: #6304, #7257
+Linked issues: #6304, #7257, #7258
 
 Linked PRs:
 
@@ -83,11 +83,13 @@ document does not imply implementation, evidence, or support.
 
 ## Required Evidence
 
-The DTO on the wire for card (`RepairCardV1.canonical_next_action`) and
-status (`agent_attempt_status.canonical_next_action`) JSON; the
+The DTO on the wire for card (`RepairCardV1.canonical_next_action`),
+status (`agent_attempt_status.canonical_next_action`), and the public
+navigation-aware `ripr check --format json` adapter; the
 `next_action_class` governed-enum registration proving the vocabulary is
 identical in code, registry, and docs; the control battery (controls 1-10)
-with each gate owning one focused negative.
+with each gate owning one focused negative. The generic check JSON renderer
+and unbounded `pr-evidence` path omit the object.
 
 ## Inputs
 
@@ -134,6 +136,9 @@ with each gate owning one focused negative.
 - `crates/ripr/src/app/navigation.rs::tests::worktree_flag_alone_misattributes_a_dirty_default_run`
 - `crates/ripr/tests/cli_smoke/next_action.rs::agent_card_json_embeds_the_canonical_decision`
 - `crates/ripr/tests/cli_smoke/next_action.rs::default_dirty_check_binds_worktree_provenance_and_reopens_the_finding`
+- `crates/ripr/src/output/render.rs::tests::navigation_aware_check_json_embeds_the_shared_producer_decision`
+- `crates/ripr/src/output/render.rs::tests::restoring_the_generic_json_path_loses_the_canonical_action`
+- `crates/ripr/src/output/render.rs::tests::findings_budget_does_not_change_the_primary_canonical_action`
 
 ## Implementation Mapping
 
@@ -146,7 +151,10 @@ with each gate owning one focused negative.
   the canonical decision; `canonical_next_action` JSON key.
 - `crates/ripr/src/output/human/triage.rs`: check adapter; line-family
   dispatch from the canonical case; diff-source bound from declared
-  provenance of the effective analysis source.
+  provenance of the effective analysis source; `detail_route` copied onto
+  the `check_triage` stop.
+- `crates/ripr/src/output/render.rs`: navigation-aware check JSON adapter
+  embeds the same producer decision; generic JSON omits it.
 - `crates/ripr/src/app/navigation.rs`: `CheckDiffProvenance::from_effective_source`
   for the check producer.
 - `crates/ripr/src/cli/commands/check.rs`: binds provenance from `worktree_run`,

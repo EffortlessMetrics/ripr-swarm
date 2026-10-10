@@ -228,6 +228,31 @@ fn default_dirty_check_binds_worktree_provenance_and_reopens_the_finding()
                 format!("dirty default must not claim the edit was excluded:\n{default}").into(),
             );
         }
+        let default_action = &default["canonical_next_action"];
+        let worktree_action = &worktree["canonical_next_action"];
+        if default_action["schema_version"] != "canonical_next_action.v1" {
+            return Err(
+                format!("public check JSON must embed the canonical action:\n{default}").into(),
+            );
+        }
+        if default_action["action_class"] != worktree_action["action_class"]
+            || default_action["subject"]["item"] != worktree_action["subject"]["item"]
+            || default_action["stop"]["detail_route"] != worktree_action["stop"]["detail_route"]
+        {
+            return Err(format!(
+                "dirty default and --worktree must agree on the canonical action:\ndefault: {default_action}\n--worktree: {worktree_action}"
+            )
+            .into());
+        }
+        if default_action["subject"]["diff_source"]
+            .get("working_tree")
+            .is_none()
+        {
+            return Err(format!(
+                "dirty-default JSON action must name the working tree:\n{default_action}"
+            )
+            .into());
+        }
 
         let listing = run_ripr(&["check", "--root", &root_arg]);
         assert_success(&listing);
@@ -257,9 +282,21 @@ fn default_dirty_check_binds_worktree_provenance_and_reopens_the_finding()
             .into());
         }
 
+        let json_route = default_action["stop"]["detail_route"]
+            .as_str()
+            .ok_or_else(|| {
+                format!("JSON action must carry a followable inspect route:\n{default_action}")
+            })?;
+        if json_route.trim() != printed_explain {
+            return Err(format!(
+                "JSON inspect route must match the printed explain:\njson: {json_route}\nhuman: {printed_explain}"
+            )
+            .into());
+        }
+
         let decoy = unique_temp_workspace("check-dirty-default-provenance-decoy");
         std::fs::create_dir_all(&decoy)?;
-        let args = printed_ripr_args(&printed_explain)?;
+        let args = printed_ripr_args(json_route)?;
         let args: Vec<&str> = args.iter().map(String::as_str).collect();
         let explained = run_command(env!("CARGO_BIN_EXE_ripr"), Some(&decoy), &args)?;
         assert_success(&explained);
@@ -286,6 +323,16 @@ fn default_dirty_check_binds_worktree_provenance_and_reopens_the_finding()
             )
             .into());
         }
+        if committed["canonical_next_action"]["subject"]["diff_source"]
+            .get("committed")
+            .is_none()
+        {
+            return Err(format!(
+                "--committed JSON action must retain committed identity:\n{}",
+                committed["canonical_next_action"]
+            )
+            .into());
+        }
         let committed_human = run_ripr(&["check", "--root", &root_arg, "--committed"]);
         assert_success(&committed_human);
         let committed_out = String::from_utf8_lossy(&committed_human.stdout).into_owned();
@@ -308,6 +355,16 @@ fn default_dirty_check_binds_worktree_provenance_and_reopens_the_finding()
         ]))?;
         if ids(&supplied).is_empty() {
             return Err(format!("--diff of the dirty edit must still find it:\n{supplied}").into());
+        }
+        if supplied["canonical_next_action"]["subject"]["diff_source"]
+            .get("working_tree")
+            .is_some()
+        {
+            return Err(format!(
+                "--diff JSON action must not become a live-tree claim:\n{}",
+                supplied["canonical_next_action"]
+            )
+            .into());
         }
         let supplied_human = run_ripr(&["check", "--root", &root_arg, "--diff", &diff_arg]);
         assert_success(&supplied_human);

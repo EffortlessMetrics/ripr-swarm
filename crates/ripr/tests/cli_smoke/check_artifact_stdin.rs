@@ -30,6 +30,61 @@ fn write(root: &Path, path: &str, bytes: impl AsRef<[u8]>) -> Result<(), String>
     std::fs::write(root.join(path), bytes).map_err(|error| format!("write {path}: {error}"))
 }
 
+/// Analysis identity is independent of the provenance-bound inspect route
+/// (#7257/#7258). Named `--write-artifact`, stdin `--diff -`, and a literal
+/// `./-` file must agree on findings while `detail_route` follows the source.
+fn without_canonical_next_action(value: &serde_json::Value) -> serde_json::Value {
+    let mut stripped = value.clone();
+    if let Some(object) = stripped.as_object_mut() {
+        object.remove("canonical_next_action");
+    }
+    stripped
+}
+
+fn canonical_next_action(value: &serde_json::Value) -> Result<&serde_json::Value, String> {
+    value
+        .get("canonical_next_action")
+        .ok_or_else(|| format!("check JSON must embed canonical_next_action: {value}"))
+}
+
+fn assert_shared_canonical_decision(
+    left: &serde_json::Value,
+    right: &serde_json::Value,
+    message: &str,
+) -> Result<(), String> {
+    let left_action = canonical_next_action(left)?;
+    let right_action = canonical_next_action(right)?;
+    if left_action["schema_version"] != "canonical_next_action.v1"
+        || right_action["schema_version"] != "canonical_next_action.v1"
+    {
+        return Err(format!(
+            "{message}: schema_version must be canonical_next_action.v1\nleft: {left_action}\nright: {right_action}"
+        ));
+    }
+    for key in ["producer", "action_class"] {
+        if left_action[key] != right_action[key] {
+            return Err(format!(
+                "{message}: canonical action {key} diverged\nleft: {}\nright: {}",
+                left_action[key], right_action[key]
+            ));
+        }
+    }
+    if left_action["stop"]["case"] != right_action["stop"]["case"]
+        || left_action["subject"]["item"] != right_action["subject"]["item"]
+    {
+        return Err(format!(
+            "{message}: selected item diverged\nleft: {left_action}\nright: {right_action}"
+        ));
+    }
+    Ok(())
+}
+
+fn inspect_route(value: &serde_json::Value) -> Result<&str, String> {
+    canonical_next_action(value)?["stop"]["detail_route"]
+        .as_str()
+        .ok_or_else(|| format!("canonical action must carry detail_route: {value}"))
+}
+
 fn exercise(root: &Path, patch: &str, unrelated: &str, selector: &str) -> Result<(), String> {
     write(root, "change.diff", patch)?;
     let named = run(
@@ -62,9 +117,37 @@ fn exercise(root: &Path, patch: &str, unrelated: &str, selector: &str) -> Result
     let stdin_parsed: serde_json::Value = serde_json::from_slice(&ordinary.stdout)
         .map_err(|error| format!("parse stdin check: {error}"))?;
     assert_eq!(
-        parsed, stdin_parsed,
+        without_canonical_next_action(&parsed),
+        without_canonical_next_action(&stdin_parsed),
         "ordinary stdin must retain named-file analysis"
     );
+    assert_shared_canonical_decision(
+        &parsed,
+        &stdin_parsed,
+        "ordinary stdin must retain the named-file next-action decision",
+    )?;
+    let named_route = inspect_route(&parsed)?;
+    if !named_route.contains("--from ") || !named_route.contains("accepted.json") {
+        return Err(format!(
+            "named --write-artifact inspect route must follow the artifact:\n{named_route}"
+        ));
+    }
+    if named_route.contains("--diff -") {
+        return Err(format!(
+            "named artifact inspect route must not collapse to stdin:\n{named_route}"
+        ));
+    }
+    let stdin_route = inspect_route(&stdin_parsed)?;
+    if !stdin_route.contains("--diff -") {
+        return Err(format!(
+            "stdin inspect route must keep --diff -:\n{stdin_route}"
+        ));
+    }
+    if stdin_route.contains("--from ") {
+        return Err(format!(
+            "stdin inspect route must not invent an artifact --from:\n{stdin_route}"
+        ));
+    }
 
     // The unrelated cwd entry must not control admission or identity. Both
     // streams used to record the same identity despite different findings.
@@ -215,7 +298,27 @@ fn exercise(root: &Path, patch: &str, unrelated: &str, selector: &str) -> Result
     assert_success(&literal);
     let literal_parsed: serde_json::Value = serde_json::from_slice(&literal.stdout)
         .map_err(|error| format!("parse literal-file check: {error}"))?;
-    assert_eq!(parsed, literal_parsed);
+    assert_eq!(
+        without_canonical_next_action(&parsed),
+        without_canonical_next_action(&literal_parsed),
+        "literal ./- must retain named-file analysis"
+    );
+    assert_shared_canonical_decision(
+        &parsed,
+        &literal_parsed,
+        "literal ./- must retain the named-file next-action decision",
+    )?;
+    let literal_route = inspect_route(&literal_parsed)?;
+    if !literal_route.contains("--from ") || !literal_route.contains("literal.json") {
+        return Err(format!(
+            "literal-file --write-artifact inspect route must follow literal.json:\n{literal_route}"
+        ));
+    }
+    if literal_route.contains("--diff -") {
+        return Err(format!(
+            "literal-file inspect route must not collapse to the stdin sentinel:\n{literal_route}"
+        ));
+    }
     // --from treats --diff as an assertion. The exact stdin sentinel must
     // never be silently accepted as the literal file above.
     for command in ["explain", "context"] {

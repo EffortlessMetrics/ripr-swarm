@@ -419,7 +419,9 @@ pub(crate) fn canonical_next_action_for_triage(
             navigation.explain_command(&finding.id)
         }
         (Some(finding), None) => finding.id.clone(),
-        (None, _) => scope.clone(),
+        // No inspect target: omit a followable route rather than publishing
+        // a scope descriptor such as `no_scope` as if it were a command.
+        (None, _) => String::new(),
     };
     let mut alternatives: Vec<NextActionAlternative> = Vec::new();
     for omitted in triage.omitted.iter().take(2) {
@@ -530,7 +532,7 @@ fn check_case_or_fallback(
     canonical_next_action_for_triage(triage, output, drill_in, provenance)
         .ok()
         .and_then(|action| match action.stop() {
-            Some(NextActionStop::CheckTriage { case }) => Some(*case),
+            Some(NextActionStop::CheckTriage { case, .. }) => Some(*case),
             _ => None,
         })
         .unwrap_or_else(|| check_case_for_triage(triage, output))
@@ -1102,7 +1104,15 @@ mod tests {
             return Err("omitted alternative lost its identity".to_string());
         }
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case }) if *case == NextActionCheckCase::TopGap => {}
+            Some(NextActionStop::CheckTriage { case, detail_route })
+                if *case == NextActionCheckCase::TopGap =>
+            {
+                if !detail_route.contains("finding:top") {
+                    return Err(format!(
+                        "top gap must carry the selected inspect route, got {detail_route}"
+                    ));
+                }
+            }
             other => return Err(format!("top gap stop is wrong: {other:?}")),
         }
         Ok(())
@@ -1133,8 +1143,15 @@ mod tests {
         }
         // No navigation: the restart route replays the bound root.
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case })
-                if *case == NextActionCheckCase::ScopeMissing => {}
+            Some(NextActionStop::CheckTriage { case, detail_route })
+                if *case == NextActionCheckCase::ScopeMissing =>
+            {
+                if !detail_route.is_empty() {
+                    return Err(format!(
+                        "missing scope must not publish a scope label as an inspect route, got {detail_route}"
+                    ));
+                }
+            }
             other => return Err(format!("scope stop is wrong: {other:?}")),
         }
         Ok(())
@@ -1322,7 +1339,7 @@ mod tests {
             .map_err(|error| format!("{} must project: {error}", state.as_str()))?;
             let fallback = check_case_for_triage(&triage, &output);
             match action.stop() {
-                Some(NextActionStop::CheckTriage { case }) if *case == fallback => {}
+                Some(NextActionStop::CheckTriage { case, .. }) if *case == fallback => {}
                 other => {
                     return Err(format!(
                         "{} projection disagrees with its case: {other:?}",
