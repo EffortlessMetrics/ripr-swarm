@@ -56,8 +56,8 @@ name, a function or impl/trait type parameter of the same name (including
 (including one introduced through `cfg_attr`), a competing same-name `use`,
 and aliases shadowed in a `const` or `static` block stay unresolved and
 read as a value. A same-named const generic, `#[cfg_attr(_, allow(..))]`,
-`#[doc]`, and a one-prefix raw-ident spelling of a unit alias or return
-path do not refuse the alias.
+`#[doc]`, `#[expect(..)]`, and a one-prefix raw-ident spelling of a unit
+alias or return path do not refuse the alias.
 A call whose value feeds a consumer (a condition or scrutinee, a named binding,
 an operand, an argument, a receiver, a field or index base, an element, a
 `for` iterable, or a non-unit return through block tails, `if` branches and

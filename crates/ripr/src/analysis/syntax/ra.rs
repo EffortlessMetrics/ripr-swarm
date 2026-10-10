@@ -1971,7 +1971,7 @@ fn meta_ident_name(meta: &ast::Meta) -> Option<String> {
 /// Built-in attrs that cannot rewrite a type alias. Anything else — `cfg`,
 /// an unparsed `cfg_attr` leaf, a qualified path, or a proc-macro-like
 /// ident — is refused. `cfg_attr` is unwrapped first so introduced `allow`
-/// / `doc` still count as unit.
+/// / `doc` / `expect` still count as unit.
 fn attr_refuses_unit_alias(attribute: &ast::Attr) -> bool {
     attribute
         .skip_cfg_attrs()
@@ -1985,7 +1985,7 @@ fn meta_refuses_unit_alias(meta: &ast::Meta) -> bool {
     }
     !matches!(
         meta_ident_name(meta).as_deref(),
-        Some("doc" | "allow" | "warn" | "deny" | "forbid" | "deprecated" | "must_use")
+        Some("doc" | "allow" | "expect" | "warn" | "deny" | "forbid" | "deprecated" | "must_use",)
     )
 }
 
@@ -2902,6 +2902,18 @@ pub fn raw_generic_shadow<r#Unit>() -> Unit {
     raw_generic_notify()
 }
 
+#[expect(non_camel_case_types)]
+type unit = ();
+pub fn expect_alias_tail() -> unit {
+    expect_notify()
+}
+
+#[cfg_attr(test, expect(non_camel_case_types))]
+type cfg_attr_expect = ();
+pub fn cfg_attr_expect_tail() -> cfg_attr_expect {
+    cfg_attr_expect_notify()
+}
+
 #[rewrite_unit]
 type Rewritten = ();
 pub fn rewritten_alias_tail() -> Rewritten {
@@ -2997,6 +3009,8 @@ static SHADOW: () = {
             "raw_return_notify()",
             "commented_cfg_attr_allow_notify()",
             "doc_comma_notify()",
+            "expect_notify()",
+            "cfg_attr_expect_notify()",
         ] {
             assert!(
                 unconsumed(call),

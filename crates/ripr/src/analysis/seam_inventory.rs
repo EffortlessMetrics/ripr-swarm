@@ -4197,6 +4197,18 @@ pub fn raw_generic_shadow<r#Unit>() -> Unit {
     raw_generic_notify()
 }
 
+#[expect(non_camel_case_types)]
+type unit = ();
+pub fn expect_alias_tail() -> unit {
+    expect_notify()
+}
+
+#[cfg_attr(test, expect(non_camel_case_types))]
+type cfg_attr_expect = ();
+pub fn cfg_attr_expect_tail() -> cfg_attr_expect {
+    cfg_attr_expect_notify()
+}
+
 #[rewrite_unit]
 type Rewritten = ();
 pub fn rewritten_alias_tail() -> Rewritten {
@@ -4287,6 +4299,8 @@ static SHADOW: () = {
             "raw_return_notify()".to_string(),
             "commented_cfg_attr_allow_notify()".to_string(),
             "doc_comma_notify()".to_string(),
+            "expect_notify()".to_string(),
+            "cfg_attr_expect_notify()".to_string(),
         ];
         expected.sort();
         assert_eq!(
