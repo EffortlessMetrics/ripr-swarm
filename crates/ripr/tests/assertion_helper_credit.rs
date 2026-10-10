@@ -361,6 +361,34 @@ fn undeclared_integration_helper_with_autotests_false_does_not_expose() -> Resul
 }
 
 #[test]
+fn harness_false_integration_helper_does_not_expose() -> Result<(), String> {
+    // A declared [[test]] with harness = false is a real Cargo target, so
+    // the #6965 drop keeps tests/gate.rs, but libtest never collects its
+    // #[test] items. Crediting that helper would promote an unrun test.
+    let finding = TempRepo::create_files(&[
+        (
+            "Cargo.toml",
+            package_manifest("\n[[test]]\nname = \"gate\"\nharness = false\n"),
+        ),
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/gate.rs",
+            format!(
+                "{}\nfn main() {{}}\n",
+                integration_source(check_eq_helper())
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "harness=false does not collect #[test] helpers as libtest evidence: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn declared_integration_helper_with_autotests_false_still_exposes() -> Result<(), String> {
     let finding = TempRepo::create_files(&[
         (

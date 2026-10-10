@@ -28,8 +28,8 @@
 //!   nested under `tests/` such as `tests/harness/tests/…`, #7125). A
 //!   nested package (nearest manifest is not the workspace root) is
 //!   credited only when Cargo's metadata inventory lists that autotest
-//!   as a workspace test target, so `[workspace] exclude` cannot become
-//!   test evidence. This producer does not reclassify that
+//!   as a libtest-enabled workspace test target, so `[workspace] exclude`
+//!   and `harness = false` cannot become test evidence. This producer does not reclassify that
 //!   `Production` helper; it only copies the helper's calls and
 //!   parser-backed assertions onto the calling test. A `Production`
 //!   function in a production file, including a `src/tests/` module
@@ -296,9 +296,11 @@ fn is_assertion_helper(
 /// undeclared file unbuilt is owned by the analysis-pipeline drop
 /// (#6965). A nested package (nearest manifest is not the workspace
 /// root) additionally requires Cargo's metadata inventory to list the
-/// path as a workspace test target, so `[workspace] exclude` cannot
-/// become test evidence. `NotDeclared` and `ManifestUnavailable` fail
-/// closed (under-credit, never over-credit).
+/// path as a libtest-enabled workspace test target, so `[workspace]
+/// exclude` and `harness = false` cannot become test evidence.
+/// Root-package path-shape still refuses an established `HarnessDisabled`
+/// target. Nested `NotDeclared` and `ManifestUnavailable` fail closed
+/// (under-credit, never over-credit).
 fn is_crate_root_integration_test_file(
     path: &Path,
     workspace_root: Option<&Path>,
@@ -311,7 +313,14 @@ fn is_crate_root_integration_test_file(
             return false;
         }
         if manifest_dir == root {
-            return true;
+            // Path-shape keeps #7125 credit when cargo metadata is
+            // unavailable. An established `harness = false` target is not
+            // libtest-collected, so its `#[test]` helper cannot become
+            // evidence.
+            return !matches!(
+                manifests.verdict(root, path),
+                CargoHarnessVerdict::HarnessDisabled
+            );
         }
         return nested_package_autotest_is_workspace_member(root, path, manifests);
     }
@@ -348,10 +357,9 @@ fn path_from_nearest_manifest(
 }
 
 /// Nested-package autotest credit uses Cargo's own membership and
-/// test-target inventory. `HarnessEnabled` and `HarnessDisabled` both
-/// mean the path is a workspace test target; the harness flag is not
-/// this producer's concern. Missing or unprobeable inventory grants
-/// nothing.
+/// test-target inventory. Only `HarnessEnabled` means libtest collects
+/// the file; `harness = false` keeps the target but never runs its
+/// `#[test]` items. Missing or unprobeable inventory grants nothing.
 fn nested_package_autotest_is_workspace_member(
     workspace_root: &Path,
     file: &Path,
@@ -359,7 +367,7 @@ fn nested_package_autotest_is_workspace_member(
 ) -> bool {
     matches!(
         manifests.verdict(workspace_root, file),
-        CargoHarnessVerdict::HarnessEnabled | CargoHarnessVerdict::HarnessDisabled
+        CargoHarnessVerdict::HarnessEnabled
     )
 }
 

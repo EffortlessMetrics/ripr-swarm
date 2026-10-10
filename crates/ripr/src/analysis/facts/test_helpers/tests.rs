@@ -490,6 +490,36 @@ fn excluded_nested_package_integration_helper_is_not_credited() -> Result<(), Bo
 }
 
 #[test]
+fn harness_false_integration_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // Declared [[test]] with harness = false is a Cargo target, but
+    // libtest never collects its #[test] items.
+    let index = index_for_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = 'root'\nversion = '0.1.0'\nedition = '2021'\n[workspace]\n[[test]]\nname = 'gate'\nharness = false\n",
+        ),
+        ("src/lib.rs", GATE),
+        (
+            "tests/gate.rs",
+            concat!(
+                "fn check(input: u32, want: bool) {\n",
+                "    assert_eq!(gate(input), want);\n",
+                "}\n\n",
+                "#[test]\n",
+                "fn boundary() {\n",
+                "    check(10, false);\n",
+                "}\n\n",
+                "fn main() {}\n",
+            ),
+        ),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
 fn nested_support_tests_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
     // Same path shape as tests/harness/tests/gate.rs, but tests/support is
     // not a package. Nearest manifest is the root, remaining path is not
