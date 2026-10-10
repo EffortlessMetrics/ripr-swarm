@@ -33,20 +33,6 @@ pub(crate) struct FilePolicyTestCommand {
     pub(crate) host: Option<FilePolicyHost>,
 }
 
-#[derive(Debug)]
-pub(crate) struct WorkflowBudget {
-    pub(crate) path: String,
-    pub(crate) max_non_empty_lines: usize,
-    pub(crate) reason: String,
-}
-
-#[derive(Debug)]
-pub(crate) struct RunBlock {
-    pub(crate) line_number: usize,
-    pub(crate) non_empty_lines: usize,
-    pub(crate) text: String,
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct RustConversionCandidate {
     pub(crate) path: String,
@@ -550,15 +536,6 @@ pub enum CheckStatus {
 }
 
 #[derive(Clone, Debug)]
-pub enum FixKind {
-    #[allow(dead_code, reason = "test-only variant")]
-    AutoFixable,
-    AuthorDecisionRequired,
-    ReviewerDecisionRequired,
-    PolicyExceptionRequired,
-}
-
-#[derive(Clone, Debug)]
 #[allow(
     dead_code,
     reason = "test-only type used via super::* glob in tests.rs"
@@ -586,16 +563,6 @@ pub struct CheckReport {
     pub check: String,
     pub status: CheckStatus,
     pub violations: Vec<CheckViolation>,
-}
-
-pub(crate) struct PolicyReportSpec<'a> {
-    pub(crate) report_file: &'a str,
-    pub(crate) check: &'a str,
-    pub(crate) why_it_matters: &'a str,
-    pub(crate) fix_kind: FixKind,
-    pub(crate) recommended_fixes: &'a [&'a str],
-    pub(crate) rerun_command: &'a str,
-    pub(crate) exception_template: Option<&'a str>,
 }
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

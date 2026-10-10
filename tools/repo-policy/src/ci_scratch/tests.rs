@@ -21,7 +21,11 @@ use super::{
 };
 
 fn repo_text(path: &str) -> Result<String, String> {
-    crate::read_text_lossy(&Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join(path))
+    crate::read_text_lossy(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(path),
+    )
 }
 
 fn repo_contract_inputs() -> Result<(Vec<(String, String)>, String), String> {

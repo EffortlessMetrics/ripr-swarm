@@ -206,9 +206,11 @@ jobs:
         with:
           shared-key: ripr-docs-gate
       - name: Doc/spec gates (full precommit table)
+        env:
+          RIPR_POLICY_PREFLIGHT_RECEIPT: target/ripr/reports/policy-preflight.json
         run: |
+          cargo policy preflight
           cargo xtask precommit
-          cargo xtask check-agent-skills
       - name: Upload docs-gate reports
         if: always()
         uses: actions/upload-artifact@v7

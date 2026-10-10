@@ -4,6 +4,8 @@
 //! unchanged.
 
 mod discarded_matcher_honesty;
+#[path = "precommit_source_oracle.rs"]
+mod precommit_source_oracle;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
@@ -30937,6 +30939,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - run: cargo xtask check-static-language
+      - run: cargo policy preflight
       - name: Required Rust gates
         run: |
           cargo fmt --check
@@ -30971,6 +30974,9 @@ jobs:
     let enforced = ci_enforced_xtask_invocations(workflow);
     let has_root = |root: &str| enforced.iter().any(|(command, _)| command == root);
     assert!(enforced.contains(&("check-static-language".to_string(), String::new())));
+    assert!(enforced.contains(&("check-agent-skills".to_string(), String::new())));
+    assert!(super::workflow_run_xtask_invocation("cargo policy preflight || true").is_none());
+    assert!(super::workflow_run_xtask_invocation("# cargo policy preflight").is_none());
     assert!(enforced.contains(&("check-network-policy".to_string(), String::new())));
     assert!(enforced.contains(&("goldens".to_string(), "check".to_string())));
     assert!(enforced.contains(&("ripr-pr".to_string(), String::new())));
@@ -52255,7 +52261,7 @@ fn require_single_bare_precommit_line(lines: &[String], context: &str) -> Result
 /// each gate as its own named per-producer step; the per-step shape (exact
 /// command, unconditional, ordered, outcome-reported) is owned by
 /// `xtask/tests/rust_gate_workflow_contract.rs`. `cargo xtask precommit` and
-/// `cargo xtask check-agent-skills` stay inline only in the docs-gate job,
+/// the lightweight `cargo policy preflight` stay inline in the docs-gate job,
 /// which `routed_rust_docs_gate_runs_full_precommit_table` covers.
 #[test]
 fn routed_rust_required_lanes_run_full_precommit_table() -> Result<(), String> {
@@ -52402,35 +52408,11 @@ fn precommit_gate_commands_match_executed_precommit_source() -> Result<(), Strin
     let path = repo_root()?.join("xtask/src/main.rs");
     let source =
         std::fs::read_to_string(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
-    let start = source
-        .find("\nfn precommit() -> Result<(), String> {")
-        .ok_or("xtask/src/main.rs must define `fn precommit()`")?;
-    let body = &source[start..];
-    let end = body
-        .find("precommit_report_body")
-        .ok_or("precommit body extraction must stop before `precommit_report_body`")?;
-    let body = &body[..end];
-    let executed: Vec<String> = body
-        .lines()
-        .filter_map(|line| {
-            let call = line.trim().strip_suffix("()?;")?;
-            if call == "markdown_links" || call.starts_with("check_") {
-                Some(call.replace('_', "-"))
-            } else {
-                None
-            }
-        })
-        .collect();
     let expected: Vec<String> = super::PRECOMMIT_GATE_COMMANDS
         .iter()
         .map(|gate| (*gate).to_string())
         .collect();
-    if executed != expected {
-        return Err(format!(
-            "gates executed by `precommit()` {executed:?} must match PRECOMMIT_GATE_COMMANDS {expected:?}"
-        ));
-    }
-    Ok(())
+    precommit_source_oracle::require_catalogue(&source, &expected)
 }
 
 /// Advisory-only `cargo xtask precommit` invocations (`continue-on-error`

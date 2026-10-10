@@ -12,3 +12,5 @@ cargo_manifest|metrics/rust-judged-behavior-panel/subjects/**/Cargo.toml|governe
 cargo_manifest|xtask/Cargo.toml|unpublished automation manifest
 workspace_member|crates/ripr|published product package
 workspace_member|xtask|unpublished Rust automation
+cargo_manifest|tools/repo-policy/Cargo.toml|unpublished workflow and agent policy boundary (#7158)
+workspace_member|tools/repo-policy|product-independent Rust repository policy (#7158)

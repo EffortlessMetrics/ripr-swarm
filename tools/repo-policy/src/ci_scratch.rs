@@ -14,7 +14,7 @@
 
 use std::path::Path;
 
-pub(crate) const SCRATCH_LEASE_ACTION_PATH: &str = ".github/actions/ci-scratch-lease/action.yml";
+pub const SCRATCH_LEASE_ACTION_PATH: &str = ".github/actions/ci-scratch-lease/action.yml";
 const SCRATCH_LEASE_USES: &str = "uses: ./.github/actions/ci-scratch-lease";
 const RUST_GATES_PATH: &str = ".github/workflows/rust-gates.yml";
 const SCRATCH_GC_PATH: &str = ".github/workflows/scratch-gc.yml";
@@ -39,7 +39,7 @@ const LOCK_PROBE: &str = "if ! flock -n -x \"$fd\"; then";
 const INODE_CHECK: &str = "stat -L -c %d:%i \"/dev/fd/$fd\"";
 const LOCKED_DELETE: &str = "rm -rf -- \"$tree\"";
 
-pub(crate) fn scratch_lease_contract_violations_for_repo() -> Result<Vec<String>, String> {
+pub fn scratch_lease_contract_violations_for_repo() -> Result<Vec<String>, String> {
     let mut workflows = Vec::new();
     let workflow_root = Path::new(".github/workflows");
     if workflow_root.exists() {
@@ -62,7 +62,7 @@ pub(crate) fn scratch_lease_contract_violations_for_repo() -> Result<Vec<String>
     ))
 }
 
-pub(crate) fn scratch_lease_contract_violations(
+pub fn scratch_lease_contract_violations(
     workflows: &[(String, String)],
     action: Option<&str>,
 ) -> Vec<String> {

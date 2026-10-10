@@ -49,3 +49,4 @@ metrics/rust-judged-behavior-panel/subjects/**/Cargo.toml|fixture_input|rust-jud
 packaging/npm/launcher/package.json|npm_distribution_manifest|release/distribution|Source manifest for the script-free scoped npm launcher; dependencies are exact platform payload identities governed by policy/distribution.toml.
 packaging/python/pyproject.toml|python_distribution_manifest|release/distribution|Pinned PEP 517/621 Maturin build contract for the wheel-only ripr-rs adapter (#4490).
 xtask/Cargo.toml|rust_tool_manifest|repo-policy|xtask package manifest.
+tools/repo-policy/Cargo.toml|rust_tool_manifest|repo-policy|#7158 product-independent workflow and agent policy package.
