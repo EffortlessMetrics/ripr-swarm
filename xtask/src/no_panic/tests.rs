@@ -51,7 +51,8 @@ fn repo_policy_package_is_enforced_and_proposed() -> Result<(), String> {
                     .map_err(|e| e.to_string())?;
             assert!(report.contains(path), "missing helper path: {report}");
             let callee = concat!("pan", "ic!");
-            allowlist.push_str(&format!("\n[[allow]]\nid = \"helper-control-{index}\"\npath = \"{path}\"\nfamily = \"panic_macro\"\nclassification = \"test_only\"\nowner = \"core/policy\"\nexplanation = \"Deliberate scanner fixture\"\nexpires = \"2026-12-31\"\n[allow.selector]\nkind = \"macro_call\"\ncontainer = \"policy_control\"\ncallee = \"{callee}\"\n"));
+            // This fixture exercises package coverage; dedicated tests exercise expiry.
+            allowlist.push_str(&format!("\n[[allow]]\nid = \"helper-control-{index}\"\npath = \"{path}\"\nfamily = \"panic_macro\"\nclassification = \"test_only\"\nowner = \"core/policy\"\nexplanation = \"Deliberate scanner fixture\"\nexpires = \"9999-12-31\"\n[allow.selector]\nkind = \"macro_call\"\ncontainer = \"policy_control\"\ncallee = \"{callee}\"\n"));
         }
         std::fs::write(policy, allowlist).map_err(|e| e.to_string())?;
         super::check_no_panic_family_impl()?;
