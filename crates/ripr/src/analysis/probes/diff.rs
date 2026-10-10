@@ -9,7 +9,8 @@ use super::binding_predicate::{
     resolve_changed_binding_uses,
 };
 use super::classify::{
-    is_structural_delimiter_line, parser_probe_shapes_for_changed_line_against,
+    added_type_bound_lines, is_structural_delimiter_line,
+    parser_probe_shapes_for_changed_line_against, removed_type_bound_lines,
     should_ignore_changed_line,
 };
 use super::expectations::{expected_sinks, required_oracles};
@@ -61,6 +62,12 @@ pub(crate) fn probes_for_file_with_relations(
     let mut emitted_parser_shapes = Vec::<(usize, String)>::new();
     let skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
+    let removed_bounds = removed_type_bound_lines(index, changed);
+    let added_bounds = if changed.removed_lines.is_empty() {
+        vec![false; changed.added_lines.len()]
+    } else {
+        added_type_bound_lines(index, changed)
+    };
 
     for (added_index, added) in changed.added_lines.iter().enumerate() {
         let text = added.text.trim();
@@ -219,8 +226,21 @@ pub(crate) fn probes_for_file_with_relations(
         ) {
             continue;
         }
-        for family in classify_changed_line(text) {
-            if has_matching_added_line(removed, &family, changed) {
+        let families = if removed_bounds[removed_index] {
+            vec![ProbeFamily::StaticUnknown]
+        } else {
+            classify_changed_line(text)
+        };
+        for family in families {
+            // A bound replacement may collapse several old predicates into one.
+            // Shared identifiers alone do not establish that the old subject
+            // remained in the replacement's evidence.
+            if has_matching_added_line(removed, &family, changed, &added_bounds)
+                && (!removed_bounds[removed_index]
+                    || probes
+                        .iter()
+                        .any(|seeded| seeded.probe.before.as_deref() == Some(text)))
+            {
                 continue;
             }
             if family == ProbeFamily::StaticUnknown
@@ -818,17 +838,22 @@ fn has_matching_added_line(
     removed_line: &ChangedLine,
     removed_family: &ProbeFamily,
     changed: &ChangedFile,
+    added_bounds: &[bool],
 ) -> bool {
     let removed_tokens = extract_identifier_tokens(&removed_line.text);
     !removed_tokens.is_empty()
-        && changed.added_lines.iter().any(|line| {
+        && changed.added_lines.iter().enumerate().any(|(index, line)| {
             let run_start = added_run_start(line.new_side_line, changed);
             if !lines_are_adjacent(removed_line.new_side_line, line.new_side_line)
                 && !lines_are_adjacent(removed_line.new_side_line, run_start)
             {
                 return false;
             }
-            let added_families = classify_changed_line(line.text.trim());
+            let added_families = if added_bounds[index] {
+                vec![ProbeFamily::StaticUnknown]
+            } else {
+                classify_changed_line(line.text.trim())
+            };
             if !added_families.iter().any(|family| family == removed_family) {
                 return false;
             }

@@ -1,5 +1,5 @@
 use super::source_utils::normalized_path;
-use super::{ChangedFile, LanguageAdapter, PythonAdapter, PythonOwner};
+use super::{LanguageAdapter, PythonAdapter, PythonOwner};
 use crate::config::{is_detectable_generated_python_path, is_python_excluded_dir_everywhere};
 use std::{
     ops::RangeInclusive,
@@ -57,36 +57,6 @@ pub(super) fn visit_workspace(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
             }
         }
     }
-}
-
-/// Reconstructs the old side of one changed file from the current source and
-/// the parsed unified-diff line coordinates. This keeps no-op classification
-/// fail-closed: an interior docstring line is suppressed only when both parsed
-/// source versions establish that it belongs to a docstring.
-pub(super) fn reconstruct_old_source(new_source: &str, changed: &ChangedFile) -> Option<String> {
-    let mut lines = new_source.lines().map(str::to_string).collect::<Vec<_>>();
-
-    let mut added = changed.added_lines.iter().collect::<Vec<_>>();
-    added.sort_by_key(|line| std::cmp::Reverse(line.line));
-    for line in added {
-        let index = line.line.checked_sub(1)?;
-        if lines.get(index)? != &line.text {
-            return None;
-        }
-        lines.remove(index);
-    }
-
-    let mut removed = changed.removed_lines.iter().collect::<Vec<_>>();
-    removed.sort_by_key(|line| line.line);
-    for line in removed {
-        let index = line.line.checked_sub(1)?;
-        if index > lines.len() {
-            return None;
-        }
-        lines.insert(index, line.text.clone());
-    }
-
-    Some(lines.join("\n"))
 }
 
 pub(super) fn line_is_in_ranges(line: usize, ranges: &[RangeInclusive<usize>]) -> bool {

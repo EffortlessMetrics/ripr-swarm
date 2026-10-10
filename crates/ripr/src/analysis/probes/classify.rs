@@ -10,6 +10,32 @@ use std::path::Path;
 
 mod declarations;
 
+pub(super) fn added_type_bound_lines(
+    index: &RustIndex,
+    changed: &crate::analysis::diff::ChangedFile,
+) -> Vec<bool> {
+    file_facts(index, &changed.path)
+        .filter(|facts| !facts.used_lexical_fallback)
+        .map(|facts| declarations::type_bound_lines(&facts.source, &changed.added_lines))
+        .unwrap_or_else(|| vec![false; changed.added_lines.len()])
+}
+
+/// Removed declarations must be admitted using reconstructed old-side syntax,
+/// never a line coincidence in the candidate index. A refused reconstruction
+/// or parse leaves the existing lexical/unknown evidence intact.
+pub(super) fn removed_type_bound_lines(
+    index: &RustIndex,
+    changed: &crate::analysis::diff::ChangedFile,
+) -> Vec<bool> {
+    if changed.removed_lines.is_empty() {
+        return Vec::new();
+    }
+    file_facts(index, &changed.path)
+        .and_then(|facts| crate::analysis::diff::reconstruct_old_source(&facts.source, changed))
+        .map(|source| declarations::type_bound_lines(&source, &changed.removed_lines))
+        .unwrap_or_else(|| vec![false; changed.removed_lines.len()])
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ParserProbeShape<'a> {
     pub(crate) family: ProbeFamily,

@@ -4,6 +4,8 @@ mod load;
 mod model;
 mod parse;
 mod path;
+mod source;
+pub(crate) use source::reconstruct_old_source;
 pub mod records;
 
 pub(crate) use load::{

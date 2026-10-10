@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -5,7 +5,7 @@
+ pub fn packet<T>(value: T) -> Packet
+ where
+-    T: Into<u8>,
++    T: Into<u8> + Copy,
+ {
+     Packet {
+-        Upper: 0,
++        Upper: value.into(),
+     }
