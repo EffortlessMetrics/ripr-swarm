@@ -5,7 +5,8 @@
   finding is `static_unknown` and names the ambiguous function. A chain
   that no test enters, including a unique wrapper of a non-unique helper,
   still reads `no_static_path`, as does a receiver call that only shares
-  the bare name (`req.parse()`) (#7080). Verdict-corpus rows
+  the bare name (`req.parse()`), including when that line also contains
+  the string or comment `parse(` (#7080). Verdict-corpus rows
   `semver-op-greater-eq` and `semver-max-comparators` move from
   `no_static_path` to `static_unknown` because tests call non-unique
   `parse`/`from_str`; neighboring `semver-*` rows stay `no_static_path`.

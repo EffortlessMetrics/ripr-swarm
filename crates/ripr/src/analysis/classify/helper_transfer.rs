@@ -236,24 +236,35 @@ fn caller_invokes_named_entry(caller: &FunctionSummary, stop_name: &str) -> bool
 }
 
 /// Whether a recorded test call invokes `callee_name` as a free function
-/// (`parse(...)`) or a path-qualified associated function
-/// (`Version::parse(...)`). A receiver call (`req.parse()`) shares the
-/// bare name but is not that entry (#7080 / identity, not token
-/// coincidence).
+/// (`parse(...)`, `parse (...)`, `parse::<T>(...)`) or a path-qualified
+/// associated function (`Version::parse(...)`). A receiver call
+/// (`req.parse()`) shares the bare name but is not that entry (#7080 /
+/// identity, not token coincidence). Comments and strings are masked
+/// first because `CallFact.text` is the original source line: a receiver
+/// on the same line as `"parse("` must not look like an entry.
 fn test_call_invokes_named_entry(text: &str, callee_name: &str) -> bool {
-    let needle = format!("{callee_name}(");
-    let mut search = 0usize;
-    while let Some(relative) = text[search..].find(&needle) {
-        let at = search + relative;
-        let enters = match text[..at].chars().next_back() {
-            None => true,
-            Some('.') => false,
-            Some(before) => !before.is_ascii_alphanumeric() && before != '_',
-        };
-        if enters {
-            return true;
+    if callee_name.is_empty() {
+        return false;
+    }
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let bytes = masked.as_bytes();
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i] == b'('
+            && let Some((start, end)) =
+                crate::analysis::extract::call_name_bounds_before_paren(&masked, i)
+            && masked[start..end] == *callee_name
+        {
+            let enters = match masked[..start].chars().next_back() {
+                None => true,
+                Some('.') => false,
+                Some(before) => !before.is_ascii_alphanumeric() && before != '_',
+            };
+            if enters {
+                return true;
+            }
         }
-        search = at + needle.chars().next().map_or(1, char::len_utf8);
+        i += 1;
     }
     false
 }
@@ -1340,7 +1351,27 @@ mod tests {
             "Version::parse(\">=1.0\")",
             "parse"
         ));
+        assert!(test_call_invokes_named_entry(r#"parse (">=1.0")"#, "parse"));
+        assert!(test_call_invokes_named_entry(
+            r#"parse::<&str>(">=1.0")"#,
+            "parse"
+        ));
+        assert!(test_call_invokes_named_entry(
+            "Version::parse::<&str>(v)",
+            "parse"
+        ));
         assert!(!test_call_invokes_named_entry("req.parse()", "parse"));
+        assert!(
+            !test_call_invokes_named_entry(
+                r#"req.parse(); assert_eq!(message, "parse(")"#,
+                "parse"
+            ),
+            "a string occurrence of parse( is not the free-function entry"
+        );
+        assert!(
+            !test_call_invokes_named_entry("req.parse(); // parse(", "parse"),
+            "a comment occurrence of parse( is not the free-function entry"
+        );
 
         let receiver_from_str =
             function("src/from_str.rs", "from_str", &[("parse", "req.parse()")]);

@@ -59,8 +59,10 @@ can only hint that a caller "may lead here" without changing anything.
   `static_unknown` naming that function, not `no_static_path` (#7080).
   A uniqueness stop that no test enters — including a unique wrapper of a
   non-unique helper (`outer` wrapping a second `inner`), or a receiver
-  call that only shares the bare name (`req.parse()`) — stays
-  `no_static_path`.
+  call that only shares the bare name (`req.parse()`) even when that
+  line also contains the string or comment text `parse(` — stays
+  `no_static_path`. Spaced and turbofish calls the extractor records
+  (`parse (...)`, `parse::<T>(...)`) still enter.
 - Hop propagation (#6780): for probe families observed through the
   owner's returned value (every family except `side_effect` and
   `call_deletion`), when the related tests reach the owner only

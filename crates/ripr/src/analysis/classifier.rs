@@ -448,6 +448,52 @@ mod tests {
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
     }
 
+    // #7080: CallFact.text is the original line. A receiver plus a string
+    // that contains `parse(` must not hide the gap as static_unknown.
+    #[test]
+    fn given_helper_chain_refused_when_receiver_shares_line_with_parse_string_then_no_static_path()
+    {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "parses_on_the_value",
+                "parse",
+                r#"req.parse(); assert_eq!(message, "parse(")"#,
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_spaced_or_turbofish_parse_then_static_unknown() {
+        for text in [r#"parse (">=1.0")"#, r#"parse::<&str>(">=1.0")"#] {
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![
+                    function("src/op.rs", "op"),
+                    function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                    function("src/other.rs", "parse"),
+                ],
+                tests: vec![test_calling(
+                    "tests/req.rs",
+                    "digit_after_wildcard",
+                    "parse",
+                    text,
+                )],
+                ..Default::default()
+            });
+            let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+            assert_eq!(finding.class, ExposureClass::StaticUnknown, "{text}");
+        }
+    }
+
     #[test]
     fn given_three_character_probe_token_in_test_name_when_owner_is_not_called_then_test_is_related()
      {

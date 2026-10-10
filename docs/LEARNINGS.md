@@ -14,10 +14,14 @@ ambiguous entry. Keep `no_static_path` only when no test enters that
 name — a unique wrapper of a non-unique helper (`outer` → second
 `inner`) is the negative control (`helper_chain_controls`,
 `rust_transitive_reach_positive`). A receiver call of the same name
-(`req.parse()`) is not an entry; `Version::parse(...)` is. A non-unique
-wrapper counts only when it invokes the refused helper the same way, and
-a test-local `fn`/`let` of that name is not an entry. Do not credit
-`helper_owner_call` through the ambiguous name.
+(`req.parse()`) is not an entry; `Version::parse(...)` is. `CallFact.text`
+is the original source line, so match after masking comments and strings
+and reuse the extractor's call-paren bounds (`parse (...)`,
+`parse::<T>(...)`); a receiver sharing a line with `"parse("` is still
+not an entry. A non-unique wrapper counts only when it invokes the
+refused helper the same way, and a test-local `fn`/`let` of that name is
+not an entry. Do not credit `helper_owner_call` through the ambiguous
+name.
 
 ## 2026-10-08: A green PR head plus clean mergeability does not prove the squash result compiles (#7150)
 
