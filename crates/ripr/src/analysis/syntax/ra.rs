@@ -1904,6 +1904,43 @@ fn enclosing_module_item_list(
     None
 }
 
+fn generic_params_include_name(params: &ast::GenericParamList, name: &str) -> bool {
+    params.type_or_const_params().any(|param| {
+        param
+            .syntax()
+            .children()
+            .filter_map(ast::Name::cast)
+            .any(|param_name| param_name.text() == name)
+    })
+}
+
+fn generic_type_param_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
+    use ra_ap_syntax::SyntaxKind as K;
+    if ast::Fn::cast(function.clone())
+        .and_then(|function| function.generic_param_list())
+        .is_some_and(|params| generic_params_include_name(&params, name))
+    {
+        return true;
+    }
+    for ancestor in function.ancestors().skip(1) {
+        match ancestor.kind() {
+            K::FN | K::SOURCE_FILE | K::ITEM_LIST => return false,
+            K::IMPL => {
+                return ast::Impl::cast(ancestor)
+                    .and_then(|item| item.generic_param_list())
+                    .is_some_and(|params| generic_params_include_name(&params, name));
+            }
+            K::TRAIT => {
+                return ast::Trait::cast(ancestor)
+                    .and_then(|item| item.generic_param_list())
+                    .is_some_and(|params| generic_params_include_name(&params, name));
+            }
+            _ => {}
+        }
+    }
+    false
+}
+
 fn assoc_type_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
     use ra_ap_syntax::SyntaxKind as K;
     function.parent().is_some_and(|parent| {
@@ -1921,13 +1958,13 @@ fn assoc_type_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
 
 /// Syntax-only: a same-module `type Name = ();` (or `( )`) whose name
 /// matches a bare return path. Aliases in other modules, associated types,
-/// generics, a further alias of that name, and nested functions stay
-/// unresolved.
+/// a function or impl/trait type parameter of the same name, a further
+/// alias of that name, and nested functions stay unresolved.
 fn same_module_unit_alias(path_type: &ast::PathType, function: &ra_ap_syntax::SyntaxNode) -> bool {
     let Some(name) = bare_type_path_name(path_type) else {
         return false;
     };
-    if assoc_type_named(function, &name) {
+    if assoc_type_named(function, &name) || generic_type_param_named(function, &name) {
         return false;
     }
     let Some(items) = enclosing_module_item_list(function) else {
@@ -2737,6 +2774,17 @@ pub fn outer_nested_unit() {
     }
     inner_unit()
 }
+
+pub fn generic_shadow<Unit>() -> Unit {
+    generic_notify()
+}
+
+struct GenericHolder<Unit>(Unit);
+impl<Unit> GenericHolder<Unit> {
+    fn method_generic() -> Unit {
+        method_generic_notify()
+    }
+}
 "#;
         let facts = summarize_file_with_parser(Path::new("src/lib.rs"), source)?;
         let consumed = |name: &str| {
@@ -2779,6 +2827,8 @@ pub fn outer_nested_unit() {
             "impl_notify()",
             "nested_shadow_notify()",
             "nested_unit_notify()",
+            "generic_notify()",
+            "method_generic_notify()",
         ] {
             assert!(
                 consumed(call),
