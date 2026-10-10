@@ -1,0 +1,60 @@
+   Compiling version_check v0.9.5
+   Compiling typenum v1.20.1
+   Compiling serde_core v1.0.229
+   Compiling generic-array v0.14.7
+   Compiling zmij v1.0.23
+   Compiling cpufeatures v0.2.17
+   Compiling cfg-if v1.0.5
+   Compiling serde_json v1.0.151
+    Checking itoa v1.0.18
+    Checking crypto-common v0.1.7
+    Checking block-buffer v0.10.4
+    Checking memchr v2.8.3
+    Checking digest v0.10.7
+    Checking sha2 v0.10.9
+   Compiling repo-policy v0.1.0 (/workspace/ripr-swarm/tools/repo-policy)
+error: couldn't read `tools/repo-policy/src/../../AGENTS.override.md`: No such file or directory (os error 2)
+   --> tools/repo-policy/src/agent_skills.rs:625:25
+    |
+625 |         let bootstrap = include_str!("../../AGENTS.override.md");
+    |                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+help: there is a file with the same name in a different directory
+    |
+625 |         let bootstrap = include_str!("../../../AGENTS.override.md");
+    |                                             +++
+
+error[E0425]: cannot find value `ROUTED_RUST_REQUIRED_RESULT_NAME` in this scope
+    --> tools/repo-policy/src/lib.rs:1017:46
+     |
+ 901 | pub const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored Label Event";
+     | ---------------------------------------------------------------------------------------------- similarly named constant `ROUTED_RUST_IGNORED_LABEL_RESULT_NAME` defined here
+...
+1017 |     let required_name_line = format!("name: {ROUTED_RUST_REQUIRED_RESULT_NAME}");
+     |                                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: a constant with a similar name exists
+     |
+1017 -     let required_name_line = format!("name: {ROUTED_RUST_REQUIRED_RESULT_NAME}");
+1017 +     let required_name_line = format!("name: {ROUTED_RUST_IGNORED_LABEL_RESULT_NAME}");
+     |
+
+error[E0425]: cannot find value `ROUTED_RUST_REQUIRED_RESULT_NAME` in this scope
+    --> tools/repo-policy/src/lib.rs:1022:82
+     |
+ 901 | pub const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored Label Event";
+     | ---------------------------------------------------------------------------------------------- similarly named constant `ROUTED_RUST_IGNORED_LABEL_RESULT_NAME` defined here
+...
+1022 |             ".github/workflows/routed-rust.yml result job must post the static `{ROUTED_RUST_REQUIRED_RESULT_NAME}` context on eve...
+     |                                                                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+help: a constant with a similar name exists
+     |
+1022 -             ".github/workflows/routed-rust.yml result job must post the static `{ROUTED_RUST_REQUIRED_RESULT_NAME}` context on every run; a conditional or renamed result can hide Draft or label activity from branch protection (#4986)"
+1022 +             ".github/workflows/routed-rust.yml result job must post the static `{ROUTED_RUST_IGNORED_LABEL_RESULT_NAME}` context on every run; a conditional or renamed result can hide Draft or label activity from branch protection (#4986)"
+     |
+
+For more information about this error, try `rustc --explain E0425`.
+error: could not compile `repo-policy` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `repo-policy` (lib test) due to 3 previous errors

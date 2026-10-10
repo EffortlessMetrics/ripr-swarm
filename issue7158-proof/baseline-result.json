@@ -1,0 +1,12 @@
+{
+  "command": "cargo check -p xtask --all-targets --locked --message-format=json",
+  "exit_code": 0,
+  "compiler_artifact_events": 268,
+  "nonfresh_compiler_artifact_events": 268,
+  "build_script_events": 34,
+  "terminal_report": "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3m 37s",
+  "output_bytes": {
+    "compiler_json": 214136,
+    "cargo_stderr": 7163
+  }
+}

@@ -1,0 +1,148 @@
+[
+  {
+    "case": "valid",
+    "command": "check-workflows",
+    "equal": true,
+    "old": {
+      "exit": 0,
+      "stdout": "check-workflows: pass (target/ripr/reports/workflows.md)\n",
+      "stderr": "",
+      "reports": {
+        "workflows.md": "# check-workflows\n\nStatus: pass\n\n## Why This Matters\n\nGitHub Actions should orchestrate xtask, Cargo, and npm commands instead of hiding complex shell logic in workflow YAML.\n\n## Violations\n\nNone detected.\n\n## Rerun\n\n```bash\ncargo xtask check-workflows\n```\n"
+      }
+    },
+    "new": {
+      "exit": 0,
+      "stdout": "check-workflows: pass (target/ripr/reports/workflows.md)\n",
+      "stderr": "",
+      "reports": {
+        "workflows.md": "# check-workflows\n\nStatus: pass\n\n## Why This Matters\n\nGitHub Actions should orchestrate xtask, Cargo, and npm commands instead of hiding complex shell logic in workflow YAML.\n\n## Violations\n\nNone detected.\n\n## Rerun\n\n```bash\ncargo xtask check-workflows\n```\n"
+      }
+    }
+  },
+  {
+    "case": "valid",
+    "command": "check-agent-skills",
+    "equal": true,
+    "old": {
+      "exit": 0,
+      "stdout": "check-agent-skills: pass (target/ripr/reports/agent-skills.md)\n",
+      "stderr": "",
+      "reports": {
+        "agent-skills.json": "{\n  \"findings\": [],\n  \"not_enforced\": [\n    \"prose identity\",\n    \"section-order symmetry\",\n    \"equal agent counts\",\n    \"equal model choices\",\n    \"one role per pass\",\n    \"one provider as generated canonical source\",\n    \"mandatory separate reviewer identity\",\n    \"semantic truth of declared review and operating contract markers\",\n    \"full prose identity beyond the checked operating markers\",\n    \"provider runtime loading and compliance\"\n  ],\n  \"schema_version\": \"0.1\",\n  \"status\": \"pass\"\n}\n",
+        "agent-skills.md": "# Agent skill structure\n\n- Status: pass\n\nScope: checked files, declared markers, and routes only. This is not proof of semantic consistency, provider runtime loading, or agent compliance.\n\n## Findings\n\n- none\n",
+        "workflows.md": "# check-workflows\n\nStatus: pass\n\n## Why This Matters\n\nGitHub Actions should orchestrate xtask, Cargo, and npm commands instead of hiding complex shell logic in workflow YAML.\n\n## Violations\n\nNone detected.\n\n## Rerun\n\n```bash\ncargo xtask check-workflows\n```\n"
+      }
+    },
+    "new": {
+      "exit": 0,
+      "stdout": "check-agent-skills: pass (target/ripr/reports/agent-skills.md)\n",
+      "stderr": "",
+      "reports": {
+        "agent-skills.json": "{\n  \"findings\": [],\n  \"not_enforced\": [\n    \"prose identity\",\n    \"section-order symmetry\",\n    \"equal agent counts\",\n    \"equal model choices\",\n    \"one role per pass\",\n    \"one provider as generated canonical source\",\n    \"mandatory separate reviewer identity\",\n    \"semantic truth of declared review and operating contract markers\",\n    \"full prose identity beyond the checked operating markers\",\n    \"provider runtime loading and compliance\"\n  ],\n  \"schema_version\": \"0.1\",\n  \"status\": \"pass\"\n}\n",
+        "agent-skills.md": "# Agent skill structure\n\n- Status: pass\n\nScope: checked files, declared markers, and routes only. This is not proof of semantic consistency, provider runtime loading, or agent compliance.\n\n## Findings\n\n- none\n",
+        "workflows.md": "# check-workflows\n\nStatus: pass\n\n## Why This Matters\n\nGitHub Actions should orchestrate xtask, Cargo, and npm commands instead of hiding complex shell logic in workflow YAML.\n\n## Violations\n\nNone detected.\n\n## Rerun\n\n```bash\ncargo xtask check-workflows\n```\n"
+      }
+    }
+  },
+  {
+    "case": "missing-budget",
+    "command": "check-workflows",
+    "equal": true,
+    "old": {
+      "exit": 1,
+      "stdout": "",
+      "stderr": "xtask: check-workflows failed; see target/ripr/reports/workflows.md\nmissing workflow budget for .github/workflows/broken.yml in policy/workflow_allowlist.txt\n",
+      "reports": {
+        "agent-skills.json": "{\n  \"findings\": [],\n  \"not_enforced\": [\n    \"prose identity\",\n    \"section-order symmetry\",\n    \"equal agent counts\",\n    \"equal model choices\",\n    \"one role per pass\",\n    \"one provider as generated canonical source\",\n    \"mandatory separate reviewer identity\",\n    \"semantic truth of declared review and operating contract markers\",\n    \"full prose identity beyond the checked operating markers\",\n    \"provider runtime loading and compliance\"\n  ],\n  \"schema_version\": \"0.1\",\n  \"status\": \"pass\"\n}\n",
+        "agent-skills.md": "# Agent skill structure\n\n- Status: pass\n\nScope: checked files, declared markers, and routes only. This is not proof of semantic consistency, provider runtime loading, or agent compliance.\n\n## Findings\n\n- none\n",
+        "workflows.md": "# check-workflows\n\nStatus: fail\n\n## Why This Matters\n\nGitHub Actions should orchestrate xtask, Cargo, and npm commands instead of hiding complex shell logic in workflow YAML.\n\n## Violations\n\n```text\nmissing workflow budget for .github/workflows/broken.yml in policy/workflow_allowlist.txt\n```\n\n## Fix Kind\n\n```text\npolicy_exception_required\n```\n\n## Recommended Fixes\n\n1. Move complex workflow logic into xtask or an npm script owned by the extension surface.\n2. Keep workflow run blocks under the documented line budget.\n3. Use Node-24-backed action majors where official releases exist.\n4. Use Node 24 for VS Code extension build and publish workflows.\n5. Add or adjust a workflow budget entry only when the workflow surface is intentionally larger.\n\n## Exception Template\n\n```text\npolicy/workflow_allowlist.txt entry:\n.github/workflows/name.yml|max_non_empty_lines|reason\n\npolicy/workflow_action_runtime_allowlist.txt entry:\n.github/workflows/name.yml|action/ref|max_count|reason\n```\n\n## Rerun\n\n```bash\ncargo xtask check-workflows\n```\n"
+      }
+    },
+    "new": {
+      "exit": 1,
+      "stdout": "",
+      "stderr": "xtask: check-workflows failed; see target/ripr/reports/workflows.md\nmissing workflow budget for .github/workflows/broken.yml in policy/workflow_allowlist.txt\n",
+      "reports": {
+        "agent-skills.json": "{\n  \"findings\": [],\n  \"not_enforced\": [\n    \"prose identity\",\n    \"section-order symmetry\",\n    \"equal agent counts\",\n    \"equal model choices\",\n    \"one role per pass\",\n    \"one provider as generated canonical source\",\n    \"mandatory separate reviewer identity\",\n    \"semantic truth of declared review and operating contract markers\",\n    \"full prose identity beyond the checked operating markers\",\n    \"provider runtime loading and compliance\"\n  ],\n  \"schema_version\": \"0.1\",\n  \"status\": \"pass\"\n}\n",
+        "agent-skills.md": "# Agent skill structure\n\n- Status: pass\n\nScope: checked files, declared markers, and routes only. This is not proof of semantic consistency, provider runtime loading, or agent compliance.\n\n## Findings\n\n- none\n",
+        "workflows.md": "# check-workflows\n\nStatus: fail\n\n## Why This Matters\n\nGitHub Actions should orchestrate xtask, Cargo, and npm commands instead of hiding complex shell logic in workflow YAML.\n\n## Violations\n\n```text\nmissing workflow budget for .github/workflows/broken.yml in policy/workflow_allowlist.txt\n```\n\n## Fix Kind\n\n```text\npolicy_exception_required\n```\n\n## Recommended Fixes\n\n1. Move complex workflow logic into xtask or an npm script owned by the extension surface.\n2. Keep workflow run blocks under the documented line budget.\n3. Use Node-24-backed action majors where official releases exist.\n4. Use Node 24 for VS Code extension build and publish workflows.\n5. Add or adjust a workflow budget entry only when the workflow surface is intentionally larger.\n\n## Exception Template\n\n```text\npolicy/workflow_allowlist.txt entry:\n.github/workflows/name.yml|max_non_empty_lines|reason\n\npolicy/workflow_action_runtime_allowlist.txt entry:\n.github/workflows/name.yml|action/ref|max_count|reason\n```\n\n## Rerun\n\n```bash\ncargo xtask check-workflows\n```\n"
+      }
+    }
+  },
+  {
+    "case": "marker-violation",
+    "command": "check-agent-skills",
+    "equal": true,
+    "old": {
+      "exit": 1,
+      "stdout": "",
+      "stderr": "xtask: check-agent-skills found 2 issue(s); see target/ripr/reports/agent-skills.md\n",
+      "reports": {
+        "agent-skills.json": "{\n  \"findings\": [\n    \"operating-contract: .agents/skills/build-candidate/SKILL.md is missing marker `candidate_contract:one_writer_worktree`\",\n    \"operating-contract: .agents/skills/build-candidate/SKILL.md declares unknown marker `candidate_contract:wrong_writer`\"\n  ],\n  \"not_enforced\": [\n    \"prose identity\",\n    \"section-order symmetry\",\n    \"equal agent counts\",\n    \"equal model choices\",\n    \"one role per pass\",\n    \"one provider as generated canonical source\",\n    \"mandatory separate reviewer identity\",\n    \"semantic truth of declared review and operating contract markers\",\n    \"full prose identity beyond the checked operating markers\",\n    \"provider runtime loading and compliance\"\n  ],\n  \"schema_version\": \"0.1\",\n  \"status\": \"failed\"\n}\n",
+        "agent-skills.md": "# Agent skill structure\n\n- Status: failed\n\nScope: checked files, declared markers, and routes only. This is not proof of semantic consistency, provider runtime loading, or agent compliance.\n\n## Findings\n\n- operating-contract: .agents/skills/build-candidate/SKILL.md is missing marker `candidate_contract:one_writer_worktree`\n- operating-contract: .agents/skills/build-candidate/SKILL.md declares unknown marker `candidate_contract:wrong_writer`\n",
+        "workflows.md": "# check-workflows\n\nStatus: fail\n\n## Why This Matters\n\nGitHub Actions should orchestrate xtask, Cargo, and npm commands instead of hiding complex shell logic in workflow YAML.\n\n## Violations\n\n```text\nmissing workflow budget for .github/workflows/broken.yml in policy/workflow_allowlist.txt\n```\n\n## Fix Kind\n\n```text\npolicy_exception_required\n```\n\n## Recommended Fixes\n\n1. Move complex workflow logic into xtask or an npm script owned by the extension surface.\n2. Keep workflow run blocks under the documented line budget.\n3. Use Node-24-backed action majors where official releases exist.\n4. Use Node 24 for VS Code extension build and publish workflows.\n5. Add or adjust a workflow budget entry only when the workflow surface is intentionally larger.\n\n## Exception Template\n\n```text\npolicy/workflow_allowlist.txt entry:\n.github/workflows/name.yml|max_non_empty_lines|reason\n\npolicy/workflow_action_runtime_allowlist.txt entry:\n.github/workflows/name.yml|action/ref|max_count|reason\n```\n\n## Rerun\n\n```bash\ncargo xtask check-workflows\n```\n"
+      }
+    },
+    "new": {
+      "exit": 1,
+      "stdout": "",
+      "stderr": "xtask: check-agent-skills found 2 issue(s); see target/ripr/reports/agent-skills.md\n",
+      "reports": {
+        "agent-skills.json": "{\n  \"findings\": [\n    \"operating-contract: .agents/skills/build-candidate/SKILL.md is missing marker `candidate_contract:one_writer_worktree`\",\n    \"operating-contract: .agents/skills/build-candidate/SKILL.md declares unknown marker `candidate_contract:wrong_writer`\"\n  ],\n  \"not_enforced\": [\n    \"prose identity\",\n    \"section-order symmetry\",\n    \"equal agent counts\",\n    \"equal model choices\",\n    \"one role per pass\",\n    \"one provider as generated canonical source\",\n    \"mandatory separate reviewer identity\",\n    \"semantic truth of declared review and operating contract markers\",\n    \"full prose identity beyond the checked operating markers\",\n    \"provider runtime loading and compliance\"\n  ],\n  \"schema_version\": \"0.1\",\n  \"status\": \"failed\"\n}\n",
+        "agent-skills.md": "# Agent skill structure\n\n- Status: failed\n\nScope: checked files, declared markers, and routes only. This is not proof of semantic consistency, provider runtime loading, or agent compliance.\n\n## Findings\n\n- operating-contract: .agents/skills/build-candidate/SKILL.md is missing marker `candidate_contract:one_writer_worktree`\n- operating-contract: .agents/skills/build-candidate/SKILL.md declares unknown marker `candidate_contract:wrong_writer`\n",
+        "workflows.md": "# check-workflows\n\nStatus: fail\n\n## Why This Matters\n\nGitHub Actions should orchestrate xtask, Cargo, and npm commands instead of hiding complex shell logic in workflow YAML.\n\n## Violations\n\n```text\nmissing workflow budget for .github/workflows/broken.yml in policy/workflow_allowlist.txt\n```\n\n## Fix Kind\n\n```text\npolicy_exception_required\n```\n\n## Recommended Fixes\n\n1. Move complex workflow logic into xtask or an npm script owned by the extension surface.\n2. Keep workflow run blocks under the documented line budget.\n3. Use Node-24-backed action majors where official releases exist.\n4. Use Node 24 for VS Code extension build and publish workflows.\n5. Add or adjust a workflow budget entry only when the workflow surface is intentionally larger.\n\n## Exception Template\n\n```text\npolicy/workflow_allowlist.txt entry:\n.github/workflows/name.yml|max_non_empty_lines|reason\n\npolicy/workflow_action_runtime_allowlist.txt entry:\n.github/workflows/name.yml|action/ref|max_count|reason\n```\n\n## Rerun\n\n```bash\ncargo xtask check-workflows\n```\n"
+      }
+    }
+  },
+  {
+    "case": "missing-input",
+    "command": "check-workflows",
+    "equal": true,
+    "old": {
+      "exit": 1,
+      "stdout": "",
+      "stderr": "xtask: failed to read policy/workflow_allowlist.txt: No such file or directory (os error 2)\n",
+      "reports": {
+        "agent-skills.json": "{\n  \"findings\": [\n    \"operating-contract: .agents/skills/build-candidate/SKILL.md is missing marker `candidate_contract:one_writer_worktree`\",\n    \"operating-contract: .agents/skills/build-candidate/SKILL.md declares unknown marker `candidate_contract:wrong_writer`\"\n  ],\n  \"not_enforced\": [\n    \"prose identity\",\n    \"section-order symmetry\",\n    \"equal agent counts\",\n    \"equal model choices\",\n    \"one role per pass\",\n    \"one provider as generated canonical source\",\n    \"mandatory separate reviewer identity\",\n    \"semantic truth of declared review and operating contract markers\",\n    \"full prose identity beyond the checked operating markers\",\n    \"provider runtime loading and compliance\"\n  ],\n  \"schema_version\": \"0.1\",\n  \"status\": \"failed\"\n}\n",
+        "agent-skills.md": "# Agent skill structure\n\n- Status: failed\n\nScope: checked files, declared markers, and routes only. This is not proof of semantic consistency, provider runtime loading, or agent compliance.\n\n## Findings\n\n- operating-contract: .agents/skills/build-candidate/SKILL.md is missing marker `candidate_contract:one_writer_worktree`\n- operating-contract: .agents/skills/build-candidate/SKILL.md declares unknown marker `candidate_contract:wrong_writer`\n",
+        "workflows.md": "# check-workflows\n\nStatus: fail\n\n## Why This Matters\n\nGitHub Actions should orchestrate xtask, Cargo, and npm commands instead of hiding complex shell logic in workflow YAML.\n\n## Violations\n\n```text\nmissing workflow budget for .github/workflows/broken.yml in policy/workflow_allowlist.txt\n```\n\n## Fix Kind\n\n```text\npolicy_exception_required\n```\n\n## Recommended Fixes\n\n1. Move complex workflow logic into xtask or an npm script owned by the extension surface.\n2. Keep workflow run blocks under the documented line budget.\n3. Use Node-24-backed action majors where official releases exist.\n4. Use Node 24 for VS Code extension build and publish workflows.\n5. Add or adjust a workflow budget entry only when the workflow surface is intentionally larger.\n\n## Exception Template\n\n```text\npolicy/workflow_allowlist.txt entry:\n.github/workflows/name.yml|max_non_empty_lines|reason\n\npolicy/workflow_action_runtime_allowlist.txt entry:\n.github/workflows/name.yml|action/ref|max_count|reason\n```\n\n## Rerun\n\n```bash\ncargo xtask check-workflows\n```\n"
+      }
+    },
+    "new": {
+      "exit": 1,
+      "stdout": "",
+      "stderr": "xtask: failed to read policy/workflow_allowlist.txt: No such file or directory (os error 2)\n",
+      "reports": {
+        "agent-skills.json": "{\n  \"findings\": [\n    \"operating-contract: .agents/skills/build-candidate/SKILL.md is missing marker `candidate_contract:one_writer_worktree`\",\n    \"operating-contract: .agents/skills/build-candidate/SKILL.md declares unknown marker `candidate_contract:wrong_writer`\"\n  ],\n  \"not_enforced\": [\n    \"prose identity\",\n    \"section-order symmetry\",\n    \"equal agent counts\",\n    \"equal model choices\",\n    \"one role per pass\",\n    \"one provider as generated canonical source\",\n    \"mandatory separate reviewer identity\",\n    \"semantic truth of declared review and operating contract markers\",\n    \"full prose identity beyond the checked operating markers\",\n    \"provider runtime loading and compliance\"\n  ],\n  \"schema_version\": \"0.1\",\n  \"status\": \"failed\"\n}\n",
+        "agent-skills.md": "# Agent skill structure\n\n- Status: failed\n\nScope: checked files, declared markers, and routes only. This is not proof of semantic consistency, provider runtime loading, or agent compliance.\n\n## Findings\n\n- operating-contract: .agents/skills/build-candidate/SKILL.md is missing marker `candidate_contract:one_writer_worktree`\n- operating-contract: .agents/skills/build-candidate/SKILL.md declares unknown marker `candidate_contract:wrong_writer`\n",
+        "workflows.md": "# check-workflows\n\nStatus: fail\n\n## Why This Matters\n\nGitHub Actions should orchestrate xtask, Cargo, and npm commands instead of hiding complex shell logic in workflow YAML.\n\n## Violations\n\n```text\nmissing workflow budget for .github/workflows/broken.yml in policy/workflow_allowlist.txt\n```\n\n## Fix Kind\n\n```text\npolicy_exception_required\n```\n\n## Recommended Fixes\n\n1. Move complex workflow logic into xtask or an npm script owned by the extension surface.\n2. Keep workflow run blocks under the documented line budget.\n3. Use Node-24-backed action majors where official releases exist.\n4. Use Node 24 for VS Code extension build and publish workflows.\n5. Add or adjust a workflow budget entry only when the workflow surface is intentionally larger.\n\n## Exception Template\n\n```text\npolicy/workflow_allowlist.txt entry:\n.github/workflows/name.yml|max_non_empty_lines|reason\n\npolicy/workflow_action_runtime_allowlist.txt entry:\n.github/workflows/name.yml|action/ref|max_count|reason\n```\n\n## Rerun\n\n```bash\ncargo xtask check-workflows\n```\n"
+      }
+    }
+  },
+  {
+    "case": "unreadable-directory",
+    "command": "check-workflows",
+    "equal": true,
+    "old": {
+      "exit": 1,
+      "stdout": "",
+      "stderr": "xtask: failed to read policy/workflow_allowlist.txt: Is a directory (os error 21)\n",
+      "reports": {
+        "agent-skills.json": "{\n  \"findings\": [\n    \"operating-contract: .agents/skills/build-candidate/SKILL.md is missing marker `candidate_contract:one_writer_worktree`\",\n    \"operating-contract: .agents/skills/build-candidate/SKILL.md declares unknown marker `candidate_contract:wrong_writer`\"\n  ],\n  \"not_enforced\": [\n    \"prose identity\",\n    \"section-order symmetry\",\n    \"equal agent counts\",\n    \"equal model choices\",\n    \"one role per pass\",\n    \"one provider as generated canonical source\",\n    \"mandatory separate reviewer identity\",\n    \"semantic truth of declared review and operating contract markers\",\n    \"full prose identity beyond the checked operating markers\",\n    \"provider runtime loading and compliance\"\n  ],\n  \"schema_version\": \"0.1\",\n  \"status\": \"failed\"\n}\n",
+        "agent-skills.md": "# Agent skill structure\n\n- Status: failed\n\nScope: checked files, declared markers, and routes only. This is not proof of semantic consistency, provider runtime loading, or agent compliance.\n\n## Findings\n\n- operating-contract: .agents/skills/build-candidate/SKILL.md is missing marker `candidate_contract:one_writer_worktree`\n- operating-contract: .agents/skills/build-candidate/SKILL.md declares unknown marker `candidate_contract:wrong_writer`\n",
+        "workflows.md": "# check-workflows\n\nStatus: fail\n\n## Why This Matters\n\nGitHub Actions should orchestrate xtask, Cargo, and npm commands instead of hiding complex shell logic in workflow YAML.\n\n## Violations\n\n```text\nmissing workflow budget for .github/workflows/broken.yml in policy/workflow_allowlist.txt\n```\n\n## Fix Kind\n\n```text\npolicy_exception_required\n```\n\n## Recommended Fixes\n\n1. Move complex workflow logic into xtask or an npm script owned by the extension surface.\n2. Keep workflow run blocks under the documented line budget.\n3. Use Node-24-backed action majors where official releases exist.\n4. Use Node 24 for VS Code extension build and publish workflows.\n5. Add or adjust a workflow budget entry only when the workflow surface is intentionally larger.\n\n## Exception Template\n\n```text\npolicy/workflow_allowlist.txt entry:\n.github/workflows/name.yml|max_non_empty_lines|reason\n\npolicy/workflow_action_runtime_allowlist.txt entry:\n.github/workflows/name.yml|action/ref|max_count|reason\n```\n\n## Rerun\n\n```bash\ncargo xtask check-workflows\n```\n"
+      }
+    },
+    "new": {
+      "exit": 1,
+      "stdout": "",
+      "stderr": "xtask: failed to read policy/workflow_allowlist.txt: Is a directory (os error 21)\n",
+      "reports": {
+        "agent-skills.json": "{\n  \"findings\": [\n    \"operating-contract: .agents/skills/build-candidate/SKILL.md is missing marker `candidate_contract:one_writer_worktree`\",\n    \"operating-contract: .agents/skills/build-candidate/SKILL.md declares unknown marker `candidate_contract:wrong_writer`\"\n  ],\n  \"not_enforced\": [\n    \"prose identity\",\n    \"section-order symmetry\",\n    \"equal agent counts\",\n    \"equal model choices\",\n    \"one role per pass\",\n    \"one provider as generated canonical source\",\n    \"mandatory separate reviewer identity\",\n    \"semantic truth of declared review and operating contract markers\",\n    \"full prose identity beyond the checked operating markers\",\n    \"provider runtime loading and compliance\"\n  ],\n  \"schema_version\": \"0.1\",\n  \"status\": \"failed\"\n}\n",
+        "agent-skills.md": "# Agent skill structure\n\n- Status: failed\n\nScope: checked files, declared markers, and routes only. This is not proof of semantic consistency, provider runtime loading, or agent compliance.\n\n## Findings\n\n- operating-contract: .agents/skills/build-candidate/SKILL.md is missing marker `candidate_contract:one_writer_worktree`\n- operating-contract: .agents/skills/build-candidate/SKILL.md declares unknown marker `candidate_contract:wrong_writer`\n",
+        "workflows.md": "# check-workflows\n\nStatus: fail\n\n## Why This Matters\n\nGitHub Actions should orchestrate xtask, Cargo, and npm commands instead of hiding complex shell logic in workflow YAML.\n\n## Violations\n\n```text\nmissing workflow budget for .github/workflows/broken.yml in policy/workflow_allowlist.txt\n```\n\n## Fix Kind\n\n```text\npolicy_exception_required\n```\n\n## Recommended Fixes\n\n1. Move complex workflow logic into xtask or an npm script owned by the extension surface.\n2. Keep workflow run blocks under the documented line budget.\n3. Use Node-24-backed action majors where official releases exist.\n4. Use Node 24 for VS Code extension build and publish workflows.\n5. Add or adjust a workflow budget entry only when the workflow surface is intentionally larger.\n\n## Exception Template\n\n```text\npolicy/workflow_allowlist.txt entry:\n.github/workflows/name.yml|max_non_empty_lines|reason\n\npolicy/workflow_action_runtime_allowlist.txt entry:\n.github/workflows/name.yml|action/ref|max_count|reason\n```\n\n## Rerun\n\n```bash\ncargo xtask check-workflows\n```\n"
+      }
+    }
+  }
+]

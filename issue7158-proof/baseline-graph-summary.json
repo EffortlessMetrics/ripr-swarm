@@ -1,0 +1,27 @@
+{
+  "source_sha": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+  "root": "xtask",
+  "normal_build_packages": 259,
+  "product_or_parser_packages": [
+    "oxc-miette",
+    "oxc-miette-derive",
+    "oxc_allocator",
+    "oxc_ast",
+    "oxc_ast_macros",
+    "oxc_data_structures",
+    "oxc_diagnostics",
+    "oxc_ecmascript",
+    "oxc_estree",
+    "oxc_index",
+    "oxc_parser",
+    "oxc_regular_expression",
+    "oxc_span",
+    "oxc_str",
+    "oxc_syntax",
+    "ra_ap_edition",
+    "ra_ap_parser",
+    "ra_ap_stdx",
+    "ra_ap_syntax",
+    "ripr"
+  ]
+}

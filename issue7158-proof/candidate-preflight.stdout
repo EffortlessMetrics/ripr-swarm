@@ -1,0 +1,2 @@
+check-workflows: pass (target/ripr/reports/workflows.md)
+check-agent-skills: pass (target/ripr/reports/agent-skills.md)

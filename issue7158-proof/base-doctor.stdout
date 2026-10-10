@@ -1,0 +1,20 @@
+# ripr worktree doctor
+
+Status: fail
+
+Checks:
+
+- branch is not dirty main
+- branch is current with origin/main
+- generated badge endpoints are not dirty in ordinary work
+- generated target/sample artifacts are not dirty
+- broad source-of-truth diffs have an obvious work item marker
+
+Errors:
+
+- worktree is on a detached HEAD; start PR work from a named branch based on origin/main
+
+Next actions:
+
+- inspect the findings above and rerun `cargo xtask worktree doctor`
+

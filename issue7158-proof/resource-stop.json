@@ -1,0 +1,18 @@
+{
+  "reason": "Nested baseline check-fast Clippy omitted CARGO_TARGET_DIR and generated unplanned 6.8GB target, exceeding admitted 8GB lane growth budget. No cleanup performed.",
+  "roots": [
+    50376,
+    61661,
+    61721
+  ],
+  "stopped_owned_pids": [
+    50376,
+    59494,
+    59503,
+    61632,
+    61646,
+    61661,
+    61721,
+    61728
+  ]
+}

@@ -1,0 +1,5 @@
+   Compiling repo-policy v0.1.0 (/workspace/issue7158-candidate/tools/repo-policy)
+   Compiling ripr v0.11.0 (/workspace/issue7158-candidate/crates/ripr)
+   Compiling xtask v0.1.0 (/workspace/issue7158-candidate/xtask)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4m 39s
+     Running tests/rust_gate_workflow_contract.rs (/workspace/issue7158-build/debug/deps/rust_gate_workflow_contract-ded7e467c2982743)

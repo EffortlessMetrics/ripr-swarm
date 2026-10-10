@@ -1,0 +1,12 @@
+
+running 7 tests
+test rust_gate_workflow_preserves_complete_ordered_command_inventory ... ok
+test rust_gate_workflow_rejects_duplicate_required_command ... ok
+test rust_gate_workflow_rejects_failure_only_summary ... ok
+test rust_gate_workflow_rejects_missing_required_command ... ok
+test rust_gate_workflow_rejects_policy_after_workspace_tests ... ok
+test rust_gate_workflow_rejects_fabricated_success_or_missing_outcome ... ok
+test rust_gate_workflow_rejects_suppressed_or_optional_required_command ... ok
+
+test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+

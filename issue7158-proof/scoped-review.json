@@ -1,0 +1,15 @@
+{
+  "head": "39824eef1498dbe18fe4ddf4b5468b3282f051c3",
+  "base": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+  "reviewer": "policy_review",
+  "model": "gpt-6.1-sol",
+  "effort": "medium",
+  "disposition": "REVIEW_INCOMPLETE",
+  "blocking_source_findings": [],
+  "remaining": [
+    "whole-candidate gates",
+    "workflow contract execution",
+    "published-head CI/review"
+  ],
+  "trust_boundary": "Receipt hashes establish currentness, not authenticity against another writer able to forge a receipt in the private trusted target directory."
+}

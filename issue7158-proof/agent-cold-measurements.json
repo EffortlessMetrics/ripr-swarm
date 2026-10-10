@@ -1,0 +1,34 @@
+[
+  {
+    "name": "agent-cold",
+    "command": "check-agent-skills",
+    "wall_seconds": 7.1109,
+    "exit_code": 0,
+    "nonfresh_compiler_units": 21,
+    "fresh_compiler_units": 0,
+    "packages_compiled": [
+      "block_buffer",
+      "build-script-build",
+      "cfg_if",
+      "cpufeatures",
+      "crypto_common",
+      "digest",
+      "generic_array",
+      "itoa",
+      "memchr",
+      "repo-policy",
+      "repo_policy",
+      "serde_core",
+      "serde_json",
+      "sha2",
+      "typenum",
+      "version_check",
+      "zmij"
+    ],
+    "stdout_bytes": 18478,
+    "stderr_bytes": 664,
+    "policy_output": "check-agent-skills: pass (target/ripr/reports/agent-skills.md)",
+    "compiler_json_bytes": 18415,
+    "policy_stdout_bytes": 63
+  }
+]

@@ -1,0 +1,17 @@
+   Compiling version_check v0.9.5
+   Compiling typenum v1.20.1
+   Compiling generic-array v0.14.7
+   Compiling zmij v1.0.23
+   Compiling serde_core v1.0.229
+   Compiling cpufeatures v0.2.17
+   Compiling cfg-if v1.0.5
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling serde_json v1.0.151
+   Compiling digest v0.10.7
+   Compiling sha2 v0.10.9
+   Compiling repo-policy v0.1.0 (/workspace/issue7158-candidate/tools/repo-policy)
+   Compiling itoa v1.0.18
+   Compiling memchr v2.8.3
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 6.97s
+     Running `/workspace/issue7158-agent-cold/debug/repo-policy check-agent-skills`

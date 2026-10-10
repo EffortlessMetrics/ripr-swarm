@@ -1,0 +1,58 @@
+
+running 34 tests
+test agent_skills::tests::negative_context_accepts_rejection_phrases_but_not_active_state ... ok
+test agent_skills::tests::architecture_map_tokens_are_closed_and_discriminating ... ok
+test agent_skills::tests::operating_contract_markers_are_closed_and_discriminating ... ok
+test agent_skills::tests::review_route_markers_are_closed_and_discriminating ... ok
+test agent_skills::tests::review_contract_markers_are_closed_and_discriminating ... ok
+test agent_skills::tests::skill_operating_markers_reject_foreign_and_ungoverned ... ok
+test agent_skills::tests::operating_markers_reject_each_missing_and_duplicate_declaration ... ok
+test agent_skills::tests::override_bootstrap_rejects_operating_declarations ... ok
+test ci_scratch::tests::a_new_scratch_workflow_without_a_lease_is_rejected ... ok
+test ci_scratch::tests::a_gc_checkout_in_the_build_workspace_is_rejected ... ok
+test ci_scratch::tests::a_lease_taken_after_trees_exist_is_rejected ... ok
+test ci_scratch::tests::a_cleaner_that_bypasses_the_authority_is_rejected ... ok
+test ci_scratch::tests::checked_in_workflows_consume_one_lease_authority ... ok
+test ci_scratch::tests::removing_the_lock_from_the_action_is_rejected_structurally ... ok
+test ci_scratch::tests::restoring_the_age_only_selector_is_rejected_in_either_cleaner ... ok
+test workflow_tests::routed_rust_contract_catches_deadline_bypass_with_stray_occurrences ... ok
+test workflow_tests::routed_rust_live_contract_rejects_reviewed_semantic_regressions ... ok
+test workflow_tests::routed_rust_ready_event_matrix_withholds_draft_and_label_context ... ok
+test workflow_tests::routed_rust_workflow_contract_accepts_reusable_implementation_authority ... ok
+test workflow_tests::routed_rust_workflow_contract_accepts_swarm_shape ... ok
+test workflow_tests::routed_rust_workflow_contract_rejects_unsafe_drift ... ok
+test workflow_tests::workflow_review_thread_mutation_policy_accepts_adjudication_guidance ... ok
+test workflow_tests::workflow_review_thread_mutation_policy_rejects_graphql_resolver ... ok
+test workflow_tests::workflow_review_thread_mutation_policy_rejects_runtime_constructed_resolver ... ok
+test workflow_tests::workflow_run_extraction_handles_step_shorthand_and_blocks ... ok
+test workflow_tests::workflow_runtime_policy_allows_documented_dependency_review_exception ... ok
+test workflow_tests::workflow_runtime_policy_flags_old_action_refs_and_node20_extension_builds ... ok
+test workflow_tests::workflow_runtime_policy_flags_remaining_old_action_refs ... ok
+test workflow_tests::workflow_runtime_policy_ignores_node20_outside_extension_workflows ... ok
+test workflow_tests::workflow_runtime_policy_rejects_dependency_review_over_allowlisted_count ... ok
+test workflow_tests::workflow_runtime_policy_rejects_unsupported_allowlist_patterns ... ok
+test ci_scratch::tests::behavior::negative_control_without_the_lock_check_deletes_live_trees ... ok
+test ci_scratch::tests::behavior::negative_control_with_an_mtime_liveness_test_deletes_live_trees ... ok
+test ci_scratch::tests::behavior::lease_authority_keeps_live_trees_and_reclaims_owned_terminal_orphans ... ok
+
+test result: ok. 34 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.94s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+running 4 tests
+test retained_binary_rejects_changed_implementation_and_wrong_source ... ok
+test missing_and_unreadable_required_policy_inputs_fail ... ok
+test real_frontdoors_accept_then_reject_workflow_and_agent_contracts ... ok
+test preflight_receipt_rejects_changed_ignored_inputs_missing_and_failed_producers ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.33s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

@@ -1,0 +1,457 @@
+[
+  {
+    "name": "FixKind",
+    "file": "xtask/src/types.rs",
+    "line": 553,
+    "bytes": 178,
+    "sha256": "a6eb22daf1117588cad570fbeb59ceb12630a0dc728881a042a0547a7d14457b"
+  },
+  {
+    "name": "PolicyDisclosure",
+    "file": "xtask/src/main.rs",
+    "line": 4712,
+    "bytes": 135,
+    "sha256": "f31373e56cd686240450cc75192bb68d258966e4e69cb8f06c368de43505a89c"
+  },
+  {
+    "name": "PolicyReportSpec",
+    "file": "xtask/src/types.rs",
+    "line": 591,
+    "bytes": 324,
+    "sha256": "2cffeda6793740ab3f5a26a9ec0a313c92d8e7e837ff755167e77cbd680e0907"
+  },
+  {
+    "name": "ROUTED_RUST_CONCURRENCY_GROUP_SNIPPET",
+    "file": "xtask/src/main.rs",
+    "line": 6003,
+    "bytes": 163,
+    "sha256": "934a3a3342a83885534b0be18aac9c9bacce20a39f2e6aef14c40b87122bcb3e"
+  },
+  {
+    "name": "ROUTED_RUST_DEADLINE_JOBS",
+    "file": "xtask/src/main.rs",
+    "line": 5886,
+    "bytes": 188,
+    "sha256": "8b9cc51fdc65e7819af78f3573bcce3f8432a43ef1f2f4b37d506caf529e7c84"
+  },
+  {
+    "name": "ROUTED_RUST_DRAFT_GUARD_SNIPPET",
+    "file": "xtask/src/main.rs",
+    "line": 6007,
+    "bytes": 80,
+    "sha256": "461fb3f54910d343b025950ea0eb290a5fb09aee00d1bd990d9c5a36a604a5a4"
+  },
+  {
+    "name": "ROUTED_RUST_IGNORED_LABEL_RESULT_NAME",
+    "file": "xtask/src/main.rs",
+    "line": 6006,
+    "bytes": 90,
+    "sha256": "f7318bcf80542453f4acc8485829e5a4183185d3fb3e95060bdca12459985f1c"
+  },
+  {
+    "name": "ROUTED_RUST_IMPLEMENTATION_JOBS",
+    "file": "xtask/src/main.rs",
+    "line": 5897,
+    "bytes": 111,
+    "sha256": "46a8d702e75d204b2ffec1d6a96e509c498c9979605e8f0632cc4024b31df04c"
+  },
+  {
+    "name": "ROUTED_RUST_READY_CANCEL_SNIPPET",
+    "file": "xtask/src/main.rs",
+    "line": 6004,
+    "bytes": 116,
+    "sha256": "f1350a092bd2365a046e413146fbc71ea6e9336a229a059ef6035a749127efb8"
+  },
+  {
+    "name": "ROUTED_RUST_READY_EVENT",
+    "file": "xtask/src/main.rs",
+    "line": 6002,
+    "bytes": 57,
+    "sha256": "e63c220a0654e253c66e9872b26fe24e924391cc08478c961c2f0574286cc829"
+  },
+  {
+    "name": "ROUTED_RUST_REUSABLE_WORKFLOW_PATH",
+    "file": "xtask/src/main.rs",
+    "line": 5899,
+    "bytes": 84,
+    "sha256": "d436d4fa2454a3f2da7717b8de14f01157b2cf111eb96715f00c836e564b2bff"
+  },
+  {
+    "name": "ROUTED_RUST_REUSABLE_WORKFLOW_REF",
+    "file": "xtask/src/main.rs",
+    "line": 5900,
+    "bytes": 91,
+    "sha256": "6b9de9974c846eb93b46700d2a0e2c48248e52693bd3f95a44da91b16767794a"
+  },
+  {
+    "name": "RunBlock",
+    "file": "xtask/src/types.rs",
+    "line": 44,
+    "bytes": 133,
+    "sha256": "76af6ef451e20c6d46c89a21ea591a757c3c73f3870b98898506f4748001a6f4"
+  },
+  {
+    "name": "WorkflowBudget",
+    "file": "xtask/src/types.rs",
+    "line": 37,
+    "bytes": 139,
+    "sha256": "d309bfdad81e8a3e1516f32fe5ce62d4f2f40e1d2a6ef2c4a5eaf072c96cd6fd"
+  },
+  {
+    "name": "check_workflows_impl",
+    "file": "xtask/src/main.rs",
+    "line": 5508,
+    "bytes": 3996,
+    "sha256": "7c1dc67ea953661639e08617e6ec2bed039532b7b12b94aa68b01826e736af52"
+  },
+  {
+    "name": "collect_files",
+    "file": "xtask/src/main.rs",
+    "line": 21796,
+    "bytes": 172,
+    "sha256": "d530e2d833c88e84242b1c94c2dc0c38b1bdd9afc231a84d05b19750aedc59f1"
+  },
+  {
+    "name": "collect_files_inner",
+    "file": "xtask/src/main.rs",
+    "line": 21802,
+    "bytes": 878,
+    "sha256": "9abee48e6dca0f2a3756ec0e3e361af29b079422107212be62d5f0a23d57632b"
+  },
+  {
+    "name": "composite_action_run_block_violations",
+    "file": "xtask/src/main.rs",
+    "line": 5596,
+    "bytes": 1362,
+    "sha256": "5dac0b561b6106c810432b98782b7a58e8f0413ae20f03bf27093734bab01f55"
+  },
+  {
+    "name": "deprecated_workflow_action_refs",
+    "file": "xtask/src/main.rs",
+    "line": 6558,
+    "bytes": 459,
+    "sha256": "86339c5aa739cacf04ff6a74ea69609f54056d3540aec200eee3a8aecc6ca433"
+  },
+  {
+    "name": "extract_workflow_run_blocks",
+    "file": "xtask/src/main.rs",
+    "line": 23013,
+    "bytes": 1763,
+    "sha256": "aa0cf7e7e255e183d96b352cf4e58cff379e3fceaae9044dd7ecc8c315a0f065"
+  },
+  {
+    "name": "finish_policy_report",
+    "file": "xtask/src/main.rs",
+    "line": 4702,
+    "bytes": 187,
+    "sha256": "fd034c62b495111c2f1ef06351224696fd2a73bbd98ec00db1ed9a4e8ee2edf6"
+  },
+  {
+    "name": "finish_policy_report_with_disclosures",
+    "file": "xtask/src/main.rs",
+    "line": 4718,
+    "bytes": 639,
+    "sha256": "52cba5a8ae572ed5276dd39a3805132124231d2882b758e5e53b33ca73294daf"
+  },
+  {
+    "name": "fix_kind_name",
+    "file": "xtask/src/main.rs",
+    "line": 4882,
+    "bytes": 350,
+    "sha256": "f2c514069597eaf46bb9646b6d535d99c7210dddafa14849d29c1a3595b23bf2"
+  },
+  {
+    "name": "insert_unique_count_allowlist_row",
+    "file": "xtask/src/main.rs",
+    "line": 21328,
+    "bytes": 666,
+    "sha256": "beb86325e627fac30c6fe1fb3b6a3e75f233cfd346c18d9050fa8d16408378fb"
+  },
+  {
+    "name": "is_extension_node_workflow",
+    "file": "xtask/src/main.rs",
+    "line": 6575,
+    "bytes": 166,
+    "sha256": "9584fb2dea6cac70ac2527020143263e96a4b2e923bdaa4860e21b79ce13a5a9"
+  },
+  {
+    "name": "json_scalar_as_string",
+    "file": "xtask/src/main.rs",
+    "line": 12801,
+    "bytes": 267,
+    "sha256": "ef6f9d6e31b7f14a49c3547330de3550dc9b4c6c6c236afc6e1ea7e36d73269d"
+  },
+  {
+    "name": "json_scalar_as_usize",
+    "file": "xtask/src/main.rs",
+    "line": 12810,
+    "bytes": 290,
+    "sha256": "4e5c820a5babde408d25678ef700e84004f41bec04a42b31fb38af5834a8faba"
+  },
+  {
+    "name": "json_string_field",
+    "file": "xtask/src/main.rs",
+    "line": 12655,
+    "bytes": 119,
+    "sha256": "17ad476f0d9cde84e6904a1691c6434d288fcef9df3b77c282a03042eb333d51"
+  },
+  {
+    "name": "json_usize_field",
+    "file": "xtask/src/main.rs",
+    "line": 12659,
+    "bytes": 116,
+    "sha256": "b3b441cee7a36a47866880887dd03669d5e23aead16af6ceb57a2c108e991459"
+  },
+  {
+    "name": "normalize_path",
+    "file": "xtask/src/main.rs",
+    "line": 22333,
+    "bytes": 157,
+    "sha256": "d0b8ad5b81598673fa05746bae9f3d35de5e5b0abe266b943e4e09c69ce2f99c"
+  },
+  {
+    "name": "normalize_slashes",
+    "file": "xtask/src/main.rs",
+    "line": 22339,
+    "bytes": 76,
+    "sha256": "15010a4f948efb135fd41c5720d0af83119a01dd360d6a82e62aad48c660429c"
+  },
+  {
+    "name": "optional_policy_text",
+    "file": "xtask/src/main.rs",
+    "line": 5875,
+    "bytes": 204,
+    "sha256": "94e74c835148b2adc95ebfae6ff835b6a7a9518ef912d6583f59db17f1b3e6b2"
+  },
+  {
+    "name": "parse_count_allowlist",
+    "file": "xtask/src/main.rs",
+    "line": 21245,
+    "bytes": 1032,
+    "sha256": "50792f268082c12cf3b7c6666c75de1daa997d793a259d6732c0c22546507106"
+  },
+  {
+    "name": "policy_report_body",
+    "file": "xtask/src/main.rs",
+    "line": 4745,
+    "bytes": 1865,
+    "sha256": "27f515995d840beef57ab28690d17fe24b7561b15b8742dc792d239f9340175d"
+  },
+  {
+    "name": "read_count_allowlist",
+    "file": "xtask/src/main.rs",
+    "line": 21240,
+    "bytes": 181,
+    "sha256": "cb5e462fffc80e4558160494431486e4a6bc78769b84ac11049c08709e5e70f2"
+  },
+  {
+    "name": "read_json_value",
+    "file": "xtask/src/main.rs",
+    "line": 12678,
+    "bytes": 224,
+    "sha256": "25a37981a464fa0e33479b092b676759ca8e2f6aa0aa8de0a9948c409f4ceb14"
+  },
+  {
+    "name": "read_text_lossy",
+    "file": "xtask/src/main.rs",
+    "line": 21869,
+    "bytes": 233,
+    "sha256": "fc2dd2bb618af11ab021a3555dafb0d62b3b704a5d62a4c1fea663c6b610fcd4"
+  },
+  {
+    "name": "read_workflow_budgets",
+    "file": "xtask/src/main.rs",
+    "line": 21712,
+    "bytes": 1271,
+    "sha256": "baa249d517decbde8f58c4b95ffe16c00577a88fc7915f798d1dd971617337f1"
+  },
+  {
+    "name": "reports_dir",
+    "file": "xtask/src/main.rs",
+    "line": 18817,
+    "bytes": 95,
+    "sha256": "b56c900ecc3e968ce8940a1f1e61aabb93f6944bd2e4fc82988df0f8d76fc487"
+  },
+  {
+    "name": "repository_owned_review_thread_mutation_violations",
+    "file": "xtask/src/main.rs",
+    "line": 5730,
+    "bytes": 999,
+    "sha256": "a2c9e56e899ba7fa10c0ec250212ccbf40ac52481dd835a462ab49fe48a5b75c"
+  },
+  {
+    "name": "reusable_workflow_jobs",
+    "file": "xtask/src/main.rs",
+    "line": 5957,
+    "bytes": 650,
+    "sha256": "b3532ee1550e25e70136965626b63ea01698e391530aaaa46ba1bce1d998dd1d"
+  },
+  {
+    "name": "review_thread_mutation_line",
+    "file": "xtask/src/main.rs",
+    "line": 5712,
+    "bytes": 304,
+    "sha256": "6c70c84c22c28224de95afa85a30c1a2f583545f7e60dff50ccfb952898d77b0"
+  },
+  {
+    "name": "review_thread_mutation_token",
+    "file": "xtask/src/main.rs",
+    "line": 5721,
+    "bytes": 202,
+    "sha256": "30550079c20e9870c1bf5f706545a5f3ef1e7ee04357c38927ef03cf3ec89c16"
+  },
+  {
+    "name": "routed_rust_job_block_any",
+    "file": "xtask/src/main.rs",
+    "line": 5905,
+    "bytes": 715,
+    "sha256": "a541c5c45372da70d2afb76dd34f7f17acc001076cf333f1c5ac6d799af432ac"
+  },
+  {
+    "name": "routed_rust_job_block_has_deadline",
+    "file": "xtask/src/main.rs",
+    "line": 5931,
+    "bytes": 218,
+    "sha256": "c8f5c5c8fbd38480bba1c87bcb65cac22e6f1ab441f05dd520929c30d577dca1"
+  },
+  {
+    "name": "routed_rust_job_block_has_with_value",
+    "file": "xtask/src/main.rs",
+    "line": 5943,
+    "bytes": 458,
+    "sha256": "06cc57fca6f6806d971ecf76c791a2494c95264cbaa2ecefa09002641d7182b8"
+  },
+  {
+    "name": "routed_rust_job_uses_reusable_workflow",
+    "file": "xtask/src/main.rs",
+    "line": 5937,
+    "bytes": 218,
+    "sha256": "17927f4b57c925f8b288e09946f020f161adc174ecb7ab33b77a27b963aa0cf7"
+  },
+  {
+    "name": "routed_rust_pull_request_types",
+    "file": "xtask/src/main.rs",
+    "line": 6009,
+    "bytes": 578,
+    "sha256": "9d82bc6db73f3a16292e73041e73ec29b0d2091f5486ef38b1129bc5d49fa0f4"
+  },
+  {
+    "name": "routed_rust_ready_event_contract_violations",
+    "file": "xtask/src/main.rs",
+    "line": 6054,
+    "bytes": 4315,
+    "sha256": "26abb4199f2c0df025924886db2e05433d11f6e7f5ec20c787f3cce561c422f7"
+  },
+  {
+    "name": "routed_rust_workflow_contract_violations_for_repo",
+    "file": "xtask/src/main.rs",
+    "line": 5852,
+    "bytes": 808,
+    "sha256": "67b7c6fc2f03fe7647e8883544d27abdabe4bc0f445eb1093887f88f4158a796"
+  },
+  {
+    "name": "routed_rust_workflow_contract_violations_with_reusable",
+    "file": "xtask/src/main.rs",
+    "line": 6132,
+    "bytes": 15199,
+    "sha256": "fb5784a403a8519659bf85a42b370af9d9834388d9bc9f9fb71a3ad8c99b8c1b"
+  },
+  {
+    "name": "scratch_gc_concurrency_violations",
+    "file": "xtask/src/main.rs",
+    "line": 5641,
+    "bytes": 2003,
+    "sha256": "d595898eb2e98ee71d47b7ee672ac7d7d4011fc7206a2eb5ca8058ce01704341"
+  },
+  {
+    "name": "shell_fetch_tool_name",
+    "file": "xtask/src/main.rs",
+    "line": 22589,
+    "bytes": 70,
+    "sha256": "bf9d28b24eaab86c1985627191441eb6c1b38ba58fb77ee00476500d714a44a6"
+  },
+  {
+    "name": "should_skip_path",
+    "file": "xtask/src/main.rs",
+    "line": 21835,
+    "bytes": 700,
+    "sha256": "127c40945d8dbfeb1dca96bea6954d25cfe99154545ecb438f7e5134984a48a8"
+  },
+  {
+    "name": "validate_assistant_loop_health_count",
+    "file": "xtask/src/fixture_contracts/report_validators.rs",
+    "line": 254,
+    "bytes": 621,
+    "sha256": "6a10012ef9a57aa0ed8165df846051976cda071d1b5a16b775c27b5b3b308334"
+  },
+  {
+    "name": "validate_assistant_loop_health_fixture_corpus",
+    "file": "xtask/src/fixture_contracts/report_validators.rs",
+    "line": 12,
+    "bytes": 275,
+    "sha256": "0ae53a0c686051c6d96ec0be62e7ecb7f870a1fc9bcb5adda543557660e3c9b3"
+  },
+  {
+    "name": "validate_assistant_loop_health_fixture_corpus_at",
+    "file": "xtask/src/fixture_contracts/report_validators.rs",
+    "line": 19,
+    "bytes": 8251,
+    "sha256": "3abbc7b0b7ab530d9d19a50f2f8aaf5af226dc596feba2ed575346bf80731816"
+  },
+  {
+    "name": "workflow_bare_self_hosted_violations",
+    "file": "xtask/src/main.rs",
+    "line": 5796,
+    "bytes": 2038,
+    "sha256": "eec20ae5a8ca81b2dbdceb768d7a42fe57b727e432e38a973695929464fca6c9"
+  },
+  {
+    "name": "workflow_plain_scalar_comment_violations",
+    "file": "xtask/src/main.rs",
+    "line": 5771,
+    "bytes": 946,
+    "sha256": "493388a6736cca87ca8cee08c6a9babd84d0ae20231bdc07ffc185aa33b501f9"
+  },
+  {
+    "name": "workflow_review_thread_mutation_violations",
+    "file": "xtask/src/main.rs",
+    "line": 5703,
+    "bytes": 374,
+    "sha256": "a31bbce68e1b67f8c77b88182bb3d46542cd9289f8488b37086ba741ee1bd981"
+  },
+  {
+    "name": "workflow_run_value",
+    "file": "xtask/src/main.rs",
+    "line": 23059,
+    "bytes": 165,
+    "sha256": "cb1bff1bbf39be22a43d675d14ebbbf08d37509078e5917113ae555914160e1f"
+  },
+  {
+    "name": "workflow_runtime_exception_patterns",
+    "file": "xtask/src/main.rs",
+    "line": 6571,
+    "bytes": 116,
+    "sha256": "b03dd06f5c81552dab7609af31ca1fb10ab49641fa2ccd31cf8f0a9b0bf4d342"
+  },
+  {
+    "name": "workflow_runtime_violations",
+    "file": "xtask/src/main.rs",
+    "line": 6489,
+    "bytes": 2241,
+    "sha256": "726be7daed31c504956675bc0ec0e284ee331dcec01874211b19692fe5621730"
+  },
+  {
+    "name": "write_report",
+    "file": "xtask/src/main.rs",
+    "line": 18769,
+    "bytes": 134,
+    "sha256": "d4247d98637a93d9f664b5e9c04486fc7c71d41da12e30572edee763020895a9"
+  },
+  {
+    "name": "write_report_in",
+    "file": "xtask/src/main.rs",
+    "line": 18775,
+    "bytes": 578,
+    "sha256": "96a8f70787aad0c37ae5548625ad4e6161b1fa3b56d55f87b5ed30d4c678889c"
+  }
+]

@@ -1,0 +1,92 @@
+{
+  "status": "EXTERNAL_BLOCKER",
+  "repository": "/workspace/ripr-swarm",
+  "head": "39824eef1498dbe18fe4ddf4b5468b3282f051c3",
+  "branch": "codex/issue7158-policy-bootstrap",
+  "inherited_origin_main": "60290d6e6dd54d24f96f79ccfa012fb5fe6dd735",
+  "source_changes": true,
+  "publication_actions": {
+    "pushed": false,
+    "pr_created": false,
+    "hosted_ci": false,
+    "issue_progress_comment": "https://github.com/EffortlessMetrics/ripr-swarm/issues/7158#issuecomment-6093993698"
+  },
+  "blocker": "Resource admission exceeded by baseline nested Clippy default target (6.8GB). Own unfinished qualifications stopped; no cleanup or publication. Parent must supply a bounded reuse/retention plan before further builds.",
+  "checks": {
+    "workflow_producer": "xtask/src/main.rs::check_workflows_impl via xtask/src/policy/workflows.rs",
+    "workflow_nested": [
+      "composite_action_run_block_violations",
+      "repository_owned_review_thread_mutation_violations",
+      "validate_assistant_loop_health_fixture_corpus",
+      "routed_rust_workflow_contract_violations_for_repo",
+      "policy::ci_scratch::scratch_lease_contract_violations_for_repo"
+    ],
+    "agent_skills_producer": "xtask/src/agent_skills.rs::check",
+    "callers": [
+      ".github/workflows/routed-rust.yml docs-gate: precommit + check-agent-skills",
+      ".github/workflows/rust-gates.yml: precommit + check-agent-skills",
+      "xtask/src/main.rs::precommit includes check_workflows"
+    ]
+  },
+  "resources": {
+    "build": "/workspace/issue7158-build",
+    "build_status": "retained with reason: baseline and migrated xtask build artifacts; no active lane consumers",
+    "evidence": "/workspace/issue7158-evidence",
+    "evidence_status": "retained with reason: source/dependency trace and baseline execution records",
+    "inherited_target": "/workspace/ripr-swarm/target preserved; awaiting original owner verification",
+    "growth_budget_bytes": 8589934592,
+    "reserve_bytes": 12884901888,
+    "worktrees": [
+      "/workspace/issue7158-base",
+      "/workspace/issue7158-candidate"
+    ],
+    "policy_targets": [
+      "/workspace/issue7158-policy-cold",
+      "/workspace/issue7158-policy-measured",
+      "/workspace/issue7158-agent-cold"
+    ],
+    "baseline_target": "/workspace/issue7158-base/target retained with reason: unplanned nested Clippy outputs, no deletion authority"
+  },
+  "not_established": [
+    "baseline check-fast: stopped exit143",
+    "candidate precommit: stopped exit143 after first two policy gates",
+    "catalog unit test: stopped exit143 during compilation",
+    "runtime full precommit receipt handoff",
+    "published-head CI/review"
+  ],
+  "next_transition": "Resolve storage plan with parent, set CARGO_TARGET_DIR for every nested Cargo command, resume current catalog/precommit/check-fast qualification, then late publication.",
+  "baseline_result": {
+    "command": "cargo check -p xtask --all-targets --locked --message-format=json",
+    "exit_code": 0,
+    "compiler_artifact_events": 268,
+    "nonfresh_compiler_artifact_events": 268,
+    "build_script_events": 34,
+    "terminal_report": "    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3m 37s",
+    "output_bytes": {
+      "compiler_json": 214136,
+      "cargo_stderr": 7163
+    }
+  },
+  "established": [
+    "single shared workflow/agent implementation",
+    "34 library + 4 frontdoor tests",
+    "strict policy Clippy",
+    "six exact old/new executable parity cases including reports/errors",
+    "21-unit cold policy compiler traces exclude product/parser stack",
+    "separate cold/warm timings and command/compiler output",
+    "real source/toolchain-bound preflight receipt verification",
+    "7 migrated workflow contract integration tests pass; actual migrated xtask executable built at exact candidate"
+  ],
+  "evidence_files": [
+    "executable-parity.json",
+    "policy-executable-identity.json",
+    "measurements.json",
+    "agent-cold-measurements.json",
+    "body-parity.json",
+    "scoped-review.json",
+    "policy-tests-final.stdout",
+    "policy-clippy-final.stderr"
+  ],
+  "active_sessions": [],
+  "review_status": "REVIEW_INCOMPLETE; no source defects found"
+}

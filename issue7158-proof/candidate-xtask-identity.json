@@ -1,0 +1,9 @@
+{
+  "head": "39824eef1498dbe18fe4ddf4b5468b3282f051c3",
+  "cwd": "/workspace/issue7158-candidate",
+  "producer": "cargo test -p xtask --test rust_gate_workflow_contract --locked --offline",
+  "producer_exit": 0,
+  "selected_executable": "/workspace/issue7158-build/debug/xtask",
+  "sha256": "0345b7ea05f04ecb3af6c83b9638d9649c066da7a0055c122978e727aaf26d17",
+  "size": 286328744
+}
