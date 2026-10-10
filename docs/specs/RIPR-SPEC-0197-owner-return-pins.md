@@ -32,6 +32,9 @@ Linked issues:
 - #6482 (an `assert_eq!` in a test-local check helper the test calls
   eagerly; rule 7)
 - #7125 (the same helper shape in a `tests/*.rs` integration target)
+- #7265 (`ManifestInventory` carries cargo metadata `test = false` so a
+  skipped `[[test]]` is not `HarnessEnabled`, including `tests/../tests/`
+  path spellings)
 
 Linked PRs:
 
@@ -626,7 +629,11 @@ rule only for an assertion whose context was admitted.
      metadata inventory lists that autotest as a libtest-enabled workspace
      test target, so `[workspace] exclude` and `harness = false` cannot
      become test evidence. A declared `[[test]]` with `test = false` is
-     skipped by `cargo test` and is not credited. The
+     skipped by `cargo test` and is not credited, including when the
+     manifest spells `path = "tests/../tests/gate.rs"`. The skip is owned
+     by `ManifestInventory` from cargo metadata's per-target `test` flag,
+     not a producer-local TOML matcher; unavailable metadata is not a
+     skip (#7265, #7125). The
      producer does not reclassify that `Production` helper; it only copies
      the helper's calls and parser-backed assertions onto the calling
      test. A `Production` function in a production file, including a
@@ -1332,6 +1339,12 @@ assertions. This repair shares the existing callback without that larger migrati
   availability reuses the canonical lexer; the existing test-only role query
   retains its separate contract. Out-of-line resolution remains owned by
   existing `FileFacts::role_provenance`, not by the admission consumer.
+- `crates/ripr/src/analysis/workspace/cargo_targets.rs`: `ManifestInventory`
+  carries cargo metadata's per-target `test` flag (#7265). A
+  `[[test]] test = false` target, including `path = "tests/../tests/gate.rs"`,
+  is not `HarnessEnabled`; `cargo_test_collection_skipped` is the producer
+  skip query. Unavailable metadata is not a skip. `required-features` is
+  not read here (#7266).
 - `crates/ripr/src/analysis/facts/test_helpers.rs`: same-file helper
   crediting. Rule 7 (#7125) also credits a unique top-level `Production`
   helper in a crate-root integration-test target (`tests/<name>.rs` or

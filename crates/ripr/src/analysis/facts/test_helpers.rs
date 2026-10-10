@@ -31,9 +31,12 @@
 //!   as a libtest-enabled workspace test target, so `[workspace] exclude`
 //!   and `harness = false` cannot become test evidence. A declared
 //!   `[[test]]` with `test = false` is still a Cargo target, but
-//!   `cargo test` skips it, so this producer refuses it from the owning
-//!   manifest rather than treating `HarnessEnabled` as executable
-//!   evidence. This producer does not reclassify that
+//!   `cargo test` skips it, so this producer refuses it when
+//!   `ManifestInventory` establishes that skip from cargo metadata's
+//!   per-target `test` flag (including `path = "tests/../tests/gate.rs"`
+//!   spellings cargo normalizes). Unavailable metadata is not a skip, so
+//!   ordinary autodiscovered `tests/<name>.rs` keep #7125 path-shape
+//!   credit. This producer does not reclassify that
 //!   `Production` helper; it copies the helper's calls and
 //!   parser-backed `assert_eq!` oracles onto the calling test. A
 //!   `Production` helper whose body has only `assert!`, `.contains()`,
@@ -335,7 +338,7 @@ fn is_assertion_helper(
 /// path as a libtest-enabled workspace test target, so `[workspace]
 /// exclude` and `harness = false` cannot become test evidence.
 /// Root-package path-shape still refuses an established `HarnessDisabled`
-/// target and a declared `[[test]]` with `test = false`. Nested
+/// target and an established metadata `test = false` skip. Nested
 /// `NotDeclared` and `ManifestUnavailable` fail closed (under-credit,
 /// never over-credit).
 fn is_crate_root_integration_test_file(
@@ -349,11 +352,10 @@ fn is_crate_root_integration_test_file(
         if !is_package_autotest_root(&relative) {
             return false;
         }
-        // `ManifestInventory::verdict` ignores cargo metadata's `test`
-        // flag and still returns `HarnessEnabled` for `test = false`.
-        // That target is declared, so the analysis-pipeline drop keeps
-        // the file, but `cargo test` does not run it.
-        if declared_test_target_is_skipped(&manifest_dir, &relative) {
+        // Inventory-owned skip: cargo metadata's `test` flag, including
+        // `path = "tests/../tests/gate.rs"` spellings cargo normalizes.
+        // Unavailable metadata is not a skip (#7125).
+        if manifests.cargo_test_collection_skipped(root, path) {
             return false;
         }
         if manifest_dir == root {
@@ -369,49 +371,6 @@ fn is_crate_root_integration_test_file(
         return nested_package_autotest_is_workspace_member(root, path, manifests);
     }
     is_repository_relative_autotest_root(path)
-}
-
-/// `[[test]] test = false` is still a Cargo target, but `cargo test`
-/// skips it. Unreadable or unparseable manifests grant nothing here
-/// (path-shape may still credit a root autotest; nested membership
-/// still fails closed through `verdict`). Only an established skip
-/// refuses credit.
-fn declared_test_target_is_skipped(manifest_dir: &Path, relative: &[String]) -> bool {
-    let Ok(text) = std::fs::read_to_string(manifest_dir.join("Cargo.toml")) else {
-        return false;
-    };
-    let Ok(value) = toml::from_str::<toml::Value>(&text) else {
-        return false;
-    };
-    let Some(entries) = value.get("test").and_then(toml::Value::as_array) else {
-        return false;
-    };
-    entries.iter().any(|entry| {
-        entry.get("test").and_then(toml::Value::as_bool) == Some(false)
-            && declared_test_entry_matches_autotest(entry, relative)
-    })
-}
-
-fn declared_test_entry_matches_autotest(entry: &toml::Value, relative: &[String]) -> bool {
-    if let Some(path) = entry.get("path").and_then(toml::Value::as_str) {
-        return path_components(Path::new(path)) == relative;
-    }
-    let Some(name) = entry.get("name").and_then(toml::Value::as_str) else {
-        return false;
-    };
-    let name = name.trim();
-    if name.is_empty() {
-        return false;
-    }
-    match relative {
-        [tests, file]
-            if tests == "tests" && file.strip_suffix(".rs").is_some_and(|stem| stem == name) =>
-        {
-            true
-        }
-        [tests, dir, main] if tests == "tests" && dir == name && main == "main.rs" => true,
-        _ => false,
-    }
 }
 
 /// Path components of `file` relative to the nearest `Cargo.toml` at or
@@ -446,7 +405,8 @@ fn path_from_nearest_manifest(
 /// Nested-package autotest credit uses Cargo's own membership and
 /// test-target inventory. Only `HarnessEnabled` means libtest collects
 /// the file; `harness = false` keeps the target but never runs its
-/// `#[test]` items. Missing or unprobeable inventory grants nothing.
+/// `#[test]` items, and `test = false` is not `HarnessEnabled`. Missing
+/// or unprobeable inventory grants nothing.
 fn nested_package_autotest_is_workspace_member(
     workspace_root: &Path,
     file: &Path,
