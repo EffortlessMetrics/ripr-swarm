@@ -344,38 +344,42 @@ fn test_call_invokes_named_entry(text: &str, callee_name: &str) -> bool {
 /// line is considered: a leading foreign qualify must not hide a later
 /// workspace entry on the same `CallFact.text`.
 fn call_is_workspace_entry(index: &RustIndex, name: &str, text: &str) -> bool {
-    named_entry_kinds(text, name).any(|kind| match kind {
+    named_entry_kinds(text, name).iter().any(|kind| match kind {
         NamedEntryKind::Free => true,
         NamedEntryKind::TypePath(self_type) => index
             .functions()
             .iter()
             .filter(|function| function.name == name)
-            .any(|function| function.impl_context.may_be_target_of_type_path(&self_type)),
+            .any(|function| function.impl_context.may_be_target_of_type_path(self_type)),
         NamedEntryKind::UnparsedQualifier => false,
     })
 }
 
 fn call_targets_function(function: &FunctionSummary, text: &str) -> bool {
-    named_entry_kinds(text, &function.name).any(|kind| match kind {
-        NamedEntryKind::Free => matches!(
-            function.impl_context,
-            FunctionImplContext::Free | FunctionImplContext::Unknown
-        ),
-        NamedEntryKind::TypePath(self_type) => {
-            function.impl_context.may_be_target_of_type_path(&self_type)
-        }
-        NamedEntryKind::UnparsedQualifier => false,
-    })
+    named_entry_kinds(text, &function.name)
+        .iter()
+        .any(|kind| match kind {
+            NamedEntryKind::Free => matches!(
+                function.impl_context,
+                FunctionImplContext::Free | FunctionImplContext::Unknown
+            ),
+            NamedEntryKind::TypePath(self_type) => {
+                function.impl_context.may_be_target_of_type_path(self_type)
+            }
+            NamedEntryKind::UnparsedQualifier => false,
+        })
 }
 
 /// `Some(None)` is a free-function call of `callee_name`. `Some(Some(T))`
 /// is `T::callee_name(`. `None` means the text does not invoke that entry.
 fn named_entry_self_type(text: &str, callee_name: &str) -> Option<Option<String>> {
-    named_entry_kinds(text, callee_name).find_map(|kind| match kind {
-        NamedEntryKind::Free => Some(None),
-        NamedEntryKind::TypePath(self_type) => Some(Some(self_type)),
-        NamedEntryKind::UnparsedQualifier => None,
-    })
+    named_entry_kinds(text, callee_name)
+        .into_iter()
+        .find_map(|kind| match kind {
+            NamedEntryKind::Free => Some(None),
+            NamedEntryKind::TypePath(self_type) => Some(Some(self_type)),
+            NamedEntryKind::UnparsedQualifier => None,
+        })
 }
 
 #[derive(Debug, PartialEq, Eq)]
