@@ -4197,6 +4197,12 @@ pub fn raw_generic_shadow<r#Unit>() -> Unit {
     raw_generic_notify()
 }
 
+#[cfg_attr(test, doc = "note, cfg(test)")]
+type DocComma = ();
+pub fn doc_comma_tail() -> DocComma {
+    doc_comma_notify()
+}
+
 #[cfg_attr /* keep */ (test, allow(dead_code))]
 type CommentedAllow = ();
 pub fn commented_cfg_attr_allow_tail() -> CommentedAllow {
@@ -4268,6 +4274,7 @@ static SHADOW: () = {
             "raw_alias_notify()".to_string(),
             "raw_return_notify()".to_string(),
             "commented_cfg_attr_allow_notify()".to_string(),
+            "doc_comma_notify()".to_string(),
         ];
         expected.sort();
         assert_eq!(
