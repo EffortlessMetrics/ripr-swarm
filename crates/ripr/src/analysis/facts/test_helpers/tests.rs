@@ -1,4 +1,4 @@
-use super::super::build_index;
+use super::super::{FunctionSourceRole, build_index};
 use super::*;
 use std::error::Error;
 use std::fs;
@@ -8,14 +8,27 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
 fn index_for(source: &str) -> Result<RustIndex, Box<dyn Error>> {
+    index_for_files(&[("src/lib.rs", source)])
+}
+
+fn index_for_files(files: &[(&str, &str)]) -> Result<RustIndex, Box<dyn Error>> {
     let root = std::env::temp_dir().join(format!(
         "ripr-test-helpers-{}-{}",
         std::process::id(),
         NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
     ));
-    fs::create_dir_all(root.join("src"))?;
-    fs::write(root.join("src/lib.rs"), source)?;
-    let index = build_index(&root, &[PathBuf::from("src/lib.rs")]);
+    let mut paths = Vec::new();
+    for (relative, source) in files {
+        let path = root.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, source)?;
+        if relative.ends_with(".rs") {
+            paths.push(PathBuf::from(*relative));
+        }
+    }
+    let index = build_index(&root, &paths);
     fs::remove_dir_all(&root)?;
     Ok(index?)
 }
@@ -246,6 +259,455 @@ fn helper_in_production_scope_is_not_an_assertion_helper() -> Result<(), Box<dyn
 
     assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
     assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn integration_target_top_level_helper_stays_production_and_is_credited()
+-> Result<(), Box<dyn Error>> {
+    // #7125: a tests/*.rs helper is item-role Production (no cfg(test)
+    // module), but the file is an integration target, so this producer
+    // credits it without minting CfgTestModule.
+    let index = index_for_files(&[
+        ("src/lib.rs", GATE),
+        (
+            "tests/gate.rs",
+            concat!(
+                "fn check(input: u32, want: bool) {\n",
+                "    assert_eq!(gate(input), want);\n",
+                "}\n\n",
+                "#[test]\n",
+                "fn boundary() {\n",
+                "    check(10, false);\n",
+                "    check(11, true);\n",
+                "}\n",
+            ),
+        ),
+    ])?;
+
+    let helper = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "check" && function.file.ends_with("gate.rs"))
+        .ok_or("premise: the integration helper is indexed")?;
+    assert_eq!(
+        helper.source_role,
+        FunctionSourceRole::Production,
+        "the producer must not reclassify the helper: {:?}",
+        helper.source_role
+    );
+
+    let test = test_named(&index, "boundary")?;
+    assert!(calls(test).contains(&"check"), "{:?}", calls(test));
+    assert!(calls(test).contains(&"gate"), "{:?}", calls(test));
+    assert_eq!(
+        assertion_texts(test),
+        vec!["assert_eq!(gate(input), want);"]
+    );
+    Ok(())
+}
+
+#[test]
+fn integration_target_assert_macro_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // #7125 is the assert_eq! check-helper cell. Copying assert!(owner(..))
+    // from a tests/*.rs Production helper rewrites RIPR-SPEC-0114's last
+    // established edge onto the public API the helper calls.
+    let index = index_for_files(&[
+        ("src/lib.rs", GATE),
+        (
+            "tests/gate.rs",
+            concat!(
+                "fn check(input: u32) {\n",
+                "    assert!(gate(input));\n",
+                "}\n\n",
+                "#[test]\n",
+                "fn boundary() {\n",
+                "    check(11);\n",
+                "}\n",
+            ),
+        ),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn integration_target_contains_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // RIPR-SPEC-0155: a tests/*.rs harness helper's .contains() is not
+    // exact-oracle evidence. Copying its owner call still inflates
+    // related_tests.
+    let index = index_for_files(&[
+        ("src/lib.rs", GATE),
+        (
+            "tests/gate.rs",
+            concat!(
+                "fn driver() {\n",
+                "    let output = gate(11).to_string();\n",
+                "    if !output.contains(\"true\") {\n",
+                "        panic!(\"{output}\");\n",
+                "    }\n",
+                "}\n\n",
+                "#[test]\n",
+                "fn boundary() {\n",
+                "    driver();\n",
+                "}\n",
+            ),
+        ),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn production_file_top_level_helper_beside_a_top_level_test_is_not_credited()
+-> Result<(), Box<dyn Error>> {
+    // Same-module Production helpers in src/ are production code under
+    // test, not integration-target evidence. Dropping the CfgTestModule
+    // gate without the tests/** fence would falsely credit this.
+    let index = index_for(&format!(
+        "{GATE}fn check(x: u32, want: bool) {{\n    assert_eq!(gate(x), want);\n}}\n\n#[test]\nfn boundary() {{\n    check(10, false);\n}}\n"
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn src_tests_module_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // `src/tests/gate.rs` is a production module directory (#6979). The
+    // shared is_test_file check matches any `/tests/` component; this
+    // producer must still refuse, or the helper's assert_eq! would
+    // become test evidence and the owner could read exposed.
+    let index = index_for_files(&[
+        ("src/lib.rs", GATE),
+        (
+            "src/tests/gate.rs",
+            concat!(
+                "fn check(input: u32, want: bool) {\n",
+                "    assert_eq!(gate(input), want);\n",
+                "}\n\n",
+                "#[test]\n",
+                "fn boundary() {\n",
+                "    check(10, false);\n",
+                "}\n",
+            ),
+        ),
+    ])?;
+    let helper = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "check" && function.file.ends_with("gate.rs"))
+        .ok_or("premise: the src/tests helper is indexed")?;
+    assert_eq!(
+        helper.source_role,
+        FunctionSourceRole::Production,
+        "premise: item role stays Production: {:?}",
+        helper.source_role
+    );
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn workspace_crate_integration_helper_is_credited() -> Result<(), Box<dyn Error>> {
+    // `crates/*/tests/*.rs` is still a crate-root integration target.
+    let index = index_for_files(&[
+        ("crates/demo/src/lib.rs", GATE),
+        (
+            "crates/demo/tests/gate.rs",
+            concat!(
+                "fn check(input: u32, want: bool) {\n",
+                "    assert_eq!(gate(input), want);\n",
+                "}\n\n",
+                "#[test]\n",
+                "fn boundary() {\n",
+                "    check(10, false);\n",
+                "}\n",
+            ),
+        ),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(calls(test).contains(&"gate"), "{:?}", calls(test));
+    assert_eq!(
+        assertion_texts(test),
+        vec!["assert_eq!(gate(input), want);"]
+    );
+    Ok(())
+}
+
+#[test]
+fn crate_root_integration_layout_rejects_src_tests_and_keeps_tests_roots() {
+    fn layout(path: &str) -> bool {
+        super::is_crate_root_integration_test_file(
+            Path::new(path),
+            None,
+            &mut super::ManifestInventory::default(),
+        )
+    }
+    assert!(layout("tests/gate.rs"));
+    assert!(layout("crates/demo/tests/gate.rs"));
+    assert!(layout("tests\\gate.rs"));
+    assert!(layout("tests/foo/main.rs"));
+    assert!(!layout("src/tests/gate.rs"));
+    assert!(!layout("src\\tests\\gate.rs"));
+    assert!(!layout("crates/demo/src/tests/gate.rs"));
+    assert!(!layout("src/lib.rs"));
+    assert!(!layout("benches/gate.rs"));
+    assert!(!layout("tests/support/gate.rs"));
+    assert!(!layout("examples/tests/gate.rs"));
+    assert!(!layout("benches/tests/gate.rs"));
+    assert!(!layout("tests/foo/mod.rs"));
+    // Nested-member autotest needs the owning manifest; path-only fallback
+    // must not treat the first `tests` as that package root.
+    assert!(!layout("tests/harness/tests/gate.rs"));
+    assert!(!layout("tests/support/tests/gate.rs"));
+}
+
+const INTEGRATION_CHECK: &str = concat!(
+    "fn check(input: u32, want: bool) {\n",
+    "    assert_eq!(gate(input), want);\n",
+    "}\n\n",
+    "#[test]\n",
+    "fn boundary() {\n",
+    "    check(10, false);\n",
+    "}\n",
+);
+
+#[test]
+fn nested_package_integration_helper_is_credited() -> Result<(), Box<dyn Error>> {
+    // A workspace member nested under `tests/` still owns `tests/gate.rs`
+    // relative to its manifest (`tests/harness/tests/gate.rs`). The first
+    // repository `tests` component is the ancestor directory, not the
+    // autotest root.
+    let index = index_for_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = 'root'\nversion = '0.1.0'\nedition = '2021'\n[workspace]\nmembers = ['tests/harness']\n",
+        ),
+        ("src/lib.rs", GATE),
+        (
+            "tests/harness/Cargo.toml",
+            "[package]\nname = 'harness'\nversion = '0.1.0'\nedition = '2021'\n",
+        ),
+        ("tests/harness/src/lib.rs", ""),
+        ("tests/harness/tests/gate.rs", INTEGRATION_CHECK),
+    ])?;
+    let helper = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "check" && function.file.ends_with("gate.rs"))
+        .ok_or("premise: the nested-package helper is indexed")?;
+    assert_eq!(
+        helper.source_role,
+        FunctionSourceRole::Production,
+        "the producer must not reclassify the helper: {:?}",
+        helper.source_role
+    );
+    let test = test_named(&index, "boundary")?;
+    assert!(calls(test).contains(&"gate"), "{:?}", calls(test));
+    assert_eq!(
+        assertion_texts(test),
+        vec!["assert_eq!(gate(input), want);"]
+    );
+    Ok(())
+}
+
+#[test]
+fn excluded_nested_package_integration_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // Same autotest remaining-path as the nested-member pin, but the
+    // workspace excludes tests/harness. Cargo metadata does not list
+    // that package; nearest-manifest path shape alone would over-credit.
+    let index = index_for_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = 'root'\nversion = '0.1.0'\nedition = '2021'\n[workspace]\nexclude = ['tests/harness']\n",
+        ),
+        ("src/lib.rs", GATE),
+        (
+            "tests/harness/Cargo.toml",
+            "[package]\nname = 'harness'\nversion = '0.1.0'\nedition = '2021'\n",
+        ),
+        ("tests/harness/src/lib.rs", ""),
+        ("tests/harness/tests/gate.rs", INTEGRATION_CHECK),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn test_false_integration_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // Declared [[test]] with test = false is a Cargo target, but cargo
+    // test does not run it. Metadata still reports kind=["test"] and
+    // verdict stays HarnessEnabled.
+    let index = index_for_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = 'root'\nversion = '0.1.0'\nedition = '2021'\n[workspace]\n[[test]]\nname = 'gate'\ntest = false\n",
+        ),
+        ("src/lib.rs", GATE),
+        ("tests/gate.rs", INTEGRATION_CHECK),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn harness_false_integration_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // Declared [[test]] with harness = false is a Cargo target, but
+    // libtest never collects its #[test] items.
+    let index = index_for_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = 'root'\nversion = '0.1.0'\nedition = '2021'\n[workspace]\n[[test]]\nname = 'gate'\nharness = false\n",
+        ),
+        ("src/lib.rs", GATE),
+        (
+            "tests/gate.rs",
+            concat!(
+                "fn check(input: u32, want: bool) {\n",
+                "    assert_eq!(gate(input), want);\n",
+                "}\n\n",
+                "#[test]\n",
+                "fn boundary() {\n",
+                "    check(10, false);\n",
+                "}\n\n",
+                "fn main() {}\n",
+            ),
+        ),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn nested_support_tests_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // Same path shape as tests/harness/tests/gate.rs, but tests/support is
+    // not a package. Nearest manifest is the root, remaining path is not
+    // an autotest root, so last-`tests` path-only credit would over-credit.
+    let index = index_for_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = 'root'\nversion = '0.1.0'\nedition = '2021'\n[workspace]\n",
+        ),
+        ("src/lib.rs", GATE),
+        ("tests/support/tests/gate.rs", INTEGRATION_CHECK),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn nested_or_example_tests_helpers_are_not_credited() -> Result<(), Box<dyn Error>> {
+    // Cargo does not treat nested tests/support/*.rs or examples/tests/**
+    // as default autotest roots. Path-only credit must not promote them.
+    for path in [
+        "tests/support/gate.rs",
+        "examples/tests/gate.rs",
+        "benches/tests/gate.rs",
+    ] {
+        let index = index_for_files(&[
+            ("src/lib.rs", GATE),
+            (
+                path,
+                concat!(
+                    "fn check(input: u32, want: bool) {\n",
+                    "    assert_eq!(gate(input), want);\n",
+                    "}\n\n",
+                    "#[test]\n",
+                    "fn boundary() {\n",
+                    "    check(10, false);\n",
+                    "}\n",
+                ),
+            ),
+        ])?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{path}: {:?}",
+            assertion_texts(test)
+        );
+        assert!(!calls(test).contains(&"gate"), "{path}: {:?}", calls(test));
+    }
+    Ok(())
+}
+
+#[test]
+fn bench_and_example_helpers_are_not_credited() -> Result<(), Box<dyn Error>> {
+    for path in ["benches/gate.rs", "examples/gate.rs"] {
+        let index = index_for_files(&[
+            ("src/lib.rs", GATE),
+            (
+                path,
+                concat!(
+                    "fn check(input: u32, want: bool) {\n",
+                    "    assert_eq!(gate(input), want);\n",
+                    "}\n\n",
+                    "#[test]\n",
+                    "fn boundary() {\n",
+                    "    check(10, false);\n",
+                    "}\n",
+                ),
+            ),
+        ])?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{path}: {:?}",
+            assertion_texts(test)
+        );
+        assert!(!calls(test).contains(&"gate"), "{path}: {:?}", calls(test));
+    }
+    Ok(())
+}
+
+#[test]
+fn integration_target_helpers_keep_the_cfg_test_refusal_gates() -> Result<(), Box<dyn Error>> {
+    for (shape, helper, body) in [
+        (
+            "let shadow",
+            "fn check(x: u32, want: bool) {\n    assert_eq!(gate(x), want);\n}\n",
+            "    let check = |_: u32, _: bool| {};\n    check(10, false);\n",
+        ),
+        (
+            "call only inside an uncalled closure",
+            "fn check(x: u32, want: bool) {\n    assert_eq!(gate(x), want);\n}\n",
+            "    let _later = || check(10, false);\n",
+        ),
+        (
+            "two same-file definitions",
+            "mod a {\n    pub fn check(x: u32, want: bool) { assert_eq!(super::gate(x), want); }\n}\nfn check(x: u32, want: bool) {\n    assert_eq!(gate(x), want);\n}\n",
+            "    check(10, false);\n",
+        ),
+    ] {
+        let index = index_for_files(&[(
+            "tests/gate.rs",
+            &format!("{helper}\n#[test]\nfn boundary() {{\n{body}}}\n"),
+        )])?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions
+                .iter()
+                .all(|assertion| !assertion.text.contains("want")),
+            "{shape}: {:?}",
+            assertion_texts(test)
+        );
+    }
     Ok(())
 }
 

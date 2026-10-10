@@ -31,6 +31,7 @@ Linked issues:
   as a weak relational check (bool-owner pins below)
 - #6482 (an `assert_eq!` in a test-local check helper the test calls
   eagerly; rule 7)
+- #7125 (the same helper shape in a `tests/*.rs` integration target)
 
 Linked PRs:
 
@@ -615,15 +616,36 @@ rule only for an assertion whose context was admitted.
      call is enough; further deferred calls neither add nor remove credit.
    - The call can only name the helper: exactly one `fn` of that name is
      visible anywhere in the file, and it is a direct item of the test's own
-     module (or both are top-level items of an out-of-line `#[cfg(test)]`
-     module file). Helpers in an integration-test target (`tests/*.rs`) are
-     not yet borrowed: the helper-assertion producer feeds only functions in
-     `#[cfg(test)]` modules, so their assertions stay uncredited. A module item
-     cannot coexist with a same-named import and wins over a glob. The test
-     contains no `use` item and binds no name equal to the helper (pattern,
-     parameter, closure parameter or nested item). A helper in a parent or
-     sibling module, a helper only a macro generates, and a duplicate
-     definition in another module of the file are refused.
+     module (or both are top-level items). The helper is either a
+     `CfgTestModule` function or a top-level non-test `Production` function
+     in a crate-root integration-test target (`tests/<name>.rs` or
+     `tests/<name>/main.rs` relative to the nearest owning manifest,
+     including `crates/*/tests/…` and a package nested under `tests/`
+     such as `tests/harness/tests/…`, #7125). A nested package (nearest
+     manifest is not the workspace root) is credited only when Cargo's
+     metadata inventory lists that autotest as a libtest-enabled workspace
+     test target, so `[workspace] exclude` and `harness = false` cannot
+     become test evidence. A declared `[[test]]` with `test = false` is
+     skipped by `cargo test` and is not credited. The
+     producer does not reclassify that `Production` helper; it only copies
+     the helper's calls and parser-backed assertions onto the calling
+     test. A `Production` function in a production file, including a
+     `src/tests/` module directory, a nested `tests/support/` file (including
+     `tests/support/tests/`), and a
+     helper in `benches/` or `examples/` (including `examples/tests/`),
+     stay uncredited. An undeclared `tests/<name>.rs` file in a package
+     that sets `autotests = false` is not a Cargo target; diff analysis
+     drops it before helper crediting (#6965). Root-package autotest
+     roots stay path-shape except an established `harness = false` or
+     `test = false` target; nested-package membership uses the existing
+     Cargo metadata authority and fails closed when the probe is
+     unavailable. A module item
+     cannot coexist with a
+     same-named import and wins over a glob. The test contains no `use` item
+     and binds no name equal to the helper (pattern, parameter, closure
+     parameter or nested item). A helper in a parent or sibling module, a
+     helper only a macro generates, and a duplicate definition in another
+     module of the file are refused.
    - The helper runs to its end on every call: no attributes other than
      `#[track_caller]`, no generic parameters or `where` clause, not `async`,
      `const` or `unsafe`, no `self` parameter, no return type, and no `return`
@@ -1310,6 +1332,23 @@ assertions. This repair shares the existing callback without that larger migrati
   availability reuses the canonical lexer; the existing test-only role query
   retains its separate contract. Out-of-line resolution remains owned by
   existing `FileFacts::role_provenance`, not by the admission consumer.
+- `crates/ripr/src/analysis/facts/test_helpers.rs`: same-file helper
+  crediting. Rule 7 (#7125) also credits a unique top-level `Production`
+  helper in a crate-root integration-test target (`tests/<name>.rs` or
+  `tests/<name>/main.rs` relative to the nearest owning manifest,
+  including a package nested under `tests/`) without changing its item
+  role, and only when that helper's parser-backed oracles include
+  `assert_eq!`. `assert!` and harness `.contains()` helpers stay
+  uncredited so RIPR-SPEC-0114's last-established edge and
+  RIPR-SPEC-0155's harness oracles stay intact. Nested `tests/support/`
+  (including `tests/support/tests/`), `benches/`, `examples/` (including
+  `examples/tests/`), `src/tests/`, and other production-file helpers stay
+  out. Undeclared `tests/*.rs` files left unbuilt by `autotests = false`
+  are dropped before this producer (#6965). Nested-package credit
+  additionally requires Cargo metadata membership so `[workspace] exclude`
+  cannot become test evidence; an established `harness = false` or
+  `test = false` target is not credited. Root-package autotest roots
+  otherwise stay path-shape.
 - `crates/ripr/src/analysis/seam_cache.rs`: classified `1.25`, sharded `0.31`,
   compact `0.31` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;
   the query reads existing indexed source, so no file-fact migration is needed.
@@ -1318,7 +1357,9 @@ assertions. This repair shares the existing callback without that larger migrati
   The statement-prefix refinement changes no serialized fact shape.
   Rule 7 (#6482) moves classified full `1.54`, sharded and compact `0.60`, so
   a warm hit cannot keep a check helper's assertion uncredited; file facts
-  are unchanged.
+  are unchanged. Integration-target helpers (#7125) move classified full
+  `1.61`, sharded and compact `0.67` so a warm `1.60` hit cannot keep a
+  `tests/*.rs` `assert!` / `.contains()` helper over-credited.
 
 ## Metrics
 

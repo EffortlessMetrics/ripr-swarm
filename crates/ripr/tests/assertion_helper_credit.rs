@@ -28,24 +28,36 @@ struct TempRepo {
 
 impl TempRepo {
     fn create(tests: &str) -> Result<Self, String> {
+        Self::create_files(&[("src/lib.rs", format!("{GATE}{tests}"))])
+    }
+
+    fn create_files(files: &[(&str, String)]) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-assertion-helper-credit-{}-{}",
             std::process::id(),
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
-        std::fs::create_dir_all(root.join("src"))
+        let this = Self { root };
+        std::fs::create_dir_all(this.root.join("src"))
             .map_err(|error| format!("create source directory failed: {error}"))?;
         std::fs::write(
-            root.join("Cargo.toml"),
+            this.root.join("Cargo.toml"),
             "[package]\nname = \"assertion-helper-credit\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
         )
         .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
-        std::fs::write(root.join("src/lib.rs"), format!("{GATE}{tests}"))
-            .map_err(|error| format!("write source failed: {error}"))?;
-        std::fs::write(root.join("diff.patch"), DIFF)
+        for (relative, source) in files {
+            let path = this.root.join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create {relative} parent failed: {error}"))?;
+            }
+            std::fs::write(&path, source)
+                .map_err(|error| format!("write {relative} failed: {error}"))?;
+        }
+        std::fs::write(this.root.join("diff.patch"), DIFF)
             .map_err(|error| format!("write diff failed: {error}"))?;
-        Ok(Self { root })
+        Ok(this)
     }
 
     /// The finding for the changed `input >= 10` predicate.
@@ -131,5 +143,405 @@ fn helper_asserting_on_something_else_reads_as_the_inline_assertion() -> Result<
 
     assert_ne!(helper.class, ExposureClass::Exposed, "{helper:?}");
     assert_eq!(helper.class, inline.class, "{helper:?}\n{inline:?}");
+    Ok(())
+}
+
+fn check_eq_helper() -> &'static str {
+    "fn check(input: u32, want: bool) {\n    assert_eq!(gate(input), want);\n}\n"
+}
+
+fn package_manifest(extra: &str) -> String {
+    format!(
+        "[package]\nname = \"assertion-helper-credit\"\nversion = \"0.0.0\"\nedition = \"2024\"\n{extra}\n[workspace]\n"
+    )
+}
+
+fn boundary_calls() -> &'static str {
+    "    check(10, true);\n    check(9, false);\n"
+}
+
+fn integration_source(helper: &str) -> String {
+    format!(
+        "use assertion_helper_credit::gate;\n\n{helper}#[test]\nfn boundary() {{\n{}}}",
+        boundary_calls()
+    )
+}
+
+#[test]
+fn integration_target_check_helper_exposes_the_changed_predicate() -> Result<(), String> {
+    let cfg_test = TempRepo::create(&tests_module(
+        "    fn check(input: u32, want: bool) {\n        assert_eq!(gate(input), want);\n    }\n",
+        "        check(10, true);\n        check(9, false);\n",
+    ))?
+    .predicate()?;
+    assert_eq!(
+        cfg_test.class,
+        ExposureClass::Exposed,
+        "control: #6482 cfg(test) helper still exposes: {cfg_test:?}"
+    );
+
+    let integration = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        ("tests/gate.rs", integration_source(check_eq_helper())),
+    ])?
+    .predicate()?;
+    assert_eq!(
+        integration.class,
+        ExposureClass::Exposed,
+        "tests/*.rs helper must expose the same way: {integration:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn integration_assert_macro_helper_does_not_expose() -> Result<(), String> {
+    // RIPR-SPEC-0114: tests/*.rs assert!(public_api(..)) is a named
+    // limitation witness, not #7125 check-helper credit.
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/gate.rs",
+            integration_source(
+                "fn check(input: u32, want: bool) {\n    assert!(gate(input) == want);\n}\n",
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "assert! integration helpers are not the #7125 assert_eq! cell: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn integration_contains_helper_does_not_expose() -> Result<(), String> {
+    // RIPR-SPEC-0155: a tests/*.rs harness .contains() helper is not
+    // exact-oracle evidence for the production owner.
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/gate.rs",
+            integration_source(concat!(
+                "fn check(input: u32, want: bool) {\n",
+                "    let output = gate(input).to_string();\n",
+                "    if !output.contains(\"true\") && want {\n",
+                "        panic!(\"{output}\");\n",
+                "    }\n",
+                "}\n",
+            )),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "harness contains helpers must not become exact evidence: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn production_top_level_check_helper_does_not_expose() -> Result<(), String> {
+    let finding = TempRepo::create(&format!(
+        "{}#[test]\nfn boundary() {{\n{}}}",
+        check_eq_helper(),
+        boundary_calls()
+    ))?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a src/ helper must not become test evidence: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_package_integration_helper_exposes_the_changed_predicate() -> Result<(), String> {
+    // A workspace member nested under tests/ still runs tests/gate.rs
+    // relative to its own manifest. First-repository-`tests` credit would
+    // leave this weakly_exposed.
+    let finding = TempRepo::create_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = \"assertion-helper-credit\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\nmembers = [\"tests/harness\"]\n"
+                .to_string(),
+        ),
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/harness/Cargo.toml",
+            "[package]\nname = \"harness\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nassertion-helper-credit = { path = \"../..\" }\n"
+                .to_string(),
+        ),
+        ("tests/harness/src/lib.rs", String::new()),
+        (
+            "tests/harness/tests/gate.rs",
+            integration_source(check_eq_helper()),
+        ),
+    ])?
+    .predicate()?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "tests/harness/tests/gate.rs is the nested member's autotest root: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn excluded_nested_package_integration_helper_does_not_expose() -> Result<(), String> {
+    // A tests/harness package that the workspace excludes is not a Cargo
+    // member. Its tests/*.rs helper must not promote the root owner.
+    let finding = TempRepo::create_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = \"assertion-helper-credit\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\nexclude = [\"tests/harness\"]\n"
+                .to_string(),
+        ),
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/harness/Cargo.toml",
+            "[package]\nname = \"harness\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nassertion-helper-credit = { path = \"../..\" }\n"
+                .to_string(),
+        ),
+        ("tests/harness/src/lib.rs", String::new()),
+        (
+            "tests/harness/tests/gate.rs",
+            integration_source(check_eq_helper()),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "an excluded nested package is not workspace test evidence: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_tests_support_tests_check_helper_does_not_expose() -> Result<(), String> {
+    // Same remaining-path shape as tests/harness/tests/gate.rs without a
+    // nested package manifest must not become exposed.
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/support/tests/gate.rs",
+            format!(
+                "use assertion_helper_credit::gate;\n\n{}#[test]\nfn boundary() {{\n{}}}",
+                check_eq_helper(),
+                boundary_calls()
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "tests/support/tests/ is not a package autotest root: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_tests_support_check_helper_does_not_expose() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/support/gate.rs",
+            format!(
+                "use assertion_helper_credit::gate;\n\n{}#[test]\nfn boundary() {{\n{}}}",
+                check_eq_helper(),
+                boundary_calls()
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "tests/support/ is not a Cargo autotest root: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn examples_tests_check_helper_does_not_expose() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "examples/tests/gate.rs",
+            format!(
+                "use assertion_helper_credit::gate;\n\n{}#[test]\nfn boundary() {{\n{}}}",
+                check_eq_helper(),
+                boundary_calls()
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "examples/tests/ is not a package autotest root: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn undeclared_integration_helper_with_autotests_false_does_not_expose() -> Result<(), String> {
+    // #6965: autotests=false leaves undeclared tests/*.rs unbuilt. Diff
+    // analysis drops that file before helper credit, so this producer
+    // must not promote the owner to exposed. Cargo-target identity stays
+    // with that drop, not a second inference here.
+    let finding = TempRepo::create_files(&[
+        ("Cargo.toml", package_manifest("autotests = false\n")),
+        ("src/lib.rs", GATE.to_string()),
+        ("tests/unbuilt.rs", integration_source(check_eq_helper())),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "autotests=false leaves tests/unbuilt.rs unbuilt (#6965): {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn harness_false_integration_helper_does_not_expose() -> Result<(), String> {
+    // A declared [[test]] with harness = false is a real Cargo target, so
+    // the #6965 drop keeps tests/gate.rs, but libtest never collects its
+    // #[test] items. Crediting that helper would promote an unrun test.
+    let finding = TempRepo::create_files(&[
+        (
+            "Cargo.toml",
+            package_manifest("\n[[test]]\nname = \"gate\"\nharness = false\n"),
+        ),
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/gate.rs",
+            format!(
+                "{}\nfn main() {{}}\n",
+                integration_source(check_eq_helper())
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "harness=false does not collect #[test] helpers as libtest evidence: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_false_integration_helper_does_not_expose() -> Result<(), String> {
+    // A declared [[test]] with test = false is still a Cargo target, so
+    // the #6965 drop keeps tests/gate.rs, but `cargo test` does not run
+    // it. ManifestInventory ignores metadata's test flag and returns
+    // HarnessEnabled; crediting that helper would promote an unrun test.
+    let finding = TempRepo::create_files(&[
+        (
+            "Cargo.toml",
+            package_manifest("\n[[test]]\nname = \"gate\"\ntest = false\n"),
+        ),
+        ("src/lib.rs", GATE.to_string()),
+        ("tests/gate.rs", integration_source(check_eq_helper())),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "test=false is skipped by cargo test and must not become evidence: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn declared_integration_helper_with_autotests_false_still_exposes() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        (
+            "Cargo.toml",
+            package_manifest("autotests = false\n\n[[test]]\nname = \"gate\"\n"),
+        ),
+        ("src/lib.rs", GATE.to_string()),
+        ("tests/gate.rs", integration_source(check_eq_helper())),
+    ])?
+    .predicate()?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a declared [[test]] target remains a Cargo test under autotests=false: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn src_tests_module_check_helper_does_not_expose() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", format!("{GATE}mod tests;\n")),
+        ("src/tests/mod.rs", "mod gate;\n".to_string()),
+        (
+            "src/tests/gate.rs",
+            format!(
+                "use crate::gate;\n\n{}#[test]\nfn boundary() {{\n{}}}",
+                check_eq_helper(),
+                boundary_calls()
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "src/tests/ is a module directory, not an integration target: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn integration_helper_that_names_the_owner_twice_does_not_expose() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/gate.rs",
+            integration_source(
+                "fn check(input: u32, want: bool) {\n    let _ = gate(input);\n    assert_eq!(gate(input), want);\n}\n",
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "#6482 single-owner-mention gate must still refuse: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn integration_helper_path_qualified_owner_does_not_expose() -> Result<(), String> {
+    // #6482 borrows only a bare owner call. `mylib::gate` in the issue
+    // write-up is the crate-path spelling; the cfg(test) equivalent is
+    // `use super::*; gate(..)`, which the positive test uses.
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/gate.rs",
+            format!(
+                "fn check(input: u32, want: bool) {{\n    assert_eq!(assertion_helper_credit::gate(input), want);\n}}\n#[test]\nfn boundary() {{\n{}}}",
+                boundary_calls()
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a path-qualified owner call is not the #6482 bare-call loan: {finding:?}"
+    );
     Ok(())
 }
