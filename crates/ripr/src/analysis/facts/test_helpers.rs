@@ -30,13 +30,15 @@
 //!   credited only when Cargo's metadata inventory lists that autotest
 //!   as a libtest-enabled workspace test target, so `[workspace] exclude`
 //!   and `harness = false` cannot become test evidence. A declared
-//!   `[[test]]` with `test = false` is still a Cargo target, but
-//!   `cargo test` skips it, so this producer refuses it when
-//!   `ManifestInventory` establishes that skip from cargo metadata's
-//!   per-target `test` flag (including `path = "tests/../tests/gate.rs"`
-//!   spellings cargo normalizes). Unavailable metadata is not a skip, so
-//!   ordinary autodiscovered `tests/<name>.rs` keep #7125 path-shape
-//!   credit. This producer does not reclassify that
+//!   `[[test]]` with `test = false` or unmet `required-features` is
+//!   still a Cargo target, but `cargo test` skips it, so this producer
+//!   refuses it when `ManifestInventory` establishes that skip from
+//!   cargo metadata's `test` flag and default-feature
+//!   `required-features` comparison (including
+//!   `path = "tests/../tests/gate.rs"` spellings cargo normalizes).
+//!   Unavailable metadata is not a skip, so ordinary autodiscovered
+//!   `tests/<name>.rs` keep #7125 path-shape credit. This producer does
+//!   not reclassify that
 //!   `Production` helper; it copies the helper's calls and
 //!   parser-backed `assert_eq!` oracles onto the calling test. A
 //!   `Production` helper whose body has only `assert!`, `.contains()`,
@@ -338,9 +340,9 @@ fn is_assertion_helper(
 /// path as a libtest-enabled workspace test target, so `[workspace]
 /// exclude` and `harness = false` cannot become test evidence.
 /// Root-package path-shape still refuses an established `HarnessDisabled`
-/// target and an established metadata `test = false` skip. Nested
-/// `NotDeclared` and `ManifestUnavailable` fail closed (under-credit,
-/// never over-credit).
+/// target and an established metadata skip (`test = false` or unmet
+/// `required-features`). Nested `NotDeclared` and `ManifestUnavailable`
+/// fail closed (under-credit, never over-credit).
 fn is_crate_root_integration_test_file(
     path: &Path,
     workspace_root: Option<&Path>,
@@ -352,7 +354,8 @@ fn is_crate_root_integration_test_file(
         if !is_package_autotest_root(&relative) {
             return false;
         }
-        // Inventory-owned skip: cargo metadata's `test` flag, including
+        // Inventory-owned skip: cargo metadata's `test` flag and unmet
+        // `required-features` under cargo defaults, including
         // `path = "tests/../tests/gate.rs"` spellings cargo normalizes.
         // Unavailable metadata is not a skip (#7125).
         if manifests.cargo_test_collection_skipped(root, path) {

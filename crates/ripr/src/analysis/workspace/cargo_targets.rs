@@ -38,10 +38,14 @@
 //! owning package manifest. Metadata does carry the per-target `test`
 //! flag: `[[test]] test = false` stays `kind = ["test"]` but `cargo test`
 //! skips it, so the inventory must not treat that target as
-//! `HarnessEnabled` (#7265). An unavailable probe — no cargo binary, a
-//! workspace cargo rejects, or an unreadable probe output — fails closed
-//! to `manifest_unavailable`: a registration grants nothing, never
-//! over-credits.
+//! `HarnessEnabled` (#7265). Metadata also retains `required-features`
+//! while `cargo test` skips a target whose required features are not in
+//! the analyzed set. That set is cargo's package defaults — the same
+//! `cargo metadata --no-deps --offline` probe does not thread
+//! `--features` / `--all-features` (#7266). An unavailable probe — no
+//! cargo binary, a workspace cargo rejects, or an unreadable probe
+//! output — fails closed to `manifest_unavailable`: a registration
+//! grants nothing, never over-credits.
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -242,15 +246,17 @@ pub(crate) enum CargoHarnessVerdict {
     /// `harness` flag is `false`: the registration's premise holds.
     HarnessDisabled,
     /// The path is a known Cargo test target (explicit entry or package
-    /// autodiscovery) whose effective `harness` flag is `true` and whose
-    /// metadata `test` flag is not `false`: the libtest harness still
-    /// collects the file, so the `harness = false` premise of a
-    /// custom-harness registration does not hold.
+    /// autodiscovery) whose effective `harness` flag is `true`, whose
+    /// metadata `test` flag is not `false`, and whose `required-features`
+    /// are met under cargo defaults: the libtest harness still collects
+    /// the file, so the `harness = false` premise of a custom-harness
+    /// registration does not hold.
     HarnessEnabled,
     /// The workspace's Cargo metadata declares no live test target for
     /// this path: nothing in the workspace compiles the file as a test,
-    /// or every matching `kind = ["test"]` target has `test = false` so
-    /// `cargo test` skips it (#7265).
+    /// or every matching `kind = ["test"]` target is skipped by
+    /// `cargo test` because `test = false` (#7265) or because
+    /// `required-features` are unmet under cargo defaults (#7266).
     NotDeclared,
     /// No premise about the target can be established: the metadata
     /// probe was unavailable (no cargo binary, a workspace cargo rejects,
@@ -276,8 +282,10 @@ pub(crate) struct ManifestInventory {
 struct MetadataTestOwner {
     manifest_dir: PathBuf,
     name: String,
-    /// Cargo metadata's per-target `test` flag. `false` means `cargo test`
-    /// skips the target even though `kind` stays `["test"]`.
+    /// Whether `cargo test` collects this owner under the analyzed
+    /// feature set. `false` when metadata `test` is false (#7265) or
+    /// when `required-features` are unmet under cargo defaults (#7266),
+    /// even though `kind` stays `["test"]`.
     test_enabled: bool,
 }
 
@@ -298,8 +306,9 @@ enum MetadataState {
     Failed,
     /// Workspace test targets keyed by their lexically resolved source
     /// path; each entry lists the owning package manifest directories
-    /// with the cargo target name (#3637 review) and metadata `test` flag
-    /// (#7265).
+    /// with the cargo target name (#3637 review), metadata `test` flag
+    /// (#7265), and default-feature `required-features` satisfaction
+    /// (#7266).
     Loaded(BTreeMap<PathBuf, Vec<MetadataTestOwner>>),
 }
 
@@ -331,14 +340,15 @@ impl ManifestInventory {
     /// patterns as literal path prefixes; a wildcard component matches no
     /// member), `[workspace.dependencies]` inheritance, and dev- and
     /// build-path dependencies. A target missing from the inventory, or
-    /// present only with metadata `test = false`, is `NotDeclared`:
-    /// `cargo test` does not collect it (#7265). A live target resolves
-    /// its `harness` flag from the owning manifest's `[[test]]` entries
-    /// (explicit `path` spellings and name-only defaults alike), because
-    /// metadata output omits the `harness` field by construction.
-    /// Conflicting flags across owning manifests — the same path claimed
-    /// by two packages — are ambiguous and fail closed. `required-features`
-    /// is a separate claim (#7266) and is not read here.
+    /// present only with metadata `test = false`, or whose
+    /// `required-features` are unmet under cargo defaults, is
+    /// `NotDeclared`: `cargo test` does not collect it (#7265, #7266).
+    /// A live target resolves its `harness` flag from the owning
+    /// manifest's `[[test]]` entries (explicit `path` spellings and
+    /// name-only defaults alike), because metadata output omits the
+    /// `harness` field by construction. Conflicting flags across owning
+    /// manifests — the same path claimed by two packages — are
+    /// ambiguous and fail closed.
     pub(crate) fn verdict(
         &mut self,
         workspace_root: &Path,
@@ -359,9 +369,9 @@ impl ManifestInventory {
             .filter(|owner| owner.test_enabled)
             .collect();
         if live.is_empty() {
-            // Metadata still lists `kind = ["test"]`, but every owner has
-            // `test = false`: cargo test skips the target, so libtest
-            // does not collect the file.
+            // Metadata still lists `kind = ["test"]`, but every owner is
+            // skipped by cargo test (`test = false` or unmet
+            // `required-features`): libtest does not collect the file.
             return CargoHarnessVerdict::NotDeclared;
         }
         let mut flags: Vec<bool> = Vec::new();
@@ -417,11 +427,12 @@ impl ManifestInventory {
     }
 
     /// True only when cargo metadata lists this path as a test target
-    /// and every owning package has `test = false`. Unavailable metadata
-    /// and paths cargo does not list are not an established skip: root
-    /// autodiscovered `tests/<name>.rs` must not lose credit when the
-    /// probe is missing (#7125), and undeclared unbuilt files stay
-    /// #6965's drop.
+    /// and every owning package is skipped by `cargo test` (`test =
+    /// false` or unmet `required-features` under cargo defaults).
+    /// Unavailable metadata and paths cargo does not list are not an
+    /// established skip: root autodiscovered `tests/<name>.rs` must not
+    /// lose credit when the probe is missing (#7125), and undeclared
+    /// unbuilt files stay #6965's drop.
     pub(crate) fn cargo_test_collection_skipped(
         &mut self,
         workspace_root: &Path,
@@ -624,6 +635,77 @@ fn run_workspace_cargo_metadata(
     parsed
 }
 
+/// Package features enabled under cargo defaults, from the metadata
+/// `packages[].features` table. The metadata probe does not pass
+/// `--features` / `--all-features`, and `--no-deps` does not populate a
+/// usable resolve graph, so this expansion is the analyzed set (#7266).
+fn default_enabled_features(package: &serde_json::Value) -> BTreeSet<String> {
+    let Some(features) = package
+        .get("features")
+        .and_then(serde_json::Value::as_object)
+    else {
+        return BTreeSet::new();
+    };
+    let mut map = BTreeMap::new();
+    for (name, enables) in features {
+        let Some(items) = enables.as_array() else {
+            continue;
+        };
+        map.insert(
+            name.clone(),
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect(),
+        );
+    }
+    expand_default_features(&map)
+}
+
+/// Transitively enable `default` and the local features it names.
+/// `dep:` and `dep/feature` enables are not local feature names.
+fn expand_default_features(features: &BTreeMap<String, Vec<String>>) -> BTreeSet<String> {
+    let mut enabled = BTreeSet::new();
+    if !features.contains_key("default") {
+        return enabled;
+    }
+    let mut stack = vec!["default".to_string()];
+    while let Some(name) = stack.pop() {
+        if !enabled.insert(name.clone()) {
+            continue;
+        }
+        if let Some(enables) = features.get(&name) {
+            for item in enables {
+                if let Some(local) = local_feature_enable(item) {
+                    stack.push(local);
+                }
+            }
+        }
+    }
+    enabled
+}
+
+fn local_feature_enable(item: &str) -> Option<String> {
+    let item = item.trim();
+    if item.is_empty() || item.starts_with("dep:") || item.contains('/') {
+        return None;
+    }
+    Some(item.to_string())
+}
+
+/// Whether every `required-features` name is in the analyzed default set.
+/// A missing field is no requirement. A malformed field fails closed.
+fn required_features_satisfied(target: &serde_json::Value, enabled: &BTreeSet<String>) -> bool {
+    match target.get("required-features") {
+        None => true,
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .all(|item| item.as_str().is_some_and(|name| enabled.contains(name))),
+        Some(_) => false,
+    }
+}
+
 /// The workspace test-target inventory from parsed `cargo metadata`
 /// (#3634). With `--no-deps`, `packages` is exactly the workspace member
 /// set — cargo's own membership resolution. Each `kind: ["test"]` target
@@ -634,7 +716,9 @@ fn run_workspace_cargo_metadata(
 /// flag (#7265). The name is the identity that ties a metadata target
 /// back to the manifest entry cargo retained, so a declaration cargo
 /// dropped from its inventory cannot contribute its flag to a live
-/// target (#3637 review). `required-features` is ignored here (#7266).
+/// target (#3637 review). `required-features` is compared against the
+/// package's default-enabled features from the same metadata document
+/// (#7266): the probe does not pass `--features` / `--all-features`.
 fn workspace_test_target_owners(
     value: &serde_json::Value,
 ) -> BTreeMap<PathBuf, Vec<MetadataTestOwner>> {
@@ -654,6 +738,7 @@ fn workspace_test_target_owners(
         let Some(targets) = package.get("targets").and_then(serde_json::Value::as_array) else {
             continue;
         };
+        let enabled_features = default_enabled_features(package);
         for target in targets {
             let is_test = target
                 .get("kind")
@@ -673,10 +758,12 @@ fn workspace_test_target_owners(
             let Some(name) = target.get("name").and_then(serde_json::Value::as_str) else {
                 continue;
             };
-            let test_enabled = target
+            let metadata_test = target
                 .get("test")
                 .and_then(serde_json::Value::as_bool)
                 .unwrap_or(true);
+            let test_enabled =
+                metadata_test && required_features_satisfied(target, &enabled_features);
             owners
                 .entry(lexical(&normalize(Path::new(src_path))))
                 .or_default()
@@ -1621,6 +1708,125 @@ mod harness_verdict {
         assert!(skipped("pkg/tests/../tests/gate.rs"));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    /// #7266: cargo metadata still reports `kind = ["test"]` and `test =
+    /// true` when `[[test]] required-features = ["special"]` and `special`
+    /// is off by default, but `cargo test` skips that target. The inventory
+    /// must not return `HarnessEnabled`. The same target stays live when
+    /// `special` is in the package default set the metadata probe uses
+    /// (ripr does not thread `--features` / `--all-features`).
+    #[test]
+    fn required_features_unmet_target_is_not_harness_enabled() -> Result<(), String> {
+        let dir = unique_workspace("req-features");
+        write_file(&dir, "Cargo.toml", "[workspace]\nmembers = ['pkg']\n")?;
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n\
+             [features]\ndefault=[]\nspecial=[]\n\n\
+             [[test]]\nname='gate'\nrequired-features=['special']\n",
+        )?;
+        write_file(&dir, "pkg/tests/gate.rs", "")?;
+        write_file(&dir, "pkg/tests/live.rs", "")?;
+        let verdict = |relative: &str| cargo_test_target_harness_verdict(&dir, Path::new(relative));
+        let skipped =
+            |relative: &str| cargo_test_target_collection_skipped(&dir, Path::new(relative));
+
+        assert_ne!(
+            verdict("pkg/tests/gate.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "unmet required-features must not count as libtest collection"
+        );
+        assert_eq!(
+            verdict("pkg/tests/gate.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "cargo test skips the target, so it is not a live collection unit"
+        );
+        assert!(
+            skipped("pkg/tests/gate.rs"),
+            "sibling query must establish the skip from metadata required-features"
+        );
+        assert_eq!(
+            verdict("pkg/tests/live.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "autodiscovered tests/<name>.rs stay harness-enabled"
+        );
+        assert!(
+            !skipped("pkg/tests/live.rs"),
+            "an autodiscovered target is not an established skip"
+        );
+
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n\
+             [features]\ndefault=['special']\nspecial=[]\n\n\
+             [[test]]\nname='gate'\nrequired-features=['special']\n",
+        )?;
+        assert_eq!(
+            verdict("pkg/tests/gate.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "the same target stays live when special is in the analyzed default set"
+        );
+        assert!(!skipped("pkg/tests/gate.rs"));
+
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n\
+             [features]\ndefault=['mid']\nmid=['special']\nspecial=[]\n\n\
+             [[test]]\nname='gate'\nrequired-features=['special']\n",
+        )?;
+        assert_eq!(
+            verdict("pkg/tests/gate.rs"),
+            CargoHarnessVerdict::HarnessEnabled,
+            "default-enabled features expand transitively"
+        );
+        assert!(!skipped("pkg/tests/gate.rs"));
+
+        write_member_package(
+            &dir,
+            "pkg",
+            "[package]\nname='p'\nversion='0.1.0'\nedition='2024'\n\n\
+             [features]\ndefault=['special']\nspecial=[]\nextra=[]\n\n\
+             [[test]]\nname='gate'\nrequired-features=['special','extra']\n",
+        )?;
+        assert_eq!(
+            verdict("pkg/tests/gate.rs"),
+            CargoHarnessVerdict::NotDeclared,
+            "every required feature must be in the analyzed default set"
+        );
+        assert!(skipped("pkg/tests/gate.rs"));
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn default_feature_expansion_is_transitive_and_local_only() {
+        let mut features = BTreeMap::new();
+        features.insert(
+            "default".to_string(),
+            vec![
+                "mid".to_string(),
+                "dep:skip".to_string(),
+                "other/feat".to_string(),
+            ],
+        );
+        features.insert("mid".to_string(), vec!["special".to_string()]);
+        features.insert("special".to_string(), vec![]);
+        let enabled = expand_default_features(&features);
+        assert!(enabled.contains("default"));
+        assert!(enabled.contains("mid"));
+        assert!(enabled.contains("special"));
+        assert!(!enabled.contains("skip"));
+        assert!(!enabled.contains("other"));
+        assert!(!enabled.contains("feat"));
+        let empty = expand_default_features(&BTreeMap::new());
+        assert!(
+            empty.is_empty(),
+            "no default table means no enabled features"
+        );
     }
 
     /// #3608: a virtual workspace manifest (no `[package]` table) declares no

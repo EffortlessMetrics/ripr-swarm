@@ -583,6 +583,45 @@ fn test_false_parent_path_spelling_helper_is_not_credited() -> Result<(), Box<dy
 }
 
 #[test]
+fn required_features_unmet_integration_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // Declared [[test]] with required-features unmet under cargo defaults
+    // is a Cargo target, but cargo test does not run it.
+    let index = index_for_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = 'root'\nversion = '0.1.0'\nedition = '2021'\n[workspace]\n[features]\ndefault = []\nspecial = []\n[[test]]\nname = 'gate'\nrequired-features = ['special']\n",
+        ),
+        ("src/lib.rs", GATE),
+        ("tests/gate.rs", INTEGRATION_CHECK),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn required_features_default_enabled_integration_helper_is_credited() -> Result<(), Box<dyn Error>>
+{
+    let index = index_for_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = 'root'\nversion = '0.1.0'\nedition = '2021'\n[workspace]\n[features]\ndefault = ['special']\nspecial = []\n[[test]]\nname = 'gate'\nrequired-features = ['special']\n",
+        ),
+        ("src/lib.rs", GATE),
+        ("tests/gate.rs", INTEGRATION_CHECK),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(
+        !test.assertions.is_empty(),
+        "default-enabled required-features stay live: {:?}",
+        assertion_texts(test)
+    );
+    assert!(calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
 fn harness_false_integration_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
     // Declared [[test]] with harness = false is a Cargo target, but
     // libtest never collects its #[test] items.
