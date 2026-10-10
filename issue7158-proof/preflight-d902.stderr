@@ -1,0 +1,6 @@
+   Compiling serde_core v1.0.229
+   Compiling serde_json v1.0.151
+   Compiling memchr v2.8.3
+   Compiling repo-policy v0.1.0 (/workspace/issue7158-candidate/tools/repo-policy)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 7.06s
+     Running `/workspace/issue7158-build/debug/repo-policy preflight`

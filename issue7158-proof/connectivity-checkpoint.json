@@ -1,0 +1,39 @@
+{
+  "utc": "2026-10-10T06:16:42.564811+00:00",
+  "executor": "connected: native commands and retained sessions responsive",
+  "head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+  "session": 87550,
+  "frontdoors": "34 unit +4 frontdoor tests passed",
+  "caller": "cargo policy preflight native exit0; final xtask precommit continuing; no restart",
+  "completed_prior": "e509 full precommit native exit0 preserved; not rerun",
+  "free_bytes": 24315715584,
+  "reserve_bytes": 12884901888,
+  "processes": [
+    {
+      "native_ps": "83331   83330       02:17 00:00:04 11868 S    python3 /tmp/issue7158-final-qualify.py",
+      "cwd": "not readable from this command sandbox; command path and retained session bind ownership"
+    },
+    {
+      "native_ps": "83602   83331       02:03 00:01:47 75692 Sl   /workspace/issue7158-evidence/xtask-d902 precommit",
+      "cwd": "not readable from this command sandbox; command path and retained session bind ownership"
+    }
+  ],
+  "remote_implementation": "codex/issue7158-policy-backup d902d099",
+  "remote_proof": "codex/issue7158-proof-backup 71b074694 interim snapshot",
+  "native_driver_results": [
+    {
+      "head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+      "name": "preflight-d902",
+      "command": [
+        "cargo",
+        "policy",
+        "preflight"
+      ],
+      "exit_code": 0,
+      "wall_seconds": 8.7185,
+      "target": "/workspace/issue7158-build",
+      "jobs": 1
+    }
+  ],
+  "inventory_note": "native ps confirms retained Python driver and xtask-d902 child; no command restart"
+}

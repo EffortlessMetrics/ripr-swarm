@@ -1,0 +1,32 @@
+[
+  {
+    "path": ".github/workflows/rust-gates.yml",
+    "e509_blob": "7e1cc56a51bc884eee8e6b4e9d6809a8a669f5b8",
+    "d902_blob": "7e1cc56a51bc884eee8e6b4e9d6809a8a669f5b8",
+    "unchanged": true
+  },
+  {
+    "path": ".github/workflows/routed-rust.yml",
+    "e509_blob": "da3ab9753a33434112379580ba998d9a559cf438",
+    "d902_blob": "da3ab9753a33434112379580ba998d9a559cf438",
+    "unchanged": true
+  },
+  {
+    "path": "xtask/tests/rust_gate_workflow_contract.rs",
+    "e509_blob": "ce13ad6099195f1070a5a16730470c5932ee598b",
+    "d902_blob": "ce13ad6099195f1070a5a16730470c5932ee598b",
+    "unchanged": true
+  },
+  {
+    "path": "xtask/src/tests.rs",
+    "e509_blob": "a7a77fceb6f9ac78efc9c8c96b8fe101b91912cf",
+    "d902_blob": "a7a77fceb6f9ac78efc9c8c96b8fe101b91912cf",
+    "unchanged": true
+  },
+  {
+    "path": "xtask/src/check_fast_strict.rs",
+    "e509_blob": "0b8dfaef904992efc317f731a3c649c19ea2df84",
+    "d902_blob": "0b8dfaef904992efc317f731a3c649c19ea2df84",
+    "unchanged": true
+  }
+]

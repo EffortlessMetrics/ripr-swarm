@@ -1,0 +1,15 @@
+[
+  {
+    "head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+    "name": "preflight-d902",
+    "command": [
+      "cargo",
+      "policy",
+      "preflight"
+    ],
+    "exit_code": 0,
+    "wall_seconds": 8.7185,
+    "target": "/workspace/issue7158-build",
+    "jobs": 1
+  }
+]
