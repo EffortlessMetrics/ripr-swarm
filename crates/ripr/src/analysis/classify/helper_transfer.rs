@@ -200,8 +200,8 @@ pub(crate) fn ambiguous_helper_entry_called_by_tests<'a>(
 }
 
 fn tests_call_name(index: &RustIndex, name: &str) -> bool {
-    tests_call_matching(index, name, |call| {
-        call_is_workspace_entry(index, name, &call.text)
+    tests_call_matching(index, name, |kind| {
+        kind_is_workspace_entry(index, name, kind)
     })
 }
 
@@ -209,51 +209,57 @@ fn tests_call_name(index: &RustIndex, name: &str) -> bool {
 /// that tests call (`VersionReq::from_str`) must not credit a free
 /// `from_str` that actually wraps the uniqueness stop.
 fn tests_call_function(index: &RustIndex, function: &FunctionSummary) -> bool {
-    tests_call_matching(index, &function.name, |call| {
-        call_targets_function(function, &call.text)
+    tests_call_matching(index, &function.name, |kind| {
+        kind_targets_function(function, kind)
     })
 }
 
 fn tests_call_matching(
     index: &RustIndex,
     name: &str,
-    call_matches: impl Fn(&CallFact) -> bool,
+    kind_matches: impl Fn(&NamedEntryKind) -> bool,
 ) -> bool {
     !name.is_empty()
         && index.tests().iter().any(|test| {
+            let imports = source_imports_foreign_entry(
+                index,
+                indexed_source(index, &test.file, test.body.as_str()),
+                name,
+            );
             test.calls.iter().any(|call| {
                 call.name == name
-                    && call_matches(call)
-                    && !test_imports_foreign_entry(index, test, name)
-                    && !local_binding_shadows(
-                        index,
-                        LocalBindingSubject {
-                            file: &test.file,
-                            body: test.body.as_str(),
-                            start_line: test.start_line,
-                            nested_fn_names: &test.nested_fn_names,
-                            let_bindings: &test.let_bindings,
-                        },
-                        name,
-                        call.line,
-                    )
+                    && named_entry_kinds(&call.text, name).iter().any(|kind| {
+                        let free_shadowed = matches!(kind, NamedEntryKind::Free)
+                            && (imports
+                                || local_binding_shadows(
+                                    index,
+                                    LocalBindingSubject {
+                                        file: &test.file,
+                                        body: test.body.as_str(),
+                                        start_line: test.start_line,
+                                        nested_fn_names: &test.nested_fn_names,
+                                        let_bindings: &test.let_bindings,
+                                    },
+                                    name,
+                                    call.line,
+                                ));
+                        !free_shadowed && kind_matches(kind)
+                    })
             })
         })
 }
 
+fn indexed_source<'a>(index: &'a RustIndex, file: &std::path::Path, fallback: &'a str) -> &'a str {
+    index
+        .files()
+        .get(file)
+        .map(|facts| facts.source.as_ref())
+        .unwrap_or(fallback)
+}
+
 /// Import identity only. Do not reuse `test_call_is_shadowed`: uniqueness
 /// would hide every #7080 entry.
-fn test_imports_foreign_entry(
-    index: &RustIndex,
-    test: &crate::analysis::facts::TestSummary,
-    name: &str,
-) -> bool {
-    let files = index.files();
-    let file_facts = files.get(&test.file);
-    let source: &str = match &file_facts {
-        Some(facts) => facts.source.as_ref(),
-        None => test.body.as_str(),
-    };
+fn source_imports_foreign_entry(index: &RustIndex, source: &str, name: &str) -> bool {
     let renamed_import = super::reveal::flattened_use_paths(source)
         .iter()
         .any(|import| {
@@ -307,21 +313,30 @@ fn caller_invokes_named_entry(
     stop_name: &str,
     index: &RustIndex,
 ) -> bool {
+    let imports = source_imports_foreign_entry(
+        index,
+        indexed_source(index, &caller.file, caller.body.as_str()),
+        stop_name,
+    );
     caller.calls.iter().any(|call| {
         call.name == stop_name
-            && call_is_workspace_entry(index, stop_name, &call.text)
-            && !local_binding_shadows(
-                index,
-                LocalBindingSubject {
-                    file: &caller.file,
-                    body: caller.body.as_str(),
-                    start_line: caller.start_line,
-                    nested_fn_names: &caller.nested_fn_names,
-                    let_bindings: &caller.let_bindings,
-                },
-                stop_name,
-                call.line,
-            )
+            && named_entry_kinds(&call.text, stop_name).iter().any(|kind| {
+                let free_shadowed = matches!(kind, NamedEntryKind::Free)
+                    && (imports
+                        || local_binding_shadows(
+                            index,
+                            LocalBindingSubject {
+                                file: &caller.file,
+                                body: caller.body.as_str(),
+                                start_line: caller.start_line,
+                                nested_fn_names: &caller.nested_fn_names,
+                                let_bindings: &caller.let_bindings,
+                            },
+                            stop_name,
+                            call.line,
+                        ));
+                !free_shadowed && kind_is_workspace_entry(index, stop_name, kind)
+            })
     })
 }
 
@@ -343,8 +358,8 @@ fn test_call_invokes_named_entry(text: &str, callee_name: &str) -> bool {
 /// calls have no `T` and still enter. Every matching occurrence on the
 /// line is considered: a leading foreign qualify must not hide a later
 /// workspace entry on the same `CallFact.text`.
-fn call_is_workspace_entry(index: &RustIndex, name: &str, text: &str) -> bool {
-    named_entry_kinds(text, name).iter().any(|kind| match kind {
+fn kind_is_workspace_entry(index: &RustIndex, name: &str, kind: &NamedEntryKind) -> bool {
+    match kind {
         NamedEntryKind::Free => true,
         NamedEntryKind::TypePath(self_type) => index
             .functions()
@@ -352,22 +367,20 @@ fn call_is_workspace_entry(index: &RustIndex, name: &str, text: &str) -> bool {
             .filter(|function| function.name == name)
             .any(|function| function.impl_context.may_be_target_of_type_path(self_type)),
         NamedEntryKind::UnparsedQualifier => false,
-    })
+    }
 }
 
-fn call_targets_function(function: &FunctionSummary, text: &str) -> bool {
-    named_entry_kinds(text, &function.name)
-        .iter()
-        .any(|kind| match kind {
-            NamedEntryKind::Free => matches!(
-                function.impl_context,
-                FunctionImplContext::Free | FunctionImplContext::Unknown
-            ),
-            NamedEntryKind::TypePath(self_type) => {
-                function.impl_context.may_be_target_of_type_path(self_type)
-            }
-            NamedEntryKind::UnparsedQualifier => false,
-        })
+fn kind_targets_function(function: &FunctionSummary, kind: &NamedEntryKind) -> bool {
+    match kind {
+        NamedEntryKind::Free => matches!(
+            function.impl_context,
+            FunctionImplContext::Free | FunctionImplContext::Unknown
+        ),
+        NamedEntryKind::TypePath(self_type) => {
+            function.impl_context.may_be_target_of_type_path(self_type)
+        }
+        NamedEntryKind::UnparsedQualifier => false,
+    }
 }
 
 /// `Some(None)` is a free-function call of `callee_name`. `Some(Some(T))`
@@ -1734,6 +1747,84 @@ mod tests {
             ambiguous_helper_entry_called_by_tests(&chain, &calling_imported),
             None,
             "a foreign import of from_str is not the workspace entry"
+        );
+
+        let mut imported_qualified = with_test("from_str", "VersionReq::from_str(\">=1.0\")");
+        imported_qualified.body =
+            "use serde_json::from_str;\nVersionReq::from_str(\">=1.0\")".into();
+        let mut workspace_from_str =
+            function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        workspace_from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let mut workspace_from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        workspace_from_str_twin.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let calling_imported_qualified = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                workspace_from_str,
+                workspace_from_str_twin,
+            ],
+            vec![imported_qualified],
+        );
+        let chain = resolve_chain("op", &calling_imported_qualified, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_imported_qualified),
+            Some("from_str"),
+            "a foreign import does not shadow VersionReq::from_str"
+        );
+
+        let mut local_and_qualified = with_test("from_str", "VersionReq::from_str(\">=1.0\")");
+        local_and_qualified.nested_fn_names = vec!["from_str".to_string()];
+        let mut workspace_from_str =
+            function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        workspace_from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let mut workspace_from_str_twin = function("src/other_from_str.rs", "from_str", &[]);
+        workspace_from_str_twin.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let calling_local_and_qualified = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                workspace_from_str,
+                workspace_from_str_twin,
+            ],
+            vec![local_and_qualified],
+        );
+        let chain = resolve_chain("op", &calling_local_and_qualified, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_local_and_qualified),
+            Some("from_str"),
+            "a local from_str binding does not shadow VersionReq::from_str"
+        );
+
+        let mut wrapping_imported_parse =
+            function("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        wrapping_imported_parse.body = "use serde_json::parse;\nparse(text)".into();
+        wrapping_imported_parse.impl_context = FunctionImplContext::Free;
+        let calling_wrapping_imported = index_with_tests(
+            vec![
+                owner.clone(),
+                parse.clone(),
+                twin.clone(),
+                wrapping_imported_parse,
+                function("src/other_from_str.rs", "from_str", &[]),
+            ],
+            vec![with_test("from_str", "from_str(\">=1.0\")")],
+        );
+        let chain = resolve_chain("op", &calling_wrapping_imported, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_wrapping_imported),
+            None,
+            "a wrapper that imports foreign parse is not an extras entry"
         );
 
         let mut parse_free = parse.clone();

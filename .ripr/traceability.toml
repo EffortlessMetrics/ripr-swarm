@@ -10207,6 +10207,8 @@ tests = [
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_same_line_has_foreign_then_workspace_from_str_then_static_unknown",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_call_associated_sibling_of_wrapping_from_str_then_no_static_path",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_import_foreign_from_str_then_no_static_path",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_foreign_import_and_qualified_from_str_then_static_unknown",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_wrapper_imports_foreign_parse_then_no_static_path",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_call_spaced_or_turbofish_parse_then_static_unknown",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::same_file_wrapper_test_keeps_the_helper_call_relation",
   "crates/ripr/tests/helper_wrapper_reach.rs::match_arm_behind_a_dropping_wrapper_is_not_credited",
