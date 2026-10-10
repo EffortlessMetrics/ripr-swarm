@@ -34,6 +34,11 @@ use std::process::{Child, ChildStdin, Command, ExitStatus, Stdio};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, sync_channel};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+#[path = "common/mod.rs"]
+mod common;
+
+use common::fixture_git::fixture_git_ok;
+
 /// Per-read budget so a hung server fails fast instead of blocking CI.
 const RESPONSE_TIMEOUT: Duration = Duration::from_secs(15);
 /// Budget for `ripr.refresh`, which runs workspace analysis.
@@ -65,6 +70,11 @@ const FINDING_CODES: [&str; 7] = [
 /// The seeded boundary edit lands on `src/lib.rs` line 2 (1-based), so its
 /// diff finding diagnostic starts at 0-based LSP line 1 (mirrors #7170).
 const SEEDED_LINE: u64 = 1;
+
+/// Synthetic URIs for the oracle-integrity controls: the fixture URI and a
+/// different workspace's same-named lib that a suffix match would confuse.
+const CONTROL_URI: &str = "file:///fixture/src/lib.rs";
+const FOREIGN_URI: &str = "file:///elsewhere/src/lib.rs";
 
 /// Events forwarded by the stdout reader thread.
 enum WireEvent {
@@ -330,8 +340,12 @@ fn unique_fixture_root(name: &str) -> Result<FixtureRoot, String> {
         .map(|duration| duration.as_nanos())
         .unwrap_or(0);
     let path = std::env::temp_dir().join(format!("ripr-lsp-{name}-{}-{stamp}", std::process::id()));
+    // Install the removal guard before any directory exists, so a partial
+    // `create_dir_all` failure or any later `?` in fixture setup cannot leak
+    // the temp tree (#7189 review).
+    let fixture = FixtureRoot { path: path.clone() };
     fs::create_dir_all(&path).map_err(|err| format!("create fixture root failed: {err}"))?;
-    Ok(FixtureRoot { path })
+    Ok(fixture)
 }
 
 /// Minimal `file://` URI for an absolute fixture path.
@@ -377,32 +391,20 @@ fn copy_fixture_tree(source: &Path, target: &Path) -> Result<(), String> {
     Ok(())
 }
 
-fn run_fixture_git(root: &Path, args: &[&str]) -> Result<(), String> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .map_err(|err| format!("run git {args:?} failed: {err}"))?;
-    if output.status.success() {
-        return Ok(());
-    }
-    Err(format!(
-        "git {args:?} failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    ))
-}
-
 /// The #7170 fixture recipe: a committed copy of the tracked boundary-gap
 /// input plus one uncommitted boundary edit, so the degraded refresh must
-/// still publish that seeded diff finding's diagnostics.
+/// still publish that seeded diff finding's diagnostics. Fixture git runs
+/// through the shared deadline-bounded `common::fixture_git` helper
+/// (deadline + one idempotent retry + commit reconcile, #7189 review), the
+/// same hardened contract every other integration harness uses.
 fn seeded_git_fixture_root(name: &str) -> Result<FixtureRoot, String> {
     let fixture = unique_fixture_root(name)?;
     let source =
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/input");
     copy_fixture_tree(&source, &fixture.path)?;
-    run_fixture_git(&fixture.path, &["init", "-q"])?;
-    run_fixture_git(&fixture.path, &["add", "-A"])?;
-    run_fixture_git(
+    fixture_git_ok(&fixture.path, &["init", "-q"])?;
+    fixture_git_ok(&fixture.path, &["add", "-A"])?;
+    fixture_git_ok(
         &fixture.path,
         &[
             "-c",
@@ -416,7 +418,7 @@ fn seeded_git_fixture_root(name: &str) -> Result<FixtureRoot, String> {
             "fixture baseline",
         ],
     )?;
-    run_fixture_git(&fixture.path, &["rev-parse", "--verify", "HEAD^{commit}"])?;
+    fixture_git_ok(&fixture.path, &["rev-parse", "--verify", "HEAD^{commit}"])?;
     let seed_path = fixture.path.join("src/lib.rs");
     let seed_source =
         fs::read_to_string(&seed_path).map_err(|err| format!("read seeded lib failed: {err}"))?;
@@ -519,47 +521,139 @@ fn log_messages_of_type(notifications: &[serde_json::Value], message_type: u64) 
         .collect()
 }
 
-/// Every diff-finding diagnostic (`code`, 0-based start line, message) the
-/// refresh published for `src/lib.rs`. Finding codes are the verbatim
-/// `ExposureClass` labels; seam and gap diagnostics carry `ripr-`-prefixed
-/// codes and never match, so this pins the seeded finding itself rather than
-/// the pre-existing seam diagnostic the clean baseline also publishes (#7170
-/// review).
-fn lib_finding_diagnostics(notifications: &[serde_json::Value]) -> Vec<(String, u64, String)> {
+/// The diff-finding diagnostics (`code`, 0-based start line, message) in
+/// the LAST `textDocument/publishDiagnostics` for exactly `fixture_uri`.
+/// LSP publishes replace rather than merge: the client displays only the
+/// final publish for a URI, so the retention oracle must judge that publish
+/// alone — a merged-history oracle credits a finding a later publish
+/// cleared, and a URI suffix admits another workspace's `src/lib.rs`
+/// (retention-oracle defect confirmed by independent review on #7189).
+/// Finding codes are the verbatim `ExposureClass` labels; seam and gap
+/// diagnostics carry `ripr-`-prefixed codes and never match, so this pins
+/// the seeded finding itself rather than the pre-existing seam diagnostic
+/// the clean baseline also publishes (#7170 review).
+fn lib_finding_diagnostics(
+    fixture_uri: &str,
+    notifications: &[serde_json::Value],
+) -> Vec<(String, u64, String)> {
+    let Some(message) = notifications.iter().rev().find(|message| {
+        message.get("method").and_then(serde_json::Value::as_str)
+            == Some("textDocument/publishDiagnostics")
+            && message["params"]["uri"].as_str() == Some(fixture_uri)
+    }) else {
+        return Vec::new();
+    };
     let mut found = Vec::new();
-    for message in notifications {
-        if message.get("method").and_then(serde_json::Value::as_str)
-            != Some("textDocument/publishDiagnostics")
-        {
-            continue;
-        }
-        if !message["params"]["uri"]
-            .as_str()
-            .is_some_and(|uri| uri.ends_with("src/lib.rs"))
-        {
-            continue;
-        }
-        if let Some(diagnostics) = message["params"]["diagnostics"].as_array() {
-            for diagnostic in diagnostics {
-                let code = diagnostic
-                    .get("code")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                let line = diagnostic["range"]["start"]["line"].as_u64();
-                let text = diagnostic
-                    .get("message")
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or_default();
-                if FINDING_CODES.contains(&code)
-                    && let Some(line) = line
-                {
-                    found.push((code.to_string(), line, text.to_string()));
-                }
+    if let Some(diagnostics) = message["params"]["diagnostics"].as_array() {
+        for diagnostic in diagnostics {
+            let code = diagnostic
+                .get("code")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            let line = diagnostic["range"]["start"]["line"].as_u64();
+            let text = diagnostic
+                .get("message")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if FINDING_CODES.contains(&code)
+                && let Some(line) = line
+            {
+                found.push((code.to_string(), line, text.to_string()));
             }
         }
     }
     found.sort();
     found
+}
+
+/// Synthetic publish for the oracle-integrity controls below.
+fn publish_diagnostics(uri: &str, diagnostics: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {"uri": uri, "diagnostics": diagnostics},
+    })
+}
+
+/// A publish carrying one seeded finding diagnostic for `uri`.
+fn finding_publish(uri: &str) -> serde_json::Value {
+    publish_diagnostics(
+        uri,
+        serde_json::json!([
+            {
+                "code": "exposed",
+                "range": {"start": {"line": SEEDED_LINE}},
+                "message": "boundary change exposed",
+            }
+        ]),
+    )
+}
+
+/// A publish clearing every diagnostic for `uri`.
+fn empty_publish(uri: &str) -> serde_json::Value {
+    publish_diagnostics(uri, serde_json::json!([]))
+}
+
+/// The oracle must fail retention when the final publish for the fixture URI
+/// clears the finding: the merged-history oracle returned the earlier
+/// finding and let an editor whose final state is empty pass (#7189 review).
+#[test]
+fn retention_oracle_fails_when_a_later_publish_clears_the_finding() -> Result<(), String> {
+    let findings = lib_finding_diagnostics(
+        CONTROL_URI,
+        &[finding_publish(CONTROL_URI), empty_publish(CONTROL_URI)],
+    );
+    if !findings.is_empty() {
+        return Err(format!(
+            "a later empty publish for the fixture URI must fail retention: {findings:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// The oracle must pass retention when the final publish keeps the finding.
+#[test]
+fn retention_oracle_passes_when_the_final_publish_keeps_the_finding() -> Result<(), String> {
+    let findings = lib_finding_diagnostics(CONTROL_URI, &[finding_publish(CONTROL_URI)]);
+    let expected = vec![(
+        "exposed".to_string(),
+        SEEDED_LINE,
+        "boundary change exposed".to_string(),
+    )];
+    if findings != expected {
+        return Err(format!(
+            "the kept finding must pass retention: {findings:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// A publish for another workspace's `src/lib.rs` must never satisfy the
+/// fixture URI's retention, while that foreign URI's own oracle still
+/// selects its final publish (#7189 review).
+#[test]
+fn retention_oracle_ignores_a_foreign_uri_publish() -> Result<(), String> {
+    let findings = lib_finding_diagnostics(
+        CONTROL_URI,
+        &[finding_publish(FOREIGN_URI), empty_publish(CONTROL_URI)],
+    );
+    if !findings.is_empty() {
+        return Err(format!(
+            "a foreign-URI finding must not pass the fixture URI's retention: {findings:?}"
+        ));
+    }
+    let kept = lib_finding_diagnostics(FOREIGN_URI, &[finding_publish(FOREIGN_URI)]);
+    let expected = vec![(
+        "exposed".to_string(),
+        SEEDED_LINE,
+        "boundary change exposed".to_string(),
+    )];
+    if kept != expected {
+        return Err(format!(
+            "the foreign URI's own oracle must still work: {kept:?}"
+        ));
+    }
+    Ok(())
 }
 
 fn shutdown_exit_and_wait(session: &mut SpawnSession) -> Result<(), String> {
@@ -586,6 +680,9 @@ fn spawned_server_with_invalid_seam_limit_degrades_seam_inventory_through_produc
 -> Result<(), String> {
     let fixture = seeded_git_fixture_root("seam-degradation-spawn")?;
     let root_uri = file_uri_for_fixture(&fixture.path)?;
+    // The exact URI the server must publish the seeded lib finding under;
+    // the retention oracle matches it exactly (#7189 review).
+    let fixture_lib_uri = file_uri_for_fixture(&fixture.path.join("src").join("lib.rs"))?;
 
     // Control: without the override the same fixture must refresh `full`
     // with a `complete` seam inventory and no degradation warning.
@@ -628,10 +725,10 @@ fn spawned_server_with_invalid_seam_limit_degrades_seam_inventory_through_produc
                 "control run must not warn about seam degradation: {control_warnings:?}"
             ));
         }
-        let findings = lib_finding_diagnostics(&notifications);
+        let findings = lib_finding_diagnostics(&fixture_lib_uri, &notifications);
         if !findings.iter().any(|(_, line, _)| *line == SEEDED_LINE) {
             return Err(format!(
-                "control run must publish the seeded finding diagnostic at line {SEEDED_LINE}: {findings:?}"
+                "control run must publish the seeded finding diagnostic at line {SEEDED_LINE} for {fixture_lib_uri}: {findings:?}"
             ));
         }
         shutdown_exit_and_wait(&mut session)?;
@@ -719,7 +816,7 @@ fn spawned_server_with_invalid_seam_limit_degrades_seam_inventory_through_produc
             "the degradation warning must name the recovery route: {warnings:?}"
         ));
     }
-    let degraded_findings = lib_finding_diagnostics(&notifications);
+    let degraded_findings = lib_finding_diagnostics(&fixture_lib_uri, &notifications);
     if !degraded_findings
         .iter()
         .any(|(_, line, _)| *line == SEEDED_LINE)

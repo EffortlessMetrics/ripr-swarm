@@ -5,4 +5,8 @@
   `seam_inventory`/`failed`/`seam_inventory_failed` component outcome with
   a `limited` run, exactly one WARNING naming the component and its
   recovery, and the seeded diff finding still published
-  (RIPR-SPEC-0141, #7147). No behavior change.
+  (RIPR-SPEC-0141, #7147). The retention assertions judge only the final
+  diagnostics publish for the exact fixture URI, with oracle-integrity
+  controls for a later clearing publish and a foreign-URI publish, so a
+  finding the editor no longer displays cannot pass (#7189 review). Fixture
+  git runs through the shared deadline-bounded helper. No behavior change.
