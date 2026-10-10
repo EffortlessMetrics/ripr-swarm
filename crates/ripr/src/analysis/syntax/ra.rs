@@ -1906,12 +1906,11 @@ fn enclosing_module_item_list(
 }
 
 fn generic_params_include_name(params: &ast::GenericParamList, name: &str) -> bool {
-    params.type_or_const_params().any(|param| {
-        param
-            .syntax()
-            .children()
-            .filter_map(ast::Name::cast)
-            .any(|param_name| param_name.text() == name)
+    params.type_or_const_params().any(|param| match param {
+        ast::TypeOrConstParam::Type(type_param) => type_param
+            .name()
+            .is_some_and(|param_name| param_name.text() == name),
+        ast::TypeOrConstParam::Const(_) => false,
     })
 }
 
@@ -1957,7 +1956,7 @@ fn assoc_type_named(function: &ra_ap_syntax::SyntaxNode, name: &str) -> bool {
     })
 }
 
-fn attr_is_cfg(attribute: &ast::Attr) -> bool {
+fn compact_attr_inner(attribute: &ast::Attr) -> String {
     let compact: String = attribute
         .syntax()
         .text()
@@ -1965,7 +1964,47 @@ fn attr_is_cfg(attribute: &ast::Attr) -> bool {
         .chars()
         .filter(|character| !character.is_whitespace())
         .collect();
-    compact.starts_with("#[cfg") || compact.starts_with("#![cfg")
+    compact
+        .strip_prefix("#![")
+        .or_else(|| compact.strip_prefix("#["))
+        .and_then(|rest| rest.strip_suffix(']'))
+        .unwrap_or(&compact)
+        .to_string()
+}
+
+fn attr_is_cfg(attribute: &ast::Attr) -> bool {
+    introduced_attr_is_cfg(&compact_attr_inner(attribute))
+}
+
+fn introduced_attr_is_cfg(inner: &str) -> bool {
+    if inner.starts_with("cfg(") {
+        return true;
+    }
+    inner
+        .strip_prefix("cfg_attr(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .is_some_and(cfg_attr_introduces_cfg)
+}
+
+fn cfg_attr_introduces_cfg(body: &str) -> bool {
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut first = true;
+    for (index, character) in body.char_indices() {
+        match character {
+            '(' | '[' | '{' => depth = depth.saturating_add(1),
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                if !first && body.get(start..index).is_some_and(introduced_attr_is_cfg) {
+                    return true;
+                }
+                first = false;
+                start = index.saturating_add(1);
+            }
+            _ => {}
+        }
+    }
+    !first && body.get(start..).is_some_and(introduced_attr_is_cfg)
 }
 
 fn type_alias_has_cfg(alias: &ast::TypeAlias) -> bool {
@@ -2848,6 +2887,22 @@ pub fn allowed_alias_tail() -> Allowed {
     allowed_notify()
 }
 
+#[cfg_attr(test, allow(dead_code))]
+type CfgAttrAllowed = ();
+pub fn cfg_attr_allow_tail() -> CfgAttrAllowed {
+    cfg_attr_allow_notify()
+}
+
+#[cfg_attr(windows, cfg(test))]
+type NestedCfg = ();
+pub fn nested_cfg_tail() -> NestedCfg {
+    nested_cfg_notify()
+}
+
+pub fn const_generic_unit<const Unit: usize>() -> Unit {
+    const_generic_notify()
+}
+
 #[cfg(windows)]
 type CfgUnit = ();
 mod cfg_other {
@@ -2895,6 +2950,8 @@ static SHADOW: () = {
             "work()",
             "inner_notify()",
             "allowed_notify()",
+            "cfg_attr_allow_notify()",
+            "const_generic_notify()",
         ] {
             assert!(
                 unconsumed(call),
@@ -2920,6 +2977,7 @@ static SHADOW: () = {
             "cfg_notify()",
             "const_shadow_notify()",
             "static_shadow_notify()",
+            "nested_cfg_notify()",
         ] {
             assert!(
                 consumed(call),

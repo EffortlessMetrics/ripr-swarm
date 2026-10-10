@@ -4168,6 +4168,22 @@ pub fn allowed_alias_tail() -> Allowed {
     allowed_notify()
 }
 
+#[cfg_attr(test, allow(dead_code))]
+type CfgAttrAllowed = ();
+pub fn cfg_attr_allow_tail() -> CfgAttrAllowed {
+    cfg_attr_allow_notify()
+}
+
+#[cfg_attr(windows, cfg(test))]
+type NestedCfg = ();
+pub fn nested_cfg_tail() -> NestedCfg {
+    nested_cfg_notify()
+}
+
+pub fn const_generic_unit<const Unit: usize>() -> Unit {
+    const_generic_notify()
+}
+
 #[cfg(windows)]
 type CfgUnit = ();
 mod cfg_other {
@@ -4210,6 +4226,8 @@ static SHADOW: () = {
             "inner_shadow()".to_string(),
             "inner_unit()".to_string(),
             "allowed_notify()".to_string(),
+            "cfg_attr_allow_notify()".to_string(),
+            "const_generic_notify()".to_string(),
         ];
         expected.sort();
         assert_eq!(
