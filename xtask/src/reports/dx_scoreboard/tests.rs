@@ -2795,10 +2795,12 @@ fn repo_sample(metric: &str, outcome: SampleOutcome, detail: String) -> Sample {
     }
 }
 
+type WarmRecord = (Vec<Sample>, Option<(usize, Vec<String>)>, Vec<&'static str>);
+
 fn record_pair(
     warmup: Result<MeasuredOutput, String>,
     measured: Result<Option<MeasuredOutput>, String>,
-) -> (Vec<Sample>, Option<(usize, Vec<String>)>, Vec<&'static str>) {
+) -> WarmRecord {
     let mut samples = Vec::new();
     let mut contradictions = None;
     let mut missing = Vec::new();
@@ -3003,12 +3005,18 @@ fn truncated_findings_keep_speed_and_hold_trust() {
         "run_status": "limited_findings_bound"
     }]);
     let subject = admission_subject();
-    match admit_check_document(&document, &subject) {
-        CheckAdmission::Complete {
-            rendering_truncated,
-            ..
-        } => assert!(rendering_truncated),
-        other => panic!("expected complete-with-truncation, got {other:?}"),
-    }
-    assert!(scan_check_contradictions(&document).is_err());
+    let admission = admit_check_document(&document, &subject);
+    assert!(
+        matches!(
+            admission,
+            CheckAdmission::Complete {
+                rendering_truncated: true,
+                ..
+            }
+        ),
+        "expected complete-with-truncation, got {admission:?}"
+    );
+    assert!(
+        scan_check_contradictions(&document).is_err_and(|err| err.contains("rendering prefix"))
+    );
 }

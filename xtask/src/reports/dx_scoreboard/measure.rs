@@ -9,9 +9,13 @@ mod check_admission;
 
 use super::{Config, CorpusEntry, Options, RunContext, Sample, SampleOutcome};
 use crate::run::{MeasuredOutput, capture_bytes_in_dir_with_timeout, capture_output_measured};
+#[cfg(test)]
 pub(crate) use check_admission::{
-    CHECK_SCHEMA_VERSION, CheckAdmission, CheckSubject, OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL,
-    admit_check_document, admit_check_sample, permissive_json_exit_zero, scan_check_contradictions,
+    CHECK_SCHEMA_VERSION, OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL, admit_check_document,
+    permissive_json_exit_zero,
+};
+pub(crate) use check_admission::{
+    CheckAdmission, CheckSubject, admit_check_sample, scan_check_contradictions,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
@@ -466,7 +470,7 @@ pub(crate) fn record_warm_check(
                 complete,
             ));
             match serde_json::from_str::<Value>(&measured.output.stdout) {
-                Ok(json) => match scan_check_contradictions(&json) {
+                Ok(json) => match check_contradictions(&json) {
                     Ok(found) => {
                         *contradictions = Some(merge_contradictions(contradictions.take(), found));
                     }

@@ -128,6 +128,7 @@ pub(crate) fn admit_check_sample(
 /// The pre-#7259 predicate: any exit-zero child whose stdout parses as JSON,
 /// including `{}` and `null`. Kept so tests can prove the new gate rejects
 /// documents the old one would accept.
+#[cfg(test)]
 pub(crate) fn permissive_json_exit_zero(timed_out: bool, exited_zero: bool, stdout: &str) -> bool {
     !timed_out && exited_zero && serde_json::from_str::<Value>(stdout).is_ok()
 }
@@ -399,6 +400,14 @@ mod tests {
         })
     }
 
+    fn document_without(mut doc: Value, field: &str) -> Result<Value, String> {
+        let object = doc
+            .as_object_mut()
+            .ok_or_else(|| format!("fixture for removing `{field}` is not an object"))?;
+        object.remove(field);
+        Ok(doc)
+    }
+
     #[test]
     fn empty_and_null_json_are_not_complete_work() {
         let subject = subject();
@@ -418,16 +427,20 @@ mod tests {
     }
 
     #[test]
-    fn missing_envelope_fields_are_rejected() {
+    fn missing_envelope_fields_are_rejected() -> Result<(), String> {
         let subject = subject();
-        let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
-        doc.as_object_mut().unwrap().remove("analysis_outcome");
+        let doc = document_without(
+            complete_document("complete_with_findings", vec![one_finding()]),
+            "analysis_outcome",
+        )?;
         assert!(!admit_check_document(&doc, &subject).is_complete());
         let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
         doc["summary"] = json!(null);
         assert!(!admit_check_document(&doc, &subject).is_complete());
-        let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
-        doc.as_object_mut().unwrap().remove("findings");
+        let doc = document_without(
+            complete_document("complete_with_findings", vec![one_finding()]),
+            "findings",
+        )?;
         assert!(!admit_check_document(&doc, &subject).is_complete());
         let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
         doc["tool"] = json!("other");
@@ -435,6 +448,7 @@ mod tests {
         let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
         doc["schema_version"] = json!("9.9");
         assert!(!admit_check_document(&doc, &subject).is_complete());
+        Ok(())
     }
 
     #[test]
@@ -447,15 +461,15 @@ mod tests {
         let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
         doc["analysis_outcome"]["analysis_complete"] = json!(true);
         doc["analysis_outcome"]["outcome"]["kind"] = json!("partial_with_limitations");
-        match admit_check_document(&doc, &subject) {
-            CheckAdmission::Rejected { reason } => {
-                assert!(
-                    reason.contains("does not match typed outcome kind"),
-                    "{reason}"
-                );
-            }
-            other => panic!("expected contradictory completeness reject, got {other:?}"),
-        }
+        let admission = admit_check_document(&doc, &subject);
+        assert!(
+            matches!(
+                &admission,
+                CheckAdmission::Rejected { reason }
+                    if reason.contains("does not match typed outcome kind")
+            ),
+            "expected contradictory completeness reject, got {admission:?}"
+        );
         for kind in ["unsupported_input", "analysis_failed"] {
             let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
             doc["analysis_outcome"]["analysis_complete"] = json!(false);
@@ -488,30 +502,33 @@ mod tests {
     }
 
     #[test]
-    fn unknown_head_is_preserved() {
+    fn unknown_head_is_preserved() -> Result<(), String> {
         let mut subject = subject();
         subject.head = None;
-        let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
-        doc.as_object_mut().unwrap().remove("head");
+        let doc = document_without(
+            complete_document("complete_with_findings", vec![one_finding()]),
+            "head",
+        )?;
         assert!(admit_check_document(&doc, &subject).is_complete());
+        Ok(())
     }
 
     #[test]
     fn valid_complete_output_is_admitted() {
         let subject = subject();
         let with_findings = complete_document("complete_with_findings", vec![one_finding()]);
-        match admit_check_document(&with_findings, &subject) {
-            CheckAdmission::Complete {
-                findings,
-                rendering_truncated,
-                kind,
-            } => {
-                assert_eq!(findings, 1);
-                assert!(!rendering_truncated);
-                assert_eq!(kind, "complete_with_findings");
-            }
-            other => panic!("expected complete admission, got {other:?}"),
-        }
+        let admission = admit_check_document(&with_findings, &subject);
+        assert!(
+            matches!(
+                &admission,
+                CheckAdmission::Complete {
+                    findings: 1,
+                    rendering_truncated: false,
+                    kind,
+                } if kind == "complete_with_findings"
+            ),
+            "expected complete admission, got {admission:?}"
+        );
         let empty = complete_document("complete_no_findings", Vec::new());
         assert!(admit_check_document(&empty, &subject).is_complete());
         let no_behavior = complete_document("no_behavioral_candidates", Vec::new());
@@ -527,24 +544,37 @@ mod tests {
             "run_status": FINDINGS_BOUND_STATUS,
             "downstream_consumable": false
         }]);
-        match admit_check_document(&doc, &subject) {
-            CheckAdmission::Complete {
-                rendering_truncated,
-                ..
-            } => assert!(rendering_truncated),
-            other => panic!("truncated complete analysis must stay complete: {other:?}"),
-        }
-        assert!(scan_check_contradictions(&doc).is_err());
+        let admission = admit_check_document(&doc, &subject);
+        assert!(
+            matches!(
+                admission,
+                CheckAdmission::Complete {
+                    rendering_truncated: true,
+                    ..
+                }
+            ),
+            "truncated complete analysis must stay complete: {admission:?}"
+        );
+        assert!(scan_check_contradictions(&doc).is_err_and(|err| err.contains("rendering prefix")));
     }
 
     #[test]
     fn missing_findings_cannot_yield_a_clean_zero() {
-        assert!(scan_check_contradictions(&json!({})).is_err());
-        assert!(scan_check_contradictions(&json!({"findings": null})).is_err());
+        assert!(
+            scan_check_contradictions(&json!({}))
+                .is_err_and(|err| err.contains("missing a findings array"))
+        );
+        assert!(
+            scan_check_contradictions(&json!({"findings": null}))
+                .is_err_and(|err| err.contains("missing a findings array"))
+        );
         let ok = json!({"findings": [
             {"id": "p1", "classification": "no_static_path", "related_tests_total": 2, "evidence": []}
         ]});
-        assert_eq!(scan_check_contradictions(&ok).unwrap().0, 1);
+        assert_eq!(
+            scan_check_contradictions(&ok).map(|(count, _)| count),
+            Ok(1)
+        );
     }
 
     #[test]
