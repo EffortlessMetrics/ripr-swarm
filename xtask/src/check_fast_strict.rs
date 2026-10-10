@@ -251,6 +251,156 @@ mod tests {
         Ok(())
     }
 
+    const RUST_GATES: [&str; 4] = [
+        "check-no-panic-family",
+        "check-allow-attributes",
+        "check-file-policy",
+        "clippy",
+    ];
+
+    fn selected_receipt(paths: &[&str], report: &str) -> (Result<(), String>, String) {
+        let selected = paths
+            .iter()
+            .map(|path| (*path).to_string())
+            .collect::<Vec<_>>();
+        let receipt = RefCell::new(String::new());
+        let mut discover = || Ok(selected.clone());
+        let mut write = |status: &str, reason: &str, count: usize, detail: &str| {
+            *receipt.borrow_mut() = selector_report(status, reason, count, detail);
+            Ok(())
+        };
+        let result = run_transaction(
+            &mut discover,
+            || Ok(()),
+            || Ok(report.to_string()),
+            &mut write,
+        );
+        let written = receipt.borrow().clone();
+        (result, written)
+    }
+
+    fn require_rust_receipts(paths: &[&str]) -> Result<(), String> {
+        let (result, receipt) = selected_receipt(paths, EMPTY_FAST_REPORT);
+        let error = result
+            .err()
+            .ok_or_else(|| format!("missing Rust gates unexpectedly passed for {paths:?}"))?;
+        for gate in RUST_GATES {
+            if !error.contains(gate) {
+                return Err(format!("missing gate {gate} not identified: {error}"));
+            }
+        }
+        if !receipt.contains("Status: fail")
+            || !receipt.contains("Selector: fast_report_mismatch")
+            || !receipt.contains(&format!("Changed files: {}", paths.len()))
+        {
+            return Err(format!("wrong missing-gate receipt: {receipt}"));
+        }
+
+        let (always, _) = EMPTY_FAST_REPORT
+            .split_once("\n\nSkipped:\n")
+            .ok_or_else(|| "control report lacks Skipped boundary".to_string())?;
+        for omitted in [
+            None,
+            Some(RUST_GATES[0]),
+            Some(RUST_GATES[1]),
+            Some(RUST_GATES[2]),
+            Some(RUST_GATES[3]),
+        ] {
+            let rust = RUST_GATES
+                .iter()
+                .filter(|gate| Some(**gate) != omitted)
+                .map(|gate| format!("- {gate}"))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let report = format!("{always}\n{rust}\n\nSkipped:\n- check-fixture-contracts\n");
+            let (result, receipt) = selected_receipt(paths, &report);
+            match omitted {
+                None => {
+                    result?;
+                    if !receipt.contains("Status: pass") || !receipt.contains("Selector: stable") {
+                        return Err(format!("complete Rust receipt failed: {receipt}"));
+                    }
+                }
+                Some(gate) => {
+                    let error = result
+                        .err()
+                        .ok_or_else(|| format!("omitted {gate} passed"))?;
+                    if !error.contains(gate) || !receipt.contains("Selector: fast_report_mismatch")
+                    {
+                        return Err(format!(
+                            "omitted {gate} was not rejected: {error}; {receipt}"
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn selected_manifest_only_requires_rust_gate_receipts() -> Result<(), String> {
+        for path in [
+            "Cargo.toml",
+            "xtask/Cargo.toml",
+            "crates/ripr/Cargo.toml",
+            "tools/repo-policy/Cargo.toml",
+        ] {
+            require_rust_receipts(&[path])?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn selected_lock_only_requires_rust_gate_receipts() -> Result<(), String> {
+        require_rust_receipts(&["Cargo.lock"])
+    }
+
+    #[test]
+    fn selected_manifest_and_lock_require_rust_gate_receipts() -> Result<(), String> {
+        require_rust_receipts(&["tools/repo-policy/Cargo.toml", "Cargo.lock"])
+    }
+
+    #[test]
+    fn documentation_and_manifest_near_matches_keep_fast_receipts() -> Result<(), String> {
+        for path in [
+            "README.md",
+            "docs/guide.md",
+            "docs/Cargo.toml.md",
+            "OtherCargo.toml",
+            "docs/Cargo.lock",
+            "Cargo.lock.md",
+        ] {
+            let categories = super::super::super::categorize_changed_files(&[path.to_string()]);
+            if categories.rust_src || categories.workflow || categories.policy || categories.fixture
+            {
+                return Err(format!("unrelated path widened conditional gates: {path}"));
+            }
+            let (result, receipt) = selected_receipt(&[path], EMPTY_FAST_REPORT);
+            result?;
+            if !receipt.contains("Status: pass") || !receipt.contains("Changed files: 1") {
+                return Err(format!("fast path receipt changed for {path}: {receipt}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fixture_manifest_retains_rust_and_fixture_obligations() -> Result<(), String> {
+        let paths = ["fixtures/propagate_value_returned/input/Cargo.toml"];
+        let categories = super::super::super::categorize_changed_files(&[paths[0].to_string()]);
+        if !categories.rust_src || !categories.fixture {
+            return Err("fixture manifest lost Rust or fixture category".to_string());
+        }
+        let (result, _) = selected_receipt(&paths, EMPTY_FAST_REPORT);
+        let error = result
+            .err()
+            .ok_or_else(|| "fixture manifest accepted empty gates".to_string())?;
+        if !error.contains("clippy") || !error.contains("check-fixture-contracts") {
+            return Err(format!("fixture manifest lost required gates: {error}"));
+        }
+        Ok(())
+    }
+
     #[test]
     fn selected_rust_path_requires_rust_gate_receipt() -> Result<(), String> {
         for path in [
