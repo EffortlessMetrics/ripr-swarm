@@ -6,6 +6,10 @@
   boundary mapping, no shadowed `assert_eq!`. A `Production` helper in
   `src/` (including `src/tests/`), nested `tests/support/`, `benches/`,
   or `examples/` (including `examples/tests/`) is still not test evidence.
+  A workspace member nested under `tests/` still credits
+  `tests/<name>.rs` relative to its own manifest
+  (`tests/harness/tests/gate.rs`); a same-shaped `tests/support/tests/`
+  path without that manifest stays uncredited.
   An undeclared `tests/*.rs` file that `autotests = false` leaves unbuilt
   is dropped before helper credit ([#6965](https://github.com/EffortlessMetrics/ripr-swarm/issues/6965))
   ([#7125](https://github.com/EffortlessMetrics/ripr-swarm/issues/7125)).

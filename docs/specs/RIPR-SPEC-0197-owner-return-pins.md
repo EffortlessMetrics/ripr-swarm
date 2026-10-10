@@ -619,16 +619,19 @@ rule only for an assertion whose context was admitted.
      module (or both are top-level items). The helper is either a
      `CfgTestModule` function or a top-level non-test `Production` function
      in a crate-root integration-test target (`tests/<name>.rs` or
-     `tests/<name>/main.rs`, including `crates/*/tests/…`, #7125). The
+     `tests/<name>/main.rs` relative to the nearest owning manifest,
+     including `crates/*/tests/…` and a package nested under `tests/`
+     such as `tests/harness/tests/…`, #7125). The
      producer does not reclassify that `Production` helper; it only copies
      the helper's calls and parser-backed assertions onto the calling
      test. A `Production` function in a production file, including a
-     `src/tests/` module directory, a nested `tests/support/` file, and a
+     `src/tests/` module directory, a nested `tests/support/` file (including
+     `tests/support/tests/`), and a
      helper in `benches/` or `examples/` (including `examples/tests/`),
      stay uncredited. An undeclared `tests/<name>.rs` file in a package
      that sets `autotests = false` is not a Cargo target; diff analysis
-     drops it before helper crediting (#6965). This producer stays
-     path-only and does not re-infer Cargo target identity. A module item
+     drops it before helper crediting (#6965). This producer does not
+     re-infer whether Cargo builds the target. A module item
      cannot coexist with a
      same-named import and wins over a glob. The test contains no `use` item
      and binds no name equal to the helper (pattern, parameter, closure
@@ -1324,8 +1327,10 @@ assertions. This repair shares the existing callback without that larger migrati
 - `crates/ripr/src/analysis/facts/test_helpers.rs`: same-file helper
   crediting. Rule 7 (#7125) also credits a unique top-level `Production`
   helper in a crate-root integration-test target (`tests/<name>.rs` or
-  `tests/<name>/main.rs`) without changing its item role; nested
-  `tests/support/`, `benches/`, `examples/` (including `examples/tests/`),
+  `tests/<name>/main.rs` relative to the nearest owning manifest,
+  including a package nested under `tests/`) without changing its item
+  role; nested `tests/support/` (including `tests/support/tests/`),
+  `benches/`, `examples/` (including `examples/tests/`),
   `src/tests/`, and other production-file helpers stay out. Undeclared
   `tests/*.rs` files left unbuilt by `autotests = false` are dropped
   before this producer (#6965); Cargo-target identity is not re-inferred
@@ -1339,7 +1344,8 @@ assertions. This repair shares the existing callback without that larger migrati
   Rule 7 (#6482) moves classified full `1.54`, sharded and compact `0.60`, so
   a warm hit cannot keep a check helper's assertion uncredited; file facts
   are unchanged. Integration-target helpers (#7125) move classified full
-  `1.56`, sharded and compact `0.62`.
+  `1.57`, sharded and compact `0.63` so a warm `1.56` hit cannot keep a
+  nested-member autotest helper under-credited.
 
 ## Metrics
 

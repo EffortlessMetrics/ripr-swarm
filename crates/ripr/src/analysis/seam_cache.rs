@@ -404,7 +404,12 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `#[cfg(test)]` helper (#7125). `src/tests/`, nested `tests/support/`,
 /// and `examples/tests/` stay uncredited. Old entries keep those
 /// findings under-credited.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.56";
+/// `1.57`: the same helper is credited relative to the nearest owning
+/// manifest, so a package nested under `tests/` (`tests/harness/tests/`)
+/// is no longer under-credited. `tests/support/tests/` without that
+/// manifest stays uncredited. Warm `1.56` entries keep the nested-member
+/// under-credit.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.57";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -502,7 +507,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.56";
 /// (#7203); CRLF-checkout entries carry shifted IDs and must miss.
 /// `0.62`: same integration-target check-helper transition as full `1.56`
 /// (#7125).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.62";
+/// `0.63`: same nested-member autotest-root transition as full `1.57`
+/// (#7125).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.63";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -602,7 +609,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.62";
 /// (#7203); CRLF-checkout entries carry shifted IDs and must miss.
 /// `0.62`: same integration-target check-helper transition as full `1.56`
 /// (#7125).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.62";
+/// `0.63`: same nested-member autotest-root transition as full `1.57`
+/// (#7125).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.63";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4230,7 +4239,8 @@ mod tests {
         // offset (#7203); a warm CRLF-checkout entry carries the
         // byte-spelling-shifted ID and must cold-recompute.
         // 1.55 -> 1.56: integration-target check helpers credited (#7125).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.56");
+        // 1.56 -> 1.57: nested-member autotest helpers credited (#7125).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.57");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4279,8 +4289,9 @@ mod tests {
         // 0.60 -> 0.61: same line-ending-normalized seam-ID transition as
         // full 1.55 (#7203).
         // 0.61 -> 0.62: same #7125 transition as full 1.56.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.62");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.62");
+        // 0.62 -> 0.63: same nested-member transition as full 1.57.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.63");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.63");
     }
 
     #[test]

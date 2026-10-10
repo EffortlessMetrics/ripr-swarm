@@ -23,8 +23,10 @@
 //!   module as the test (or both sit at the file's top level). Eligible
 //!   helpers are an evidence-role (`CfgTestModule`) function, or a
 //!   top-level `Production` function in a crate-root integration-test
-//!   target (`tests/<name>.rs` or `tests/<name>/main.rs`, including
-//!   `crates/*/tests/…`, #7125). This producer does not reclassify that
+//!   target (`tests/<name>.rs` or `tests/<name>/main.rs` relative to the
+//!   nearest owning manifest, including `crates/*/tests/…` and a package
+//!   nested under `tests/` such as `tests/harness/tests/…`, #7125). This
+//!   producer does not reclassify that
 //!   `Production` helper; it only copies the helper's calls and
 //!   parser-backed assertions onto the calling test. A `Production`
 //!   function in a production file, including a `src/tests/` module
@@ -77,6 +79,10 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
     // parsed serially here before, which dominated warm diff-scoped checks.
     // A file is parsed only when one of its tests calls a candidate helper
     // that the parse-free conditions below already admit.
+    let workspace_root = index
+        .workspace_authority
+        .as_ref()
+        .map(|authority| authority.root.as_path());
     let mut names_by_file: BTreeMap<&PathBuf, BTreeMap<&str, Vec<&FunctionFact>>> = BTreeMap::new();
     let mut test_files: BTreeSet<&PathBuf> = BTreeSet::new();
     for test in index.tests().iter() {
@@ -99,7 +105,7 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
         let candidate = test.calls.iter().any(|call| {
             matches!(
                 names.get(call.name.as_str()).map(Vec::as_slice),
-                Some([helper]) if is_assertion_helper(helper)
+                Some([helper]) if is_assertion_helper(helper, workspace_root)
                     && !test_shadows(test, &call.name)
                     && !spans_overlap(helper, test)
             )
@@ -166,7 +172,9 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
             if credited_helpers.contains(&call.name.as_str()) {
                 continue;
             }
-            let Some(helper) = unique_assertion_helper(functions_by_name, &call.name) else {
+            let Some(helper) =
+                unique_assertion_helper(functions_by_name, &call.name, workspace_root)
+            else {
                 continue;
             };
             let helper_key = (helper.start_line, helper.name.clone());
@@ -223,9 +231,10 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
 fn unique_assertion_helper<'facts>(
     functions_by_name: &BTreeMap<String, Vec<&'facts FunctionFact>>,
     name: &str,
+    workspace_root: Option<&Path>,
 ) -> Option<&'facts FunctionFact> {
     match functions_by_name.get(name)?.as_slice() {
-        [helper] if is_assertion_helper(helper) => Some(helper),
+        [helper] if is_assertion_helper(helper, workspace_root) => Some(helper),
         _ => None,
     }
 }
@@ -239,50 +248,105 @@ fn unique_assertion_helper<'facts>(
 /// because the helper is not inside a cfg-test module. Executable test
 /// roles and production files stay out, so a `src/` helper — including
 /// `src/tests/` (#6979) — cannot become test evidence here.
-fn is_assertion_helper(helper: &FunctionFact) -> bool {
+fn is_assertion_helper(helper: &FunctionFact, workspace_root: Option<&Path>) -> bool {
     match helper.source_role {
         FunctionSourceRole::CfgTestModule => true,
-        FunctionSourceRole::Production => is_crate_root_integration_test_file(&helper.file),
+        FunctionSourceRole::Production => {
+            is_crate_root_integration_test_file(&helper.file, workspace_root)
+        }
         _ => false,
     }
 }
 
 /// Cargo's default autotest roots are `tests/<name>.rs` and
-/// `tests/<name>/main.rs` beside the package (including
-/// `crates/demo/tests/…`). Nested files such as `tests/support/gate.rs`
-/// are not targets unless a root `mod`s them, and this producer is
-/// same-file only, so they stay uncredited. `src/tests/` is a module
-/// directory (#6979). `examples/tests/` and `benches/tests/` are not
-/// package autotest roots. The shared `is_test_file` layout check
+/// `tests/<name>/main.rs` beside the owning package (including
+/// `crates/demo/tests/…` and a member nested under `tests/`, such as
+/// `tests/harness/tests/gate.rs`). Nested files such as
+/// `tests/support/gate.rs` are not targets unless a root `mod`s them, and
+/// this producer is same-file only, so they stay uncredited. `src/tests/`
+/// is a module directory (#6979). `examples/tests/` and `benches/tests/`
+/// are not package autotest roots. The shared `is_test_file` layout check
 /// matches any `/tests/` component and is not reused here.
 ///
-/// `autotests = false` leaving an undeclared `tests/*.rs` unbuilt is
-/// owned by the analysis-pipeline drop (#6965), which removes that file
-/// before this producer runs. This check stays path-only and does not
-/// re-infer Cargo target identity.
-fn is_crate_root_integration_test_file(path: &Path) -> bool {
-    let normalized = path.to_string_lossy().replace('\\', "/");
-    let components: Vec<&str> = normalized
+/// When a workspace root is known, the remaining path is taken from the
+/// nearest `Cargo.toml` so a first repository `tests`/`src`/`examples`/
+/// `benches` component cannot hide a nested member's genuine autotest
+/// root. No manifest found (synthetic indexes) falls back to the
+/// repository-relative first-`tests` shape. Finding a manifest whose
+/// remaining path is not an autotest root stays refused: `tests/support/`
+/// and `src/tests/` cannot become test evidence. `autotests = false`
+/// leaving an undeclared `tests/*.rs` unbuilt is owned by the
+/// analysis-pipeline drop (#6965); this check does not re-infer whether
+/// Cargo builds the target.
+fn is_crate_root_integration_test_file(path: &Path, workspace_root: Option<&Path>) -> bool {
+    if let Some(root) = workspace_root
+        && let Some(relative) = path_from_nearest_manifest(root, path)
+    {
+        return is_package_autotest_root(&relative);
+    }
+    is_repository_relative_autotest_root(path)
+}
+
+/// Path components of `file` relative to the nearest `Cargo.toml` at or
+/// above it, stopping at `workspace_root`. `None` when no manifest exists
+/// in that walk, so callers can fall back to the repository-relative
+/// layout check used by synthetic indexes.
+fn path_from_nearest_manifest(workspace_root: &Path, file: &Path) -> Option<Vec<String>> {
+    let full = if file.is_absolute() {
+        file.to_path_buf()
+    } else {
+        workspace_root.join(file)
+    };
+    let mut dir = full.parent()?.to_path_buf();
+    loop {
+        if !dir.starts_with(workspace_root) {
+            return None;
+        }
+        if dir.join("Cargo.toml").is_file() {
+            return Some(path_components(full.strip_prefix(&dir).ok()?));
+        }
+        if dir == workspace_root {
+            return None;
+        }
+        dir = dir.parent()?.to_path_buf();
+    }
+}
+
+fn path_components(path: &Path) -> Vec<String> {
+    path.to_string_lossy()
+        .replace('\\', "/")
         .split('/')
         .filter(|component| !component.is_empty() && *component != ".")
-        .collect();
-    let Some(tests_at) = components
-        .iter()
-        .position(|component| *component == "tests")
-    else {
+        .map(str::to_string)
+        .collect()
+}
+
+/// `tests/<name>.rs` or `tests/<name>/main.rs` relative to a package root.
+fn is_package_autotest_root(components: &[String]) -> bool {
+    match components {
+        [tests, name] if tests == "tests" && name.ends_with(".rs") => true,
+        [tests, _, main] if tests == "tests" && main == "main.rs" => true,
+        _ => false,
+    }
+}
+
+/// Fallback when no owning manifest is on disk: first `tests` component,
+/// no earlier `src`/`examples`/`benches`, then `tests/<name>.rs` or
+/// `tests/<name>/main.rs`. This still credits `crates/demo/tests/gate.rs`
+/// in synthetic indexes and still refuses `src/tests/` and
+/// `tests/harness/tests/gate.rs` (the nested member needs its manifest).
+fn is_repository_relative_autotest_root(path: &Path) -> bool {
+    let components = path_components(path);
+    let Some(tests_at) = components.iter().position(|component| component == "tests") else {
         return false;
     };
     if components[..tests_at]
         .iter()
-        .any(|component| matches!(*component, "src" | "examples" | "benches"))
+        .any(|component| matches!(component.as_str(), "src" | "examples" | "benches"))
     {
         return false;
     }
-    match components.get(tests_at + 1..) {
-        Some([name]) => name.ends_with(".rs"),
-        Some([_, "main.rs"]) => true,
-        _ => false,
-    }
+    is_package_autotest_root(&components[tests_at..])
 }
 
 /// A nested `fn` item or a `let` binding with the helper's name means the

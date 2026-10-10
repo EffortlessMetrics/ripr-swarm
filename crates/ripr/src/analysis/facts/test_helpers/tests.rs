@@ -24,7 +24,9 @@ fn index_for_files(files: &[(&str, &str)]) -> Result<RustIndex, Box<dyn Error>> 
             fs::create_dir_all(parent)?;
         }
         fs::write(&path, source)?;
-        paths.push(PathBuf::from(*relative));
+        if relative.ends_with(".rs") {
+            paths.push(PathBuf::from(*relative));
+        }
     }
     let index = build_index(&root, &paths);
     fs::remove_dir_all(&root)?;
@@ -388,45 +390,93 @@ fn workspace_crate_integration_helper_is_credited() -> Result<(), Box<dyn Error>
 
 #[test]
 fn crate_root_integration_layout_rejects_src_tests_and_keeps_tests_roots() {
-    assert!(super::is_crate_root_integration_test_file(Path::new(
-        "tests/gate.rs"
-    )));
-    assert!(super::is_crate_root_integration_test_file(Path::new(
-        "crates/demo/tests/gate.rs"
-    )));
-    assert!(super::is_crate_root_integration_test_file(Path::new(
-        "tests\\gate.rs"
-    )));
-    assert!(super::is_crate_root_integration_test_file(Path::new(
-        "tests/foo/main.rs"
-    )));
-    assert!(!super::is_crate_root_integration_test_file(Path::new(
-        "src/tests/gate.rs"
-    )));
-    assert!(!super::is_crate_root_integration_test_file(Path::new(
-        "src\\tests\\gate.rs"
-    )));
-    assert!(!super::is_crate_root_integration_test_file(Path::new(
-        "crates/demo/src/tests/gate.rs"
-    )));
-    assert!(!super::is_crate_root_integration_test_file(Path::new(
-        "src/lib.rs"
-    )));
-    assert!(!super::is_crate_root_integration_test_file(Path::new(
-        "benches/gate.rs"
-    )));
-    assert!(!super::is_crate_root_integration_test_file(Path::new(
-        "tests/support/gate.rs"
-    )));
-    assert!(!super::is_crate_root_integration_test_file(Path::new(
-        "examples/tests/gate.rs"
-    )));
-    assert!(!super::is_crate_root_integration_test_file(Path::new(
-        "benches/tests/gate.rs"
-    )));
-    assert!(!super::is_crate_root_integration_test_file(Path::new(
-        "tests/foo/mod.rs"
-    )));
+    fn layout(path: &str) -> bool {
+        super::is_crate_root_integration_test_file(Path::new(path), None)
+    }
+    assert!(layout("tests/gate.rs"));
+    assert!(layout("crates/demo/tests/gate.rs"));
+    assert!(layout("tests\\gate.rs"));
+    assert!(layout("tests/foo/main.rs"));
+    assert!(!layout("src/tests/gate.rs"));
+    assert!(!layout("src\\tests\\gate.rs"));
+    assert!(!layout("crates/demo/src/tests/gate.rs"));
+    assert!(!layout("src/lib.rs"));
+    assert!(!layout("benches/gate.rs"));
+    assert!(!layout("tests/support/gate.rs"));
+    assert!(!layout("examples/tests/gate.rs"));
+    assert!(!layout("benches/tests/gate.rs"));
+    assert!(!layout("tests/foo/mod.rs"));
+    // Nested-member autotest needs the owning manifest; path-only fallback
+    // must not treat the first `tests` as that package root.
+    assert!(!layout("tests/harness/tests/gate.rs"));
+    assert!(!layout("tests/support/tests/gate.rs"));
+}
+
+const INTEGRATION_CHECK: &str = concat!(
+    "fn check(input: u32, want: bool) {\n",
+    "    assert_eq!(gate(input), want);\n",
+    "}\n\n",
+    "#[test]\n",
+    "fn boundary() {\n",
+    "    check(10, false);\n",
+    "}\n",
+);
+
+#[test]
+fn nested_package_integration_helper_is_credited() -> Result<(), Box<dyn Error>> {
+    // A workspace member nested under `tests/` still owns `tests/gate.rs`
+    // relative to its manifest (`tests/harness/tests/gate.rs`). The first
+    // repository `tests` component is the ancestor directory, not the
+    // autotest root.
+    let index = index_for_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = 'root'\nversion = '0.1.0'\nedition = '2021'\n[workspace]\nmembers = ['tests/harness']\n",
+        ),
+        ("src/lib.rs", GATE),
+        (
+            "tests/harness/Cargo.toml",
+            "[package]\nname = 'harness'\nversion = '0.1.0'\nedition = '2021'\n",
+        ),
+        ("tests/harness/tests/gate.rs", INTEGRATION_CHECK),
+    ])?;
+    let helper = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "check" && function.file.ends_with("gate.rs"))
+        .ok_or("premise: the nested-package helper is indexed")?;
+    assert_eq!(
+        helper.source_role,
+        FunctionSourceRole::Production,
+        "the producer must not reclassify the helper: {:?}",
+        helper.source_role
+    );
+    let test = test_named(&index, "boundary")?;
+    assert!(calls(test).contains(&"gate"), "{:?}", calls(test));
+    assert_eq!(
+        assertion_texts(test),
+        vec!["assert_eq!(gate(input), want);"]
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_support_tests_helper_is_not_credited() -> Result<(), Box<dyn Error>> {
+    // Same path shape as tests/harness/tests/gate.rs, but tests/support is
+    // not a package. Nearest manifest is the root, remaining path is not
+    // an autotest root, so last-`tests` path-only credit would over-credit.
+    let index = index_for_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = 'root'\nversion = '0.1.0'\nedition = '2021'\n[workspace]\n",
+        ),
+        ("src/lib.rs", GATE),
+        ("tests/support/tests/gate.rs", INTEGRATION_CHECK),
+    ])?;
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
 }
 
 #[test]

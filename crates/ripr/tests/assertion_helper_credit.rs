@@ -210,6 +210,62 @@ fn production_top_level_check_helper_does_not_expose() -> Result<(), String> {
 }
 
 #[test]
+fn nested_package_integration_helper_exposes_the_changed_predicate() -> Result<(), String> {
+    // A workspace member nested under tests/ still runs tests/gate.rs
+    // relative to its own manifest. First-repository-`tests` credit would
+    // leave this weakly_exposed.
+    let finding = TempRepo::create_files(&[
+        (
+            "Cargo.toml",
+            "[package]\nname = \"assertion-helper-credit\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\nmembers = [\"tests/harness\"]\n"
+                .to_string(),
+        ),
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/harness/Cargo.toml",
+            "[package]\nname = \"harness\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[dependencies]\nassertion-helper-credit = { path = \"../..\" }\n"
+                .to_string(),
+        ),
+        ("tests/harness/src/lib.rs", String::new()),
+        (
+            "tests/harness/tests/gate.rs",
+            integration_source(check_eq_helper()),
+        ),
+    ])?
+    .predicate()?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "tests/harness/tests/gate.rs is the nested member's autotest root: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn nested_tests_support_tests_check_helper_does_not_expose() -> Result<(), String> {
+    // Same remaining-path shape as tests/harness/tests/gate.rs without a
+    // nested package manifest must not become exposed.
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/support/tests/gate.rs",
+            format!(
+                "use assertion_helper_credit::gate;\n\n{}#[test]\nfn boundary() {{\n{}}}",
+                check_eq_helper(),
+                boundary_calls()
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "tests/support/tests/ is not a package autotest root: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn nested_tests_support_check_helper_does_not_expose() -> Result<(), String> {
     let finding = TempRepo::create_files(&[
         ("src/lib.rs", GATE.to_string()),
