@@ -15,7 +15,11 @@ name — a unique wrapper of a non-unique helper (`outer` → second
 `inner`) is the negative control (`helper_chain_controls`,
 `rust_transitive_reach_positive`). A receiver call of the same name
 (`req.parse()`, including the raw-identifier spelling `req.r#parse()`)
-is not an entry; `Version::parse(...)` is. `call_name_bounds_before_paren`
+is not an entry; `Version::parse(...)` is when it targets the hop, not a
+qualified sibling (`B::parse` must not credit hop `A::parse`; bind the
+stop-name branch to that hop's `FunctionSummary` like extras already use
+`tests_call_function`) (#7268). Bare unresolved `parse(` still enters.
+`call_name_bounds_before_paren`
 walks only `[A-Za-z0-9_]`, so skip one preceding `r#` before the
 receiver / path / `fn`-item checks or `raw_before` is `#` and the
 occurrence falls through to Free (#7270). Bare `r#parse(` stays an

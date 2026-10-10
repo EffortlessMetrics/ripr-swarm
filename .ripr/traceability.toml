@@ -10232,6 +10232,7 @@ spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests",
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::uniqueness_stop_names_the_ambiguous_entry_tests_call",
+  "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::uniqueness_stop_does_not_credit_qualified_sibling_of_the_hop",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_for_non_unique_entry_when_tests_call_it_then_static_unknown",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_for_non_unique_callee_when_tests_call_a_unique_wrapper_then_no_static_path",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_for_non_unique_entry_when_tests_only_call_a_receiver_then_no_static_path",
@@ -10248,6 +10249,9 @@ tests = [
   "crates/ripr/tests/property_macro_quarantine.rs::property_macro_quarantine_matches_runtime_collection_and_discrimination",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_call_generic_qualified_parse_then_no_static_path",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_same_line_has_foreign_then_workspace_from_str_then_static_unknown",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_call_qualified_sibling_of_hop_then_no_static_path",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_call_bare_parse_of_qualified_hop_then_static_unknown",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_call_qualified_hop_then_static_unknown",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_call_associated_sibling_of_wrapping_from_str_then_no_static_path",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_import_foreign_from_str_then_no_static_path",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_foreign_import_and_qualified_from_str_then_static_unknown",

@@ -4,7 +4,8 @@ Status: proposed
 
 Issue: #3296 (parent #3215; builds on #3294 / RIPR-SPEC-0157 and
 #3295 / RIPR-SPEC-0158). Classification of a uniqueness-only refusal:
-#7080. Raw-identifier receiver/path not an entry: #7270.
+#7080. Raw-identifier receiver/path not an entry: #7270. Qualified
+sibling of the uniqueness-stop hop is not an entry: #7268.
 
 ## Problem
 
@@ -68,6 +69,11 @@ can only hint that a caller "may lead here" without changing anything.
   (`parse (...)`, `parse::<T>(...)`) still enter. A path-qualified call
   enters only when some workspace function of that name could be the `T`
   in `T::name(` (`VersionReq::from_str` yes; `serde_json::from_str` no).
+  When the uniqueness-stop name is also a resolved hop (`A::parse`
+  calling unique `op`), a type-qualified sibling (`B::parse`) does not
+  enter that hop; bind the hop like extras already bind wrappers
+  (`tests_call_function`). Bare unresolved `parse(...)` still enters
+  (#7268 / #7080).
   A wrapper-local or test-local `fn`/`let` of the refused name, including
   on a lexical-fallback file, is not an entry. An `fn` item on the call
   line (`fn parse() { ... }`) is not a free-function entry.
