@@ -20318,6 +20318,111 @@ async fn workspace_status_reports_outside_partition_document_not_analyzed() -> R
     Ok(())
 }
 
+/// #5998 must keep its reason on a dirty buffer. `state` becomes
+/// `quarantined` and line-local diagnostics are withdrawn, but the
+/// partition reason and recovery stay so a consumer can still see why
+/// the saved file was never analyzed.
+#[tokio::test]
+async fn workspace_status_keeps_outside_partition_reason_when_quarantined() -> Result<(), String> {
+    let fixture = partition_fixture("outside-partition-quarantined")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    for (uri, text) in fixture.uris.iter().zip(PARTITION_TEXTS.iter()) {
+        backend.did_open(quarantine_open_params(uri, text)).await;
+    }
+    backend
+        .refresh_plan(partition_workspace_diagnostics(
+            &fixture,
+            false,
+            Some(partition_partial_scope()),
+        ))
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.uris[1],
+            2,
+            "fn beyond() -> bool { false }\n",
+        ))
+        .await;
+
+    let status = workspace_status_json(backend).await?;
+    let beyond = open_document_entry(&status, fixture.uris[1].as_str())?;
+    if beyond["state"].as_str() != Some("quarantined")
+        || beyond["line_local_diagnostics"].as_str() != Some("withdrawn")
+    {
+        return Err(format!(
+            "a dirty outside-partition document must be quarantined/withdrawn: {beyond}"
+        ));
+    }
+    if beyond["not_analyzed_reason"].as_str() != Some("outside_analyzed_partition") {
+        return Err(format!(
+            "quarantine must not clear the #5998 reason: {beyond}"
+        ));
+    }
+    let recovery = beyond["not_analyzed_recovery"]
+        .as_str()
+        .ok_or_else(|| format!("quarantined outside-partition must keep recovery: {beyond}"))?;
+    if !recovery.contains("RIPR_PARTIAL_DIFF_FILE_BUDGET") {
+        return Err(format!(
+            "quarantined #5998 recovery must name the budget: {recovery}"
+        ));
+    }
+    Ok(())
+}
+
+/// #7205: a dirty disabled-language document is quarantined; do not attach
+/// the new reason until the buffer is saved. That keeps #1970's dirty-state
+/// disclosure as the document row's primary status.
+#[tokio::test]
+async fn workspace_status_omits_disabled_language_reason_while_quarantined() -> Result<(), String> {
+    let fixture = disabled_language_fixture("disabled-language-quarantined")?;
+    let (service, socket) = LspService::new(|client| Backend::new(client, fixture.root.clone()));
+    drop(socket);
+    let backend = service.inner();
+    backend
+        .did_open(quarantine_open_params(
+            &fixture.changed_python_uri,
+            "def price():\n    return 1\n",
+        ))
+        .await;
+    backend
+        .refresh_plan(disabled_language_workspace_diagnostics(
+            &fixture,
+            None,
+            python_disabled_adapter_coverage(&["zpy/pricing.py"], 1),
+        )?)
+        .ok_or_else(|| "expected committed snapshot".to_string())?;
+    backend
+        .did_change(quarantine_change_params(
+            &fixture.changed_python_uri,
+            2,
+            "def price():\n    return 2\n",
+        ))
+        .await;
+
+    let status = workspace_status_json(backend).await?;
+    let changed = open_document_entry(&status, fixture.changed_python_uri.as_str())?;
+    if changed["state"].as_str() != Some("quarantined")
+        || changed["line_local_diagnostics"].as_str() != Some("withdrawn")
+    {
+        return Err(format!(
+            "a dirty disabled-language document must be quarantined/withdrawn: {changed}"
+        ));
+    }
+    if changed["not_analyzed_reason"].as_str() == Some("language_adapter_not_enabled") {
+        return Err(format!(
+            "quarantine must not attach the #7205 reason on a dirty buffer: {changed}"
+        ));
+    }
+    if !changed["not_analyzed_reason"].is_null() {
+        return Err(format!(
+            "quarantined disabled-language reason must stay null: {changed}"
+        ));
+    }
+    Ok(())
+}
+
 fn python_disabled_adapter_coverage(
     sample_paths: &[&str],
     file_count: usize,

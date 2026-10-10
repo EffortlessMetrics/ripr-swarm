@@ -6262,18 +6262,18 @@ impl Backend {
                     } else {
                         "served"
                     },
-                    "not_analyzed_reason": if quarantined {
-                        serde_json::Value::Null
-                    } else if outside_partition {
+                    // #5998 reason/recovery stay on a quarantined document:
+                    // `state`/`line_local_diagnostics` already say
+                    // quarantined/withdrawn. The new #7205 reason is gated
+                    // off while dirty so it cannot overwrite that disclosure.
+                    "not_analyzed_reason": if outside_partition {
                         serde_json::Value::String("outside_analyzed_partition".to_string())
-                    } else if adapter_language.is_some() {
+                    } else if !quarantined && adapter_language.is_some() {
                         serde_json::Value::String("language_adapter_not_enabled".to_string())
                     } else {
                         serde_json::Value::Null
                     },
-                    "not_analyzed_recovery": if quarantined {
-                        serde_json::Value::Null
-                    } else if outside_partition {
+                    "not_analyzed_recovery": if outside_partition {
                         snapshot
                             .map(|snapshot| {
                                 serde_json::Value::String(outside_partition_recovery(
@@ -6281,7 +6281,7 @@ impl Backend {
                                 ))
                             })
                             .unwrap_or(serde_json::Value::Null)
-                    } else if let Some(language) = adapter_language {
+                    } else if let (false, Some(language)) = (quarantined, adapter_language) {
                         serde_json::Value::String(language_adapter_not_enabled_recovery(language))
                     } else {
                         serde_json::Value::Null
