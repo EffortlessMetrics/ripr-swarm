@@ -56,12 +56,13 @@ impl Fixture {
         }
         Ok(fixture)
     }
+    fn command(&self, argument: &str) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_repo-policy"));
+        command.arg(argument).current_dir(&self.0);
+        command
+    }
     fn run(&self, command: &str) -> Result<Output, String> {
-        Command::new(env!("CARGO_BIN_EXE_repo-policy"))
-            .arg(command)
-            .current_dir(&self.0)
-            .output()
-            .map_err(|e| e.to_string())
+        self.command(command).output().map_err(|e| e.to_string())
     }
 }
 impl Drop for Fixture {
@@ -224,10 +225,9 @@ fn partial_fixture_is_removed_after_copy_error() -> Result<(), String> {
 fn runtime_compiler_selection_rejects_a_changed_compiler() -> Result<(), String> {
     let fixture = Fixture::new()?;
     let run = |compiler: &str| {
-        Command::new(env!("CARGO_BIN_EXE_repo-policy"))
-            .arg("preflight")
+        fixture
+            .command("preflight")
             .env("RUSTC", compiler)
-            .current_dir(&fixture.0)
             .output()
             .map_err(|e| e.to_string())
     };
