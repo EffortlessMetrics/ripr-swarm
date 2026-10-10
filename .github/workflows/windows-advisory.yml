@@ -310,75 +310,6 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@1.95
 
-      - name: Own stable same-volume Cargo target before cache and subset builds
-        shell: pwsh
-        env:
-          SELECTOR_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          $target_setup = @'
-          import json
-          import os
-          from pathlib import Path
-          import shutil
-
-          def own_target(stock_bin, root, head):
-              owned = stock_bin / "selector-subset-cache"
-              alias = root / "target" / "selector-cargo-cache"
-              if alias.exists() or alias.is_symlink() or getattr(alias, "is_junction", lambda: False)():
-                  raise RuntimeError("occupied cache target alias")
-              owned.mkdir()  # Atomic, exclusive acquisition; occupied roots are terminal.
-              target = owned / "target"
-              target.mkdir()
-              owner = {"head": head, "root": str(root), "target": str(target), "alias": str(alias)}
-              (owned / "owner.json").write_text(json.dumps(owner), encoding="utf-8")
-              alias.parent.mkdir(exist_ok=True)
-              return owner
-
-          root = Path.cwd().resolve()
-          cargo = shutil.which("cargo")
-          if not cargo:
-              raise RuntimeError("stock Cargo unavailable")
-          owner = own_target(Path(cargo).resolve().parent, root, os.environ["SELECTOR_EXPECTED_HEAD"])
-          print(json.dumps(owner))
-          '@
-          $owner = $target_setup | python -
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $owner = $owner | ConvertFrom-Json
-          New-Item -ItemType Junction -Path $owner.alias -Target $owner.target -ErrorAction Stop | Out-Null
-          "CARGO_TARGET_DIR=$($owner.target)" >> $env:GITHUB_ENV
-          "SELECTOR_TARGET_OWNER=$($owner.target | Split-Path)/owner.json" >> $env:GITHUB_ENV
-
-      # Distinct cache key on purpose: this job and the full suite build
-      # different target subsets, and GitHub cache keys are immutable, so one
-      # shared key would let whichever job saves first on `main` starve the
-      # other of its artifacts.
-      - uses: Swatinem/rust-cache@v2
-        with:
-          # v2 joins target to workspace root; cross-drive absolute targets cannot
-          # be mapped directly. Prune through the junction, archive the real path
-          # once, and retain the checkout root for workspace crate classification.
-          shared-key: ripr-windows-advisory-subset-1.95-${{ runner.os }}-stock-volume-v1
-          workspaces: ". -> target/selector-cargo-cache"
-          cache-targets: false
-          cache-directories: ${{ env.CARGO_TARGET_DIR }}
-          cache-bin: false
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Run lsp::gap_artifacts subset (advisory, #4921)
-        shell: bash
-        run: |
-          mkdir -p target; set +e; cargo test -p ripr --lib lsp::gap_artifacts 2>&1 | tee target/subset-gap-artifacts.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-gap-artifacts.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-gap-artifacts.log" >&2; exit 1; fi; exit 0
-
-      - name: Run cache-warning smoke subset (advisory, #4918)
-        shell: bash
-        run: |
-          mkdir -p target; set +e; cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build 2>&1 | tee target/subset-cache-warning.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cache-warning.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cache-warning.log" >&2; exit 1; fi; exit 0
-
-      - name: Run clippy subset (advisory, #4337)
-        shell: bash
-        run: |
-          mkdir -p target; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-clippy.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-clippy.log" >&2; exit 1; fi; exit 0
-
       - name: Check selector storage boundaries without a product build
         shell: pwsh
         run: |
@@ -390,6 +321,7 @@ jobs:
           import json
           import os
           from pathlib import Path
+          import re
           import shutil
           import sys
           import tempfile
@@ -458,21 +390,35 @@ jobs:
 
               def test_cache_target_is_owned_before_restore_and_all_subset_builds(self):
                   text = WORKFLOW.read_text()
-                  section = text[text.index('      - name: Own stable same-volume Cargo target'):]
+                  section = text[text.index('\n      - name: Own stable same-volume Cargo target before cache and subset builds\n'):]
                   self.assertLess(section.index('$target_setup'), section.index('uses: Swatinem/rust-cache@v2'))
                   self.assertLess(section.index('uses: Swatinem/rust-cache@v2'), section.index('cargo test -p ripr'))
                   self.assertIn('"CARGO_TARGET_DIR=$($owner.target)" >> $env:GITHUB_ENV', section)
                   self.assertIn('workspaces: ". -> target/selector-cargo-cache"', section)
                   self.assertIn('cache-targets: false', section)
-                  self.assertIn('cache-directories: ${{ env.CARGO_TARGET_DIR }}', section)
-                  self.assertIn('shared-key: ripr-windows-advisory-subset-1.95-${{ runner.os }}-stock-volume-v1', section)
-                  self.assertIn("save-if: ${{ github.ref == 'refs/heads/main' }}", section)
+                  expression = lambda value: '$' + '{{ ' + value + ' }}'
+                  self.assertIn('cache-directories: ' + expression('env.CARGO_TARGET_DIR'), section)
+                  self.assertIn('shared-key: ripr-windows-advisory-subset-1.95-' + expression('runner.os') + '-stock-volume-v1', section)
+                  self.assertIn('save-if: ' + expression("github.ref == 'refs/heads/main'"), section)
                   self.assertIn('cache-bin: false', section)
                   source = ast.unparse(self.tree)
                   self.assertIn("target = Path(os.environ['CARGO_TARGET_DIR'])", source)
                   self.assertNotIn('selector-build-', source)
                   self.assertNotIn('rmtree(target)', source)
                   self.assertIn('alias.is_junction() and alias.resolve() == target', source)
+
+              def test_actions_rendered_storage_source_is_python_and_precedes_product_builds(self):
+                  text = WORKFLOW.read_text()
+                  raw = text.split("$storage_tests = @'\n", 1)[1].split("\n          '@\n", 1)[0]
+                  source = '\n'.join(line[10:] for line in raw.splitlines())
+                  # Model Actions substitution before PowerShell/Python see this source.
+                  values = {'env.CARGO_TARGET_DIR': r'C:\Users\runneradmin\.cargo\bin\selector-subset-cache\target',
+                            'runner.os': 'Windows', "github.ref == 'refs/heads/main'": 'false'}
+                  rendered = re.sub(r'\$\{\{(.*?)\}\}', lambda m: values[m[1].strip()], source)
+                  compile(rendered, 'actions-rendered-storage-tests', 'exec')
+                  self.assertEqual(rendered, source, 'test source contains an Actions expression')
+                  self.assertLess(text.index('\n      - name: Check selector storage boundaries without a product build\n'),
+                                  text.index('\n      - name: Own stable same-volume Cargo target before cache and subset builds\n'))
 
               def acquire(self):
                   text = WORKFLOW.read_text().split("$target_setup = @'\n", 1)[1].split("\n          '@", 1)[0]
@@ -696,6 +642,75 @@ jobs:
           '@
           $storage_tests | python -
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Own stable same-volume Cargo target before cache and subset builds
+        shell: pwsh
+        env:
+          SELECTOR_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $target_setup = @'
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+
+          def own_target(stock_bin, root, head):
+              owned = stock_bin / "selector-subset-cache"
+              alias = root / "target" / "selector-cargo-cache"
+              if alias.exists() or alias.is_symlink() or getattr(alias, "is_junction", lambda: False)():
+                  raise RuntimeError("occupied cache target alias")
+              owned.mkdir()  # Atomic, exclusive acquisition; occupied roots are terminal.
+              target = owned / "target"
+              target.mkdir()
+              owner = {"head": head, "root": str(root), "target": str(target), "alias": str(alias)}
+              (owned / "owner.json").write_text(json.dumps(owner), encoding="utf-8")
+              alias.parent.mkdir(exist_ok=True)
+              return owner
+
+          root = Path.cwd().resolve()
+          cargo = shutil.which("cargo")
+          if not cargo:
+              raise RuntimeError("stock Cargo unavailable")
+          owner = own_target(Path(cargo).resolve().parent, root, os.environ["SELECTOR_EXPECTED_HEAD"])
+          print(json.dumps(owner))
+          '@
+          $owner = $target_setup | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $owner = $owner | ConvertFrom-Json
+          New-Item -ItemType Junction -Path $owner.alias -Target $owner.target -ErrorAction Stop | Out-Null
+          "CARGO_TARGET_DIR=$($owner.target)" >> $env:GITHUB_ENV
+          "SELECTOR_TARGET_OWNER=$($owner.target | Split-Path)/owner.json" >> $env:GITHUB_ENV
+
+      # Distinct cache key on purpose: this job and the full suite build
+      # different target subsets, and GitHub cache keys are immutable, so one
+      # shared key would let whichever job saves first on `main` starve the
+      # other of its artifacts.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # v2 joins target to workspace root; cross-drive absolute targets cannot
+          # be mapped directly. Prune through the junction, archive the real path
+          # once, and retain the checkout root for workspace crate classification.
+          shared-key: ripr-windows-advisory-subset-1.95-${{ runner.os }}-stock-volume-v1
+          workspaces: ". -> target/selector-cargo-cache"
+          cache-targets: false
+          cache-directories: ${{ env.CARGO_TARGET_DIR }}
+          cache-bin: false
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Run lsp::gap_artifacts subset (advisory, #4921)
+        shell: bash
+        run: |
+          mkdir -p target; set +e; cargo test -p ripr --lib lsp::gap_artifacts 2>&1 | tee target/subset-gap-artifacts.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-gap-artifacts.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-gap-artifacts.log" >&2; exit 1; fi; exit 0
+
+      - name: Run cache-warning smoke subset (advisory, #4918)
+        shell: bash
+        run: |
+          mkdir -p target; set +e; cargo test -p ripr --test cli_smoke unusable_cache_directory_is_reported_once_per_build 2>&1 | tee target/subset-cache-warning.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-cache-warning.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-cache-warning.log" >&2; exit 1; fi; exit 0
+
+      - name: Run clippy subset (advisory, #4337)
+        shell: bash
+        run: |
+          mkdir -p target; set +e; cargo clippy -p ripr --all-targets -- -D warnings 2>&1 | tee target/subset-clippy.log; pipe_status=("${PIPESTATUS[@]}"); printf '%s\n' "${pipe_status[0]}" > target/subset-clippy.status; if [ "${pipe_status[1]}" != "0" ]; then echo "subset evidence capture failed: tee exited ${pipe_status[1]} writing target/subset-clippy.log" >&2; exit 1; fi; exit 0
 
       # #5252/#5581: real stock-environment PowerShell recovery, not argv recording.
       - name: Produce and replay exact-head selector recovery (advisory)
