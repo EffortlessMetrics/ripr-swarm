@@ -11,7 +11,8 @@ pub fn verify_executable_identity() -> Result<(), String> {
     if current != env!("REPO_POLICY_SOURCE_ID") {
         return Err("policy executable is stale or belongs to a different source tree; rerun with cargo policy".into());
     }
-    let output = std::process::Command::new("rustc")
+    let compiler = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+    let output = std::process::Command::new(compiler)
         .arg("-vV")
         .output()
         .map_err(|e| format!("policy compiler identity: {e}"))?;

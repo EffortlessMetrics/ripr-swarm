@@ -8,7 +8,7 @@ fn main() {
         Some("verify-preflight") => repo_policy::verify_preflight(std::path::Path::new(
             "target/ripr/reports/policy-preflight.json",
         )),
-        _ => Err("usage: cargo policy check-workflows | check-agent-skills | preflight".into()),
+        _ => Err("usage: cargo policy check-workflows | check-agent-skills | preflight | verify-preflight".into()),
     };
     if let Err(error) = result {
         eprintln!("xtask: {error}");

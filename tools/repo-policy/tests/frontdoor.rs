@@ -29,24 +29,32 @@ impl Fixture {
                 .map_err(|e| e.to_string())?
                 .as_nanos()
         ));
-        for path in [
-            "Cargo.toml",
-            "Cargo.lock",
-            "rust-toolchain.toml",
-            "tools/repo-policy",
-            ".github",
-            ".agents",
-            ".claude",
-            "AGENTS.md",
-            "AGENTS.override.md",
-            "CLAUDE.md",
-            "docs/ARCHITECTURE.md",
-            "policy",
-            "fixtures/boundary_gap/expected",
-        ] {
-            copy(&source.join(path), &root.join(path))?;
+        Self::from_paths(
+            &source,
+            root,
+            &[
+                "Cargo.toml",
+                "Cargo.lock",
+                "rust-toolchain.toml",
+                "tools/repo-policy",
+                ".github",
+                ".agents",
+                ".claude",
+                "AGENTS.md",
+                "AGENTS.override.md",
+                "CLAUDE.md",
+                "docs/ARCHITECTURE.md",
+                "policy",
+                "fixtures/boundary_gap/expected",
+            ],
+        )
+    }
+    fn from_paths(source: &Path, root: PathBuf, paths: &[&str]) -> Result<Self, String> {
+        let fixture = Self(root);
+        for path in paths {
+            copy(&source.join(path), &fixture.0.join(path))?;
         }
-        Ok(Self(root))
+        Ok(fixture)
     }
     fn run(&self, command: &str) -> Result<Output, String> {
         Command::new(env!("CARGO_BIN_EXE_repo-policy"))
@@ -190,5 +198,70 @@ fn preflight_receipt_rejects_changed_ignored_inputs_missing_and_failed_producers
     assert!(fixture.run("preflight")?.status.success());
     std::fs::write(&receipt, "{\"schema\":1,\"checks\":[]}\n").map_err(|e| e.to_string())?;
     assert!(!fixture.run("verify-preflight")?.status.success());
+    Ok(())
+}
+
+#[test]
+fn partial_fixture_is_removed_after_copy_error() -> Result<(), String> {
+    let source = Fixture::new()?;
+    let root = source.0.join("partial-copy");
+    let missing = "missing-copy-input";
+    assert!(!source.0.join(missing).exists());
+    assert!(source.0.join("Cargo.toml").is_file());
+    let result = Fixture::from_paths(&source.0, root.clone(), &["Cargo.toml", missing]);
+    assert!(
+        result.is_err(),
+        "missing source must fail after copying Cargo.toml"
+    );
+    assert!(
+        !root.exists(),
+        "failed copy retained its partial destination"
+    );
+    Ok(())
+}
+
+#[test]
+fn runtime_compiler_selection_rejects_a_changed_compiler() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let run = |compiler: &str| {
+        Command::new(env!("CARGO_BIN_EXE_repo-policy"))
+            .arg("preflight")
+            .env("RUSTC", compiler)
+            .current_dir(&fixture.0)
+            .output()
+            .map_err(|e| e.to_string())
+    };
+    let output = run("rustc")?;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let receipt = fixture.0.join("target/ripr/reports/policy-preflight.json");
+    assert!(receipt.is_file());
+    let output = run(env!("CARGO_BIN_EXE_repo-policy"))?;
+    assert!(
+        !output.status.success(),
+        "changed RUSTC must invalidate the producer"
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("xtask: policy executable toolchain differs")
+    );
+    assert!(
+        !receipt.exists(),
+        "changed compiler retained a success receipt"
+    );
+    Ok(())
+}
+
+#[test]
+fn usage_lists_the_receipt_verification_frontdoor() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let output = fixture.run("unknown-command")?;
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.starts_with("xtask: usage:"));
+    assert!(error.contains("verify-preflight"));
     Ok(())
 }
