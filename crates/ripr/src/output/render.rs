@@ -1105,6 +1105,14 @@ mod tests {
         {
             return Err("missing scope must not mint an executable command".to_string());
         }
+        if let Some(missing_route) = missing_parsed["canonical_next_action"]["stop"]["detail_route"]
+            .as_str()
+            .filter(|route| !route.is_empty())
+        {
+            return Err(format!(
+                "missing scope must not publish a scope label as an inspect route: {missing_route}"
+            ));
+        }
         Ok(())
     }
 

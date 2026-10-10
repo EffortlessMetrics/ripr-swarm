@@ -310,8 +310,9 @@ pub enum NextActionStop {
         /// Followable inspect or restart route for this triage case. The
         /// check producer copies `NextActionInput::detail_route` here so a
         /// JSON consumer can replay the printed command without assembling
-        /// `--root` / mode flags from the finding id. Empty only when a
-        /// fixture constructs the stop without a route.
+        /// `--root` / mode flags from the finding id. Empty when there is
+        /// no inspect target (for example missing scope) or a fixture
+        /// constructs the stop without a route.
         #[serde(default)]
         detail_route: String,
     },

@@ -419,7 +419,9 @@ pub(crate) fn canonical_next_action_for_triage(
             navigation.explain_command(&finding.id)
         }
         (Some(finding), None) => finding.id.clone(),
-        (None, _) => scope.clone(),
+        // No inspect target: omit a followable route rather than publishing
+        // a scope descriptor such as `no_scope` as if it were a command.
+        (None, _) => String::new(),
     };
     let mut alternatives: Vec<NextActionAlternative> = Vec::new();
     for omitted in triage.omitted.iter().take(2) {
@@ -1141,8 +1143,15 @@ mod tests {
         }
         // No navigation: the restart route replays the bound root.
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case, .. })
-                if *case == NextActionCheckCase::ScopeMissing => {}
+            Some(NextActionStop::CheckTriage { case, detail_route })
+                if *case == NextActionCheckCase::ScopeMissing =>
+            {
+                if !detail_route.is_empty() {
+                    return Err(format!(
+                        "missing scope must not publish a scope label as an inspect route, got {detail_route}"
+                    ));
+                }
+            }
             other => return Err(format!("scope stop is wrong: {other:?}")),
         }
         Ok(())
