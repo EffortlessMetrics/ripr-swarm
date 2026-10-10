@@ -7112,18 +7112,25 @@ fn outside_partition_recovery(partial_scope: Option<&crate::analysis::PartialDif
 /// #7205: recovery for a changed document whose adapter was not enabled.
 /// Refreshing the session cannot enable a language the process did not
 /// load. When the adapter is compiled in, the route names `[languages]
-/// enabled` and the sidecar restart. When it is not compiled in (Perl on
-/// the default build), enablement is not enough — reuse the shared
+/// enabled` and the sidecar restart, then appends
+/// [`crate::domain::LanguageId::enable_prerequisite`] so compiled-in Perl
+/// does not claim enablement plus restart is sufficient. When it is not
+/// compiled in (Perl on the default build), enablement is not enough —
+/// reuse the shared
 /// [`crate::domain::LanguageId::unavailable_adapter_recovery`] text.
 fn language_adapter_not_enabled_recovery(language: crate::domain::LanguageId) -> String {
     if !language.is_available() {
         return language.unavailable_adapter_recovery();
     }
-    format!(
+    let enablement = format!(
         "add \"{}\" to [languages] enabled in ripr.toml, then restart the language server \
          so the enabled adapter is read",
         language.as_str()
-    )
+    );
+    match language.enable_prerequisite() {
+        Some(prerequisite) => format!("{enablement}; {prerequisite}"),
+        None => enablement,
+    }
 }
 
 #[cfg(test)]
@@ -7146,6 +7153,43 @@ mod language_adapter_recovery_tests {
             if !recovery.contains(needle) {
                 return Err(format!(
                     "compiled-in recovery must name {needle:?}: {recovery}"
+                ));
+            }
+        }
+        if let Some(prerequisite) = language.enable_prerequisite() {
+            if !recovery.contains(&prerequisite) {
+                return Err(format!(
+                    "compiled-in recovery must append enable_prerequisite: {recovery}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn compiled_in_perl_recovery_names_fact_packet_prerequisite() -> Result<(), String> {
+        // Default and rust-only builds omit `lang-perl`; the uncompiled
+        // sibling covers that lane. `--all-features` compiles Perl in, and
+        // enablement plus restart is still not enough.
+        if !LanguageId::Perl.is_available() {
+            return Ok(());
+        }
+        let recovery = language_adapter_not_enabled_recovery(LanguageId::Perl);
+        let Some(prerequisite) = LanguageId::Perl.enable_prerequisite() else {
+            return Err(
+                "compiled-in Perl must own enable_prerequisite so LSP recovery can reuse it"
+                    .to_string(),
+            );
+        };
+        for needle in [
+            "[languages] enabled",
+            "restart",
+            "perl",
+            prerequisite.as_str(),
+        ] {
+            if !recovery.contains(needle) {
+                return Err(format!(
+                    "compiled-in perl recovery must name {needle:?}: {recovery}"
                 ));
             }
         }

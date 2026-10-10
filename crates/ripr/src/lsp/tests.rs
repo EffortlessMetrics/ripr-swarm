@@ -20915,7 +20915,18 @@ async fn workspace_status_uncompiled_perl_recovery_does_not_claim_enablement() -
         .as_str()
         .ok_or_else(|| format!("perl disabled document must carry a recovery: {changed}"))?;
     if LanguageId::Perl.is_available() {
-        for needle in ["[languages] enabled", "restart", "perl"] {
+        let Some(prerequisite) = LanguageId::Perl.enable_prerequisite() else {
+            return Err(
+                "compiled-in Perl must own enable_prerequisite so workspace-status recovery can reuse it"
+                    .to_string(),
+            );
+        };
+        for needle in [
+            "[languages] enabled",
+            "restart",
+            "perl",
+            prerequisite.as_str(),
+        ] {
             if !recovery.contains(needle) {
                 return Err(format!(
                     "compiled-in perl recovery must name {needle:?}: {recovery}"
