@@ -2107,8 +2107,12 @@ impl RustAdapter {
             // and once per probe so a superseded or deadline-expired refresh
             // exits the classify loop promptly.
             cancellation::checkpoint()?;
-            let probes =
-                analysis_probes::probes_for_file_with_relations(&options.root, changed, &index);
+            let probes = analysis_probes::probes_for_file_with_relations(
+                &options.root,
+                changed,
+                &index,
+                &options.test_harnesses,
+            );
             if !probes.is_empty() {
                 files_with_findings.insert(changed.path.clone());
             }

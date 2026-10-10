@@ -9,6 +9,11 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_bounds_use_normalized_test_attributes",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_bounds_use_registered_old_attributes",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_bound_preserves_composed_test_file_exclusion",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_bound_cannot_borrow_candidate_test_role",
+  "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::removed_test_bound_cannot_borrow_candidate_production_role",
   "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::where_bound_lines_retain_unknown_subjects",
   "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::where_bound_shared_body_and_uppercase_fields_keep_runtime_shapes",
   "crates/ripr/src/analysis/probes/where_bound_boundary_tests.rs::bound_spelling_in_macro_or_string_has_no_declaration_authority",

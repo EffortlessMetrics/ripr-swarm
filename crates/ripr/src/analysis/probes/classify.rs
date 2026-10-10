@@ -2,7 +2,7 @@ use super::super::rust_index::{ProbeShapeFact, ProbeShapeKind, RustIndex};
 use super::family::family_for_probe_shape;
 use crate::analysis::extract::mask_comments_and_strings;
 use crate::analysis::facts::FileData;
-use crate::analysis::syntax::parse_clean_source_file;
+use crate::analysis::syntax::{RaRustSyntaxAdapter, RustSyntaxAdapter, parse_clean_source_file};
 use crate::domain::ProbeFamily;
 use ra_ap_syntax::{AstNode, ast};
 use std::ops::Range;
@@ -23,17 +23,51 @@ pub(super) fn added_type_bound_lines(
 /// Removed declarations must be admitted using reconstructed old-side syntax,
 /// never a line coincidence in the candidate index. A refused reconstruction
 /// or parse leaves the existing lexical/unknown evidence intact.
-pub(super) fn removed_type_bound_lines(
+pub(super) struct RemovedTypeBounds {
+    pub lines: Vec<bool>,
+    pub old_index: Option<RustIndex>,
+}
+
+pub(super) fn removed_type_bounds(
+    root: &Path,
+    registrations: &[crate::config::TestHarnessRegistration],
     index: &RustIndex,
     changed: &crate::analysis::diff::ChangedFile,
-) -> Vec<bool> {
+) -> RemovedTypeBounds {
+    let unavailable = || RemovedTypeBounds {
+        lines: vec![false; changed.removed_lines.len()],
+        old_index: None,
+    };
     if changed.removed_lines.is_empty() {
-        return Vec::new();
+        return unavailable();
     }
-    file_facts(index, &changed.path)
+    let Some(source) = file_facts(index, &changed.path)
         .and_then(|facts| crate::analysis::diff::reconstruct_old_source(&facts.source, changed))
-        .map(|source| declarations::type_bound_lines(&source, &changed.removed_lines))
-        .unwrap_or_else(|| vec![false; changed.removed_lines.len()])
+    else {
+        return unavailable();
+    };
+    let lines = declarations::type_bound_lines(&source, &changed.removed_lines);
+    if !lines.iter().any(|bound| *bound) {
+        return unavailable();
+    }
+    let Ok(facts) = RaRustSyntaxAdapter.summarize_file(&changed.path, &source) else {
+        return unavailable();
+    };
+    let mut old_index = RustIndex::default();
+    old_index.insert_file(changed.path.clone(), facts, true);
+    if crate::analysis::facts::normalize_reconstructed_source_roles(
+        &mut old_index,
+        root,
+        registrations,
+    )
+    .is_err()
+    {
+        return unavailable();
+    }
+    RemovedTypeBounds {
+        lines,
+        old_index: Some(old_index),
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

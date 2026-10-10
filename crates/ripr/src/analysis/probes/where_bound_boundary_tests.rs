@@ -387,3 +387,275 @@ fn expression_and_macro_bounds_keep_fallback_evidence() -> Result<(), String> {
     }
     Ok(())
 }
+
+#[test]
+fn removed_bound_cannot_borrow_candidate_test_role() -> Result<(), String> {
+    let source = "#[test] fn retained() {}\n";
+    let diff = "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,5 +1,1 @@\n-fn f<T>()\n-where\n-    T: Send,\n-{}\n #[test] fn retained() {}\n";
+    let changed = crate::analysis::diff::parse_unified_diff(diff)
+        .into_iter()
+        .next()
+        .ok_or_else(|| "no changed file".to_string())?;
+    assert_eq!(changed.removed_lines.len(), 4);
+    let result = probes(source, changed)?;
+    assert!(
+        result.iter().any(|p| p.family == ProbeFamily::StaticUnknown
+            && p.before.as_deref() == Some("T: Send,")
+            && p.after.is_none()),
+        "base-side bound vanished through candidate test role: {result:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn removed_test_bound_cannot_borrow_candidate_production_role() -> Result<(), String> {
+    for deleted in [
+        "#[cfg(test)]\nmod checks {\nfn helper<T>()\nwhere\n    T: Send,\n{}\n}\n",
+        "#[cfg(test)]\nmod checks {\nstruct Packet<T>\nwhere\n    T: Send,\n{ value: T }\n}\n",
+    ] {
+        let source = "fn retained() {}\n";
+        let old_source = format!("{deleted}{source}");
+        RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), &old_source)?;
+        let deletions = deleted
+            .lines()
+            .map(|line| format!("-{line}\n"))
+            .collect::<String>();
+        let diff = format!(
+            "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{} +1,1 @@\n{deletions} {source}",
+            deleted.lines().count() + 1
+        );
+        let changed = crate::analysis::diff::parse_unified_diff(&diff)
+            .into_iter()
+            .next()
+            .ok_or_else(|| "no removed-test subject".to_string())?;
+        assert!(
+            changed
+                .removed_lines
+                .iter()
+                .any(|line| line.text.trim() == "T: Send,")
+        );
+        let result = probes(source, changed)?;
+        assert!(
+            !result
+                .iter()
+                .any(|p| p.before.as_deref() == Some("T: Send,")),
+            "old evidence-only bound became a production subject: {result:?}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn removed_bound_preserves_composed_test_file_exclusion() -> Result<(), String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("ripr-removed-bound-context-{stamp}"));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    let result = (|| {
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='bound-context'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        for owner in ["fn helper<T>()", "struct Packet<T>"] {
+            let source = format!("{owner}\nwhere\n    T: Clone,\n{{}}\n");
+            std::fs::write(root.join("src/checks.rs"), &source)
+                .map_err(|error| error.to_string())?;
+            let diff = format!(
+                "--- a/src/checks.rs\n+++ b/src/checks.rs\n@@ -1,5 +1,4 @@\n {owner}\n where\n-    T: Send,\n     T: Clone,\n {{}}\n"
+            );
+            let changed = crate::analysis::diff::parse_unified_diff(&diff)
+                .into_iter()
+                .next()
+                .ok_or_else(|| "missing removed bound".to_string())?;
+            assert_eq!(changed.removed_lines[0].text.trim(), "T: Send,");
+            for test_only in [false, true] {
+                let parent = if test_only {
+                    "#[cfg(test)]\nmod checks;\n"
+                } else {
+                    "mod checks;\n"
+                };
+                std::fs::write(root.join("src/lib.rs"), parent)
+                    .map_err(|error| error.to_string())?;
+                let index = crate::analysis::facts::build_index(
+                    &root,
+                    &[PathBuf::from("src/lib.rs"), PathBuf::from("src/checks.rs")],
+                )?;
+                let facts = crate::analysis::rust_index::find_file_facts(&index, &changed.path)
+                    .ok_or_else(|| "missing indexed child".to_string())?;
+                assert_eq!(
+                    facts
+                        .role_provenance
+                        .edges
+                        .iter()
+                        .any(|edge| edge.requires_test),
+                    test_only
+                );
+                let result = probes_for_file(&root, &changed, &index);
+                let retained = result.iter().any(|probe| {
+                    probe.family == ProbeFamily::StaticUnknown
+                        && probe.before.as_deref() == Some("T: Send,")
+                        && probe.after.is_none()
+                });
+                assert_eq!(
+                    retained, !test_only,
+                    "composed file exclusion for {owner}, test_only={test_only}: {result:?}"
+                );
+            }
+        }
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    result
+}
+
+#[test]
+fn removed_bounds_use_normalized_test_attributes() -> Result<(), String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("ripr-old-bound-attributes-{stamp}"));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    let result = (|| {
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='bound-attributes'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        for (attribute, is_test) in [
+            ("#[quickcheck]", true),
+            ("#[test_case(1)]", true),
+            ("#[rstest::rstest]", true),
+            ("#[tokio::test_helper]", false),
+        ] {
+            let source = format!("{attribute}\nfn subject<T>()\nwhere\n    T: Clone,\n{{}}\n");
+            std::fs::write(root.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+            let index = crate::analysis::facts::build_index(&root, &[PathBuf::from("src/lib.rs")])?;
+            let owner = crate::analysis::rust_index::find_owner_function(
+                &index,
+                Path::new("src/lib.rs"),
+                4,
+            )
+            .ok_or_else(|| "missing attribute owner".to_string())?;
+            assert_eq!(owner.source_role.is_evidence_role(), is_test);
+            let diff = format!(
+                "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,6 +1,5 @@\n {attribute}\n fn subject<T>()\n where\n-    T: Send,\n     T: Clone,\n {{}}\n"
+            );
+            let changed = crate::analysis::diff::parse_unified_diff(&diff)
+                .into_iter()
+                .next()
+                .ok_or_else(|| "missing attribute bound".to_string())?;
+            let probes = probes_for_file(&root, &changed, &index);
+            assert_eq!(
+                probes
+                    .iter()
+                    .any(|probe| probe.before.as_deref() == Some("T: Send,")),
+                !is_test,
+                "normalized old role for {attribute}: {probes:?}"
+            );
+        }
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    result
+}
+
+#[test]
+fn removed_bounds_use_registered_old_attributes() -> Result<(), String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("ripr-old-bound-registry-{stamp}"));
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    let result = (|| {
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname='bound-registry'\nversion='0.1.0'\nedition='2024'\n",
+        )
+        .map_err(|error| error.to_string())?;
+        let registrations = [crate::config::TestHarnessRegistration {
+            registration_id: "bounds".into(),
+            target: PathBuf::from("src/lib.rs"),
+            kind: crate::config::TestHarnessKind::RegisteredAttribute,
+            adapter: crate::config::TestHarnessAdapter::ExactAttributeV1,
+            marker: "custom::check".into(),
+        }];
+        for (prefix, candidate, excluded) in [
+            ("#[custom::check]\n", "fn retained() {}\n", true),
+            ("use custom::check;\n#[check]\n", "fn retained() {}\n", true),
+            (
+                "use custom::check as old_check;\n#[old_check]\n",
+                "fn retained() {}\n",
+                false,
+            ),
+            ("#[custom::check_helper]\n", "fn retained() {}\n", false),
+            ("", "#[custom::check] fn retained() {}\n", false),
+        ] {
+            let deleted = format!("{prefix}fn subject<T>()\nwhere\n    T: Send,\n{{}}\n");
+            std::fs::write(root.join("src/lib.rs"), format!("{deleted}{candidate}"))
+                .map_err(|error| error.to_string())?;
+            let old_index = crate::analysis::facts::build_index_with_test_harnesses(
+                &root,
+                &[PathBuf::from("src/lib.rs")],
+                &registrations,
+            )?;
+            let old_owner = crate::analysis::rust_index::find_owner_function(
+                &old_index,
+                Path::new("src/lib.rs"),
+                prefix.lines().count() + 1,
+            )
+            .ok_or_else(|| "missing old registry owner".to_string())?;
+            assert_eq!(
+                old_owner.source_role.is_evidence_role(),
+                excluded,
+                "unsupported registry fixture premise: {prefix:?}"
+            );
+            std::fs::write(root.join("src/lib.rs"), candidate)
+                .map_err(|error| error.to_string())?;
+            let index = crate::analysis::facts::build_index_with_test_harnesses(
+                &root,
+                &[PathBuf::from("src/lib.rs")],
+                &registrations,
+            )?;
+            let deletions = deleted
+                .lines()
+                .map(|line| format!("-{line}\n"))
+                .collect::<String>();
+            let diff = format!(
+                "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,{} +1,1 @@\n{deletions} {candidate}",
+                deleted.lines().count() + 1
+            );
+            let changed = crate::analysis::diff::parse_unified_diff(&diff)
+                .into_iter()
+                .next()
+                .ok_or_else(|| "missing registered bound".to_string())?;
+            assert!(
+                changed
+                    .removed_lines
+                    .iter()
+                    .any(|line| line.text.trim() == "T: Send,")
+            );
+            let probes = super::diff::probes_for_file_with_relations(
+                &root,
+                &changed,
+                &index,
+                &registrations,
+            );
+            assert_eq!(
+                probes
+                    .iter()
+                    .any(|seeded| seeded.probe.family == ProbeFamily::StaticUnknown
+                        && seeded.probe.before.as_deref() == Some("T: Send,")),
+                !excluded,
+                "registered old role for {prefix:?}, candidate={candidate:?}: {probes:?}"
+            );
+        }
+        Ok(())
+    })();
+    std::fs::remove_dir_all(&root).map_err(|error| error.to_string())?;
+    result
+}

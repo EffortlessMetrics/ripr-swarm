@@ -44,8 +44,14 @@ probes. Const expressions and macro types retain existing fallback evidence.
 Real expressions on a shared line
 keep their existing parser-owned runtime probes. Comments, strings and macro
 token trees cannot establish declaration authority. Removed bounds require
-old-side parser context reconstructed from the diff; unavailable or malformed
-source retains existing uncertainty rather than borrowing a candidate line.
+old-side parser context and local source roles reconstructed from the diff.
+Candidate line coincidences cannot exclude old production bounds or admit old
+test bounds. External module/include exclusion retains resolved candidate-index
+composition authority. Test attributes use the shared normalizer and active
+harness registrations; external parent edges, configuration and Cargo manifests
+are not reconstructed.
+Unavailable or malformed source retains existing uncertainty rather than
+borrowing a candidate line.
 
 Each finding should carry:
 

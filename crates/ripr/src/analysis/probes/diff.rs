@@ -10,8 +10,7 @@ use super::binding_predicate::{
 };
 use super::classify::{
     added_type_bound_lines, is_structural_delimiter_line,
-    parser_probe_shapes_for_changed_line_against, removed_type_bound_lines,
-    should_ignore_changed_line,
+    parser_probe_shapes_for_changed_line_against, removed_type_bounds, should_ignore_changed_line,
 };
 use super::expectations::{expected_sinks, required_oracles};
 use super::family::delta_for_family;
@@ -28,7 +27,7 @@ use std::path::Path;
 /// callers use [`probes_for_file_with_relations`].
 #[cfg(test)]
 pub(crate) fn probes_for_file(root: &Path, changed: &ChangedFile, index: &RustIndex) -> Vec<Probe> {
-    probes_for_file_with_relations(root, changed, index)
+    probes_for_file_with_relations(root, changed, index, &[])
         .into_iter()
         .map(|seeded| seeded.probe)
         .collect()
@@ -38,6 +37,7 @@ pub(crate) fn probes_for_file_with_relations(
     root: &Path,
     changed: &ChangedFile,
     index: &RustIndex,
+    registrations: &[crate::config::TestHarnessRegistration],
 ) -> Vec<SeededProbe> {
     let mut probes = Vec::new();
     // Use `new_side_line` for all lines: for added lines this equals `line`; for
@@ -62,7 +62,12 @@ pub(crate) fn probes_for_file_with_relations(
     let mut emitted_parser_shapes = Vec::<(usize, String)>::new();
     let skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
-    let removed_bounds = removed_type_bound_lines(index, changed);
+    let removed_bounds = removed_type_bounds(root, registrations, index, changed);
+    let old_test_module_ranges = removed_bounds
+        .old_index
+        .as_ref()
+        .map(|old| test_module_ranges_for(old, &changed.path))
+        .unwrap_or_default();
     let added_bounds = if changed.removed_lines.is_empty() {
         vec![false; changed.added_lines.len()]
     } else {
@@ -215,18 +220,32 @@ pub(crate) fn probes_for_file_with_relations(
         if should_ignore_changed_line(text) || skip_removed[removed_index] {
             continue;
         }
-        // Use new_side_line so the owner lookup queries the new-file index at the
-        // correct position (RANK-1 fix: `removed.line` is an old-side coordinate
-        // and diverges from the new file when an earlier hunk shifted lines).
-        if changed_line_is_test_evidence(
-            index,
-            &changed.path,
-            removed.new_side_line,
-            &test_module_ranges,
-        ) {
+        // Local bound roles use reconstructed old syntax rather than candidate
+        // line coincidences. External file context retains the index composer
+        // authority used by the existing test-evidence exclusion.
+        // Other families keep their existing candidate-coordinate handling.
+        let is_test_evidence = if removed_bounds.lines[removed_index] {
+            file_is_composed_test_evidence(index, &changed.path)
+                || removed_bounds.old_index.as_ref().is_some_and(|old| {
+                    changed_line_is_test_evidence(
+                        old,
+                        &changed.path,
+                        removed.line,
+                        &old_test_module_ranges,
+                    )
+                })
+        } else {
+            changed_line_is_test_evidence(
+                index,
+                &changed.path,
+                removed.new_side_line,
+                &test_module_ranges,
+            )
+        };
+        if is_test_evidence {
             continue;
         }
-        let families = if removed_bounds[removed_index] {
+        let families = if removed_bounds.lines[removed_index] {
             vec![ProbeFamily::StaticUnknown]
         } else {
             classify_changed_line(text)
@@ -236,7 +255,7 @@ pub(crate) fn probes_for_file_with_relations(
             // Shared identifiers alone do not establish that the old subject
             // remained in the replacement's evidence.
             if has_matching_added_line(removed, &family, changed, &added_bounds)
-                && (!removed_bounds[removed_index]
+                && (!removed_bounds.lines[removed_index]
                     || probes
                         .iter()
                         .any(|seeded| seeded.probe.before.as_deref() == Some(text)))
@@ -486,6 +505,10 @@ fn changed_line_is_test_evidence(
     if line_in_module_ranges(test_module_ranges, line) {
         return true;
     }
+    file_is_composed_test_evidence(index, path)
+}
+
+fn file_is_composed_test_evidence(index: &RustIndex, path: &Path) -> bool {
     let Some(facts) = find_file_facts(index, path) else {
         return false;
     };
@@ -1683,7 +1706,7 @@ mod tests {
             )]),
             ..Default::default()
         });
-        let seeded = probes_for_file_with_relations(Path::new("workspace"), &changed, &index);
+        let seeded = probes_for_file_with_relations(Path::new("workspace"), &changed, &index, &[]);
         let predicate = seeded
             .iter()
             .find(|item| item.probe.family == ProbeFamily::Predicate)
@@ -2862,7 +2885,7 @@ mod tests {
             ..Default::default()
         });
 
-        let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index);
+        let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index, &[]);
 
         let [seeded] = probes.as_slice() else {
             return Err(format!("expected one retargeted probe, got {probes:?}"));
@@ -2938,7 +2961,7 @@ mod tests {
             ..Default::default()
         });
 
-        let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index);
+        let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index, &[]);
 
         let [seeded] = probes.as_slice() else {
             return Err(format!("expected the generic probe only, got {probes:?}"));
@@ -3002,7 +3025,7 @@ mod tests {
             ..Default::default()
         });
 
-        let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index);
+        let probes = probes_for_file_with_relations(Path::new("workspace"), &changed, &index, &[]);
 
         // The changed let stays generic; the changed predicate carries its
         // own probe; neither is a retarget.
