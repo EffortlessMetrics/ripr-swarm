@@ -237,8 +237,9 @@ fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOpt
 /// The before-phase disclosure for an attempt whose captured baseline is
 /// already ambiguous (#7204): the cage cannot prove the exact worktree state
 /// the attempt measures, so the attempt can never earn a compliant verdict.
-/// The agent hears that before investing the focused test edit, and the
-/// attempt manifest records the same limitation.
+/// Printed in place of the unqualified "Next: add ..." edit directive, so an
+/// ambiguous attempt opens with one coherent route instead of contradictory
+/// next steps; the attempt manifest records the same limitation.
 fn baseline_ambiguous_disclosure_lines(baseline_path: &Path) -> Vec<String> {
     vec![
         format!(
@@ -385,7 +386,18 @@ fn persist_before_repair_attempt(
             binding.verified.attempt_id, binding.verified.selection_digest
         );
     }
-    if policy.inline_test_module_target {
+    // #7204: an attempt whose captured baseline is already ambiguous can
+    // never be scored, so the disclosure comes BEFORE any edit directive and
+    // the ambiguous branch replaces the unqualified "Next: add ..." line —
+    // one coherent route instead of contradictory next steps.
+    if baseline_ambiguous {
+        for line in baseline_ambiguous_disclosure_lines(&edit_cage_baseline) {
+            eprintln!(
+                "{}",
+                crate::output::human::terminal_safe(format!("ripr: {line}"))
+            );
+        }
+    } else if policy.inline_test_module_target {
         // #5210: the cage admits only new test functions inserted into the
         // target's inline test module, so "strengthen" an existing test, or
         // any other byte of the production file, would fail the attempt.
@@ -401,22 +413,17 @@ fn persist_before_repair_attempt(
     eprintln!(
         "ripr: keep this command's output out of the checkout: the edit cage counts a file you redirect it into (for example `> packet.json` or `2> before.err`) as an edit outside the test surface. The packet is already at target/ripr/workflow/agent-packet.json; to keep a copy, redirect under target/ripr/ or outside the repository. The same applies to the after phase."
     );
-    // #7204: an attempt whose captured baseline is already ambiguous can
-    // never be scored, so the agent hears that before investing the focused
-    // test edit — not only after the after phase refuses the attempt
-    // Incomparable. The manifest records the same disclosure.
     if baseline_ambiguous {
-        for line in baseline_ambiguous_disclosure_lines(&edit_cage_baseline) {
-            eprintln!(
-                "{}",
-                crate::output::human::terminal_safe(format!("ripr: {line}"))
-            );
-        }
+        eprintln!(
+            "ripr: repair attempt {} is awaiting the focused test edit, though its ambiguous baseline (above) means this attempt ends in a terminal Incomparable refusal either way; for a scorable attempt, restart from a clean state as described above.",
+            result.manifest.repair_attempt_id.as_str()
+        );
+    } else {
+        eprintln!(
+            "ripr: repair attempt {} is awaiting the focused test edit",
+            result.manifest.repair_attempt_id.as_str()
+        );
     }
-    eprintln!(
-        "ripr: repair attempt {} is awaiting the focused test edit",
-        result.manifest.repair_attempt_id.as_str()
-    );
     eprintln!(
         "{}",
         crate::output::human::terminal_safe(format!(
