@@ -1,0 +1,10 @@
+{
+  "removed": "/workspace/issue7158-build/debug/incremental",
+  "reproducible_bytes": 8849074323,
+  "active_consumers": [],
+  "free_before": 18677800960,
+  "free_after": 26435063808,
+  "preserved": "all source, reports, frozen executables, deps, shared caches",
+  "reserve_bytes": 12884901888,
+  "additional_admission_bytes": 8589934592
+}

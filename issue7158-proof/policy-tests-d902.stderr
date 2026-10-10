@@ -1,0 +1,6 @@
+   Compiling repo-policy v0.1.0 (/workspace/issue7158-candidate/tools/repo-policy)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.70s
+     Running unittests src/lib.rs (/workspace/issue7158-policy-cold/debug/deps/repo_policy-6c8435a7cfd45204)
+     Running unittests src/main.rs (/workspace/issue7158-policy-cold/debug/deps/repo_policy-bba4a51e407c3bac)
+     Running tests/frontdoor.rs (/workspace/issue7158-policy-cold/debug/deps/frontdoor-1fa77b8ce45cd827)
+   Doc-tests repo_policy

@@ -1,0 +1,4 @@
+$ cargo fmt --check
+xtask: check-file-policy failed; see target/ripr/reports/file-policy.md
+unapproved non-Rust programming/declarative file: tools/repo-policy/Cargo.toml
+  preferred: implement automation in Rust/xtask or add a policy allowlist entry with owner and reason

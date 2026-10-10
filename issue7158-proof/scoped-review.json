@@ -7,9 +7,38 @@
   "disposition": "REVIEW_INCOMPLETE",
   "blocking_source_findings": [],
   "remaining": [
-    "whole-candidate gates",
-    "workflow contract execution",
+    "final-head whole-candidate gates",
+    "baseline check-fast completion",
     "published-head CI/review"
   ],
-  "trust_boundary": "Receipt hashes establish currentness, not authenticity against another writer able to forge a receipt in the private trusted target directory."
+  "trust_boundary": "Receipt hashes establish currentness, not authenticity against another writer able to forge a receipt in the private trusted target directory.",
+  "guidance_followup": {
+    "head": "9934dfd1ff56339fcbf25de8f4695d5a7a5c23bc",
+    "base": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+    "blocking_findings": [],
+    "source_supported": [
+      "runner environment inheritance",
+      "Rust change selects workspace all-targets Clippy",
+      "absolute target, whole-driver serialization and storage admission"
+    ],
+    "disposition": "REVIEW_INCOMPLETE"
+  },
+  "latest_head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+  "source_followups": [
+    {
+      "head": "db9ce975206e0d6a257012ca7d9e1a1a0ba88850",
+      "claim": "one Rust selector includes helper implementation and tests; strict receipt control rejects missing gate",
+      "blocking_findings": []
+    },
+    {
+      "head": "e5094c36897599b924aecc35c8470e1538d982e7",
+      "claim": "exact manifest metadata meets existing non-Rust file policy",
+      "blocking_findings": []
+    },
+    {
+      "head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+      "claim": "one identity-owning dispatch boundary; stale preflight removes old receipt",
+      "blocking_findings": []
+    }
+  ]
 }

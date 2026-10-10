@@ -1,0 +1,22 @@
+[
+  {
+    "label": "old-cli",
+    "head": "39824eef1498dbe18fe4ddf4b5468b3282f051c3",
+    "initial_exit": 0,
+    "initial_stderr": "",
+    "initial_receipt": true,
+    "stale_exit": 1,
+    "stale_stderr": "xtask: policy executable is stale or belongs to a different source tree; rerun with cargo policy\n",
+    "stale_receipt_remains": true
+  },
+  {
+    "label": "new-cli",
+    "head": "d902d09922245fb47e9af5a941022ff7da86c8ea",
+    "initial_exit": 0,
+    "initial_stderr": "",
+    "initial_receipt": true,
+    "stale_exit": 1,
+    "stale_stderr": "xtask: policy executable is stale or belongs to a different source tree; rerun with cargo policy\n",
+    "stale_receipt_remains": false
+  }
+]

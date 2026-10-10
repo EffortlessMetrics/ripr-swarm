@@ -1,0 +1,9 @@
+{
+  "candidate_precommit_exit": 1,
+  "classification": "INSTRUMENT_FAILURE",
+  "reason": "Enumeration waited on baseline Cargo artifact lock then hit300s cap; actual report correctly labels covered_by_instrument_timeout, not unresolved pointer.",
+  "baseline_exit": 143,
+  "baseline_stop_reason": "Serialize whole driver to release target lock before enumeration cap; stop came too late.",
+  "next": "Warm causal_delta_fixture --no-run with30min compile budget, then rerun candidate precommit alone; baseline check-fast starts only afterward.",
+  "source_changed": false
+}

@@ -1,0 +1,8 @@
+
+running 3 tests
+test tests::command_catalog_ci_drift_reports_both_directions ... ok
+test tests::precommit_gate_commands_are_catalog_ci_enforced ... ok
+test tests::command_catalog_ci_enforced_flags_match_repo_workflows ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 3403 filtered out; finished in 0.02s
+

@@ -1,0 +1,9 @@
+{
+  "reason": "Baseline file-policy warmup holds shared Cargo lock while candidate enters five-minute warm list phase. Serialize whole drivers to prevent lock wait becoming enumeration timeout; stop only owned baseline descendants, retain outputs, resume after candidate completes.",
+  "root": 63743,
+  "stopped_pids": [
+    63743,
+    64044,
+    65395
+  ]
+}

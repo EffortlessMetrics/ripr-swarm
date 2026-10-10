@@ -1,0 +1,16 @@
+[
+  {
+    "path": "/workspace/issue7158-evidence/candidate-xtask",
+    "source": "/workspace/issue7158-build/debug/xtask",
+    "sha256": "0345b7ea05f04ecb3af6c83b9638d9649c066da7a0055c122978e727aaf26d17",
+    "bytes": 286328744,
+    "head": "39824eef1498dbe18fe4ddf4b5468b3282f051c3"
+  },
+  {
+    "path": "/workspace/issue7158-evidence/candidate-repo-policy",
+    "source": "/workspace/issue7158-policy-measured/debug/repo-policy",
+    "sha256": "8f87bf97c273196a46e3b33331393d37fd720fc412026804848119c6bd380a08",
+    "bytes": 7083688,
+    "head": "39824eef1498dbe18fe4ddf4b5468b3282f051c3"
+  }
+]

@@ -1,0 +1,24 @@
+{
+  "implementation_backup": "39824eef1498dbe18fe4ddf4b5468b3282f051c3",
+  "proof_backup": "80e4578f166d16ad38eedef248e92ce257d0ffc3",
+  "released_and_deleted": [
+    "/workspace/issue7158-base/target/debug",
+    "/workspace/issue7158-build/debug/incremental"
+  ],
+  "consumer_inventory": "resource-inventory.json: zero active consumers",
+  "retained": [
+    "source worktrees",
+    "frozen baseline/candidate xtask and policy witnesses",
+    "reports and receipts",
+    "reusable task build deps",
+    "shared toolchain and inherited root target untouched"
+  ],
+  "free_bytes": 28071866368,
+  "reserve_bytes": 12884901888,
+  "peak_additional_bytes": 8589934592,
+  "nested_target": "/workspace/issue7158-build",
+  "nested_jobs": 1,
+  "diagnosis": "Direct frozen old-xtask invocation omitted CARGO_TARGET_DIR. run.rs inherits environment correctly; Cargo build output location is not implicit runtime child state. check_fast rust_src selector legitimately ran workspace/all-targets Clippy for inherited origin/main diff. No product prerequisite code fix needed; use supported absolute CARGO_TARGET_DIR inherited by nested commands.",
+  "free_bytes_before_nested_clippy": 26393669632,
+  "nested_workload_budget_basis": "Prior cold nested workspace/all-targets Clippy generated 6.8GB. Admit 8GB additional for complete nested workload and overhead, including current 3.5GB reusable state separately; current free capacity exceeds unchanged 12GB reserve + 8GB peak. No profile change or CARGO_INCREMENTAL override."
+}

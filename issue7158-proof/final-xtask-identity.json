@@ -1,0 +1,38 @@
+{
+  "source_commit": "e5094c36897599b924aecc35c8470e1538d982e7",
+  "compiler_artifact": {
+    "reason": "compiler-artifact",
+    "package_id": "path+file:///workspace/issue7158-candidate/xtask#0.1.0",
+    "manifest_path": "/workspace/issue7158-candidate/xtask/Cargo.toml",
+    "target": {
+      "kind": [
+        "bin"
+      ],
+      "crate_types": [
+        "bin"
+      ],
+      "name": "xtask",
+      "src_path": "/workspace/issue7158-candidate/xtask/src/main.rs",
+      "edition": "2024",
+      "doc": true,
+      "doctest": false,
+      "test": true
+    },
+    "profile": {
+      "opt_level": "0",
+      "debuginfo": "line-tables-only",
+      "debug_assertions": true,
+      "overflow_checks": true,
+      "test": false
+    },
+    "features": [],
+    "filenames": [
+      "/workspace/issue7158-build/debug/xtask"
+    ],
+    "executable": "/workspace/issue7158-build/debug/xtask",
+    "fresh": false
+  },
+  "retained_executable": "/workspace/issue7158-evidence/final-xtask",
+  "sha256": "d34f25aac6243a895dbf437453bacb26c01b13e8ae02b56d53e4122825d213d3",
+  "bytes": 286328840
+}

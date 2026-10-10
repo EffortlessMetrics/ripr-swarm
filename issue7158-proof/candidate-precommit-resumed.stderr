@@ -1,0 +1,6 @@
+$ cargo fmt --check
+xtask: policy/non-rust-allowlist.toml:724 test-valued `covered_by` enumeration did not finish (instrument timeout, not an unresolved pointer): `cargo test -p ripr --test causal_delta_fixture`
+stdout: 
+stderr: covered_by_instrument_timeout: timed out after 300s; status: signal: 9 (SIGKILL)
+    Blocking waiting for file lock on artifact directory
+   Compiling ripr v0.11.0 (/workspace/issue7158-candidate/crates/ripr)

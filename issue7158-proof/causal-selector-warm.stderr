@@ -1,0 +1,3 @@
+   Compiling ripr v0.11.0 (/workspace/issue7158-candidate/crates/ripr)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.04s
+  Executable tests/causal_delta_fixture.rs (/workspace/issue7158-build/debug/deps/causal_delta_fixture-dca0833e3c8306f0)
