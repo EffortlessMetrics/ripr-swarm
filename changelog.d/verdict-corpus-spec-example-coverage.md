@@ -7,5 +7,5 @@
   unmeasured. The report's new `spec_example_coverage` section reads 71/132
   covered; `cargo xtask verdict-corpus check` fails when covered falls below
   the ledger's floor. The dx-scoreboard trust-board entry
-  `trust.verdict_corpus_spec_example_coverage` is committed as pending; live
-  board wiring follows in #7134 (#6638).
+  `trust.verdict_corpus_spec_example_coverage` reads that coverage rate from
+  the committed corpus, ledger, and `docs/specs` (#6638, #7134).

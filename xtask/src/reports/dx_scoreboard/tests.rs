@@ -2539,8 +2539,13 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
         let Some(reference) = metric.source.strip_prefix("verdict-corpus:") else {
             continue;
         };
-        seen += 1;
         let (dir, rate) = reference.split_once('#').ok_or("no #rate")?;
+        // Coverage is not a field on `expected_report()`; the dedicated pin
+        // below owns that pointer (#7134).
+        if rate.starts_with("spec_example_coverage") {
+            continue;
+        }
+        seen += 1;
         let report = super::super::verdict_corpus::expected_report(&root.join(dir))?;
         let expected = serde_json::to_value(&report).map_err(|err| err.to_string())?;
         let numerator = expected[rate]["numerator"]
@@ -2611,12 +2616,94 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
 }
 
 #[test]
+fn spec_example_coverage_resolves_from_the_committed_fixtures() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let config = load_config(&committed_config())?;
+    let metric = config
+        .metric
+        .iter()
+        .find(|metric| metric.id == "trust.verdict_corpus_spec_example_coverage")
+        .cloned()
+        .ok_or("trust.verdict_corpus_spec_example_coverage missing")?;
+    let reference = metric
+        .source
+        .strip_prefix("verdict-corpus:")
+        .ok_or_else(|| {
+            format!(
+                "expected a live verdict-corpus source, got {}",
+                metric.source
+            )
+        })?;
+    let (dir, pointer) = reference.split_once('#').ok_or("no #pointer")?;
+    assert_eq!(
+        pointer, "spec_example_coverage.coverage",
+        "{}",
+        metric.source
+    );
+
+    let mut absolute = metric.clone();
+    absolute.source = format!("verdict-corpus:{}#{pointer}", root.join(dir).display());
+    let sample = verdict_corpus_sample(
+        &absolute,
+        absolute.source.trim_start_matches("verdict-corpus:"),
+    );
+    let SampleOutcome::Value(rate) = sample.outcome else {
+        return Err(format!(
+            "expected a measured coverage rate, got {:?} {}",
+            sample.outcome, sample.detail
+        ));
+    };
+
+    // Independent of the coverage function: the ledger floor is the covered
+    // count `verdict-corpus check` protects, so a live board reading must
+    // report that numerator rather than `not_measured`.
+    let ledger = fs::read_to_string(root.join(dir).join("spec-coverage.toml"))
+        .map_err(|err| err.to_string())?;
+    let floor: usize = ledger
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("floor = ")?.parse().ok())
+        .ok_or("spec-coverage.toml has no floor")?;
+    assert!(
+        sample.detail.contains(&format!("{pointer}: {floor}/")),
+        "board must report the ledger floor as the covered count: {}",
+        sample.detail
+    );
+    assert!(
+        rate > 0.0 && rate <= 1.0,
+        "coverage rate {rate} from {}",
+        sample.detail
+    );
+
+    // A corpus without a ledger is a failed instrument, not a silent 0 or 1.
+    let isolated = crate::tests::temp_dir("dx-spec-example-coverage-no-ledger");
+    crate::tests::write(
+        &isolated.join("corpus.json"),
+        r#"{"schema_version":"ripr_verdict_corpus.v1","kind":"ripr_verdict_corpus","spec":"RIPR-SPEC-0219","description":"x","label_method":"x","verdict_projection":"x","non_claims":[]}"#,
+    );
+    fs::create_dir(isolated.join("subjects")).map_err(|err| err.to_string())?;
+    fs::create_dir(isolated.join("cases")).map_err(|err| err.to_string())?;
+    let missing_ledger = format!("{}#spec_example_coverage.coverage", isolated.display());
+    let failed = verdict_corpus_sample(&absolute, &missing_ledger);
+    assert!(
+        matches!(failed.outcome, SampleOutcome::Failed),
+        "{:?} {}",
+        failed.outcome,
+        failed.detail
+    );
+    assert!(
+        failed.detail.contains("spec-coverage.toml"),
+        "{}",
+        failed.detail
+    );
+    Ok(())
+}
+
+#[test]
 fn file_sources_point_at_committed_receipts() -> Result<(), String> {
     // A `file:` source whose path is missing renders `not_measured` with a
     // restore hint that can never work (#6638 review: the coverage metric
     // pointed at `expected/report.json`, deleted by the rows layout in
-    // #6658). Metrics without a producer stay `source = "pending"` with a
-    // reason until one exists (#7134).
+    // #6658). Coverage now has a live `verdict-corpus:` producer (#7134).
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let config = load_config(&committed_config())?;
     let mut seen = 0;

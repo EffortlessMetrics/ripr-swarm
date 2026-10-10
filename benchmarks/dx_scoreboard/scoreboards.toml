@@ -10,6 +10,8 @@
 #   file:<path>       read from a committed receipt in this repository
 #   verdict-corpus:<dir>#<rate>
 #                     derived from a verdict corpus's committed expected rows
+#                     (`spec_example_coverage.coverage` is derived from the
+#                     corpus cases, spec-coverage.toml, and docs/specs)
 #   ingest:<kind>     supplied by `--ingest <file>` from another harness
 #   pending           no instrument yet; always reported as not_measured
 #
@@ -313,8 +315,8 @@ target = 1.0
 regression_pct = 0
 regression_floor = 0
 runner_dependent = false
-source = "pending"
-pending_reason = "expected_report derives only row verdict rates; board wiring for the coverage rate follows in #7134; `cargo xtask verdict-corpus check` gates the covered count against the floor in spec-coverage.toml meanwhile"
+source = "verdict-corpus:fixtures/rust-verdict-corpus#spec_example_coverage.coverage"
+pending_reason = "coverage is derived from fixtures/rust-verdict-corpus cases, spec-coverage.toml, and docs/specs; restore the corpus from main; `cargo xtask verdict-corpus check` gates the covered count against the floor in spec-coverage.toml"
 
 [[metric]]
 id = "trust.discriminator_claim_agreement"

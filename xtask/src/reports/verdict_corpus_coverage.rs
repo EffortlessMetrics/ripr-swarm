@@ -13,7 +13,7 @@ use crate::normalize_path;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(crate) const LEDGER_FILE: &str = "spec-coverage.toml";
 pub(crate) const SPECS_DIR: &str = "docs/specs";
@@ -377,6 +377,42 @@ pub(crate) struct SpecCoverageRow {
     pub(crate) covered: usize,
     pub(crate) waived: usize,
     pub(crate) uncovered: Vec<usize>,
+}
+
+/// Coverage for one corpus directory without going through `expected_report()`.
+///
+/// The dx-scoreboard reads this so tempdir corpora that only need row rates
+/// never scan `docs/specs`. Specs come from the repository that owns
+/// `fixtures/<corpus>/`, not from CWD or an ancestor walk that would hit
+/// this repo's specs when tests write under `target/` (#7134).
+pub(crate) fn spec_example_coverage_for_corpus(
+    corpus_dir: &Path,
+) -> Result<SpecExampleCoverage, String> {
+    let corpus = super::load_corpus(corpus_dir)?;
+    let ledger = load_ledger(corpus_dir)?;
+    let specs = scan_specs(&specs_dir_for_corpus(corpus_dir)?)?;
+    Ok(spec_example_coverage(&corpus, &ledger, &specs))
+}
+
+fn specs_dir_for_corpus(corpus_dir: &Path) -> Result<PathBuf, String> {
+    if let Some(root) = corpus_dir
+        .parent()
+        .filter(|parent| parent.file_name().is_some_and(|name| name == "fixtures"))
+        .and_then(Path::parent)
+    {
+        let specs = root.join(SPECS_DIR);
+        if specs.is_dir() {
+            return Ok(specs);
+        }
+    }
+    let cwd_specs = Path::new(SPECS_DIR);
+    if cwd_specs.is_dir() {
+        return Ok(cwd_specs.to_path_buf());
+    }
+    Err(format!(
+        "no {SPECS_DIR} beside {}; spec-example coverage reads numbered examples from the repository spec files, not from expected_report",
+        normalize_path(corpus_dir)
+    ))
 }
 
 pub(crate) fn spec_example_coverage(

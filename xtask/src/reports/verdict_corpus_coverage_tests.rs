@@ -328,5 +328,45 @@ fn committed_ledger_is_valid_and_meets_its_floor() -> Result<(), String> {
             "{case} does not cite {id}"
         );
     }
+
+    let via_corpus = spec_example_coverage_for_corpus(&repo_path(CORPUS_DIR))?;
+    assert_eq!(via_corpus.coverage.numerator, coverage.coverage.numerator);
+    assert_eq!(
+        via_corpus.coverage.denominator,
+        coverage.coverage.denominator
+    );
+    Ok(())
+}
+
+#[test]
+fn spec_example_coverage_for_a_tempdir_does_not_scan_the_repo_specs() -> Result<(), String> {
+    let dir = crate::tests::temp_dir("spec-example-coverage-isolated");
+    crate::tests::write(
+        &dir.join("corpus.json"),
+        r#"{
+  "schema_version": "ripr_verdict_corpus.v1",
+  "kind": "ripr_verdict_corpus",
+  "spec": "RIPR-SPEC-0219",
+  "description": "isolated",
+  "label_method": "isolated",
+  "verdict_projection": "isolated",
+  "non_claims": []
+}"#,
+    );
+    std::fs::create_dir(dir.join("subjects")).map_err(|err| err.to_string())?;
+    std::fs::create_dir(dir.join("cases")).map_err(|err| err.to_string())?;
+    crate::tests::write(
+        &dir.join(LEDGER_FILE),
+        r#"schema_version = "ripr_verdict_corpus_spec_coverage.v1"
+floor = 0
+"#,
+    );
+    let err = spec_example_coverage_for_corpus(&dir)
+        .err()
+        .ok_or("a tempdir corpus must not pick up this repository's docs/specs")?;
+    assert!(
+        err.contains(SPECS_DIR),
+        "isolation failure must name {SPECS_DIR}: {err}"
+    );
     Ok(())
 }
