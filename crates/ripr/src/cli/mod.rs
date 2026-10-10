@@ -287,8 +287,7 @@ fn persist_before_repair_attempt(
     crate::edit_cage::validate_build_output_precondition(root, &policy)
         .map_err(|error| format!("{error} No repair attempt was started."))?;
     let edit_cage_baseline = root.join("target/ripr/workflow/attempt-baseline.json");
-    let baseline_ambiguous =
-        crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
+    crate::app::repair_attempt::write_edit_cage_baseline(root, &edit_cage_baseline, &policy)?;
 
     // The Python repair-trust binding (#3568, RIPR-SPEC-0176) is verified
     // BEFORE the durable attempt is published: every drift, ambiguity, unsafe
@@ -362,6 +361,12 @@ fn persist_before_repair_attempt(
         },
         identity,
     )?;
+    // #7204: the staged baseline artifact — read back through the
+    // publication result, the same authority that decided the manifest's
+    // limitations entry — is the one disclosure source. Narration, the
+    // continuation, and the manifest cannot drift apart when the
+    // workflow-path capture is replaced between capture and staging.
+    let baseline_ambiguous = result.baseline_ambiguous;
     // The persist total stops at publication: everything below is success
     // narration and stdout rendering, and a slow stdout reader must not
     // inflate the persistence measurement (#6917).

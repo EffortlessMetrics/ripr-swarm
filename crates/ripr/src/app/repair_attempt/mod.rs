@@ -837,6 +837,13 @@ pub(crate) struct BeforeArtifactSource<'a> {
 pub(crate) struct BeginRepairAttemptResult {
     pub(crate) manifest: RepairAttemptManifest,
     pub(crate) manifest_path: PathBuf,
+    /// Whether the staged `edit_cage_baseline` artifact itself records the
+    /// ambiguity — the same staged-bytes read that decided the manifest's
+    /// limitations entry (#7204). Narration renders from this value, so the
+    /// CLI disclosure cannot drift from the artifact the attempt retains
+    /// when the workflow-path capture is replaced between capture and
+    /// staging.
+    pub(crate) baseline_ambiguous: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1143,6 +1150,7 @@ fn complete_repair_attempt(
             Ok(BeginRepairAttemptResult {
                 manifest,
                 manifest_path,
+                baseline_ambiguous,
             })
         });
     if result.is_err() {
@@ -2065,18 +2073,18 @@ pub(crate) fn include_explicit_store_operational_write(
 /// every before phase (the durable authority is the baseline staged inside
 /// the attempt), so an existing projection is replaced. The captured baseline
 /// is dropped before the replacement so its Windows write authorities cannot
-/// block the removal of the file it just probed. Returns whether the captured
-/// baseline is ambiguous, so the before phase can disclose an attempt the
-/// cage may never be able to score (#7204).
+/// block the removal of the file it just probed. The staged artifact — not
+/// this in-flight copy — is the disclosure authority: attempt publication
+/// re-derives the ambiguity from the staged bytes and returns it on
+/// `BeginRepairAttemptResult` (#7204).
 pub(crate) fn write_edit_cage_baseline(
     root: &Path,
     path: &Path,
     policy: &EditCagePolicy,
-) -> Result<bool, String> {
+) -> Result<(), String> {
     let capture_started = Instant::now();
     let baseline = crate::edit_cage::capture_attempt_baseline(root, policy)?;
     crate::edit_cage::trace_persist_latency("baseline_capture", capture_started.elapsed());
-    let ambiguous = baseline.is_ambiguous();
     let serialize_started = Instant::now();
     let bytes = serde_json::to_vec_pretty(&baseline)
         .map_err(|error| format!("serialize edit-cage baseline failed: {error}"))?;
@@ -2091,7 +2099,7 @@ pub(crate) fn write_edit_cage_baseline(
     let write_started = Instant::now();
     write_bytes_atomic(path, &bytes)?;
     crate::edit_cage::trace_persist_latency("baseline_write", write_started.elapsed());
-    Ok(ambiguous)
+    Ok(())
 }
 
 /// Resolve the durable before inputs for one after-phase invocation. Attempt ID
