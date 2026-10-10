@@ -1236,6 +1236,10 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         .iter()
         .map(|batch| (batch.uri.clone(), batch.diagnostics.clone()))
         .collect();
+    let unavailable_adapter = super::state::UnavailableAdapterCoverage::from_preview_advisories(
+        &output.preview_language_advisories,
+    )
+    .with_rust_config_exclusion(analysis_outcome.as_ref());
     let snapshot = AnalysisSnapshot {
         root,
         rust_consumed_sources: consumed_sources,
@@ -1258,9 +1262,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         partial_scope,
         component_outcomes,
         out_of_scope_test_file_findings,
-        unavailable_adapter: super::state::UnavailableAdapterCoverage::from_preview_advisories(
-            &output.preview_language_advisories,
-        ),
+        unavailable_adapter,
     };
     Ok(WorkspaceDiagnostics { snapshot, batches })
 }

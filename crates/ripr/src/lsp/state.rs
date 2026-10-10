@@ -769,6 +769,24 @@ impl UnavailableAdapterCoverage {
         }
     }
 
+    /// #7205: Rust is never a preview advisory. When the producer emits
+    /// `rust_excluded_by_config_limitation`, there are no `sample_paths` to
+    /// name, so fail-close every opened document routed to Rust rather than
+    /// leaving `.rs` rows as `clean`/`served` beside the same payload's
+    /// `language_adapter_unavailable` limitation.
+    pub(super) fn with_rust_config_exclusion(mut self, outcome: Option<&AnalysisOutcome>) -> Self {
+        if limitation_covers_language(outcome, LanguageId::Rust)
+            && !self
+                .incomplete_languages
+                .iter()
+                .any(|name| name == LanguageId::Rust.as_str())
+        {
+            self.incomplete_languages
+                .push(LanguageId::Rust.as_str().to_string());
+        }
+        self
+    }
+
     /// The routed language of an opened changed document that this coverage
     /// plus a matching `language_adapter_unavailable` limitation bind to.
     /// `None` unless both the limitation and the changed-file membership
@@ -3256,5 +3274,80 @@ mod tests {
                 enabled: false,
             }]);
         assert_eq!(incomplete.incomplete_languages, vec!["python".to_string()]);
+    }
+
+    fn rust_unavailable_outcome() -> Result<AnalysisOutcome, String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisLimitation, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+            AnalysisRecovery, AnalysisRecoveryKind, AnalysisStage,
+        };
+        let limitation = AnalysisLimitation::new(
+            AnalysisLimitationKind::LanguageAdapterUnavailable,
+            AnalysisStage::LanguageAdapter,
+            AnalysisRecovery::new(
+                AnalysisRecoveryKind::EnableLanguage,
+                "The effective [languages].enabled set is [\"python\"], which excludes rust; add \"rust\" to [languages].enabled in ripr.toml and re-run the analysis.",
+            )?,
+        )
+        .with_affected_items(1)?
+        .with_detail(
+            "rust changed 1 file(s), but rust is not in the effective [languages].enabled set [\"python\"], so these files were not analyzed",
+        )?;
+        AnalysisOutcome::new(
+            AnalysisOutcomeKind::PartialWithLimitations,
+            AnalysisIdentity {
+                input_identity: Some("sha256:lsp-7205-rust".to_string()),
+                ..AnalysisIdentity::default()
+            },
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                ..AnalysisOutcomeCounts::default()
+            },
+            vec![limitation],
+        )
+    }
+
+    #[test]
+    fn unavailable_adapter_rust_config_exclusion_fail_closes_without_preview_samples()
+    -> Result<(), String> {
+        let coverage = UnavailableAdapterCoverage::from_preview_advisories(&[])
+            .with_rust_config_exclusion(None);
+        if coverage
+            .not_enabled_language(Path::new("src/main.rs"), None)
+            .is_some()
+        {
+            return Err(
+                "rust config exclusion without a matching limitation must not invent not_analyzed"
+                    .into(),
+            );
+        }
+        let python_only = python_unavailable_outcome()?;
+        let coverage = UnavailableAdapterCoverage::from_preview_advisories(&[])
+            .with_rust_config_exclusion(Some(&python_only));
+        if coverage
+            .not_enabled_language(Path::new("src/main.rs"), Some(&python_only))
+            .is_some()
+        {
+            return Err("a python limitation must not fail-close rust documents".into());
+        }
+        let rust_outcome = rust_unavailable_outcome()?;
+        let coverage = UnavailableAdapterCoverage::from_preview_advisories(&[])
+            .with_rust_config_exclusion(Some(&rust_outcome));
+        if coverage.not_enabled_language(Path::new("src/main.rs"), Some(&rust_outcome))
+            != Some(LanguageId::Rust)
+        {
+            return Err(
+                "rust config exclusion must fail-close opened rust documents beside the limitation"
+                    .into(),
+            );
+        }
+        if coverage
+            .not_enabled_language(Path::new("zpy/pricing.py"), Some(&rust_outcome))
+            .is_some()
+        {
+            return Err("rust config exclusion must not cover python documents".into());
+        }
+        Ok(())
     }
 }
