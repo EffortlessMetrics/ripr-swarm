@@ -898,6 +898,14 @@ fn compare_golden(
 ) -> Result<GoldenComparison, String> {
     let expected_text = read_text_lossy(expected)?;
     let actual_text = read_text_lossy(actual)?;
+    let (expected_text, actual_text) = if surface == "check.json" {
+        (
+            normalize_check_json_golden_document(&expected_text),
+            normalize_check_json_golden_document(&actual_text),
+        )
+    } else {
+        (expected_text, actual_text)
+    };
     let normalized_expected = normalize_golden_text(&expected_text);
     let normalized_actual = normalize_golden_text(&actual_text);
     Ok(GoldenComparison {
@@ -994,8 +1002,43 @@ fn strip_canonical_next_action_member(value: &str) -> String {
     stripped
 }
 
+/// Last-member append reconstitutes a pretty root closer (`]\n}`). One
+/// classification golden still stores compact `]}`. Normalize both so
+/// embedding `canonical_next_action` does not look like findings drift.
+fn split_compact_root_object_closer(value: &str) -> String {
+    let trailing_newline = value.ends_with('\n');
+    let trimmed = value.trim_end();
+    let Some(without_brace) = trimmed.strip_suffix('}') else {
+        return value.to_string();
+    };
+    if without_brace.ends_with('\n') {
+        return value.to_string();
+    }
+    let Some(without_bracket) = without_brace.strip_suffix(']') else {
+        return value.to_string();
+    };
+    // Keep one-line documents such as `{"findings":[]}` intact. Compact
+    // fixture goldens place `]}` after indent: `  ]}`.
+    if !without_bracket.ends_with(|ch: char| ch.is_whitespace()) {
+        return value.to_string();
+    }
+    let mut split = String::with_capacity(value.len() + 1);
+    split.push_str(without_bracket);
+    split.push(']');
+    split.push('\n');
+    split.push('}');
+    if trailing_newline {
+        split.push('\n');
+    }
+    split
+}
+
+fn normalize_check_json_golden_document(value: &str) -> String {
+    split_compact_root_object_closer(&strip_canonical_next_action_member(value))
+}
+
 pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
-    let value = strip_canonical_next_action_member(value);
+    let value = normalize_check_json_golden_document(value);
     // #2337: match the human normalizer's approach — replace ALL backslashes
     // with forward slashes, not just the escaped double-backslash form. On
     // Windows, ripr check --json can emit single-backslash paths inside
@@ -2178,6 +2221,63 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    fn simulate_append_canonical_next_action(rendered: &str) -> String {
+        let trimmed = rendered.trim_end();
+        let Some(body) = trimmed.strip_suffix('}') else {
+            return rendered.to_string();
+        };
+        let body = body.trim_end();
+        let newline = if rendered.ends_with('\n') { "\n" } else { "" };
+        format!(
+            "{body},\n  \"canonical_next_action\": {{\"schema_version\":\"canonical_next_action.v1\"}}\n}}{newline}"
+        )
+    }
+
+    #[test]
+    fn compact_findings_closer_golden_matches_after_last_member_strip() -> Result<(), String> {
+        let compact = "{\n  \"findings\": [\n    {\"id\":\"gap-1\"}\n  ]}\n";
+        let pretty = "{\n  \"findings\": [\n    {\"id\":\"gap-1\"}\n  ]\n}\n";
+        let appended = simulate_append_canonical_next_action(compact);
+        let compact_out = normalize_check_json_golden_document(compact);
+        let appended_out = normalize_check_json_golden_document(&appended);
+        let pretty_out = normalize_check_json_golden_document(pretty);
+        if compact_out != appended_out {
+            return Err(format!(
+                "compact findings closer golden must match reconstituted last-member strip\ncompact: {compact_out:?}\nappended: {appended_out:?}"
+            ));
+        }
+        if compact_out != pretty_out {
+            return Err(format!(
+                "compact and pretty findings closers must share one normalized form\ncompact: {compact_out:?}\npretty: {pretty_out:?}"
+            ));
+        }
+        if compact_out.contains("canonical_next_action") {
+            return Err(format!("strip leaked the last member: {compact_out}"));
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&compact_out)
+            .map_err(|error| format!("normalized compact closer must stay JSON: {error}"))?;
+        if parsed["findings"][0]["id"] != "gap-1" {
+            return Err(format!("findings drifted: {parsed}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn one_line_findings_document_keeps_its_compact_closer() {
+        let input = r#"{"findings":[{"id":"gap-1"}]}"#;
+        assert_eq!(normalize_check_json_golden_document(input), input);
+    }
+
+    #[test]
+    fn compact_closer_normalization_still_sees_finding_id_drift() {
+        let left = "{\n  \"findings\": [\n    {\"id\":\"gap-1\"}\n  ]}\n";
+        let right = "{\n  \"findings\": [\n    {\"id\":\"gap-2\"}\n  ]}\n";
+        assert_ne!(
+            normalize_check_json_golden_document(left),
+            normalize_check_json_golden_document(right)
+        );
     }
 
     use std::sync::atomic::{AtomicUsize, Ordering};
