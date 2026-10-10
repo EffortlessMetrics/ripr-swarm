@@ -250,12 +250,16 @@ pub(crate) fn admit_check_document(value: &Value, subject: &CheckSubject) -> Che
         return rejected(&format!("analysis is not complete (`{kind}`)"));
     }
     let findings = finding_count(object, outcome);
-    if kind == "complete_with_findings" && findings.unwrap_or(0) == 0 {
-        return rejected("complete_with_findings requires a findings count");
+    if let Some(reason) = complete_kind_counts_contradict(kind, outcome, findings) {
+        return rejected(reason);
+    }
+    let truncated = findings_rendering_truncated(value);
+    if let Some(reason) = declared_finding_counts_disagree(object, outcome, truncated) {
+        return rejected(reason);
     }
     CheckAdmission::Complete {
         findings: findings.unwrap_or(0),
-        rendering_truncated: findings_rendering_truncated(value),
+        rendering_truncated: truncated,
         kind: kind.to_string(),
     }
 }
@@ -347,24 +351,126 @@ fn finding_count(
     envelope: &serde_json::Map<String, Value>,
     outcome: &serde_json::Map<String, Value>,
 ) -> Option<u64> {
-    outcome
-        .get("counts")
-        .and_then(Value::as_object)
-        .and_then(|counts| counts.get("finding_count"))
-        .and_then(Value::as_u64)
-        .or_else(|| {
-            envelope
-                .get("summary")
-                .and_then(Value::as_object)
-                .and_then(|summary| summary.get("findings"))
-                .and_then(Value::as_u64)
-        })
+    outcome_finding_count(outcome)
+        .or_else(|| summary_finding_count(envelope))
         .or_else(|| {
             envelope
                 .get("findings")
                 .and_then(Value::as_array)
                 .map(|findings| findings.len() as u64)
         })
+}
+
+fn outcome_finding_count(outcome: &serde_json::Map<String, Value>) -> Option<u64> {
+    outcome
+        .get("counts")
+        .and_then(Value::as_object)
+        .and_then(|counts| counts.get("finding_count"))
+        .and_then(Value::as_u64)
+}
+
+fn summary_finding_count(envelope: &serde_json::Map<String, Value>) -> Option<u64> {
+    envelope
+        .get("summary")
+        .and_then(Value::as_object)
+        .and_then(|summary| summary.get("findings"))
+        .and_then(Value::as_u64)
+}
+
+fn count_field(counts: Option<&serde_json::Map<String, Value>>, name: &str) -> Option<u64> {
+    counts
+        .and_then(|counts| counts.get(name))
+        .and_then(Value::as_u64)
+}
+
+/// Local copy of the producer `validate_outcome` per-kind count
+/// invariants. Missing or contradictory counts cannot improve a
+/// complete-work baseline.
+fn complete_kind_counts_contradict(
+    kind: &str,
+    outcome: &serde_json::Map<String, Value>,
+    declared_findings: Option<u64>,
+) -> Option<&'static str> {
+    let counts = outcome.get("counts").and_then(Value::as_object);
+    let finding = declared_findings.or_else(|| count_field(counts, "finding_count"));
+    let changed_file = count_field(counts, "changed_file_count").unwrap_or(0);
+    let changed_line = count_field(counts, "changed_line_count").unwrap_or(0);
+    let candidate = count_field(counts, "candidate_line_count").unwrap_or(0);
+    let probe = count_field(counts, "probe_count").unwrap_or(0);
+    match kind {
+        "no_scope" => {
+            if finding.unwrap_or(0) != 0
+                || changed_file != 0
+                || changed_line != 0
+                || candidate != 0
+                || probe != 0
+            {
+                Some("no_scope requires every count to be zero")
+            } else {
+                None
+            }
+        }
+        "no_changed_lines" => {
+            if finding.unwrap_or(0) != 0 || changed_line != 0 || candidate != 0 || probe != 0 {
+                Some(
+                    "no_changed_lines requires zero changed-line, candidate, probe, and finding counts",
+                )
+            } else {
+                None
+            }
+        }
+        "no_behavioral_candidates" => {
+            if changed_line == 0 || candidate != 0 || probe != 0 || finding.unwrap_or(0) != 0 {
+                Some(
+                    "no_behavioral_candidates requires changed lines and zero candidate, probe, and finding counts",
+                )
+            } else {
+                None
+            }
+        }
+        "complete_no_findings" => {
+            if finding.unwrap_or(0) != 0 {
+                Some("complete_no_findings requires finding_count = 0")
+            } else if candidate == 0 && probe == 0 {
+                Some("complete_no_findings requires a behavioral candidate or probe subject")
+            } else {
+                None
+            }
+        }
+        "complete_with_findings" => {
+            if finding.unwrap_or(0) == 0 {
+                Some("complete_with_findings requires a findings count")
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+fn declared_finding_counts_disagree(
+    envelope: &serde_json::Map<String, Value>,
+    outcome: &serde_json::Map<String, Value>,
+    truncated: bool,
+) -> Option<&'static str> {
+    let outcome_count = outcome_finding_count(outcome);
+    let summary_count = summary_finding_count(envelope);
+    if outcome_count.is_some() && summary_count.is_some() && outcome_count != summary_count {
+        return Some("declared finding counts disagree");
+    }
+    if truncated {
+        return None;
+    }
+    let rows = envelope
+        .get("findings")
+        .and_then(Value::as_array)
+        .map(|findings| findings.len() as u64);
+    let declared = outcome_count.or(summary_count);
+    if declared.is_some() && rows.is_some() && declared != rows {
+        Some("findings count does not match the findings array")
+    } else {
+        None
+    }
 }
 
 fn rejected(reason: &str) -> CheckAdmission {
@@ -388,6 +494,13 @@ mod tests {
     }
 
     fn complete_outcome(kind: &str, finding_count: u64) -> Value {
+        let (changed_file, changed_line, candidate, probe) = match kind {
+            "no_scope" => (0, 0, 0, 0),
+            "no_changed_lines" => (1, 0, 0, 0),
+            "no_behavioral_candidates" => (1, 1, 0, 0),
+            "complete_no_findings" => (1, 1, 1, 1),
+            _ => (1, 1, 0, 0),
+        };
         json!({
             "schema_version": OUTCOME_SCHEMA_VERSION,
             "kind": kind,
@@ -401,10 +514,10 @@ mod tests {
                 "git_candidate_subject": null
             },
             "counts": {
-                "changed_file_count": 1,
-                "changed_line_count": 1,
-                "candidate_line_count": if kind == "complete_no_findings" { 1 } else { 0 },
-                "probe_count": if kind == "complete_no_findings" { 1 } else { 0 },
+                "changed_file_count": changed_file,
+                "changed_line_count": changed_line,
+                "candidate_line_count": candidate,
+                "probe_count": probe,
                 "finding_count": finding_count
             },
             "limitations": [],
@@ -538,6 +651,34 @@ mod tests {
         assert!(
             admit_check_document(&doc, &subject).is_complete(),
             "eol_only_churn is a complete-analysis disclosure"
+        );
+        let mut doc = complete_document("complete_no_findings", Vec::new());
+        doc["analysis_outcome"]["outcome"]["counts"]["finding_count"] = json!(1);
+        assert!(
+            !admit_check_document(&doc, &subject).is_complete(),
+            "complete_no_findings with finding_count=1 must not improve the baseline"
+        );
+        let mut doc = complete_document("no_scope", Vec::new());
+        doc["analysis_outcome"]["outcome"]["counts"]["changed_file_count"] = json!(1);
+        assert!(
+            !admit_check_document(&doc, &subject).is_complete(),
+            "no_scope with a nonzero count must not improve the baseline"
+        );
+        let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
+        doc["summary"]["findings"] = json!(2);
+        assert!(
+            !admit_check_document(&doc, &subject).is_complete(),
+            "disagreeing declared finding counts must not improve the baseline"
+        );
+        let empty = complete_document("complete_no_findings", Vec::new());
+        assert!(
+            admit_check_document(&empty, &subject).is_complete(),
+            "valid complete_no_findings must still admit"
+        );
+        let no_scope = complete_document("no_scope", Vec::new());
+        assert!(
+            admit_check_document(&no_scope, &subject).is_complete(),
+            "valid no_scope must still admit"
         );
     }
 
