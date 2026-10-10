@@ -28,6 +28,10 @@ struct TempRepo {
 
 impl TempRepo {
     fn create(tests: &str) -> Result<Self, String> {
+        Self::create_files(&[("src/lib.rs", format!("{GATE}{tests}"))])
+    }
+
+    fn create_files(files: &[(&str, String)]) -> Result<Self, String> {
         static SEQUENCE: AtomicU64 = AtomicU64::new(0);
         let root = std::env::temp_dir().join(format!(
             "ripr-assertion-helper-credit-{}-{}",
@@ -41,8 +45,15 @@ impl TempRepo {
             "[package]\nname = \"assertion-helper-credit\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[workspace]\n",
         )
         .map_err(|error| format!("write Cargo.toml failed: {error}"))?;
-        std::fs::write(root.join("src/lib.rs"), format!("{GATE}{tests}"))
-            .map_err(|error| format!("write source failed: {error}"))?;
+        for (relative, source) in files {
+            let path = root.join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)
+                    .map_err(|error| format!("create {relative} parent failed: {error}"))?;
+            }
+            std::fs::write(&path, source)
+                .map_err(|error| format!("write {relative} failed: {error}"))?;
+        }
         std::fs::write(root.join("diff.patch"), DIFF)
             .map_err(|error| format!("write diff failed: {error}"))?;
         Ok(Self { root })
@@ -131,5 +142,83 @@ fn helper_asserting_on_something_else_reads_as_the_inline_assertion() -> Result<
 
     assert_ne!(helper.class, ExposureClass::Exposed, "{helper:?}");
     assert_eq!(helper.class, inline.class, "{helper:?}\n{inline:?}");
+    Ok(())
+}
+
+fn check_eq_helper() -> &'static str {
+    "fn check(input: u32, want: bool) {\n    assert_eq!(assertion_helper_credit::gate(input), want);\n}\n"
+}
+
+fn boundary_calls() -> &'static str {
+    "    check(10, true);\n    check(9, false);\n"
+}
+
+#[test]
+fn integration_target_check_helper_exposes_the_changed_predicate() -> Result<(), String> {
+    let cfg_test = TempRepo::create(&tests_module(
+        "    fn check(input: u32, want: bool) {\n        assert_eq!(gate(input), want);\n    }\n",
+        "        check(10, true);\n        check(9, false);\n",
+    ))?
+    .predicate()?;
+    assert_eq!(
+        cfg_test.class,
+        ExposureClass::Exposed,
+        "control: #6482 cfg(test) helper still exposes: {cfg_test:?}"
+    );
+
+    let integration = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/gate.rs",
+            format!(
+                "{}#[test]\nfn boundary() {{\n{}}}",
+                check_eq_helper(),
+                boundary_calls()
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_eq!(
+        integration.class,
+        ExposureClass::Exposed,
+        "tests/*.rs helper must expose the same way: {integration:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn production_top_level_check_helper_does_not_expose() -> Result<(), String> {
+    let finding = TempRepo::create(&format!(
+        "{}#[test]\nfn boundary() {{\n{}}}",
+        check_eq_helper().replace("assertion_helper_credit::", ""),
+        boundary_calls()
+    ))?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "a src/ helper must not become test evidence: {finding:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn integration_helper_that_names_the_owner_twice_does_not_expose() -> Result<(), String> {
+    let finding = TempRepo::create_files(&[
+        ("src/lib.rs", GATE.to_string()),
+        (
+            "tests/gate.rs",
+            format!(
+                "fn check(input: u32, want: bool) {{\n    let _ = assertion_helper_credit::gate(input);\n    assert_eq!(assertion_helper_credit::gate(input), want);\n}}\n#[test]\nfn boundary() {{\n{}}}",
+                boundary_calls()
+            ),
+        ),
+    ])?
+    .predicate()?;
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "#6482 single-owner-mention gate must still refuse: {finding:?}"
+    );
     Ok(())
 }

@@ -18,13 +18,19 @@
 //! every role authority, so the helper's role is final, and it widens a
 //! test's facts in one bounded direction:
 //!
-//! - the helper is a non-test, evidence-role (`CfgTestModule`) function in
-//!   the test's own file, its name is defined exactly once there, and it
-//!   is a direct item of the same inline module as the test (or both sit at
-//!   the file's top level). A module item cannot coexist with a same-named
-//!   `use` import and wins over a glob, so the call resolves to it. A
-//!   helper in a sibling or parent module (`use super::*`), or nested in
-//!   another fn's body, is not credited, and neither is any helper for a
+//! - the helper is a non-test function in the test's own file, its name is
+//!   defined exactly once there, and it is a direct item of the same inline
+//!   module as the test (or both sit at the file's top level). Eligible
+//!   helpers are an evidence-role (`CfgTestModule`) function, or a
+//!   top-level `Production` function in an integration-test target
+//!   (`tests/**`, #7125). This producer does not reclassify that
+//!   `Production` helper; it only copies the helper's calls and
+//!   parser-backed assertions onto the calling test. A `Production`
+//!   function in a production file, or a helper in `benches/` or
+//!   `examples/`, is not credited. A module item cannot coexist with a
+//!   same-named `use` import and wins over a glob, so the call resolves to
+//!   it. A helper in a sibling or parent module (`use super::*`), or nested
+//!   in another fn's body, is not credited, and neither is any helper for a
 //!   test whose body holds a `use` item or any `cfg`/`cfg_attr` attribute;
 //! - the parsed test body calls it as a single-segment free function
 //!   (`check(..)`, not `self.check(..)`, `path::check(..)`, or the text
@@ -53,6 +59,7 @@
 //! evidence the helper body really contains.
 
 use super::{FunctionFact, FunctionSourceRole, OracleFact, RustIndex, TestFact};
+use crate::analysis::rust_index::is_test_file;
 use crate::analysis::syntax::{ModuleItemScopes, module_item_scopes, parser_oracles_for_function};
 use rayon::prelude::*;
 use std::borrow::Cow;
@@ -87,7 +94,7 @@ pub(super) fn credit_same_file_assertion_helpers(index: &mut RustIndex) {
         let candidate = test.calls.iter().any(|call| {
             matches!(
                 names.get(call.name.as_str()).map(Vec::as_slice),
-                Some([helper]) if helper.source_role == FunctionSourceRole::CfgTestModule
+                Some([helper]) if is_assertion_helper(helper)
                     && !test_shadows(test, &call.name)
                     && !spans_overlap(helper, test)
             )
@@ -213,8 +220,24 @@ fn unique_assertion_helper<'facts>(
     name: &str,
 ) -> Option<&'facts FunctionFact> {
     match functions_by_name.get(name)?.as_slice() {
-        [helper] if helper.source_role == FunctionSourceRole::CfgTestModule => Some(helper),
+        [helper] if is_assertion_helper(helper) => Some(helper),
         _ => None,
+    }
+}
+
+/// Whether `helper` may lend its assertions to a same-file test.
+///
+/// `CfgTestModule` is the ordinary `#[cfg(test)]` helper. A `Production`
+/// function in an integration-test target is the same evidence-only shape
+/// for this producer (#7125): Cargo never treats `tests/*.rs` as a
+/// production subject, but item role stays `Production` because the helper
+/// is not inside a cfg-test module. Executable test roles and production
+/// files stay out, so a `src/` helper cannot become test evidence here.
+fn is_assertion_helper(helper: &FunctionFact) -> bool {
+    match helper.source_role {
+        FunctionSourceRole::CfgTestModule => true,
+        FunctionSourceRole::Production => is_test_file(&helper.file),
+        _ => false,
     }
 }
 

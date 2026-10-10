@@ -31,6 +31,7 @@ Linked issues:
   as a weak relational check (bool-owner pins below)
 - #6482 (an `assert_eq!` in a test-local check helper the test calls
   eagerly; rule 7)
+- #7125 (the same helper shape in a `tests/*.rs` integration target)
 
 Linked PRs:
 
@@ -615,15 +616,18 @@ rule only for an assertion whose context was admitted.
      call is enough; further deferred calls neither add nor remove credit.
    - The call can only name the helper: exactly one `fn` of that name is
      visible anywhere in the file, and it is a direct item of the test's own
-     module (or both are top-level items of an out-of-line `#[cfg(test)]`
-     module file). Helpers in an integration-test target (`tests/*.rs`) are
-     not yet borrowed: the helper-assertion producer feeds only functions in
-     `#[cfg(test)]` modules, so their assertions stay uncredited. A module item
-     cannot coexist with a same-named import and wins over a glob. The test
-     contains no `use` item and binds no name equal to the helper (pattern,
-     parameter, closure parameter or nested item). A helper in a parent or
-     sibling module, a helper only a macro generates, and a duplicate
-     definition in another module of the file are refused.
+     module (or both are top-level items). The helper is either a
+     `CfgTestModule` function or a top-level non-test `Production` function
+     in an integration-test target (`tests/*.rs`, #7125). The producer does
+     not reclassify that `Production` helper; it only copies the helper's
+     calls and parser-backed assertions onto the calling test. A
+     `Production` function in a production file, and a helper in `benches/`
+     or `examples/`, stay uncredited. A module item cannot coexist with a
+     same-named import and wins over a glob. The test contains no `use` item
+     and binds no name equal to the helper (pattern, parameter, closure
+     parameter or nested item). A helper in a parent or sibling module, a
+     helper only a macro generates, and a duplicate definition in another
+     module of the file are refused.
    - The helper runs to its end on every call: no attributes other than
      `#[track_caller]`, no generic parameters or `where` clause, not `async`,
      `const` or `unsafe`, no `self` parameter, no return type, and no `return`
@@ -1310,6 +1314,10 @@ assertions. This repair shares the existing callback without that larger migrati
   availability reuses the canonical lexer; the existing test-only role query
   retains its separate contract. Out-of-line resolution remains owned by
   existing `FileFacts::role_provenance`, not by the admission consumer.
+- `crates/ripr/src/analysis/facts/test_helpers.rs`: same-file helper
+  crediting. Rule 7 (#7125) also credits a unique top-level `Production`
+  helper in an integration-test target (`tests/*.rs`) without changing its
+  item role; `benches/`, `examples/`, and production-file helpers stay out.
 - `crates/ripr/src/analysis/seam_cache.rs`: classified `1.25`, sharded `0.31`,
   compact `0.31` invalidate stale false credit. File-fact `1.15` from #4748 is preserved;
   the query reads existing indexed source, so no file-fact migration is needed.
@@ -1318,7 +1326,8 @@ assertions. This repair shares the existing callback without that larger migrati
   The statement-prefix refinement changes no serialized fact shape.
   Rule 7 (#6482) moves classified full `1.54`, sharded and compact `0.60`, so
   a warm hit cannot keep a check helper's assertion uncredited; file facts
-  are unchanged.
+  are unchanged. Integration-target helpers (#7125) move classified full
+  `1.56`, sharded and compact `0.62`.
 
 ## Metrics
 

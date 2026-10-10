@@ -399,7 +399,10 @@ pub(crate) struct CachedSeamLimitInfo {
 /// a warm entry written from a CRLF working tree carries the
 /// byte-spelling-shifted ID, so cross-checkout snapshot joins must
 /// cold-recompute instead of replaying it.
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.55";
+/// `1.56`: a `tests/*.rs` integration-target check helper's `assert_eq!`
+/// is credited like a `#[cfg(test)]` helper (#7125). Old entries keep those
+/// findings under-credited.
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.56";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -495,7 +498,9 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.55";
 /// `0.60`: same check-helper transition as full `1.54` (#6482).
 /// `0.61`: same line-ending-normalized seam-ID transition as full `1.55`
 /// (#7203); CRLF-checkout entries carry shifted IDs and must miss.
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.61";
+/// `0.62`: same integration-target check-helper transition as full `1.56`
+/// (#7125).
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.62";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -593,7 +598,9 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.61";
 /// `0.60`: same check-helper transition as full `1.54` (#6482).
 /// `0.61`: same line-ending-normalized seam-ID transition as full `1.55`
 /// (#7203); CRLF-checkout entries carry shifted IDs and must miss.
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.61";
+/// `0.62`: same integration-target check-helper transition as full `1.56`
+/// (#7125).
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.62";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -4220,7 +4227,8 @@ mod tests {
         // 1.54 -> 1.55: seam IDs hash the line-ending-normalized logical
         // offset (#7203); a warm CRLF-checkout entry carries the
         // byte-spelling-shifted ID and must cold-recompute.
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.55");
+        // 1.55 -> 1.56: integration-target check helpers credited (#7125).
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.56");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4268,8 +4276,9 @@ mod tests {
         // 0.59 -> 0.60: same #6482 transition as full 1.54.
         // 0.60 -> 0.61: same line-ending-normalized seam-ID transition as
         // full 1.55 (#7203).
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.61");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.61");
+        // 0.61 -> 0.62: same #7125 transition as full 1.56.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.62");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.62");
     }
 
     #[test]

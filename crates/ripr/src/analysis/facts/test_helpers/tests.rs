@@ -1,4 +1,4 @@
-use super::super::build_index;
+use super::super::{FunctionSourceRole, build_index};
 use super::*;
 use std::error::Error;
 use std::fs;
@@ -8,14 +8,25 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static NEXT_ROOT: AtomicU64 = AtomicU64::new(0);
 
 fn index_for(source: &str) -> Result<RustIndex, Box<dyn Error>> {
+    index_for_files(&[("src/lib.rs", source)])
+}
+
+fn index_for_files(files: &[(&str, &str)]) -> Result<RustIndex, Box<dyn Error>> {
     let root = std::env::temp_dir().join(format!(
         "ripr-test-helpers-{}-{}",
         std::process::id(),
         NEXT_ROOT.fetch_add(1, Ordering::Relaxed)
     ));
-    fs::create_dir_all(root.join("src"))?;
-    fs::write(root.join("src/lib.rs"), source)?;
-    let index = build_index(&root, &[PathBuf::from("src/lib.rs")]);
+    let mut paths = Vec::new();
+    for (relative, source) in files {
+        let path = root.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&path, source)?;
+        paths.push(PathBuf::from(*relative));
+    }
+    let index = build_index(&root, &paths);
     fs::remove_dir_all(&root)?;
     Ok(index?)
 }
@@ -246,6 +257,131 @@ fn helper_in_production_scope_is_not_an_assertion_helper() -> Result<(), Box<dyn
 
     assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
     assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn integration_target_top_level_helper_stays_production_and_is_credited()
+-> Result<(), Box<dyn Error>> {
+    // #7125: a tests/*.rs helper is item-role Production (no cfg(test)
+    // module), but the file is an integration target, so this producer
+    // credits it without minting CfgTestModule.
+    let index = index_for_files(&[
+        ("src/lib.rs", GATE),
+        (
+            "tests/gate.rs",
+            concat!(
+                "fn check(input: u32, want: bool) {\n",
+                "    assert_eq!(gate(input), want);\n",
+                "}\n\n",
+                "#[test]\n",
+                "fn boundary() {\n",
+                "    check(10, false);\n",
+                "    check(11, true);\n",
+                "}\n",
+            ),
+        ),
+    ])?;
+
+    let helper = index
+        .functions()
+        .iter()
+        .find(|function| function.name == "check" && function.file.ends_with("gate.rs"))
+        .ok_or("premise: the integration helper is indexed")?;
+    assert_eq!(
+        helper.source_role,
+        FunctionSourceRole::Production,
+        "the producer must not reclassify the helper: {:?}",
+        helper.source_role
+    );
+
+    let test = test_named(&index, "boundary")?;
+    assert!(calls(test).contains(&"check"), "{:?}", calls(test));
+    assert!(calls(test).contains(&"gate"), "{:?}", calls(test));
+    assert_eq!(
+        assertion_texts(test),
+        vec!["assert_eq!(gate(input), want);"]
+    );
+    Ok(())
+}
+
+#[test]
+fn production_file_top_level_helper_beside_a_top_level_test_is_not_credited()
+-> Result<(), Box<dyn Error>> {
+    // Same-module Production helpers in src/ are production code under
+    // test, not integration-target evidence. Dropping the CfgTestModule
+    // gate without the tests/** fence would falsely credit this.
+    let index = index_for(&format!(
+        "{GATE}fn check(x: u32, want: bool) {{\n    assert_eq!(gate(x), want);\n}}\n\n#[test]\nfn boundary() {{\n    check(10, false);\n}}\n"
+    ))?;
+
+    let test = test_named(&index, "boundary")?;
+    assert!(test.assertions.is_empty(), "{:?}", assertion_texts(test));
+    assert!(!calls(test).contains(&"gate"), "{:?}", calls(test));
+    Ok(())
+}
+
+#[test]
+fn bench_and_example_helpers_are_not_credited() -> Result<(), Box<dyn Error>> {
+    for path in ["benches/gate.rs", "examples/gate.rs"] {
+        let index = index_for_files(&[
+            ("src/lib.rs", GATE),
+            (
+                path,
+                concat!(
+                    "fn check(input: u32, want: bool) {\n",
+                    "    assert_eq!(gate(input), want);\n",
+                    "}\n\n",
+                    "#[test]\n",
+                    "fn boundary() {\n",
+                    "    check(10, false);\n",
+                    "}\n",
+                ),
+            ),
+        ])?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions.is_empty(),
+            "{path}: {:?}",
+            assertion_texts(test)
+        );
+        assert!(!calls(test).contains(&"gate"), "{path}: {:?}", calls(test));
+    }
+    Ok(())
+}
+
+#[test]
+fn integration_target_helpers_keep_the_cfg_test_refusal_gates() -> Result<(), Box<dyn Error>> {
+    for (shape, helper, body) in [
+        (
+            "let shadow",
+            "fn check(x: u32, want: bool) {\n    assert_eq!(gate(x), want);\n}\n",
+            "    let check = |_: u32, _: bool| {};\n    check(10, false);\n",
+        ),
+        (
+            "call only inside an uncalled closure",
+            "fn check(x: u32, want: bool) {\n    assert_eq!(gate(x), want);\n}\n",
+            "    let _later = || check(10, false);\n",
+        ),
+        (
+            "two same-file definitions",
+            "mod a {\n    pub fn check(x: u32, want: bool) { assert_eq!(super::gate(x), want); }\n}\nfn check(x: u32, want: bool) {\n    assert_eq!(gate(x), want);\n}\n",
+            "    check(10, false);\n",
+        ),
+    ] {
+        let index = index_for_files(&[(
+            "tests/gate.rs",
+            &format!("{helper}\n#[test]\nfn boundary() {{\n{body}}}\n"),
+        )])?;
+        let test = test_named(&index, "boundary")?;
+        assert!(
+            test.assertions
+                .iter()
+                .all(|assertion| !assertion.text.contains("want")),
+            "{shape}: {:?}",
+            assertion_texts(test)
+        );
+    }
     Ok(())
 }
 
