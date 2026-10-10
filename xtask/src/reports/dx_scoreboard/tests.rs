@@ -2860,7 +2860,7 @@ fn speed_rss(samples: &[Sample]) -> Option<&Sample> {
         .find(|sample| sample.metric == "speed.warm_check_peak_rss_mb")
 }
 
-fn warm_check_pair<'a>(samples: &'a [Sample]) -> Result<(&'a Sample, &'a Sample), String> {
+fn warm_check_pair(samples: &[Sample]) -> Result<(&Sample, &Sample), String> {
     Ok((
         speed_ms(samples).ok_or("speed.warm_check_ms missing")?,
         speed_rss(samples).ok_or("speed.warm_check_peak_rss_mb missing")?,
