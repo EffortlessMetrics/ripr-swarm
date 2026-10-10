@@ -1,0 +1,242 @@
+{
+  "source_sha": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+  "recorded_utc": "2026-10-10T04:58:04.868174+00:00",
+  "environment": {
+    "shell": "bash",
+    "rust": "1.95.0",
+    "cargo": "1.95.0",
+    "cpu_quota_cores": 4,
+    "memory_limit_gib": 16,
+    "cargo_build_jobs": 2,
+    "offline_registry": "preexisting warm registry",
+    "cold_targets": "fresh, separate, task-owned directories",
+    "original_debug_cache_gib_approx": 9,
+    "original_incremental_gib_approx": 5.8
+  },
+  "derived": {
+    "cold_wall_reduction_percent": 12.607052578004732,
+    "cold_target_byte_reduction_percent": 50.588483505201566,
+    "comment_only_edit_penalty_s": 47.67684282100004,
+    "cold_saving_edit_break_even_count": 0.6453743820143866
+  },
+  "measurements": {
+    "baseline-cold": {
+      "label": "baseline-cold",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "xtask",
+        "--timings"
+      ],
+      "exit": 0,
+      "stop": null,
+      "wall_s": 244.065080094,
+      "max_child_rss_kib": 3771852,
+      "target_bytes": 3162791877,
+      "jobs": 2,
+      "source_sha": "331176f6cf6405ba9688b7a5dbca6654453eaad1"
+    },
+    "lean-cold-isolated": {
+      "label": "lean-cold-isolated",
+      "command": [
+        "env",
+        "CARGO_INCREMENTAL=0",
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "xtask",
+        "--timings",
+        "-vv"
+      ],
+      "exit": 0,
+      "stop": null,
+      "wall_s": 213.29566712200005,
+      "max_child_rss_kib": 3776736,
+      "target_bytes": 1562783430,
+      "jobs": 2,
+      "source_sha": "331176f6cf6405ba9688b7a5dbca6654453eaad1"
+    },
+    "lean256-cold": {
+      "label": "lean256-cold",
+      "command": [
+        "env",
+        "CARGO_INCREMENTAL=0",
+        "CARGO_PROFILE_DEV_CODEGEN_UNITS=256",
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "xtask",
+        "--timings",
+        "-vv"
+      ],
+      "exit": 0,
+      "stop": null,
+      "wall_s": 223.08213294400002,
+      "max_child_rss_kib": 3690776,
+      "target_bytes": 1591821316,
+      "jobs": 2,
+      "source_sha": "331176f6cf6405ba9688b7a5dbca6654453eaad1"
+    },
+    "baseline-warm": {
+      "label": "baseline-warm",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "xtask",
+        "-vv"
+      ],
+      "exit": 0,
+      "stop": null,
+      "wall_s": 0.26058598400004485,
+      "target_bytes": 3162791877,
+      "jobs": 2,
+      "source_sha": "331176f6cf6405ba9688b7a5dbca6654453eaad1"
+    },
+    "lean-warm": {
+      "label": "lean-warm",
+      "command": [
+        "env",
+        "CARGO_INCREMENTAL=0",
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "xtask",
+        "-vv"
+      ],
+      "exit": 0,
+      "stop": null,
+      "wall_s": 0.26088972299999114,
+      "target_bytes": 1562783430,
+      "jobs": 2,
+      "source_sha": "331176f6cf6405ba9688b7a5dbca6654453eaad1"
+    },
+    "lean256-warm": {
+      "label": "lean256-warm",
+      "command": [
+        "env",
+        "CARGO_INCREMENTAL=0",
+        "CARGO_PROFILE_DEV_CODEGEN_UNITS=256",
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "xtask",
+        "-vv"
+      ],
+      "exit": 0,
+      "stop": null,
+      "wall_s": 0.26025356399998145,
+      "target_bytes": 1591821316,
+      "jobs": 2,
+      "source_sha": "331176f6cf6405ba9688b7a5dbca6654453eaad1"
+    },
+    "baseline-edit": {
+      "label": "baseline-edit",
+      "command": [
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "xtask",
+        "-vv"
+      ],
+      "exit": 0,
+      "stop": null,
+      "wall_s": 11.767015614999991,
+      "max_child_rss_kib": 1767268,
+      "target_bytes": 3579355149,
+      "jobs": 2,
+      "base_source_sha": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+      "source_delta_recipe": "edit object in this document"
+    },
+    "lean-edit": {
+      "label": "lean-edit",
+      "command": [
+        "env",
+        "CARGO_INCREMENTAL=0",
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "xtask",
+        "-vv"
+      ],
+      "exit": 0,
+      "stop": null,
+      "wall_s": 59.44385843600003,
+      "max_child_rss_kib": 2746788,
+      "target_bytes": 1562783430,
+      "jobs": 2,
+      "base_source_sha": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+      "source_delta_recipe": "edit object in this document"
+    },
+    "lean256-edit": {
+      "label": "lean256-edit",
+      "command": [
+        "env",
+        "CARGO_INCREMENTAL=0",
+        "CARGO_PROFILE_DEV_CODEGEN_UNITS=256",
+        "cargo",
+        "build",
+        "--locked",
+        "--offline",
+        "-p",
+        "xtask",
+        "-vv"
+      ],
+      "exit": 0,
+      "stop": null,
+      "wall_s": 65.01962750500002,
+      "max_child_rss_kib": 2623868,
+      "target_bytes": 1591821316,
+      "jobs": 2,
+      "base_source_sha": "331176f6cf6405ba9688b7a5dbca6654453eaad1",
+      "source_delta_recipe": "edit object in this document"
+    }
+  },
+  "edit": {
+    "original_sha256": "d7f2f3fb76455a1fb3e8410cb6fdef516c1c6a5918a9802f3183d1421ea86751",
+    "edited_sha256": "a17a153a3d02c2f289979f43eb1f1678f6b77e0f90dabebe796be3b02351c02c",
+    "change": "append one comment; no behavior change",
+    "path": "xtask/src/main.rs",
+    "append_utf8": "\n// RIPR build-preparation benchmark: harmless comment-only edit.\n"
+  },
+  "proof": {
+    "compiler_units_each": 289,
+    "features_each": [
+      "default",
+      "lang-rust",
+      "lang-typescript",
+      "lang-python"
+    ],
+    "same_third_party_library_fingerprints": 219,
+    "positive_policy_cases": 6,
+    "negative_policy_cases": 3,
+    "negative_condition": "invalid name frontmatter in prepare-proof skill; real checker emits both codex and zcode findings and exit1",
+    "source_and_fixture_restored": true,
+    "compiler_trace": "no incremental flag in lean; line-tables-only retained; explicit codegen-units=256 only in lean256",
+    "workflow_input_file_count": 31,
+    "canonical_skill_input_file_count": 7,
+    "post_edit_driver_hashes_equal_to_original": true
+  },
+  "archive": {
+    "sha256": "14b369427fb67859e9c3dc3b70209e9bfb30b082122dbcd809c1394df04e2f62",
+    "bytes": 211727176,
+    "availability": "Task-local retained proof pack; not uploaded or a durable remote binary receipt."
+  }
+}
