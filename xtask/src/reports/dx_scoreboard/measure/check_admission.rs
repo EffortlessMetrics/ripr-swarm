@@ -231,8 +231,8 @@ pub(crate) fn admit_check_document(value: &Value, subject: &CheckSubject) -> Che
     if analysis_complete != kind_complete {
         return rejected("analysis_complete does not match typed outcome kind");
     }
-    if kind_complete && complete_kind_has_incomplete_limitation(outcome) {
-        return rejected("complete analysis cannot carry incomplete-analysis limitations");
+    if kind_complete && let Some(reason) = complete_kind_has_incomplete_limitation(outcome) {
+        return rejected(reason);
     }
     if let Some(actual) = outcome
         .get("identity")
@@ -337,18 +337,26 @@ fn portable_root(value: &str) -> String {
     value.replace('\\', "/").replace("%25", "%")
 }
 
-fn complete_kind_has_incomplete_limitation(outcome: &serde_json::Map<String, Value>) -> bool {
-    outcome
-        .get("limitations")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .any(|limitation| {
-            matches!(
-                limitation.get("kind").and_then(Value::as_str),
-                Some(kind) if kind != COMPLETE_KIND_ALLOWED_LIMITATION
-            )
-        })
+/// Complete kinds may disclose only `eol_only_churn`. A missing, non-array,
+/// or kind-less `limitations` value is not an empty allowlist (#7276).
+fn complete_kind_has_incomplete_limitation(
+    outcome: &serde_json::Map<String, Value>,
+) -> Option<&'static str> {
+    let Some(Value::Array(items)) = outcome.get("limitations") else {
+        return Some("complete analysis requires a typed limitations array");
+    };
+    for limitation in items {
+        match limitation.get("kind").and_then(Value::as_str) {
+            Some(kind) if kind == COMPLETE_KIND_ALLOWED_LIMITATION => {}
+            Some(_) => {
+                return Some("complete analysis cannot carry incomplete-analysis limitations");
+            }
+            None => {
+                return Some("complete analysis limitations must each have a string kind");
+            }
+        }
+    }
+    None
 }
 
 fn finding_count(
@@ -733,6 +741,132 @@ mod tests {
         assert!(
             !admit_check_document(&doc, &subject).is_complete(),
             "a non-numeric count field must not improve the baseline"
+        );
+        Ok(())
+    }
+
+    /// Pre-#7276 flatten: a missing or non-array `limitations` value, and
+    /// entries without a string `kind`, were treated as "no incomplete
+    /// limitations." Kept so restoring that hole fails this discriminator.
+    fn permissive_complete_kind_limitation_flatten(
+        outcome: &serde_json::Map<String, Value>,
+    ) -> bool {
+        outcome
+            .get("limitations")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .any(|limitation| {
+                matches!(
+                    limitation.get("kind").and_then(Value::as_str),
+                    Some(kind) if kind != COMPLETE_KIND_ALLOWED_LIMITATION
+                )
+            })
+    }
+
+    fn outcome_object(doc: &Value) -> Result<&serde_json::Map<String, Value>, String> {
+        doc["analysis_outcome"]["outcome"]
+            .as_object()
+            .ok_or_else(|| "outcome fixture is not an object".to_string())
+    }
+
+    fn rejected_reason(doc: &Value, subject: &CheckSubject) -> Result<String, String> {
+        match admit_check_document(doc, subject) {
+            CheckAdmission::Rejected { reason } => Ok(reason),
+            other => Err(format!("expected rejection, got {other:?}")),
+        }
+    }
+
+    #[test]
+    fn omitted_object_and_kindless_limitations_cannot_admit_as_complete() -> Result<(), String> {
+        let subject = subject();
+        let empty = complete_document("complete_with_findings", vec![one_finding()]);
+        assert!(
+            admit_check_document(&empty, &subject).is_complete(),
+            "empty limitations: [] on an otherwise valid complete kind must still admit"
+        );
+
+        let mut omitted = complete_document("complete_with_findings", vec![one_finding()]);
+        let Some(outcome) = omitted["analysis_outcome"]["outcome"].as_object_mut() else {
+            return Err("outcome fixture is not an object".to_string());
+        };
+        outcome.remove("limitations");
+        assert!(
+            !permissive_complete_kind_limitation_flatten(outcome_object(&omitted)?),
+            "old flatten treated omitted limitations as an empty allowlist"
+        );
+        let reason = rejected_reason(&omitted, &subject)?;
+        assert!(
+            reason.contains("typed limitations array"),
+            "omitted limitations must name the missing array, got {reason:?}"
+        );
+
+        let mut object = complete_document("complete_with_findings", vec![one_finding()]);
+        object["analysis_outcome"]["outcome"]["limitations"] = json!({"kind": "eol_only_churn"});
+        assert!(
+            !permissive_complete_kind_limitation_flatten(outcome_object(&object)?),
+            "old flatten treated an object-valued limitations field as empty"
+        );
+        let reason = rejected_reason(&object, &subject)?;
+        assert!(
+            reason.contains("typed limitations array"),
+            "object-valued limitations must name the missing array, got {reason:?}"
+        );
+
+        let mut kindless = complete_document("complete_with_findings", vec![one_finding()]);
+        kindless["analysis_outcome"]["outcome"]["limitations"] = json!([{}]);
+        assert!(
+            !permissive_complete_kind_limitation_flatten(outcome_object(&kindless)?),
+            "old flatten ignored entries without a string kind"
+        );
+        let reason = rejected_reason(&kindless, &subject)?;
+        assert!(
+            reason.contains("string kind"),
+            "kind-less array entry must name the missing kind, got {reason:?}"
+        );
+
+        let mut numeric_kind = complete_document("complete_with_findings", vec![one_finding()]);
+        numeric_kind["analysis_outcome"]["outcome"]["limitations"] = json!([{ "kind": 1 }]);
+        let reason = rejected_reason(&numeric_kind, &subject)?;
+        assert!(
+            reason.contains("string kind"),
+            "non-string kind must not admit, got {reason:?}"
+        );
+
+        let mut mixed = complete_document("complete_with_findings", vec![one_finding()]);
+        mixed["analysis_outcome"]["outcome"]["limitations"] = json!([
+            { "kind": "eol_only_churn", "producer_stage": "diff_parse" },
+            {}
+        ]);
+        let reason = rejected_reason(&mixed, &subject)?;
+        assert!(
+            reason.contains("string kind"),
+            "a kind-less entry beside eol_only_churn must not admit, got {reason:?}"
+        );
+
+        let mut producer_failure = complete_document("complete_with_findings", vec![one_finding()]);
+        producer_failure["analysis_outcome"]["outcome"]["limitations"] = json!([{
+            "kind": "producer_failure",
+            "producer_stage": "analysis_pipeline"
+        }]);
+        assert!(
+            permissive_complete_kind_limitation_flatten(outcome_object(&producer_failure)?),
+            "producer_failure was already an incomplete-analysis limitation"
+        );
+        let reason = rejected_reason(&producer_failure, &subject)?;
+        assert!(
+            reason.contains("incomplete-analysis limitations"),
+            "producer_failure must still use the allowlist reject, got {reason:?}"
+        );
+
+        let mut eol = complete_document("complete_with_findings", vec![one_finding()]);
+        eol["analysis_outcome"]["outcome"]["limitations"] = json!([{
+            "kind": "eol_only_churn",
+            "producer_stage": "diff_parse"
+        }]);
+        assert!(
+            admit_check_document(&eol, &subject).is_complete(),
+            "eol_only_churn is still a complete-analysis disclosure"
         );
         Ok(())
     }
