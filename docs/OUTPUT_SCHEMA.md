@@ -507,6 +507,13 @@ The normative top-level contract is
 `schema_version` (`0.2`), `tool`, `mode`, `root`, `summary`, and `findings`.
 The optional `analysis_outcome` block preserves producer-owned completeness;
 the optional `finding_alignment` block is the typed canonical seam projection.
+The optional `canonical_next_action` object is additive in schema `0.2`
+(#7258): the public navigation-aware `ripr check --format json` adapter
+embeds the same `canonical_next_action.v1` decision the human triage
+renderer consumes. The generic JSON renderer and unbounded `pr-evidence`
+path omit it because they lack navigation/provenance context and must not
+invent a committed-source default or executable route. Per-finding
+`suggested_next_action` advice stays compatible and is not this object.
 Unknown top-level fields are rejected by the verification contract. Nested
 finding and seam details may grow additively within the pinned version.
 
@@ -560,9 +567,40 @@ identity agree and the analysis-outcome validator accepts the artifact.
       "claim_boundary": "Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."
     }
   },
-  "findings": []
+  "findings": [],
+  "canonical_next_action": {
+    "schema_version": "canonical_next_action.v1",
+    "producer": "check_top_result",
+    "subject": {
+      "root": "/abs/path/to/workspace",
+      "diff_source": { "working_tree": { "head": null } },
+      "item": "probe:src_lib.rs:1:predicate"
+    },
+    "currentness": {
+      "head_expected": null,
+      "head_observed": null,
+      "config_expected": null,
+      "config_observed": null
+    },
+    "action_class": "inspect_details",
+    "stop": {
+      "kind": "check_triage",
+      "case": "top_gap",
+      "detail_route": "ripr explain --root /abs/path/to/workspace --worktree probe:src_lib.rs:1:predicate"
+    },
+    "non_claim": "Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."
+  }
 }
 ```
+
+`canonical_next_action` (additive, no `schema_version` bump, #7258) is the
+same DTO RepairCard and agent-status JSON already embed. Check JSON carries
+it only when the CLI render path has a declared diff provenance. An
+inspectable finding stays `inspect_details`; a guidance string is never
+upgraded into `run_command` without a producer-owned `CommandSpec`. JSON
+findings-array budgeting preserves this primary object and its
+`stop.detail_route` even when later findings are omitted. Classification
+fixture goldens strip the member so analyzer contracts stay finding-shaped.
 
 `analysis_outcome` is emitted for diff and worktree analysis. Its
 `analysis_complete` member is derived from `outcome.kind`; consumers must use

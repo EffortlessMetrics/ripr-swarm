@@ -287,8 +287,39 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
         OutputFormat::HumanFull => Ok(human::terminal_safe(
             human::render_full_with_config_and_navigation(output, config, drill_in),
         )),
+        OutputFormat::Json => {
+            // The public CLI JSON adapter has navigation/provenance; reuse
+            // the check producer rather than re-inferring mode here (#7258).
+            // The generic JSON arm below has neither and must not invent a
+            // committed-source default or executable route.
+            let findings_budget = json::check_findings_byte_budget()?;
+            let rendered = stamp_check_json(
+                json::render_with_config(output, config, findings_budget),
+                &output.root,
+            );
+            Ok(attach_canonical_next_action(
+                rendered, output, config, drill_in, provenance,
+            ))
+        }
         _ => render_check_with_config_and_progress(output, format, config, progress),
     }
+}
+
+/// Embed the shared check-action projection as a last top-level member.
+/// Projection failure omits the member: the typed document stays valid and
+/// does not gain a fabricated route.
+fn attach_canonical_next_action(
+    rendered: String,
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> String {
+    let Some(action) = human::canonical_next_action_for_check(output, config, drill_in, provenance)
+    else {
+        return rendered;
+    };
+    super::next_action::append_canonical_next_action_member(rendered, &action)
 }
 
 /// Public re-export for CLI callers that drive the streaming JSON path directly
@@ -703,8 +734,11 @@ fn missing_test_efficiency_badge_summary(
 
 #[cfg(test)]
 mod tests {
-    use super::render_check_with_config;
-    use crate::app::{CheckOutput, Mode};
+    use super::{
+        attach_canonical_next_action, render_check_with_config,
+        render_check_with_config_and_navigation_and_progress,
+    };
+    use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation, Mode};
     use crate::config::RiprConfig;
     use crate::domain::{
         ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, OracleKind,
@@ -712,6 +746,7 @@ mod tests {
         SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId,
     };
     use crate::output::format::OutputFormat;
+    use crate::output::json;
     use std::path::{Path, PathBuf};
 
     #[test]
@@ -917,6 +952,206 @@ mod tests {
         assert!(!human.is_empty());
         assert!(json.contains("\"schema_version\""));
         assert!(github.contains("ripr"));
+        Ok(())
+    }
+
+    #[test]
+    fn generic_check_json_omits_canonical_next_action() -> Result<(), String> {
+        let output = check_output_with(vec![sample_finding("src/lib.rs", 1)]);
+        let json = render_check_with_config(&output, &OutputFormat::Json, &RiprConfig::default())?;
+        if json.contains("\"canonical_next_action\"") {
+            return Err(
+                "generic JSON renderer must not invent a canonical action without provenance"
+                    .to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn navigation_aware_check_json_embeds_the_shared_producer_decision() -> Result<(), String> {
+        let output = check_output_with(vec![sample_finding("src/lib.rs", 1)]);
+        let config = RiprConfig::default();
+        let drill_in = FindingDrillIn::Commands(FindingNavigation::legacy());
+        let json = render_check_with_config_and_navigation_and_progress(
+            &output,
+            &OutputFormat::Json,
+            &config,
+            Some(&drill_in),
+            None,
+            CheckDiffProvenance::Worktree,
+        )?;
+        let parsed: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|error| format!("navigation JSON must stay one document: {error}"))?;
+        let action = parsed
+            .get("canonical_next_action")
+            .ok_or("navigation-aware JSON must embed canonical_next_action")?;
+        if action["schema_version"] != "canonical_next_action.v1" {
+            return Err(format!("schema_version is wrong: {action}"));
+        }
+        if action["producer"] != "check_top_result" {
+            return Err(format!("producer is wrong: {action}"));
+        }
+        if action["action_class"] != "inspect_details" {
+            return Err(format!(
+                "top gap must stay inspectable, not executable: {action}"
+            ));
+        }
+        if action
+            .get("command")
+            .is_some_and(|command| !command.is_null())
+        {
+            return Err(format!(
+                "inspectable findings cannot gain run_command authority: {action}"
+            ));
+        }
+        if action["subject"]["item"] != "probe:src_lib_rs:42:error_path" {
+            return Err(format!("selected item drifted: {action}"));
+        }
+        if action["subject"]["root"] != "." {
+            return Err(format!("root drifted: {action}"));
+        }
+        if action["subject"]["diff_source"]
+            .get("working_tree")
+            .is_none()
+        {
+            return Err(format!("worktree provenance must survive JSON: {action}"));
+        }
+        let route = action["stop"]["detail_route"]
+            .as_str()
+            .ok_or_else(|| format!("check triage must carry its inspect route: {action}"))?;
+        if !route.contains("probe:src_lib_rs:42:error_path") {
+            return Err(format!("inspect route lost the finding id: {route}"));
+        }
+        if parsed["findings"][0]["suggested_next_action"].is_null() {
+            return Err("per-finding advice must remain compatible".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn restoring_the_generic_json_path_loses_the_canonical_action() -> Result<(), String> {
+        let output = check_output_with(vec![sample_finding("src/lib.rs", 1)]);
+        let config = RiprConfig::default();
+        let drill_in = FindingDrillIn::Commands(FindingNavigation::legacy());
+        let with_action = render_check_with_config_and_navigation_and_progress(
+            &output,
+            &OutputFormat::Json,
+            &config,
+            Some(&drill_in),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        let generic = render_check_with_config(&output, &OutputFormat::Json, &config)?;
+        if !with_action.contains("\"canonical_next_action\"") {
+            return Err("navigation-aware JSON must carry the action".to_string());
+        }
+        if generic.contains("\"canonical_next_action\"") {
+            return Err("generic JSON must be the removal control".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn check_json_action_preserves_supplied_scope_and_omits_unavailable_authority()
+    -> Result<(), String> {
+        let output = check_output_with(vec![sample_finding("src/lib.rs", 1)]);
+        let config = RiprConfig::default();
+        let drill_in = FindingDrillIn::Commands(FindingNavigation::legacy());
+        let supplied = render_check_with_config_and_navigation_and_progress(
+            &output,
+            &OutputFormat::Json,
+            &config,
+            Some(&drill_in),
+            None,
+            CheckDiffProvenance::SuppliedScope,
+        )?;
+        let parsed: serde_json::Value = serde_json::from_str(&supplied)
+            .map_err(|error| format!("supplied-scope JSON: {error}"))?;
+        let diff_source = &parsed["canonical_next_action"]["subject"]["diff_source"];
+        if diff_source.get("committed").is_none() {
+            return Err(format!(
+                "supplied-diff must retain committed/supplied identity: {diff_source}"
+            ));
+        }
+        if diff_source.get("working_tree").is_some() {
+            return Err(format!(
+                "supplied-diff must not become a live-tree claim: {diff_source}"
+            ));
+        }
+
+        let mut empty = check_output_with(Vec::new());
+        empty.no_scope_provided = true;
+        empty.base = None;
+        let missing = render_check_with_config_and_navigation_and_progress(
+            &empty,
+            &OutputFormat::Json,
+            &config,
+            None,
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        )?;
+        let missing_parsed: serde_json::Value = serde_json::from_str(&missing)
+            .map_err(|error| format!("missing-scope JSON: {error}"))?;
+        if missing_parsed["canonical_next_action"]["action_class"] != "satisfy_prerequisite" {
+            return Err(format!(
+                "missing scope must keep its stop semantics: {}",
+                missing_parsed["canonical_next_action"]
+            ));
+        }
+        if missing_parsed["canonical_next_action"]
+            .get("command")
+            .is_some_and(|command| !command.is_null())
+        {
+            return Err("missing scope must not mint an executable command".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn findings_budget_does_not_change_the_primary_canonical_action() -> Result<(), String> {
+        let first = sample_finding("src/lib.rs", 1);
+        let mut second = sample_finding("src/other.rs", 2);
+        second.id = "probe:src_other_rs:2:error_path".to_string();
+        let output = check_output_with(vec![first, second]);
+        let config = RiprConfig::default();
+        let drill_in = FindingDrillIn::Commands(FindingNavigation::legacy());
+        let unbounded = json::render_with_config(&output, &config, None);
+        let bounded = json::render_with_config(
+            &output,
+            &config,
+            Some((1, crate::output::json::FindingsBudgetSource::Default)),
+        );
+        let unbounded = attach_canonical_next_action(
+            unbounded,
+            &output,
+            &config,
+            Some(&drill_in),
+            CheckDiffProvenance::Worktree,
+        );
+        let bounded = attach_canonical_next_action(
+            bounded,
+            &output,
+            &config,
+            Some(&drill_in),
+            CheckDiffProvenance::Worktree,
+        );
+        let unbounded_parsed: serde_json::Value =
+            serde_json::from_str(&unbounded).map_err(|error| format!("unbounded JSON: {error}"))?;
+        let bounded_parsed: serde_json::Value =
+            serde_json::from_str(&bounded).map_err(|error| format!("bounded JSON: {error}"))?;
+        if unbounded_parsed["canonical_next_action"] != bounded_parsed["canonical_next_action"] {
+            return Err(format!(
+                "budget must not change the primary action:\nunbounded: {}\nbounded: {}",
+                unbounded_parsed["canonical_next_action"], bounded_parsed["canonical_next_action"]
+            ));
+        }
+        let bounded_findings = bounded_parsed["findings"]
+            .as_array()
+            .ok_or("bounded JSON must keep a findings array")?;
+        if bounded_findings.len() >= unbounded_parsed["findings"].as_array().map_or(0, Vec::len) {
+            return Err("budget fixture must omit at least one finding".to_string());
+        }
         Ok(())
     }
 

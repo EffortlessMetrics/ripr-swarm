@@ -969,7 +969,29 @@ fn snapshot_line_preview(line: &str) -> String {
     preview
 }
 
+/// Classification goldens pin analyzer findings, not the check-JSON
+/// canonical next-action projection (#7258). Strip that one last member so
+/// embedding it on the public CLI path does not force a corpus-wide golden
+/// refresh. Dedicated CLI/schema tests own the field.
+fn strip_canonical_next_action_member(value: &str) -> String {
+    const MARKER: &str = "\n  \"canonical_next_action\": ";
+    let Some(start) = value.rfind(MARKER) else {
+        return value.to_string();
+    };
+    let rest = &value[start + MARKER.len()..];
+    let Some(end) = rest.rfind('\n') else {
+        return value.to_string();
+    };
+    let mut stripped = value[..start].to_string();
+    if stripped.ends_with(',') {
+        stripped.pop();
+    }
+    stripped.push_str(&rest[end..]);
+    stripped
+}
+
 pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
+    let value = strip_canonical_next_action_member(value);
     // #2337: match the human normalizer's approach — replace ALL backslashes
     // with forward slashes, not just the escaped double-backslash form. On
     // Windows, ripr check --json can emit single-backslash paths inside
@@ -2121,6 +2143,24 @@ mod tests {
         let input = r#"{"path":"src/lib.rs","count":42}"#;
         let out = normalize_fixture_json_output(input);
         assert_eq!(out, input);
+    }
+
+    #[test]
+    fn normalize_json_strips_canonical_next_action_without_touching_findings() {
+        let input = "{\n  \"findings\": [{\"id\":\"gap-1\"}],\n  \"source_subject\": {\"digest_algorithm\":\"sha256\"},\n  \"canonical_next_action\": {\"schema_version\":\"canonical_next_action.v1\",\"action_class\":\"inspect_details\"}\n}\n";
+        let out = normalize_fixture_json_output(input);
+        assert!(
+            !out.contains("canonical_next_action"),
+            "fixture goldens must not absorb the check JSON action: {out}"
+        );
+        assert!(
+            out.contains("\"findings\"") && out.contains("source_subject"),
+            "strip must keep the classification document: {out}"
+        );
+        let parsed: serde_json::Value =
+            serde_json::from_str(&out).expect("stripped output must remain JSON");
+        assert!(parsed.get("canonical_next_action").is_none());
+        assert_eq!(parsed["findings"][0]["id"], "gap-1");
     }
 
     use std::sync::atomic::{AtomicUsize, Ordering};

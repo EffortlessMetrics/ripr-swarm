@@ -530,7 +530,7 @@ fn check_case_or_fallback(
     canonical_next_action_for_triage(triage, output, drill_in, provenance)
         .ok()
         .and_then(|action| match action.stop() {
-            Some(NextActionStop::CheckTriage { case }) => Some(*case),
+            Some(NextActionStop::CheckTriage { case, .. }) => Some(*case),
             _ => None,
         })
         .unwrap_or_else(|| check_case_for_triage(triage, output))
@@ -1102,7 +1102,15 @@ mod tests {
             return Err("omitted alternative lost its identity".to_string());
         }
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case }) if *case == NextActionCheckCase::TopGap => {}
+            Some(NextActionStop::CheckTriage { case, detail_route })
+                if *case == NextActionCheckCase::TopGap =>
+            {
+                if !detail_route.contains("finding:top") {
+                    return Err(format!(
+                        "top gap must carry the selected inspect route, got {detail_route}"
+                    ));
+                }
+            }
             other => return Err(format!("top gap stop is wrong: {other:?}")),
         }
         Ok(())
@@ -1133,7 +1141,7 @@ mod tests {
         }
         // No navigation: the restart route replays the bound root.
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case })
+            Some(NextActionStop::CheckTriage { case, .. })
                 if *case == NextActionCheckCase::ScopeMissing => {}
             other => return Err(format!("scope stop is wrong: {other:?}")),
         }
@@ -1322,7 +1330,7 @@ mod tests {
             .map_err(|error| format!("{} must project: {error}", state.as_str()))?;
             let fallback = check_case_for_triage(&triage, &output);
             match action.stop() {
-                Some(NextActionStop::CheckTriage { case }) if *case == fallback => {}
+                Some(NextActionStop::CheckTriage { case, .. }) if *case == fallback => {}
                 other => {
                     return Err(format!(
                         "{} projection disagrees with its case: {other:?}",

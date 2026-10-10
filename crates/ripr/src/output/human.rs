@@ -81,6 +81,20 @@ pub(crate) fn selected_triage_finding<'a>(
     triage::select_human_triage(output, config).selected
 }
 
+/// Project the check producer's canonical next action for a navigation-aware
+/// render. `None` when the producer cannot bind a subject; JSON callers omit
+/// the member rather than inventing a committed-source default or executable
+/// route (#7258).
+pub(crate) fn canonical_next_action_for_check(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> Option<crate::domain::CanonicalNextActionV1> {
+    let triage = triage::select_human_triage(output, config);
+    triage::canonical_next_action_for_triage(&triage, output, drill_in, provenance).ok()
+}
+
 pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
     let drill_in = FindingDrillIn::Commands(FindingNavigation::legacy());
     // Library callers declare no provenance; the adapter falls back to the

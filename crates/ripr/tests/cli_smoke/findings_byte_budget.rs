@@ -111,6 +111,17 @@ fn check_findings_byte_budget_bounds_array_with_disclosed_totals() -> Result<(),
             "message must name the applied limit: {message}"
         );
         assert_eq!(entry["repair_route"], "output/check-findings-budget");
+        assert_eq!(
+            bounded_report["canonical_next_action"], baseline["canonical_next_action"],
+            "findings-array omission must not change the primary canonical action"
+        );
+        assert!(
+            bounded_report["canonical_next_action"]["stop"]["detail_route"]
+                .as_str()
+                .is_some_and(|route| !route.is_empty()),
+            "bounded JSON must keep a resolvable inspect route: {}",
+            bounded_report["canonical_next_action"]
+        );
 
         // Opt-out restores the full document byte-identically (removal shape).
         let unbounded = run_ripr_with_env(&args, &[("RIPR_CHECK_FINDINGS_BYTES", "0")]);
