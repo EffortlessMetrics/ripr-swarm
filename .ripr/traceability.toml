@@ -10203,6 +10203,8 @@ tests = [
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_call_foreign_qualified_from_str_then_no_static_path",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_wrapper_only_foreign_qualifies_parse_then_no_static_path",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_call_parse_after_match_then_static_unknown",
+  "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_call_text_is_fn_item_then_no_static_path",
+  "crates/ripr/tests/property_macro_quarantine.rs::property_macro_quarantine_matches_runtime_collection_and_discrimination",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_call_generic_qualified_parse_then_no_static_path",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_same_line_has_foreign_then_workspace_from_str_then_static_unknown",
   "crates/ripr/src/analysis/classifier.rs::tests::given_helper_chain_refused_when_tests_call_associated_sibling_of_wrapping_from_str_then_no_static_path",

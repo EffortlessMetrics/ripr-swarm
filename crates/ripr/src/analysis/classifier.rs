@@ -578,6 +578,27 @@ mod tests {
     }
 
     #[test]
+    fn given_helper_chain_refused_when_call_text_is_fn_item_then_no_static_path() {
+        let mut parse = function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]);
+        parse.impl_context = FunctionImplContext::Free;
+        let mut twin = function("src/other.rs", "parse");
+        twin.impl_context = FunctionImplContext::Free;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![function("src/op.rs", "op"), parse, twin],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "parse",
+                "parse",
+                "fn parse() { prop_assert_eq!(super::parse(1), 1); }",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
     fn given_helper_chain_refused_when_tests_call_generic_qualified_parse_then_no_static_path() {
         let mut parse = function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]);
         parse.impl_context = FunctionImplContext::Free;

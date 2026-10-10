@@ -415,7 +415,10 @@ fn named_entry_kinds(text: &str, callee_name: &str) -> Vec<NamedEntryKind> {
             let prefix = masked[..start].trim_end();
             let enters = match raw_before {
                 Some(character) if character.is_ascii_alphanumeric() || character == '_' => false,
-                _ => !matches!(prefix.chars().next_back(), Some('.')),
+                _ => {
+                    !matches!(prefix.chars().next_back(), Some('.'))
+                        && !prefix_introduces_fn_item(prefix)
+                }
             };
             if enters {
                 kinds.push(named_entry_kind_from_prefix(prefix));
@@ -424,6 +427,14 @@ fn named_entry_kinds(text: &str, callee_name: &str) -> Vec<NamedEntryKind> {
         i += 1;
     }
     kinds
+}
+
+/// `fn parse()` / `pub fn parse()` is an item, not a call. `CallFact.text`
+/// is the original source line, so a test named after the ambiguous
+/// helper would otherwise look like a free-function entry (#7080 /
+/// `property_macro_noop_named_test`).
+fn prefix_introduces_fn_item(prefix: &str) -> bool {
+    prefix.split_whitespace().next_back() == Some("fn")
 }
 
 fn named_entry_kind_from_prefix(prefix: &str) -> NamedEntryKind {
@@ -1578,6 +1589,14 @@ mod tests {
             r#"match parse(">=1.0") { _ => {} }"#,
             "parse"
         ));
+        assert!(
+            !test_call_invokes_named_entry("fn parse() {}", "parse"),
+            "a fn item is not a free-function entry"
+        );
+        assert!(
+            !test_call_invokes_named_entry("pub(crate) async fn parse() {}", "parse"),
+            "a qualified fn item is not a free-function entry"
+        );
         assert!(test_call_invokes_named_entry("return parse(x)", "parse"));
         assert!(test_call_invokes_named_entry(
             "if parse(x).is_err()",
@@ -1890,6 +1909,24 @@ mod tests {
                 "a later workspace from_str on the same line still enters: {text}"
             );
         }
+
+        let mut free_parse = parse.clone();
+        free_parse.impl_context = FunctionImplContext::Free;
+        let mut free_twin = twin.clone();
+        free_twin.impl_context = FunctionImplContext::Free;
+        let calling_fn_item = index_with_tests(
+            vec![owner.clone(), free_parse, free_twin],
+            vec![with_test(
+                "parse",
+                "fn parse() { prop_assert_eq!(super::parse(1), 1); }",
+            )],
+        );
+        let chain = resolve_chain("op", &calling_fn_item, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_fn_item),
+            None,
+            "a fn item on CallFact.text is not a free-function entry"
+        );
 
         let mut local_parse = with_test("parse", "parse(\">=1.0\")");
         local_parse.nested_fn_names = vec!["parse".to_string()];

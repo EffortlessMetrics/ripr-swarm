@@ -23,8 +23,10 @@ function of that name could be the `T` in `T::name(`
 (`VersionReq::from_str` yes; `serde_json::from_str` no). A non-unique
 wrapper counts only when it invokes the refused helper the same way, not
 a wrapper-local `parse`. A test-local `fn`/`let` of that name is not an
-entry, including on lexical-fallback files. Do not credit
-`helper_owner_call` through the ambiguous name.
+entry, including on lexical-fallback files. A `fn parse()` item on
+`CallFact.text` is not a call (`property_macro_noop_named_test` names
+its test after the owner). Do not credit `helper_owner_call` through
+the ambiguous name.
 
 ## 2026-10-08: A green PR head plus clean mergeability does not prove the squash result compiles (#7150)
 

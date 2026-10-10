@@ -66,7 +66,8 @@ can only hint that a caller "may lead here" without changing anything.
   enters only when some workspace function of that name could be the `T`
   in `T::name(` (`VersionReq::from_str` yes; `serde_json::from_str` no).
   A wrapper-local or test-local `fn`/`let` of the refused name, including
-  on a lexical-fallback file, is not an entry.
+  on a lexical-fallback file, is not an entry. An `fn` item on the call
+  line (`fn parse() { ... }`) is not a free-function entry.
 - Hop propagation (#6780): for probe families observed through the
   owner's returned value (every family except `side_effect` and
   `call_deletion`), when the related tests reach the owner only
