@@ -243,7 +243,7 @@ fn before_repair_attempt(args: &[String]) -> Result<Option<agent::AgentRepairOpt
 fn baseline_ambiguous_disclosure_lines(baseline_path: &Path) -> Vec<String> {
     vec![
         format!(
-            "warning: the captured edit-cage baseline for this attempt records `ambiguous: true` ({}); the cage cannot prove the exact worktree state the attempt measures, so its after phase can refuse the attempt as Incomparable with an empty violations list even when the focused test edit breaks no cage rule.",
+            "warning: the captured edit-cage baseline for this attempt records `ambiguous: true` ({}); the cage cannot prove the exact worktree state the attempt measures, so its after phase can refuse the attempt as Incomparable with an empty violations list even when the edit stays inside the allowed test surface.",
             baseline_path.display()
         ),
         "the attempt manifest records this limitation. To invest the edit in a scorable attempt instead, resolve the workspace condition that made the baseline ambiguous (a stale target/ state is a common Windows trigger) and run the same --phase before command again from the clean state; continuing with this attempt ends in a terminal refusal either way."

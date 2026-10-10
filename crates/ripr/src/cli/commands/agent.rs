@@ -1943,10 +1943,11 @@ fn repair_after_cage_recovery_lines(
         "if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree), "
     };
     // #7204: an empty violations list means nothing was refused. The refusal
-    // is then the attempt's comparability, not the edit: an ambiguous
-    // baseline is the recorded cause when the artifacts carry one, and any
-    // other incomparable delta still must not narrate refused changes that
-    // do not exist. Both recover through a fresh attempt from a clean state.
+    // is then the attempt's comparability, not a verdict on the edit: an
+    // ambiguous baseline is the recorded cause when the artifacts carry one,
+    // and any other incomparable delta still must not narrate refused
+    // changes that do not exist. Both recover through a fresh attempt from a
+    // clean state.
     if violations.is_empty() {
         let ambiguous_baseline = crate::app::repair_attempt::load_edit_cage_baseline_from(
             root,
@@ -1956,12 +1957,39 @@ fn repair_after_cage_recovery_lines(
         .map(|baseline| baseline.is_ambiguous())
         .unwrap_or(false);
         if ambiguous_baseline {
-            lines.push("the attempt's before-phase baseline was recorded ambiguous (its `attempt-baseline.json` artifact has `\"ambiguous\": true`), so the cage cannot prove the exact worktree state the attempt measured; the attempt is unscorable even though the edit broke no cage rule.".to_string());
+            lines.push("the attempt's before-phase baseline was recorded ambiguous (its `attempt-baseline.json` artifact has `\"ambiguous\": true`), so the cage cannot prove the exact worktree state the attempt measured and stopped before judging the edit; the attempt is unscorable.".to_string());
         } else {
             lines.push("the edit cage could not compare the attempt's before and after states, so the attempt is unscorable; no path change was refused.".to_string());
         }
+        // An incomparable delta skips policy evaluation, so an empty
+        // violations list is not a compliance finding: name every change the
+        // cage never judged, so an outside-surface edit is not silently
+        // carried into the next baseline. Untracked files survive a plain
+        // `git stash`, so the route names them explicitly.
+        if !after.verdict.changed_paths.is_empty() {
+            let listed = after
+                .verdict
+                .changed_paths
+                .iter()
+                .take(CAGE_RECOVERY_MAX_VIOLATIONS)
+                .map(|path| format!("`{path}`"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = if after.verdict.changed_paths.len() > CAGE_RECOVERY_MAX_VIOLATIONS {
+                format!(
+                    " (and {} more; see the attempt manifest)",
+                    after.verdict.changed_paths.len() - CAGE_RECOVERY_MAX_VIOLATIONS
+                )
+            } else {
+                String::new()
+            };
+            lines.push(format!(
+                "the cage stopped before judging the attempt's {} changed path(s): {listed}{more}. Inspect every change outside the attempt's allowed test surface and remove or set it aside before restarting; note `git stash` leaves untracked files in place (use `git stash -u` or delete them).",
+                after.verdict.changed_paths.len()
+            ));
+        }
         lines.push(format!(
-            "to recover: {uncommit}start a fresh attempt from a clean state: set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` from the clean state, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+            "to recover: {uncommit}start a fresh attempt from a clean state: set your test edit aside (for example `git stash -u`, which also takes untracked files), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` from the clean state, restore your test edit (`git stash pop`), then run the new --attempt command it prints."
         ));
         return lines;
     }
@@ -2218,9 +2246,10 @@ pub(in crate::cli) fn before_phase_stdout(
             continuation,
         );
     }
-    let mut document = before_phase_summary(packet, packet_path).unwrap_or_else(|| {
-        format!("Repair packet (JSON): {packet_path}; add --json to print it here\n")
-    });
+    let mut document = before_phase_summary(packet, packet_path, !continuation.baseline_ambiguous)
+        .unwrap_or_else(|| {
+            format!("Repair packet (JSON): {packet_path}; add --json to print it here\n")
+        });
     if continuation.baseline_ambiguous {
         document.push_str(&before_phase_ambiguous_stdout_lines(
             &continuation.next_command,
@@ -2246,7 +2275,7 @@ pub(in crate::cli) fn before_phase_stdout(
 /// only as an explicitly acknowledged fallback.
 fn before_phase_ambiguous_stdout_lines(next_command: &str) -> String {
     format!(
-        "warning: this attempt's captured edit-cage baseline records `ambiguous: true`; its after phase can refuse the attempt as Incomparable with an empty violations list even when the focused test edit breaks no cage rule.\nto invest the edit in a scorable attempt instead, resolve the workspace condition that made the baseline ambiguous and run the same --phase before command again from the clean state. if you continue with this attempt anyway, after the test edit run: {next_command}\n"
+        "warning: this attempt's captured edit-cage baseline records `ambiguous: true`; its after phase can refuse the attempt as Incomparable with an empty violations list even when the edit stays inside the allowed test surface.\nto invest the edit in a scorable attempt instead, resolve the workspace condition that made the baseline ambiguous and run the same --phase before command again from the clean state. if you continue with this attempt anyway, after the test edit run: {next_command}\n"
     )
 }
 
@@ -2278,7 +2307,7 @@ fn after_phase_human_stdout(
     out
 }
 
-fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
+fn before_phase_summary(packet: &str, packet_path: &str, edit_directive: bool) -> Option<String> {
     let value: serde_json::Value = serde_json::from_str(packet).ok()?;
     let item = value.get("packets")?.as_array()?.first()?;
     let text = |pointer: &str| {
@@ -2311,21 +2340,30 @@ fn before_phase_summary(packet: &str, packet_path: &str) -> Option<String> {
         lines.push(format!("  missing discriminator: {missing}"));
     }
     let inline_module_target = !crate::analysis::is_test_surface_path(test_file);
-    match text("/recommended_test/name") {
-        // #5210: a production file is routed only as its inline test module,
-        // where the cage admits nothing but newly inserted test functions.
-        Some(name) if inline_module_target => lines.push(format!(
-            "  add one new test function (suggested `{name}`) inside the existing `#[cfg(test)]` module of {test_file}; leave production code, the module declaration, and existing tests unchanged"
-        )),
-        None if inline_module_target => lines.push(format!(
-            "  add one new test function inside the existing `#[cfg(test)]` module of {test_file}; leave production code, the module declaration, and existing tests unchanged"
-        )),
-        Some(name) => lines.push(format!(
-            "  edit one test file: {test_file} (suggested test `{name}`); leave production code unchanged"
-        )),
-        None => lines.push(format!(
-            "  edit one test file: {test_file}; leave production code unchanged"
-        )),
+    // #7204: an unscorable attempt's summary may not hand out an unqualified
+    // edit instruction; it names the target and defers to the baseline
+    // warning instead.
+    if edit_directive {
+        match text("/recommended_test/name") {
+            // #5210: a production file is routed only as its inline test module,
+            // where the cage admits nothing but newly inserted test functions.
+            Some(name) if inline_module_target => lines.push(format!(
+                "  add one new test function (suggested `{name}`) inside the existing `#[cfg(test)]` module of {test_file}; leave production code, the module declaration, and existing tests unchanged"
+            )),
+            None if inline_module_target => lines.push(format!(
+                "  add one new test function inside the existing `#[cfg(test)]` module of {test_file}; leave production code, the module declaration, and existing tests unchanged"
+            )),
+            Some(name) => lines.push(format!(
+                "  edit one test file: {test_file} (suggested test `{name}`); leave production code unchanged"
+            )),
+            None => lines.push(format!(
+                "  edit one test file: {test_file}; leave production code unchanged"
+            )),
+        }
+    } else {
+        lines.push(format!(
+            "  the focused test edit would target {test_file}; see the ambiguous-baseline warning below before editing"
+        ));
     }
     // #4330: state the terminality, not just the preference. The cage kills
     // the attempt when any other file changes, so the narration that names
@@ -2726,11 +2764,13 @@ mod tests {
     }
 
     /// The #7204 after-phase narration: an attempt whose baseline was born
-    /// ambiguous finishes Incomparable with an empty violations list. The
-    /// narration must name the recorded ambiguity and route to a fresh
-    /// attempt from a clean state, and must not narrate refused changes that
-    /// do not exist. The control keeps the undo narration for a genuinely
-    /// violated attempt, where refused changes are real.
+    /// ambiguous finishes Incomparable with an empty violations list, even
+    /// when the edit carries an outside-surface file the incomparable delta
+    /// never judged. The narration must name the recorded ambiguity and that
+    /// unjudged path, route to a fresh attempt from a clean state, and must
+    /// not narrate refused changes that do not exist or claim compliance the
+    /// cage never evaluated. The control keeps the undo narration for a
+    /// genuinely violated attempt, where refused changes are real.
     #[test]
     fn incomparable_empty_violation_narration_names_the_ambiguous_baseline() -> Result<(), String> {
         use crate::app::repair_attempt::{
@@ -2817,7 +2857,8 @@ mod tests {
             };
 
         // The discriminating case: an ambiguous baseline makes the attempt
-        // Incomparable with nothing refused.
+        // Incomparable with nothing refused, and the edit carries an
+        // outside-surface file the incomparable delta never judged.
         let ambiguous_root = unique_command_test_dir("incomparable-ambiguous-narration");
         std::fs::create_dir_all(&ambiguous_root)
             .map_err(|error| format!("create {} failed: {error}", ambiguous_root.display()))?;
@@ -2826,6 +2867,10 @@ mod tests {
             crate::testing::fixture_git::stage_case_collision_index_entries(&ambiguous_root)?;
             let prepared = begin_attempt(&ambiguous_root, "ambiguous")?;
             make_allowed_edit(&ambiguous_root)?;
+            std::fs::create_dir_all(ambiguous_root.join("src"))
+                .map_err(|error| format!("create src dir failed: {error}"))?;
+            std::fs::write(ambiguous_root.join("src/extra.rs"), "fn extra() {}\n")
+                .map_err(|error| format!("write outside edit failed: {error}"))?;
             let after = finish_after_edit(&ambiguous_root, &prepared)?;
             if after.verdict.status != EditCageVerdictStatus::Incomparable {
                 return Err(format!(
@@ -2850,6 +2895,21 @@ mod tests {
             if joined.contains("undo the refused changes") {
                 return Err(format!(
                     "an Incomparable refusal with empty violations must not narrate refused changes that do not exist:\n{joined}"
+                ));
+            }
+            if joined.contains("broke no cage rule") {
+                return Err(format!(
+                    "an incomparable delta skipped policy evaluation, so the narration must not claim compliance:\n{joined}"
+                ));
+            }
+            if !joined.contains("`src/extra.rs`") {
+                return Err(format!(
+                    "the narration must name the changed path the cage never judged:\n{joined}"
+                ));
+            }
+            if !joined.contains("git stash -u") {
+                return Err(format!(
+                    "the narration must warn that a plain git stash leaves untracked files behind:\n{joined}"
                 ));
             }
             if !joined.contains("ambiguous") {
@@ -3578,6 +3638,13 @@ mod before_phase_stdout_tests {
             &ambiguous,
         )?;
         assert!(!summary.contains("Next, after the test edit:"), "{summary}");
+        // An unscorable attempt's summary must not hand out an unqualified
+        // edit instruction (#7253 review).
+        assert!(!summary.contains("edit one test file:"), "{summary}");
+        assert!(
+            summary.contains("the focused test edit would target tests/pricing.rs"),
+            "{summary}"
+        );
         for expected in [
             "ambiguous: true",
             "Incomparable",
