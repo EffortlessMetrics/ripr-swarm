@@ -315,7 +315,11 @@ into covered. `verdict-corpus report` fills that section after scoring.
 that must not scan `docs/specs`. The dx-scoreboard metric
 `trust.verdict_corpus_spec_example_coverage` reads the same `coverage`
 rate from the committed corpus, the ledger, and `docs/specs` instead
-(#7134).
+(#7134). That producer runs corpus `validate` and `coverage_violations`
+before emitting a rate, so an invalid case or ledger is a failed
+instrument rather than a measured score. Specs come from the repository
+that owns `fixtures/<corpus>/`; a corpus without that tree does not fall
+back to CWD `docs/specs`.
 
 `check` fails before running ripr when covered is below `floor`, naming the
 fall and the fix (restore the lost citation, or lower the floor with a
@@ -538,6 +542,9 @@ Spec-example coverage tests live in
 - `coverage_counts_cited_in_scope_examples_over_the_unwaived_ones`
 - `floor_gate_fails_below_passes_at_and_invites_a_raise_above`
 - `committed_ledger_is_valid_and_meets_its_floor`
+- `spec_example_coverage_for_a_tempdir_does_not_scan_the_repo_specs`
+- `spec_example_coverage_for_corpus_fails_when_the_ledger_omits_a_numbered_spec`
+- `spec_example_coverage_for_corpus_fails_when_a_citing_case_names_no_subject`
 
 ## Implementation Mapping
 

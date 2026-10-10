@@ -384,17 +384,20 @@ pub(crate) struct SpecCoverageRow {
 /// The dx-scoreboard reads this so tempdir corpora that only need row rates
 /// never scan `docs/specs`. Specs come from the repository that owns
 /// `fixtures/<corpus>/`, not from CWD or an ancestor walk that would hit
-/// this repo's specs when tests write under `target/` (#7134).
+/// this repo's specs when tests write under `target/` (#7134). Corpus
+/// `validate` and `coverage_violations` run first: an invalid case or
+/// ledger is a failed instrument, not a measured rate.
 pub(crate) fn spec_example_coverage_for_corpus(
     corpus_dir: &Path,
 ) -> Result<SpecExampleCoverage, String> {
     let corpus = super::load_corpus(corpus_dir)?;
     let ledger = load_ledger(corpus_dir)?;
     let specs = scan_specs(&specs_dir_for_corpus(corpus_dir)?)?;
-    let violations = coverage_violations(&corpus, &ledger, &specs);
+    let mut violations = super::validate(&corpus, corpus_dir);
+    violations.extend(coverage_violations(&corpus, &ledger, &specs));
     if !violations.is_empty() {
         return Err(format!(
-            "verdict corpus coverage is invalid:\n- {}",
+            "verdict corpus is invalid:\n- {}",
             violations.join("\n- ")
         ));
     }
@@ -412,12 +415,8 @@ fn specs_dir_for_corpus(corpus_dir: &Path) -> Result<PathBuf, String> {
             return Ok(specs);
         }
     }
-    let cwd_specs = Path::new(SPECS_DIR);
-    if cwd_specs.is_dir() {
-        return Ok(cwd_specs.to_path_buf());
-    }
     Err(format!(
-        "no {SPECS_DIR} beside {}; spec-example coverage reads numbered examples from the repository spec files, not from expected_report",
+        "no {SPECS_DIR} beside {}; spec-example coverage reads numbered examples from the repository that owns fixtures/<corpus>/, not from CWD or expected_report",
         normalize_path(corpus_dir)
     ))
 }
