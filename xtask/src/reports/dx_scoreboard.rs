@@ -1469,9 +1469,12 @@ pub(crate) fn mutation_spot_check_to_input(value: &Value) -> Result<Value, Strin
 }
 
 /// Metrics read from committed receipts (`file:<path>#<json.path>`) or from
-/// a verdict corpus's committed rows (`verdict-corpus:<corpus dir>#<rate>`,
-/// the summary derived as `verdict-corpus check` derives it). The referenced
-/// object uses the judged-panel `{numerator, denominator}` shape; a zero
+/// a verdict corpus (`verdict-corpus:<corpus dir>#<rate>`). Row rates come
+/// from `expected_report()` as `verdict-corpus check` derives them.
+/// `spec_example_coverage.coverage` is produced from the corpus cases, the
+/// ledger, and `docs/specs` instead: `expected_report()` leaves that field
+/// empty so tempdir corpora stay hermetic (#7134). The referenced object
+/// uses the judged-panel `{numerator, denominator}` shape; a zero
 /// denominator is `not_measured`, not a perfect rate.
 fn file_samples(config: &Config, boards: &[String]) -> Result<Vec<Sample>, String> {
     let mut samples = Vec::new();
@@ -1528,11 +1531,39 @@ fn verdict_corpus_sample(metric: &MetricDef, reference: &str) -> Sample {
             },
         };
     }
+    // Coverage is not on `expected_report()`: that path stays row-rate-only
+    // so tempdir corpora do not scan `docs/specs`. The board calls the
+    // coverage owner with specs resolved from the corpus tree (#7134).
+    if pointer == "spec_example_coverage.coverage" || pointer.starts_with("spec_example_coverage.")
+    {
+        return spec_example_coverage_sample(metric, dir, pointer);
+    }
     let report = super::verdict_corpus::expected_report(Path::new(dir)).and_then(|report| {
         serde_json::to_value(&report).map_err(|err| format!("render {dir} report: {err}"))
     });
     match report {
         Ok(json) => ratio_sample(&metric.id, dir, pointer, &json),
+        Err(err) => Sample {
+            metric: metric.id.clone(),
+            repo: None,
+            outcome: SampleOutcome::Failed,
+            detail: err,
+        },
+    }
+}
+
+fn spec_example_coverage_sample(metric: &MetricDef, dir: &str, pointer: &str) -> Sample {
+    match super::verdict_corpus::coverage::spec_example_coverage_for_corpus(Path::new(dir))
+        .and_then(|coverage| {
+            serde_json::to_value(&coverage)
+                .map_err(|err| format!("render {dir} spec_example_coverage: {err}"))
+        }) {
+        Ok(coverage) => ratio_sample(
+            &metric.id,
+            dir,
+            pointer,
+            &json!({ "spec_example_coverage": coverage }),
+        ),
         Err(err) => Sample {
             metric: metric.id.clone(),
             repo: None,

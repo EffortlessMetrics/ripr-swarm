@@ -328,5 +328,178 @@ fn committed_ledger_is_valid_and_meets_its_floor() -> Result<(), String> {
             "{case} does not cite {id}"
         );
     }
+
+    let via_corpus = spec_example_coverage_for_corpus(&repo_path(CORPUS_DIR))?;
+    assert_eq!(via_corpus.coverage.numerator, coverage.coverage.numerator);
+    assert_eq!(
+        via_corpus.coverage.denominator,
+        coverage.coverage.denominator
+    );
+    Ok(())
+}
+
+#[test]
+fn spec_example_coverage_for_a_tempdir_does_not_scan_the_repo_specs() -> Result<(), String> {
+    let dir = crate::tests::temp_dir("spec-example-coverage-isolated");
+    crate::tests::write(
+        &dir.join("corpus.json"),
+        r#"{
+  "schema_version": "ripr_verdict_corpus.v1",
+  "kind": "ripr_verdict_corpus",
+  "spec": "RIPR-SPEC-0219",
+  "description": "isolated",
+  "label_method": "isolated",
+  "verdict_projection": "isolated",
+  "non_claims": []
+}"#,
+    );
+    std::fs::create_dir(dir.join("subjects")).map_err(|err| err.to_string())?;
+    std::fs::create_dir(dir.join("cases")).map_err(|err| err.to_string())?;
+    crate::tests::write(
+        &dir.join(LEDGER_FILE),
+        r#"schema_version = "ripr_verdict_corpus_spec_coverage.v1"
+floor = 0
+"#,
+    );
+    let err = spec_example_coverage_for_corpus(&dir)
+        .err()
+        .ok_or("a tempdir corpus must not pick up this repository's docs/specs")?;
+    assert!(
+        err.contains(&format!("no {SPECS_DIR} beside")) && err.contains("not from CWD"),
+        "isolation must refuse a missing fixtures-parent specs dir, got {err}"
+    );
+    assert!(
+        !err.contains("missing from") && !err.contains("RIPR-SPEC-"),
+        "isolation must not be a validation error against this repo's specs: {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn spec_example_coverage_for_corpus_fails_when_the_ledger_omits_a_numbered_spec()
+-> Result<(), String> {
+    let root = crate::tests::temp_dir("spec-example-coverage-omitted-spec");
+    let corpus_dir = root.join("fixtures/omitted-spec-corpus");
+    crate::tests::write(
+        &corpus_dir.join("corpus.json"),
+        r#"{
+  "schema_version": "ripr_verdict_corpus.v1",
+  "kind": "ripr_verdict_corpus",
+  "spec": "RIPR-SPEC-0219",
+  "description": "isolated",
+  "label_method": "isolated",
+  "verdict_projection": "isolated",
+  "non_claims": []
+}"#,
+    );
+    std::fs::create_dir(corpus_dir.join("subjects")).map_err(|err| err.to_string())?;
+    std::fs::create_dir(corpus_dir.join("cases")).map_err(|err| err.to_string())?;
+    crate::tests::write(
+        &corpus_dir.join(LEDGER_FILE),
+        r#"schema_version = "ripr_verdict_corpus_spec_coverage.v1"
+floor = 0
+"#,
+    );
+    crate::tests::write(
+        &root.join("docs/specs/RIPR-SPEC-0900-omitted.md"),
+        "# Omitted\n\n## Acceptance Examples\n\n1. A numbered example.\n",
+    );
+    let err = spec_example_coverage_for_corpus(&corpus_dir)
+        .err()
+        .ok_or("an omitted numbered spec must fail the board producer")?;
+    assert!(
+        err.contains("RIPR-SPEC-0900") && err.contains("missing from"),
+        "omitted spec must fail closed, got {err}"
+    );
+    Ok(())
+}
+
+#[test]
+fn spec_example_coverage_for_corpus_fails_when_a_citing_case_names_no_subject() -> Result<(), String>
+{
+    let root = crate::tests::temp_dir("spec-example-coverage-unknown-subject");
+    let corpus_dir = root.join("fixtures/unknown-subject-corpus");
+    crate::tests::write(
+        &corpus_dir.join("corpus.json"),
+        r#"{
+  "schema_version": "ripr_verdict_corpus.v1",
+  "kind": "ripr_verdict_corpus",
+  "spec": "RIPR-SPEC-0219",
+  "description": "isolated",
+  "label_method": "isolated",
+  "verdict_projection": "isolated",
+  "non_claims": ["not a product analyzer claim"]
+}"#,
+    );
+    std::fs::create_dir(corpus_dir.join("subjects")).map_err(|err| err.to_string())?;
+    std::fs::create_dir(corpus_dir.join("cases")).map_err(|err| err.to_string())?;
+    crate::tests::write(
+        &corpus_dir.join("cases/cites-unknown-subject.json"),
+        r#"{
+  "case_id": "cites-unknown-subject",
+  "subject_id": "missing-subject",
+  "diff": "cases/cites-unknown-subject.diff",
+  "anchor": {"file": "src/lib.rs", "line": 1},
+  "edit_kind": "behavior_change",
+  "behavior_family": "x",
+  "test_shape": "x",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "x",
+    "test_command": "cargo test",
+    "toolchain": "x",
+    "mutants": []
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": ["credited"]
+  },
+  "reasoning": "x",
+  "labeling_observation": {
+    "ripr_commit": "x",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [],
+    "excerpt_parity": "x"
+  },
+  "spec_examples": ["RIPR-SPEC-0900#1"]
+}"#,
+    );
+    crate::tests::write(
+        &corpus_dir.join(LEDGER_FILE),
+        r#"schema_version = "ripr_verdict_corpus_spec_coverage.v1"
+floor = 0
+
+[[spec]]
+id = "RIPR-SPEC-0900"
+scope = "in"
+"#,
+    );
+    crate::tests::write(
+        &root.join("docs/specs/RIPR-SPEC-0900-unknown-subject.md"),
+        "# Unknown subject\n\n## Acceptance Examples\n\n1. A numbered example.\n",
+    );
+
+    let corpus = load_corpus(&corpus_dir)?;
+    let ledger = load_ledger(&corpus_dir)?;
+    let specs = scan_specs(&specs_dir_for_corpus(&corpus_dir)?)?;
+    let coverage_only = coverage_violations(&corpus, &ledger, &specs);
+    assert!(
+        coverage_only.is_empty(),
+        "coverage law alone must not catch the unknown subject: {coverage_only:#?}"
+    );
+    assert_eq!(
+        spec_example_coverage(&corpus, &ledger, &specs).covered_examples,
+        1,
+        "the citation would still raise the board rate without corpus validation"
+    );
+
+    let err = spec_example_coverage_for_corpus(&corpus_dir)
+        .err()
+        .ok_or("an unknown-subject citation must fail the board producer")?;
+    assert!(
+        err.contains("unknown subject") && err.contains("missing-subject"),
+        "unknown subject must fail closed, got {err}"
+    );
     Ok(())
 }

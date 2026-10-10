@@ -310,7 +310,16 @@ waived over in-scope examples, the in-scope, covered and waived example
 counts, the in-scope and out-of-scope spec counts, `unmeasured_specs`, and
 one row per in-scope spec with its in-scope examples, covered and waived
 counts, and uncovered example numbers. Waived examples are never folded
-into covered.
+into covered. `verdict-corpus report` fills that section after scoring.
+`expected_report()` leaves it empty: its callers include tempdir corpora
+that must not scan `docs/specs`. The dx-scoreboard metric
+`trust.verdict_corpus_spec_example_coverage` reads the same `coverage`
+rate from the committed corpus, the ledger, and `docs/specs` instead
+(#7134). That producer runs corpus `validate` and `coverage_violations`
+before emitting a rate, so an invalid case or ledger is a failed
+instrument rather than a measured score. Specs come from the repository
+that owns `fixtures/<corpus>/`; a corpus without that tree does not fall
+back to CWD `docs/specs`.
 
 `check` fails before running ripr when covered is below `floor`, naming the
 fall and the fix (restore the lost citation, or lower the floor with a
@@ -494,7 +503,8 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `validator_refuses_a_test_command_the_replay_cannot_run`
 
 The derived rates' consumers are tested beside them:
-`verdict_corpus_sources_derive_each_rate_from_the_committed_rows` in
+`verdict_corpus_sources_derive_each_rate_from_the_committed_rows` and
+`spec_example_coverage_resolves_from_the_committed_fixtures` in
 `xtask/src/reports/dx_scoreboard/tests.rs` and
 `verdict_receipt_derives_the_summary_from_rows_in_file_name_order` in
 `xtask/src/public_proof.rs`.
@@ -532,6 +542,9 @@ Spec-example coverage tests live in
 - `coverage_counts_cited_in_scope_examples_over_the_unwaived_ones`
 - `floor_gate_fails_below_passes_at_and_invites_a_raise_above`
 - `committed_ledger_is_valid_and_meets_its_floor`
+- `spec_example_coverage_for_a_tempdir_does_not_scan_the_repo_specs`
+- `spec_example_coverage_for_corpus_fails_when_the_ledger_omits_a_numbered_spec`
+- `spec_example_coverage_for_corpus_fails_when_a_citing_case_names_no_subject`
 
 ## Implementation Mapping
 
