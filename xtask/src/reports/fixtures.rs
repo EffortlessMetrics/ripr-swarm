@@ -2150,25 +2150,34 @@ mod tests {
     }
 
     #[test]
-    fn normalize_json_strips_canonical_next_action_without_touching_findings() {
+    fn normalize_json_strips_canonical_next_action_without_touching_findings() -> Result<(), String>
+    {
         let input = "{\n  \"findings\": [{\"id\":\"gap-1\"}],\n  \"source_subject\": {\"digest_algorithm\":\"sha256\"},\n  \"canonical_next_action\": {\"schema_version\":\"canonical_next_action.v1\",\"action_class\":\"inspect_details\"}\n}\n";
         let out = normalize_fixture_json_output(input);
-        assert!(
-            !out.contains("canonical_next_action"),
-            "fixture goldens must not absorb the check JSON action: {out}"
-        );
-        assert!(
-            out.contains("\"findings\"") && out.contains("source_subject"),
-            "strip must keep the classification document: {out}"
-        );
-        let parsed: serde_json::Value =
-            serde_json::from_str(&out).expect("stripped output must remain JSON");
-        assert!(parsed.get("canonical_next_action").is_none());
-        assert_eq!(parsed["findings"][0]["id"], "gap-1");
-        assert_eq!(
-            parsed["source_subject"]["digest_algorithm"], "sha256",
-            "closing brace after the compact member must survive strip: {out}"
-        );
+        if out.contains("canonical_next_action") {
+            return Err(format!(
+                "fixture goldens must not absorb the check JSON action: {out}"
+            ));
+        }
+        if !(out.contains("\"findings\"") && out.contains("source_subject")) {
+            return Err(format!(
+                "strip must keep the classification document: {out}"
+            ));
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|error| format!("stripped output must remain JSON: {error}"))?;
+        if parsed.get("canonical_next_action").is_some() {
+            return Err("parsed document still has canonical_next_action".to_string());
+        }
+        if parsed["findings"][0]["id"] != "gap-1" {
+            return Err(format!("findings drifted: {parsed}"));
+        }
+        if parsed["source_subject"]["digest_algorithm"] != "sha256" {
+            return Err(format!(
+                "closing brace after the compact member must survive strip: {out}"
+            ));
+        }
+        Ok(())
     }
 
     use std::sync::atomic::{AtomicUsize, Ordering};
