@@ -2663,9 +2663,9 @@ fn item_nesting_with_impl(
             modules.push(base(module.name()?.text().to_string()));
         } else if allow_impl && let Some(implementation) = ast::Impl::cast(ancestor.clone()) {
             cfg_gated |= has_cfg_attr(&implementation);
-        } else if !(allow_impl && ast::AssocItemList::can_cast(ancestor.kind()))
-            && !ast::ItemList::can_cast(ancestor.kind())
-            && !ast::SourceFile::can_cast(ancestor.kind())
+        } else if !(ast::ItemList::can_cast(ancestor.kind())
+            || ast::SourceFile::can_cast(ancestor.kind())
+            || allow_impl && ast::AssocItemList::can_cast(ancestor.kind()))
         {
             return None;
         }
