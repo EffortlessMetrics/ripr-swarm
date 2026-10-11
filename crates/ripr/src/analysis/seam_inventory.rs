@@ -8332,7 +8332,7 @@ impl Beta {{ pub fn new(x: i32) -> i32 {{ if x > 1 {{ x }} else {{ 1 }} }} }}
             if label != "module-value" {
                 let index = crate::analysis::facts::build_index(&root, &[root.join("src/lib.rs")])?;
                 assert!(
-                    index.functions().any(|function| {
+                    index.functions().iter().any(|function| {
                         function.name == "owner" && function.source_role.is_evidence_role()
                     }),
                     "{label}: fixture must contain the competing evidence-only helper"
