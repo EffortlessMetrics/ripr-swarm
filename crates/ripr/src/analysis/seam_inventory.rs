@@ -8325,6 +8325,10 @@ impl Beta { pub fn new(x: i32) -> i32 { if x > 5 { x } else { 5 } } }
             "use self::support::{Alpha};",
             "use crate::support::*;",
             "use crate::{support::*};",
+            "use crate::support::r#Alpha;",
+            "use crate::support::{r#Alpha};",
+            "use crate::support::Alpha as r#Alpha;",
+            "use crate::support::Alpha::{self};",
         ] {
             let root = make_tempdir("targeted-import-shadowed-constructor")?;
             write_file(

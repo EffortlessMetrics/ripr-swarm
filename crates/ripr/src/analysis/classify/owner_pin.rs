@@ -293,7 +293,9 @@ impl OwnerPinSyntax {
             // in this file; an explicit crate-root path is checked separately.
             owner_scope.modules == test_scope.modules
                 && !file_use_statements(&facts.source).iter().any(|statement| {
-                    use_statement_binds_name(statement, self_ty) || statement.contains('*')
+                    // Include raw bindings and grouped `Type::{self}` imports;
+                    // unrelated mentions of this type also stay conservative.
+                    contains_as_whole_word(statement, self_ty) || statement.contains('*')
                 })
         } else if prefix == format!("crate::{self_ty}") {
             owner_scope.modules.is_empty()
