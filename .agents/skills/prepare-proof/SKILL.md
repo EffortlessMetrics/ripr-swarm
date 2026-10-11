@@ -32,6 +32,7 @@ A bounded proof contract can distinguish the intended behavior from the stronges
 - A setup helper must fail at setup rather than manufacture a downstream product failure.
 - A status-zero command with missing or unrecognized evidence is not clean.
 - Platform-specific branches require platform-capable proof.
+- Bounded subprocess-cleanup claims need an actual owned-descendant control that distinguishes primary-only termination from containment cleanup, including resistance to graceful termination when escalation is claimed. Observe terminal status, primary reaping, and descendant cleanup before deleting fixtures; a timeout return alone is insufficient. Use the existing platform-specific process owner: Linux process-group evidence does not qualify Windows containment, and unknown third-party processes are not owned. Record unavailable execution as not established.
 - Process success, static movement, mutation adequacy, and merge readiness remain separate axes.
 
 # Useful fan-out
