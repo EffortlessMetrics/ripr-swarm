@@ -4158,10 +4158,7 @@ fn ts_apply_post_ladder_rules(
     if let Some(subject) = context
         .old_line_text
         .and_then(|old| ts_identity_copy_subject(old, context.line_text))
-        && !context
-            .candidates
-            .iter()
-            .any(|candidate| ts_test_pins_identity(candidate.test, &context.owner.name))
+        && !ts_candidates_pin_identity(context.candidates, &context.owner.name)
     {
         verdict.class = ExposureClass::WeaklyExposed;
         verdict.discriminate_state = StageState::Weak;
@@ -4246,6 +4243,20 @@ pub(crate) fn ts_identity_copy_subject(old_line: &str, new_line: &str) -> Option
     } else {
         (is_identifier(&new) && copied(&old)? == new).then_some(new)
     }
+}
+
+/// `true` when a related test that grants oracle credit pins identity. A
+/// heuristic (name-linked) relation cannot see the owner's result, so its
+/// `toBe` does not count. Heuristic candidates appear today only when no
+/// oracle relation exists, which never reaches `exposed`; the filter keeps
+/// rule 1 correct if that ordering changes.
+pub(super) fn ts_candidates_pin_identity(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    owner: &str,
+) -> bool {
+    candidates.iter().any(|candidate| {
+        candidate.relation.uses_oracle() && ts_test_pins_identity(candidate.test, owner)
+    })
 }
 
 /// `true` when a test asserts directly on the owner call's result

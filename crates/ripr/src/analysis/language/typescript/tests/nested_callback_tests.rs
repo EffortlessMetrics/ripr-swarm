@@ -45,6 +45,7 @@ fn other_foreach_forms_collect_nothing() {
         "  [150].forEach(async (v) => { await tick(); expect(price(v)).toBe(140); });",
         "  [150].forEach((v) => { return load(v).then((r) => { expect(r).toBe(2); }); });",
         "  [150].forEach(function* (v) { expect(price(v)).toBe(140); });",
+        "  [-\n150].forEach((v) => { expect(price(v)).toBe(140); });",
     ] {
         let source = format!(
             "import {{ price }} from \"../src/price\";\ntest(\"price\", () => {{\n{body}\n}});\n"
@@ -94,6 +95,7 @@ fn floating_or_unsafe_then_collects_nothing() {
         "  return total(\n    [10, 20],\n  ).then((sum) => {\n    expect(sum).toBe(30);\n  });",
         "  return total([10, 20]).catch(() => 30).then((sum) => {\n    expect(sum).toBe(30);\n  });",
         "  return total([10, 20]).then (() => 30).then((sum) => {\n    expect(sum).toBe(30);\n  });",
+        "  return total([10, 20])[\"then\"](() => 30).then((sum) => {\n    expect(sum).toBe(30);\n  });",
     ] {
         let source = format!("test(\"total\", () => {{\n{body}\n}});\n");
         assert_eq!(observed("tests/order.test.ts", &source), vec![], "{body}");
@@ -220,6 +222,34 @@ fn copy_for_identity_change_needs_an_identity_matcher() -> Result<(), String> {
         "  return { ...cfg, ok: true };",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn identity_pin_counts_only_oracle_relations() -> Result<(), String> {
+    let source = "test(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).toBe(cfg);\n});\n";
+    assert_eq!(
+        observed("tests/ready.test.ts", source),
+        vec![(Some("ready(cfg)".to_string()), None, 3)]
+    );
+    let tests = extract_tests(Path::new("tests/ready.test.ts"), source);
+    let [test] = tests.as_slice() else {
+        return Err(format!("expected one parsed test, got {}", tests.len()));
+    };
+    let direct = TypeScriptRelatedCandidate::with_owner_path(
+        test,
+        TypeScriptRelationKind::DirectOwnerCall,
+        TypeScriptOwnerPathDisposition::TrustedOwnerPath,
+    );
+    assert!(ts_candidates_pin_identity(&[direct], "ready"));
+    // The same `toBe` reached only by test-name similarity cannot see the
+    // owner's result.
+    let name_linked = TypeScriptRelatedCandidate::with_owner_path(
+        test,
+        TypeScriptRelationKind::TestName,
+        TypeScriptOwnerPathDisposition::OwnerNameCallUnanchored,
+    );
+    assert!(!ts_candidates_pin_identity(&[name_linked], "ready"));
     Ok(())
 }
 

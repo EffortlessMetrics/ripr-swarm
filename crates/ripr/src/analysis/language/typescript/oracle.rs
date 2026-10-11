@@ -379,7 +379,12 @@ fn collect_nested_callback_assertions(
                     return;
                 };
                 let span = cell.span();
-                let Some(cell_text) = text.get(span.start as usize..span.end as usize) else {
+                // A cell spanning lines would shift the re-parsed
+                // assertion lines (as `literal_table_rows` refuses).
+                let Some(cell_text) = text
+                    .get(span.start as usize..span.end as usize)
+                    .filter(|cell_text| !cell_text.contains(['\n', '\r']))
+                else {
                     return;
                 };
                 rows.push(vec![cell_text.to_string()]);
@@ -399,12 +404,14 @@ fn collect_nested_callback_assertions(
             let Some(receiver) = text.get(span.start as usize..span.end as usize) else {
                 return;
             };
-            // A multi-line receiver, or an earlier `.then` step that may
-            // replace the owner's value, is not substituted.
+            // A multi-line receiver, or an earlier promise step that may
+            // replace the owner's value, is not substituted. The step is
+            // matched as a whole word so a computed `["then"]` member is
+            // refused too; an argument named `then` is a refused miss.
             if receiver.contains(['\n', '\r'])
-                || [".then", ".catch", ".finally"]
-                    .iter()
-                    .any(|step| receiver.contains(step))
+                || receiver
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+                    .any(|word| matches!(word, "then" | "catch" | "finally"))
             {
                 return;
             }

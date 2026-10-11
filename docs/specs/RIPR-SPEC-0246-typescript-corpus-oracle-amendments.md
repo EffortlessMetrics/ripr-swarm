@@ -95,14 +95,16 @@ rule 1 still demotes. That costs a false gap, never false credit.
 assertions are collected as the test's own:
 
 - `[<literal>, ...].forEach((v) => body)`: an inline array of at most 64
-  literals (the RIPR-SPEC-0243 rule 11 literal set) and a callback that is
-  neither `async` nor a generator, with exactly one plain parameter. Each
-  element reads as one case, the body with `v` replaced by the element,
-  exactly as a rule 11 table row. A `return` inside the body does not
-  reach the runner, because `forEach` discards it.
+  literals (the RIPR-SPEC-0243 rule 11 literal set), each on one line,
+  and a callback that is neither `async` nor a generator, with exactly
+  one plain parameter. Each element reads as one case, the body with `v`
+  replaced by the element, exactly as a rule 11 table row. A synchronous
+  `return expect(...)` still runs and is collected, but a promise returned
+  from the body does not reach the runner, because `forEach` discards it,
+  so a `.then` returned there is not collected.
 - `return p.then((v) => body)` or `await p.then((v) => body)`, with a
-  single argument, a receiver `p` on one line that contains no `.then`,
-  `.catch` or `.finally` step,
+  single argument, a receiver `p` on one line in which `then`, `catch`
+  and `finally` never appear as a word (a dotted or computed step),
   and a body that declares none of the names `p` reads: the runner waits
   for the returned or awaited promise, so the body runs before the test
   settles. With one plain parameter the body reads with `v` replaced by
@@ -168,7 +170,14 @@ and the rejected alternative.
 ## Non-Goals
 
 - No collection of assertions in other nested callbacks (`setTimeout`,
-  `waitFor`, `act`, a `.then` that floats, a `forEach` over a variable).
+  `waitFor`, `act`, a `.then` that floats, a `forEach` over a variable),
+  or in the refused forms rule 2 lists (an `async` or generator callback,
+  a multi-line cell or receiver, an earlier promise step, a subtest
+  without a literal name or on another receiver).
+- No type reasoning about `.then`. A receiver whose own `then` never calls
+  its callback (a hand-written thenable) is read as a promise. The same
+  receiver already credits `expect(await p).toBe(...)`, so rule 2 adds no
+  new false-credit path.
 - No change to snapshot, mock-matcher or legacy-assert strengths.
 - No identity reasoning beyond the four copy forms of rule 1.
 
