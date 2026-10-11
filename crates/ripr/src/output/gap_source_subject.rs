@@ -14,7 +14,8 @@
 //! ([`derive_source_subject`]); they never hash the workspace, so a report
 //! written after a checkout or an edit cannot vouch for records computed
 //! before it. The LSP validator in `lsp::gap_artifacts` recomputes the
-//! digests from the current workspace and is the only consumer authority.
+//! digests from the current workspace. Targeted rerun uses the same validator
+//! to admit legacy ledgers whose relative/missing root cannot bind a checkout.
 
 mod shared;
 

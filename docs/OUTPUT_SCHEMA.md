@@ -17389,6 +17389,11 @@ unit tests.
 
 ## Gap Decision Ledger
 
+The CLI writer persists the selected canonical absolute `root`, including the
+default `--root .`, so a consumer cannot reinterpret the producer's directory
+label in its own working directory (#7382). Source-subject digests remain copied
+from the analysis input; resolving the root does not mint fresh provenance.
+
 `ripr reports gap-ledger --records <path>` renders a read-only advisory ledger
 from explicit `GapRecord` input. The input may be a `records` array,
 `gap_records` array, raw record array, or the `fixtures/gap-decision-ledger`
@@ -18399,6 +18404,15 @@ is `limited` only when no current scope resolves. Missing, root-mismatched, or
 otherwise unresolved selectors emit `state: "limited"`, an empty `seams` array,
 and a named `limitation` such as `canonical_gap_unresolved` or
 `stale_gap_ledger`. They never fall back to an unrelated workspace scan. A
+different absolute ledger root refuses before record matching and scope
+recomputation, even when source bytes match. Relative/missing legacy roots use
+the existing `source_subject` validator against the selected root: changed
+bytes yield `stale_subject`; missing/malformed/unsupported/incomplete/unreadable
+stamps yield `unverifiable_subject` with the shared reason. These refusals retain
+zero matched records/scopes and cache `not_run`. Current legacy stamps permit
+explicit root selection from a foreign working directory. Matching absolute
+roots retain targeted recomputation after edits, including unstamped legacy
+records; no HEAD/base revision-staleness policy is added. A
 `--gap-ledger` that cannot be read or parsed is not a limitation: the command
 exits 2 without a report, as it does for an unreadable `--changed-test`.
 
