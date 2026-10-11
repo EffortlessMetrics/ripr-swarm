@@ -466,13 +466,40 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
         LineComment,
         BlockComment,
     }
-    fn operand_expected(prev: Option<char>) -> bool {
-        prev.is_none_or(|c| "(,=:[!&|?{};+-*%<>~^".contains(c))
+    // Keywords after which an operand (so a regex) follows; a property
+    // name with the same spelling (`x.return`) is not a keyword.
+    const OPERAND_KEYWORDS: [&str; 12] = [
+        "return",
+        "typeof",
+        "void",
+        "delete",
+        "in",
+        "instanceof",
+        "new",
+        "throw",
+        "case",
+        "yield",
+        "await",
+        "of",
+    ];
+    fn is_word_char(c: char) -> bool {
+        c.is_alphanumeric() || c == '_' || c == '$'
+    }
+    fn operand_expected(prev: Option<char>, word: &str, word_after_dot: bool) -> bool {
+        match prev {
+            None => true,
+            Some(c) if is_word_char(c) => !word_after_dot && OPERAND_KEYWORDS.contains(&word),
+            Some(c) => "(,=:[!&|?{};+-*%<>~^".contains(c),
+        }
     }
     let mut out = String::with_capacity(text.len());
     let mut mode = Mode::Code;
     // The last non-whitespace code character, to tell a regex from division.
     let mut prev: Option<char> = None;
+    // The identifier or keyword that `prev` ends, and whether a `.` precedes
+    // it (a member name).
+    let mut word = String::new();
+    let mut word_after_dot = false;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
@@ -505,7 +532,7 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                         mode = Mode::BlockComment;
                         out.push_str("  ");
                     }
-                    '/' if operand_expected(prev) => {
+                    '/' if operand_expected(prev, &word, word_after_dot) => {
                         mode = Mode::Regex { in_class: false };
                         out.push(c);
                     }
@@ -527,6 +554,15 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                         out.push(c);
                     }
                     _ => out.push(c),
+                }
+                if is_word_char(c) {
+                    if !prev.is_some_and(is_word_char) {
+                        word.clear();
+                        word_after_dot = prev == Some('.');
+                    }
+                    word.push(c);
+                } else if !c.is_whitespace() {
+                    word.clear();
                 }
                 if !c.is_whitespace() {
                     prev = Some(c);

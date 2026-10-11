@@ -413,6 +413,10 @@ fn literal_masking_reads_regex_literals_and_division() {
         ("expect(/[/'\"]/g.test(p(1)))", "p"),
         ("a / b / p(1)", "p"),
         ("f(x) / 2 + p(1)", "p"),
+        ("typeof /\"/.test(s) && quote(s)", "quote"),
+        ("await /'/.exec(p(1))", "p"),
+        ("x.return / 2 + p(1)", "p"),
+        ("total / 2 + p(1)", "p"),
     ] {
         let masked = ts_mask_literals_and_comments(text);
         assert!(
