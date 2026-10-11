@@ -29,7 +29,11 @@ can only hint that a caller "may lead here" without changing anything.
   complete parser-backed inventory and synchronous
   nongeneric declarations. Imports (including glob imports), aliases,
   competing names, traits, deferred code, macro calls/declarations, transforming or
-  cfg attributes and multiple selected paths/occurrences refuse. Receipts may
+  cfg attributes and multiple selected paths/occurrences refuse. A competing
+  path on another root struct is noncompeting only when its member binds to one
+  plain inherent function declaration. Associated constants, trait items and
+  unresolved or ambiguous member declarations refuse; nominal type identity
+  alone does not establish callable identity. Receipts may
   accompany a Partial returned-ledger witness; they add no propagation edge,
   activation, collection element/index, Config/Result payload or oracle credit.
   Wrapper-local collection/field propagation remains refused.

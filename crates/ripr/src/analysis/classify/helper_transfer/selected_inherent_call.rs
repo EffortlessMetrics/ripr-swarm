@@ -290,11 +290,11 @@ fn sole_top_level_initializer_call(
                 ))
             && !(expected.len() == 2
                 && names.len() == 2
-                && plain_other_root_struct(root, &names[0], expected[0]))
+                && distinct_root_inherent_function(root, &names[0], &names[1], expected[0]))
         {
             // A parent re-export can make `super::helper` the same function.
             // Unknown qualifications must not disappear from uniqueness;
-            // only a declared distinct nominal root receiver is noncompeting.
+            // only a bound distinct inherent function declaration is noncompeting.
             return None;
         }
     }
@@ -354,15 +354,56 @@ fn sole_top_level_initializer_call(
     .then_some(call)
 }
 
-fn plain_other_root_struct(root: &SyntaxNode, name: &str, selected: &str) -> bool {
-    name != selected
-        && name_count(root, name) == 1
-        && root.children().filter_map(ast::Struct::cast).any(|item| {
+fn distinct_root_inherent_function(
+    root: &SyntaxNode,
+    receiver: &str,
+    method: &str,
+    selected_receiver: &str,
+) -> bool {
+    if receiver == selected_receiver
+        || name_count(root, receiver) != 1
+        || !root.children().filter_map(ast::Struct::cast).any(|item| {
             item.generic_param_list().is_none()
-                && item
-                    .name()
-                    .is_some_and(|declaration| declaration.text() == name)
+                && item.name().is_some_and(|name| name.text() == receiver)
         })
+    {
+        return false;
+    }
+    // A distinct nominal type can expose the selected function through an
+    // associated constant or trait item. Bind the member declaration itself;
+    // no function-pointer value or trait resolution is claimed here.
+    let mut members = root
+        .children()
+        .filter_map(ast::Impl::cast)
+        .filter(|item| {
+            item.self_ty()
+                .is_some_and(|ty| ty.syntax().text() == receiver)
+        })
+        .flat_map(|implementation| {
+            implementation
+                .assoc_item_list()
+                .into_iter()
+                .flat_map(|items| items.assoc_items())
+                .map(move |item| (implementation.clone(), item))
+        })
+        .filter(|(_, item)| {
+            ast::AnyHasName::cast(item.syntax().clone())
+                .and_then(|named| named.name())
+                .is_some_and(|name| name.text().trim_start_matches("r#") == method)
+        });
+    let Some((implementation, ast::AssocItem::Fn(function))) = members.next() else {
+        return false;
+    };
+    members.next().is_none()
+        && implementation.trait_().is_none()
+        && implementation.generic_param_list().is_none()
+        && plain_sync(&function)
+        && !function
+            .attrs()
+            .any(|attr| attr.simple_name().as_deref() == Some("test"))
+        && function
+            .param_list()
+            .is_some_and(|params| params.self_param().is_none())
 }
 
 fn path_names(path: ast::Path) -> Option<Vec<String>> {
@@ -575,6 +616,42 @@ mod tests {
             1,
             "distinct nominal receiver must remain noncompeting"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn distinct_receiver_requires_an_inherent_function_member() -> Result<(), String> {
+        for declaration in [
+            "impl Other { const parse: fn(bool) -> Config = Config::parse; }",
+            "impl Other { const parse: fn(bool) -> Config = Config::parse as fn(bool) -> Config; }",
+            "impl Other { const parse: fn(bool) -> Config = crate::Config::parse; }",
+            "impl Other { const parse: fn(bool) -> Config = (Config::parse); }",
+            "impl Other { const parse: &'static fn(bool) -> Config = &(Config::parse as fn(bool) -> Config); }",
+            "fn noop(_: bool) -> Config { Config { errors: Vec::new() } } impl Other { const parse: fn(bool) -> Config = noop; }",
+            "trait Callable { const parse: fn(bool) -> Config; } impl Callable for Other { const parse: fn(bool) -> Config = Config::parse; }",
+        ] {
+            let source = format!(
+                "struct Other; {declaration}\n{}",
+                SOURCE.replace(
+                    "let malformed",
+                    "let other = Other::parse(false); let malformed"
+                )
+            );
+            assert!(
+                receipts(&source)?.is_empty(),
+                "unresolved callable {declaration}"
+            );
+        }
+        // A distinct function may invoke the selected function internally.
+        // This binds direct declarations, not a number of runtime invocations.
+        let source = format!(
+            "struct Other; impl Other {{ fn parse(flag: bool) -> Config {{ Config::parse(flag) }} }}\n{}",
+            SOURCE.replace(
+                "let malformed",
+                "let other = Other::parse(false); let malformed"
+            )
+        );
+        assert_eq!(receipts(&source)?.len(), 1);
         Ok(())
     }
 
