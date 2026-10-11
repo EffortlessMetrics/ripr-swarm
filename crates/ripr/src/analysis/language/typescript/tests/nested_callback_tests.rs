@@ -96,6 +96,8 @@ fn floating_or_unsafe_then_collects_nothing() {
         "  return total([10, 20]).catch(() => 30).then((sum) => {\n    expect(sum).toBe(30);\n  });",
         "  return total([10, 20]).then (() => 30).then((sum) => {\n    expect(sum).toBe(30);\n  });",
         "  return total([10, 20])[\"then\"](() => 30).then((sum) => {\n    expect(sum).toBe(30);\n  });",
+        "  return total([10, 20])[\"th\" + \"en\"](() => 30).then((sum) => {\n    expect(sum).toBe(30);\n  });",
+        "  return total([10, 20])?.[step](() => 30).then((sum) => {\n    expect(sum).toBe(30);\n  });",
     ] {
         let source = format!("test(\"total\", () => {{\n{body}\n}});\n");
         assert_eq!(observed("tests/order.test.ts", &source), vec![], "{body}");

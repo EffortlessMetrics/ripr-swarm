@@ -412,6 +412,7 @@ fn collect_nested_callback_assertions(
                 || receiver
                     .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
                     .any(|word| matches!(word, "then" | "catch" | "finally"))
+                || receiver_chain_has_computed_member(member.object())
             {
                 return;
             }
@@ -467,6 +468,37 @@ fn collect_nested_callback_assertions(
             collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
         }
         _ => {}
+    }
+}
+
+/// `true` when the receiver's member chain has a computed step
+/// (`p["th" + "en"](...)`): its name cannot be read, so it may be a promise
+/// step that replaces the owner's value. Array literals in call arguments
+/// are not on the chain and stay allowed.
+fn receiver_chain_has_computed_member(receiver: &Expression<'_>) -> bool {
+    let mut expr = receiver.get_inner_expression();
+    loop {
+        expr = match expr {
+            Expression::ComputedMemberExpression(_) => return true,
+            Expression::CallExpression(call) => call.callee.get_inner_expression(),
+            Expression::StaticMemberExpression(member) => member.object.get_inner_expression(),
+            Expression::PrivateFieldExpression(member) => member.object.get_inner_expression(),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                oxc_ast::ast::ChainElement::ComputedMemberExpression(_) => return true,
+                oxc_ast::ast::ChainElement::CallExpression(call) => {
+                    call.callee.get_inner_expression()
+                }
+                oxc_ast::ast::ChainElement::StaticMemberExpression(member) => {
+                    member.object.get_inner_expression()
+                }
+                oxc_ast::ast::ChainElement::PrivateFieldExpression(member) => {
+                    member.object.get_inner_expression()
+                }
+                _ => return true,
+            },
+            Expression::AwaitExpression(_) => return true,
+            _ => return false,
+        };
     }
 }
 

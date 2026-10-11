@@ -104,7 +104,8 @@ assertions are collected as the test's own:
   so a `.then` returned there is not collected.
 - `return p.then((v) => body)` or `await p.then((v) => body)`, with a
   single argument, a receiver `p` on one line in which `then`, `catch`
-  and `finally` never appear as a word (a dotted or computed step),
+  and `finally` never appear as a word and whose member chain has no
+  computed step (a computed name such as `"th" + "en"` cannot be read),
   and a body that declares none of the names `p` reads: the runner waits
   for the returned or awaited promise, so the body runs before the test
   settles. With one plain parameter the body reads with `v` replaced by
