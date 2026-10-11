@@ -478,6 +478,26 @@ fn patch_brief(root: &Path) -> Result<serde_json::Value, String> {
     serde_json::from_str(&rendered).map_err(|error| error.to_string())
 }
 
+fn started_brief(root: &Path, brief: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let seam_id = brief["top_seams"][0]["seam_id"]
+        .as_str()
+        .ok_or("patch brief has no selected seam")?;
+    let written = write_agent_start(AgentStartOptions {
+        root: root.to_path_buf(),
+        seam_id: seam_id.to_string(),
+        out_dir: PathBuf::from("target/started"),
+        json: true,
+    })?;
+    assert_eq!(written.paths.len(), 3);
+    assert!(written.paths.iter().all(|path| path.is_file()));
+    let raw = std::fs::read_to_string(root.join("target/started/agent-brief.json"))
+        .map_err(|error| error.to_string())?;
+    let started: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|error| error.to_string())?;
+    assert_eq!(started["top_seams"][0]["seam_id"], seam_id);
+    Ok(started)
+}
+
 fn close_boundary_gap(root: &Path) -> Result<(), String> {
     let path = root.join("tests/pricing.rs");
     let mut tests = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
@@ -517,6 +537,31 @@ fn cli_non_git_patch_brief_discloses_verify_provenance_limit() -> Result<(), Str
         "the supported patch brief must disclose its verification limitation: {warnings:?}"
     );
     assert!(!root.join(".git").exists(), "brief must not initialize Git");
+    Ok(())
+}
+
+#[test]
+fn cli_non_git_agent_start_brief_discloses_verify_provenance_limit() -> Result<(), String> {
+    let owned = boundary_patch_root("non-git-start")?;
+    let root = &owned.0;
+    let _missing_head = crate::agent::artifact::current_git_head(root)
+        .err()
+        .ok_or("non-Git fixture unexpectedly has a concrete HEAD")?;
+    let brief = patch_brief(root)?;
+    let started = started_brief(root, &brief)?;
+    assert!(
+        started["warnings"]
+            .as_array()
+            .ok_or("missing start warnings")?
+            .iter()
+            .any(|warning| warning.as_str().is_some_and(|text| {
+                text.contains("Git/revision provenance") && text.contains("remain supported")
+            })),
+        "the generated start brief must disclose its verification limitation: {}",
+        started["warnings"]
+    );
+    assert_eq!(started["warnings"], brief["warnings"]);
+    assert!(!root.join(".git").exists(), "start must not initialize Git");
     Ok(())
 }
 
