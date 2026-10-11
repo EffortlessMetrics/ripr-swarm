@@ -216,6 +216,85 @@ fn json_pretty(value: Value) -> String {
     }
 }
 
+/// The notification id every SARIF refusal document declares and references.
+/// One declared id — the typed identity and repair route ride in the
+/// notification's property bag and the run's properties, never in a
+/// dynamically named rule.
+const SARIF_REFUSAL_NOTIFICATION_ID: &str = "run_refused";
+
+/// Render a SARIF 2.1.0 refusal document for a run that never analyzed
+/// (#7332). Schema-valid and code-scanning-uploadable: one run with an
+/// `invocations[].toolConfigurationNotifications` entry naming the typed
+/// refusal identity and repair route, an empty `results` array, and the
+/// ripr property bag echoing the invocation context. A SARIF consumer gets
+/// a parseable document that says the run refused — never zero bytes that
+/// could read as "the tool was never invoked".
+pub(crate) fn render_refusal_sarif(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+) -> String {
+    let mut properties = Map::new();
+    properties.insert("tool".to_string(), json!("ripr"));
+    properties.insert(
+        "schema_version".to_string(),
+        json!(RIPR_SARIF_SCHEMA_VERSION),
+    );
+    properties.insert("scope".to_string(), json!("finding"));
+    properties.insert("run_status".to_string(), json!("refused"));
+    properties.insert("refusal_identity".to_string(), json!(notice.identity));
+    properties.insert(
+        "repair_route".to_string(),
+        json!(notice.repair_route),
+    );
+    properties.insert("root".to_string(), json!(root.display().to_string()));
+    if let Some(base) = base {
+        properties.insert("base".to_string(), json!(base));
+    }
+    let document = json!({
+        "$schema": SARIF_SCHEMA,
+        "version": SARIF_VERSION,
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "ripr",
+                        "semanticVersion": env!("CARGO_PKG_VERSION"),
+                        "informationUri": "https://github.com/EffortlessMetrics/ripr",
+                        "notifications": [
+                            {
+                                "id": SARIF_REFUSAL_NOTIFICATION_ID,
+                                "shortDescription": {
+                                    "text": "The run refused to analyze; the invocation notification carries the typed identity and repair route."
+                                }
+                            }
+                        ]
+                    }
+                },
+                "invocations": [
+                    {
+                        "executionSuccessful": false,
+                        "toolConfigurationNotifications": [
+                            {
+                                "level": "error",
+                                "descriptor": { "id": SARIF_REFUSAL_NOTIFICATION_ID },
+                                "message": { "text": notice.message },
+                                "properties": {
+                                    "identity": notice.identity,
+                                    "repair_route": notice.repair_route
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "results": [],
+                "properties": properties
+            }
+        ]
+    });
+    json_pretty(document)
+}
+
 fn finding_result(
     root: &Path,
     finding: &Finding,
@@ -961,6 +1040,57 @@ mod tests {
     };
     use serde_json::Value;
     use std::path::PathBuf;
+
+    #[test]
+    fn refusal_sarif_is_a_schema_valid_run_with_the_typed_notification() -> Result<(), String> {
+        // #7332: a refused run must still upload to code scanning — one run
+        // whose only signal is the tool-configuration notification naming the
+        // typed identity and repair route, and an empty results array.
+        let notice = crate::core_error::CoreError::base_unresolvable(
+            "the base `deadbeef` does not resolve to a commit",
+        )
+        .refusal_notice();
+        let rendered = render_refusal_sarif(&notice, std::path::Path::new("."), Some("deadbeef"));
+        let sarif = parse_json(&rendered)?;
+        if sarif["version"] != Value::String("2.1.0".to_string()) {
+            return Err(format!("version must be 2.1.0: {sarif}"));
+        }
+        let run = &sarif["runs"][0];
+        if run["tool"]["driver"]["notifications"][0]["id"] != Value::String("run_refused".into())
+        {
+            return Err(format!("driver must declare run_refused: {sarif}"));
+        }
+        let notification = &run["invocations"][0]["toolConfigurationNotifications"][0];
+        for (pointer, expected) in [
+            ("/level", "error"),
+            ("/descriptor/id", "run_refused"),
+            ("/properties/identity", "base_unresolvable"),
+            ("/properties/repair_route", "analysis/base-resolution"),
+        ] {
+            let actual = notification.pointer(pointer).and_then(Value::as_str);
+            if actual != Some(expected) {
+                return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+            }
+        }
+        if notification["message"]["text"] != Value::String(notice.message.clone()) {
+            return Err(format!("notification must echo the diagnostic: {sarif}"));
+        }
+        if run["results"].as_array().map(Vec::len) != Some(0) {
+            return Err(format!("results must be empty: {sarif}"));
+        }
+        for (pointer, expected) in [
+            ("/properties/run_status", "refused"),
+            ("/properties/refusal_identity", "base_unresolvable"),
+            ("/properties/repair_route", "analysis/base-resolution"),
+            ("/properties/base", "deadbeef"),
+        ] {
+            let actual = run.pointer(pointer).and_then(Value::as_str);
+            if actual != Some(expected) {
+                return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn sarif_preserves_matched_total_for_sparse_retained_rows() -> Result<(), String> {

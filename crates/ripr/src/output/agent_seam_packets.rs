@@ -240,6 +240,23 @@ pub(crate) enum PacketCommandContext<'a> {
     },
 }
 
+/// Render an agent-seam-packets refusal document (#7332) for a run that
+/// never analyzed. Keeps the format's own envelope conventions:
+/// `scope: "repo"`, the `run_status`/`limitations[]` pair (here `refused`
+/// with the typed refusal identity as the limitation category), and an
+/// empty `packets` array with `packets_total: 0` — parseable as
+/// `agent-seam-packets-json`, never zero bytes, and no `next` block because
+/// there is no packet to act on.
+pub(crate) fn render_refusal_json(notice: &crate::core_error::RefusalNotice) -> String {
+    format!(
+        "{{\n  \"schema_version\": \"{}\",\n  \"scope\": \"repo\",\n  \"run_status\": \"refused\",\n  \"limitations\": [\n    {{\n      \"category\": \"{}\",\n      \"repair_route\": \"{}\",\n      \"message\": \"{}\"\n    }}\n  ],\n  \"packets_total\": 0,\n  \"packets\": []\n}}\n",
+        AGENT_SEAM_PACKET_SCHEMA_VERSION,
+        notice.identity,
+        notice.repair_route,
+        crate::output::json::escape(&notice.message),
+    )
+}
+
 fn render_agent_seam_packets_json_with_root(
     classified: &[ClassifiedSeam],
     limit_info: Option<RepoExposureLimit<'_>>,
@@ -3462,6 +3479,43 @@ mod tests {
     };
     use crate::repair_guidance::{GuidanceReason, GuidanceRecovery};
     use std::path::PathBuf;
+
+    #[test]
+    fn refusal_document_keeps_the_packet_envelope_with_no_packets() -> Result<(), String> {
+        // #7332: a refused agent-seam-packets run parses as
+        // agent-seam-packets-json — the format's own run_status/limitations
+        // pair, packets_total 0, an empty packets array, and no `next` block
+        // because there is no packet to act on.
+        let notice = crate::core_error::CoreError::gap_ledger_unusable(
+            "read gap ledger nope.json failed: missing",
+        )
+        .refusal_notice();
+        let rendered = render_refusal_json(&notice);
+        let value: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
+        for (pointer, expected) in [
+            ("/schema_version", AGENT_SEAM_PACKET_SCHEMA_VERSION),
+            ("/scope", "repo"),
+            ("/run_status", "refused"),
+            ("/limitations/0/category", "gap_ledger_unusable"),
+            ("/limitations/0/repair_route", "analysis/gap-ledger"),
+        ] {
+            let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+            if actual != Some(expected) {
+                return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+            }
+        }
+        if value["packets_total"] != serde_json::Value::from(0) {
+            return Err(format!("packets_total must be 0: {value}"));
+        }
+        if value["packets"].as_array().map(Vec::len) != Some(0) {
+            return Err(format!("packets must be empty: {value}"));
+        }
+        if value.get("next").is_some() {
+            return Err(format!("a refused run must not grow a next block: {value}"));
+        }
+        Ok(())
+    }
 
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")

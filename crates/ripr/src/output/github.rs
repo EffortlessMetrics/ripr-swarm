@@ -263,6 +263,20 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     out
 }
 
+/// Render a refusal as one GitHub Actions error annotation (#7332). The
+/// format's natural refusal shape: the stream stays parseable workflow
+/// commands, GitHub surfaces the line as a step annotation, and the typed
+/// identity plus repair route ride in the escaped data so a log parser can
+/// branch on them. Never zero bytes: an empty GitHub-format stream would
+/// read as "nothing to annotate", which a refusal is not.
+pub(crate) fn render_refusal(notice: &crate::core_error::RefusalNotice) -> String {
+    let text = format!(
+        "run refused: run_status={}; repair_route={}; {}",
+        notice.identity, notice.repair_route, notice.message
+    );
+    format!("::error title=ripr refusal::{}\n", escape_data(&text))
+}
+
 /// An incomplete analysis must not read as a clean one in a PR check: the
 /// annotation stream is often the only thing a reviewer sees, so it names
 /// the outcome and each limitation's recovery, as the human report does.
@@ -553,6 +567,32 @@ mod tests {
         StageState, StaticLimitKind, StopReason, Summary, SymbolId,
     };
     use std::path::PathBuf;
+
+    #[test]
+    fn refusal_renders_one_workflow_command_error_with_identity_and_route() {
+        // #7332: the GitHub-format stream stays parseable workflow commands —
+        // one error annotation whose escaped data carries the typed identity
+        // and repair route, never zero bytes.
+        let notice = crate::core_error::CoreError::repository_root_unusable(
+            "not inside a Git work tree",
+        )
+        .refusal_notice();
+        let rendered = super::render_refusal(&notice);
+        assert!(
+            rendered.starts_with("::error title=ripr refusal::"),
+            "unexpected refusal line: {rendered}"
+        );
+        assert!(rendered.ends_with('\n'), "refusal line must end newline");
+        assert_eq!(rendered.lines().count(), 1, "exactly one annotation");
+        let expected = format!(
+            "run refused: run_status={}; repair_route={}; {}",
+            notice.identity, notice.repair_route, notice.message
+        );
+        assert!(
+            rendered.contains(&expected),
+            "escaped data must carry identity, route, and diagnostic: {rendered}"
+        );
+    }
 
     #[test]
     fn render_reports_empty_findings_as_notice() {

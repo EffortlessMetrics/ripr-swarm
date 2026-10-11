@@ -88,36 +88,44 @@ fn is_repo_scope_oversized(error: &str) -> bool {
     error.trim_start().starts_with(REPO_SCOPE_OVERSIZED_PREFIX)
 }
 
-/// Render the `check --json` refusal document for a failure that is not one
-/// of the two scope guards (#6834).
+/// Invocation context a refusal envelope echoes (#7331). Each `--json`
+/// command keys the shared envelope shape with its own `schema_version`;
+/// `mode` appears only for commands that accept one, and no
+/// caller-unsupplied value enters the document (RIPR-SPEC-0241).
+pub(crate) struct RefusalEnvelopeContext<'a> {
+    /// The refusing command's own schema version.
+    pub(crate) schema_version: &'static str,
+    /// The analysis scope the command would have run (`"diff"` or `"repo"`).
+    pub(crate) scope: &'static str,
+    /// The CLI mode label, for commands that accept `--mode`.
+    pub(crate) mode: Option<&'static str>,
+    pub(crate) root: &'a std::path::Path,
+    pub(crate) base: Option<&'a str>,
+}
+
+/// Render the shared typed refusal document for a post-argv-parse failure
+/// (#6834, generalized #7331).
 ///
-/// Same envelope shape as the scope guards — same keys, same zeroed summary,
-/// same non-consumable treatment — so a JSON consumer has one contract: the
-/// typed identity selects `run_status`/`category`/`limitation` (and `basis`,
-/// which names the limiting condition), and the human diagnostic rides in
-/// `message`. The identity comes from [`CoreError::check_refusal`], matched
-/// structurally; this renderer never inspects message text.
-///
-/// Callers try [`render_diff_scope_limited_check_json`] first, so scope-guard
-/// bytes stay frozen and #4861 keeps owning those identities.
-pub(crate) fn render_check_failure_json(
-    input: &CheckInput,
+/// Same envelope shape for every command — same keys, same zeroed summary,
+/// same empty findings, same non-consumable treatment — so a JSON consumer
+/// has one contract: the typed identity selects `run_status`/`category`/
+/// `limitation` (and `basis`, which names the limiting condition), and the
+/// human diagnostic rides in `message`. The identity comes from
+/// [`CoreError::check_refusal`], matched structurally; this renderer never
+/// inspects message text.
+pub(crate) fn render_refusal_envelope(
+    context: &RefusalEnvelopeContext<'_>,
     error: &CoreError,
 ) -> Result<String, String> {
-    let refusal = error.check_refusal();
-    let message = if refusal.redact_message {
-        crate::config::config_error_summary(&error.to_string())
-    } else {
-        error.to_string()
-    };
-    let identity = refusal.identity;
-    let repair_route = refusal.repair_route;
+    let notice = error.refusal_notice();
+    let identity = notice.identity;
+    let repair_route = notice.repair_route;
+    let message = notice.message;
 
     let mut value = json!({
-        "schema_version": CHECK_OUTPUT_SCHEMA_VERSION,
+        "schema_version": context.schema_version,
         "tool": "ripr",
-        "mode": input.mode.as_str(),
-        "root": input.root.display().to_string(),
+        "root": context.root.display().to_string(),
         "summary": {
             "changed_rust_files": 0,
             "probes": 0,
@@ -133,7 +141,7 @@ pub(crate) fn render_check_failure_json(
         },
         "findings": [],
         "analysis_scope": {
-            "scope": "diff",
+            "scope": context.scope,
             "run_status": identity,
             "basis": identity,
             "downstream_consumable": false,
@@ -152,11 +160,42 @@ pub(crate) fn render_check_failure_json(
         ]
     });
 
-    if let Some(base) = &input.base {
+    if let Some(mode) = context.mode {
+        value["mode"] = json!(mode);
+    }
+    if let Some(base) = context.base {
         value["base"] = json!(base);
     }
 
     render_pretty_with_newline(&value, "limited check")
+}
+
+/// Render the `check --json` refusal document for a failure that is not one
+/// of the two scope guards (#6834).
+///
+/// Delegates to [`render_refusal_envelope`] with the check output schema
+/// version, so the check envelope keeps one builder with its sibling
+/// commands (#7331) and stays byte-identical to the #6834 shape: same keys,
+/// same zeroed summary, same non-consumable treatment. The identity comes
+/// from [`CoreError::check_refusal`], matched structurally; this renderer
+/// never inspects message text.
+///
+/// Callers try [`render_diff_scope_limited_check_json`] first, so scope-guard
+/// bytes stay frozen and #4861 keeps owning those identities.
+pub(crate) fn render_check_failure_json(
+    input: &CheckInput,
+    error: &CoreError,
+) -> Result<String, String> {
+    render_refusal_envelope(
+        &RefusalEnvelopeContext {
+            schema_version: CHECK_OUTPUT_SCHEMA_VERSION,
+            scope: "diff",
+            mode: Some(input.mode.as_str()),
+            root: &input.root,
+            base: input.base.as_deref(),
+        },
+        error,
+    )
 }
 
 #[cfg(test)]
@@ -464,6 +503,99 @@ mod tests {
             value.get("base").is_none(),
             "base should be omitted when absent: {value}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn refusal_envelope_names_the_artifact_ledger_and_seam_identities() -> Result<(), String> {
+        use crate::core_error::CoreError;
+        // #7331: the three new typed families select their own identities and
+        // repair routes, with the stderr diagnostic echoed verbatim.
+        let cases = [
+            (
+                CoreError::check_artifact_unusable(
+                    "check artifact `nope.json` was unreadable or unparsable",
+                ),
+                "check_artifact_unusable",
+                "analysis/check-artifact",
+            ),
+            (
+                CoreError::gap_ledger_unusable("read gap ledger nope.json failed: missing"),
+                "gap_ledger_unusable",
+                "analysis/gap-ledger",
+            ),
+            (
+                CoreError::seam_id_unknown("agent packet seam_id s was not found. Run `ripr pilot`"),
+                "seam_id_unknown",
+                "analysis/seam-inventory",
+            ),
+        ];
+        for (error, identity, route) in cases {
+            let rendered = render_check_failure_json(&input(), &error)?;
+            assert!(!rendered.is_empty(), "refusal stdout must be non-empty");
+            let value: Value = serde_json::from_str(&rendered)
+                .map_err(|err| format!("parse refusal JSON: {err}"))?;
+            for (pointer, expected) in [
+                ("/analysis_scope/run_status", identity),
+                ("/analysis_scope/repair_route", route),
+                ("/analysis_scope/limitation", identity),
+                ("/run_limitations/0/category", identity),
+                ("/run_limitations/0/repair_route", route),
+            ] {
+                let actual = value.pointer(pointer).and_then(Value::as_str);
+                if actual != Some(expected) {
+                    return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+                }
+            }
+            if value["run_limitations"][0]["message"] != Value::String(error.to_string()) {
+                return Err(format!("message must echo the diagnostic: {value}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sibling_refusal_envelope_omits_mode_and_base_when_unsupplied() -> Result<(), String> {
+        use crate::core_error::CoreError;
+        // #7331: commands without a `--mode` (rerun, agent brief, agent
+        // packet) must not grow a fabricated `mode` key; a repo-scope
+        // command keys the same envelope shape with its own version.
+        let context = RefusalEnvelopeContext {
+            schema_version: "ripr-targeted-rerun-v1",
+            scope: "diff",
+            mode: None,
+            root: std::path::Path::new("."),
+            base: None,
+        };
+        let rendered = render_refusal_envelope(
+            &context,
+            &CoreError::gap_ledger_unusable("read gap ledger nope.json failed: missing"),
+        )?;
+        let value: Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse JSON: {err}"))?;
+        for (pointer, expected) in [
+            ("/schema_version", "ripr-targeted-rerun-v1"),
+            ("/analysis_scope/scope", "diff"),
+            ("/analysis_scope/run_status", "gap_ledger_unusable"),
+            ("/analysis_scope/repair_route", "analysis/gap-ledger"),
+        ] {
+            let actual = value.pointer(pointer).and_then(Value::as_str);
+            if actual != Some(expected) {
+                return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+            }
+        }
+        if value.get("mode").is_some() {
+            return Err(format!("mode must be omitted when the command has none: {value}"));
+        }
+        if value.get("base").is_some() {
+            return Err(format!("base must be omitted when none was supplied: {value}"));
+        }
+        if value["findings"].as_array().map(Vec::len) != Some(0) {
+            return Err(format!("findings must be empty: {value}"));
+        }
+        if value.pointer("/analysis_scope/downstream_consumable") != Some(&Value::Bool(false)) {
+            return Err(format!("downstream_consumable must be false: {value}"));
+        }
         Ok(())
     }
 }
