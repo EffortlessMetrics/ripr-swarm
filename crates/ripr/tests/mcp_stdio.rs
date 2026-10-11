@@ -1637,7 +1637,7 @@ fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
         ));
     }
     let mut session = SequentialStdio::spawn(&root)?;
-    let timeout = Duration::from_secs(60);
+    let timeout = Duration::from_mins(1);
     session.call("discover", "server/discover", json!({}), timeout)?;
     let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), timeout)?;
     let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
