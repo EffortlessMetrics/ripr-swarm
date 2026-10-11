@@ -42,6 +42,8 @@ fn other_foreach_forms_collect_nothing() {
         "  [150].forEach((v, i) => { expect(price(v)).toBe(i); });",
         "  [].forEach((v) => { expect(price(v)).toBe(140); });",
         "  [150].map((v) => { expect(price(v)).toBe(140); });",
+        "  [150].forEach(async (v) => { await tick(); expect(price(v)).toBe(140); });",
+        "  [150].forEach((v) => { return load(v).then((r) => { expect(r).toBe(2); }); });",
     ] {
         let source = format!(
             "import {{ price }} from \"../src/price\";\ntest(\"price\", () => {{\n{body}\n}});\n"
@@ -73,11 +75,20 @@ fn returned_or_awaited_then_reads_the_resolved_receiver() {
 }
 
 /// A `.then` callback the runner does not wait for may run after the test
-/// settles, so its assertions are not collected.
+/// settles, a rejection handler can swallow the change, an earlier `.then`
+/// step can replace the owner's value, and a body that re-declares a name
+/// the receiver reads would change the substituted text: none is collected.
 #[test]
-fn floating_then_collects_nothing() {
-    let source = "test(\"total\", () => {\n  total([10, 20]).then((sum) => {\n    expect(sum).toBe(30);\n  });\n});\n";
-    assert_eq!(observed("tests/order.test.ts", source), vec![]);
+fn floating_or_unsafe_then_collects_nothing() {
+    for body in [
+        "  total([10, 20]).then((sum) => {\n    expect(sum).toBe(30);\n  });",
+        "  return total([10, 20]).then((sum) => {\n    expect(sum).toBe(30);\n  }, () => {});",
+        "  return total([10, 20]).then(() => 30).then((sum) => {\n    expect(sum).toBe(30);\n  });",
+        "  return total(items).then((sum) => {\n    const items = [];\n    expect(sum).toBe(30);\n  });",
+    ] {
+        let source = format!("test(\"total\", () => {{\n{body}\n}});\n");
+        assert_eq!(observed("tests/order.test.ts", &source), vec![], "{body}");
+    }
 }
 
 #[test]
@@ -87,8 +98,18 @@ fn awaited_subtest_on_the_receiver_is_collected() {
         observed("tests/member.test.ts", source),
         vec![some("memberPrice(30)", "25", 6)]
     );
+    let with_options = source.replace(
+        "t.test(\"five off\", ",
+        "t.test(\"five off\", { timeout: 50 }, ",
+    );
+    assert_eq!(
+        observed("tests/member.test.ts", &with_options),
+        vec![some("memberPrice(30)", "25", 6)]
+    );
     for body in [
         "  t.test(\"five off\", () => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
+        "  await t.test(\"five off\", { skip: true }, () => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
+        "  await t.test(\"five off\", { todo: true }, () => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
         "  await other.test(\"five off\", () => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
     ] {
         let source = format!(
@@ -145,6 +166,11 @@ fn copy_for_identity_change_needs_an_identity_matcher() -> Result<(), String> {
     let identity = "import { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).toBe(cfg);\n});\n";
     let finding = settings_finding("identity-copy-pinned", identity, "  return cfg;")?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+
+    // An identity matcher on a member of the result does not pin identity.
+    let member = "import { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg).ok).toBe(true);\n  expect(ready(cfg)).toEqual(cfg);\n});\n";
+    let finding = settings_finding("identity-copy-member", member, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
 
     // A change that is not copy-only keeps the ladder verdict.
     let finding = settings_finding(

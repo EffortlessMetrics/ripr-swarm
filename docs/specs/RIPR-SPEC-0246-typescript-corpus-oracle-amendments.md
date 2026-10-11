@@ -32,9 +32,11 @@ Support-tier impact:
 
 - No tier change. TypeScript stays Preview. Rule 1 removes credit: a
   finding may move from `exposed` to `weakly_exposed`. Rule 2 adds credit
-  only where the corpus mutation evidence (#6686) shows the uncredited
-  reading was a false actionable verdict: the collected assertion is the
-  same evidence a top-level assertion with the substituted value would be.
+  in every repository, for three callback forms that run before the test
+  settles. Corpus mutation evidence (#6686) motivated it: in those forms
+  the uncredited reading was a false actionable verdict, and a collected
+  assertion is the same evidence as a top-level assertion with the
+  substituted value.
 - Claim boundaries remain governed by
   [support tiers](../status/SUPPORT_TIERS.md).
 
@@ -69,37 +71,56 @@ implementation bug.
 changed line's removed text is `return x` and its added text is
 `return { ...x }`, `return [...x]`, `return Object.assign({}, x)` or
 `return structuredClone(x)` for the same identifier `x`, or the reverse,
-the change alters only the identity of the returned object. A structural
-matcher (`toEqual`, `toStrictEqual`, `deepEqual`, `deepStrictEqual`, chai
-`eql` or `deep.equal`) passes on both versions. An `exposed` ladder result
-then reads `weakly_exposed` unless a related test asserts with `toBe`,
-`strictEqual` or AVA `t.is`, which compare objects by identity. chai
-`equal` does not count, because the recorded matcher does not carry the
-`.deep` flag (fail closed). Any other change on the line, such as an
-added or overridden field, is not copy-only and keeps the ladder result.
+the change alters the identity of the returned object. For a plain object
+or array a structural matcher (`toEqual`, `toStrictEqual`, `deepEqual`,
+`deepStrictEqual`, chai `eql` or `deep.equal`) passes on both versions.
+An `exposed` ladder result then reads `weakly_exposed` unless a related
+test asserts on the owner call's result itself (`expect(owner(...))`, not
+a member of it or a local) with `toBe`, `strictEqual` or AVA `t.is`,
+which compare objects by identity. chai `equal` does not count, because
+the recorded matcher does not carry the `.deep` flag (fail closed). Any
+other change on the line, such as an added or overridden field, is not
+copy-only and keeps the ladder result. Rule 1 runs before RIPR-SPEC-0243
+rule 8, so a copy-only change reads `weakly_exposed` even when rule 8
+would read `static_unknown`.
+
+Known limit: when the returned value is a class instance, a `Set` or a
+`Map`, a copy also changes its prototype or type, so `toStrictEqual` can
+tell the two apart. Static evidence does not know the runtime type, so
+rule 1 still demotes. That costs a false gap, never false credit.
 
 **Rule 2. Three nested callbacks run before the test settles.** Their
 assertions are collected as the test's own:
 
 - `[<literal>, ...].forEach((v) => body)`: an inline array of at most 64
-  literals (the RIPR-SPEC-0243 rule 11 literal set) and a callback with one
-  plain parameter. Each element reads as one case, the body with `v`
-  replaced by the element, exactly as a rule 11 table row.
-- `return p.then((v) => body)` or `await p.then((v) => body)`: the runner
-  waits for the returned or awaited promise, so the body runs before the
-  test settles. With one plain parameter the body reads with `v` replaced
-  by `(p)`, the expression whose resolved value the assertion observes.
-  With no parameter the body is collected as written.
+  literals (the RIPR-SPEC-0243 rule 11 literal set) and a callback that is
+  neither `async` nor a generator, with exactly one plain parameter. Each
+  element reads as one case, the body with `v` replaced by the element,
+  exactly as a rule 11 table row. A `return` inside the body does not
+  reach the runner, because `forEach` discards it.
+- `return p.then((v) => body)` or `await p.then((v) => body)`, with a
+  single argument, a receiver `p` on one line that contains no `.then(`,
+  and a body that declares none of the names `p` reads: the runner waits
+  for the returned or awaited promise, so the body runs before the test
+  settles. With one plain parameter the body reads with `v` replaced by
+  `(p)`, the expression whose resolved value the assertion observes. With
+  no parameter the body is collected as written.
 - `await t.test(name, [options,] (t2) => body)`, where `t` is the test
-  callback's own receiver: node:test runs an awaited subtest inside its
-  parent, and a failing subtest fails the parent. The body is collected
-  with `t2` as its receiver.
+  callback's own receiver, `name` is a string or template literal and
+  `options` is an object literal with no `skip` or `todo` key and no
+  spread: node:test runs an awaited subtest inside its parent, and a
+  failing subtest fails the parent. The body is collected with `t2` as its
+  receiver.
 
-Anything else collects nothing, as before: a non-literal or empty array, a
-`forEach` callback with more than one parameter, a `.then` whose promise is
-neither returned nor awaited (it may settle after the test), a subtest that
-is not awaited or not on the test's receiver, and any body the rule 11 row
-reader refuses.
+Anything else collects nothing, as before. That includes a non-literal or
+empty array; an `async` or generator `forEach` callback, or one without
+exactly one parameter; a `.then` whose promise is neither returned to the
+runner nor awaited (it may settle after the test); a `.then` with a
+rejection handler (it can swallow the change), a chained or multi-line
+receiver, or a body that re-declares a receiver name; a subtest that is
+not awaited, not on the test's receiver, or skipped or todo (a todo
+failure does not fail the parent); and any body the rule 11 row reader
+refuses.
 
 ### Decisions
 
@@ -108,10 +129,10 @@ documented decisions and proceed"). Each records the adopted option, why,
 and the rejected alternative.
 
 1. **Copy-for-identity (rule 1).** Adopted: demote unless an identity
-   matcher is present. Rejected: demote only when the strongest matcher is
-   structural, which keeps credit when a `toBe` exists anywhere but
-   observes something else. That case is rare and the demotion never
-   hides a real gap, so the simpler test-level check is kept.
+   matcher observes the owner call's result directly. Rejected: any
+   identity matcher in the test, which keeps credit for
+   `expect(ready(cfg).ok).toBe(true)`, an assertion that cannot see the
+   copy.
 2. **Nested callbacks (rule 2).** Adopted: the three forms whose callback
    provably runs before the test settles. Rejected: collect every nested
    callback, which would credit assertions in `setTimeout`, unawaited
@@ -159,14 +180,22 @@ and the rejected alternative.
    assertion.
 6. `return total([10, 20]).then((sum) => { expect(sum).toBe(30); })`: one
    assertion observing `(total([10, 20]))`.
-7. `total([10, 20]).then(...)` as a bare statement: no assertion.
+7. `total([10, 20]).then(...)` as a bare statement, with a rejection
+   handler, after another `.then` step, or with a body that re-declares a
+   receiver name: no assertion.
 8. `await t.test("x", () => { assert.strictEqual(memberPrice(30), 25); })`:
-   one assertion; without `await`, or on another object, none.
+   one assertion, also with `{ timeout: 50 }` options; without `await`, on
+   another object, or with `{ skip: true }` or `{ todo: true }`, none.
+9. `[150].forEach(async (v) => { await tick(); expect(price(v)).toBe(140); })`
+   or `[150].forEach((v) => { return load(v).then(...); })`: no assertion.
+10. `return cfg` becomes `return { ...cfg }`, test
+    `expect(ready(cfg).ok).toBe(true); expect(ready(cfg)).toEqual(cfg)`:
+    `weakly_exposed`.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs`
-  pins examples 1 to 8.
+  pins examples 1 to 10.
 - `fixtures/typescript-verdict-corpus` pins the four Problem rows.
 
 ## Implementation Mapping

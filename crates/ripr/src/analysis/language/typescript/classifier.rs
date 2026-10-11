@@ -4161,7 +4161,7 @@ fn ts_apply_post_ladder_rules(
         && !context
             .candidates
             .iter()
-            .any(|candidate| ts_test_pins_identity(candidate.test))
+            .any(|candidate| ts_test_pins_identity(candidate.test, &context.owner.name))
     {
         verdict.class = ExposureClass::WeaklyExposed;
         verdict.discriminate_state = StageState::Weak;
@@ -4248,14 +4248,26 @@ pub(crate) fn ts_identity_copy_subject(old_line: &str, new_line: &str) -> Option
     }
 }
 
-/// `true` when a test asserts with a matcher that compares identity for
-/// objects (`toBe`, `strictEqual`, AVA `t.is`). chai `equal` is excluded
-/// because the `.deep` flag is not part of the recorded matcher (fail
-/// closed).
-fn ts_test_pins_identity(test: &TypeScriptTest) -> bool {
-    test.assertions
-        .iter()
-        .any(|assertion| matches!(assertion.matcher.as_str(), "toBe" | "strictEqual" | "is"))
+/// `true` when a test asserts directly on the owner call's result
+/// (`expect(owner(...))`, not a member of it or a local) with a matcher that
+/// compares identity for objects (`toBe`, `strictEqual`, AVA `t.is`). chai
+/// `equal` is excluded because the `.deep` flag is not part of the recorded
+/// matcher (fail closed).
+fn ts_test_pins_identity(test: &TypeScriptTest, owner: &str) -> bool {
+    test.assertions.iter().any(|assertion| {
+        matches!(assertion.matcher.as_str(), "toBe" | "strictEqual" | "is")
+            && assertion
+                .observed_expression
+                .as_deref()
+                .is_some_and(|observed| {
+                    let observed = observed.trim();
+                    observed
+                        .strip_prefix(owner)
+                        .is_some_and(|rest| rest.starts_with('('))
+                        && observed.ends_with(')')
+                        && !observed.contains(").")
+                })
+    })
 }
 
 /// The finding-wide ladder facts rule 8 re-reads per test file: the parsed
