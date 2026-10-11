@@ -130,3 +130,4 @@ crates/ripr/tests/task_first_facade.rs|Command::new|2|cli-tests|#6305: facade in
 tools/repo-policy/build.rs|Command::new|1|repo-policy|#7158: fixed rustc identity query for source-bound policy builds.
 tools/repo-policy/src/identity.rs|Command::new|1|repo-policy|#7158: fixed rustc identity query binds preflight receipts.
 tools/repo-policy/tests/frontdoor.rs|Command::new|1|repo-policy|#7158: fixture harness executes only the Cargo-selected policy compiler artifact.
+tools/repo-policy/tests/future_clippy.rs|Command::new|1|future-clippy-instrumentation-proof|#7307: Linux test-only harness executes the checked-in Future Clippy scan and summary blocks through a 20-second timeout under Bash, with Cargo/tee stubs in exclusively owned fixtures; no network or production spawn.

@@ -1963,9 +1963,16 @@ current workspace can produce coverage and JUnit artifacts. The jobs still run
 only on pull requests, pushes to `main`/`master`, and manual dispatches, and
 Codecov upload remains non-blocking.
 
-Future Clippy also runs on `ubuntu-latest`. It remains advisory and never fails
-the branch; the hosted runner keeps deferred-lint readiness visible without
-blocking release proof on self-hosted runner availability.
+Future Clippy also runs on `ubuntu-latest` with installation and invocation
+pinned to Rust `1.95.0`. Selected lint findings remain advisory warnings. A
+missing component, compilation failure, failed log capture, or absent Cargo
+artifact/completion evidence fails that job instead of appearing as a completed
+scan. Its always-run summary and artifact retain the source SHA, run ID and
+attempt, requested toolchain, native Cargo and log-capture exits, and successful
+scan completion. The summary rejects evidence from another SHA, run, or attempt.
+This advisory lane has no new branch-protection requirement. Completion shows
+that the scan ran; planned lints still have the support/configuration limits
+recorded in [Clippy policy](CLIPPY_POLICY.md).
 
 It installs `cargo-deny` as a normal command-line binary before running the
 check, so self-hosted runners do not need Docker just to execute the security
