@@ -57,7 +57,7 @@ pub fn verify_executable_identity() -> Result<(), String> {
         .output()
         .map_err(|e| {
             format!(
-                "policy compiler identity: could not execute {compiler:?} -vV: {e}; ensure the repository-pinned Rust toolchain (rust-toolchain.toml) is activated and the compiler is executable; rerun with cargo policy"
+                "policy compiler identity: could not execute {compiler:?} -vV: {e}; ensure the repository-pinned Rust toolchain (rust-toolchain.toml) is activated and the compiler is executable; rerun with cargo policy preflight"
             )
         })?;
     let compiler = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;

@@ -478,7 +478,12 @@ fn unavailable_compiler_reports_executable_and_recovery() -> Result<(), String> 
             "{error}"
         );
         assert!(error.contains("rust-toolchain.toml"), "{error}");
-        assert!(error.contains("rerun with cargo policy"), "{error}");
+        assert!(
+            error
+                .trim_end()
+                .ends_with("; rerun with cargo policy preflight"),
+            "{error}"
+        );
         assert!(!error.contains("toolchain differs"), "{error}");
         assert!(!receipt.exists(), "unavailable compiler retained a receipt");
     }
