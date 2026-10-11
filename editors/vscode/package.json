@@ -434,7 +434,7 @@
         "command": "ripr.copyRepairPacketAtCursor",
         "key": "ctrl+alt+shift+p",
         "mac": "cmd+alt+shift+p",
-        "when": "editorTextFocus"
+        "when": "editorTextFocus && resourceLangId =~ /^(rust|typescript|typescriptreact|javascript|javascriptreact|python)$/"
       },
       {
         "command": "ripr.showStatus",
