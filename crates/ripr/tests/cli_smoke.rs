@@ -2310,7 +2310,7 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
     Ok(())
 }
 
-fn posix_flag_value(words: &[String], flag: &str) -> Result<&str, String> {
+fn posix_flag_value<'a>(words: &'a [String], flag: &str) -> Result<&'a str, String> {
     words
         .iter()
         .position(|word| word == flag)
