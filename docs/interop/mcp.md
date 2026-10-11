@@ -139,6 +139,10 @@ with `stale_snapshot` and the current identity.
 Paging (#6021): `offset` (default 0) and `limit` (minimum 1) page over the
 selected items in snapshot order, disclosed through the `page` window
 (`offset`, `limit` when caller-set, `returned`, `has_more`, `next_offset`).
+Optional tool fields must be omitted to use their defaults: explicit `null`
+is invalid for `snapshot_id`, `offset`, and `limit` (#7314). The server
+returns `-32602` Invalid Params naming the field with the same request ID;
+correct the argument or omit it and retry on the same connection.
 When the whole selection cannot fit one wire response, the default call
 returns the first wire-fitting page and `continuation.next_page` names the
 `ripr_list_gaps` call that resumes the walk — pinned to the snapshot
