@@ -88,11 +88,8 @@ pub(crate) fn returned_ledger(
     })?;
     // The sole binding must be the mutable parameter, including raw spelling.
     // Opaque statement expansions may introduce a same-name local invisibly.
-    let name = parameter.trim_start_matches("r#");
-    if fn_name_binding_count(&owner.body, name)?
-        + fn_name_binding_count(&owner.body, &format!("r#{name}"))?
-        != 1
-        || has_statement_macro(&function.body()?)
+    if name_binding_count(&owner.body, &parameter)? != 1
+        || has_opaque_bindings(&function.body()?)
         || caller_rebinds_parameter(&owner.body, &parameter)
     {
         return None;
@@ -127,21 +124,13 @@ pub(crate) fn returned_ledger(
     // all body patterns and named items can replace this unqualified callee.
     // Check both source spellings of a raw-capable identifier, failing closed
     // when the authority cannot parse the declaration.
-    let name = owner.name.trim_start_matches("r#");
-    if fn_name_binding_count(&hop.caller.body, name)? != 0
-        || fn_name_binding_count(&hop.caller.body, &format!("r#{name}"))? != 0
-    {
+    if name_binding_count(&hop.caller.body, &owner.name)? != 0 {
         return None;
     }
     let body = caller_fn.body()?;
     // Imports, value/item declarations and opaque statement expansions can
     // replace the unqualified callee. Refuse before establishing an owner edge.
-    if body
-        .syntax()
-        .descendants()
-        .any(|node| ast::Use::can_cast(node.kind()))
-        || has_statement_macro(&body)
-    {
+    if has_opaque_bindings(&body) {
         return None;
     }
     if body.tail_expr()?.syntax().text() != local {
@@ -156,7 +145,10 @@ pub(crate) fn returned_ledger(
         .filter_map(ast::IdentPat::cast)
         .filter(|pat| pat.name().is_some_and(|name| name.text() == local))
         .collect::<Vec<_>>();
-    if bindings.len() != 1 || bindings[0].mut_token().is_none() {
+    if name_binding_count(&hop.caller.body, local)? != 1
+        || bindings.len() != 1
+        || bindings[0].mut_token().is_none()
+    {
         return None;
     }
     let declaration = bindings[0].syntax().parent().and_then(ast::LetStmt::cast)?;
@@ -212,7 +204,25 @@ pub(crate) fn returned_ledger(
     })
 }
 
-fn has_statement_macro(body: &ast::BlockExpr) -> bool {
+// Shared authority for each value-namespace endpoint: the helper receiver,
+// caller callee and returned local. Imports are unresolved by the name counter;
+// opaque statement/item expansions may introduce names absent from the AST.
+fn name_binding_count(function: &str, identifier: &str) -> Option<usize> {
+    let name = identifier.trim_start_matches("r#");
+    Some(
+        fn_name_binding_count(function, name)?
+            + fn_name_binding_count(function, &format!("r#{name}"))?,
+    )
+}
+
+fn has_opaque_bindings(body: &ast::BlockExpr) -> bool {
+    if body
+        .syntax()
+        .descendants()
+        .any(|node| ast::Use::can_cast(node.kind()))
+    {
+        return true;
+    }
     body.syntax()
         .descendants()
         .filter_map(ast::MacroCall::cast)
@@ -533,6 +543,12 @@ mod tests {
             "let Ledgers { mut errors } = ledgers;",
             "macro_rules! bind { ($name:ident) => { let mut $name = Vec::new(); }; } bind!(errors);",
             "opaque!();",
+            "use crate::shadow::errors;",
+            "use crate::shadow::*;",
+            "use crate::shadow::other as errors;",
+            "use crate::shadow::{errors};",
+            "use crate::shadow::{other as errors};",
+            "use crate::shadow::unrelated;",
         ] {
             let source = format!(
                 "fn record(errors: &mut Vec<PolicyError>) {{ {declaration}\n    errors.push(PolicyError {{\n        detail: format!(\"diagnostic\"),\n    }});\n}}"

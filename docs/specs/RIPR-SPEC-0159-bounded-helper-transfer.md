@@ -125,8 +125,11 @@ can only hint that a caller "may lead here" without changing anything.
   imports, callee-named signature/body bindings (including raw names and
   destructuring patterns), value/item declarations, and opaque item/statement macro
   expansions refuse the unqualified helper edge. The owner parameter must be
-  its sole matching binding, and opaque owner statement macros also refuse the
-  transfer because they can introduce a shadow ledger. Rebound,
+  its sole matching binding. The same parser-owned opaque-binding boundary
+  refuses imports (direct, glob, alias and grouped) and item/statement macro
+  expansions in both owner and caller bodies. The returned local also requires
+  a sole matching full-function binding. Scoped expression tails introduce no
+  binding visible to a subsequent call/push and remain admissible. Rebound,
   shadowed, discarded, sibling-field, transformed-return and later-write cases
   refuse this transfer. This is **partial identity evidence**, not an exception
   to the complete propagation refusal above. A pushed element remains a
@@ -134,6 +137,14 @@ can only hint that a caller "may lead here" without changing anything.
   `returned_mutable_ledger_observer_unresolved`; Config field assignment, index
   selection, preceding appends, branch activation, and exact field observation
   remain unestablished. No oracle, score or exposure class is strengthened.
+  The bounded identity endpoints use these authorities consistently:
+
+  | Endpoint | Named-binding authority | Opaque-binding refusal | Other constraints |
+  |---|---|---|---|
+  | Owner push receiver | Exactly one ordinary/raw full-function binding, the parameter | Owner-body imports and statement/item expansions | Exact field/receiver and mutable parameter; no rebind; synchronous source owner |
+  | Caller helper callee | No ordinary/raw full-function binding shadows the resolved owner | Caller-body imports and statement/item expansions | Same file/scope; final direct call matches resolved arguments |
+  | Caller returned local | Exactly one ordinary/raw full-function binding, the mutable local | Same caller-body refusal | Direct local declaration, no assignment, exact mutable argument and tail return |
+
 - Boundary pairing through the entry (RIPR-SPEC-0186) reads only rows
   recomputed from the asserting test, and requires the assertion's
   subject to hold exactly one entry call whose arguments are each a whole
