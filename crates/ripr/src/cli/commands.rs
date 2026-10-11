@@ -2788,20 +2788,78 @@ struct DiffOptions {
     explicit: CheckInputExplicit,
 }
 
+/// The `ripr diff --json` refusal envelope keys its document with the diff
+/// report's schema version (#7331). Owner: the `DiffReport.schema_version`
+/// literal in `output/diff_report.rs` (pinned there by the output-contract
+/// version gate), mirrored here because the report value exists only on the
+/// success path.
+const DIFF_REFUSAL_SCHEMA_VERSION: &str = "0.1";
+
 pub(super) fn diff(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_diff_help();
         return Ok(());
     }
     let options = parse_diff_options(args)?;
-    let config = load_for_root(&options.root)?;
+    let json = matches!(options.format, DiffReportFormat::Json);
+    // #7331: every post-argv-parse failure of a JSON diff run writes the
+    // shared refusal envelope (the diff report's own schema version) to
+    // stdout before the prose error reaches stderr. Argv usage errors above
+    // stay prose-only. Config loading comes first and has no merged mode
+    // yet, so its refusal names the parsed mode.
+    let config = load_for_root(&options.root).map_err(|err| {
+        let error = crate::cli::commands_context::config_load_refusal(&options.root, err);
+        if !json {
+            return error.to_string();
+        }
+        crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(options.mode.as_str()),
+            &options.root,
+            options.base.as_deref(),
+            error,
+        )
+    })?;
+    // Effective mode after config merging: `run_diff_check_from_file`
+    // applies `config.analysis.mode()` unless `--mode` was explicit, and a
+    // later refusal must name the mode the check actually ran with, not
+    // the pre-merge default (#7331 review).
+    let effective_mode = if options.explicit.mode {
+        options.mode.clone()
+    } else {
+        config
+            .analysis
+            .mode()
+            .cloned()
+            .unwrap_or_else(|| options.mode.clone())
+    };
+    let refuse = |error: crate::core_error::CoreError| -> String {
+        if !json {
+            return error.to_string();
+        }
+        crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(effective_mode.as_str()),
+            &options.root,
+            options.base.as_deref(),
+            error,
+        )
+    };
     // #3952 / RIPR-SPEC-0084: an omitted --base resolves the repository's
     // default branch through the same authority as `ripr check`, and an
     // explicit one is verified there, instead of assuming `origin/main`.
-    let base = analysis::resolve_effective_base(&options.root, options.base.as_deref(), None)?;
-    let diff_text = analysis::load_diff_range(&options.root, &base, &options.head)?;
+    // The typed core keeps the refusal identity (`base_unresolvable` /
+    // `repository_root_unusable`) that the String wrapper would flatten
+    // (#7331); Display is a pure projection, so stderr prose is unchanged.
+    let base = analysis::resolve_effective_base_core(&options.root, options.base.as_deref(), None)
+        .map_err(&refuse)?;
+    let diff_text = analysis::load_diff_range(&options.root, &base, &options.head)
+        .map_err(|err| refuse(crate::core_error::CoreError::from(err)))?;
     let changed_files = diff_changed_files_from_text(&diff_text);
-    let diff_file = crate::app::temp_diff::write_temporary_diff_file(&diff_text)?;
+    let diff_file = crate::app::temp_diff::write_temporary_diff_file(&diff_text)
+        .map_err(|err| refuse(crate::core_error::CoreError::from(err)))?;
 
     let check_result = run_diff_check_from_file(&options, &base, &config, &diff_file);
     let _ = std::fs::remove_file(&diff_file);
@@ -2810,7 +2868,7 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
     if let Some(parent) = diff_file.parent() {
         let _ = std::fs::remove_dir(parent);
     }
-    let output = check_result?;
+    let output = check_result.map_err(|err| refuse(crate::core_error::CoreError::from(err)))?;
 
     let report = output::diff_report::build_diff_report(
         &output,

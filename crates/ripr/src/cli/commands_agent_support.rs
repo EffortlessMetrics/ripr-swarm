@@ -228,14 +228,21 @@ pub(super) fn read_agent_verify_snapshot(path: &Path, label: &str) -> Result<Str
     })
 }
 
+/// Resolve the argv working set to the lines/owners the brief will cover.
+///
+/// The typed error carries the refusal family (`base_unresolvable` /
+/// `repository_root_unusable` through `load_diff_core`) so `agent brief
+/// --json` refusals name the family instead of the honest fallback (#7331);
+/// path-confinement failures stay untyped messages because no Git verdict
+/// is claimed.
 pub(super) fn resolve_agent_brief_working_set(
     root: &Path,
     working_set: &crate::cli::agent::AgentBriefWorkingSet,
-) -> Result<AgentBriefResolvedWorkingSet, String> {
+) -> Result<AgentBriefResolvedWorkingSet, crate::core_error::CoreError> {
     match working_set {
         crate::cli::agent::AgentBriefWorkingSet::Diff(path) => {
             let diff_path = validate_agent_brief_diff_path(root, path)?;
-            let diff_text = analysis::load_diff(root, None, Some(&diff_path), None)?;
+            let diff_text = analysis::load_diff_core(root, None, Some(&diff_path), None)?;
             let changed_lines = agent_brief_lines_from_diff(root, &diff_text);
             let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
             Ok(AgentBriefResolvedWorkingSet::diff(
@@ -245,7 +252,7 @@ pub(super) fn resolve_agent_brief_working_set(
             .map(|working_set| working_set.with_changed_owners(changed_owners))
         }
         crate::cli::agent::AgentBriefWorkingSet::Base(base) => {
-            let diff_text = analysis::load_diff(root, Some(base.as_str()), None, None)?;
+            let diff_text = analysis::load_diff_core(root, Some(base.as_str()), None, None)?;
             let changed_lines = agent_brief_lines_from_diff(root, &diff_text);
             let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
             Ok(AgentBriefResolvedWorkingSet::base(
@@ -258,6 +265,7 @@ pub(super) fn resolve_agent_brief_working_set(
             .iter()
             .map(|file| confine_agent_brief_file_path(root, file))
             .collect::<Result<Vec<_>, _>>()
+            .map_err(crate::core_error::CoreError::from)
             .map(AgentBriefResolvedWorkingSet::files),
         crate::cli::agent::AgentBriefWorkingSet::SeamId(seam_id) => {
             Ok(AgentBriefResolvedWorkingSet::seam_id(seam_id.clone()))

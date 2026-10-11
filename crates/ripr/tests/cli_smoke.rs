@@ -3350,6 +3350,686 @@ fn check_json_unmigrated_analysis_failure_emits_analysis_failed() -> Result<(), 
     Ok(())
 }
 
+/// #7331: shared shape assertions for a sibling `--json` command's refusal
+/// envelope — the #6834 shape keyed with the refusing command's own
+/// `schema_version` and scope, with the prose diagnostic still on stderr.
+fn assert_json_refusal_envelope(
+    output: &Output,
+    schema_version: &str,
+    scope: &str,
+    identity: &str,
+    repair_route: &str,
+) -> Result<serde_json::Value, String> {
+    if output.status.code() != Some(2) {
+        return Err(format!(
+            "expected exit 2 for {identity}, got {:?}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    // The assertion that fails before the fix: stdout carried zero bytes.
+    if output.stdout.is_empty() {
+        return Err(format!(
+            "a --json refusal must write the envelope to stdout for {identity}, got zero bytes"
+        ));
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("refusal stdout should parse as JSON: {err}\n{stdout}"))?;
+    for (pointer, expected) in [
+        ("/schema_version", schema_version),
+        ("/tool", "ripr"),
+        ("/analysis_scope/scope", scope),
+        ("/analysis_scope/run_status", identity),
+        ("/analysis_scope/basis", identity),
+        ("/analysis_scope/limitation", identity),
+        ("/analysis_scope/repair_route", repair_route),
+        ("/run_limitations/0/category", identity),
+        ("/run_limitations/0/run_status", identity),
+        ("/run_limitations/0/repair_route", repair_route),
+    ] {
+        let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!(
+                "{pointer}: expected {expected}, got {actual:?}\n{stdout}"
+            ));
+        }
+    }
+    for pointer in [
+        "/analysis_scope/downstream_consumable",
+        "/run_limitations/0/downstream_consumable",
+    ] {
+        if value.pointer(pointer) != Some(&serde_json::Value::Bool(false)) {
+            return Err(format!("{pointer} must be false\n{stdout}"));
+        }
+    }
+    if value["findings"].as_array().map(Vec::len) != Some(0) {
+        return Err(format!("refusal findings must be empty\n{stdout}"));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a human message")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains(message) {
+        return Err(format!(
+            "the envelope message must be the stderr diagnostic verbatim; stderr: {stderr}"
+        ));
+    }
+    Ok(value)
+}
+
+/// #7332: shared baseline for a machine-format refusal: exit 2, non-empty
+/// stdout carrying the format's own refusal document, and the prose
+/// diagnostic unchanged on stderr.
+fn assert_machine_refusal_basics(output: &Output) -> Result<String, String> {
+    if output.status.code() != Some(2) {
+        return Err(format!(
+            "expected exit 2 for a machine-format refusal, got {:?}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    if output.stdout.is_empty() {
+        return Err(
+            "a machine format must emit its refusal document on stdout, got zero bytes".to_string(),
+        );
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if stderr.trim().is_empty() {
+        return Err("the prose diagnostic must stay on stderr".to_string());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// #7331: `ripr diff --json --base <dead>` emits the shared refusal envelope
+/// keyed with the diff report's own schema version, echoing mode and base.
+#[test]
+fn diff_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
+    let root = init_check_refusal_repo("diff-json-bad-base", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "diff",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-7331",
+    ]);
+    let value = assert_json_refusal_envelope(
+        &output,
+        "0.1",
+        "diff",
+        "base_unresolvable",
+        "analysis/base-resolution",
+    )?;
+    if value["base"] != "definitely-not-a-real-ref-9f2a-7331" {
+        return Err(format!(
+            "refusal must echo the caller-supplied base: {value}"
+        ));
+    }
+    if value["mode"] != "draft" {
+        return Err(format!(
+            "refusal must echo the caller-supplied mode: {value}"
+        ));
+    }
+    if value["root"] != root_arg.as_str() {
+        return Err(format!(
+            "refusal must echo the caller-supplied root: {value}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7331: `ripr diff --json` outside any work tree names
+/// `repository_root_unusable` on stdout instead of writing zero bytes.
+#[test]
+fn diff_json_outside_work_tree_emits_refusal_envelope() -> Result<(), String> {
+    let plain = unique_external_workspace("diff-json-plain-dir")?;
+    std::fs::create_dir_all(&plain).map_err(|e| format!("create plain dir: {e}"))?;
+    // A valid config keeps the failure at base resolution, not config load,
+    // so the identity is the typed root refusal.
+    std::fs::write(plain.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")
+        .map_err(|e| format!("write ripr.toml: {e}"))?;
+    let plain_arg = plain.display().to_string();
+    let output = run_ripr(&["diff", "--json", "--root", &plain_arg, "--base", "main"]);
+    assert_json_refusal_envelope(
+        &output,
+        "0.1",
+        "diff",
+        "repository_root_unusable",
+        "analysis/repository-root",
+    )?;
+    ignore_remove_dir_all(&plain);
+    Ok(())
+}
+
+/// #7331: `ripr rerun --json --gap-ledger <missing>` names
+/// `gap_ledger_unusable`, keyed with the rerun document's own version string,
+/// and grows no `mode` key because rerun has no `--mode`.
+#[test]
+fn rerun_json_unreadable_gap_ledger_emits_refusal_envelope() -> Result<(), String> {
+    let root = init_check_refusal_repo("rerun-json-bad-ledger", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "rerun",
+        "--json",
+        "--root",
+        &root_arg,
+        "--gap",
+        "gap:example",
+        "--gap-ledger",
+        "nope-7331.json",
+    ]);
+    let value = assert_json_refusal_envelope(
+        &output,
+        "ripr-targeted-rerun-v1",
+        "diff",
+        "gap_ledger_unusable",
+        "analysis/gap-ledger",
+    )?;
+    if value.get("mode").is_some() {
+        return Err(format!(
+            "rerun has no --mode; the envelope must not grow one: {value}"
+        ));
+    }
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("read gap ledger") {
+        return Err(format!(
+            "the message must carry the ledger diagnostic: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7331: `ripr context --from <missing>` names `check_artifact_unusable`,
+/// keyed with the context packet's own version.
+#[test]
+fn context_json_missing_artifact_emits_refusal_envelope() -> Result<(), String> {
+    let root = init_check_refusal_repo("context-json-missing-artifact", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "context",
+        "--root",
+        &root_arg,
+        "--at",
+        "src/lib.rs:1",
+        "--from",
+        "nope-7331.json",
+    ]);
+    let value = assert_json_refusal_envelope(
+        &output,
+        "1.0",
+        "diff",
+        "check_artifact_unusable",
+        "analysis/check-artifact",
+    )?;
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("nope-7331.json") {
+        return Err(format!(
+            "the message must name the unreadable artifact: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7331: `ripr agent brief --json --base <dead>` names `base_unresolvable`
+/// in repo scope, keyed with the brief's own schema version and echoing the
+/// caller-supplied base.
+#[test]
+fn agent_brief_json_unresolvable_base_emits_refusal_envelope() -> Result<(), String> {
+    let root = init_check_refusal_repo("brief-json-bad-base", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "agent",
+        "brief",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-7331",
+    ]);
+    let value = assert_json_refusal_envelope(
+        &output,
+        "0.1",
+        "repo",
+        "base_unresolvable",
+        "analysis/base-resolution",
+    )?;
+    if value["base"] != "definitely-not-a-real-ref-9f2a-7331" {
+        return Err(format!(
+            "refusal must echo the caller-supplied base: {value}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7331: `ripr agent packet --json --seam-id <unknown>` names
+/// `seam_id_unknown` in repo scope, keyed with the packet schema version.
+#[test]
+fn agent_packet_json_unknown_seam_id_emits_refusal_envelope() -> Result<(), String> {
+    let root = init_check_refusal_repo("packet-json-unknown-seam", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "agent",
+        "packet",
+        "--json",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        "seam:definitely-not-real-9f2a-7331",
+    ]);
+    let value = assert_json_refusal_envelope(
+        &output,
+        "0.5",
+        "repo",
+        "seam_id_unknown",
+        "analysis/seam-inventory",
+    )?;
+    let message = value["run_limitations"][0]["message"]
+        .as_str()
+        .ok_or("refusal must carry a message")?;
+    if !message.contains("was not found") {
+        return Err(format!(
+            "the message must name the unknown seam_id: {message}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7331 review: `ripr agent packet --json --root <missing>` refuses with
+/// the shared envelope (`repository_root_unusable`) instead of exiting 2
+/// with zero stdout — the root gate sits below argv parsing, inside the
+/// refusal envelope's coverage.
+#[test]
+fn agent_packet_json_unusable_root_emits_refusal_envelope() -> Result<(), String> {
+    let root = unique_external_workspace("packet-json-missing-root")?;
+    // Deliberately not created: the root gate must be the refusing stage.
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "agent",
+        "packet",
+        "--json",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        "seam:definitely-not-real-9f2a-7331",
+    ]);
+    let value = assert_json_refusal_envelope(
+        &output,
+        "0.5",
+        "repo",
+        "repository_root_unusable",
+        "analysis/repository-root",
+    )?;
+    if value["root"] != root_arg.as_str() {
+        return Err(format!(
+            "refusal must echo the caller-supplied root: {value}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7331 review: `ripr diff --json` in a workspace whose config selects a
+/// non-default mode refuses naming the effective mode (`deep`), not the
+/// pre-merge default — the same mode the check itself would have run with.
+#[test]
+fn diff_json_refusal_reports_configured_mode() -> Result<(), String> {
+    let root = init_check_refusal_repo("diff-json-configured-mode", 1)?;
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
+        .map_err(|e| format!("write ripr.toml: {e}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "diff",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-7331",
+    ]);
+    let value = assert_json_refusal_envelope(
+        &output,
+        "0.1",
+        "diff",
+        "base_unresolvable",
+        "analysis/base-resolution",
+    )?;
+    if value["mode"] != "deep" {
+        return Err(format!(
+            "refusal must report the config-selected mode: {value}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7331 review: `ripr context --from <missing>` in a workspace whose
+/// config selects a non-default mode refuses naming the effective mode.
+#[test]
+fn context_json_refusal_reports_configured_mode() -> Result<(), String> {
+    let root = init_check_refusal_repo("context-json-configured-mode", 1)?;
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")
+        .map_err(|e| format!("write ripr.toml: {e}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "context",
+        "--root",
+        &root_arg,
+        "--at",
+        "src/lib.rs:1",
+        "--from",
+        "nope-7331.json",
+    ]);
+    let value = assert_json_refusal_envelope(
+        &output,
+        "1.0",
+        "diff",
+        "check_artifact_unusable",
+        "analysis/check-artifact",
+    )?;
+    if value["mode"] != "ready" {
+        return Err(format!(
+            "refusal must report the config-selected mode: {value}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7331 review: an artifact reused with a conflicting `--base` assertion
+/// refuses as `check_artifact_unusable` — the typed artifact family with
+/// the exact mismatch diagnostic — never the untyped `analysis_failed`
+/// fallback a String conversion would publish.
+#[test]
+fn context_json_scope_mismatch_refuses_as_artifact_unusable() -> Result<(), String> {
+    let root = unique_temp_workspace("context-scope-mismatch");
+    let result = (|| {
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        run_git(&root, &["init"])?;
+        run_git(&root, &["config", "user.email", "test@test.com"])?;
+        run_git(&root, &["config", "user.name", "Test"])?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+        )
+        .map_err(|err| format!("write base lib.rs: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"spec-7331-scope-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "-m", "initial"])?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+        )
+        .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+
+        let root_str = root.to_string_lossy().into_owned();
+        let artifact = root.join("last-check.json");
+        let artifact_arg = artifact.display().to_string();
+        let check = run_ripr(&[
+            "check",
+            "--root",
+            &root_str,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--json",
+            "--write-artifact",
+            &artifact_arg,
+        ]);
+        assert_success(&check);
+
+        // The recording pins base "HEAD"; asserting "main" against it is a
+        // scope mismatch, one family with every structural artifact refusal.
+        let output = run_ripr(&[
+            "context",
+            "--root",
+            &root_str,
+            "--from",
+            &artifact_arg,
+            "--base",
+            "main",
+            "--at",
+            "src/lib.rs:1",
+        ]);
+        let value = assert_json_refusal_envelope(
+            &output,
+            "1.0",
+            "diff",
+            "check_artifact_unusable",
+            "analysis/check-artifact",
+        )?;
+        let message = value["run_limitations"][0]["message"]
+            .as_str()
+            .ok_or("refusal must carry a message")?;
+        if !message.contains("diff_source.base") {
+            return Err(format!(
+                "the message must name the mismatched scope field: {message}"
+            ));
+        }
+        Ok(())
+    })();
+    ignore_remove_dir_all(&root);
+    result
+}
+
+/// #7332: `check --format sarif` on a refused run emits a schema-valid SARIF
+/// log whose only signal is the tool-configuration notification carrying the
+/// typed identity — uploadable to code scanning, unlike zero bytes.
+#[test]
+fn check_sarif_refusal_emits_a_schema_valid_run() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-sarif-refusal", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--format",
+        "sarif",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-7332",
+    ]);
+    let stdout = assert_machine_refusal_basics(&output)?;
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("SARIF refusal must parse as JSON: {err}\n{stdout}"))?;
+    if value["version"] != "2.1.0" {
+        return Err(format!("SARIF version must be 2.1.0: {value}"));
+    }
+    let run = &value["runs"][0];
+    let notification = &run["invocations"][0]["toolConfigurationNotifications"][0];
+    if notification["properties"]["identity"] != "base_unresolvable" {
+        return Err(format!(
+            "notification must carry the typed identity: {value}"
+        ));
+    }
+    if notification["properties"]["repair_route"] != "analysis/base-resolution" {
+        return Err(format!("notification must carry the repair route: {value}"));
+    }
+    if run["results"].as_array().map(Vec::len) != Some(0) {
+        return Err(format!("results must be empty: {value}"));
+    }
+    if run["properties"]["run_status"] != "refused" {
+        return Err(format!("run_status must be refused: {value}"));
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !stderr.contains("definitely-not-a-real-ref-9f2a-7332") {
+        return Err(format!("stderr keeps the human diagnostic: {stderr}"));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7332: `check --format github` on a refused run emits exactly one
+/// workflow-command error annotation carrying the typed identity and repair
+/// route in its escaped data.
+#[test]
+fn check_github_refusal_emits_one_error_annotation() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-github-refusal", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--format",
+        "github",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-7332",
+    ]);
+    let stdout = assert_machine_refusal_basics(&output)?;
+    if stdout.lines().count() != 1 {
+        return Err(format!(
+            "github refusal must be exactly one annotation line: {stdout}"
+        ));
+    }
+    if !stdout.starts_with("::error title=ripr refusal::") {
+        return Err(format!("unexpected refusal line shape: {stdout}"));
+    }
+    if !stdout.contains("run_status=base_unresolvable") {
+        return Err(format!(
+            "annotation must carry the typed identity: {stdout}"
+        ));
+    }
+    if !stdout.contains("repair_route=analysis/base-resolution") {
+        return Err(format!("annotation must carry the repair route: {stdout}"));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7332: `check --format badge-json` on a refused run emits the badge
+/// family's degraded-state convention — warn + lightgrey with the typed
+/// identity in the message — instead of zero bytes a consumer could read as
+/// "no gaps".
+#[test]
+fn check_badge_json_refusal_emits_the_degraded_badge() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-badge-refusal", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--format",
+        "badge-json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-7332",
+    ]);
+    let stdout = assert_machine_refusal_basics(&output)?;
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("badge refusal must parse as JSON: {err}\n{stdout}"))?;
+    if value["message"] != "refused: base_unresolvable" {
+        return Err(format!("badge message must name the refusal: {value}"));
+    }
+    if value["status"] != "warn" {
+        return Err(format!("badge status must be warn: {value}"));
+    }
+    if value["color"] != "lightgrey" {
+        return Err(format!("badge color must be lightgrey: {value}"));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7332: `check --format repo-exposure-json` on a refused run emits the
+/// format's own run_status/limitations envelope with zeroed metrics and an
+/// empty seams array.
+#[test]
+fn check_repo_exposure_json_refusal_emits_the_refused_envelope() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-repo-exposure-refusal", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--format",
+        "repo-exposure-json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-7332",
+    ]);
+    let stdout = assert_machine_refusal_basics(&output)?;
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("repo-exposure refusal must parse as JSON: {err}\n{stdout}"))?;
+    for (pointer, expected) in [
+        ("/schema_version", "0.4"),
+        ("/scope", "repo"),
+        ("/run_status", "refused"),
+        ("/limitations/0/category", "base_unresolvable"),
+        ("/limitations/0/repair_route", "analysis/base-resolution"),
+    ] {
+        let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!(
+                "{pointer}: expected {expected}, got {actual:?}\n{stdout}"
+            ));
+        }
+    }
+    if value["seams"].as_array().map(Vec::len) != Some(0) {
+        return Err(format!("seams must be empty: {value}"));
+    }
+    if value["metrics"]["seams_total"] != 0 {
+        return Err(format!("metrics must be zeroed: {value}"));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7332: `check --format agent-seam-packets-json` on a refused run emits the
+/// format's own envelope with `packets_total: 0`, an empty `packets` array,
+/// and no `next` block.
+#[test]
+fn check_agent_seam_packets_json_refusal_emits_the_refused_envelope() -> Result<(), String> {
+    let root = init_check_refusal_repo("check-packets-refusal", 1)?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--format",
+        "agent-seam-packets-json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-7332",
+    ]);
+    let stdout = assert_machine_refusal_basics(&output)?;
+    let value: serde_json::Value = serde_json::from_str(&stdout)
+        .map_err(|err| format!("packets refusal must parse as JSON: {err}\n{stdout}"))?;
+    for (pointer, expected) in [
+        ("/schema_version", "0.5"),
+        ("/scope", "repo"),
+        ("/run_status", "refused"),
+        ("/limitations/0/category", "base_unresolvable"),
+        ("/limitations/0/repair_route", "analysis/base-resolution"),
+    ] {
+        let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+        if actual != Some(expected) {
+            return Err(format!(
+                "{pointer}: expected {expected}, got {actual:?}\n{stdout}"
+            ));
+        }
+    }
+    if value["packets_total"] != 0 {
+        return Err(format!("packets_total must be 0: {value}"));
+    }
+    if value["packets"].as_array().map(Vec::len) != Some(0) {
+        return Err(format!("packets must be empty: {value}"));
+    }
+    if value.get("next").is_some() {
+        return Err(format!("a refused run must not grow a next block: {value}"));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// #6834: a `git_invocation_timeout` and an unresolvable base produce
 /// different identities, so a consumer can tell them apart. The timeout is
 /// forced deterministically: every git invocation hangs, and
@@ -7554,8 +8234,12 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
 
 /// #4445: a repo-scoped format still records `--base` as snapshot
 /// provenance and names `--diff` as an input, so an unresolvable base or a
-/// missing diff file exits 2 with empty stdout, like the diff-scoped
-/// formats. A resolvable base keeps working.
+/// missing diff file exits 2, like the diff-scoped formats. #7332 changed
+/// what the two JSON repo formats write on that refusal: `repo-exposure-json`
+/// and `agent-seam-packets-json` render their format's refusal document
+/// (`run_status: "refused"`) on stdout instead of zero bytes, while
+/// `repo-sarif` still has no honest refusal shape and stays empty. A
+/// resolvable base keeps working.
 #[test]
 fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -7594,10 +8278,24 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
                 "{format} {bad:?}: stderr={}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            assert!(
-                output.stdout.is_empty(),
-                "{format} {bad:?} wrote stdout on a failed invocation"
-            );
+            if format == "repo-sarif" {
+                assert!(
+                    output.stdout.is_empty(),
+                    "{format} {bad:?} wrote stdout on a failed invocation"
+                );
+            } else {
+                // #7332: the JSON repo formats carry their refusal document
+                // on stdout rather than zero bytes.
+                assert!(
+                    !output.stdout.is_empty(),
+                    "{format} {bad:?} must write its refusal document on stdout"
+                );
+                let refusal: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                assert_eq!(
+                    refusal["run_status"], "refused",
+                    "{format} {bad:?}: stdout must be the refused envelope"
+                );
+            }
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 stderr.contains(bad[1]),

@@ -61,9 +61,25 @@ document should branch on `exit`, not on free-text `stop_states`.
   above, an unreadable config or suppression policy, a git timeout, or any
   other failure the command can produce — also writes a machine-readable
   refusal document to stdout naming the failure; the exit stays `2` and the
-  human prose stays on stderr. Only argv usage errors stay prose-only with
-  empty stdout. [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the
-  refusal shape and its `schema_version`.
+  human prose stays on stderr. The same envelope covers the other `--json`
+  commands (#7331): `diff --json`, `rerun --json`, `context` (which emits
+  JSON only), `agent brief --json`, and `agent packet --json` each write the
+  shared refusal shape keyed with their own `schema_version` (rerun
+  `ripr-targeted-rerun-v1`, context `1.0`, diff and agent brief `0.1`, agent
+  packet `0.5`), and `mode` appears only on commands that accept `--mode`.
+  For `check`, the machine-readable formats also carry their own refusal
+  document on stdout (#7332): SARIF renders a schema-valid run whose only
+  signal is a tool-configuration notification, GitHub renders one workflow
+  error annotation, and `badge-json`, `repo-exposure-json`, and
+  `agent-seam-packets-json` render their format's degraded/refused envelope
+  (zeroed counts, `run_status: "refused"`). Machine formats without an
+  honest refusal shape yet — `repo-sarif`, `badge-plus`, `repo-badge-*`,
+  `shields`, `repo-seams-*`, and `repo-exposure-summary-json` — write
+  nothing to stdout and put the prose diagnostic on stderr for now; that
+  gap is a named limitation, not a clean result. Exactly two cases stay
+  prose-only with empty stdout on every command: argv usage errors and
+  these not-yet-refusing machine formats. [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the refusal
+  shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
