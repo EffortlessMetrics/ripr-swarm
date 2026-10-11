@@ -417,6 +417,8 @@ pub(crate) fn run_packaged_install(
     }
     let archive_digest = crate::reports::release_server::sha256_file(&archive)?;
     details.push(format!("package archive sha256: {archive_digest}"));
+    let expected_commit = packaged_archive_commit(&archive, version)?;
+    details.push(format!("packaged source commit: {expected_commit}"));
     if let Err(err) = extract_packaged_crate(&archive, &package_dir, version) {
         let cleanup = fs::remove_dir_all(&package_dir);
         if let Err(cleanup_err) = cleanup {
@@ -509,11 +511,9 @@ pub(crate) fn run_packaged_install(
     let version_result = run_command_path(&installed_binary, &["--version"])
         .map_err(|err| format!("installed ripr --version could not run: {err}"))?;
     details.extend(command_details(&version_result));
-    if let Err(err) = validate_installed_version(
-        version_result.success,
-        &version_result.stdout,
-        crate_version,
-    ) {
+    if let Err(err) =
+        validate_installed_version_result(&version_result, crate_version, Some(&expected_commit))
+    {
         details.push(err);
         return Ok(PackageInstallResult {
             success: false,
@@ -686,18 +686,114 @@ fn validate_binary_identity(workspace_digest: &str, installed_digest: &str) -> R
     Ok(())
 }
 
+/// Compatibility entry point for the qualified negative corpus, whose caller
+/// supplies only success/stdout and separately owns archive custody. Readiness
+/// consumers supply the observed process result and packaged commit below.
 pub(crate) fn validate_installed_version(
     success: bool,
     stdout: &str,
     version: &str,
 ) -> Result<(), String> {
-    if !success || !stdout.contains(&format!("ripr {version}")) {
+    validate_installed_version_result(
+        &CommandResult {
+            status: success.then_some(0),
+            success,
+            stdout: stdout.to_string(),
+            stderr: String::new(),
+        },
+        version,
+        None,
+    )
+}
+
+fn validate_installed_version_result(
+    result: &CommandResult,
+    version: &str,
+    expected_commit: Option<&str>,
+) -> Result<(), String> {
+    if !result.success || result.status != Some(0) {
+        return Err("installed binary version command did not exit 0".to_string());
+    }
+    if !result.stderr.is_empty() {
+        return Err("installed binary version command emitted stderr".to_string());
+    }
+    let prefix = format!("ripr {version} (");
+    let commit = result
+        .stdout
+        .strip_prefix(&prefix)
+        .and_then(|suffix| suffix.strip_suffix(")\n"))
+        .filter(|commit| full_packaged_commit_id(commit));
+    let Some(commit) = commit else {
         return Err(
-            "installed binary version output did not identify the packaged crate version"
+            "installed binary version output must be exactly the packaged version and clean full commit with one newline"
                 .to_string(),
+        );
+    };
+    if let Some(expected) = expected_commit
+        && (!full_packaged_commit_id(expected) || commit != expected)
+    {
+        return Err(
+            "installed binary version commit differs from the packaged crate commit".to_string(),
         );
     }
     Ok(())
+}
+
+fn full_packaged_commit_id(commit: &str) -> bool {
+    matches!(commit.len(), 40 | 64)
+        && commit
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+/// Reload the retained archive because the install proof removes its extraction
+/// before the external journey. Never substitute the controller checkout's HEAD.
+fn packaged_archive_commit(archive: &Path, version: &str) -> Result<String, String> {
+    let file = fs::File::open(archive)
+        .map_err(|err| format!("open package archive for version identity failed: {err}"))?;
+    let mut tar = Archive::new(GzDecoder::new(file));
+    let root = PathBuf::from(format!("ripr-{version}"));
+    let identity_path = root.join(".cargo_vcs_info.json");
+    let mut identity = None;
+    for entry in tar
+        .entries()
+        .map_err(|err| format!("read package identity entries failed: {err}"))?
+    {
+        let mut entry =
+            entry.map_err(|err| format!("read package identity entry failed: {err}"))?;
+        let path = entry
+            .path()
+            .map_err(|err| format!("read package identity path failed: {err}"))?
+            .into_owned();
+        validate_package_entry(&path, entry.header().entry_type(), &root)?;
+        if path != identity_path {
+            continue;
+        }
+        if identity.is_some() || !entry.header().entry_type().is_file() || entry.size() > 4096 {
+            return Err(
+                "package VCS identity must be one regular file of at most 4096 bytes".to_string(),
+            );
+        }
+        let record: Value = serde_json::from_reader(&mut entry)
+            .map_err(|err| format!("parse package VCS identity failed: {err}"))?;
+        let git = record
+            .get("git")
+            .and_then(Value::as_object)
+            .ok_or_else(|| "package VCS identity has no Git record".to_string())?;
+        let commit = git
+            .get("sha1")
+            .and_then(Value::as_str)
+            .filter(|commit| full_packaged_commit_id(commit))
+            .ok_or_else(|| "package VCS identity has no full lowercase Git commit".to_string())?;
+        if git
+            .get("dirty")
+            .is_some_and(|dirty| dirty.as_bool() != Some(false))
+        {
+            return Err("package VCS identity is dirty or has an invalid dirty flag".to_string());
+        }
+        identity = Some(commit.to_string());
+    }
+    identity.ok_or_else(|| "package archive has no VCS identity record".to_string())
 }
 
 pub(crate) fn validate_doctor_result(success: bool, doctor_json: &Value) -> Result<(), String> {
@@ -1012,6 +1108,8 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
         let expected_version = crate_version.ok_or_else(|| {
             "crate version could not be read for packaged CLI journey".to_string()
         })?;
+        let archive = Path::new("target/package").join(format!("ripr-{expected_version}.crate"));
+        let expected_commit = packaged_archive_commit(&archive, expected_version)?;
         let version_args = vec!["--version".to_string()];
         let version = run_command_in_dir(
             &binary,
@@ -1022,8 +1120,9 @@ fn packaged_cli_journey_check(binary: &Path, crate_version: Option<&str>) -> Rel
             "installed packaged CLI version",
         )?;
         record_journey_command(&mut commands, "version", &version_args, &version);
-        validate_installed_version(version.success, &version.stdout, expected_version)?;
+        validate_installed_version_result(&version, expected_version, Some(&expected_commit))?;
         details.push(format!("packaged version: {expected_version}"));
+        details.push(format!("packaged source commit: {expected_commit}"));
         let (base, head) = create_external_cli_fixture(&fixture_root)?;
         details.push(format!("base sha: {base}"));
         details.push(format!("head sha: {head}"));
@@ -3375,14 +3474,15 @@ mod tests {
     #[cfg(unix)]
     use super::{CI_PACKET_STEP_NEEDLES, ci_packet_steps_missing, ci_summary_first_run_missing};
     use super::{
-        EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
+        CommandResult, EditorVersion, FIRST_SCREEN_NEEDLES, PackageVersion, RELEASE_LOOP_NEEDLES,
         ReleaseReadinessCheck, ReleaseReadinessReport, changelog_has_release_heading,
         create_external_doctor_fixture, extension_version_check_from, extract_packaged_crate,
         init_pin_version_check_from, latest_released_version_in, missing_required_needles,
-        package_version, parse_release_readiness_args, read_crate_version, readiness_check,
-        release_readiness_json, release_readiness_markdown, release_readiness_status,
-        validate_binary_identity, validate_doctor_result, validate_installed_version,
-        validate_package_entry, vsix_start_current_repair_command_present,
+        package_version, packaged_archive_commit, parse_release_readiness_args, read_crate_version,
+        readiness_check, release_readiness_json, release_readiness_markdown,
+        release_readiness_status, validate_binary_identity, validate_doctor_result,
+        validate_installed_version, validate_installed_version_result, validate_package_entry,
+        vsix_start_current_repair_command_present,
     };
     use serde_json::Value;
     use std::fs;
@@ -3489,7 +3589,11 @@ mod tests {
         if validate_installed_version(true, "ripr 0.9.0\n", "0.10.0").is_ok() {
             return Err("wrong installed version was accepted".to_string());
         }
-        validate_installed_version(true, "ripr 0.10.0\n", "0.10.0")?;
+        validate_installed_version(
+            true,
+            "ripr 0.10.0 (5fc77a91871ea352e7dfaa322b90bfbe853d3ffe)\n",
+            "0.10.0",
+        )?;
         if validate_installed_version(false, "ripr 0.10.0\n", "0.10.0").is_ok() {
             return Err("failed version command was accepted".to_string());
         }
@@ -3502,6 +3606,227 @@ mod tests {
         let warn = serde_json::json!({"status": "warn"});
         if validate_doctor_result(true, &warn).is_ok() {
             return Err("non-pass doctor status was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    const VERSION_COMMIT: &str = "5fc77a91871ea352e7dfaa322b90bfbe853d3ffe";
+
+    fn version_result(stdout: String) -> CommandResult {
+        CommandResult {
+            status: Some(0),
+            success: true,
+            stdout,
+            stderr: String::new(),
+        }
+    }
+
+    #[test]
+    fn installed_version_requires_exact_packaged_identity() -> Result<(), String> {
+        // This line is the observed output of an actual clean packaged install.
+        // SHA-256 object ids retain the same documented line format.
+        for commit in [VERSION_COMMIT.to_string(), "a".repeat(64)] {
+            let result = version_result(format!("ripr 0.11.0 ({commit})\n"));
+            validate_installed_version_result(&result, "0.11.0", Some(&commit))?;
+            validate_installed_version(true, &result.stdout, "0.11.0")?;
+        }
+        let genuine = format!("ripr 0.11.0 ({VERSION_COMMIT})\n");
+        let invalid = [
+            (
+                "version suffix",
+                format!("ripr 0.11.01 ({VERSION_COMMIT})\n"),
+            ),
+            ("wrong version", format!("ripr 0.10.0 ({VERSION_COMMIT})\n")),
+            ("extra prefix", format!("help first\n{genuine}")),
+            ("extra suffix", format!("{genuine}extra\n")),
+            ("extra newline", format!("{genuine}\n")),
+            ("missing newline", genuine.trim_end().to_string()),
+            ("CRLF", genuine.replace('\n', "\r\n")),
+            ("unidentified", "ripr 0.11.0\n".to_string()),
+            ("dirty", format!("ripr 0.11.0 ({VERSION_COMMIT}-dirty)\n")),
+            ("short commit", "ripr 0.11.0 (5fc77a91)\n".to_string()),
+            (
+                "uppercase",
+                format!("ripr 0.11.0 ({})\n", VERSION_COMMIT.to_uppercase()),
+            ),
+            (
+                "nonhex",
+                format!("ripr 0.11.0 (g{})\n", &VERSION_COMMIT[1..]),
+            ),
+            (
+                "foreign commit",
+                "ripr 0.11.0 (0123456789abcdef0123456789abcdef01234567)\n".to_string(),
+            ),
+        ];
+        for (case, stdout) in invalid {
+            if validate_installed_version_result(
+                &version_result(stdout),
+                "0.11.0",
+                Some(VERSION_COMMIT),
+            )
+            .is_ok()
+            {
+                return Err(format!("installed version accepted {case}"));
+            }
+        }
+        // Keep the external compatibility caller on the same formatting owner.
+        for stdout in ["ripr 0.11.01\n", "noise\nripr 0.11.0\n"] {
+            if validate_installed_version(true, stdout, "0.11.0").is_ok() {
+                return Err("compatibility validator accepted malformed identity".to_string());
+            }
+        }
+        if validate_installed_version_result(&version_result(genuine), "0.11.0", Some("5fc77a91"))
+            .is_ok()
+        {
+            return Err("invalid expected package commit was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn installed_version_requires_observed_exit_zero_and_empty_stderr() -> Result<(), String> {
+        for (status, success, stderr) in [
+            (Some(1), true, ""),
+            (None, true, ""),
+            (Some(0), false, ""),
+            (Some(0), true, "warning\n"),
+            (Some(0), true, " "),
+        ] {
+            let result = CommandResult {
+                status,
+                success,
+                stdout: format!("ripr 0.11.0 ({VERSION_COMMIT})\n"),
+                stderr: stderr.to_string(),
+            };
+            if validate_installed_version_result(&result, "0.11.0", Some(VERSION_COMMIT)).is_ok() {
+                return Err(format!(
+                    "installed version accepted invalid process result {result:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn version_identity_archive(
+        entries: &[(&str, &str, tar::EntryType)],
+    ) -> Result<std::path::PathBuf, String> {
+        let stamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|err| format!("clock error: {err}"))?
+            .as_nanos();
+        let path =
+            std::env::temp_dir().join(format!("ripr-version-{}-{stamp}.crate", std::process::id()));
+        let file =
+            fs::File::create(&path).map_err(|err| format!("create identity archive: {err}"))?;
+        let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
+            file,
+            flate2::Compression::default(),
+        ));
+        for (name, text, entry_type) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(*entry_type);
+            header.set_size(text.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tar.append_data(&mut header, name, text.as_bytes())
+                .map_err(|err| format!("write identity entry: {err}"))?;
+        }
+        tar.into_inner()
+            .map_err(|err| format!("finish identity tar: {err}"))?
+            .finish()
+            .map_err(|err| format!("finish identity archive: {err}"))?;
+        Ok(path)
+    }
+
+    #[test]
+    fn packaged_version_commit_comes_from_clean_full_archive_record() -> Result<(), String> {
+        let name = "ripr-0.11.0/.cargo_vcs_info.json";
+        for commit in [VERSION_COMMIT.to_string(), "a".repeat(64)] {
+            for dirty in ["", ",\"dirty\":false"] {
+                let record = format!(
+                    "{{\"git\":{{\"sha1\":\"{commit}\"{dirty}}},\"path_in_vcs\":\"crates/ripr\"}}"
+                );
+                let archive =
+                    version_identity_archive(&[(name, &record, tar::EntryType::Regular)])?;
+                let result = packaged_archive_commit(&archive, "0.11.0");
+                fs::remove_file(&archive)
+                    .map_err(|err| format!("remove identity archive: {err}"))?;
+                if result? != commit {
+                    return Err(
+                        "archive-derived version commit differs from package record".to_string()
+                    );
+                }
+            }
+        }
+        for record in [
+            "not JSON".to_string(),
+            "{}".to_string(),
+            "{\"git\":null}".to_string(),
+            "{\"git\":{}}".to_string(),
+            "{\"git\":{\"sha1\":null}}".to_string(),
+            "{\"git\":{\"sha1\":\"5fc77a91\"}}".to_string(),
+            format!(
+                "{{\"git\":{{\"sha1\":\"{}\"}}}}",
+                VERSION_COMMIT.to_uppercase()
+            ),
+            format!("{{\"git\":{{\"sha1\":\"g{}\"}}}}", &VERSION_COMMIT[1..]),
+            format!("{{\"git\":{{\"sha1\":\"{VERSION_COMMIT}\",\"dirty\":true}}}}"),
+            format!("{{\"git\":{{\"sha1\":\"{VERSION_COMMIT}\",\"dirty\":null}}}}"),
+            format!("{{\"git\":{{\"sha1\":\"{VERSION_COMMIT}\",\"dirty\":\"false\"}}}}"),
+        ] {
+            let archive = version_identity_archive(&[(name, &record, tar::EntryType::Regular)])?;
+            let result = packaged_archive_commit(&archive, "0.11.0");
+            fs::remove_file(&archive)
+                .map_err(|err| format!("remove invalid identity archive: {err}"))?;
+            if result.is_ok() {
+                return Err(format!("archive accepted invalid VCS identity: {record}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn packaged_version_commit_requires_unique_bounded_regular_record() -> Result<(), String> {
+        let name = "ripr-0.11.0/.cargo_vcs_info.json";
+        let record = format!("{{\"git\":{{\"sha1\":\"{VERSION_COMMIT}\"}}}}");
+        let oversized = " ".repeat(4097);
+        let cases = [
+            (
+                "missing",
+                vec![("ripr-0.11.0/Cargo.toml", "", tar::EntryType::Regular)],
+            ),
+            (
+                "duplicate",
+                vec![
+                    (name, record.as_str(), tar::EntryType::Regular),
+                    (name, record.as_str(), tar::EntryType::Regular),
+                ],
+            ),
+            ("nonregular", vec![(name, "", tar::EntryType::Directory)]),
+            (
+                "oversized",
+                vec![(name, oversized.as_str(), tar::EntryType::Regular)],
+            ),
+            (
+                "foreign root",
+                vec![(
+                    "ripr-0.11.01/.cargo_vcs_info.json",
+                    record.as_str(),
+                    tar::EntryType::Regular,
+                )],
+            ),
+        ];
+        for (case, entries) in cases {
+            let archive = version_identity_archive(&entries)?;
+            let result = packaged_archive_commit(&archive, "0.11.0");
+            fs::remove_file(&archive)
+                .map_err(|err| format!("remove {case} identity archive: {err}"))?;
+            if result.is_ok() {
+                return Err(format!("archive accepted {case} VCS identity"));
+            }
+            if case == "oversized" && !result.err().is_some_and(|err| err.contains("4096")) {
+                return Err("oversized identity did not fail at the byte budget".to_string());
+            }
         }
         Ok(())
     }
