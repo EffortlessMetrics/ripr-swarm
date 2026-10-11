@@ -452,7 +452,7 @@ mod tests {
         for source in [
             format!("{} {}", owner.body, caller.body),
             format!("mod same {{ {} {} }}", owner.body, caller.body),
-            format!("#![allow(dead_code)] {} {}", owner.body, caller.body),
+            format!("#![warn(dead_code)] {} {}", owner.body, caller.body),
         ] {
             assert!(synchronous_definitions(&source, &[&owner, &caller]));
         }
