@@ -353,7 +353,7 @@ mod tests {
                     .bytes()
                     .filter(|byte| *byte == b'\n')
                     .count();
-            owner.body = source.to_string();
+            owner.body = source.into();
             assert!(
                 returned_ledger(&owner, &probe, &chain).is_none(),
                 "{source}"
