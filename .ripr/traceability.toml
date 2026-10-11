@@ -10057,6 +10057,11 @@ tests = [
   "crates/ripr/src/analysis/workspace/module_graph.rs::tests::unresolved_path_routes_name_the_declaration_for_files_only_it_reaches",
   "crates/ripr/src/analysis/workspace/module_graph.rs::tests::unresolved_route_yields_to_a_resolved_path_from_another_package",
   "crates/ripr/src/analysis/facts/test_styles/tests.rs::test_under_a_cfg_that_is_false_in_a_test_build_is_not_a_test",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::multiline_false_cfg_on_the_lexical_fallback_is_not_a_test",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::long_never_true_cfg_on_the_lexical_fallback_is_not_a_test",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::comment_between_never_true_cfg_and_test_on_the_lexical_fallback_is_not_a_test",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::unclosed_attribute_on_the_lexical_fallback_keeps_the_following_test",
+  "crates/ripr/src/analysis/facts/test_styles/tests.rs::long_true_cfg_on_the_lexical_fallback_keeps_the_test",
 ]
 fixtures = [
   "fixtures/rust_test_under_false_cfg_not_grip",
