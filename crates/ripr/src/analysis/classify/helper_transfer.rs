@@ -28,6 +28,9 @@
 //! alone never establishes propagation or discrimination — the oracle
 //! still has to observe the sink through the ordinary evidence stages.
 
+mod returned_ledger;
+pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
+
 use super::value_transfer::ExactInputs;
 use crate::analysis::facts::{CallFact, FunctionImplContext, FunctionSummary, RustIndex};
 

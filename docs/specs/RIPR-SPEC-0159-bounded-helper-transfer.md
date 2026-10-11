@@ -112,6 +112,21 @@ can only hint that a caller "may lead here" without changing anything.
   field, a static or an expression — and a probe that names no owner
   parameter make propagation `unknown` (`helper_result_not_forwarded`):
   the caller's test cannot see that state, so the finding abstains.
+- Returned mutable-ledger identity (#3215, ub-review #1363): a constructed
+  field directly inside a record passed to an owner parameter's `push` can
+  retain the first helper hop's mutable argument and returned local binding in
+  `PropagationWitnessV1`. The call must be the caller's final statement, its
+  exact `&mut local` argument must match the resolved hop, the local must have
+  one mutable binding and no assignment, and the tail must return that local.
+  Caller and owner must share source/type scope and the declared return type
+  must match the parameter's pointee, without generic substitutions. Rebound,
+  shadowed, discarded, sibling-field, transformed-return and later-write cases
+  refuse this transfer. This is **partial identity evidence**, not an exception
+  to the complete propagation refusal above. A pushed element remains a
+  candidate, and the first observer boundary is named
+  `returned_mutable_ledger_observer_unresolved`; Config field assignment, index
+  selection, preceding appends, branch activation, and exact field observation
+  remain unestablished. No oracle, score or exposure class is strengthened.
 - Boundary pairing through the entry (RIPR-SPEC-0186) reads only rows
   recomputed from the asserting test, and requires the assertion's
   subject to hold exactly one entry call whose arguments are each a whole
