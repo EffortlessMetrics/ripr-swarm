@@ -568,7 +568,7 @@ allocate the heavy required gate (#4986):
 
 ```text
 opened / reopened / synchronize while Draft:
-  no Routed Rust Small run; cheap feedback only
+  no Routed Rust Small run; existing early advisory events remain separate
 
 ready_for_review (Draft -> Ready):
   the sole pull-request qualification request; validates the exact Ready head
@@ -592,6 +592,29 @@ on the branch head, without the `pull_request`-scoped PR-evidence steps.
 Do not dispatch on PR branches; #5394 tracks enforcing this.
 
 What this means for authors and agents:
+
+UB and Droid retain early review on `opened`, `synchronize`, and `reopened`,
+including Drafts; Droid also retains `labeled` and `unlabeled`. They do not
+subscribe to `ready_for_review` (#4987). Ready therefore neither cancels an
+active UB review nor queues another Droid review, and does not repeat completed
+advisory work. Their existing trust/title/release guards and concurrency remain
+unchanged. UB explicitly lists all three early passes in
+`.ub-review.toml`'s `gate.post_review_on`: action pin
+`55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8` otherwise permits publication only on
+opened and Ready. Removing Ready admission alone would leave repaired-head
+reviews unable to publish. This does not suppress repeated Draft synchronize
+review or complete the broader #4987 acceptance.
+
+Retain advisory run IDs, candidate head, observed base and synthetic merge SHA,
+action/config identity, and review receipts. The same PR head with a changed
+base or merge tree is a different review identity; this event change supplies
+no cache hit or integration re-review. Before merge, inspect material integration
+changes and obtain applicable fresh review through the existing review route.
+Material findings return the candidate to Draft for repair. An unavailable,
+failed, or skipped provider remains missing review evidence after Ready; no
+synthetic success replaces it. Runner-minute savings remain unmeasured until a
+natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
+checks parsed event/config contracts, not hosted provider execution.
 
 - Open PRs as Draft (`gh pr create --draft`), then mark them Ready. A PR opened
   directly as Ready never receives a `ready_for_review` event and never gets
