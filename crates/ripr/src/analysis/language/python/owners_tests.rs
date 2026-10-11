@@ -272,6 +272,7 @@ pub(super) struct TestImportContext<'a> {
     pub(super) body: &'a [PythonImport],
     pub(super) definition: &'a [PythonImport],
     pub(super) admission: &'a PythonAdmissionContext,
+    pub(super) standard_unittest_list: bool,
 }
 
 /// Follow the default pytest `python_functions` and unittest
@@ -301,7 +302,15 @@ pub(super) fn collect_tests_from_statements(
                 };
                 let name = function.name.to_string();
                 let fixtures = fixture_parameter_names(&function.args, framework);
-                let assertions = collect_assertions_from_statements(&function.body, source);
+                let assertions = collect_assertions_from_statements(
+                    &function.body,
+                    source,
+                    import_context.standard_unittest_list
+                        && super::oracles::unittest_list::eligible_method(
+                            &function.args,
+                            &function.decorator_list,
+                        ),
+                );
                 // pytest does not parametrize unittest methods.
                 let parametrize = (framework == "pytest")
                     .then(|| parametrize_cases(source, &function.decorator_list))
@@ -354,7 +363,7 @@ pub(super) fn collect_tests_from_statements(
                 };
                 let name = function.name.to_string();
                 let fixtures = fixture_parameter_names(&function.args, framework);
-                let assertions = collect_assertions_from_statements(&function.body, source);
+                let assertions = collect_assertions_from_statements(&function.body, source, false);
                 // pytest does not parametrize unittest methods.
                 let parametrize = (framework == "pytest")
                     .then(|| parametrize_cases(source, &function.decorator_list))
@@ -418,6 +427,10 @@ pub(super) fn collect_tests_from_statements(
                             body: imports,
                             definition: &definition_imports,
                             admission,
+                            standard_unittest_list: super::oracles::unittest_list::eligible_class(
+                                class,
+                                &definition_imports,
+                            ),
                         },
                         out,
                     );
@@ -445,6 +458,7 @@ pub(super) fn collect_tests_from_statements(
                                     .map(Vec::as_slice)
                                     .unwrap_or(&definition_imports),
                                 admission,
+                                standard_unittest_list: false,
                             },
                             &mut from_mixin,
                         );

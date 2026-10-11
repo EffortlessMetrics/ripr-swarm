@@ -2,13 +2,25 @@ use super::source_utils::{SourceText, line_for_range_start, text_for_range};
 use super::{PythonAssertion, PythonOracleShape, expr_full_name};
 use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Stmt};
+pub(super) mod unittest_list;
 
 pub(super) fn collect_assertions_from_statements(
     statements: &[Stmt],
     source: &SourceText<'_>,
+    standard_unittest_list: bool,
 ) -> Vec<PythonAssertion> {
     let mut out = Vec::new();
     collect_assertions(statements, source, &mut out);
+    if standard_unittest_list
+        && let [Stmt::Expr(expr)] = statements
+        && let Expr::Call(call) = expr.value.as_ref()
+        && unittest_list::literal_call(call)
+        && let Some(assertion) = out.first_mut()
+    {
+        assertion.oracle_kind = OracleKind::ExactValue;
+        assertion.oracle_strength = OracleStrength::Strong;
+        assertion.oracle_shape = PythonOracleShape::ExactAssertion;
+    }
     out
 }
 
@@ -255,6 +267,12 @@ fn oracle_for_call(
     let name = expr_full_name(call.func.as_ref())?;
     let last_segment = name.rsplit('.').next().unwrap_or(name.as_str());
     match last_segment {
+        // Only the bounded standard unittest context above promotes this call.
+        "assertListEqual" => Some((
+            OracleKind::Unknown,
+            OracleStrength::Unknown,
+            PythonOracleShape::UnknownCustomHelper,
+        )),
         "assertEqual" => Some((
             OracleKind::ExactValue,
             OracleStrength::Strong,

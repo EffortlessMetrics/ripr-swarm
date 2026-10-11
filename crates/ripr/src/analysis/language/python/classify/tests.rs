@@ -5,6 +5,174 @@ use super::classify_change_with_old;
 use crate::domain::{ExposureClass, Finding, OracleStrength, StageState};
 use std::path::Path;
 
+// #7312: independently authored from CPython ebf955df7a89ed0c7968f79faec1de49f61ed7cb
+// Lib/unittest/case.py::assertListEqual and test_unittest/test_case.py::testEquality.
+#[test]
+fn unittest_list_equal_observes_whole_return_including_short_elements() -> Result<(), String> {
+    for (before, after, expected) in [
+        ("    return [1, 1]", "    return [1, 2]", "[1, 2]"),
+        (
+            "    return [0, 'pending']",
+            "    return [0, 'ready']",
+            "[0, 'ready']",
+        ),
+    ] {
+        let source = format!("def labels():\n{after}\n");
+        let tests = format!(
+            "import unittest\nfrom src.subject import labels\nclass Checks(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual(labels(), {expected})\n"
+        );
+        let extracted = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        assert_eq!(extracted.len(), 1);
+        let finding = classify_case(&source, &tests, 2, before, after)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{expected}");
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong
+        );
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    }
+    Ok(())
+}
+
+#[test]
+fn unittest_list_equal_withholds_unresolved_or_nonobserving_calls() -> Result<(), String> {
+    let before = "    return [10, 21]";
+    let after = "    return [10, 22]";
+    for (declaration, members, body) in [
+        ("class Checks(unittest.TestCase):", "", "labels()"),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "labels()\n        self.assertListEqual([10, 22], [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual(ignore(labels()), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "fake.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self().assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(fake.TestCase):",
+            "",
+            "self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class TestChecks:",
+            "",
+            "self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "    def assertListEqual(self, *args):\n        pass\n",
+            "self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "    def assertSequenceEqual(self, *args):\n        pass\n",
+            "self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "    def fail(self, *args):\n        pass\n",
+            "self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self = fake\n        self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual = ignore\n        self.assertListEqual(labels(), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual(labels(), labels())",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual(labels()[:1], [10])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual(labels(), [10, 22], msg='unsupported message form')",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "    @unittest.skip('disabled')\n",
+            "self.assertListEqual(labels(), [10, 22])",
+        ),
+    ] {
+        let tests = format!(
+            "import unittest\nimport fake\nfrom src.subject import labels, ignore\n{declaration}\n{members}    def test_labels(self):\n        {body}\n"
+        );
+        let extracted = extract_tests(Path::new("tests/test_subject.py"), &tests);
+        assert_eq!(extracted.len(), 1, "{tests}");
+        let finding = classify_case(
+            "def labels():\n    return [10, 22]\n",
+            &tests,
+            2,
+            before,
+            after,
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert_ne!(
+            finding.ripr.reveal.discriminate.state,
+            StageState::Yes,
+            "{tests}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unittest_list_equal_withholds_module_binding_and_framework_writes() -> Result<(), String> {
+    for mutation in [
+        "unittest = fake",
+        "unittest.TestCase = fake.TestCase",
+        "unittest.TestCase.assertListEqual = ignore",
+        "unittest.TestCase.assertSequenceEqual = ignore",
+        "unittest.TestCase.fail = ignore",
+        "labels = ignore",
+        "setattr(unittest.TestCase, 'assertListEqual', ignore)",
+    ] {
+        let tests = format!(
+            "import unittest\nimport fake\nfrom src.subject import labels, ignore\n{mutation}\nclass Checks(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual(labels(), [1, 2])\n"
+        );
+        assert_eq!(
+            extract_tests(Path::new("tests/test_subject.py"), &tests).len(),
+            1
+        );
+        let finding = classify_case(
+            "def labels():\n    return [1, 2]\n",
+            &tests,
+            2,
+            "    return [1, 1]",
+            "    return [1, 2]",
+        )?;
+        assert_ne!(finding.class, ExposureClass::Exposed, "{mutation}");
+        assert_ne!(
+            finding.ripr.reveal.discriminate.state,
+            StageState::Yes,
+            "{mutation}"
+        );
+    }
+    Ok(())
+}
+
 /// Exercise the existing source-fact producer and final classifier together.
 fn classify_case(
     source: &str,

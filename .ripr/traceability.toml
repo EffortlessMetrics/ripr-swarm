@@ -3005,6 +3005,9 @@ id = "RIPR-SPEC-0028"
 name = "Python preview static facts"
 spec = "docs/specs/RIPR-SPEC-0028-python-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_observes_whole_return_including_short_elements",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_withholds_unresolved_or_nonobserving_calls",
+  "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_list_equal_withholds_module_binding_and_framework_writes",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::activation_controlled_python_tests_do_not_credit_their_assertions",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::unittest_metadata_ignored_by_ordinary_pytest_keeps_active_oracle_credit",
   "crates/ripr/src/analysis/language/python/classify/tests.rs::explicit_nonframework_imports_cannot_disable_python_oracle_credit",
@@ -3094,6 +3097,7 @@ fixtures = [
   "fixtures/python_rebound_constant_boundary_limit",
   "fixtures/python_async_owner",
   "fixtures/python_unittest_basic",
+  "fixtures/python_unittest_list_equal",
   "fixtures/python_method_owner",
   "fixtures/python_class_method_owner",
   "fixtures/python_parametrize_basic",
@@ -3157,6 +3161,7 @@ fixtures = [
 code = [
   "xtask/src/fixture_contracts/upstream_python.rs",
   "crates/ripr/src/analysis/language/python.rs",
+  "crates/ripr/src/analysis/language/python/oracles/unittest_list.rs",
   "crates/ripr/src/analysis/language/python/static_limits.rs",
   "crates/ripr/src/domain/probe.rs",
   "crates/ripr/src/analysis/language/mod.rs",

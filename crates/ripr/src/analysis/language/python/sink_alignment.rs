@@ -302,6 +302,9 @@ fn oracle_observes_changed_list_element(
     changed_indices: &[usize],
     changed_values: &[String],
 ) -> bool {
+    if super::oracles::unittest_list::literal_text(oracle) {
+        return true;
+    }
     if oracle.contains("=={")
         || oracle.contains("== {")
         || oracle.contains("==[")
@@ -470,6 +473,7 @@ pub(super) fn classify_sink_alignment_with_old(
     let strong_tests: Vec<&RelatedTest> = related
         .iter()
         .filter(|test| test.oracle_strength.rank() >= OracleStrength::Strong.rank())
+        .filter(|test| super::oracles::unittest_list::observes_owner(test, owner, all_tests))
         .collect();
     if strong_tests.is_empty() {
         return SinkAlignment::unknown(changed_sink);
