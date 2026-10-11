@@ -10,15 +10,34 @@ traceability without reconstructing intent from chat history.
    `rust-toolchain.toml` pins the exact toolchain version and its
    `rustfmt` and `clippy` components; `rustup` picks it up automatically
    the first time you run a `cargo` command in this repo.
-2. Clone the repo and build the workspace:
+2. Clone the repo:
 
    ```bash
    git clone <repo-url>
    cd ripr-swarm
-   cargo build --workspace
    ```
 
-3. Run a cheap sanity check before paying for the full test suite:
+3. For workflow-policy or agent-skill edits, get focused feedback before
+   building the product:
+
+   ```bash
+   cargo policy check-workflows
+   cargo policy check-agent-skills
+   ```
+
+   Run the check that covers your edit, or `cargo policy preflight` for both.
+   These commands build the small, unpublished `repo-policy` package without
+   compiling `ripr` or its parser dependencies. The first run downloads and
+   compiles the helper's dependencies; subsequent unchanged runs reuse them.
+   Run from the repository root with the pinned Rust toolchain on `PATH`.
+   Failures point to reports under `target/ripr/reports/`.
+
+   This is focused policy feedback, not all docs checks, product compilation,
+   `precommit`, or required merge qualification. Other edits still need their
+   applicable checks, and hosted required CI remains authoritative for merge.
+
+4. For Rust product work, check the workspace before building executables or
+   running the full test suite:
 
    ```bash
    cargo check --workspace --all-targets
@@ -31,7 +50,7 @@ traceability without reconstructing intent from chat history.
    cargo test --workspace
    ```
 
-4. Try the binary against the in-repo sample:
+5. Try the binary against the in-repo sample:
 
    ```bash
    cargo run -p ripr -- check --diff crates/ripr/examples/sample/example.diff
