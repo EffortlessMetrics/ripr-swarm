@@ -47,7 +47,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       assert.ok(fixture && server, 'matrix needs staged roots and an exact server path');
       assert.ok(path.isAbsolute(server) && fs.statSync(server).isFile());
       rootA = {
-        root: path.join(fixture, 'root-a'), source: 'src/alpha.rs',
+        root: vscode.Uri.file(path.join(fixture, 'root-a')).fsPath, source: 'src/alpha.rs',
         sourceContents: 'pub fn alpha_discount(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n',
         testContents: 'use root_alpha::alpha_discount;\n\n#[test]\nfn alpha_below_boundary() {\n    assert_eq!(alpha_discount(50, 100), 50);\n}\n\n#[test]\nfn alpha_far_above_boundary() {\n    assert_eq!(alpha_discount(10_000, 100), 9_990);\n}\n',
         symbol: 'alpha_discount', changedExpression: 'amount >= threshold',
@@ -55,7 +55,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         testNames: ['alpha_below_boundary', 'alpha_far_above_boundary'],
       };
       rootB = {
-        root: path.join(fixture, 'root-b'), source: 'src/beta.rs',
+        root: vscode.Uri.file(path.join(fixture, 'root-b')).fsPath, source: 'src/beta.rs',
         sourceContents: 'pub fn beta_shipping(weight: i32, cutoff: i32) -> i32 {\n    if weight >= cutoff {\n        weight * 3\n    } else {\n        7\n    }\n}\n',
         testContents: 'use root_beta::beta_shipping;\n\n#[test]\nfn beta_light_parcel() {\n    assert_eq!(beta_shipping(5, 10), 7);\n}\n\n#[test]\nfn beta_heavy_parcel() {\n    assert_eq!(beta_shipping(100, 10), 300);\n}\n',
         symbol: 'beta_shipping', changedExpression: 'weight >= cutoff',
@@ -94,7 +94,7 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
 
       // Capture the real activation-scoped instance via an existing command;
       // the wrapper delegates the complete production implementation unchanged.
-      const extension = vscode.extensions.getExtension('EffortlessMetrics.ripr');
+      const extension = vscode.extensions.getExtension('effortlessmetrics.ripr');
       assert.ok(extension, 'real extension must be installed in this host');
       // Load from the extension actually under test, including an extracted
       // VSIX when the caller supplies RIPR_TEST_EXTENSION_PATH.
