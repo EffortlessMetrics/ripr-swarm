@@ -5,6 +5,51 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "ts_reexported_expect_cannot_credit_local_rejection_helper",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_rejects_reexport_shadow",
+      "vector": "reexport_relation_does_not_bind_runner_assertion",
+      "probe_family": "error_path",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
+      ]
+    },
+    {
+      "id": "ts_literal_rejection_equality_error_path",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_rejects_literal_equality",
+      "vector": "literal_rejection_equality_observes_rejected_reason",
+      "control": "must_stay_exposed",
+      "probe_family": "error_path",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
+        { "type": "expected_oracle", "kind": "exact_error_variant", "strength": "strong" }
+      ]
+    },
+    {
+      "id": "ts_literal_rejection_equality_not_return_value",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_rejects_literal_equality",
+      "vector": "rejected_reason_cannot_observe_resolved_return",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
+      ]
+    },
+    {
       "id": "rust_where_bound_has_no_runtime_exposure_credit",
       "language": "rust",
       "tier": "pure",

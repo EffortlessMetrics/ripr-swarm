@@ -1,0 +1,282 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/typescript_rejects_literal_equality/input",
+  "summary": {"changed_rust_files":0,"probes":2,"findings":2,"exposed":1,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"typescript","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:48d84ea994c8821b","base_revision":null,"input_identity":"sha256:0d649c812e58180c42824c287985f255535d9a65f8844567ccb6a4a32021b74d","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":4,"candidate_line_count":2,"probe_count":2,"finding_count":2},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_load.ts:typescript_preview:fd09bc48",
+      "classification": "exposed",
+      "severity": "info",
+      "confidence": 0.60,
+      "probe": {
+        "id": "probe:src_load.ts:typescript_preview:fd09bc48",
+        "family": "error_path",
+        "delta": "control",
+        "file": "src/load.ts",
+        "line": 3,
+        "expression": "    throw \"TOKEN_REQUIRED\";",
+        "owner": "typescript:src/load.ts::load"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `load`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"yes","confidence":"low","summary":"Strongest extracted oracle kind: `exact_error_variant` (rank 5)"},
+        "discriminate": {"state":"yes","confidence":"low","summary":"Related test uses a `exact_error_variant` oracle; static evidence suggests the changed behavior is discriminated."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `load`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation yes: Strongest extracted oracle kind: `exact_error_variant` (rank 5)", "discriminator yes: Related test uses a `exact_error_variant` oracle; static evidence suggests the changed behavior is discriminated.", "local flow reaches error variant: throw \"TOKEN_REQUIRED\"; (line 3)", "related test tests/load.test.ts:4 missing token rejects with the required literal uses strong exact error variant oracle: expect(...).rejects.toBe(...)"],
+      "flow_sinks": [
+        {"kind":"error_variant","text":"throw \"TOKEN_REQUIRED\";","line":3}
+      ],
+      "evidence": ["owner: load", "typescript_oracle_observed: load()", "typescript_oracle_expected: \"TOKEN_REQUIRED\"", "typescript_oracle_confidence: high", "typescript_oracle_evidence_ref: tests/load.test.ts:5", "gap_state: already_observed", "actionability_category: strong_oracle_observed", "why_not_actionable: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted", "repair_route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior", "evidence_needed_to_promote: none for a repair packet; retain strong related-test evidence as non-actionable context", "raw_evidence_ref: file=src/load.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_load.ts:typescript_preview:fd09bc48;owner=load", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_runner_hint: npm", "typescript_package_confidence: high", "typescript_verify_command: npx --no-install vitest run tests/load.test.ts"],
+      "missing": ["Related test reaches `load` with a `exact_error_variant` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.", "TypeScript preview actionability `already_observed` / `strong_oracle_observed`: related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted. Repair route: keep the finding advisory preview and verify the existing assertion still targets the changed behavior"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "missing token rejects with the required literal",
+          "file": "tests/load.test.ts",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_error_variant",
+          "oracle": "expect(...).rejects.toBe(...)",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "error_path changed at src/load.ts:3: `throw \"TOKEN_REQUIRED\";`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": null,
+        "oracle_kind": "exact_error_variant",
+        "oracle_strength": "strong",
+        "owner": "load",
+        "owner_kind": "function",
+        "probe_family": "error_path",
+        "related_test": {
+          "file": "tests/load.test.ts",
+          "line": 4,
+          "name": "missing token rejects with the required literal"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Exact error payload evidence is present; no repair packet is emitted without strict fields.",
+        "verify": {
+          "command": "npx --no-install vitest run tests/load.test.ts"
+        },
+        "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted"
+      },
+      "preview_actionability": {
+        "actionability_category": "strong_oracle_observed",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "none for a repair packet; retain strong related-test evidence as non-actionable context",
+        "gap_state": "already_observed",
+        "missing_actionability_fields": [],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/load.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 3,
+            "owner": "load",
+            "raw": "file=src/load.ts;line=3;kind=typescript_preview_probe;source_id=probe:src_load.ts:typescript_preview:fd09bc48;owner=load",
+            "sample": null,
+            "source_id": "probe:src_load.ts:typescript_preview:fd09bc48"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
+        "unlock_condition": null,
+        "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "exact_error_variant",
+      "oracle_strength": "strong",
+      "recommended_next_step": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
+      "suggested_next_action": "TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    },
+    {
+      "id": "probe:src_load.ts:typescript_preview:2209cfc8",
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_load.ts:typescript_preview:2209cfc8",
+        "family": "return_value",
+        "delta": "value",
+        "file": "src/load.ts",
+        "line": 5,
+        "expression": "  return \"ready\";",
+        "owner": "typescript:src/load.ts::load"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related test(s) found for owner `load`"},
+        "infect": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model infection."},
+        "propagate": {"state":"unknown","confidence":"low","summary":"TypeScript preview adapter does not yet model propagation."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted oracle kind: `unknown` (rank 0)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"TypeScript preview adapter found no strong discriminator; missing proof: `return value == \"ready\"`."}
+       },
+      "evidence_path": ["reach yes: 1 related test(s) found for owner `load`", "infection unknown: TypeScript preview adapter does not yet model infection.", "propagation unknown: TypeScript preview adapter does not yet model propagation.", "observation weak: Strongest extracted oracle kind: `unknown` (rank 0)", "discriminator weak: TypeScript preview adapter found no strong discriminator; missing proof: `return value == \"ready\"`.", "local flow reaches returned value: return \"ready\"; (line 5)", "related test tests/load.test.ts:4 missing token rejects with the required literal uses unknown unknown oracle", "missing discriminator return value == \"ready\": changed TypeScript returned-value at line 5 lacks a concrete preview discriminator"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"return \"ready\";","line":5}
+      ],
+      "evidence": ["owner: load", "missing_discriminator: return value == \"ready\"", "gap_state: advisory", "actionability_category: incomplete_repair_packet", "why_not_actionable: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract", "repair_route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available", "missing_actionability_fields: canonical_gap_id, repair_kind, target_test_shape, related_test_or_observer, receipt_command, must_not_change, allowed_edit_surface, raw_evidence_refs", "evidence_needed_to_promote: canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints", "raw_evidence_ref: file=src/load.ts;line=5;kind=typescript_preview_probe;source_id=probe:src_load.ts:typescript_preview:2209cfc8;owner=load", "typescript_assertion_selection: no_return_value_relevant_assertion (missing token rejects with the required literal)", "typescript_package_root: .", "typescript_workspace_root: .", "typescript_framework_hint: vitest", "typescript_test_runner: vitest", "typescript_runner_hint: npm", "typescript_package_confidence: high", "typescript_verify_command: npx --no-install vitest run tests/load.test.ts"],
+      "missing": ["Related test reaches `load` but the strongest extracted oracle is `unknown`; upgrade by adding an exact-value (`toBe` / `toEqual` / `toStrictEqual`) assertion or a `toThrow` form with an exact payload (string, object, or class reference).", "TypeScript preview actionability `advisory` / `incomplete_repair_packet`: TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract. Repair route: project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available"],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+          {
+            "value": "return value == \"ready\"",
+            "reason": "changed TypeScript returned-value at line 5 lacks a concrete preview discriminator",
+            "flow_sink": {"kind":"return_value","text":"return \"ready\";","line":5}
+          }
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+        {
+          "value": "return value == \"ready\"",
+          "reason": "changed TypeScript returned-value at line 5 lacks a concrete preview discriminator",
+          "flow_sink": {"kind":"return_value","text":"return \"ready\";","line":5}
+        }
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "missing token rejects with the required literal",
+          "file": "tests/load.test.ts",
+          "line": 4,
+          "oracle_strength": "unknown",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high"
+        }
+      ],
+      "typescript_preview_card": {
+        "authority_boundary": "preview_advisory_only",
+        "bun_cross_language_grip": null,
+        "card_version": "typescript_preview_card.v1",
+        "changed_behavior": "return_value changed at src/load.ts:5: `return \"ready\";`",
+        "language": "typescript",
+        "language_status": "preview",
+        "limits": [
+          "Syntax-first TypeScript/JavaScript preview evidence only.",
+          "No tsc, tsserver, package graph, Jest/Vitest runtime, mutation execution, generated tests, provider calls, source edits, gate authority, or badge authority.",
+          "This card is advisory and is not a repair packet."
+        ],
+        "missing_discriminator": "return value == \"ready\"",
+        "oracle_kind": "unknown",
+        "oracle_strength": "unknown",
+        "owner": "load",
+        "owner_kind": "function",
+        "probe_family": "return_value",
+        "related_test": {
+          "file": "tests/load.test.ts",
+          "line": 4,
+          "name": "missing token rejects with the required literal"
+        },
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "source": "check_typescript_preview",
+        "static_limits": [],
+        "suggested_assertion_shape": "Add an exact return-value assertion for the changed output.",
+        "verify": {
+          "command": "npx --no-install vitest run tests/load.test.ts"
+        },
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "preview_actionability": {
+        "actionability_category": "incomplete_repair_packet",
+        "authority_boundary": "preview_advisory_only",
+        "evidence_needed_to_promote": "canonical gap identity, repair kind, target test shape, related observer, verify command, receipt command, raw evidence refs, and edit constraints",
+        "gap_state": "advisory",
+        "missing_actionability_fields": [
+          "canonical_gap_id",
+          "repair_kind",
+          "target_test_shape",
+          "related_test_or_observer",
+          "receipt_command",
+          "must_not_change",
+          "allowed_edit_surface",
+          "raw_evidence_refs"
+        ],
+        "missing_graph_legs": [],
+        "raw_evidence_refs": [
+          {
+            "file": "src/load.ts",
+            "kind": "typescript_preview_probe",
+            "leg": null,
+            "line": 5,
+            "owner": "load",
+            "raw": "file=src/load.ts;line=5;kind=typescript_preview_probe;source_id=probe:src_load.ts:typescript_preview:2209cfc8;owner=load",
+            "sample": null,
+            "source_id": "probe:src_load.ts:typescript_preview:2209cfc8"
+          }
+        ],
+        "repair_packet_ready": false,
+        "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
+        "unlock_condition": null,
+        "why_not_actionable": "TypeScript preview has owner, related-test, oracle, and probe evidence but lacks a complete repair packet contract"
+      },
+      "stop_reasons": [],
+      "oracle_kind": "unknown",
+      "oracle_strength": "unknown",
+      "recommended_next_step": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == \"ready\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "suggested_next_action": "TypeScript preview advisory: add or strengthen a focused assertion for missing discriminator `return value == \"ready\"`; no actionable repair packet is emitted until verify, receipt, and edit-boundary fields are available.",
+      "language": "typescript",
+      "language_status": "preview",
+      "owner_kind": "function",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "typescript",
+      "file_count": 1,
+      "sample_paths": ["src/load.ts"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/load.ts","digest":"sha256:fec26909aed2002359a5105ae6e182d6b8a4d912415b1970622478477450555a"}]}
+}

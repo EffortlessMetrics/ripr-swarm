@@ -186,7 +186,7 @@ fn assertion_from_expression_any(
     context: &AssertionContext<'_>,
 ) -> Option<TypeScriptAssertion> {
     chai_expect_assertion_from_expression(expr, source, context.bindings)
-        .or_else(|| expect_assertion_from_expression(expr, source))
+        .or_else(|| expect_assertion_from_expression(expr, source, context.bindings))
         .or_else(|| {
             context
                 .receiver
@@ -298,6 +298,7 @@ pub(crate) fn collect_expect_assertions_from_statement_vec(
 pub(crate) fn expect_assertion_from_expression(
     expr: &Expression<'_>,
     source: &SourceText<'_>,
+    bindings: &TypeScriptAssertionBindings,
 ) -> Option<TypeScriptAssertion> {
     let expr = match expr {
         Expression::AwaitExpression(await_expr) => &await_expr.argument,
@@ -319,7 +320,7 @@ pub(crate) fn expect_assertion_from_expression(
 
     let mock_payload = mock_payload_from_assertion(matcher, expect_call, outer_call, source);
     let error_payload = error_payload_from_assertion(matcher, async_modifier, outer_call, source);
-    let (oracle_kind, oracle_strength) = if error_payload.is_some() {
+    let (mut oracle_kind, oracle_strength) = if error_payload.is_some() {
         (OracleKind::ExactErrorVariant, OracleStrength::Strong)
     } else {
         oracle_for_matcher(matcher)
@@ -338,6 +339,23 @@ pub(crate) fn expect_assertion_from_expression(
     let (expected_value_or_variant, has_dynamic_matcher_arg) =
         extract_matcher_expected_value(matcher, &error_payload, outer_call, source);
 
+    // A rejection equality observes the rejected reason, not the fulfilled
+    // value. Admit this new credit only for a concrete literal through a
+    // known, unshadowed runner binding; the existing binding filter supplies
+    // the scope proof. Implicit globals and dynamic arguments keep their
+    // current classification (#7315).
+    let rendered_call = if async_modifier == Some("rejects")
+        && oracle_kind == OracleKind::ExactValue
+        && outer_call.arguments.len() == 1
+        && expected_value_or_variant.is_some()
+        && bindings.runner_expects.iter().any(|name| name == "expect")
+    {
+        oracle_kind = OracleKind::ExactErrorVariant;
+        Some(format!("expect(...).rejects.{matcher}(...)"))
+    } else {
+        None
+    };
+
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, matcher);
 
@@ -353,7 +371,7 @@ pub(crate) fn expect_assertion_from_expression(
         expected_value_or_variant,
         has_dynamic_matcher_arg,
         oracle_confidence,
-        rendered_call: None,
+        rendered_call,
     })
 }
 
@@ -451,7 +469,8 @@ pub(crate) enum AssertFlavor {
 
 /// Module-level bindings through which a test file reaches an assertion
 /// library that is not a test-callback receiver (#4547): `node:assert` (and
-/// its `/strict` variant) and chai's `assert` / `expect`.
+/// its `/strict` variant), chai's `assert` / `expect`, and explicit runner
+/// `expect` imports for literal rejection equality (#7315).
 ///
 /// Only names the file IMPORTS from one of those modules are recorded — an
 /// ESM import or a top-level `require(...)` binding — so a locally declared
@@ -469,6 +488,9 @@ pub(crate) struct TypeScriptAssertionBindings {
     chai_expects: Vec<String>,
     /// Identifiers bound to the chai module (`chai.expect`, `chai.assert`).
     chai_modules: Vec<String>,
+    /// Explicit Jest/Vitest `expect` imports eligible for literal rejection
+    /// equality credit. Ordinary matcher admission remains unchanged.
+    runner_expects: Vec<String>,
 }
 
 impl TypeScriptAssertionBindings {
@@ -490,6 +512,28 @@ impl TypeScriptAssertionBindings {
             );
         }
         for stmt in statements {
+            // The relation inventory also records re-exports. Only actual
+            // local value imports can establish the new runner credit.
+            if let Statement::ImportDeclaration(import) = stmt {
+                if import.import_kind != ImportOrExportKind::Type
+                    && matches!(import.source.value.as_str(), "vitest" | "@jest/globals")
+                    && let Some(specifiers) = &import.specifiers
+                {
+                    for specifier in specifiers {
+                        if let ImportDeclarationSpecifier::ImportSpecifier(specifier) = specifier
+                            && specifier.import_kind != ImportOrExportKind::Type
+                            && super::owners::module_export_name_text(&specifier.imported)
+                                .as_deref()
+                                == Some("expect")
+                        {
+                            bindings
+                                .runner_expects
+                                .push(specifier.local.name.to_string());
+                        }
+                    }
+                }
+                continue;
+            }
             let Statement::VariableDeclaration(decl) = stmt else {
                 continue;
             };
@@ -580,6 +624,12 @@ impl TypeScriptAssertionBindings {
                 .filter(|local| !is_shadowed(local))
                 .cloned()
                 .collect(),
+            runner_expects: self
+                .runner_expects
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
         }
     }
 
@@ -594,6 +644,7 @@ impl TypeScriptAssertionBindings {
                 .any(|(local, _, _)| local == name)
             || self.chai_expects.iter().any(|local| local == name)
             || self.chai_modules.iter().any(|local| local == name)
+            || self.runner_expects.iter().any(|local| local == name)
     }
 
     fn is_empty(&self) -> bool {

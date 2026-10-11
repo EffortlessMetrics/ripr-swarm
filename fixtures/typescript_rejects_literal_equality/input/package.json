@@ -1,0 +1,11 @@
+{
+  "name": "ripr-rejects-literal-equality-fixture",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run --maxWorkers=1"
+  },
+  "devDependencies": {
+    "vitest": "4.1.11"
+  }
+}
