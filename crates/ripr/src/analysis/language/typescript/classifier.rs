@@ -3635,7 +3635,8 @@ pub(crate) fn classify_change_with_alias_state(
     let owner_body = reads_mock_payload
         .then(|| ts_owner_body_text(owner, workspace_root))
         .flatten();
-    let mock_facts = MockCallFacts::read(line_text, owner_body.as_deref(), &owner.params);
+    let mock_facts =
+        MockCallFacts::read(line_text, owner_body.as_deref(), &owner.name, &owner.params);
     let (strongest_strength, strongest_kind) = strongest_family_matching_oracle(
         &probe_shape.family,
         &related_candidates,

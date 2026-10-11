@@ -14,69 +14,106 @@ use super::*;
 /// The facts rule 1 reads from one changed line.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct MockCallFacts {
-    /// Names called on the changed line through an owner parameter (`send`
-    /// in `send(x)` for a parameter `send`, `write` in `db.write(x)` for a
-    /// parameter `db`) that the owner body calls exactly once. Keywords are
-    /// not calls. `toHaveBeenCalledWith` passes when ANY recorded call
-    /// matches, so a second call to the same name could still match after
-    /// the changed call is mutated; such a name is not kept. A call through
-    /// anything but a parameter may reach code other than the test's mock.
-    callees: Vec<String>,
+    owner_name: String,
+    /// Calls on the changed line made through an owner parameter that the
+    /// owner body mentions nowhere else.
+    calls: Vec<ParameterCall>,
+}
+
+/// A call `p(...)` or `p.m(...)` through the owner parameter `p` at
+/// `index`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ParameterCall {
+    parameter: String,
+    index: usize,
+    /// `None` for `p(...)`, `Some(m)` for `p.m(...)`.
+    method: Option<String>,
 }
 
 impl MockCallFacts {
     /// `owner_body` is the owner's source after the change; `None` (not
-    /// readable) keeps no callee, so rule 1 credits nothing.
-    pub(crate) fn read(line_text: &str, owner_body: Option<&str>, owner_params: &[String]) -> Self {
+    /// readable) keeps no call, so rule 1 credits nothing.
+    ///
+    /// `toHaveBeenCalledWith` passes when ANY recorded call matches, so the
+    /// changed call must be the only way the owner reaches the parameter:
+    /// the parameter appears exactly twice in the owner (its declaration and
+    /// this call). A second call, `p.call(...)`, an alias, passing `p` on, or
+    /// an inner parameter shadowing it all add a mention and refuse.
+    pub(crate) fn read(
+        line_text: &str,
+        owner_body: Option<&str>,
+        owner_name: &str,
+        owner_params: &[String],
+    ) -> Self {
         let Some(owner_body) = owner_body else {
             return Self::default();
         };
-        let owner_calls = calls_in(owner_body);
-        let callees = calls_in(line_text)
+        let calls = calls_in(line_text)
             .into_iter()
-            .filter(|call| {
-                owner_params.contains(&call.root)
-                    && !body_redeclares(owner_body, &call.root)
-                    && owner_calls
-                        .iter()
-                        .filter(|other| other.name == call.name)
-                        .count()
-                        == 1
+            .filter_map(|call| {
+                let method = match call.depth {
+                    0 if call.name == call.root => None,
+                    1 => Some(call.name),
+                    _ => return None,
+                };
+                let index = owner_params.iter().position(|param| *param == call.root)?;
+                (identifier_mentions(owner_body, &call.root) == 2).then_some(ParameterCall {
+                    parameter: call.root,
+                    index,
+                    method,
+                })
             })
-            .map(|call| call.name)
             .collect();
-        Self { callees }
+        Self {
+            owner_name: owner_name.to_string(),
+            calls,
+        }
     }
 
-    /// `true` when `payload` is an all-literal `toHaveBeenCalledWith` on a
-    /// mock made in `test_body`, the test never calls it itself, and the
-    /// changed line calls it.
+    /// `true` when `payload` is a primitive-literal `toHaveBeenCalledWith`
+    /// on a mock made in `test_body` under the parameter's own name, passed
+    /// to the owner's one call in the test at the parameter's position, and
+    /// mentioned nowhere else but `expect(...)`.
     pub(crate) fn credits(&self, payload: &TypeScriptMockPayload, test_body: &str) -> bool {
-        if payload.kind != TypeScriptMockPayloadKind::CalledWith {
-            return false;
-        }
-        let segments: Vec<&str> = payload.target.split('.').collect();
-        let Some(last) = segments.last() else {
-            return false;
-        };
-        if !self.callees.iter().any(|callee| callee == last)
-            || calls_in(test_body).iter().any(|call| call.name == *last)
+        // Jest's recursive equality treats a property set to `undefined` as
+        // absent, so an object payload does not pin every field.
+        if payload.kind != TypeScriptMockPayloadKind::CalledWith
+            || ts_mask_literals_and_comments(&payload.expected).contains('{')
         {
             return false;
         }
-        match segments.as_slice() {
-            [name] => test_local_mock_binding(test_body, name),
-            [object, property] => test_local_mock_property(test_body, object, property),
-            _ => false,
-        }
+        let segments: Vec<&str> = payload.target.split('.').collect();
+        let Some(call) = self
+            .calls
+            .iter()
+            .find(|call| match (segments.as_slice(), &call.method) {
+                ([name], None) => *name == call.parameter,
+                ([object, property], Some(method)) => {
+                    *object == call.parameter && property == method
+                }
+                _ => false,
+            })
+        else {
+            return false;
+        };
+        let local = call.parameter.as_str();
+        let made_in_test = match &call.method {
+            None => test_local_mock_binding(test_body, local),
+            Some(method) => test_local_mock_property(test_body, local, method),
+        };
+        made_in_test
+            && identifier_mentions_outside_expect(test_body, local) == 2
+            && owner_call_passes_at(test_body, &self.owner_name, local, call.index)
     }
 }
 
-/// One call outside literals and comments: the called name and the first
-/// identifier of its member chain (`notifier` for `notifier.send(`).
+/// One call outside literals and comments: the called name, the first
+/// identifier of its member chain (`notifier` for `notifier.send(`), and
+/// the number of member steps (`1` there, `0` for `send(`).
 struct Call {
     name: String,
     root: String,
+    depth: usize,
 }
 
 /// Every identifier followed by `(` or `?.(`, outside literals and comments.
@@ -85,6 +122,7 @@ fn calls_in(text: &str) -> Vec<Call> {
     let chars: Vec<char> = masked.chars().collect();
     let mut calls = Vec::new();
     let mut chain_root = String::new();
+    let mut depth = 0;
     let mut index = 0;
     while index < chars.len() {
         if !is_identifier_start(chars[index]) {
@@ -100,9 +138,11 @@ fn calls_in(text: &str) -> Vec<Call> {
         while before > 0 && chars[before - 1].is_whitespace() {
             before -= 1;
         }
-        let member = before > 0 && chars[before - 1] == '.';
-        if !member {
+        if before > 0 && chars[before - 1] == '.' {
+            depth += 1;
+        } else {
             chain_root.clone_from(&name);
+            depth = 0;
         }
         let mut next = index;
         while next < chars.len() && chars[next].is_whitespace() {
@@ -116,24 +156,83 @@ fn calls_in(text: &str) -> Vec<Call> {
             calls.push(Call {
                 name,
                 root: chain_root.clone(),
+                depth,
             });
         }
     }
     calls
 }
 
-/// `true` when the owner body declares `name` again, shadowing the
-/// parameter.
-fn body_redeclares(owner_body: &str, name: &str) -> bool {
-    let masked = ts_mask_literals_and_comments(owner_body);
-    ["const", "let", "var", "function"].iter().any(|keyword| {
-        masked.match_indices(keyword).any(|(at, _)| {
-            word_boundary_before(&masked, at)
-                && strip_required_space(&masked[at + keyword.len()..])
-                    .and_then(|rest| rest.strip_prefix(name))
-                    .is_some_and(|rest| !rest.starts_with(is_identifier_part))
+/// Byte offsets of `name` as a whole identifier that is not a member name
+/// (`x.name`), outside literals and comments.
+fn identifier_offsets(masked: &str, name: &str) -> Vec<usize> {
+    masked
+        .match_indices(name)
+        .filter(|(at, _)| {
+            word_boundary_before(masked, *at)
+                && !masked[at + name.len()..].starts_with(is_identifier_part)
+                && !masked[..*at].trim_end().ends_with('.')
         })
-    })
+        .map(|(at, _)| at)
+        .collect()
+}
+
+fn identifier_mentions(text: &str, name: &str) -> usize {
+    identifier_offsets(&ts_mask_literals_and_comments(text), name).len()
+}
+
+/// Mentions of `name` other than as the whole subject of `expect(name` /
+/// `expect(name.member`.
+fn identifier_mentions_outside_expect(text: &str, name: &str) -> usize {
+    let masked = ts_mask_literals_and_comments(text);
+    identifier_offsets(&masked, name)
+        .into_iter()
+        .filter(|at| {
+            let before = masked[..*at].trim_end();
+            !(before.ends_with('(') && before[..before.len() - 1].trim_end().ends_with("expect"))
+        })
+        .count()
+}
+
+/// `true` when exactly one call `owner(...)` in the test passes `local` as
+/// a whole argument, and it sits at `index`.
+fn owner_call_passes_at(test_body: &str, owner_name: &str, local: &str, index: usize) -> bool {
+    let masked = ts_mask_literals_and_comments(test_body);
+    let mut passing = masked.match_indices(owner_name).filter_map(|(at, _)| {
+        if !(word_boundary_before(&masked, at) || masked[..at].ends_with('.')) {
+            return None;
+        }
+        let rest = masked[at + owner_name.len()..].trim_start();
+        let arguments = top_level_arguments(rest.strip_prefix('(')?)?;
+        arguments
+            .iter()
+            .position(|argument| argument.trim() == local)
+    });
+    passing.next() == Some(index) && passing.next().is_none()
+}
+
+/// The comma-separated top-level arguments of a call whose `(` was just
+/// consumed; `None` when the list never closes.
+fn top_level_arguments(text: &str) -> Option<Vec<&str>> {
+    let mut depth = 0usize;
+    let mut start = 0;
+    let mut arguments = Vec::new();
+    for (index, c) in text.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' if depth == 0 => {
+                arguments.push(&text[start..index]);
+                return Some(arguments);
+            }
+            ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+            ',' if depth == 0 => {
+                arguments.push(&text[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The owner's source lines after the change, read from the workspace;

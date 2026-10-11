@@ -13919,11 +13919,12 @@ id = "RIPR-SPEC-0247"
 name = "TypeScript literal matcher strength"
 spec = "docs/specs/RIPR-SPEC-0247-typescript-literal-matcher-strength.md"
 tests = [
-  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_a_test_local_mock_called_once_is_credited",
-  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_without_proof_of_the_only_call_is_not_credited",
-  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_a_mock_not_made_in_the_test_is_not_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_the_parameters_own_mock_is_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_another_call_could_satisfy_is_not_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_another_target_is_not_credited",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::loose_equality_with_a_coercion_safe_literal_reads_exact",
   "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::inline_snapshot_with_literal_text_reads_strong",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::chai_loose_equal_reads_like_legacy_node_assert",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",

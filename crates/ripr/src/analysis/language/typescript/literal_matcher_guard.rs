@@ -57,7 +57,11 @@ fn expression_pins_loosely(expression: &Expression<'_>, deep: bool) -> bool {
                         && !property.method
                         && !property.shorthand
                         && property.kind == PropertyKind::Init
-                        && property.key.static_name().is_some()
+                        // `__proto__: {...}` sets the prototype, not a key.
+                        && property
+                            .key
+                            .static_name()
+                            .is_some_and(|key| key != "__proto__")
                         && expression_pins_loosely(&property.value, deep)
                 }
                 ObjectPropertyKind::SpreadProperty(_) => false,
@@ -75,24 +79,27 @@ fn expression_pins_loosely(expression: &Expression<'_>, deep: bool) -> bool {
 /// A string no value of another type equals under `==`: not empty, not
 /// whitespace, and not numeric (`"1" == true`, `"0" == false`, `"20" == 20`).
 fn string_pins_loosely(value: &str) -> bool {
-    let trimmed = value.trim();
+    // JavaScript's `ToNumber` also strips U+FEFF, which `str::trim` keeps.
+    let trimmed = value.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}');
     !trimmed.is_empty() && trimmed.parse::<f64>().is_err() && !is_js_numeric_prefix(trimmed)
 }
 
-/// JavaScript also reads `0x1f`, `0b1`, `0o7` and `Infinity` as numbers,
-/// which Rust's `f64` parser does not.
+/// JavaScript also reads `0x1f`, `0b1` and `0o7` as numbers, which Rust's
+/// `f64` parser does not (it already reads `Infinity` and `1e3`).
 fn is_js_numeric_prefix(trimmed: &str) -> bool {
     let unsigned = trimmed.trim_start_matches(['+', '-']);
     ["0x", "0X", "0b", "0B", "0o", "0O"]
         .iter()
         .any(|prefix| unsigned.starts_with(prefix))
-        || unsigned == "Infinity"
 }
 
 /// A number no value of another type equals under `==` except its own
 /// numeric string: `0` equals `false` and `""`, `1` equals `true`.
 fn number_pins_loosely(value: f64) -> bool {
-    value.is_finite() && value != 0.0 && value != 1.0
+    // Bit patterns, so `-0.0` reads as `0` and the comparison is exact.
+    value.is_finite()
+        && value.abs().to_bits() != 0.0_f64.to_bits()
+        && value.to_bits() != 1.0_f64.to_bits()
 }
 
 /// `true` when `matcher_call` is `toMatchInlineSnapshot` with exactly one
