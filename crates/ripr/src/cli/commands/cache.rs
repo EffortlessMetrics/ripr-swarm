@@ -3,6 +3,7 @@ use crate::analysis::seam_cache::{
     inspect_cache_root,
 };
 use crate::cli::suggest::unknown_argument;
+use crate::output;
 use serde_json::json;
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
@@ -140,14 +141,41 @@ fn resolve_status_base(cache_dir: &Path) -> (PathBuf, Option<PathBuf>) {
     }
 }
 
+/// Human `Cache dir:` header for `cache status` and `cache clear`. Routes
+/// through the shared CLI path renderer so a Windows drive-letter verbatim
+/// prefix is stripped the same way `ripr doctor` already shows this directory
+/// (#7326). JSON status keeps [`Path::display`].
+fn cache_dir_human_line(cache_dir: &Path) -> String {
+    cache_dir_human_line_for_host(cache_dir, cfg!(windows))
+}
+
+fn cache_dir_human_line_for_host(cache_dir: &Path, windows: bool) -> String {
+    format!(
+        "Cache dir: {}",
+        output::path::human_path_text(&cache_dir.to_string_lossy(), windows)
+    )
+}
+
 fn render_status(
     cache_dir: &Path,
     real_dir: Option<&Path>,
     status: &CacheStatus,
     is_json: bool,
 ) -> Result<String, String> {
-    let cache_dir_str = cache_dir.display().to_string();
+    render_status_for_host(cache_dir, real_dir, status, is_json, cfg!(windows))
+}
+
+fn render_status_for_host(
+    cache_dir: &Path,
+    real_dir: Option<&Path>,
+    status: &CacheStatus,
+    is_json: bool,
+    windows: bool,
+) -> Result<String, String> {
     if is_json {
+        // Machine identity keeps Path::display, including a Windows verbatim
+        // prefix; only the human Cache dir line uses human_path (#7326).
+        let cache_dir_str = cache_dir.display().to_string();
         serde_json::to_string_pretty(&json!({
             "schema_version": CACHE_STATUS_SCHEMA_VERSION,
             "cache_dir": cache_dir_str,
@@ -162,7 +190,7 @@ fn render_status(
         .map_err(|error| error.to_string())
     } else {
         let mut lines = vec![
-            format!("Cache dir: {cache_dir_str}"),
+            cache_dir_human_line_for_host(cache_dir, windows),
             format!("Status: {}", status.state),
             format!("Total size: {} bytes", status.total_size_bytes),
             format!("Entries: {}", status.entry_count),
@@ -520,7 +548,7 @@ fn run_clear(args: &[String]) -> Result<(), String> {
     let current_dir =
         std::env::current_dir().map_err(|error| format!("failed to get current dir: {error}"))?;
     let cache_dir = cache_dir_for_current_dir(&current_dir, std::env::var(CACHE_DIR_ENV))?;
-    println!("Cache dir: {}", cache_dir.display());
+    println!("{}", cache_dir_human_line(&cache_dir));
     println!("{}", clear_cache_dir(&cache_dir, options)?);
 
     Ok(())
@@ -643,6 +671,65 @@ mod tests {
         }
         if parse_clear_args(&["--forced".to_string()]).is_ok() {
             return Err("unknown cache clear argument was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7326: `cache status` / `cache clear` printed `Path::display()` of a
+    /// canonical Windows path, leaking the verbatim prefix that `ripr doctor`
+    /// already strips through `output::path::human_path`. JSON keeps the raw
+    /// spelling. `run_clear` prints the same `cache_dir_human_line` helper.
+    #[test]
+    fn render_status_human_cache_dir_strips_windows_verbatim_prefix() -> Result<(), String> {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shape is assembled from parts.
+        let drive = "F:";
+        let verbatim = format!(r"\\?\{drive}\code\myrepo\target\ripr\cache");
+        let cache_dir = Path::new(&verbatim);
+        let status = CacheStatus {
+            state: "ok",
+            total_size_bytes: 0,
+            entry_count: 0,
+            foreign_entry_count: 0,
+            foreign_total_size_bytes: 0,
+        };
+        let human = render_status_for_host(cache_dir, None, &status, false, true)?;
+        let expected = format!("Cache dir: {drive}/code/myrepo/target/ripr/cache");
+        let first = human.lines().next().unwrap_or("");
+        if first != expected {
+            return Err(format!(
+                "Windows human Cache dir leaked verbatim spelling: {human}"
+            ));
+        }
+        if first.contains(r"\\?\") {
+            return Err(format!(
+                "Windows human Cache dir still has verbatim prefix: {human}"
+            ));
+        }
+        let unix = render_status_for_host(cache_dir, None, &status, false, false)?;
+        let unix_first = unix.lines().next().unwrap_or("");
+        if unix_first != format!("Cache dir: {verbatim}") {
+            return Err(format!(
+                "Unix human Cache dir must keep verbatim text as a filename: {unix}"
+            ));
+        }
+        let json = render_status_for_host(cache_dir, None, &status, true, true)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        let machine = cache_dir.display().to_string();
+        if value.get("cache_dir").and_then(serde_json::Value::as_str) != Some(machine.as_str()) {
+            return Err(format!(
+                "JSON cache_dir must keep Path::display identity, got: {json}"
+            ));
+        }
+        let hosted = render_status(cache_dir, None, &status, false)?;
+        if hosted.lines().next() != Some(cache_dir_human_line(cache_dir).as_str()) {
+            return Err(format!(
+                "host render_status Cache dir must use human_path: {hosted}"
+            ));
+        }
+        if cache_dir_human_line_for_host(cache_dir, true) != expected {
+            return Err("cache clear header helper drifted from status renderer".to_string());
         }
         Ok(())
     }
