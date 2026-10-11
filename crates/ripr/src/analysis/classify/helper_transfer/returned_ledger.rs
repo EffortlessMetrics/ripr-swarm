@@ -309,6 +309,11 @@ fn synchronous_definitions(source: &str, facts: &[&FunctionSummary]) -> bool {
         if matches.next().is_some()
             || function.async_token().is_some()
             || function.attrs().next().is_some()
+            || function
+                .syntax()
+                .ancestors()
+                .filter_map(ast::Module::cast)
+                .any(|module| module.attrs().next().is_some())
         {
             return false;
         }
@@ -448,6 +453,11 @@ mod tests {
             format!("fn outer() {{ {} }} {}", owner.body, caller.body),
             format!("impl Collector {{ {} {} }}", owner.body, caller.body),
             format!("mod a {{ {} }} mod b {{ {} }}", owner.body, caller.body),
+            format!("#[rewrite] mod same {{ {} {} }}", owner.body, caller.body),
+            format!(
+                "#[cfg_attr(feature = \"rewrite\", rewrite)] mod outer {{ mod same {{ {} {} }} }}",
+                owner.body, caller.body
+            ),
             format!(
                 "#[cfg(any())] {} const record: fn(&mut Vec<PolicyError>) = |_| {{}}; {}",
                 owner.body, caller.body

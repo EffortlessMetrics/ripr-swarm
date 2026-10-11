@@ -129,7 +129,8 @@ can only hint that a caller "may lead here" without changing anything.
   declarations must bind uniquely to the indexed source, be synchronous and
   unattributed direct items in the same lexical source-file/module scope, with
   unique direct declaration names. Const/static/block-local declarations,
-  associated functions, conditional declarations and different module scopes
+  associated functions, attributed enclosing modules (which may rewrite their
+  declarations), conditional declarations and different module scopes
   refuse; SymbolId prefixes or a free-function fact alone are insufficient.
   fact body fragments alone omit qualifiers and cannot establish execution. Caller
   imports, callee-named signature/body bindings (including raw names and
