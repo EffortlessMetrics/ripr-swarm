@@ -300,7 +300,7 @@ fn refuse_agent_brief(options: &AgentBriefOptions, error: CoreError, json: bool)
 
 fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> {
     ensure_command_root(&options.root, "agent brief")
-        .map_err(|err| CoreError::repository_root_unusable(err))?;
+        .map_err(CoreError::repository_root_unusable)?;
     let (input, config) = load_root_input_and_config(&options.root)
         .map_err(|err| config_load_refusal(&options.root, err))?;
 

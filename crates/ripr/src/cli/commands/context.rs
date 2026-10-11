@@ -206,7 +206,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             artifact_path,
             asserted_base.as_deref(),
         )
-        .map_err(|err| refuse(err))?,
+        .map_err(&refuse)?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
             app::collect_context_with_config_and_worktree(
@@ -217,7 +217,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 worktree,
                 explicit.mode,
             )
-            .map_err(|err| refuse(err))?
+            .map_err(&refuse)?
         }
     };
     println!("{rendered}");

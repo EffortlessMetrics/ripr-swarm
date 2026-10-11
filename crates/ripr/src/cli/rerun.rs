@@ -403,8 +403,7 @@ fn run_refusing(options: RerunOptions) -> Result<(), String> {
         RerunSelector::Gap {
             canonical_gap_id,
             gap_ledger,
-        } => rerun_gap(&input.root, &config, &canonical_gap_id, &gap_ledger)
-            .map_err(|err| refuse(err))?,
+        } => rerun_gap(&input.root, &config, &canonical_gap_id, &gap_ledger).map_err(&refuse)?,
     };
     if options.check_parity {
         apply_full_pipeline_parity(&mut report, &input.root, &config)
