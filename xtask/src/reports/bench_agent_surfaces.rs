@@ -4212,6 +4212,142 @@ mod tests {
         Ok(())
     }
 
+    fn repo_identity_fixture(root: &Path) -> Result<Corpus, String> {
+        write_corpus_file(
+            root,
+            "Cargo.toml",
+            "[package]\nname = \"bench_repo_identity\"\nversion = \"0.0.0\"\n",
+        )?;
+        write_corpus_file(
+            root,
+            "src/lib.rs",
+            "pub fn fixture_value() -> u32 { 1729 }\n",
+        )?;
+        commit_corpus_base(root)?;
+        let root = canonical(root)?;
+        let root_text = root.display().to_string();
+        let base = trimmed_output(run_output("git", &["-C", &root_text, "rev-parse", "HEAD"])?);
+        write_corpus_file(
+            &root,
+            "src/lib.rs",
+            "pub fn fixture_value() -> u32 { 1730 }\n",
+        )?;
+        commit_corpus_after_state(&root)?;
+        assert_eq!(
+            trimmed_output(run_output(
+                "git",
+                &["-C", &root_text, "rev-list", "--count", "HEAD"]
+            )?),
+            "2",
+            "the fixture must have two real commits before testing identity"
+        );
+        assert_eq!(
+            trimmed_output(run_output(
+                "git",
+                &["-C", &root_text, "rev-parse", "HEAD~1"]
+            )?),
+            base,
+            "the fixture parent must resolve to its captured before-state"
+        );
+        assert_ne!(
+            trimmed_output(run_output("git", &["-C", &root_text, "rev-parse", "HEAD"])?),
+            base,
+            "the after-state must be a separate commit"
+        );
+        Ok(Corpus {
+            id: CorpusId::Repo,
+            root,
+            diff_path: None,
+            base: Some(base),
+            kind: "head_parent_fallback",
+            expects_findings: false,
+            tree_removed_after_run: false,
+        })
+    }
+
+    /// RIPR-SPEC-0221: the repo input pin covers the selected corpus's
+    /// resolved-base diff, while source_sha continues to identify the harness.
+    #[test]
+    fn repo_input_digest_uses_fixture_history_and_dirty_worktree() -> Result<(), String> {
+        let scratch =
+            std::env::temp_dir().join(format!("ripr-bench-repo-identity-{}", unix_stamp()));
+        let _cleanup = DirGuard::new(scratch.clone());
+        let mut repo = repo_identity_fixture(&scratch.join("repo corpus"))?;
+        let root_text = repo.root.display().to_string();
+        let base_sha = repo.base.clone().ok_or("fixture base missing")?;
+        let harness_sha = trimmed_output(run_output("git", &["rev-parse", "HEAD"])?);
+        let fixture_sha =
+            trimmed_output(run_output("git", &["-C", &root_text, "rev-parse", "HEAD"])?);
+        assert_ne!(
+            harness_sha, fixture_sha,
+            "the fixture must differ from the harness"
+        );
+        let binary = scratch.join("ripr-under-test.bin");
+        fs::write(&binary, b"binary bytes").map_err(|err| err.to_string())?;
+        let mut clean_digest = String::new();
+
+        for after in [1730, 1731] {
+            if after == 1731 {
+                write_corpus_file(
+                    &repo.root,
+                    "src/lib.rs",
+                    "pub fn fixture_value() -> u32 { 1731 }\n",
+                )?;
+            }
+            // Independent argv construction: do not let a wrong git_args
+            // root make the expected digest and the recorded digest agree.
+            let diff = run_output("git", &["-C", &root_text, "diff", &base_sha])?;
+            assert!(diff.contains("diff --git a/src/lib.rs b/src/lib.rs"));
+            assert!(diff.contains("-pub fn fixture_value() -> u32 { 1729 }"));
+            assert!(diff.contains(&format!("+pub fn fixture_value() -> u32 {{ {after} }}")));
+            let expected = crate::blind_journey::sha256_hex(diff.as_bytes());
+            if after == 1730 {
+                clean_digest = expected.clone();
+            } else {
+                assert_ne!(
+                    expected, clean_digest,
+                    "dirty fixture edits must move the input pin"
+                );
+            }
+            // HEAD~1 first gives a wrong-root implementation a resolvable
+            // ambient ref in a full clone: RED must be a digest mismatch,
+            // rather than a fixture setup or unknown-base failure.
+            for base in ["HEAD~1", base_sha.as_str()] {
+                repo.base = Some(base.to_string());
+                let overlay = identity_overlay(&binary, std::slice::from_ref(&repo))?;
+                assert_eq!(
+                    overlay["source_sha"], harness_sha,
+                    "source_sha identifies the harness"
+                );
+                let entry = overlay
+                    .pointer("/corpora/repo")
+                    .ok_or("corpora.repo missing")?;
+                assert_eq!(entry["base"], base);
+                assert_eq!(
+                    entry["input_digest"].as_str(),
+                    Some(expected.as_str()),
+                    "repo input digest must hash the fixture-local diff for {base}, after={after}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repo_input_digest_preserves_invalid_base_error() -> Result<(), String> {
+        let scratch = std::env::temp_dir().join(format!("ripr-bench-repo-error-{}", unix_stamp()));
+        let _cleanup = DirGuard::new(scratch.clone());
+        let mut repo = repo_identity_fixture(&scratch.join("repo corpus"))?;
+        repo.base = Some("refs/heads/missing-identity-base".to_string());
+        let binary = scratch.join("ripr-under-test.bin");
+        fs::write(&binary, b"binary bytes").map_err(|err| err.to_string())?;
+        let error = identity_overlay(&binary, &[repo])
+            .err()
+            .ok_or("invalid base must fail")?;
+        assert!(error.starts_with("repo diff for digest:"), "{error}");
+        Ok(())
+    }
+
     /// #5971: the identity overlay must record the corpus tree digest the
     /// spec promises (CORPORA C2 "both digests are recorded") — the diff
     /// digest cannot see the oracle-mix test files, and the DirGuard deletes
@@ -4298,15 +4434,10 @@ mod tests {
         );
 
         // A live-checkout corpus records the null digest with its note.
-        let repo = Corpus {
-            id: CorpusId::Repo,
-            root: tree.clone(),
-            diff_path: None,
-            base: Some("HEAD~1".to_string()),
-            kind: "head_parent_fallback",
-            expects_findings: false,
-            tree_removed_after_run: false,
-        };
+        // This case owns real history independently of the harness checkout;
+        // the synthetic .git above only exercises tree-digest exclusion.
+        let mut repo = repo_identity_fixture(&base.join("repo corpus"))?;
+        repo.base = Some("HEAD~1".to_string());
         let repo_overlay = identity_overlay(&binary, &[repo])?;
         let repo_entry = repo_overlay
             .pointer("/corpora/repo")
