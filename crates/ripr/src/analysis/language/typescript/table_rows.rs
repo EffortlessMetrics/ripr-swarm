@@ -364,6 +364,47 @@ fn reparse_row_assertions(
 mod tests {
     use super::*;
 
+    /// The row re-parse fails closed: a synthesized callback that does not
+    /// parse, or a callback at the start of a line (no room for the `(`
+    /// prefix), yields `None`, which leaves the whole table unresolved. A
+    /// well-formed callback yields its assertion on the original line.
+    #[test]
+    fn reparse_row_assertions_fails_closed() -> Result<(), String> {
+        let bindings = TypeScriptAssertionBindings::default();
+        let original = "test.each([[1, 2]])(\"t\", (a, b) => {\n  expect(f(a)).toBe(b);\n});\n";
+        let start = original
+            .find("(a, b)")
+            .ok_or_else(|| "fixture has no callback".to_string())?;
+        let parsed = reparse_row_assertions(
+            original,
+            start,
+            "(a, b) => {\n  expect(f(1)).toBe(2);\n}",
+            &bindings,
+        );
+        assert_eq!(parsed.as_ref().map(Vec::len), Some(1), "{parsed:?}");
+        assert_eq!(
+            parsed
+                .as_ref()
+                .and_then(|assertions| assertions.first())
+                .map(|assertion| assertion.line),
+            Some(2)
+        );
+        assert_eq!(
+            reparse_row_assertions(
+                original,
+                start,
+                "(a, b) => {\n  expect(f(1)).toBe(2;\n}",
+                &bindings
+            ),
+            None
+        );
+        assert_eq!(
+            reparse_row_assertions("(a) => {}", 0, "(a) => {}", &bindings),
+            None
+        );
+        Ok(())
+    }
+
     #[test]
     fn substitute_row_replaces_plain_reads_only() {
         let params = ["points".to_string(), "tier".to_string()];
