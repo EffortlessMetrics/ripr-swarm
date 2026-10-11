@@ -7,7 +7,7 @@ use crate::analysis::syntax::{fn_name_binding_count, parse_clean_source_file};
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode,
-    ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName},
+    ast::{self, HasArgList, HasGenericParams, HasName},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -277,6 +277,17 @@ fn synchronous_definitions(source: &str, facts: &[&FunctionSummary]) -> bool {
     let Some(parsed) = parse_clean_source_file(source) else {
         return false;
     };
+    // File-level lint/doc attributes are inert for declaration identity. Other
+    // inner attributes can exclude or transform this source scope; no cfg
+    // evaluation or macro expansion is claimed here.
+    if ast::attrs_including_inner(&parsed.tree()).any(|attr| {
+        !matches!(
+            attr.simple_name().as_deref(),
+            Some("allow" | "warn" | "deny" | "forbid" | "doc")
+        )
+    }) {
+        return false;
+    }
     let mut declaration_scope = None;
     facts.iter().all(|fact| {
         let mut matches = parsed
@@ -308,12 +319,12 @@ fn synchronous_definitions(source: &str, facts: &[&FunctionSummary]) -> bool {
         };
         if matches.next().is_some()
             || function.async_token().is_some()
-            || function.attrs().next().is_some()
+            || ast::attrs_including_inner(&function).next().is_some()
             || function
                 .syntax()
                 .ancestors()
                 .filter_map(ast::Module::cast)
-                .any(|module| module.attrs().next().is_some())
+                .any(|module| ast::attrs_including_inner(&module).next().is_some())
         {
             return false;
         }
@@ -441,6 +452,7 @@ mod tests {
         for source in [
             format!("{} {}", owner.body, caller.body),
             format!("mod same {{ {} {} }}", owner.body, caller.body),
+            format!("#![allow(dead_code)] {} {}", owner.body, caller.body),
         ] {
             assert!(synchronous_definitions(&source, &[&owner, &caller]));
         }
@@ -454,6 +466,21 @@ mod tests {
             format!("impl Collector {{ {} {} }}", owner.body, caller.body),
             format!("mod a {{ {} }} mod b {{ {} }}", owner.body, caller.body),
             format!("#[rewrite] mod same {{ {} {} }}", owner.body, caller.body),
+            format!(
+                "mod same {{ #![cfg(any())] {} {} }}",
+                owner.body, caller.body
+            ),
+            format!("#![cfg(any())] {} {}", owner.body, caller.body),
+            format!(
+                "{} {}",
+                owner.body.replacen("{", "{ #![cfg(any())]", 1),
+                caller.body
+            ),
+            format!(
+                "{} {}",
+                owner.body,
+                caller.body.replacen("{", "{ #![cfg(any())]", 1)
+            ),
             format!(
                 "#[cfg_attr(feature = \"rewrite\", rewrite)] mod outer {{ mod same {{ {} {} }} }}",
                 owner.body, caller.body

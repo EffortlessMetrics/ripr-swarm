@@ -131,7 +131,10 @@ can only hint that a caller "may lead here" without changing anything.
   unique direct declaration names. Const/static/block-local declarations,
   associated functions, attributed enclosing modules (which may rewrite their
   declarations), conditional declarations and different module scopes
-  refuse; SymbolId prefixes or a free-function fact alone are insufficient.
+  refuse. Attribute checks reuse `attrs_including_inner`, covering function
+  bodies and module item lists as well as outer attributes. Source-file inner
+  attributes also refuse, except inert lint/doc attributes; no cfg evaluator or
+  expansion is introduced. SymbolId prefixes or a free-function fact alone are insufficient.
   Fact body fragments alone omit qualifiers and cannot establish execution. Caller
   imports, callee-named signature/body bindings (including raw names and
   destructuring patterns), value/item declarations, and opaque item/statement macro
