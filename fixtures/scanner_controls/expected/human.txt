@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:classify_bound:predicate_boundary:predicate:final_state==lit74657874
   Changed behavior: if final_state == "text" {
   Missing discriminator (1 of 2): Changed boundary input is unresolved: boundary operand `final_state` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the…
-  Related test (1 of 2): tests/classify.rs:12 bound_long_trailing_space_is_blank
+  Related test (1 of 2 matched rows): tests/classify.rs:12 bound_long_trailing_space_is_blank
   Next step: Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
     - reach yes: Related tests appear to reach classify_bound: bound_long_trailing_space_is_blank, bound_long_word_is_word

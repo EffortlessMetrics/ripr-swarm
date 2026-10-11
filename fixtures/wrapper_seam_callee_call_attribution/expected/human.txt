@@ -15,7 +15,7 @@ Start here:
   Why weak: no test is seen calling this change
   Changed behavior: try_parse_summary(raw).map_err(|error| error.to_string().into())
   Missing discriminator: Typed static limitation (wrapper_error_binding_unresolved): the wrapper error conversion's variant binding is not statically established
-  Related test (1 of 2): tests/attribution.rs:4 observes_callee_outcome (ripr could not confirm that this assertion observes the changed behavior)
+  Related test (1 of 2 matched rows): tests/attribution.rs:4 observes_callee_outcome (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Typed static limitation (wrapper_error_binding_unresolved): ripr cannot statically
     establish that this boxed wrapper conversion carries the callee's error variant, so an existing
     exact downcast witness is not statically creditable. Verify via real mutation testing or deeper

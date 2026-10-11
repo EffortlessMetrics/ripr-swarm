@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:deposit_cap:error_variant:error_path:err<i64_payerror>payerror_limit
   Changed behavior: return Err::<i64, PayError>(PayError::Limit);
   Missing discriminator: No exact error variant discriminator was detected
-  Related test (1 of 2): src/lib.rs:31 a_small_deposit_is_accepted (ripr could not confirm that this assertion observes the changed behavior)
+  Related test (1 of 2 matched rows): src/lib.rs:31 a_small_deposit_is_accepted (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Assert the exact error variant or payload instead of only is_err().
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach deposit_cap: a_small_deposit_is_accepted, a_large_refund_hits_the_limit

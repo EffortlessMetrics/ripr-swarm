@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #1185 — Human output is opaque when every finding is no-path/unknown
+- #6807 — per-finding digest `Related test (1 of N)` counted matched rows as tests
 
 Linked PRs:
 
@@ -117,6 +118,11 @@ linked related test(s) across R matched related-test row(s)", where R is the
 packed row count for a single finding and "at least" the larger of the packed
 row count and T across several findings, so the note never presents a row
 count as a test count.
+
+The per-finding digest line uses the same unit: `Related test (1 of N matched
+rows)` (#6807). `N` is `related_tests_total()` (matched rows before packing).
+A distinct-test count of packed-away rows is not on the finding and is not
+invented from the packed window. JSON is unchanged.
 
 If `summary.changed_rust_files` is zero, the scope sentence omits the changed
 Rust file count rather than fabricating a file count:
@@ -222,6 +228,7 @@ fails the analysis rather than yielding a partial count.
 - `crates/ripr/src/output/human.rs::tests::render_all_no_path_disclosure_uses_finding_count_not_probe_count`
 - `crates/ripr/src/output/human.rs::tests::render_all_no_path_disclosure_uses_conservative_static_language`
 - `crates/ripr/src/output/human.rs::tests::render_all_no_path_disclosure_counts_linked_related_tests`
+- `crates/ripr/src/output/human.rs::tests::digest_related_test_line_names_matched_rows_not_tests`
 - `fixtures/all_no_path_disclosure` (golden fixture)
 
 ## Implementation Mapping
@@ -229,6 +236,8 @@ fails the analysis rather than yielding a partial count.
 - `crates/ripr/src/output/human.rs` — new function
   `render_all_no_path_disclosure(out, output)`, called in `render_with_config`
   after the findings loop and before `render_preview_language_advisories`.
+- `crates/ripr/src/output/human/sections.rs` — digest related-test line names
+  matched rows (`Related test (1 of N matched rows)`, #6807).
 
 ## CI Proof
 

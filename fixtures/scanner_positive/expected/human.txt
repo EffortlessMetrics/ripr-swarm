@@ -14,7 +14,7 @@ Start here:
   Static exposure: exposed (info, confidence 1.00)
   Canonical gap: gap:rust:src/lib.rs:classify:predicate_boundary:predicate:final_state==lit74657874
   Changed behavior: if final_state == "text" {
-  Related test (1 of 2): tests/classify.rs:4 plain_word_is_word
+  Related test (1 of 2 matched rows): tests/classify.rs:4 plain_word_is_word
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
     - reach yes: Related tests appear to reach classify: plain_word_is_word, trailing_space_is_blank
     - infection yes: Detected related test input at the changed boundary

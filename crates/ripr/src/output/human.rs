@@ -617,12 +617,12 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
         })
         .collect::<BTreeSet<_>>()
         .len();
-    // Each finding's "Related test (1 of N)" line counts matched related-test
-    // rows before bounded packing (#5146), and one test can contribute many
-    // rows. When packing hid rows, the retained distinct tests are a floor
-    // and the row total is reported as rows, not as tests. Across findings
-    // the packed-away rows cannot be deduplicated, so the largest
-    // per-finding total is itself a floor.
+    // Each finding's "Related test (1 of N matched rows)" line counts matched
+    // related-test rows before bounded packing (#5146, #6807), and one test
+    // can contribute many rows. When packing hid rows, the retained distinct
+    // tests are a floor and the row total is reported as rows, not as tests.
+    // Across findings the packed-away rows cannot be deduplicated, so the
+    // largest per-finding total is itself a floor.
     let packed_related_tests = output
         .findings
         .iter()
@@ -4095,7 +4095,9 @@ mod tests {
         );
 
         assert!(
-            digest.contains("  Related test (1 of 2): tests/sample.rs:22 test_handles_disabled\n"),
+            digest.contains(
+                "  Related test (1 of 2 matched rows): tests/sample.rs:22 test_handles_disabled\n",
+            ),
             "expected the digest related-test total; got:\n{digest}"
         );
 
@@ -4110,6 +4112,43 @@ mod tests {
             "a single related test keeps the unmarked form; got:\n{digest}"
         );
         assert!(!digest.contains("Related test (1 of"), "{digest}");
+    }
+
+    /// #6807: `related_tests_total()` is matched related-test rows (one
+    /// assertion, plus examined-miss rows), not distinct tests. A packed
+    /// finding with 81 rows and 8 listed tests must not read as 81 tests.
+    #[test]
+    fn digest_related_test_line_names_matched_rows_not_tests() {
+        let mut finding = sample_finding();
+        finding.related_tests = (0..8)
+            .map(|index| RelatedTest {
+                name: format!("test_{index}"),
+                file: PathBuf::from("tests/sample.rs"),
+                line: 10 + index,
+                oracle: Some("assert_eq!(actual, expected)".to_string()),
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+            })
+            .collect();
+        finding.related_tests_matched_total = Some(81);
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+
+        assert!(
+            digest.contains("  Related test (1 of 81 matched rows): tests/sample.rs:10 test_0\n"),
+            "the digest must name matched rows, not tests; got:\n{digest}"
+        );
+        assert!(
+            !digest.contains("Related test (1 of 81):"),
+            "bare '1 of 81' still reads as 81 tests; got:\n{digest}"
+        );
     }
 
     /// #4320: the digest missing-discriminator line discloses its window into
@@ -5939,9 +5978,10 @@ mod tests {
 
     #[test]
     fn all_no_path_disclosure_counts_related_tests_before_packing() {
-        // The finding line reads "Related test (1 of 81)" from the matched
-        // row total; the scope note must neither report only the 8 retained
-        // rows nor call 81 related-test rows 81 tests (one test can own many).
+        // The finding line reads "Related test (1 of 81 matched rows)" from
+        // the matched row total; the scope note must neither report only the
+        // 8 retained rows nor call 81 related-test rows 81 tests (one test
+        // can own many).
         let related = |line: usize| RelatedTest {
             name: format!("test_{line}"),
             file: PathBuf::from("tests/sample.rs"),

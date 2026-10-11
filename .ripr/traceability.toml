@@ -6910,6 +6910,7 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::render_all_no_path_disclosure_uses_finding_count_not_probe_count",
   "crates/ripr/src/output/human.rs::tests::render_all_no_path_disclosure_uses_conservative_static_language",
   "crates/ripr/src/output/human.rs::tests::render_all_no_path_disclosure_counts_linked_related_tests",
+  "crates/ripr/src/output/human.rs::tests::digest_related_test_line_names_matched_rows_not_tests",
   "crates/ripr/src/output/human.rs::tests::no_path_note_names_python_tests_when_present",
   "crates/ripr/src/output/human.rs::tests::no_path_note_omits_python_sentence_without_the_discriminating_facts",
   "crates/ripr/src/analysis/workspace/discover.rs::tests::discover_python_test_files_counts_and_skips_ignored_dirs",
@@ -6923,6 +6924,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/output/human.rs",
+  "crates/ripr/src/output/human/sections.rs",
   "crates/ripr/src/analysis/workspace/discover.rs",
   "crates/ripr/src/app/check.rs"
 ]
