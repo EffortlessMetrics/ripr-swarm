@@ -236,10 +236,17 @@ pub(crate) fn evidence_tree_currentness(
     Ok(evidence_tree_currentness_batch(root, &[entry])?.remove(0))
 }
 
-/// Upper bound on pathspecs per `git status` child: Windows command lines end
-/// near 32k characters, so a binding set with thousands of evidence paths
-/// chunks into several children instead of failing the spawn.
+/// Upper bound on pathspecs per `git status` child: a binding set with
+/// thousands of evidence paths chunks into several children instead of
+/// growing one argv without bound.
 const CURRENTNESS_PROBE_PATHS_PER_CHILD: usize = 180;
+
+/// Command-line budget per `git status` child, in UTF-16 units of pathspec
+/// text: the count bound alone does not bound argv length, and Windows
+/// command lines end near 32k units once the executable, flags and quoting
+/// join the line. A single path longer than the whole budget still goes
+/// through alone (git fails it on its own merits; it cannot be split).
+const CURRENTNESS_PROBE_PATH_BUDGET_UTF16_UNITS: usize = 24_000;
 
 /// #7292 test seam: children spawned by the batched currentness probe.
 #[cfg(test)]
@@ -269,34 +276,63 @@ pub(crate) fn evidence_tree_currentness_batch(
         .collect();
     // The union of every entry's evidence paths, deduplicated: one status
     // child answers for all of them, and each entry reads only its own
-    // paths back out of the record set.
+    // paths back out of the record set. The pathspec keeps each path's own
+    // spelling — a literal backslash in a filename is real data, not a
+    // separator — and normalization happens only for record comparison.
     let mut union: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for paths in &probe_paths {
         for path in paths {
-            let spelling = path.to_string_lossy().replace('\\', "/");
-            if !union.contains(&spelling) {
-                union.push(spelling);
+            if seen.insert(path.to_string_lossy().into_owned()) {
+                union.push(path.to_string_lossy().into_owned());
             }
         }
     }
     let mut dirty: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for chunk in union.chunks(CURRENTNESS_PROBE_PATHS_PER_CHILD) {
-        probe_paths_dirty(root, chunk, &mut dirty)?;
+    for chunk in currentness_probe_chunks(&union) {
+        probe_paths_dirty(root, &chunk, &mut dirty)?;
     }
+    let scope_is_dirty = |paths: &[std::path::PathBuf]| {
+        paths.iter().any(|path| {
+            let spelling = path.to_string_lossy().replace('\\', "/");
+            dirty.contains(&spelling)
+        })
+    };
     Ok(probe_paths
         .into_iter()
         .map(|paths| {
-            let scope_dirty = paths.iter().any(|path| {
-                let spelling = path.to_string_lossy().replace('\\', "/");
-                dirty.contains(&spelling)
-            });
-            if scope_dirty {
+            if scope_is_dirty(&paths) {
                 RepairCardSnapshotCurrentness::AcceptedDirtyDraft
             } else {
                 RepairCardSnapshotCurrentness::Current
             }
         })
         .collect())
+}
+
+/// Split the union pathspec list into per-child argument lists bounded by
+/// both count and command-line length: Windows child command lines end near
+/// 32k UTF-16 units, so a fixed path count is not enough when evidence
+/// paths are long.
+fn currentness_probe_chunks(union: &[String]) -> Vec<Vec<String>> {
+    let mut chunks = Vec::new();
+    let mut chunk: Vec<String> = Vec::new();
+    let mut units = 0usize;
+    for path in union {
+        let path_units = path.encode_utf16().count() + 1;
+        let over_count = chunk.len() >= CURRENTNESS_PROBE_PATHS_PER_CHILD;
+        let over_length = units + path_units > CURRENTNESS_PROBE_PATH_BUDGET_UTF16_UNITS;
+        if !chunk.is_empty() && (over_count || over_length) {
+            chunks.push(std::mem::take(&mut chunk));
+            units = 0;
+        }
+        units += path_units;
+        chunk.push(path.clone());
+    }
+    if !chunk.is_empty() {
+        chunks.push(chunk);
+    }
+    chunks
 }
 
 /// Run one `git status --porcelain -z --ignored` over `paths` and record
@@ -324,6 +360,15 @@ fn probe_paths_dirty(
     CURRENTNESS_PROBE_CHILDREN.fetch_add(1, std::sync::atomic::Ordering::Release);
     let output = git_output(root, &arg_refs)
         .map_err(|error| format!("agent card could not probe the working-tree state: {error}"))?;
+    // A truncated -z stream would silently lose the tail records and read
+    // dirty scopes clean, so a nonempty body that does not end on the record
+    // terminator fails closed instead.
+    if !output.is_empty() && !output.ends_with('\0') {
+        return Err(
+            "agent card could not probe the working-tree state: git status output was truncated"
+                .to_string(),
+        );
+    }
     let mut records = output
         .split('\0')
         .filter(|record| !record.is_empty())
@@ -339,7 +384,7 @@ fn probe_paths_dirty(
         let status = &record[..2];
         let path = &record[3..];
         dirty.insert(path.replace('\\', "/"));
-        let rename_original = (status.starts_with('R') || status.starts_with('C'))
+        let rename_original = (status.contains('R') || status.contains('C'))
             // The rename's other path arrives as the next NUL field; a
             // real record always begins with its two status columns and
             // a space, which a bare path cannot be assumed to.
@@ -2255,6 +2300,12 @@ mod tests {
         let git = |args: &[&str]| -> Result<(), String> {
             let output = std::process::Command::new("git")
                 .current_dir(&root)
+                // A hook or caller carrying GIT_DIR/GIT_WORK_TREE would
+                // redirect the fixture setup at that repository instead of
+                // the temp fixture, so the routing family is stripped.
+                .env_remove("GIT_DIR")
+                .env_remove("GIT_WORK_TREE")
+                .env_remove("GIT_INDEX_FILE")
                 .args(args)
                 .output()
                 .map_err(|error| format!("git {args:?} failed to run: {error}"))?;
@@ -2393,10 +2444,9 @@ mod tests {
                 .map_err(|error| format!("gitignore: {error}"))?;
             std::fs::write(root.join("src/untracked.rs"), "pub fn c() {}\n")
                 .map_err(|error| format!("write: {error}"))?;
-            // The ignore rule and the untracked draft must be committed or
-            // left as worktree state on purpose: the ignored file is
-            // committed as tracked content here is wrong — keep it untracked
-            // and ignored; the untracked draft stays untracked and reported.
+            // Fixture roles: `src/ignored.rs` stays untracked and ignored
+            // (the probe uses --ignored, so its scope reads dirty), and
+            // `src/untracked.rs` stays untracked and reported.
             let entries = [
                 entry_for_file("src/tracked.rs"),
                 entry_for_file("src/untracked.rs"),

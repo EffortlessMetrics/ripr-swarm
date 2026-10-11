@@ -133,24 +133,37 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     // wall time stops extending every live-repository refresh. The same
     // probe runs with the same inputs; a failed worker reads as the
     // resolver's own absent outcome (best-effort naming, per contract).
+    // The worker carries this attempt's cancellation token, and the
+    // analysis result is evaluated only after the join, so a worker panic
+    // cannot ride the scope destructor through an early error return.
     let probe_base = loaded.effective_base.clone();
+    let probe_token = cancellation::current_token();
     std::thread::scope(|scope| {
         let probes = probe_base.as_deref().map(|base| {
-            scope.spawn(|| {
-                diff::resolve_analyzed_revisions(&options.root, base, false, options.git_timeout)
+            scope.spawn(move || {
+                cancellation::with_optional_token(probe_token.as_ref(), || {
+                    diff::resolve_analyzed_revisions(
+                        &options.root,
+                        base,
+                        false,
+                        options.git_timeout,
+                    )
+                })
             })
         });
-        let mut result = committed_source::with_overlay(overlay.clone(), || {
+        let result = committed_source::with_overlay(overlay.clone(), || {
             run_pipeline_for_diff_text(options, oracle_policy, languages, rust_config, &loaded.text)
-        })?;
+        });
+        let analyzed_revisions = match probes {
+            Some(handle) => handle.join().ok(),
+            None => None,
+        };
+        let mut result = result?;
         if let Some(overlay) = overlay {
             result.uncommitted_source_paths = overlay.dirty_source_paths();
             result.untracked_source_paths = overlay.untracked_source_paths();
         }
-        result.analyzed_revisions = match probes {
-            Some(handle) => handle.join().ok(),
-            None => None,
-        };
+        result.analyzed_revisions = analyzed_revisions;
         bind_effective_base(&mut result, loaded.effective_base)?;
         Ok(result)
     })
@@ -245,23 +258,28 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     // probes are a handful of short git processes, so serializing them
     // after the analysis added their full wall time to every refresh. The
     // same probes run with the same inputs and failure semantics; only
-    // their placement moves. The worker is bounded by the same git
-    // deadlines, so an error path waits no longer than the serial form
-    // did.
+    // their placement moves. The worker carries this attempt's cancellation
+    // token so a superseded refresh cancels its git children instead of
+    // waiting out their deadline, and the analysis result is evaluated only
+    // after the join, so a worker panic cannot ride the scope destructor
+    // through an early error return.
     let probe_base = loaded.effective_base.clone();
+    let probe_token = cancellation::current_token();
     std::thread::scope(|scope| {
-        let probes = scope.spawn(|| {
-            #[cfg(test)]
-            PROBE_OVERLAP_WORKER_STARTED.store(true, std::sync::atomic::Ordering::Release);
-            // RIPR-SPEC-0116: the working-tree diff covers tracked files
-            // only; name the untracked routed files it cannot contain so
-            // the output can say so.
-            let untracked =
-                committed_source::untracked_routed_paths(&options.root, options.git_timeout);
-            let analyzed = probe_base.as_deref().map(|base| {
-                diff::resolve_analyzed_revisions(&options.root, base, true, options.git_timeout)
-            });
-            (untracked, analyzed)
+        let probes = scope.spawn(move || {
+            cancellation::with_optional_token(probe_token.as_ref(), || {
+                #[cfg(test)]
+                PROBE_OVERLAP_WORKER_STARTED.store(true, std::sync::atomic::Ordering::Release);
+                // RIPR-SPEC-0116: the working-tree diff covers tracked files
+                // only; name the untracked routed files it cannot contain so
+                // the output can say so.
+                let untracked =
+                    committed_source::untracked_routed_paths(&options.root, options.git_timeout);
+                let analyzed = probe_base.as_deref().map(|base| {
+                    diff::resolve_analyzed_revisions(&options.root, base, true, options.git_timeout)
+                });
+                (untracked, analyzed)
+            })
         });
         #[cfg(test)]
         wait_for_probe_worker_for_test();
@@ -5590,6 +5608,12 @@ index 0000000..1111111 100644
     fn fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
         let output = std::process::Command::new("git")
             .current_dir(root)
+            // A hook or caller carrying GIT_DIR/GIT_WORK_TREE would redirect
+            // the fixture setup at that repository instead of the temp
+            // fixture, so the routing family is stripped.
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
             .args(args)
             .output()
             .map_err(|err| format!("run git {args:?}: {err}"))?;
