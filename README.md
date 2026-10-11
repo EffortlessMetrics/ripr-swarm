@@ -145,8 +145,10 @@ ripr pilot --root .
 
 `check` reports gaps in the current change and prints the `ripr explain` and
 `ripr context` commands for the top finding; add `--format json` for
-machine-readable results, which omit those commands. `pilot` names one supported
-repair or explains why none is ready. Run the follow-up commands ripr prints
+machine-readable results that embed the same bounded `canonical_next_action`
+(class, selected item, root, diff source, and followable route). `pilot`
+names one supported repair or explains why none is ready. Run the follow-up
+commands ripr prints
 (`ripr explain`, `ripr context`, `ripr agent repair ...`) exactly as printed:
 their IDs belong to that run and cannot be copied from documentation.
 `agent repair --seam-id` takes the seam ID that `pilot` prints; the `probe:...`

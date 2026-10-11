@@ -81,6 +81,20 @@ pub(crate) fn selected_triage_finding<'a>(
     triage::select_human_triage(output, config).selected
 }
 
+/// Project the check producer's canonical next action for a navigation-aware
+/// render. `None` when the producer cannot bind a subject; JSON callers omit
+/// the member rather than inventing a committed-source default or executable
+/// route (#7258).
+pub(crate) fn canonical_next_action_for_check(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> Option<crate::domain::CanonicalNextActionV1> {
+    let triage = triage::select_human_triage(output, config);
+    triage::canonical_next_action_for_triage(&triage, output, drill_in, provenance).ok()
+}
+
 pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
     let drill_in = FindingDrillIn::Commands(FindingNavigation::legacy());
     // Library callers declare no provenance; the adapter falls back to the
@@ -915,7 +929,8 @@ mod tests {
         Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId,
         LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, OracleKind,
         OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
-        SourceLocation, StageEvidence, StageState, Summary, SymbolId, ValueContext, ValueFact,
+        SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId, ValueContext,
+        ValueFact,
     };
     use std::path::{Path, PathBuf};
 
@@ -4564,6 +4579,47 @@ mod tests {
             ),
             "{output}"
         );
+    }
+
+    fn uniqueness_unknown_finding() -> Finding {
+        let mut finding = unknown_finding();
+        finding.class = ExposureClass::StaticUnknown;
+        finding.ripr.reach = StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "ripr cannot tell which `parse` a test calls because that name is not unique in the workspace",
+        );
+        finding.stop_reasons = vec![StopReason::HelperIdentityUnresolved];
+        finding.missing = vec![
+            "helper chain abstains: `parse` is not a unique function in the workspace".to_string(),
+        ];
+        finding
+    }
+
+    #[test]
+    fn uniqueness_unknown_human_names_identity_not_probe_shape() {
+        let finding = uniqueness_unknown_finding();
+        let output = render_finding(&finding);
+        assert!(output.contains("reach unknown:"), "{output}");
+        assert!(!output.contains("reach no:"), "{output}");
+        assert!(!output.contains("No static test path"), "{output}");
+        assert!(output.contains("helper_identity_unresolved"), "{output}");
+        assert!(
+            output.contains("which workspace function") && output.contains("not unique"),
+            "{output}"
+        );
+        assert!(
+            !output.contains("no probe shape") && !output.contains("probe shape"),
+            "{output}"
+        );
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(digest.contains("Evidence: reach unknown"), "{digest}");
+        assert!(!digest.contains("Evidence: reach no"), "{digest}");
     }
 
     /// #4323 review: guidance just under the budget must count the label, so

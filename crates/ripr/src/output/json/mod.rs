@@ -10,6 +10,8 @@ pub(crate) use context_packet::render_context_packet_with_explain_command;
 // parity oracle for the LSP packet tests.
 #[cfg(test)]
 pub(crate) use context_packet::render_context_packet_dto;
+#[cfg(test)]
+pub(crate) use report::FindingsBudgetSource;
 pub use report::render;
 pub(crate) use report::{
     CHECK_FINDINGS_BYTES_ENV, FINDINGS_BOUND_RUN_STATUS, check_findings_byte_budget,

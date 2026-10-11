@@ -476,6 +476,14 @@ interprets it through the receipt owner (`output::agent_receipt`):
   be reconstructed, and the warning names the new-attempt command for the seam
   in case its gap is still open.
 
+Repair inventories and Git currentness probes ignore the user's
+`diff.orderFile`: a dangling orderfile must not abort the before phase or the
+after phase, including when the focused test edit was committed between phases.
+A live orderfile leaves the same static result. Dirty production input still
+refuses with its path and commit/restore recovery, without publishing an attempt.
+Successful static repair evidence stays advisory and records that verification
+was not run (#6837).
+
 An after phase that refuses after selecting its attempt records the refusal on
 the attempt (`last_after_refusal`, owned by `app::repair_attempt`): the final
 error followed by the cause and recovery the after phase printed (for example
@@ -620,6 +628,9 @@ labels retain their own bounded legacy contract. Copying a command is advisory;
 it does not execute the command or grant edit authority.
 
 ## Test Mapping
+
+- `crates/ripr/tests/cli_smoke/repair_orderfile.rs::repair_completes_despite_user_orderfile`
+- `crates/ripr/tests/cli_smoke/repair_orderfile.rs::dirty_production_requires_recovery_despite_user_orderfile`
 
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_reports_missing_artifacts_and_next_commands`
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_recovers_seam_id_from_receipt`

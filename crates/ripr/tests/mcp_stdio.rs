@@ -318,6 +318,205 @@ fn line(value: Value) -> Result<Vec<u8>, String> {
     Ok(encoded)
 }
 
+/// Optional tool fields may be omitted, but their advertised string/integer
+/// types do not accept explicit null. Pin the schemas and dispatch separately
+/// against literal expectations, through the actual stdio process (#7314).
+#[test]
+fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), String> {
+    let root = workspace_root()?;
+    let cases = [
+        (
+            "ripr_list_gaps",
+            "snapshot_id",
+            json!({}),
+            json!("snapshot:sha256:input-control"),
+            "string",
+        ),
+        ("ripr_list_gaps", "offset", json!({}), json!(0), "integer"),
+        ("ripr_list_gaps", "limit", json!({}), json!(1), "integer"),
+        (
+            "ripr_get_gap",
+            "snapshot_id",
+            json!({"canonical_id": "gap:input-control"}),
+            json!("snapshot:sha256:input-control"),
+            "string",
+        ),
+        (
+            "ripr_prepare_repair",
+            "snapshot_id",
+            json!({"canonical_id": "gap:input-control"}),
+            json!("snapshot:sha256:input-control"),
+            "string",
+        ),
+        (
+            "ripr_get_repair_card",
+            "snapshot_id",
+            json!({"canonical_id": "gap:input-control"}),
+            json!("snapshot:sha256:input-control"),
+            "string",
+        ),
+    ];
+    let tool_call = |id: &str, name: &str, arguments: Value| {
+        line(json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "_meta": current_meta(), "name": name, "arguments": arguments }
+        }))
+    };
+    let mut requests = vec![
+        line(json!({
+            "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+            "params": { "_meta": current_meta() }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "tools", "method": "tools/list",
+            "params": { "_meta": current_meta() }
+        }))?,
+    ];
+    for (index, (tool, field, omitted, valid, _kind)) in cases.iter().enumerate() {
+        for (variant, value) in [
+            ("omitted", None),
+            ("valid", Some(valid.clone())),
+            ("null", Some(Value::Null)),
+        ] {
+            let mut arguments = omitted.clone();
+            if let Some(value) = value {
+                arguments
+                    .as_object_mut()
+                    .ok_or("control arguments must be an object")?
+                    .insert((*field).into(), value);
+            }
+            requests.push(tool_call(&format!("{index}-{variant}"), tool, arguments)?);
+        }
+    }
+    requests.push(tool_call(
+        "wrong-type",
+        "ripr_list_gaps",
+        json!({"limit": false}),
+    )?);
+    requests.push(tool_call("recovery", "ripr_workspace_status", json!({}))?);
+    let input = requests.concat();
+    let output = run_mcp(&root, &[&input])?;
+    let responses = response_lines(&output)?;
+    if responses.len() != requests.len() {
+        return Err(format!(
+            "expected {} correlated replies, got {}",
+            requests.len(),
+            responses.len()
+        ));
+    }
+    if output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .any(|frame| frame.len() > 128 * 1024)
+    {
+        return Err("argument control exceeded the literal 128-KiB response bound".into());
+    }
+    let reply = |id: &str| {
+        responses
+            .iter()
+            .find(|response| response.get("id").and_then(Value::as_str) == Some(id))
+            .ok_or_else(|| format!("missing correlated response for {id}"))
+    };
+    let discovered = reply("discover")?;
+    if discovered.get("error").is_some()
+        || !discovered
+            .pointer("/result/supportedVersions")
+            .and_then(Value::as_array)
+            .is_some_and(|versions| {
+                versions
+                    .iter()
+                    .any(|version| version.as_str() == Some("2026-07-28"))
+            })
+    {
+        return Err("control did not reach real server discovery".into());
+    }
+    let tools = reply("tools")?
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .ok_or("discovery omitted tools")?;
+    for (index, (tool, field, _omitted, _valid, kind)) in cases.iter().enumerate() {
+        let descriptor = tools
+            .iter()
+            .find(|descriptor| descriptor.get("name").and_then(Value::as_str) == Some(*tool))
+            .ok_or_else(|| format!("discovery omitted {tool}"))?;
+        let schema = descriptor
+            .get("inputSchema")
+            .ok_or("tool omitted input schema")?;
+        if schema
+            .pointer(&format!("/properties/{field}/type"))
+            .and_then(Value::as_str)
+            != Some(*kind)
+            || schema
+                .get("required")
+                .and_then(Value::as_array)
+                .is_some_and(|fields| fields.iter().any(|value| value.as_str() == Some(*field)))
+        {
+            return Err(format!(
+                "{tool}.{field} must stay optional with non-null {kind} type: {schema}"
+            ));
+        }
+        for variant in ["omitted", "valid"] {
+            let accepted = reply(&format!("{index}-{variant}"))?;
+            if accepted.get("error").is_some()
+                || accepted.pointer("/result/isError").and_then(Value::as_bool) != Some(true)
+                || accepted
+                    .pointer("/result/structuredContent/failure/code")
+                    .and_then(Value::as_str)
+                    != Some("no_snapshot")
+            {
+                return Err(format!(
+                    "{tool}.{field} {variant} must reach session lookup: {accepted}"
+                ));
+            }
+        }
+        let rejected = reply(&format!("{index}-null"))?;
+        let expected_message = format!(
+            "{field} must be a {}",
+            if *kind == "integer" {
+                "non-negative integer"
+            } else {
+                "string"
+            }
+        );
+        if rejected.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+            || rejected.pointer("/error/message").and_then(Value::as_str)
+                != Some(expected_message.as_str())
+            || rejected.get("result").is_some()
+        {
+            return Err(format!(
+                "{tool}.{field} null must be correlated Invalid Params before session lookup: {rejected}"
+            ));
+        }
+    }
+    if reply("wrong-type")?
+        .pointer("/error/code")
+        .and_then(Value::as_i64)
+        != Some(-32602)
+    {
+        return Err("boolean paging limit must remain Invalid Params".into());
+    }
+    let recovered = reply("recovery")?;
+    if recovered.get("error").is_some()
+        || recovered
+            .pointer("/result/isError")
+            .and_then(Value::as_bool)
+            != Some(false)
+        || recovered
+            .pointer("/result/structuredContent/schema_version")
+            .and_then(Value::as_str)
+            != Some("ripr-mcp-workspace-status-v1")
+        || recovered
+            .pointer("/result/structuredContent/session/attempt_state")
+            .and_then(Value::as_str)
+            != Some("no_snapshot")
+    {
+        return Err(format!(
+            "status must succeed unchanged after argument errors: {recovered}"
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn readable_request_id_larger_than_output_cap_terminates_without_oversized_reply()
 -> Result<(), String> {

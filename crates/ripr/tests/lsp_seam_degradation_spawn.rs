@@ -22,7 +22,9 @@
 //! inventory, and captures the finding set the degraded run must keep) and
 //! the forced run (asserts the SPEC-0141 wire outcomes). The control removes
 //! the variable from the child env, so ambient pollution can fake neither a
-//! pass nor a fail. Every spawned server is terminated and reaped by
+//! pass nor a fail. A third session saves an edit between full refreshes,
+//! checking fresh component identities and retirement of obsolete findings.
+//! Every spawned server is terminated and reaped by
 //! `SpawnSession::drop`, so a failing test cannot orphan a process that
 //! would hold a file lock on the binary and break later builds.
 
@@ -510,6 +512,83 @@ fn analysis_status_params(notifications: &[serde_json::Value]) -> Vec<serde_json
         .collect()
 }
 
+/// Wait for an open/save-triggered refresh to finish before sending the next
+/// explicit refresh. Its publications are deliberately kept out of that
+/// explicit refresh's diagnostic oracle.
+fn await_notification_refresh(session: &mut SpawnSession, reason: &str) -> Result<(), String> {
+    let deadline = Instant::now() + ANALYSIS_TIMEOUT;
+    loop {
+        let message = session.await_message(deadline, reason)?;
+        if message.get("method").and_then(serde_json::Value::as_str) == Some("ripr/analysisStatus")
+            && message["params"]["reason"].as_str() == Some(reason)
+            && message["params"]["state"].as_str() == Some("succeeded")
+        {
+            return Ok(());
+        }
+    }
+}
+
+/// Bind the actual component record to both completed-status identities.
+/// Presence alone admits empty, foreign, and retained prior-refresh strings.
+fn completed_seam_identity(status: &serde_json::Value) -> Result<&str, String> {
+    if status["state"].as_str() != Some("succeeded") {
+        return Err(format!("identity requires a completed refresh: {status}"));
+    }
+    let components = status["components"]
+        .as_array()
+        .ok_or_else(|| format!("completed status must expose components: {status}"))?;
+    let seams: Vec<_> = components
+        .iter()
+        .filter(|outcome| outcome["component"].as_str() == Some("seam_inventory"))
+        .collect();
+    if seams.len() != 1 {
+        return Err(format!("expected exactly one seam outcome: {status}"));
+    }
+    let identity = seams[0]["snapshot_identity"]
+        .as_str()
+        .filter(|identity| !identity.trim().is_empty())
+        .ok_or_else(|| format!("seam identity must be a nonempty string: {status}"))?;
+    if status["current_input_identity"].as_str() != Some(identity)
+        || status["last_success_input_identity"].as_str() != Some(identity)
+    {
+        return Err(format!(
+            "seam identity must equal both completed-status input identities: {status}"
+        ));
+    }
+    Ok(identity)
+}
+
+/// Oracle controls alter copies of a captured production status. They do not
+/// supply the identities used by the live producer assertions.
+fn reject_substituted_seam_identities(status: &serde_json::Value) -> Result<(), String> {
+    let actual = completed_seam_identity(status)?;
+    for replacement in ["foreign-snapshot-identity", ""] {
+        if replacement == actual {
+            return Err("identity rejection control must differ from the producer".to_string());
+        }
+        let mut substituted = status.clone();
+        let components = substituted["components"]
+            .as_array_mut()
+            .ok_or_else(|| "captured status lost its components".to_string())?;
+        for component in components {
+            if component["component"].as_str() == Some("seam_inventory") {
+                component["snapshot_identity"] = serde_json::json!(replacement);
+            }
+        }
+        // Equality alone would accept three empty identities.
+        if replacement.is_empty() {
+            substituted["current_input_identity"] = serde_json::json!("");
+            substituted["last_success_input_identity"] = serde_json::json!("");
+        }
+        if completed_seam_identity(&substituted).is_ok() {
+            return Err(format!(
+                "substituted identity must be rejected: {substituted}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn log_messages_of_type(notifications: &[serde_json::Value], message_type: u64) -> Vec<String> {
     notifications
         .iter()
@@ -519,6 +598,17 @@ fn log_messages_of_type(notifications: &[serde_json::Value], message_type: u64) 
         })
         .filter_map(|message| message["params"]["message"].as_str().map(str::to_string))
         .collect()
+}
+
+fn last_lib_publish<'a>(
+    fixture_uri: &str,
+    notifications: &'a [serde_json::Value],
+) -> Option<&'a serde_json::Value> {
+    notifications.iter().rev().find(|message| {
+        message.get("method").and_then(serde_json::Value::as_str)
+            == Some("textDocument/publishDiagnostics")
+            && message["params"]["uri"].as_str() == Some(fixture_uri)
+    })
 }
 
 /// The diff-finding diagnostics (`code`, 0-based start line, message) in
@@ -536,11 +626,7 @@ fn lib_finding_diagnostics(
     fixture_uri: &str,
     notifications: &[serde_json::Value],
 ) -> Vec<(String, u64, String)> {
-    let Some(message) = notifications.iter().rev().find(|message| {
-        message.get("method").and_then(serde_json::Value::as_str)
-            == Some("textDocument/publishDiagnostics")
-            && message["params"]["uri"].as_str() == Some(fixture_uri)
-    }) else {
+    let Some(message) = last_lib_publish(fixture_uri, notifications) else {
         return Vec::new();
     };
     let mut found = Vec::new();
@@ -592,6 +678,49 @@ fn finding_publish(uri: &str) -> serde_json::Value {
 /// A publish clearing every diagnostic for `uri`.
 fn empty_publish(uri: &str) -> serde_json::Value {
     publish_diagnostics(uri, serde_json::json!([]))
+}
+
+/// Missing publications cannot establish retirement. Inspect only the last
+/// exact-URI array, rejecting every diff-finding code even without a range.
+fn require_retired_lib_findings(
+    fixture_uri: &str,
+    notifications: &[serde_json::Value],
+) -> Result<(), String> {
+    let message = last_lib_publish(fixture_uri, notifications)
+        .ok_or_else(|| format!("final refresh must publish diagnostics for {fixture_uri}"))?;
+    let diagnostics = message["params"]["diagnostics"]
+        .as_array()
+        .ok_or_else(|| format!("final diagnostics must be an array: {message}"))?;
+    if diagnostics.iter().any(|diagnostic| {
+        diagnostic["code"]
+            .as_str()
+            .is_some_and(|code| FINDING_CODES.contains(&code))
+    }) {
+        return Err(format!(
+            "final refresh retained obsolete findings: {message}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn retirement_oracle_requires_the_final_publish_for_the_exact_uri() -> Result<(), String> {
+    require_retired_lib_findings(
+        CONTROL_URI,
+        &[finding_publish(CONTROL_URI), empty_publish(CONTROL_URI)],
+    )?;
+    for notifications in [
+        vec![empty_publish(CONTROL_URI), finding_publish(CONTROL_URI)],
+        vec![empty_publish(FOREIGN_URI)],
+        Vec::new(),
+    ] {
+        if require_retired_lib_findings(CONTROL_URI, &notifications).is_ok() {
+            return Err(format!(
+                "invalid retirement evidence was accepted: {notifications:?}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The oracle must fail retention when the final publish for the fixture URI
@@ -716,6 +845,7 @@ fn spawned_server_with_invalid_seam_limit_degrades_seam_inventory_through_produc
                 seam_outcomes[0]
             ));
         }
+        completed_seam_identity(status)?;
         let control_warnings = log_messages_of_type(&notifications, 2);
         if control_warnings
             .iter()
@@ -768,10 +898,10 @@ fn spawned_server_with_invalid_seam_limit_degrades_seam_inventory_through_produc
     if seam["state"].as_str() != Some("failed")
         || seam["kind"].as_str() != Some("seam_inventory_failed")
         || seam["findings_trustworthy"].as_bool() != Some(true)
-        || seam["snapshot_identity"].is_null()
     {
         return Err(format!("unexpected seam_inventory outcome: {seam}"));
     }
+    completed_seam_identity(status)?;
     let recovery = seam["recovery"].as_str().unwrap_or("");
     if !recovery.contains("ripr.refreshDiagnostics") {
         return Err(format!(
@@ -837,5 +967,85 @@ fn spawned_server_with_invalid_seam_limit_degrades_seam_inventory_through_produc
             "the degraded refresh suppressed finding diagnostics: {suppressed:?}"
         ));
     }
+    shutdown_exit_and_wait(&mut session)
+}
+
+/// A third owned child observes real saved-input revision and publication.
+/// Save refreshes defer inventory; the final explicit refresh restores seam
+/// diagnostics, so its own publication must retire the old diff findings.
+#[test]
+fn spawned_server_saved_edit_refresh_changes_identity_and_retires_obsolete_findings()
+-> Result<(), String> {
+    let fixture = seeded_git_fixture_root("seam-identity-saved-edit")?;
+    let root_uri = file_uri_for_fixture(&fixture.path)?;
+    let lib_path = fixture.path.join("src/lib.rs");
+    let lib_uri = file_uri_for_fixture(&lib_path)?;
+    let seeded_source = fs::read_to_string(&lib_path)
+        .map_err(|err| format!("read saved-edit seed failed: {err}"))?;
+    let mut session = SpawnSession::spawn(None)?;
+    handshake(&mut session, &root_uri)?;
+    session.notify(
+        "textDocument/didOpen",
+        Some(serde_json::json!({"textDocument": {
+            "uri": lib_uri, "languageId": "rust", "version": 1, "text": seeded_source,
+        }})),
+    )?;
+    await_notification_refresh(&mut session, "did_open")?;
+    let (before, refresh) = collect_refresh(&mut session)?;
+    expect_result(&refresh, "ripr.refresh")?;
+    let statuses = analysis_status_params(&before);
+    let status = statuses.last().ok_or("initial refresh emitted no status")?;
+    if status["run_status"].as_str() != Some("full") {
+        return Err(format!("initial full inventory must complete: {status}"));
+    }
+    let before_identity = completed_seam_identity(status)?.to_string();
+    reject_substituted_seam_identities(status)?;
+    if !lib_finding_diagnostics(&lib_uri, &before)
+        .iter()
+        .any(|(_, line, _)| *line == SEEDED_LINE)
+    {
+        return Err("initial refresh must publish the obsolete seeded finding".to_string());
+    }
+
+    let saved_source = seeded_source.replace(
+        "amount > discount_threshold",
+        "amount >= discount_threshold",
+    );
+    if saved_source == seeded_source {
+        return Err("saved edit must change the seeded boundary".to_string());
+    }
+    fs::write(&lib_path, &saved_source)
+        .map_err(|err| format!("persist saved edit failed: {err}"))?;
+    fixture_git_ok(&fixture.path, &["diff", "--exit-code", "--", "src/lib.rs"])?;
+    session.notify(
+        "textDocument/didChange",
+        Some(serde_json::json!({
+            "textDocument": {"uri": lib_uri, "version": 2},
+            "contentChanges": [{"text": saved_source}],
+        })),
+    )?;
+    session.notify(
+        "textDocument/didSave",
+        Some(serde_json::json!({"textDocument": {"uri": lib_uri}, "text": saved_source})),
+    )?;
+    await_notification_refresh(&mut session, "did_save")?;
+
+    // Neither the initial refresh nor the save's quarantine/interactive
+    // publications may satisfy this final explicit refresh's oracle.
+    let (after, refresh) = collect_refresh(&mut session)?;
+    expect_result(&refresh, "ripr.refresh")?;
+    let statuses = analysis_status_params(&after);
+    let status = statuses.last().ok_or("final refresh emitted no status")?;
+    if status["run_status"].as_str() != Some("full") {
+        return Err(format!("final full inventory must complete: {status}"));
+    }
+    let after_identity = completed_seam_identity(status)?;
+    if after_identity == before_identity {
+        return Err(format!(
+            "saved edit must change the input identity: {status}"
+        ));
+    }
+    reject_substituted_seam_identities(status)?;
+    require_retired_lib_findings(&lib_uri, &after)?;
     shutdown_exit_and_wait(&mut session)
 }

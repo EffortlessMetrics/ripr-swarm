@@ -278,12 +278,15 @@ fn same_tree_immutable_and_committed_analysis_agree() -> Result<(), String> {
         // revisions (RIPR-SPEC-0116 amendment), which a candidate-tree
         // subject names in its identity instead. Completeness, counts,
         // and limitations are acceptance-named and MUST match (#3279
-        // review M2).
+        // review M2). The check-JSON canonical next-action inspect
+        // route is provenance-bound (#7257/#7258): `--candidate-tree`
+        // and `--base` share analysis, not `detail_route`.
         copy["analysis_outcome"]["outcome"]["identity"] = Value::Null;
         copy["mode"] = Value::Null;
         copy["root"] = Value::Null;
         copy["base"] = Value::Null;
         if let Some(object) = copy.as_object_mut() {
+            object.remove("canonical_next_action");
             for live_only in ["base_commit", "merge_base_commit", "head"] {
                 object.remove(live_only);
             }

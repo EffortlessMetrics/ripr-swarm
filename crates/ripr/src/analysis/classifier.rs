@@ -100,9 +100,13 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
 /// is not "no test reaches the owner". Relation stays refused (fail closed);
 /// when a test actually calls that ambiguous name, the finding abstains as
 /// `static_unknown` and names the function. A uniqueness stop that no test
-/// enters, including a unique wrapper of a non-unique helper or a
+/// enters, including a unique wrapper of a non-unique helper, a
 /// receiver/foreign path that only shares the bare name (`req.parse()`,
-/// `req.r#parse()`, `foreign::r#parse()`), stays `no_static_path` (#7270).
+/// `req.r#parse()`, `foreign::r#parse()`), or a type-qualified sibling of
+/// the uniqueness-stop hop (`B::parse` when the hop is `A::parse`), stays
+/// `no_static_path` (#7270 / #7268). After the class rewrite, reach is an
+/// identity-unknown stage (not `no`) and the stop reason names callee
+/// identity rather than a missing probe shape (#7272).
 fn withhold_helper_uniqueness_as_unknown(
     finding: &mut Finding,
     chain: &HelperChain,
@@ -115,6 +119,13 @@ fn withhold_helper_uniqueness_as_unknown(
         return;
     };
     finding.class = ExposureClass::StaticUnknown;
+    finding.ripr.reach = StageEvidence::new(
+        StageState::Unknown,
+        Confidence::Low,
+        format!(
+            "ripr cannot tell which `{entry}` a test calls because that name is not unique in the workspace"
+        ),
+    );
     let ripr = &finding.ripr;
     finding.confidence = finding.confidence.min(confidence_score(
         &ripr.reach,
@@ -124,11 +135,16 @@ fn withhold_helper_uniqueness_as_unknown(
         &ripr.reveal.discriminate,
         &finding.class,
     ));
+    finding
+        .stop_reasons
+        .retain(|reason| *reason != StopReason::StaticProbeUnknown);
     if !finding
         .stop_reasons
-        .contains(&StopReason::StaticProbeUnknown)
+        .contains(&StopReason::HelperIdentityUnresolved)
     {
-        finding.stop_reasons.push(StopReason::StaticProbeUnknown);
+        finding
+            .stop_reasons
+            .push(StopReason::HelperIdentityUnresolved);
     }
     finding.missing = vec![format!(
         "helper chain abstains: `{entry}` is not a unique function in the workspace"
@@ -137,6 +153,9 @@ fn withhold_helper_uniqueness_as_unknown(
     finding.recommended_next_step = Some(format!(
         "ripr cannot tell which `{entry}` a test calls because that name is not unique in the workspace, so it does not claim that no test reaches this change. Disambiguate the function, or add a test that calls a unique owner, only if none already does."
     ));
+    finding
+        .evidence
+        .retain(|line| !line.contains("No static test path"));
     finding.evidence.push(format!(
         "helper_chain_uniqueness: `{entry}` is not a unique function in the workspace; tests call that name"
     ));
@@ -310,6 +329,69 @@ mod tests {
         })
     }
 
+    /// `A::parse` hops to unique `op`; `B::parse` makes the name non-unique.
+    /// Distinct `Impl` contexts so a qualified sibling is not the hop (#7268).
+    fn uniqueness_qualified_hop_index(call_text: &str) -> RustIndex {
+        let mut hop = function_with_calls("src/a.rs", "parse", &[("op", "op(bytes)")]);
+        hop.impl_context = FunctionImplContext::Impl {
+            self_type: "A".to_string(),
+        };
+        let mut sibling = function("src/b.rs", "parse");
+        sibling.impl_context = FunctionImplContext::Impl {
+            self_type: "B".to_string(),
+        };
+        RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![function("src/op.rs", "op"), hop, sibling],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "digit_after_wildcard",
+                "parse",
+                call_text,
+            )],
+            ..Default::default()
+        })
+    }
+
+    fn assert_uniqueness_unknown_identity_stage(finding: &Finding, entry: &str) {
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(finding.ripr.reach.state, StageState::Unknown);
+        assert_ne!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            finding.ripr.reach.summary.contains(&format!("`{entry}`"))
+                && finding.ripr.reach.summary.contains("not unique"),
+            "{}",
+            finding.ripr.reach.summary
+        );
+        assert!(
+            finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved),
+            "{:?}",
+            finding.stop_reasons
+        );
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::StaticProbeUnknown),
+            "{:?}",
+            finding.stop_reasons
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .all(|line| !line.contains("No static test path")),
+            "{:?}",
+            finding.evidence
+        );
+        let gloss = StopReason::HelperIdentityUnresolved.describe();
+        assert!(
+            gloss.contains("workspace function") && gloss.contains("not unique"),
+            "{gloss}"
+        );
+        assert!(!gloss.contains("probe"), "{gloss}");
+    }
+
     fn helper_probe(file: &str, owner: &str) -> Probe {
         Probe {
             id: ProbeId(format!("probe:{file}:{owner}")),
@@ -345,7 +427,7 @@ mod tests {
         });
         let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
 
-        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_uniqueness_unknown_identity_stage(&finding, "parse");
         assert!(
             finding
                 .related_tests
@@ -400,6 +482,12 @@ mod tests {
         );
 
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved)
+        );
         assert!(
             finding
                 .missing
@@ -433,6 +521,7 @@ mod tests {
         let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
 
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
         assert!(
             finding
                 .missing
@@ -452,6 +541,12 @@ mod tests {
         let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
 
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved)
+        );
         assert!(
             finding
                 .related_tests
@@ -485,6 +580,12 @@ mod tests {
         let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
 
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved)
+        );
     }
 
     // #7270 / retain #7080: bare `r#parse(...)` is the same identifier as
@@ -494,7 +595,7 @@ mod tests {
         let index = uniqueness_parse_index(r#"r#parse(">=1.0")"#);
         let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
 
-        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_uniqueness_unknown_identity_stage(&finding, "parse");
         assert!(
             finding
                 .missing
@@ -737,6 +838,85 @@ mod tests {
             let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
             assert_eq!(finding.class, ExposureClass::StaticUnknown, "{text}");
         }
+    }
+
+    // #7268: `B::parse` is a distinct entity from the uniqueness-stop hop
+    // `A::parse`. Crediting it as the ambiguous entry hides a real gap.
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_qualified_sibling_of_hop_then_no_static_path() {
+        let index = uniqueness_qualified_hop_index(r#"B::parse(">=1.0")"#);
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved)
+        );
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason != Some(RelationReason::HelperOwnerCall)),
+            "relation stays refused: {:?}",
+            finding.related_tests
+        );
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("No static test path")),
+            "{:?}",
+            finding.missing
+        );
+    }
+
+    // #7268 / retain #7080: an Impl-qualified hop must still abstain when
+    // tests call the unresolved bare name. Without a Free fallback this
+    // would regress to no_static_path.
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_bare_parse_of_qualified_hop_then_static_unknown()
+    {
+        let index = uniqueness_qualified_hop_index(r#"parse(">=1.0")"#);
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("`parse`") && line.contains("not a unique function")),
+            "{:?}",
+            finding.missing
+        );
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason != Some(RelationReason::HelperOwnerCall)),
+            "uniqueness refusal stays fail-closed: {:?}",
+            finding.related_tests
+        );
+    }
+
+    // #7268: a call that targets the hop itself still enters the uniqueness
+    // rewrite. Relation stays refused (name uniqueness / not a free-function
+    // site); do not claim HelperOwnerCall.
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_qualified_hop_then_static_unknown() {
+        let index = uniqueness_qualified_hop_index(r#"A::parse(">=1.0")"#);
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason != Some(RelationReason::HelperOwnerCall)),
+            "uniqueness refusal stays fail-closed: {:?}",
+            finding.related_tests
+        );
     }
 
     #[test]

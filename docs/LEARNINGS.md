@@ -15,7 +15,11 @@ name — a unique wrapper of a non-unique helper (`outer` → second
 `inner`) is the negative control (`helper_chain_controls`,
 `rust_transitive_reach_positive`). A receiver call of the same name
 (`req.parse()`, including the raw-identifier spelling `req.r#parse()`)
-is not an entry; `Version::parse(...)` is. `call_name_bounds_before_paren`
+is not an entry; `Version::parse(...)` is when it targets the hop, not a
+qualified sibling (`B::parse` must not credit hop `A::parse`; bind the
+stop-name branch to that hop's `FunctionSummary` like extras already use
+`tests_call_function`) (#7268). Bare unresolved `parse(` still enters.
+`call_name_bounds_before_paren`
 walks only `[A-Za-z0-9_]`, so skip one preceding `r#` before the
 receiver / path / `fn`-item checks or `raw_before` is `#` and the
 occurrence falls through to Free (#7270). Bare `r#parse(` stays an
@@ -31,10 +35,14 @@ a wrapper-local `parse`. A test-local `fn`/`let` of that name is not an
 entry, including on lexical-fallback files. A `fn parse()` item on
 `CallFact.text` is not a call (`property_macro_noop_named_test` names
 its test after the owner). Do not credit `helper_owner_call` through
-the ambiguous name. Bless only verdict-corpus rows `verdict-corpus check`
-actually moves: neighboring `semver-max-comparators` and the rusqlite
-`no_static_path` sibling stay as labeled, because they are not
-uniqueness-only refusals that tests enter.
+the ambiguous name. After the class rewrite, reach is `unknown` naming
+that identity limit — not `no` with a leftover no-path summary — and
+the stop reason is `helper_identity_unresolved`, not
+`static_probe_unknown`'s probe-shape gloss (#7272). Bless only
+verdict-corpus rows `verdict-corpus check` actually moves: neighboring
+`semver-max-comparators` and the rusqlite `no_static_path` sibling stay
+as labeled, because they are not uniqueness-only refusals that tests
+enter.
 
 ## 2026-10-08: A green PR head plus clean mergeability does not prove the squash result compiles (#7150)
 

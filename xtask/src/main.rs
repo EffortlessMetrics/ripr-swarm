@@ -17487,36 +17487,40 @@ fn sort_allowlist_files() -> Result<Vec<String>, String> {
     Ok(changed)
 }
 
+/// Sort allowlist *entries* without dropping or relocating comments.
+///
+/// Consecutive non-comment, non-blank lines form a sortable group.
+/// Comment and blank lines stay in place as group separators, so a later
+/// owner/reason comment is not deleted once an entry has been seen, and
+/// comments are not moved across groups. Files that only have a leading
+/// header still get a global entry sort. Duplicate entry lines are kept
+/// (duplicate policy is owned elsewhere).
 fn sorted_allowlist_content(text: &str) -> String {
-    let mut prefix = Vec::new();
+    let mut output = String::new();
     let mut entries = Vec::new();
-    let mut saw_entry = false;
+
+    fn flush_entries(entries: &mut Vec<String>, output: &mut String) {
+        if entries.is_empty() {
+            return;
+        }
+        entries.sort();
+        for entry in entries.drain(..) {
+            output.push_str(&entry);
+            output.push('\n');
+        }
+    }
 
     for line in text.lines() {
         let trimmed = line.trim();
-        if !saw_entry && (trimmed.is_empty() || trimmed.starts_with('#')) {
-            prefix.push(line.trim_end().to_string());
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            flush_entries(&mut entries, &mut output);
+            output.push_str(line.trim_end());
+            output.push('\n');
             continue;
         }
-        saw_entry = true;
-        if !trimmed.is_empty() && !trimmed.starts_with('#') {
-            entries.push(trimmed.to_string());
-        }
+        entries.push(trimmed.to_string());
     }
-
-    entries.sort();
-    let mut output = String::new();
-    if !prefix.is_empty() {
-        output.push_str(&prefix.join("\n"));
-        output.push('\n');
-    }
-    if !entries.is_empty() {
-        if !output.ends_with("\n\n") {
-            output.push('\n');
-        }
-        output.push_str(&entries.join("\n"));
-        output.push('\n');
-    }
+    flush_entries(&mut entries, &mut output);
     if output.is_empty() {
         output.push('\n');
     }
@@ -21686,6 +21690,10 @@ synonym (e.g. {hint}). To intentionally allow this line, append \
     reason = "xtask test code uses unwrap/expect for fail-fast assertion. Production paths are receipted via policy/no-panic-allowlist.toml; the test scope is governed by this single module-level expect."
 )]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/sorted_allowlist_content.rs"]
+mod sorted_allowlist_content_tests;
 
 #[cfg(test)]
 mod inherited_failure_tests {

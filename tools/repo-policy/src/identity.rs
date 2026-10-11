@@ -52,10 +52,14 @@ pub fn verify_executable_identity() -> Result<(), String> {
         return Err("policy executable is stale or belongs to a different source tree; rerun with cargo policy".into());
     }
     let compiler = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
-    let output = std::process::Command::new(compiler)
+    let output = std::process::Command::new(&compiler)
         .arg("-vV")
         .output()
-        .map_err(|e| format!("policy compiler identity: {e}"))?;
+        .map_err(|e| {
+            format!(
+                "policy compiler identity: could not execute {compiler:?} -vV: {e}; ensure the repository-pinned Rust toolchain (rust-toolchain.toml) is activated and the compiler is executable; rerun with cargo policy preflight"
+            )
+        })?;
     let compiler = String::from_utf8(output.stdout).map_err(|e| e.to_string())?;
     if !output.status.success() || compiler.replace('\n', "|") != env!("REPO_POLICY_COMPILER_ID") {
         return Err(

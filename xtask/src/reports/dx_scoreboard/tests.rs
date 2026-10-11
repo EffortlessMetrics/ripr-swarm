@@ -2,10 +2,11 @@
 use super::measure::linked_target;
 use super::measure::{
     CHECK_SCHEMA_VERSION, CheckAdmission, CheckSubject, OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL,
-    PasteVerdict, Probe, admit_check_document, builds_ripr_from_source, check_contradictions,
-    classify_replay, contradiction_outcome, extract_commands, hostile_outcome, parse_test_result,
-    permissive_json_exit_zero, probe_result, record_warm_check, repo_exposure_contradictions,
-    rss_sample, scan_check_contradictions,
+    PasteVerdict, Probe, WARM_CHECK_MODE, admit_check_document, builds_ripr_from_source,
+    check_args_without_explicit_mode, check_contradictions, classify_replay, contradiction_outcome,
+    extract_commands, hostile_outcome, parse_test_result, permissive_json_exit_zero, probe_result,
+    record_warm_check, repo_exposure_contradictions, rss_sample, scan_check_contradictions,
+    warm_check_args, warm_check_subject,
 };
 use super::*;
 use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
@@ -3204,4 +3205,319 @@ fn truncated_findings_keep_speed_and_hold_trust() {
     assert!(
         scan_check_contradictions(&document).is_err_and(|err| err.contains("rendering prefix"))
     );
+}
+
+fn argv_mode(args: &[String]) -> Option<&str> {
+    args.windows(2)
+        .find_map(|pair| (pair[0] == "--mode").then_some(pair[1].as_str()))
+}
+
+fn mode_mismatch(actual: &str, expected: &str) -> String {
+    format!("producer mode `{actual}` does not match expected `{expected}`")
+}
+
+fn complete_for(subject: &CheckSubject) -> Value {
+    let mut document = complete_check_json(0);
+    document["mode"] = json!(&subject.mode);
+    document["root"] = json!(&subject.root);
+    document["base"] = json!(&subject.base);
+    if let Some(head) = &subject.head {
+        document["head"] = json!({ "source": "commit", "commit": head });
+    }
+    document["analysis_outcome"]["outcome"]["identity"]["base_revision"] = json!(&subject.base);
+    document
+}
+
+fn warm_check_mode_checkout(
+    label: &str,
+    ripr_toml: Option<&str>,
+) -> Result<(PathBuf, String), String> {
+    let dir = crate::tests::temp_dir(label);
+    crate::tests::write(
+        &dir.join("Cargo.toml"),
+        "[package]\nname = \"dx-warm-check-mode\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    );
+    crate::tests::write(&dir.join("src/lib.rs"), "pub fn n() -> u8 { 1 }\n");
+    let git = |args: &[&str]| super::measure::git(Some(&dir), args);
+    git(&["init", "--quiet"])?;
+    git(&["config", "core.autocrlf", "false"])?;
+    git(&["config", "user.name", "t"])?;
+    git(&["config", "user.email", "t@t"])?;
+    git(&["config", "commit.gpgsign", "false"])?;
+    fs::write(dir.join(".git/info/exclude"), "/target/\n").map_err(|err| err.to_string())?;
+    git(&["add", "Cargo.toml", "src/lib.rs"])?;
+    git(&["commit", "--quiet", "-m", "a"])?;
+    crate::tests::write(&dir.join("src/lib.rs"), "pub fn n() -> u8 { 2 }\n");
+    git(&["add", "src/lib.rs"])?;
+    git(&["commit", "--quiet", "-m", "b"])?;
+    if let Some(text) = ripr_toml {
+        crate::tests::write(&dir.join("ripr.toml"), text);
+    }
+    let head = git(&["rev-parse", "HEAD"])?.trim().to_string();
+    if head.is_empty() {
+        return Err("empty HEAD".to_string());
+    }
+    Ok((dir, head))
+}
+
+fn scoreboard_test_ripr_binary() -> Result<String, String> {
+    static BINARY: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
+    BINARY
+        .get_or_init(|| {
+            // `cargo test -p xtask` runs with cwd at the xtask package, so a
+            // relative `target/debug/ripr` lookup misses the workspace binary
+            // that `cargo build -p ripr` actually writes.
+            crate::run::run("cargo", &["build", "-p", "ripr"]).map(|_| ())?;
+            let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .canonicalize()
+                .map_err(|err| format!("workspace root: {err}"))?;
+            let target = match std::env::var_os("CARGO_TARGET_DIR") {
+                Some(dir) => {
+                    let path = PathBuf::from(dir);
+                    if path.is_absolute() {
+                        path
+                    } else {
+                        workspace.join(path)
+                    }
+                }
+                None => workspace.join("target"),
+            };
+            let binary = target
+                .join("debug")
+                .join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
+            binary
+                .canonicalize()
+                .map(|path| path.display().to_string())
+                .map_err(|err| {
+                    format!(
+                        "ripr binary {} missing after cargo build -p ripr: {err}",
+                        binary.display()
+                    )
+                })
+        })
+        .clone()
+}
+
+fn run_measured_check(args: &[String], cache: &Path) -> Result<MeasuredOutput, String> {
+    let binary = scoreboard_test_ripr_binary()?;
+    let cache_text = cache.display().to_string();
+    capture_output_measured(
+        &binary,
+        args,
+        None,
+        &[("RIPR_CACHE_DIR", cache_text.as_str())],
+        std::time::Duration::from_mins(2),
+        "dx-scoreboard warm-check mode binding",
+    )
+}
+
+fn produced_check_json(measured: &MeasuredOutput) -> Result<Value, String> {
+    if measured.output.timed_out {
+        return Err(format!(
+            "check timed out; stderr:\n{}",
+            measured.output.stderr
+        ));
+    }
+    if measured.output.stderr.contains("unknown mode") {
+        return Err(format!(
+            "CLI rejected --mode; stderr:\n{}",
+            measured.output.stderr
+        ));
+    }
+    serde_json::from_str(measured.output.stdout.trim()).map_err(|err| {
+        format!(
+            "check stdout is not JSON ({err}); status={:?}; stderr:\n{}\nstdout:\n{}",
+            measured.output.status, measured.output.stderr, measured.output.stdout
+        )
+    })
+}
+
+fn record_with_subject(
+    subject: &CheckSubject,
+    warmup: Result<MeasuredOutput, String>,
+    measured: Result<Option<MeasuredOutput>, String>,
+) -> WarmRecord {
+    let mut samples = Vec::new();
+    let mut contradictions = None;
+    let mut missing = Vec::new();
+    record_warm_check(
+        &repo_sample,
+        subject,
+        warmup,
+        measured,
+        &mut samples,
+        &mut contradictions,
+        &mut missing,
+    );
+    (samples, contradictions, missing)
+}
+
+/// #7273: the measured argv and the admission subject name the same draft
+/// mode by construction. The pre-repair argv is retained so restoring it
+/// fails this discriminator without a real checkout.
+#[test]
+fn warm_check_args_and_subject_share_an_explicit_draft_mode() {
+    let args = warm_check_args("/tmp/corpus-a", "HEAD~1");
+    let subject = warm_check_subject(
+        "/tmp/corpus-a".to_string(),
+        "HEAD~1".to_string(),
+        Some("abc123".to_string()),
+    );
+    assert_eq!(argv_mode(&args), Some(WARM_CHECK_MODE));
+    assert_eq!(subject.mode, WARM_CHECK_MODE);
+    assert_eq!(argv_mode(&args), Some(subject.mode.as_str()));
+    assert_ne!(
+        args,
+        check_args_without_explicit_mode("/tmp/corpus-a", "HEAD~1"),
+        "restoring the pre-#7273 argv (no --mode) must fail this discriminator"
+    );
+    assert!(
+        admit_check_document(&complete_for(&subject), &subject).is_complete(),
+        "a complete draft document must still admit against the production subject"
+    );
+}
+
+/// Production-path: a checkout `ripr.toml` with a non-draft mode cannot
+/// retarget the measured command. A no-config checkout still admits as
+/// draft. Changing only `check_args` or only the subject string fails.
+#[test]
+fn a_non_draft_checkout_config_still_produces_a_draft_warm_check_sample() -> Result<(), String> {
+    let binary = scoreboard_test_ripr_binary()?;
+    let help = capture_output_measured(
+        &binary,
+        &["check".to_string(), "--help".to_string()],
+        None,
+        &[],
+        std::time::Duration::from_secs(15),
+        "dx-scoreboard confirm check --mode is accepted",
+    )?;
+    let help_text = format!("{}\n{}", help.output.stdout, help.output.stderr);
+    assert!(
+        help_text.contains("--mode") && help_text.contains("draft"),
+        "ripr check must accept --mode draft; help was:\n{help_text}"
+    );
+
+    let (fast_root, fast_head) = warm_check_mode_checkout(
+        "dx-warm-check-mode-fast",
+        Some("[analysis]\nmode = \"fast\"\n"),
+    )?;
+    let fast_root_text = fast_root.display().to_string();
+    let fast_cache = fast_root.join("target/ripr/cache-fast");
+    let fast_subject = warm_check_subject(
+        fast_root_text.clone(),
+        "HEAD~1".to_string(),
+        Some(fast_head),
+    );
+    let production_args = warm_check_args(&fast_root_text, "HEAD~1");
+    assert_eq!(argv_mode(&production_args), Some(WARM_CHECK_MODE));
+
+    let fast_with_flag = run_measured_check(&production_args, &fast_cache)?;
+    let fast_with_flag_json = produced_check_json(&fast_with_flag)?;
+    assert_eq!(
+        fast_with_flag_json["mode"].as_str(),
+        Some(WARM_CHECK_MODE),
+        "explicit --mode draft must override [analysis].mode = \"fast\"; got {}",
+        fast_with_flag_json
+    );
+    let fast_admission = admit_check_document(&fast_with_flag_json, &fast_subject);
+    assert!(
+        !fast_admission
+            .reason()
+            .contains(&mode_mismatch("fast", WARM_CHECK_MODE)),
+        "a complete sample must not be rejected as the wrong subject: {}",
+        fast_admission.reason()
+    );
+    assert!(
+        admit_check_document(&complete_for(&fast_subject), &fast_subject).is_complete(),
+        "a complete draft document for this checkout must admit"
+    );
+
+    let (samples, _, _) = record_with_subject(
+        &fast_subject,
+        Ok(fast_with_flag),
+        Ok(Some(run_measured_check(&production_args, &fast_cache)?)),
+    );
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    match &warm.outcome {
+        SampleOutcome::Value(_) => {}
+        SampleOutcome::Incomplete(_) => {
+            assert!(
+                !warm
+                    .detail
+                    .contains(&mode_mismatch("fast", WARM_CHECK_MODE)),
+                "incomplete must name a non-mode reason, got {}",
+                warm.detail
+            );
+        }
+        other => {
+            return Err(format!(
+                "expected Value or Incomplete for an explicit-draft run, got {other:?} {}",
+                warm.detail
+            ));
+        }
+    }
+
+    let (plain_root, plain_head) = warm_check_mode_checkout("dx-warm-check-mode-plain", None)?;
+    let plain_root_text = plain_root.display().to_string();
+    let plain_cache = plain_root.join("target/ripr/cache-plain");
+    let plain_subject = warm_check_subject(
+        plain_root_text.clone(),
+        "HEAD~1".to_string(),
+        Some(plain_head),
+    );
+    let plain_json = produced_check_json(&run_measured_check(
+        &warm_check_args(&plain_root_text, "HEAD~1"),
+        &plain_cache,
+    )?)?;
+    assert_eq!(
+        plain_json["mode"].as_str(),
+        Some(WARM_CHECK_MODE),
+        "a checkout without analysis-mode config must still emit draft; got {plain_json}"
+    );
+    assert!(
+        !admit_check_document(&plain_json, &plain_subject)
+            .reason()
+            .contains(&mode_mismatch("fast", WARM_CHECK_MODE)),
+        "{}",
+        admit_check_document(&plain_json, &plain_subject).reason()
+    );
+    assert!(admit_check_document(&complete_for(&plain_subject), &plain_subject).is_complete());
+
+    let legacy_args = check_args_without_explicit_mode(&fast_root_text, "HEAD~1");
+    assert_eq!(argv_mode(&legacy_args), None);
+    let legacy_json = produced_check_json(&run_measured_check(&legacy_args, &fast_cache)?)?;
+    assert_eq!(
+        legacy_json["mode"].as_str(),
+        Some("fast"),
+        "without --mode the producer must inherit [analysis].mode = \"fast\"; got {legacy_json}"
+    );
+    let legacy_admission = admit_check_document(&legacy_json, &fast_subject);
+    assert!(
+        !legacy_admission.is_complete(),
+        "a fast document must not admit against the draft subject"
+    );
+    assert!(
+        legacy_admission
+            .reason()
+            .contains(&mode_mismatch("fast", WARM_CHECK_MODE)),
+        "expected wrong-subject rejection, got {}",
+        legacy_admission.reason()
+    );
+
+    let mut wrong_subject = fast_subject.clone();
+    wrong_subject.mode = "fast".to_string();
+    let draft_document = complete_for(&fast_subject);
+    assert!(
+        !admit_check_document(&draft_document, &wrong_subject).is_complete(),
+        "changing only the subject mode must fail admission"
+    );
+    assert!(
+        admit_check_document(&draft_document, &wrong_subject)
+            .reason()
+            .contains(&mode_mismatch(WARM_CHECK_MODE, "fast")),
+        "{}",
+        admit_check_document(&draft_document, &wrong_subject).reason()
+    );
+    Ok(())
 }

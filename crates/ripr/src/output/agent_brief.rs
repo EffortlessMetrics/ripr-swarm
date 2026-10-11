@@ -30,6 +30,7 @@ pub(crate) fn render_agent_brief_json(
     if let Some(warning) = causal_projection_warning {
         warnings.push(warning);
     }
+    let command_root = bound_root(&display_path(root));
     let mut value = json!({
         "schema_version": AGENT_BRIEF_SCHEMA_VERSION,
         "tool": "ripr",
@@ -50,13 +51,16 @@ pub(crate) fn render_agent_brief_json(
             .map(|entry| top_seam_json(entry, root, mode, config, causal_projection.as_ref()))
             .collect::<Vec<_>>(),
         "next": {
-            "inspect_packet": agent_seam_packets_command(
-                &bound_root(&display_path(root)),
-                mode.as_str(),
-                WORKFLOW_AGENT_SEAM_PACKETS_ARTIFACT,
+            "inspect_packet": prepare_workflow_command(
+                &command_root,
+                agent_seam_packets_command(
+                    &command_root,
+                    mode.as_str(),
+                    WORKFLOW_AGENT_SEAM_PACKETS_ARTIFACT,
+                ),
             ),
             "verify_after_edit": agent_verify_command(
-                &bound_root(&display_path(root)),
+                &command_root,
                 WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
                 WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
                 None,
@@ -179,17 +183,13 @@ fn top_seam_json(
 fn verification_json(root: &Path, mode: &Mode, recommended_name: &str) -> Value {
     let root = bound_root(&display_path(root));
     json!({
-        // The before snapshot is the loop's first write, so the command
-        // creates its directory; in a fresh checkout the redirect alone fails.
-        "before_snapshot_command": format!(
-            "mkdir -p {} && {}",
-            shell_arg(&anchored_redirect_target(&root, WORKFLOW_DIR)),
+        "before_snapshot_command": prepare_workflow_command(
+            &root,
             check_repo_exposure_command(&root, mode.as_str(), WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT),
         ),
-        "after_snapshot_command": check_repo_exposure_command(
+        "after_snapshot_command": prepare_workflow_command(
             &root,
-            mode.as_str(),
-            WORKFLOW_AFTER_SNAPSHOT_ARTIFACT,
+            check_repo_exposure_command(&root, mode.as_str(), WORKFLOW_AFTER_SNAPSHOT_ARTIFACT),
         ),
         "verify_command": agent_verify_command(
             &root,
@@ -199,6 +199,15 @@ fn verification_json(root: &Path, mode: &Mode, recommended_name: &str) -> Value 
         ),
         "suggested_test_command": format!("cargo test {recommended_name}"),
     })
+}
+
+/// Each artifact command may be pasted first in a fresh checkout. Bind its
+/// directory preparation to the same selected root as the shell redirect.
+fn prepare_workflow_command(root: &str, command: String) -> String {
+    format!(
+        "mkdir -p {} && {command}",
+        shell_arg(&anchored_redirect_target(root, WORKFLOW_DIR)),
+    )
 }
 
 fn display_text_path(path: &str) -> String {
@@ -413,10 +422,13 @@ mod tests {
         // anchor math itself is pinned in loop_commands tests).
         assert_eq!(
             value["next"]["inspect_packet"],
-            agent_seam_packets_command(
+            prepare_workflow_command(
                 &display_path(&root),
-                Mode::Fast.as_str(),
-                WORKFLOW_AGENT_SEAM_PACKETS_ARTIFACT,
+                agent_seam_packets_command(
+                    &display_path(&root),
+                    Mode::Fast.as_str(),
+                    WORKFLOW_AGENT_SEAM_PACKETS_ARTIFACT,
+                ),
             )
             .as_str()
         );

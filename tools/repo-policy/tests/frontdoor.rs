@@ -451,6 +451,73 @@ fn runtime_compiler_selection_rejects_a_changed_compiler() -> Result<(), String>
 }
 
 #[test]
+fn unavailable_compiler_reports_executable_and_recovery() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    let empty_path = fixture.0.join("empty-path");
+    std::fs::create_dir(&empty_path).map_err(|e| e.to_string())?;
+    let missing_compiler = empty_path.join("missing-rustc");
+    for compiler in [None, Some(missing_compiler.as_os_str())] {
+        assert!(fixture.run("preflight")?.status.success());
+        let receipt = fixture.0.join("target/ripr/reports/policy-preflight.json");
+        assert!(receipt.is_file());
+        let mut command = fixture.command("preflight");
+        command.env("PATH", &empty_path).env_remove("RUSTC");
+        if let Some(compiler) = compiler {
+            command.env("RUSTC", compiler);
+        }
+        let output = command.output().map_err(|e| e.to_string())?;
+        assert!(!output.status.success());
+        let error = String::from_utf8_lossy(&output.stderr);
+        let selected = compiler.unwrap_or_else(|| std::ffi::OsStr::new("rustc"));
+        assert!(
+            error.contains(&format!("could not execute {selected:?} -vV:")),
+            "{error}"
+        );
+        assert!(
+            error.contains("repository-pinned Rust toolchain"),
+            "{error}"
+        );
+        assert!(error.contains("rust-toolchain.toml"), "{error}");
+        assert!(
+            error
+                .trim_end()
+                .ends_with("; rerun with cargo policy preflight"),
+            "{error}"
+        );
+        assert!(!error.contains("toolchain differs"), "{error}");
+        assert!(!receipt.exists(), "unavailable compiler retained a receipt");
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn non_executable_compiler_preserves_permission_error() -> Result<(), String> {
+    let fixture = Fixture::new()?;
+    // A directory cannot be executed, even when the test runs as root.
+    let compiler = fixture.0.join("compiler-directory");
+    std::fs::create_dir(&compiler).map_err(|e| e.to_string())?;
+    let output = fixture
+        .command("preflight")
+        .env("RUSTC", &compiler)
+        .output()
+        .map_err(|e| e.to_string())?;
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        error.contains(&format!(
+            "could not execute {:?} -vV:",
+            compiler.as_os_str()
+        )),
+        "{error}"
+    );
+    assert!(error.contains("Permission denied"), "{error}");
+    assert!(!error.contains("not found"), "{error}");
+    assert!(!error.contains("toolchain differs"), "{error}");
+    Ok(())
+}
+
+#[test]
 fn usage_lists_the_receipt_verification_frontdoor() -> Result<(), String> {
     let fixture = Fixture::new()?;
     let output = fixture.run("unknown-command")?;

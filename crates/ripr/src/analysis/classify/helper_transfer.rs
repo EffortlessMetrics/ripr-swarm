@@ -178,12 +178,16 @@ pub(crate) fn uniqueness_refusal_callee(chain: &HelperChain) -> Option<&str> {
 /// `rust_transitive_reach_positive` pins). A non-unique caller
 /// (`from_str` wrapping a non-unique `parse`) is another ambiguous entry
 /// the tests may invoke; naming it is the same uniqueness refusal.
+/// When the stop name is also a resolved hop (`A::parse` calling unique
+/// `op`), bind that hop the same way extras bind wrappers: a qualified
+/// sibling (`B::parse`) is not the hop. Bare unresolved `parse(` still
+/// enters (#7268 / #7080).
 pub(crate) fn ambiguous_helper_entry_called_by_tests<'a>(
     chain: &'a HelperChain,
     index: &'a RustIndex,
 ) -> Option<&'a str> {
     let stop_name = uniqueness_refusal_callee(chain)?;
-    if tests_call_name(index, stop_name) {
+    if tests_enter_uniqueness_stop(chain, index, stop_name) {
         return Some(stop_name);
     }
     let mut extras: Vec<&str> = direct_callers(stop_name, index)
@@ -199,10 +203,35 @@ pub(crate) fn ambiguous_helper_entry_called_by_tests<'a>(
     extras.first().copied()
 }
 
+/// The hop whose caller is the uniqueness-stop name, when resolution
+/// recorded that hop before stopping on the shared name.
+fn uniqueness_stop_hop<'a>(chain: &'a HelperChain, stop_name: &str) -> Option<&'a FunctionSummary> {
+    chain
+        .hops
+        .iter()
+        .find(|hop| hop.caller.name == stop_name)
+        .map(|hop| &hop.caller)
+}
+
+fn tests_enter_uniqueness_stop(chain: &HelperChain, index: &RustIndex, stop_name: &str) -> bool {
+    match uniqueness_stop_hop(chain, stop_name) {
+        Some(function) => {
+            tests_call_function(index, function) || tests_call_unresolved_name(index, stop_name)
+        }
+        None => tests_call_name(index, stop_name),
+    }
+}
+
 fn tests_call_name(index: &RustIndex, name: &str) -> bool {
     tests_call_matching(index, name, |kind| {
         kind_is_workspace_entry(index, name, kind)
     })
+}
+
+/// Bare `parse(` / `r#parse(` / spaced and turbofish free calls. A
+/// type-qualified sibling is not unresolved (#7268).
+fn tests_call_unresolved_name(index: &RustIndex, name: &str) -> bool {
+    tests_call_matching(index, name, |kind| matches!(kind, NamedEntryKind::Free))
 }
 
 /// The extras wrapper is one `FunctionSummary`. A same-named sibling
@@ -1998,6 +2027,67 @@ mod tests {
             ambiguous_helper_entry_called_by_tests(&chain, &calling_local),
             None,
             "a test-local fn parse is not the workspace entry"
+        );
+    }
+
+    // #7268: the uniqueness-stop name is `parse`, but the hop is `A::parse`.
+    // `B::parse` must not credit that hop; bare `parse(` and `A::parse(` still
+    // enter. Distinct Impl contexts establish the specific functions.
+    #[test]
+    fn uniqueness_stop_does_not_credit_qualified_sibling_of_the_hop() {
+        let owner = function("src/op.rs", "op", &[]);
+        let mut hop = function("src/a.rs", "parse", &[("op", "op(bytes)")]);
+        hop.impl_context = FunctionImplContext::Impl {
+            self_type: "A".to_string(),
+        };
+        let mut sibling = function("src/b.rs", "parse", &[]);
+        sibling.impl_context = FunctionImplContext::Impl {
+            self_type: "B".to_string(),
+        };
+        let with_test = |call: &str, text: &str| {
+            let mut test = test_summary_calling(call, text);
+            test.name = format!("calls_{call}");
+            test
+        };
+
+        let calling_sibling = index_with_tests(
+            vec![owner.clone(), hop.clone(), sibling.clone()],
+            vec![with_test("parse", r#"B::parse(">=1.0")"#)],
+        );
+        let chain = resolve_chain("op", &calling_sibling, true, &[]);
+        assert_eq!(
+            chain.hops.len(),
+            1,
+            "A::parse remains the unique caller of op"
+        );
+        assert_eq!(chain.hops[0].caller.name, "parse");
+        assert_eq!(uniqueness_refusal_callee(&chain), Some("parse"));
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_sibling),
+            None,
+            "B::parse must not credit the A::parse hop"
+        );
+
+        let calling_bare = index_with_tests(
+            vec![owner.clone(), hop.clone(), sibling.clone()],
+            vec![with_test("parse", r#"parse(">=1.0")"#)],
+        );
+        let chain = resolve_chain("op", &calling_bare, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_bare),
+            Some("parse"),
+            "bare parse( still enters the uniqueness-stop (#7080)"
+        );
+
+        let calling_hop = index_with_tests(
+            vec![owner, hop, sibling],
+            vec![with_test("parse", r#"A::parse(">=1.0")"#)],
+        );
+        let chain = resolve_chain("op", &calling_hop, true, &[]);
+        assert_eq!(
+            ambiguous_helper_entry_called_by_tests(&chain, &calling_hop),
+            Some("parse"),
+            "A::parse still enters the uniqueness-stop hop"
         );
     }
 

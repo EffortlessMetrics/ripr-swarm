@@ -399,7 +399,7 @@ fn optional_string_argument(
         return Ok(None);
     };
     match arguments.get(name) {
-        None | Some(Value::Null) => Ok(None),
+        None => Ok(None),
         Some(Value::String(value)) => Ok(Some(value.clone())),
         Some(_other) => Err(ErrorData::invalid_params(
             format!("{name} must be a string"),
@@ -418,7 +418,7 @@ fn optional_nonnegative_argument(
         return Ok(None);
     };
     match arguments.get(name) {
-        None | Some(Value::Null) => Ok(None),
+        None => Ok(None),
         Some(value) => {
             let raw = value.as_u64().ok_or_else(|| {
                 ErrorData::invalid_params(format!("{name} must be a non-negative integer"), None)

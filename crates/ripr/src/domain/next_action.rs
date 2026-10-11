@@ -307,6 +307,14 @@ pub enum NextActionStop {
     },
     CheckTriage {
         case: NextActionCheckCase,
+        /// Followable inspect or restart route for this triage case. The
+        /// check producer copies `NextActionInput::detail_route` here so a
+        /// JSON consumer can replay the printed command without assembling
+        /// `--root` / mode flags from the finding id. Empty when there is
+        /// no inspect target (for example missing scope) or a fixture
+        /// constructs the stop without a route.
+        #[serde(default)]
+        detail_route: String,
     },
     DoctorRecovery {
         check_name: String,
@@ -983,7 +991,10 @@ pub(crate) fn select_canonical_next_action(
         return stopped(
             input,
             class,
-            NextActionStop::CheckTriage { case },
+            NextActionStop::CheckTriage {
+                case,
+                detail_route: input.detail_route.clone(),
+            },
             transition,
             Vec::new(),
         );
@@ -2172,8 +2183,17 @@ mod tests {
                 case.as_str()
             );
             match action.stop() {
-                Some(NextActionStop::CheckTriage { case: bound }) => {
+                Some(NextActionStop::CheckTriage {
+                    case: bound,
+                    detail_route,
+                }) => {
                     assert_eq!(*bound, case);
+                    assert_eq!(
+                        detail_route,
+                        &input.detail_route,
+                        "check case {} must carry its inspect route",
+                        case.as_str()
+                    );
                 }
                 other => {
                     return Err(format!(
@@ -2532,6 +2552,7 @@ mod tests {
             },
             NextActionStop::CheckTriage {
                 case: NextActionCheckCase::TopGap,
+                detail_route: "ripr explain finding:top".to_string(),
             },
             NextActionStop::DoctorRecovery {
                 check_name: "c".to_string(),
