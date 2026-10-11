@@ -49,6 +49,7 @@ fn shell(name: &str) -> TestResult<String> {
 
 struct Fixture {
     root: PathBuf,
+    retained: bool,
 }
 
 impl Fixture {
@@ -63,7 +64,10 @@ impl Fixture {
         ));
         fs::create_dir_all(std::env::temp_dir())?;
         fs::create_dir(&root)?;
-        let fixture = Self { root };
+        let fixture = Self {
+            root,
+            retained: false,
+        };
         fixture.git(&["init", "--object-format=sha1", "-b", "main"])?;
         fixture.git(&["config", "user.name", "Routing Fixture"])?;
         fixture.git(&["config", "user.email", "fixture@example.invalid"])?;
@@ -210,7 +214,9 @@ impl Fixture {
 
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.root);
+        if !self.retained {
+            let _ = fs::remove_dir_all(&self.root);
+        }
     }
 }
 
@@ -504,24 +510,142 @@ fn missing_event_objects_can_be_recovered_without_changing_checkout() -> TestRes
     Ok(())
 }
 
+// Follow xtask's /proc observer semantics: split after the final ')' and keep
+// unreadable/malformed observations distinct from a terminated process.
+fn witness_identity(stat: &str) -> TestResult<(u32, u64, char)> {
+    let (prefix, rest) = stat.rsplit_once(')').ok_or("process stat delimiter")?;
+    let pid = prefix
+        .split_ascii_whitespace()
+        .next()
+        .ok_or("process PID")?
+        .parse()?;
+    let fields = rest.split_ascii_whitespace().collect::<Vec<_>>();
+    let state = fields.first().ok_or("process state")?;
+    if state.len() != 1 {
+        return Err("invalid process state".into());
+    }
+    let state = state.chars().next().ok_or("process state")?;
+    let start = fields.get(19).ok_or("process start time")?.parse()?;
+    Ok((pid, start, state))
+}
+
+fn witness_is_live(stat: Result<&str, &std::io::Error>, pid: u32, start: u64) -> TestResult<bool> {
+    match stat {
+        Ok(stat) => {
+            let (observed_pid, observed_start, state) = witness_identity(stat)?;
+            Ok(observed_pid == pid && observed_start == start && !matches!(state, 'Z' | 'X'))
+        }
+        Err(error)
+            if error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(3) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(format!("cannot observe witness: {error}").into()),
+    }
+}
+
 #[test]
-fn timeout_terminates_and_reaps_shell_descendants() -> TestResult {
-    let fixture = Fixture::new()?;
-    for (script, stubborn) in [
-        (
-            "sleep 30 & child=$!; echo \"$child\" > .git/child-pid; trap 'wait \"$child\"; exit 0' TERM; wait \"$child\"",
-            false,
-        ),
-        (
-            "trap '' TERM; bash -c \"trap '' TERM; exec sleep 30\" & child=$!; echo \"$child\" > .git/child-pid; wait \"$child\"",
-            true,
-        ),
+fn witness_observer_distinguishes_identity_state_and_incomplete_evidence() -> TestResult {
+    let stat = |pid, state, start| {
+        format!(
+            "{pid} (name with ) parentheses) {state} {} {start}",
+            vec!["0"; 18].join(" ")
+        )
+    };
+    assert!(witness_is_live(Ok(&stat(42, 'S', 123)), 42, 123)?);
+    for (pid, state, start) in [
+        (42, 'Z', 123),
+        (42, 'X', 123),
+        (42, 'S', 124),
+        (43, 'S', 123),
     ] {
+        assert!(!witness_is_live(Ok(&stat(pid, state, start)), 42, 123)?);
+    }
+    for malformed in ["", "42 (broken", "42 (broken) S", "42 (broken) invalid"] {
+        if let Ok(observed) = witness_is_live(Ok(malformed), 42, 123) {
+            return Err(format!("malformed observation became live={observed}").into());
+        }
+    }
+    for error in [
+        std::io::Error::from(std::io::ErrorKind::NotFound),
+        std::io::Error::from_raw_os_error(3),
+    ] {
+        assert!(!witness_is_live(Err(&error), 42, 123)?);
+    }
+    let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    if let Ok(observed) = witness_is_live(Err(&denied), 42, 123) {
+        return Err(format!("unreadable observation became live={observed}").into());
+    }
+    Ok(())
+}
+
+#[test]
+fn timeout_terminates_shell_descendants() -> TestResult {
+    let mut fixture = Fixture::new()?;
+    for stubborn in [false, true] {
+        // Record the shell's birth identity before exec, which preserves it.
+        // Null streams prevent a leaked child from holding Command::output open
+        // until its natural exit and falsely passing the termination observation.
+        let trap = if stubborn { "trap \"\" TERM; " } else { "" };
+        let script = format!(
+            "{trap}bash -c '{trap}IFS= read -r stat < /proc/$BASHPID/stat; printf \"%s\\n\" \"$stat\" > .git/child-stat; exec sleep 8' </dev/null >/dev/null 2>&1 & child=$!; {}wait \"$child\"",
+            if stubborn {
+                ""
+            } else {
+                "trap 'wait \"$child\"; exit 0' TERM; "
+            }
+        );
+        let started = std::time::Instant::now();
         let output = fixture.output(
             fixture
                 .command_with_deadline("bash", "0.2s")?
-                .args(["-c", script]),
-        )?;
+                .args(["-c", &script]),
+        );
+        let elapsed = started.elapsed();
+        let observation = (|| -> TestResult<bool> {
+            let original = fs::read_to_string(fixture.root.join(".git/child-stat"))?;
+            let (pid, start, _) = witness_identity(&original)?;
+            let process = Path::new("/proc").join(pid.to_string()).join("stat");
+            let live = || -> TestResult<bool> {
+                let stat = fs::read_to_string(&process);
+                witness_is_live(stat.as_deref(), pid, start)
+            };
+            let observed = std::time::Instant::now();
+            while live()? && observed.elapsed() < std::time::Duration::from_secs(1) {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            let failed_termination = live()?;
+            // No numeric-PID signal: even checking start time before kill races
+            // PID reuse. Let this finite witness expire, preserving the failure.
+            while live()? && observed.elapsed() < std::time::Duration::from_secs(10) {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            if live()? {
+                return Err("witness still live after finite-expiration bound".into());
+            }
+            Ok(failed_termination)
+        })();
+        let failed_termination = match observation {
+            Ok(failed) => failed,
+            Err(error) => {
+                let retained = fixture.root.clone();
+                // Uncertain ownership/liveness is not permission to delete an
+                // in-use fixture. Preserve it for diagnosis instead of signaling.
+                fixture.retained = true;
+                return Err(format!("{error}; fixture retained at {}", retained.display()).into());
+            }
+        };
+        // Assert only after the witness is no longer live. An orphan zombie may
+        // await PID 1; this test promises termination, not that we reaped it.
+        let output = output?;
+        assert!(
+            !failed_termination,
+            "timeout left a live owned descendant (stubborn={stubborn})"
+        );
+        assert!(
+            elapsed < std::time::Duration::from_secs(4),
+            "timeout observation waited for natural witness expiry: {elapsed:?}"
+        );
         if stubborn {
             assert_eq!(
                 output.status.signal(),
@@ -535,23 +659,21 @@ fn timeout_terminates_and_reaps_shell_descendants() -> TestResult {
                 "actual timeout: {output:?}"
             );
         }
-        let pid = fs::read_to_string(fixture.root.join(".git/child-pid"))?;
-        let pid = pid.trim();
-        assert!(!pid.is_empty() && pid.chars().all(|c| c.is_ascii_digit()));
-        let process = Path::new("/proc").join(pid);
-        let started = std::time::Instant::now();
-        while process.exists() && started.elapsed() < std::time::Duration::from_secs(1) {
-            std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    Ok(())
+}
+
+#[test]
+fn fixture_retention_preserves_only_explicitly_retained_evidence() -> TestResult {
+    for retained in [false, true] {
+        let mut fixture = Fixture::new()?;
+        let root = fixture.root.clone();
+        fixture.retained = retained;
+        drop(fixture);
+        assert_eq!(root.exists(), retained);
+        if retained {
+            fs::remove_dir_all(root)?;
         }
-        let alive = process.exists();
-        if alive {
-            // Clean up the deliberately spawned witness before reporting a failure.
-            fixture.output(fixture.command("kill")?.args(["-KILL", pid]))?;
-        }
-        assert!(
-            !alive,
-            "timed-out descendant {pid} must be gone before fixture cleanup (stubborn={stubborn})"
-        );
     }
     Ok(())
 }
