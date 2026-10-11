@@ -28,6 +28,7 @@ A bounded proof contract distinguishes the desired behavior from the strongest p
 
 - Printed output is not proof of retained behavior.
 - Goldens can encode incorrect expectations; add an independent invariant or corpus when promotion risk is material.
+- Derive expected semantic values from the contract, with literal pins or an independent invariant; do not compute them with the production decision being checked. Shared setup helpers are fine. When a targeted wrong-result or removal control materially strengthens behavioral proof, verify that the unchanged expected values reject it; record unexecuted discrimination as not established.
 - A failed prerequisite must not masquerade as a downstream analyzer failure.
 - Status zero with missing or structurally unrecognized evidence is incomplete, not clean.
 - Platform-specific branches require platform-capable proof.
