@@ -12,6 +12,7 @@
 
 use crate::analysis;
 use crate::analysis::owner_fn_line_span;
+use crate::analysis::seams::SeamGripClass;
 use crate::analysis::seams::SeamKind;
 use crate::analysis::test_stub::{
     RustTestStub, TestStubPlacement, TestStubRefusal, rust_test_stub,
@@ -82,6 +83,11 @@ pub(crate) struct TestStubResolution {
     /// and refuses when the file changed in between.
     pub(crate) source: String,
     pub(crate) outcome: Result<RustTestStub, TestStubRefusal>,
+    /// Inventory grip class when classification named this seam.
+    /// `--at --kind` selects from a file parse without classifying; the
+    /// use case looks the class up afterward so the stub can disclose it
+    /// (#7290). `None` when that lookup did not find the seam.
+    pub(crate) grip_class: Option<SeamGripClass>,
 }
 
 #[derive(Debug)]
@@ -110,7 +116,12 @@ pub(crate) fn resolve_test_stub(
             Ok(resolution_for(entry, source))
         }
         TestStubSelector::At { file, line, kind } => {
-            resolve_at_location(root, config, file, *line, kind.as_deref())
+            let mut resolution = resolve_at_location(root, config, file, *line, kind.as_deref())?;
+            if resolution.grip_class.is_none() {
+                resolution.grip_class =
+                    inventory_grip_class(root, config, file, &resolution.seam_id);
+            }
+            Ok(resolution)
         }
     }
 }
@@ -211,6 +222,7 @@ impl<'a> AtCandidate<'a> {
                     owner: seam.owner().to_string(),
                     source,
                     outcome,
+                    grip_class: None,
                 }
             }
             Self::Classified(entry) => resolution_for(entry, source),
@@ -529,7 +541,32 @@ fn resolution_for(entry: &ClassifiedSeam, source: String) -> TestStubResolution 
         owner: entry.seam.owner().to_string(),
         source,
         outcome,
+        grip_class: Some(entry.class),
     }
+}
+
+/// Inventory class for a seam selected from a file parse (`--at --kind`).
+/// Classification is not used to pick the seam (#5471); this lookup is
+/// disclosure only. A failed or empty inventory leaves `None`.
+fn inventory_grip_class(
+    root: &Path,
+    config: &RiprConfig,
+    file: &str,
+    seam_id: &str,
+) -> Option<SeamGripClass> {
+    let relative = scoped_file(root, file)?;
+    let scoped = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+        root,
+        config,
+        &[relative],
+        &[],
+    )
+    .ok()?;
+    scoped
+        .classified
+        .iter()
+        .find(|entry| entry.seam.id().as_str() == seam_id)
+        .map(|entry| entry.class)
 }
 
 /// Exact or path-suffix match in either direction, after normalizing
@@ -670,10 +707,8 @@ mod tests {
         assert!(!paths_match(Path::new("src/mylib.rs"), "lib.rs"));
     }
 
-    fn ungripped(file: &str, line: usize) -> ClassifiedSeam {
-        use crate::analysis::seams::{
-            ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
-        };
+    fn classified_at(file: &str, line: usize, class: SeamGripClass) -> ClassifiedSeam {
+        use crate::analysis::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind};
         use crate::analysis::test_grip_evidence::TestGripEvidence;
         use crate::domain::{Confidence, StageEvidence, StageState};
         let stage = || StageEvidence::new(StageState::Yes, Confidence::Medium, "test stage");
@@ -704,8 +739,31 @@ mod tests {
                 new_test_target: None,
             },
             seam,
-            class: SeamGripClass::Ungripped,
+            class,
         }
+    }
+
+    fn ungripped(file: &str, line: usize) -> ClassifiedSeam {
+        classified_at(file, line, SeamGripClass::Ungripped)
+    }
+
+    fn scratch_stub_crate(label: &str, source: &str) -> Result<PathBuf, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-stub-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            format!("[package]\nname = \"{label}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        )
+        .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), source).map_err(|error| error.to_string())?;
+        Ok(root)
     }
 
     #[test]
@@ -934,5 +992,80 @@ mod tests {
         assert_eq!(line_of_offset("a\nb\nc", 0), 1);
         assert_eq!(line_of_offset("a\nb\nc", 2), 2);
         assert_eq!(line_of_offset("a\nb\nc", 4), 3);
+    }
+
+    #[test]
+    fn classified_candidates_omit_strongly_gripped_seams() {
+        let classified = vec![
+            ungripped("src/lib.rs", 2),
+            classified_at("src/lib.rs", 4, SeamGripClass::StronglyGripped),
+        ];
+        let candidates = classified_candidates(&classified);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].seam().display_line(), 2);
+    }
+
+    /// #7290: `--at --kind` selects from a file parse, so a strongly-gripped
+    /// seam still yields a stub. The use case must still look up the
+    /// inventory class so the CLI can disclose it.
+    #[test]
+    fn at_kind_stub_discloses_a_strongly_gripped_inventory_class() -> Result<(), String> {
+        const SOURCE: &str = "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn at_boundary_clamps() {\n        assert_eq!(clamp_to(100), 100);\n        assert_eq!(clamp_to(99), 99);\n        assert_eq!(clamp_to(500), 100);\n    }\n}\n";
+        let root = scratch_stub_crate("strongly-gripped", SOURCE)?;
+        let config = RiprConfig::default();
+        let inventory = analysis::inventory_diff_scoped_classified_seams_at_with_config(
+            &root,
+            &config,
+            &[PathBuf::from("src/lib.rs")],
+            &[],
+        )
+        .map_err(|error| error.to_string())?;
+        let fixture = inventory
+            .classified
+            .iter()
+            .find(|entry| entry.seam.display_line() == 2)
+            .ok_or_else(|| {
+                format!(
+                    "fixture must classify the comparison on line 2: {:?}",
+                    inventory
+                        .classified
+                        .iter()
+                        .map(|entry| (entry.seam.display_line(), entry.class.as_str()))
+                        .collect::<Vec<_>>()
+                )
+            })?;
+        assert_eq!(
+            fixture.class,
+            SeamGripClass::StronglyGripped,
+            "fixture must already be strongly gripped before the stub lookup"
+        );
+        let selector = TestStubSelector::parse_at("src/lib.rs:2")?.with_kind("predicate")?;
+        let resolution =
+            resolve_test_stub(&root, &config, &selector).map_err(|error| format!("{error:?}"))?;
+        let outcome_ok = resolution.outcome.is_ok();
+        let grip = resolution.grip_class;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(outcome_ok, "stub as scaffold stays ready");
+        assert_eq!(grip, Some(SeamGripClass::StronglyGripped));
+        Ok(())
+    }
+
+    /// A genuine open gap still yields a ready stub, and its inventory
+    /// class is not the strongly-gripped omission case.
+    #[test]
+    fn at_kind_stub_on_an_open_gap_is_not_strongly_gripped() -> Result<(), String> {
+        const SOURCE: &str =
+            "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n";
+        let root = scratch_stub_crate("open-gap", SOURCE)?;
+        let config = RiprConfig::default();
+        let selector = TestStubSelector::parse_at("src/lib.rs:2")?.with_kind("predicate")?;
+        let resolution =
+            resolve_test_stub(&root, &config, &selector).map_err(|error| format!("{error:?}"))?;
+        let outcome_ok = resolution.outcome.is_ok();
+        let grip = resolution.grip_class;
+        let _ = std::fs::remove_dir_all(&root);
+        assert!(outcome_ok, "an open gap still yields a stub: {grip:?}");
+        assert_ne!(grip, Some(SeamGripClass::StronglyGripped));
+        Ok(())
     }
 }

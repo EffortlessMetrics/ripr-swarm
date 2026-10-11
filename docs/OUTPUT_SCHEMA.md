@@ -70,7 +70,7 @@ map is:
 | `ripr agent card --json` and the `RepairCardV1` DTO (RIPR-SPEC-0192, RIPR-SPEC-0194; `ripr agent card` is the default CLI handoff, #4667) | `schema_version` | `repair_card.v1` |
 | `RepairCardV1` detail references and overflow disclosure (RIPR-SPEC-0193, #4666) | `budget_version` | `repair-card-budget-v1` |
 | `ripr agent card --json` refusal stderr envelope (`agent_card_refusal`; RIPR-SPEC-0202, #5007) | `schema_version` | `0.1` |
-| `ripr agent stub --json` document and its refusal stderr envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #5355) | `schema_version` | `0.1` |
+| `ripr agent stub --json` document and its refusal stderr envelope (`kind: rust_test_stub`, `state: ready` or `refused`; #5355; additive `grip_class` / `classification` / `warnings` #7290) | `schema_version` | `0.1` |
 
 The published JSON Schemas have these current versions. Each row is checked
 against the schema's pinned `const` and every named producer source by
@@ -226,6 +226,33 @@ fail-closed decision, not a severity and not an analysis verdict. A seam with
 no witness-producing finding still renders its card with the `unavailable`
 instruction (RIPR-SPEC-0194 acceptance) — that in-band card state is typed
 already and is not a refusal.
+
+## Agent stub (`rust_test_stub`, schema `0.1`)
+
+`ripr agent stub --json` emits one `rust_test_stub` document on stdout when
+the producer yields a stub (`state: ready`, exit 0). A producer refusal
+keeps stdout empty and, under `--json`, writes the same `kind` on stderr
+with `state: refused` (#5355). Additive fields on schema `0.1` (#7290):
+
+- `grip_class` — the inventory seam grip class when classification named
+  this seam (`strongly_gripped`, `weakly_gripped`, `ungripped`, …), else
+  `null`. `--at --kind` still selects from a file parse without using
+  classification to pick the seam; the field is a lookup after selection.
+- `classification` — the check-side exposure counterpart of `grip_class`
+  from the shared grip-to-exposure table (`strongly_gripped` → `exposed`,
+  `weakly_gripped` → `weakly_exposed`, `ungripped` → `no_static_path`, …),
+  else `null`. No per-surface translation fork.
+- `warnings` — when the class is omitted from agent packet/repair results,
+  one string reusing that omission reason, for example
+  `seam <id> is configured off for strongly_gripped seams and is not included in agent results`.
+  Empty when the class is included in agent results or the grip is unknown.
+  Human output prints the same strings. Serving a strongly_gripped seam as
+  a scaffold remains `state: ready` / exit 0; the warning is disclosure,
+  not a refusal.
+
+Existing fields (`placement`, `test_name`, `text`, `fill_ins`,
+`derived_inputs`, `written`, `run_command`, and the refusal `refusal`
+object) keep their `0.1` meanings.
 
 ## Executed-control packet (`executed_control_packet`, schema `1`)
 
