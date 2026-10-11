@@ -8129,15 +8129,12 @@ pub struct Alpha;
 impl Alpha { pub fn new() -> Self { Self } }
 pub struct Beta;
 impl Beta { pub fn new() -> Self { Self } }
-#[cfg(test)] mod tests {
-    use super::diagnostic_refresh_plan;
-    use std::collections::BTreeMap;
-    #[test] fn selected() {
-        let previous = BTreeMap::<usize, usize>::new();
-        let plan = diagnostic_refresh_plan();
-        assert!(plan.published_payload_bytes > 0);
-        assert!(previous.is_empty());
-    }
+use std::collections::BTreeMap;
+#[test] fn selected() {
+    let previous = BTreeMap::<usize, usize>::new();
+    let plan = diagnostic_refresh_plan();
+    assert!(plan.published_payload_bytes > 0);
+    assert!(previous.is_empty());
 }
 "#,
         )?;
