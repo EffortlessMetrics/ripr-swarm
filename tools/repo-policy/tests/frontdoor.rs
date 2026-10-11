@@ -1,6 +1,9 @@
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+#[path = "common/git_environment.rs"]
+mod git_environment;
+
 fn copy(from: &Path, to: &Path) -> Result<(), String> {
     if from.is_dir() {
         std::fs::create_dir_all(to).map_err(|e| e.to_string())?;
@@ -57,14 +60,10 @@ impl Fixture {
         Ok(fixture)
     }
     fn git(&self, args: &[&str]) -> Result<String, String> {
-        let output = Command::new("git")
-            .args(args)
-            .current_dir(&self.0)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .output()
-            .map_err(|e| e.to_string())?;
+        let mut command = Command::new("git");
+        command.args(args).current_dir(&self.0);
+        git_environment::isolate_git_environment(&mut command);
+        let output = command.output().map_err(|e| e.to_string())?;
         if !output.status.success() {
             return Err(format!(
                 "fixture git {args:?}: {}",
@@ -88,16 +87,12 @@ impl Fixture {
     }
     fn command(&self, argument: &str) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_repo-policy"));
-        command
-            .arg(argument)
-            .current_dir(&self.0)
-            .env_remove("GIT_DIR")
-            .env_remove("GIT_WORK_TREE")
-            .env_remove("GIT_INDEX_FILE")
-            .env(
-                "GIT_CEILING_DIRECTORIES",
-                self.0.parent().unwrap_or(&self.0),
-            );
+        command.arg(argument).current_dir(&self.0);
+        git_environment::isolate_git_environment(&mut command);
+        command.env(
+            "GIT_CEILING_DIRECTORIES",
+            self.0.parent().unwrap_or(&self.0),
+        );
         command
     }
     fn run(&self, command: &str) -> Result<Output, String> {
