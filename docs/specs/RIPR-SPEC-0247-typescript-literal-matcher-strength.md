@@ -75,7 +75,8 @@ all of these hold:
   object payload is refused: Jest's recursive equality treats a property
   set to `undefined` as absent);
 - the changed line calls an owner parameter `p` as `p(...)`, or a method
-  of it as `p.m(...)`, and the owner body mentions `p` exactly twice: its
+  of it as `p.m(...)` (not through a computed receiver such as
+  `getTable(p).m(...)` or `t[p].m(...)`), and the owner body mentions `p` exactly twice: its
   declaration and this call;
 - the asserted target is `p` (or `p.m`), the same name, bound at the
   test callback's top level (not inside a nested block, where it could

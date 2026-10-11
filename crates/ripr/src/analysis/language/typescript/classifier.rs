@@ -1396,7 +1396,7 @@ fn closed_test_body_constants(
 
 /// The text inside a test callback's braces (`() => { ... }`, `async () =>
 /// { ... }`, `function () { ... }`), or `None` for any other shape.
-pub(crate) fn test_callback_block(body: &str) -> Option<&str> {
+fn test_callback_block(body: &str) -> Option<&str> {
     let arrow = body.find("=>");
     let open = match arrow {
         Some(arrow) => {

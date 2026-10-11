@@ -103,7 +103,10 @@ impl MockCallFacts {
         // The mock is declared at the test callback's top level, so the
         // name passed to the owner and asserted on is that binding and not
         // an outer one a nested block shadows.
-        let scope = test_callback_block(test_body).unwrap_or(test_body);
+        let masked_body = ts_mask_literals_and_comments(test_body);
+        let Some(scope) = callback_scope(&masked_body) else {
+            return false;
+        };
         let made_in_test = match &call.method {
             None => test_local_mock_binding(scope, local),
             Some(method) => test_local_mock_property(scope, local, method),
@@ -146,7 +149,22 @@ fn calls_in(text: &str) -> Vec<Call> {
             before -= 1;
         }
         if before > 0 && chars[before - 1] == '.' {
-            depth += 1;
+            // Only an identifier before the dot continues the chain; after
+            // `)` or `]` (`getTable(db).write(`) the receiver is a computed
+            // value, so the call has no parameter root.
+            let mut receiver = before - 1;
+            if receiver > 0 && chars[receiver - 1] == '?' {
+                receiver -= 1;
+            }
+            while receiver > 0 && chars[receiver - 1].is_whitespace() {
+                receiver -= 1;
+            }
+            if receiver > 0 && is_identifier_part(chars[receiver - 1]) {
+                depth += 1;
+            } else {
+                chain_root.clear();
+                depth = 0;
+            }
         } else {
             chain_root.clone_from(&name);
             depth = 0;
@@ -380,6 +398,36 @@ fn top_level_entries(literal: &str) -> Vec<&str> {
     entries.push(literal[start..].trim());
     entries.retain(|entry| !entry.is_empty());
     entries
+}
+
+/// The test callback's block in a masked `it(...)` call: the first `{`
+/// directly inside the call's argument list (paren depth 1, so a
+/// destructured parameter or a nested call's block is skipped) up to its
+/// matching `}`. A body with no such brace is read whole. `None` when the
+/// block never closes, so an unreadable shape earns nothing.
+fn callback_scope(masked: &str) -> Option<&str> {
+    let mut parens = 0usize;
+    for (index, c) in masked.char_indices() {
+        match c {
+            '(' => parens += 1,
+            ')' => parens = parens.saturating_sub(1),
+            '{' if parens == 1 => {
+                let inner = &masked[index + 1..];
+                let mut depth = 0usize;
+                for (offset, c) in inner.char_indices() {
+                    match c {
+                        '{' => depth += 1,
+                        '}' if depth == 0 => return Some(&inner[..offset]),
+                        '}' => depth -= 1,
+                        _ => {}
+                    }
+                }
+                return None;
+            }
+            _ => {}
+        }
+    }
+    Some(masked)
 }
 
 /// `true` when `at` sits outside every brace block of `masked`.

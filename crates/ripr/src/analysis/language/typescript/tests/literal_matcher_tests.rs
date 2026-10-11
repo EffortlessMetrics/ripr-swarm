@@ -58,7 +58,11 @@ fn mock_payload_on_the_parameters_own_mock_is_credited() {
         &called_with("db.write", "2"),
         "const db = { write: jest.fn((a, b) => a), size: 1 }; save(db, 1);"
     ));
-    // Inside a real test callback.
+    // Inside a real test callback, with or without a destructured parameter.
+    assert!(notify_facts(Some(NOTIFY_OWNER)).credits(
+        &order_payload(),
+        "test(\"announces {\", async ({ task }) => { const send = vi.fn(); announce(7, send); })"
+    ));
     assert!(notify_facts(Some(NOTIFY_OWNER)).credits(
         &order_payload(),
         "it(\"announces\", () => { const send = jest.fn(); announce(7, send); expect(send).toHaveBeenCalledWith(\"order 7\"); })"
@@ -73,6 +77,10 @@ fn mock_payload_on_a_binding_the_owner_may_not_receive_is_not_credited() {
     for test in [
         "it(\"t\", () => { if (ready) { const send = jest.fn(); } announce(7, send); expect(send).toHaveBeenCalledWith(\"order 7\"); })",
         "it(\"t\", function () { { let send = vi.fn(); } announce(7, send); })",
+        // A nested arrow block before the callback's own statements.
+        "it(\"t\", function () { [1].forEach(() => { const send = jest.fn(); }); announce(7, send); expect(send).toHaveBeenCalledWith(\"order 7\"); })",
+        // Braces and quotes in the test name or a comment.
+        "it('function {\"', function () { if (ready) { // \"\n const send = jest.fn(); } announce(7, send); expect(send).toHaveBeenCalledWith(\"order 7\"); })",
     ] {
         assert!(
             !notify_facts(Some(NOTIFY_OWNER)).credits(&payload, test),
@@ -85,6 +93,28 @@ fn mock_payload_on_a_binding_the_owner_may_not_receive_is_not_credited() {
         "save",
         &params(&["db", "v"]),
     );
+    // The changed call goes through a computed receiver, not `db` itself.
+    for line in ["  getTable(db).write(v + 2);", "  tables[db].write(v + 2);"] {
+        let owner = format!("function save(db: Db, v: number) {{\n{line}\n}}");
+        let computed = MockCallFacts::read(line, Some(&owner), "save", &params(&["db", "v"]));
+        assert!(
+            !computed.credits(
+                &called_with("db.write", "2"),
+                "const db = { write: jest.fn() }; save(db, 1);"
+            ),
+            "{line}"
+        );
+    }
+    let optional = MockCallFacts::read(
+        "  db?.write(v + 2);",
+        Some("function save(db: Db, v: number) {\n  db?.write(v + 2);\n}"),
+        "save",
+        &params(&["db", "v"]),
+    );
+    assert!(optional.credits(
+        &called_with("db.write", "2"),
+        "const db = { write: jest.fn() }; save(db, 1);"
+    ));
     // A spread, a repeated key or a quoted key can replace the factory.
     for test in [
         "const db = { write: jest.fn(), ...defaults }; save(db, 1);",
