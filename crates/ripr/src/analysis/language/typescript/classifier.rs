@@ -484,8 +484,13 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
     ];
     // Keywords that take a string operand (`x as 'p'`, `from 'p'`) though a
     // `/` after them is not a regex; a quote after any other word is JSX text.
-    const STRING_OPERAND_KEYWORDS: [&str; 9] = [
+    const STRING_OPERAND_KEYWORDS: [&str; 14] = [
         "as",
+        "is",
+        "module",
+        "static",
+        "get",
+        "set",
         "satisfies",
         "extends",
         "from",
@@ -506,7 +511,9 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
         }
     }
     fn string_expected(prev: Option<char>, word: &str, word_after_dot: bool) -> bool {
+        // `.` covers a spread (`[...'p']`); no member name is a string.
         operand_expected(prev, word, word_after_dot)
+            || prev == Some('.')
             || (prev.is_some_and(is_word_char)
                 && !word_after_dot
                 && STRING_OPERAND_KEYWORDS.contains(&word))
