@@ -253,3 +253,397 @@ fn rerun_missing_gap_ledger_help_names_source_specific_capture_steps() -> TestRe
     }
     Ok(())
 }
+// Literal identities for the real pricing inventory used by the recovery
+// control above. Neither expectation is derived by the identity under test.
+const ROOT_BINDING_GAP: &str = "gap:54c07ec8eeadf203";
+const ROOT_BINDING_SOURCE: &str = "pub fn discounted_total(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n";
+const ROOT_BINDING_TESTS: &str = "use ordinary_shop::discounted_total;\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n#[test]\nfn above_threshold_discounts() {\n    assert_eq!(discounted_total(1_000, 100), 990);\n}\n";
+
+/// Every CLI child goes through the existing owned process harness, with an
+/// empty stdin and a deadline. The absolute Cargo-selected binary is the only
+/// executable used; no PATH lookup, separate spawn site or frozen copy.
+fn root_binding_probe(cwd: &Path, args: &[&str]) -> Result<Output, Box<dyn std::error::Error>> {
+    let mut command = super::probe_command(env!("CARGO_BIN_EXE_ripr"));
+    command
+        .current_dir(cwd)
+        .args(args)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    Ok(super::run_owned_stdin_probe(
+        command,
+        &[],
+        std::time::Duration::from_secs(30),
+    )?)
+}
+
+fn root_binding_json(
+    cwd: &Path,
+    args: &[&str],
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let output = root_binding_probe(cwd, args)?;
+    assert!(
+        output.status.success(),
+        "CLI setup or observation failed: {output:?}"
+    );
+    Ok(serde_json::from_slice(&output.stdout)?)
+}
+
+struct RootBindingFixture {
+    scratch: std::path::PathBuf,
+    root: std::path::PathBuf,
+    foreign: std::path::PathBuf,
+    ledger: std::path::PathBuf,
+}
+
+impl Drop for RootBindingFixture {
+    fn drop(&mut self) {
+        // Preserve recoverable ownership if the host prevents closeout.
+        if let Err(error) = std::fs::remove_dir_all(&self.scratch) {
+            eprintln!(
+                "root-binding fixture retained at {}: {error}",
+                self.scratch.display()
+            );
+        }
+    }
+}
+
+fn root_binding_fixture(
+    label: &str,
+) -> Result<(RootBindingFixture, serde_json::Value), Box<dyn std::error::Error>> {
+    let scratch = unique_temp_workspace(label);
+    let fixture = RootBindingFixture {
+        root: scratch.join("repository A"),
+        foreign: scratch.join("repository B"),
+        ledger: scratch.join("repository A/target/ripr/reports/gap-decision-ledger.json"),
+        scratch,
+    };
+    // B deliberately has identical analyzed bytes. A content-digest-only
+    // implementation cannot substitute for new producers' concrete root.
+    for root in [&fixture.root, &fixture.foreign] {
+        std::fs::create_dir_all(root.join("src"))?;
+        std::fs::create_dir_all(root.join("tests"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"ordinary_shop\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        std::fs::write(root.join("src/lib.rs"), ROOT_BINDING_SOURCE)?;
+        std::fs::write(root.join("tests/pricing.rs"), ROOT_BINDING_TESTS)?;
+        run_git(root, &["init"])?;
+        run_git(root, &["config", "core.autocrlf", "false"])?;
+        std::fs::write(root.join(".git/info/exclude"), "/target/\n")?;
+        run_git(root, &["add", "Cargo.toml", "src", "tests"])?;
+        run_git(
+            root,
+            &[
+                "-c",
+                "user.name=RIPR test",
+                "-c",
+                "user.email=ripr@example.invalid",
+                "commit",
+                "-m",
+                "pricing crate",
+            ],
+        )?;
+    }
+    for relative in ["Cargo.toml", "src/lib.rs", "tests/pricing.rs"] {
+        assert_eq!(
+            std::fs::read(fixture.root.join(relative))?,
+            std::fs::read(fixture.foreign.join(relative))?,
+            "A and B must have byte-identical subject files before consuming A's ledger"
+        );
+    }
+    let captured = root_binding_probe(&fixture.root, &["check", "--format", "repo-exposure-json"])?;
+    assert!(
+        captured.status.success(),
+        "default capture failed: {captured:?}"
+    );
+    let inventory: serde_json::Value = serde_json::from_slice(&captured.stdout)?;
+    assert_eq!(
+        inventory["seams"].as_array().ok_or("missing seams")?.len(),
+        1
+    );
+    assert_eq!(
+        inventory["seams"][0]["evidence_record"]["canonical_gap_id"],
+        ROOT_BINDING_GAP
+    );
+    assert_eq!(
+        inventory["seams"][0]["owner"],
+        "src/lib.rs::discounted_total"
+    );
+    std::fs::write(fixture.root.join("repo-exposure.json"), captured.stdout)?;
+    // Both the root and destination use actual CLI defaults.
+    let produced = root_binding_probe(
+        &fixture.root,
+        &[
+            "reports",
+            "gap-ledger",
+            "--repo-exposure",
+            "repo-exposure.json",
+        ],
+    )?;
+    assert!(
+        produced.status.success(),
+        "default producer failed: {produced:?}"
+    );
+    let ledger: serde_json::Value = serde_json::from_slice(&std::fs::read(&fixture.ledger)?)?;
+    assert_eq!(
+        ledger["records"].as_array().ok_or("missing records")?.len(),
+        1
+    );
+    assert_eq!(ledger["records"][0]["canonical_gap_id"], ROOT_BINDING_GAP);
+    assert!(
+        ledger["records"][0]["seam_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty()),
+        "the real producer must supply the seam identity retained after gap closure"
+    );
+    assert_eq!(ledger["records"][0]["anchor"]["file"], "src/lib.rs");
+    assert_eq!(ledger["source_subject"]["digest_algorithm"], "sha256");
+    let files = ledger["source_subject"]["files"]
+        .as_array()
+        .ok_or("missing producer source subject")?;
+    assert!(
+        !files.is_empty(),
+        "real producer must stamp nonempty subjects"
+    );
+    for relative in ["src/lib.rs", "tests/pricing.rs"] {
+        let file = files
+            .iter()
+            .find(|file| file["path"] == relative)
+            .ok_or("named subject was not stamped")?;
+        let digest = format!(
+            "sha256:{:x}",
+            <sha2::Sha256 as sha2::Digest>::digest(std::fs::read(fixture.root.join(relative))?)
+        );
+        assert_eq!(file["digest"], digest);
+    }
+    Ok((fixture, ledger))
+}
+
+fn root_binding_rerun(
+    fixture: &RootBindingFixture,
+    ledger: &Path,
+    explicit_root: bool,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let ledger_arg = ledger.display().to_string();
+    let root_arg = fixture.root.display().to_string();
+    let mut args = vec![
+        "rerun",
+        "--gap",
+        ROOT_BINDING_GAP,
+        "--gap-ledger",
+        &ledger_arg,
+        "--json",
+    ];
+    if explicit_root {
+        args.extend(["--root", &root_arg]);
+    }
+    root_binding_json(&fixture.foreign, &args)
+}
+
+fn assert_root_binding_selected(selected: &serde_json::Value, expected_class: &str) -> TestResult {
+    assert_eq!(selected["state"], "current_state_only", "{selected}");
+    assert_eq!(selected["selector"]["canonical_gap_id"], ROOT_BINDING_GAP);
+    assert_eq!(selected["selector"]["matched_record_count"], 1);
+    assert_eq!(selected["selector"]["recomputed_scope_count"], 1);
+    let seams = selected["seams"]
+        .as_array()
+        .ok_or("missing selected seams")?;
+    assert_eq!(seams.len(), 1, "{selected}");
+    assert_eq!(seams[0]["canonical_gap_id"], ROOT_BINDING_GAP);
+    assert_eq!(seams[0]["file"], "src/lib.rs");
+    assert_eq!(seams[0]["owner"], "src/lib.rs::discounted_total");
+    assert_eq!(seams[0]["line"], 2);
+    assert_eq!(seams[0]["static_class"], expected_class);
+    assert!(selected.get("movement").is_none());
+    assert!(selected.get("limitation").is_none());
+    Ok(())
+}
+
+fn assert_root_binding_refused(
+    refused: &serde_json::Value,
+    kind: &str,
+    reason: &str,
+) -> TestResult {
+    assert_eq!(refused["state"], "limited", "{refused}");
+    assert_eq!(refused["limitation"]["kind"], kind, "{refused}");
+    assert!(
+        refused["limitation"]["message"]
+            .as_str()
+            .ok_or("missing refusal message")?
+            .contains(reason),
+        "{refused}"
+    );
+    assert_eq!(refused["selector"]["matched_record_count"], 0);
+    assert_eq!(refused["selector"]["recomputed_scope_count"], 0);
+    assert_eq!(refused["seams"], serde_json::json!([]));
+    assert_eq!(refused["cache"]["reuse_state"], "not_run");
+    assert_eq!(refused["cache"]["file_fact_status"], "not_run");
+    assert_eq!(refused["cache"]["hits"], 0);
+    assert_eq!(refused["cache"]["misses"], 0);
+    assert!(refused.get("route").is_none());
+    Ok(())
+}
+
+/// #7382: a real default-root ledger cannot borrow B's meaning of `.`.
+/// Identical source bytes make a digest-only repair fail this root oracle.
+#[test]
+fn rerun_default_gap_ledger_binds_producer_root_before_scope_recomputation() -> TestResult {
+    let (fixture, ledger) = root_binding_fixture("rerun-default-ledger-root")?;
+    let local = root_binding_json(
+        &fixture.root,
+        &[
+            "rerun",
+            "--gap",
+            ROOT_BINDING_GAP,
+            "--gap-ledger",
+            "target/ripr/reports/gap-decision-ledger.json",
+            "--json",
+        ],
+    )?;
+    assert_root_binding_selected(&local, "weakly_gripped")?;
+    let refused = root_binding_rerun(&fixture, &fixture.ledger, false)?;
+    assert_root_binding_refused(&refused, "stale_gap_ledger", "does not match rerun root")?;
+    let selected = root_binding_rerun(&fixture, &fixture.ledger, true)?;
+    assert_root_binding_selected(&selected, "weakly_gripped")?;
+    assert_eq!(
+        selected["seams"][0]["seam_id"],
+        ledger["records"][0]["seam_id"]
+    );
+    let recorded_root = Path::new(ledger["root"].as_str().ok_or("missing ledger root")?);
+    assert!(
+        recorded_root.is_absolute(),
+        "producer persisted a CWD-relative root: {ledger}"
+    );
+    assert_eq!(recorded_root.canonicalize()?, fixture.root.canonicalize()?);
+    Ok(())
+}
+
+/// Absolute root metadata already binds the checkout. Rerun must preserve its
+/// existing edited-source recomputation contract, including older unstamped
+/// records and explicit seam retention after the canonical gap closes.
+#[test]
+fn rerun_absolute_root_ledger_keeps_edited_source_and_unstamped_legacy_recomputation() -> TestResult
+{
+    let (fixture, mut ledger) = root_binding_fixture("rerun-bound-ledger-recompute")?;
+    ledger["root"] = serde_json::json!(
+        fixture
+            .root
+            .canonicalize()?
+            .to_string_lossy()
+            .replace('\\', "/")
+    );
+    let stamped = fixture.root.join("bound-stamped.json");
+    std::fs::write(&stamped, serde_json::to_vec(&ledger)?)?;
+    let legacy = fixture.root.join("bound-legacy.json");
+    let object = ledger.as_object_mut().ok_or("ledger is not an object")?;
+    object.remove("source_subject");
+    object.remove("source_subject_unavailable");
+    object.remove("inputs");
+    std::fs::write(&legacy, serde_json::to_vec(&ledger)?)?;
+    let after = format!(
+        "{ROOT_BINDING_TESTS}#[test]\nfn equality_boundary_discounts() {{\n    assert_eq!(discounted_total(100, 100), 90);\n}}\n"
+    );
+    std::fs::write(fixture.root.join("tests/pricing.rs"), after)?;
+    std::fs::write(
+        fixture.root.join("src/lib.rs"),
+        format!("{ROOT_BINDING_SOURCE}// source edited after ledger capture\n"),
+    )?;
+    for path in [stamped, legacy] {
+        let selected = root_binding_rerun(&fixture, &path, true)?;
+        assert_root_binding_selected(&selected, "strongly_gripped")?;
+        assert_eq!(
+            selected["seams"][0]["seam_id"],
+            ledger["records"][0]["seam_id"]
+        );
+        assert!(
+            selected["seams"][0]["missing_discriminators"]
+                .as_array()
+                .ok_or("missing discriminators")?
+                .is_empty()
+        );
+        assert!(
+            selected["seams"][0]["related_tests"]
+                .as_array()
+                .ok_or("missing related tests")?
+                .iter()
+                .any(|test| test["test_name"] == "equality_boundary_discounts")
+        );
+    }
+    Ok(())
+}
+
+/// Legacy relative or missing roots cannot recover the producer's CWD. Use
+/// the existing source-subject authority, with real records left unchanged.
+#[test]
+fn rerun_legacy_unbound_roots_require_current_complete_source_subject() -> TestResult {
+    let (fixture, produced) = root_binding_fixture("rerun-legacy-ledger-subject")?;
+    for root in [Some("."), Some("relative/producer"), None] {
+        let mut ledger = produced.clone();
+        let object = ledger.as_object_mut().ok_or("ledger is not an object")?;
+        match root {
+            Some(root) => {
+                object.insert("root".to_string(), serde_json::json!(root));
+            }
+            None => {
+                object.remove("root");
+            }
+        }
+        let path = fixture.root.join("legacy-subject.json");
+        std::fs::write(&path, serde_json::to_vec(&ledger)?)?;
+        assert_root_binding_selected(
+            &root_binding_rerun(&fixture, &path, true)?,
+            "weakly_gripped",
+        )?;
+        // Matching is evaluated at explicit A, not at the foreign process CWD.
+        std::fs::write(
+            fixture.foreign.join("src/lib.rs"),
+            "pub fn foreign_repository_only() {}\n",
+        )?;
+        assert_root_binding_refused(
+            &root_binding_rerun(&fixture, &path, false)?,
+            "stale_subject",
+            "src/lib.rs",
+        )?;
+        let mut unsupported = ledger["source_subject"].clone();
+        unsupported["digest_algorithm"] = serde_json::json!("md5");
+        let mut incomplete = ledger["source_subject"].clone();
+        incomplete["files"]
+            .as_array_mut()
+            .ok_or("missing subject files")?
+            .retain(|file| file["path"] != "tests/pricing.rs");
+        assert!(
+            !incomplete["files"]
+                .as_array()
+                .ok_or("missing subject files")?
+                .is_empty()
+        );
+        for (stamp, reason) in [
+            (None, "source_subject_missing"),
+            (Some(serde_json::Value::Null), "source_subject_malformed"),
+            (
+                Some(serde_json::json!({"files": "not an array"})),
+                "source_subject_malformed",
+            ),
+            (Some(unsupported), "source_subject_unsupported_digest"),
+            (Some(incomplete), "source_subject_incomplete"),
+        ] {
+            let mut unavailable = ledger.clone();
+            let object = unavailable
+                .as_object_mut()
+                .ok_or("ledger is not an object")?;
+            object.remove("source_subject");
+            if let Some(stamp) = stamp {
+                object.insert("source_subject".to_string(), stamp);
+            }
+            std::fs::write(&path, serde_json::to_vec(&unavailable)?)?;
+            assert_root_binding_refused(
+                &root_binding_rerun(&fixture, &path, true)?,
+                "unverifiable_subject",
+                reason,
+            )?;
+        }
+    }
+    Ok(())
+}
