@@ -17,7 +17,7 @@
 //! and LSP surfaces (which require a usable git workspace root) see the same
 //! behavior change the CLI surface sees through `--diff`.
 
-use crate::run::{capture_output_with_timeout, run, run_output, run_output_owned_with_envs};
+use crate::run::{capture_output_with_timeout, run, run_output};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -3244,7 +3244,7 @@ mod tests {
     }
 
     /// Unique scratch root for the corpus-git routing tests.
-    fn corpus_git_test_root(label: &str) -> std::path::PathBuf {
+    fn corpus_git_test_root(label: &str) -> Result<std::path::PathBuf, String> {
         let root = std::env::temp_dir().join(format!(
             "ripr-bench-corpus-git-{label}-{}",
             SystemTime::now()
@@ -3252,30 +3252,30 @@ mod tests {
                 .map(|duration| duration.as_nanos())
                 .unwrap_or(0)
         ));
-        fs::create_dir_all(&root).expect("create corpus git test root");
-        root
+        fs::create_dir_all(&root)
+            .map_err(|error| format!("create corpus git test root: {error}"))?;
+        Ok(root)
     }
 
-    fn corpus_git(root: &std::path::Path, args: &[&str]) -> String {
+    fn corpus_git(root: &std::path::Path, args: &[&str]) -> Result<String, String> {
         let mut all: Vec<String> = vec!["-C".to_string(), root.display().to_string()];
         all.extend(args.iter().map(|value| (*value).to_string()));
-        String::from_utf8_lossy(
-            &crate::run::capture_process_output_isolated("git", &all, &[], &[], &[])
-                .expect("corpus git helper child"),
-        )
-        .into_owned()
+        crate::run::capture_process_output_isolated("git", &all, &[], &[], &[])
+            .map(|output| String::from_utf8_lossy(&output).into_owned())
+            .map_err(|error| format!("corpus git {args:?}: {}", error.message))
     }
 
     /// Seeds an "enclosing checkout": a git repository with one commit whose
     /// HEAD id the tests pin as the damage witness.
-    fn seed_foreign_repo(root: &std::path::Path) -> String {
-        fs::create_dir_all(root).expect("create foreign repo");
-        corpus_git(root, &["init", "-q", "--initial-branch", "main"]);
-        corpus_git(root, &["config", "user.email", "bench@example.invalid"]);
-        corpus_git(root, &["config", "user.name", "ripr bench corpus tests"]);
-        fs::write(root.join("README"), "enclosing checkout\n").expect("write readme");
-        corpus_git(root, &["add", "."]);
-        corpus_git(root, &["commit", "-q", "-m", "outer base"]);
+    fn seed_foreign_repo(root: &std::path::Path) -> Result<String, String> {
+        fs::create_dir_all(root).map_err(|error| format!("create foreign repo: {error}"))?;
+        corpus_git(root, &["init", "-q", "--initial-branch", "main"])?;
+        corpus_git(root, &["config", "user.email", "bench@example.invalid"])?;
+        corpus_git(root, &["config", "user.name", "ripr bench corpus tests"])?;
+        fs::write(root.join("README"), "enclosing checkout\n")
+            .map_err(|error| format!("write readme: {error}"))?;
+        corpus_git(root, &["add", "."])?;
+        corpus_git(root, &["commit", "-q", "-m", "outer base"])?;
         corpus_git(root, &["rev-parse", "HEAD"])
     }
 
@@ -3286,12 +3286,13 @@ mod tests {
     /// unborn bench-base HEAD with a corpus commit. This is the corruption
     /// the `git bisect run` parent produced on the shared repository.
     #[test]
-    fn inherited_git_dir_redirects_the_corpus_sequence_without_removals() {
-        let root = corpus_git_test_root("negative");
-        let foreign_head = seed_foreign_repo(&root.join("outer"));
+    fn inherited_git_dir_redirects_the_corpus_sequence_without_removals() -> Result<(), String> {
+        let root = corpus_git_test_root("negative")?;
+        let foreign_head = seed_foreign_repo(&root.join("outer"))?;
         let corpus = root.join("corpus");
-        fs::create_dir_all(&corpus).expect("create corpus dir");
-        fs::write(corpus.join("Cargo.toml"), "[package]\nname = \"c\"\n").expect("write corpus");
+        fs::create_dir_all(&corpus).map_err(|error| format!("create corpus dir: {error}"))?;
+        fs::write(corpus.join("Cargo.toml"), "[package]\nname = \"c\"\n")
+            .map_err(|error| format!("write corpus: {error}"))?;
 
         let git_dir = root.join("outer").join(".git").display().to_string();
         let poison = [("GIT_DIR", git_dir.as_str())];
@@ -3371,18 +3372,20 @@ mod tests {
             "negative witness failed: the GIT_DIR-pointed repository was NOT corrupted, so this \
              test no longer reproduces the #7292 corpus-creation hazard"
         );
+        Ok(())
     }
 
     /// #7292 positive witness: with the corpus routing env removed, the same
     /// sequence initializes its own repository at `corpus_root` and leaves
     /// the `GIT_DIR`-pointed repository untouched.
     #[test]
-    fn corpus_git_routing_env_keeps_the_sequence_inside_the_corpus() {
-        let root = corpus_git_test_root("positive");
-        let foreign_head = seed_foreign_repo(&root.join("outer"));
+    fn corpus_git_routing_env_keeps_the_sequence_inside_the_corpus() -> Result<(), String> {
+        let root = corpus_git_test_root("positive")?;
+        let foreign_head = seed_foreign_repo(&root.join("outer"))?;
         let corpus = root.join("corpus");
-        fs::create_dir_all(&corpus).expect("create corpus dir");
-        fs::write(corpus.join("Cargo.toml"), "[package]\nname = \"c\"\n").expect("write corpus");
+        fs::create_dir_all(&corpus).map_err(|error| format!("create corpus dir: {error}"))?;
+        fs::write(corpus.join("Cargo.toml"), "[package]\nname = \"c\"\n")
+            .map_err(|error| format!("write corpus: {error}"))?;
 
         let git_dir = root.join("outer").join(".git").display().to_string();
         let poison = [("GIT_DIR", git_dir.as_str())];
@@ -3395,7 +3398,7 @@ mod tests {
             &CORPUS_GIT_REMOVED_ENVS,
             &pinned_git_env(),
         )
-        .expect("corpus init");
+        .map_err(|error| format!("corpus init: {}", error.message))?;
         let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
         all.extend(
             ["symbolic-ref", "HEAD", "refs/heads/bench-base"]
@@ -3409,7 +3412,7 @@ mod tests {
             &CORPUS_GIT_REMOVED_ENVS,
             &pinned_git_env(),
         )
-        .expect("corpus symbolic-ref");
+        .map_err(|error| format!("corpus symbolic-ref: {}", error.message))?;
         let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
         all.extend(["add", "-A"].iter().map(|value| (*value).to_string()));
         crate::run::capture_process_output_isolated(
@@ -3419,7 +3422,7 @@ mod tests {
             &CORPUS_GIT_REMOVED_ENVS,
             &pinned_git_env(),
         )
-        .expect("corpus add");
+        .map_err(|error| format!("corpus add: {}", error.message))?;
         let mut all: Vec<String> = vec![
             "-c".to_string(),
             "user.name=ripr bench corpus".to_string(),
@@ -3440,11 +3443,11 @@ mod tests {
             &CORPUS_GIT_REMOVED_ENVS,
             &pinned_git_env(),
         )
-        .expect("corpus commit");
+        .map_err(|error| format!("corpus commit: {}", error.message))?;
 
-        let untouched_head = corpus_git(&root.join("outer"), &["rev-parse", "HEAD"]);
-        let corpus_head = corpus_git(&corpus, &["rev-parse", "HEAD"]);
-        let corpus_branch = corpus_git(&corpus, &["symbolic-ref", "--short", "HEAD"]);
+        let untouched_head = corpus_git(&root.join("outer"), &["rev-parse", "HEAD"])?;
+        let corpus_head = corpus_git(&corpus, &["rev-parse", "HEAD"])?;
+        let corpus_branch = corpus_git(&corpus, &["symbolic-ref", "--short", "HEAD"])?;
         let _ = fs::remove_dir_all(&root);
         assert_eq!(
             untouched_head.trim(),
@@ -3460,6 +3463,7 @@ mod tests {
             !corpus_head.trim().is_empty(),
             "the corpus repository must hold the base commit"
         );
+        Ok(())
     }
 
     /// A real exit(1) status: `ExitStatus::default()` reports success on

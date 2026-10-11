@@ -242,6 +242,10 @@ fn child_after_readiness(
     Ok((result.output, elapsed_at_abort))
 }
 
+// Every caller is a Linux-gated contention test (flock evidence); on other
+// hosts the fn is dead without this gate (#7292 lane: the Windows xtask
+// clippy gate fails on clean main without it).
+#[cfg(target_os = "linux")]
 fn assert_child(output: &crate::run::TimedOutput) {
     assert!(
         !output.timed_out && output.status.is_some_and(|status| status.success()),
