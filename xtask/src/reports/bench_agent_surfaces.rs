@@ -17,7 +17,7 @@
 //! and LSP surfaces (which require a usable git workspace root) see the same
 //! behavior change the CLI surface sees through `--diff`.
 
-use crate::run::{capture_output_with_timeout, run, run_output, run_output_owned_with_envs};
+use crate::run::{capture_output_with_timeout, run, run_output};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -414,6 +414,23 @@ fn pinned_git_env() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+/// Repository-routing environment variables removed from every corpus git
+/// child. With `GIT_DIR` inherited, `git init -q` REINITIALIZES the pointed
+/// repository and every later corpus git call (`-C corpus_root`
+/// notwithstanding) operates on that repository instead of the corpus one —
+/// a parent that exports `GIT_DIR` (`git bisect run`, CI wrappers) made the
+/// corpus commits land in, and point the `main` branch of, the enclosing
+/// checkout (#7292). The corpus operations must always create and use their
+/// own repository at `corpus_root`, so the inherited routing is stripped.
+const CORPUS_GIT_REMOVED_ENVS: [&str; 6] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+];
+
 fn os_dev_null() -> &'static str {
     if cfg!(windows) { "NUL" } else { "/dev/null" }
 }
@@ -505,7 +522,15 @@ fn git_args(
     for value in args {
         all.push((*value).to_string());
     }
-    run_output_owned_with_envs("git", &all, envs)
+    let output = crate::run::capture_process_output_isolated(
+        "git",
+        &all,
+        &[],
+        &CORPUS_GIT_REMOVED_ENVS,
+        envs,
+    )
+    .map_err(|error| error.message)?;
+    Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
 /// Corpus `tiny`: derived from the checked-in sample bytes. The checked-in
@@ -3216,6 +3241,229 @@ mod tests {
 
     fn sample(args: &[&str]) -> Vec<String> {
         args.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    /// Unique scratch root for the corpus-git routing tests.
+    fn corpus_git_test_root(label: &str) -> Result<std::path::PathBuf, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-bench-corpus-git-{label}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&root)
+            .map_err(|error| format!("create corpus git test root: {error}"))?;
+        Ok(root)
+    }
+
+    fn corpus_git(root: &std::path::Path, args: &[&str]) -> Result<String, String> {
+        let mut all: Vec<String> = vec!["-C".to_string(), root.display().to_string()];
+        all.extend(args.iter().map(|value| (*value).to_string()));
+        crate::run::capture_process_output_isolated("git", &all, &[], &[], &[])
+            .map(|output| String::from_utf8_lossy(&output).into_owned())
+            .map_err(|error| format!("corpus git {args:?}: {}", error.message))
+    }
+
+    /// Seeds an "enclosing checkout": a git repository with one commit whose
+    /// HEAD id the tests pin as the damage witness.
+    fn seed_foreign_repo(root: &std::path::Path) -> Result<String, String> {
+        fs::create_dir_all(root).map_err(|error| format!("create foreign repo: {error}"))?;
+        corpus_git(root, &["init", "-q", "--initial-branch", "main"])?;
+        corpus_git(root, &["config", "user.email", "bench@example.invalid"])?;
+        corpus_git(root, &["config", "user.name", "ripr bench corpus tests"])?;
+        fs::write(root.join("README"), "enclosing checkout\n")
+            .map_err(|error| format!("write readme: {error}"))?;
+        corpus_git(root, &["add", "."])?;
+        corpus_git(root, &["commit", "-q", "-m", "outer base"])?;
+        corpus_git(root, &["rev-parse", "HEAD"])
+    }
+
+    /// #7292 discriminating pair, negative witness first: with `GIT_DIR`
+    /// inherited, the exact corpus-creation sequence the harness runs
+    /// (`init`, `symbolic-ref HEAD bench-base`, `add -A`, `commit`) operates
+    /// on the GIT_DIR-pointed repository, replacing the enclosing checkout's
+    /// unborn bench-base HEAD with a corpus commit. This is the corruption
+    /// the `git bisect run` parent produced on the shared repository.
+    #[test]
+    fn inherited_git_dir_redirects_the_corpus_sequence_without_removals() -> Result<(), String> {
+        let root = corpus_git_test_root("negative")?;
+        let foreign_head = seed_foreign_repo(&root.join("outer"))?;
+        let corpus = root.join("corpus");
+        fs::create_dir_all(&corpus).map_err(|error| format!("create corpus dir: {error}"))?;
+        fs::write(corpus.join("Cargo.toml"), "[package]\nname = \"c\"\n")
+            .map_err(|error| format!("write corpus: {error}"))?;
+
+        let git_dir = root.join("outer").join(".git").display().to_string();
+        let poison = [("GIT_DIR", git_dir.as_str())];
+        let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
+        all.push("init".to_string());
+        all.push("-q".to_string());
+        let _ = crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &[],
+            &pinned_git_env(),
+        );
+        let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
+        all.extend(
+            ["symbolic-ref", "HEAD", "refs/heads/bench-base"]
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
+        let _ = crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &[],
+            &pinned_git_env(),
+        );
+        let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
+        all.push("add".to_string());
+        all.push("-A".to_string());
+        let _ = crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &[],
+            &pinned_git_env(),
+        );
+        let mut all: Vec<String> = vec![
+            "-c".to_string(),
+            "user.name=ripr bench corpus".to_string(),
+            "-c".to_string(),
+            "user.email=bench@ripr.invalid".to_string(),
+            "-C".to_string(),
+            corpus.display().to_string(),
+        ];
+        all.push("commit".to_string());
+        all.push("-q".to_string());
+        all.push("-m".to_string());
+        all.push("ripr bench corpus base".to_string());
+        let commit = crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &[],
+            &pinned_git_env(),
+        );
+
+        // Without removals the sequence corrupts the pointed repository: the
+        // unborn bench-base branch got the corpus commit, so the outer HEAD
+        // no longer resolves to the seeded base (it moved to the corpus
+        // commit or the branch was left unborn).
+        let outer = root.join("outer");
+        let mut all: Vec<String> = vec!["-C".to_string(), outer.display().to_string()];
+        all.extend(
+            ["rev-parse", "HEAD"]
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
+        let corrupted_head =
+            crate::run::capture_process_output_isolated("git", &all, &[], &[], &[])
+                .map(|output| String::from_utf8_lossy(&output).trim().to_string())
+                .unwrap_or_else(|_| "<unresolvable>".to_string());
+        let _ = commit;
+        let _ = fs::remove_dir_all(&root);
+        assert_ne!(
+            corrupted_head,
+            foreign_head.trim().to_string(),
+            "negative witness failed: the GIT_DIR-pointed repository was NOT corrupted, so this \
+             test no longer reproduces the #7292 corpus-creation hazard"
+        );
+        Ok(())
+    }
+
+    /// #7292 positive witness: with the corpus routing env removed, the same
+    /// sequence initializes its own repository at `corpus_root` and leaves
+    /// the `GIT_DIR`-pointed repository untouched.
+    #[test]
+    fn corpus_git_routing_env_keeps_the_sequence_inside_the_corpus() -> Result<(), String> {
+        let root = corpus_git_test_root("positive")?;
+        let foreign_head = seed_foreign_repo(&root.join("outer"))?;
+        let corpus = root.join("corpus");
+        fs::create_dir_all(&corpus).map_err(|error| format!("create corpus dir: {error}"))?;
+        fs::write(corpus.join("Cargo.toml"), "[package]\nname = \"c\"\n")
+            .map_err(|error| format!("write corpus: {error}"))?;
+
+        let git_dir = root.join("outer").join(".git").display().to_string();
+        let poison = [("GIT_DIR", git_dir.as_str())];
+        let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
+        all.extend(["init", "-q"].iter().map(|value| (*value).to_string()));
+        crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &CORPUS_GIT_REMOVED_ENVS,
+            &pinned_git_env(),
+        )
+        .map_err(|error| format!("corpus init: {}", error.message))?;
+        let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
+        all.extend(
+            ["symbolic-ref", "HEAD", "refs/heads/bench-base"]
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
+        crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &CORPUS_GIT_REMOVED_ENVS,
+            &pinned_git_env(),
+        )
+        .map_err(|error| format!("corpus symbolic-ref: {}", error.message))?;
+        let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
+        all.extend(["add", "-A"].iter().map(|value| (*value).to_string()));
+        crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &CORPUS_GIT_REMOVED_ENVS,
+            &pinned_git_env(),
+        )
+        .map_err(|error| format!("corpus add: {}", error.message))?;
+        let mut all: Vec<String> = vec![
+            "-c".to_string(),
+            "user.name=ripr bench corpus".to_string(),
+            "-c".to_string(),
+            "user.email=bench@ripr.invalid".to_string(),
+            "-C".to_string(),
+            corpus.display().to_string(),
+        ];
+        all.extend(
+            ["commit", "-q", "-m", "ripr bench corpus base"]
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
+        crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &CORPUS_GIT_REMOVED_ENVS,
+            &pinned_git_env(),
+        )
+        .map_err(|error| format!("corpus commit: {}", error.message))?;
+
+        let untouched_head = corpus_git(&root.join("outer"), &["rev-parse", "HEAD"])?;
+        let corpus_head = corpus_git(&corpus, &["rev-parse", "HEAD"])?;
+        let corpus_branch = corpus_git(&corpus, &["symbolic-ref", "--short", "HEAD"])?;
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            untouched_head.trim(),
+            foreign_head.trim(),
+            "the GIT_DIR-pointed repository must stay untouched by corpus creation"
+        );
+        assert_eq!(
+            corpus_branch.trim(),
+            "bench-base",
+            "the corpus repository must carry the pinned base branch"
+        );
+        assert!(
+            !corpus_head.trim().is_empty(),
+            "the corpus repository must hold the base commit"
+        );
+        Ok(())
     }
 
     /// A real exit(1) status: `ExitStatus::default()` reports success on

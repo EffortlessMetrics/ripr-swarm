@@ -1293,6 +1293,14 @@ owner = "product-analysis"
 standalone_reason = "Amends the TypeScript oracle rules from corpus mutation evidence: copy-for-identity changes need an identity matcher, and three nested callbacks that run before the test settles are collected."
 
 [[artifact]]
+id = "RIPR-SPEC-0247"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0247-typescript-literal-matcher-strength.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Amends the TypeScript matcher strengths from corpus mutation evidence: a literal mock-call payload on a test-local mock, loose equality against a coercion-safe literal, and a literal inline snapshot read exact."
+
+[[artifact]]
 id = "RIPR-SPEC-0243"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
@@ -1402,7 +1410,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md"
 status = "proposed"
 owner = "product-analysis"
-standalone_reason = "Records the check --json refusal-envelope contract (#6834): a parsed-but-refused invocation emits a parseable envelope whose typed identity is carried in analysis_scope.run_status/basis/limitation and run_limitations[0].category/run_status/basis, with the repair route and the verbatim stderr diagnostic bound by test; caller-supplied root/base are echoed; argv usage errors stay prose-only; file-loaded config redacts only caller-unsupplied values."
+standalone_reason = "Records the check --json refusal-envelope contract (#6834): a parsed-but-refused invocation emits a parseable envelope whose typed identity is carried in analysis_scope.run_status/basis/limitation and run_limitations[0].category/run_status/basis, with the repair route and the verbatim stderr diagnostic bound by test; caller-supplied root/base are echoed; argv usage errors stay prose-only; file-loaded config redacts only caller-unsupplied values. Amended (#7331/#7332): the same envelope covers diff/rerun/context/agent brief/agent packet --json keyed with each command's own schema_version (adding check_artifact_unusable, gap_ledger_unusable, and seam_id_unknown identities), and the machine check formats sarif/github/badge-json/repo-exposure-json/agent-seam-packets-json render per-format refusal documents instead of zero bytes."
 
 [[artifact]]
 id = "RIPR-SPEC-0242"

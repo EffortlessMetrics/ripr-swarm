@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::Duration;
 
@@ -221,6 +221,9 @@ fn validate_test_covered_by_with(
     mut enumerate: impl FnMut(&[String]) -> Result<(bool, String, String), String>,
 ) -> Result<Vec<TestCoverageObservation>, String> {
     let mut observations = Vec::new();
+    // This synchronous invocation keeps one execution context. Reuse raw
+    // successful output by exact argv, retaining each selector's validation.
+    let mut enumerated = BTreeMap::<Vec<String>, (bool, String, String)>::new();
     for selector in commands {
         let FilePolicyTestCommand { line, command, .. } = selector;
         if !is_cargo_test_command(command) {
@@ -245,8 +248,11 @@ fn validate_test_covered_by_with(
             "--format".to_string(),
             "terse".to_string(),
         ]);
-        let (success, stdout, stderr) = enumerate(&args)
-            .map_err(|error| format!("{path}:{line} enumerate `{command}`: {error}"))?;
+        let (success, stdout, stderr) = match enumerated.get(&args) {
+            Some(output) => output.clone(),
+            None => enumerate(&args)
+                .map_err(|error| format!("{path}:{line} enumerate `{command}`: {error}"))?,
+        };
         if stderr.starts_with(COVERED_BY_INSTRUMENT_PREFIX) {
             return Err(format!(
                 "{path}:{line} test-valued `covered_by` enumeration did not finish (instrument timeout, not an unresolved pointer): `{command}`\nstdout: {stdout}\nstderr: {stderr}"
@@ -266,6 +272,7 @@ fn validate_test_covered_by_with(
                 "{path}:{line} test-valued `covered_by` selects zero tests: `{command}`"
             ));
         }
+        enumerated.entry(args).or_insert((success, stdout, stderr));
         observations.push(TestCoverageObservation {
             selector: selector.clone(),
             host,
@@ -324,6 +331,191 @@ mod tests {
             stderr: stderr.to_string(),
             duration: Duration::ZERO,
             timed_out,
+        }
+    }
+
+    #[test]
+    fn test_covered_by_reuses_successful_argv_and_retains_each_observation() -> Result<(), String> {
+        for host in [FilePolicyHost::Unix, FilePolicyHost::Windows] {
+            let other = if host == FilePolicyHost::Unix {
+                FilePolicyHost::Windows
+            } else {
+                FilePolicyHost::Unix
+            };
+            let commands = [
+                FilePolicyTestCommand {
+                    host: Some(other),
+                    ..common(1, "cargo test shared")
+                },
+                common(2, "cargo test shared"),
+                FilePolicyTestCommand {
+                    host: Some(host),
+                    ..common(3, "cargo\ttest  shared")
+                },
+                common(4, "cargo test distinct"),
+                FilePolicyTestCommand {
+                    host: Some(other),
+                    ..common(5, "cargo test shared")
+                },
+                common(6, "cargo test shared"),
+            ];
+            let mut calls = Vec::new();
+            let observations =
+                validate_test_covered_by_with("policy.toml", &commands, host, |args| {
+                    calls.push(args.to_vec());
+                    Ok((
+                        true,
+                        format!("{}: test\n", args[1]),
+                        "status: success".to_string(),
+                    ))
+                })?;
+            assert_eq!(
+                calls,
+                [
+                    ["test", "shared", "--", "--list", "--format", "terse"]
+                        .map(str::to_string)
+                        .to_vec(),
+                    ["test", "distinct", "--", "--list", "--format", "terse"]
+                        .map(str::to_string)
+                        .to_vec(),
+                ]
+            );
+            assert_eq!(observations.len(), commands.len());
+            for (index, observation) in observations.iter().enumerate() {
+                let selector = &commands[index];
+                assert_eq!(observation.selector.line, selector.line);
+                assert_eq!(observation.selector.command, selector.command);
+                assert_eq!(observation.selector.host, selector.host);
+                assert_eq!(observation.host, host);
+                let status = if index == 0 || index == 4 {
+                    assert!(observation.selected.is_none());
+                    "not_applicable; selected=not_enumerated".to_string()
+                } else {
+                    let subject = if index == 3 { "distinct" } else { "shared" };
+                    assert_eq!(
+                        observation.selected.as_deref(),
+                        Some([subject.to_string()].as_slice())
+                    );
+                    format!("applicable; selected=1; tests=[{subject}]")
+                };
+                assert_eq!(
+                    observation.render(),
+                    format!(
+                        "line {}; host={}; declared={}; {status}; `{}`",
+                        selector.line,
+                        host.name(),
+                        selector.host.map_or("all", FilePolicyHost::name),
+                        selector.command
+                    )
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_covered_by_argv_identity_preserves_argument_boundaries() -> Result<(), String> {
+        let commands = [
+            common(1, "cargo test a\u{1f}b"),
+            common(2, "cargo test a b"),
+        ];
+        let mut calls = Vec::new();
+        let observations = validate_test_covered_by_with(
+            "policy.toml",
+            &commands,
+            FilePolicyHost::Unix,
+            |args| {
+                calls.push(args.to_vec());
+                let subject = if calls.len() == 1 {
+                    "one_argument"
+                } else {
+                    "two_arguments"
+                };
+                Ok((true, format!("{subject}: test\n"), String::new()))
+            },
+        )?;
+        assert_eq!(calls.len(), 2);
+        assert_ne!(calls[0], calls[1]);
+        assert_eq!(calls[0].join("\u{1f}"), calls[1].join("\u{1f}"));
+        assert_eq!(
+            observations[0].selected.as_deref(),
+            Some(["one_argument".to_string()].as_slice())
+        );
+        assert_eq!(
+            observations[1].selected.as_deref(),
+            Some(["two_arguments".to_string()].as_slice())
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_covered_by_reuse_does_not_cross_invocations() -> Result<(), String> {
+        let commands = [
+            common(8, "cargo test shared"),
+            common(9, "cargo test shared"),
+        ];
+        let mut calls = 0;
+        for subject in ["first", "second"] {
+            let observations = validate_test_covered_by_with(
+                "policy.toml",
+                &commands,
+                FilePolicyHost::Unix,
+                |_| {
+                    calls += 1;
+                    Ok((true, format!("{subject}: test\n"), String::new()))
+                },
+            )?;
+            for observation in observations {
+                assert_eq!(observation.selected, Some(vec![subject.to_string()]));
+            }
+        }
+        assert_eq!(calls, 2);
+        let failed =
+            validate_test_covered_by_with("policy.toml", &commands, FilePolicyHost::Unix, |_| {
+                calls += 1;
+                Err("fresh spawn failure".to_string())
+            });
+        assert_eq!(calls, 3);
+        assert_eq!(
+            failed.err().as_deref(),
+            Some("policy.toml:8 enumerate `cargo test shared`: fresh spawn failure")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_covered_by_reuse_preserves_later_rejections() {
+        let commands = [
+            common(2, "cargo test good"),
+            common(3, "cargo test good"),
+            common(17, "cargo test bad"),
+        ];
+        let cases = [
+            (Ok((true, "not_a_test: benchmark\n".to_string(), String::new())),
+             "policy.toml:17 test-valued `covered_by` selects zero tests: `cargo test bad`".to_string()),
+            (Ok((false, "partial: test\n".to_string(), "status: exit 1".to_string())),
+             "policy.toml:17 test-valued `covered_by` could not be enumerated: `cargo test bad`\nstdout: partial: test\n\nstderr: status: exit 1".to_string()),
+            (Ok((true, "partial: test\n".to_string(), format!("{COVERED_BY_INSTRUMENT_PREFIX} timed out"))),
+             format!("policy.toml:17 test-valued `covered_by` enumeration did not finish (instrument timeout, not an unresolved pointer): `cargo test bad`\nstdout: partial: test\n\nstderr: {COVERED_BY_INSTRUMENT_PREFIX} timed out")),
+            (Err("spawn failed".to_string()), "policy.toml:17 enumerate `cargo test bad`: spawn failed".to_string()),
+        ];
+        for (failure, expected) in cases {
+            let mut calls = 0;
+            let result = validate_test_covered_by_with(
+                "policy.toml",
+                &commands,
+                FilePolicyHost::Unix,
+                |args| {
+                    calls += 1;
+                    if args[1] == "good" {
+                        Ok((true, "good: test\n".to_string(), String::new()))
+                    } else {
+                        failure.clone()
+                    }
+                },
+            );
+            assert_eq!(result.err(), Some(expected));
+            assert_eq!(calls, 2);
         }
     }
 

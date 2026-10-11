@@ -768,6 +768,29 @@ fn write_repo_exposure_json_document<W: io::Write>(
     out.flush()
 }
 
+/// Render a repo-exposure refusal document (#7332) for a run that never
+/// analyzed. Keeps the format's own conventions: `scope: "repo"`, a
+/// `run_status`/`limitations[]` pair (here `refused` with the typed refusal
+/// identity as the limitation category), zeroed `metrics`, and an empty
+/// `seams` array — parseable as `repo-exposure-json`, never zero bytes.
+pub(crate) fn render_refusal_json(notice: &crate::core_error::RefusalNotice) -> String {
+    let mut metrics = String::from("  \"metrics\": {\n");
+    metrics.push_str("    \"seams_total\": 0,\n");
+    metrics.push_str("    \"headline_eligible\": 0");
+    for class in SeamGripClass::ALL {
+        metrics.push_str(&format!(",\n    \"{}\": 0", class.as_str()));
+    }
+    metrics.push_str("\n  },\n");
+    format!(
+        "{{\n  \"schema_version\": \"{}\",\n  \"scope\": \"repo\",\n  \"run_status\": \"refused\",\n  \"limitations\": [\n    {{\n      \"category\": \"{}\",\n      \"repair_route\": \"{}\",\n      \"message\": \"{}\"\n    }}\n  ],\n{}  \"seams\": []\n}}\n",
+        REPO_EXPOSURE_SCHEMA_VERSION,
+        notice.identity,
+        notice.repair_route,
+        json_escape(&notice.message),
+        metrics,
+    )
+}
+
 /// Render a bounded repo exposure summary JSON.
 ///
 /// Unlike `repo-exposure-json`, this shape deliberately omits per-seam
@@ -1442,6 +1465,49 @@ mod tests {
         StageState, ValueFact,
     };
     use crate::output::markdown::{code_span, inline_prose_literal};
+
+    #[test]
+    fn refusal_document_keeps_the_format_contract_with_zeroed_metrics() -> Result<(), String> {
+        // #7332: a refused repo-exposure run parses as repo-exposure-json —
+        // the format's own run_status/limitations pair, zeroed metrics for
+        // every grip class, and an empty seams array, never zero bytes.
+        let notice =
+            crate::core_error::CoreError::seam_id_unknown("agent packet seam_id s was not found")
+                .refusal_notice();
+        let rendered = render_refusal_json(&notice);
+        let value: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
+        for (pointer, expected) in [
+            ("/schema_version", REPO_EXPOSURE_SCHEMA_VERSION),
+            ("/scope", "repo"),
+            ("/run_status", "refused"),
+            ("/limitations/0/category", "seam_id_unknown"),
+            ("/limitations/0/repair_route", "analysis/seam-inventory"),
+        ] {
+            let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+            if actual != Some(expected) {
+                return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+            }
+        }
+        if value["limitations"][0]["message"] != serde_json::Value::String(notice.message.clone()) {
+            return Err(format!("limitation must echo the diagnostic: {value}"));
+        }
+        if value["seams"].as_array().map(Vec::len) != Some(0) {
+            return Err(format!("seams must be empty: {value}"));
+        }
+        let metrics = value
+            .pointer("/metrics")
+            .ok_or("metrics object must be present")?;
+        for class in SeamGripClass::ALL {
+            if metrics[class.as_str()] != 0 {
+                return Err(format!("metric {} must be zeroed: {value}", class.as_str()));
+            }
+        }
+        if metrics["seams_total"] != 0 || metrics["headline_eligible"] != 0 {
+            return Err(format!("totals must be zeroed: {value}"));
+        }
+        Ok(())
+    }
 
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")

@@ -702,12 +702,56 @@ zeroed `summary`, same empty `findings`, same
 | `repository_root_unusable` | `analysis/repository-root` | The root is not a directory, is not inside a Git work tree, or is a repository Git cannot read. |
 | `config_invalid` | `analysis/config-load` | `ripr.toml` (or the candidate tree's config) failed to load or parse. |
 | `suppression_policy_invalid` | `analysis/suppression-policy` | An explicit `--suppression-policy` file is missing or malformed. |
+| `check_artifact_unusable` | `analysis/check-artifact` | A named `ripr context --from` check artifact is unreadable, malformed, foreign, or identity-mismatched (#7331). |
+| `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed (#7331). |
+| `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam (#7331). |
 | `git_invocation_timeout` | `analysis/git-timeout` | A git invocation exceeded its cooperative deadline and was terminated. |
 | `analysis_failed` | `analysis/failure` | Honest fallback for any other failure: the run produced no findings, with no claim about which stage stopped. |
 
 The scope-guard identities (`diff_scope_oversized`, `repo_scope_oversized`)
 keep their existing documents byte for byte; they are not members of this
 vocabulary.
+
+The same envelope covers the other `--json` commands (#7331): `ripr diff
+--json`, `ripr rerun --json`, `ripr context` (which emits JSON only), `ripr
+agent brief --json`, and `ripr agent packet --json` write this document for
+every post-argv-parse failure, keyed with the refusing command's own
+`schema_version` (`"0.1"` for diff and agent brief, `"ripr-targeted-rerun-v1"`
+for rerun, `"1.0"` for context, `"0.5"` for agent packet). `mode` appears only
+on commands that accept `--mode` (check, diff, context); `scope` is `"diff"`
+for diff-scoped commands and `"repo"` for agent brief and agent packet; agent
+brief echoes the caller-supplied `--base` when its working set selected one.
+The exit stays `2` and the human prose stays on stderr; argv usage errors stay
+prose-only with empty stdout on every command.
+
+For `ripr check`, the machine-readable formats also carry their own refusal
+document on stdout instead of zero bytes (#7332), each parseable as its own
+format and each carrying the same typed identity and repair route:
+
+- `--format sarif` renders a schema-valid SARIF 2.1.0 log: one run whose
+  driver declares a `run_refused` notification, whose
+  `invocations[0].toolConfigurationNotifications[0]` carries `level: "error"`,
+  the verbatim diagnostic, and `properties.identity` / `properties.repair_route`,
+  with empty `results` and the invocation context in `run.properties`
+  (`run_status: "refused"`).
+- `--format github` renders exactly one workflow-command error annotation,
+  `::error title=ripr refusal::<escaped data>`, whose data carries
+  `run_status=<identity>; repair_route=<route>; <diagnostic>`.
+- `--format badge-json` renders the badge family's degraded-state convention:
+  `status: "warn"`, `color: "lightgrey"`, zeroed counts, `message:
+  "refused: <identity>"`, and the diagnostic plus repair route in `warnings[0]`.
+- `--format repo-exposure-json` renders the format's own envelope:
+  `run_status: "refused"`, one `limitations[]` entry with the typed
+  `category`, `repair_route`, and diagnostic, zeroed `metrics` (every grip
+  class), and an empty `seams` array.
+- `--format agent-seam-packets-json` renders the same refused envelope with
+  `packets_total: 0`, an empty `packets` array, and no `next` block.
+
+Machine formats without an honest refusal shape yet (`repo-sarif`,
+`badge-plus`, `repo-badge-*`, `shields`, `repo-seams-*`,
+`repo-exposure-summary-json`) write nothing to stdout and put the prose
+diagnostic on stderr for now; that gap is a named limitation, not a clean
+result.
 
 Whether the analysis ran is implicit per identity, not a separate field.
 `suppression_policy_invalid` is the one identity where classification ran to
