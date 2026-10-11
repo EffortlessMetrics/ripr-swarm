@@ -116,7 +116,10 @@ can only hint that a caller "may lead here" without changing anything.
   field directly inside a record passed to an owner parameter's `push` can
   retain the first helper hop's mutable argument and returned local binding in
   `PropagationWitnessV1`. The call must be the caller's final statement, its
-  exact `&mut local` argument must match the resolved hop, the local must have
+  exact `&mut local` argument must match the resolved hop. Mutability comes
+  from parsed `RefType`/`RefExpr` tokens, never a canonicalized text prefix;
+  shared `&mutLedger` types and `&mut_errors` arguments refuse, as do raw
+  pointers. The local must have
   one mutable binding and no assignment, and the tail must return that local.
   Caller and owner must share source/type scope and the declared return type
   must match the parameter's pointee, without generic substitutions. Both

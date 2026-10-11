@@ -84,7 +84,8 @@ pub(crate) fn returned_ledger(
             .is_some_and(|pat| pat.syntax().text() == parameter.as_str())
             && param
                 .ty()
-                .is_some_and(|ty| canonical(&ty.syntax().text().to_string()).starts_with("&mut"))
+                .and_then(|ty| ast::RefType::cast(ty.syntax().clone()))
+                .is_some_and(|ty| ty.mut_token().is_some())
     })?;
     // The sole binding must be the mutable parameter, including raw spelling.
     // Opaque statement expansions may introduce a same-name local invisibly.
@@ -102,11 +103,6 @@ pub(crate) fn returned_ledger(
     }
     let target_type = parameters.get(position)?.ty()?;
     let target_type = ast::RefType::cast(target_type.syntax().clone())?.ty()?;
-    let argument = canonical(hop.arguments.get(position)?);
-    let local = argument.strip_prefix("&mut")?;
-    if !super::is_identifier(local) {
-        return None;
-    }
     let caller_parse = parse_clean_source_file(&hop.caller.body)?;
     let caller_fn = caller_parse
         .tree()
@@ -133,6 +129,37 @@ pub(crate) fn returned_ledger(
     if has_opaque_bindings(&body) {
         return None;
     }
+    let last = body.statements().last()?;
+    let ast::Stmt::ExprStmt(statement) = last else {
+        return None;
+    };
+    let ast::Expr::CallExpr(last_call) = statement.expr()? else {
+        return None;
+    };
+    if last_call.expr()?.syntax().text() != owner.name.as_str() {
+        return None;
+    }
+    let arguments = last_call.arg_list()?.args().collect::<Vec<_>>();
+    // Mutability is a grammar token, never a whitespace-stripped prefix:
+    // `&mut_errors` is shared, and `&mutLedger` names a shared reference type.
+    let ast::Expr::RefExpr(borrowed) = arguments.get(position)? else {
+        return None;
+    };
+    if borrowed.mut_token().is_none() || borrowed.raw_token().is_some() {
+        return None;
+    }
+    let ast::Expr::PathExpr(path) = borrowed.expr()? else {
+        return None;
+    };
+    let local_text = path.syntax().text().to_string();
+    let local = local_text.as_str();
+    if !super::is_identifier(local) {
+        return None;
+    }
+    let actual_arguments = arguments
+        .iter()
+        .map(|arg| canonical(&arg.syntax().text().to_string()))
+        .collect::<Vec<_>>();
     if body.tail_expr()?.syntax().text() != local {
         return None;
     }
@@ -173,21 +200,6 @@ pub(crate) fn returned_ledger(
     {
         return None;
     }
-    let last = body.statements().last()?;
-    let ast::Stmt::ExprStmt(statement) = last else {
-        return None;
-    };
-    let ast::Expr::CallExpr(last_call) = statement.expr()? else {
-        return None;
-    };
-    if last_call.expr()?.syntax().text() != owner.name.as_str() {
-        return None;
-    }
-    let actual_arguments = last_call
-        .arg_list()?
-        .args()
-        .map(|arg| canonical(&arg.syntax().text().to_string()))
-        .collect::<Vec<_>>();
     if actual_arguments
         != hop
             .arguments
@@ -512,6 +524,47 @@ mod tests {
                 "{caller}"
             );
         }
+    }
+
+    #[test]
+    fn shared_reference_type_prefixes_have_no_transfer() {
+        for ty in ["mutLedger", "mutVec<PolicyError>", "mut_ledger"] {
+            let caller = format!(
+                "fn collect() -> {ty} {{ let mut errors = Vec::new(); record(&mut errors); errors }}"
+            );
+            let (mut owner, probe, chain) = route(&caller);
+            owner.body = format!(
+                "fn record(errors: &{ty}) {{\n    errors.push(PolicyError {{\n        detail: format!(\"diagnostic\"),\n    }});\n}}"
+            ).into();
+            assert!(returned_ledger(&owner, &probe, &chain).is_none(), "{ty}");
+        }
+        let (mut owner, probe, chain) = route(
+            "fn collect() -> Vec<PolicyError> { let mut errors = Vec::new(); record(&mut errors); errors }",
+        );
+        owner.body = owner
+            .body
+            .replace("&mut Vec", "& /*comment*/ mut Vec")
+            .into();
+        assert!(returned_ledger(&owner, &probe, &chain).is_some());
+    }
+
+    #[test]
+    fn mutable_argument_identity_uses_reference_tokens() {
+        for argument in ["&mut_errors", "&muterrors", "&raw mut errors", "&(errors)"] {
+            let caller = format!(
+                "fn collect() -> Vec<PolicyError> {{ let mut _errors = Vec::new(); let mut errors = Vec::new(); let mut_errors = Vec::new(); record({argument}); _errors }}"
+            );
+            let (owner, probe, mut chain) = route(&caller);
+            chain.hops[0].arguments = vec![argument.to_string()];
+            assert!(
+                returned_ledger(&owner, &probe, &chain).is_none(),
+                "{argument}"
+            );
+        }
+        let (owner, probe, chain) = route(
+            "fn collect() -> Vec<PolicyError> { let mut errors = Vec::new(); record(& /*comment*/ mut errors); errors }",
+        );
+        assert!(returned_ledger(&owner, &probe, &chain).is_some());
     }
 
     #[test]
