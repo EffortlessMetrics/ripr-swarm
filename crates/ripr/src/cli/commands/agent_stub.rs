@@ -6,6 +6,8 @@
 //! decision (exit 3) with empty stdout, like `agent card`.
 
 use crate::agent::loop_commands::{bound_root, shell_arg};
+use crate::analysis::seams::SeamGripClass;
+use crate::app::agent_brief::AgentBriefPolicy;
 use crate::app::test_stub::{
     TestStubError, TestStubSelector, line_of_offset, package_manifest_for, resolve_test_stub,
     run_command, write_test_stub,
@@ -13,7 +15,8 @@ use crate::app::test_stub::{
 use crate::cli::CommandError;
 use crate::cli::agent::AgentStubOptions;
 use crate::cli::commands_context::ensure_command_root;
-use crate::config::load_for_root;
+use crate::config::{RiprConfig, load_for_root};
+use crate::output::gap_vocabulary::exposure_counterpart;
 
 /// Schema version of the `rust_test_stub` JSON document.
 const RUST_TEST_STUB_SCHEMA_VERSION: &str = "0.1";
@@ -31,6 +34,7 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
         }
         Err(TestStubError::Operational(message)) => return Err(CommandError::Failure(message)),
     };
+    let disclosure = stub_grip_disclosure(&resolution.seam_id, resolution.grip_class, &config);
     let stub = match &resolution.outcome {
         Ok(stub) => stub,
         Err(refusal) => {
@@ -42,6 +46,9 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
                     "owner": resolution.owner,
                     "state": "refused",
                     "refusal": {"kind": refusal.as_str(), "reason": refusal.reason()},
+                    "grip_class": disclosure.grip_class,
+                    "classification": disclosure.classification,
+                    "warnings": disclosure.warnings,
                 });
                 // A JSON document, not report text: keep it parseable (#6309).
                 ::std::eprintln!(
@@ -101,6 +108,9 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
             "derived_inputs": stub.derived_inputs,
             "written": written.is_some(),
             "run_command": run,
+            "grip_class": disclosure.grip_class,
+            "classification": disclosure.classification,
+            "warnings": disclosure.warnings,
         });
         println!("{}", render(&document)?);
         return Ok(());
@@ -113,6 +123,9 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
         ),
         None => format!("{file} (new file)"),
     };
+    for warning in &disclosure.warnings {
+        println!("{warning}");
+    }
     if written.is_some() {
         println!("Wrote test stub `{}` to {place}.", stub.test_name);
     } else {
@@ -161,4 +174,75 @@ fn render(document: &serde_json::Value) -> Result<String, CommandError> {
     serde_json::to_string_pretty(document).map_err(|error| {
         CommandError::Failure(format!("serialize agent stub document failed: {error}"))
     })
+}
+
+/// Inventory grip plus the check-side exposure counterpart, and the
+/// packet/repair omission prose when that class is omitted from agent
+/// results. Additive on `rust_test_stub` schema `0.1` (#7290).
+#[derive(Debug, PartialEq, Eq)]
+struct StubGripDisclosure {
+    grip_class: Option<&'static str>,
+    classification: Option<&'static str>,
+    warnings: Vec<String>,
+}
+
+fn stub_grip_disclosure(
+    seam_id: &str,
+    grip_class: Option<SeamGripClass>,
+    config: &RiprConfig,
+) -> StubGripDisclosure {
+    let warnings = grip_class
+        .and_then(|class| AgentBriefPolicy::from_config(config).omission_reason_for_class(class))
+        .map(|reason| format!("seam {seam_id} {reason}"))
+        .into_iter()
+        .collect();
+    let grip_class = grip_class.map(|class| class.as_str());
+    StubGripDisclosure {
+        classification: grip_class.and_then(exposure_counterpart),
+        grip_class,
+        warnings,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strongly_gripped_stub_reuses_the_packet_omission_reason() {
+        let disclosure = stub_grip_disclosure(
+            "clamp-seam",
+            Some(SeamGripClass::StronglyGripped),
+            &RiprConfig::default(),
+        );
+        assert_eq!(disclosure.grip_class, Some("strongly_gripped"));
+        assert_eq!(disclosure.classification, Some("exposed"));
+        assert_eq!(
+            disclosure.warnings,
+            vec![
+                "seam clamp-seam is configured off for strongly_gripped seams and is not included in agent results"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn open_gap_stub_has_no_omission_warning() {
+        let disclosure = stub_grip_disclosure(
+            "gap-seam",
+            Some(SeamGripClass::Ungripped),
+            &RiprConfig::default(),
+        );
+        assert_eq!(disclosure.grip_class, Some("ungripped"));
+        assert_eq!(disclosure.classification, Some("no_static_path"));
+        assert!(disclosure.warnings.is_empty(), "{:?}", disclosure.warnings);
+    }
+
+    #[test]
+    fn unknown_grip_stays_null_without_inventing_a_class() {
+        let disclosure = stub_grip_disclosure("unknown-seam", None, &RiprConfig::default());
+        assert_eq!(disclosure.grip_class, None);
+        assert_eq!(disclosure.classification, None);
+        assert!(disclosure.warnings.is_empty());
+    }
 }

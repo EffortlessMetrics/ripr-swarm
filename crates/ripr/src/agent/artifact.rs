@@ -32,6 +32,8 @@ pub(crate) const CONTENT_COMMITMENT_CANONICALIZATION: &str = "raw_json_placehold
 pub(crate) const CONTENT_SHA256_PLACEHOLDER: &str =
     "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
+pub(crate) const VERIFY_GIT_PROVENANCE_REQUIREMENT: &str = "agent verify requires Git/revision provenance: snapshots must come from a Git repository with a concrete HEAD and available worktree status.";
+
 /// `analysis.format` / `analysis.command` token of the repo-exposure identity
 /// envelope. The repo-exposure producer command is part of the validated
 /// identity contract (`validate_repo_exposure_artifact`).
@@ -245,21 +247,8 @@ fn analysis_artifact_metadata(
     content_sha256: &str,
 ) -> Result<Value, String> {
     let root = canonical_root(&context.root)?;
-    let head = git_output(&root, &["rev-parse", "HEAD"])
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| is_full_sha(value))
-        .unwrap_or_else(|| "unavailable".to_string());
-    let status = git_output(&root, &["status", "--porcelain", "--untracked-files=no"])
-        .ok()
-        .map(|value| {
-            if value.trim().is_empty() {
-                "clean"
-            } else {
-                "dirty"
-            }
-        })
-        .unwrap_or("unavailable");
+    let head = current_git_head(&root).unwrap_or_else(|_| "unavailable".to_string());
+    let status = current_git_worktree_status(&root).unwrap_or("unavailable");
     Ok(json!({
         "kind": artifact_kind,
         "schema_version": ARTIFACT_IDENTITY_SCHEMA_VERSION,
@@ -361,7 +350,10 @@ pub(crate) fn validate_repo_exposure_artifact(
         || identity.analysis.input_identity.trim().is_empty()
         || identity.analysis.command != "ripr check --format repo-exposure-json"
         || identity.analysis.profile != identity.analysis.mode
-        || !matches!(identity.analysis.worktree.as_str(), "clean" | "dirty")
+        || !matches!(
+            identity.analysis.worktree.as_str(),
+            "clean" | "dirty" | "unavailable"
+        )
     {
         return Err(format!(
             "agent verify {label} artifact has invalid or unknown producer identity"
@@ -414,7 +406,7 @@ pub(crate) fn validate_repo_exposure_artifact(
             expected_root.display()
         ));
     }
-    if !is_full_sha(&identity.repository.head) {
+    if identity.repository.head != "unavailable" && !is_full_sha(&identity.repository.head) {
         return Err(format!(
             "agent verify {label} artifact has invalid repository HEAD `{}`",
             identity.repository.head
@@ -443,6 +435,16 @@ pub(crate) fn validate_repo_exposure_artifact(
         return Err(format!(
             "agent verify {label} artifact content commitment mismatch: declared {}, recomputed {}",
             identity.content_sha256, recomputed
+        ));
+    }
+
+    // `unavailable` is an honest producer limitation, not an unknown producer.
+    // Diagnose it only after root, snapshot and content admission checks, and
+    // always refuse it before currentness or movement can be calculated.
+    if identity.repository.head == "unavailable" || identity.analysis.worktree == "unavailable" {
+        return Err(format!(
+            "agent verify {label} artifact has unavailable Git/revision provenance (repository.head={}, analysis.worktree={}); {VERIFY_GIT_PROVENANCE_REQUIREMENT} Regenerate both snapshots from the existing Git checkout. Patch analysis and agent brief remain supported without verification provenance.",
+            identity.repository.head, identity.analysis.worktree,
         ));
     }
 
@@ -777,6 +779,17 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
         ));
     }
     Ok(head.to_string())
+}
+
+/// The artifact producer's bounded worktree probe, shared with limitation
+/// disclosure. A successful HEAD read alone does not establish this status.
+pub(crate) fn current_git_worktree_status(root: &Path) -> Result<&'static str, String> {
+    let status = git_output(root, &["status", "--porcelain", "--untracked-files=no"])?;
+    Ok(if status.trim().is_empty() {
+        "clean"
+    } else {
+        "dirty"
+    })
 }
 
 /// A HEAD read that also detects an A-B-A swap between two reads (#5930).
@@ -2195,13 +2208,21 @@ mod tests {
                     document["artifact"]["analysis"]["profile"] = json!("release");
                 }),
                 ("analysis worktree state is unknown", |document| {
-                    document["artifact"]["analysis"]["worktree"] = json!("unavailable");
+                    document["artifact"]["analysis"]["worktree"] = json!("unknown");
                 }),
             ];
             for (case, mutate) in cases {
                 let mutated = validate_mutated_identity(&root, &document, mutate)?;
                 expect_identity_rejection(case, mutated, "invalid or unknown producer identity")?;
             }
+            let unavailable = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["analysis"]["worktree"] = json!("unavailable");
+            })?;
+            expect_identity_rejection(
+                "unavailable worktree provenance",
+                unavailable,
+                "Git/revision provenance",
+            )?;
             Ok(())
         })();
         let cleanup =
