@@ -448,70 +448,97 @@ pub(crate) fn ts_references_identifier(text: &str, ident: &str) -> bool {
     })
 }
 
-/// `text` with string-literal contents, template-literal text and comments
-/// replaced by spaces, so an identifier search sees only code. Template
-/// `${...}` interpolations stay code. Quotes and backticks are kept, so a
-/// masked literal still separates the identifiers around it.
+/// `text` with string-literal contents, template-literal text, regular
+/// expression literals and comments replaced by spaces, so an identifier
+/// search sees only code. Template `${...}` interpolations stay code. Quotes,
+/// backticks and regex slashes are kept, so a masked literal still separates
+/// the identifiers around it. A `/` opens a regex literal where an operand is
+/// expected (at the start, or after an operator or opening punctuation);
+/// elsewhere it is division.
 pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
     #[derive(Clone, Copy)]
     enum Mode {
         Code,
         Quote(char),
         Template,
+        Regex { in_class: bool },
+        RegexFlags,
         LineComment,
         BlockComment,
     }
+    fn operand_expected(prev: Option<char>) -> bool {
+        prev.is_none_or(|c| "(,=:[!&|?{};+-*%<>~^".contains(c))
+    }
     let mut out = String::with_capacity(text.len());
     let mut mode = Mode::Code;
+    // The last non-whitespace code character, to tell a regex from division.
+    let mut prev: Option<char> = None;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
+        if let Mode::RegexFlags = mode {
+            if c.is_ascii_alphabetic() {
+                out.push(' ');
+                continue;
+            }
+            mode = Mode::Code;
+        }
         match mode {
-            Mode::Code => match c {
-                '\'' | '"' => {
-                    mode = Mode::Quote(c);
-                    out.push(c);
-                }
-                '`' => {
-                    mode = Mode::Template;
-                    out.push(c);
-                }
-                '/' if chars.peek() == Some(&'/') => {
-                    chars.next();
-                    mode = Mode::LineComment;
-                    out.push_str("  ");
-                }
-                '/' if chars.peek() == Some(&'*') => {
-                    chars.next();
-                    mode = Mode::BlockComment;
-                    out.push_str("  ");
-                }
-                '{' => {
-                    if let Some(depth) = interpolations.last_mut() {
-                        *depth += 1;
+            Mode::Code => {
+                match c {
+                    '\'' | '"' => {
+                        mode = Mode::Quote(c);
+                        out.push(c);
                     }
-                    out.push(c);
-                }
-                '}' => {
-                    match interpolations.last_mut() {
-                        Some(0) => {
-                            interpolations.pop();
-                            mode = Mode::Template;
+                    '`' => {
+                        mode = Mode::Template;
+                        out.push(c);
+                    }
+                    '/' if chars.peek() == Some(&'/') => {
+                        chars.next();
+                        mode = Mode::LineComment;
+                        out.push_str("  ");
+                    }
+                    '/' if chars.peek() == Some(&'*') => {
+                        chars.next();
+                        mode = Mode::BlockComment;
+                        out.push_str("  ");
+                    }
+                    '/' if operand_expected(prev) => {
+                        mode = Mode::Regex { in_class: false };
+                        out.push(c);
+                    }
+                    '{' => {
+                        if let Some(depth) = interpolations.last_mut() {
+                            *depth += 1;
                         }
-                        Some(depth) => *depth -= 1,
-                        None => {}
+                        out.push(c);
                     }
-                    out.push(c);
+                    '}' => {
+                        match interpolations.last_mut() {
+                            Some(0) => {
+                                interpolations.pop();
+                                mode = Mode::Template;
+                            }
+                            Some(depth) => *depth -= 1,
+                            None => {}
+                        }
+                        out.push(c);
+                    }
+                    _ => out.push(c),
                 }
-                _ => out.push(c),
-            },
+                if !c.is_whitespace() {
+                    prev = Some(c);
+                }
+            }
             Mode::Quote(quote) => {
                 if c == '\\' {
                     chars.next();
                     out.push_str("  ");
                 } else if c == quote || c == '\n' {
                     mode = Mode::Code;
+                    prev = Some(c);
                     out.push(c);
                 } else {
                     out.push(' ');
@@ -523,16 +550,40 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                     out.push_str("  ");
                 } else if c == '`' {
                     mode = Mode::Code;
+                    prev = Some(c);
                     out.push(c);
                 } else if c == '$' && chars.peek() == Some(&'{') {
                     chars.next();
                     interpolations.push(0);
                     mode = Mode::Code;
+                    prev = Some('{');
                     out.push_str("${");
                 } else {
                     out.push(' ');
                 }
             }
+            Mode::Regex { in_class } => {
+                if c == '\\' {
+                    chars.next();
+                    out.push_str("  ");
+                } else if c == '\n' {
+                    mode = Mode::Code;
+                    out.push(c);
+                } else if c == '/' && !in_class {
+                    mode = Mode::RegexFlags;
+                    prev = Some(c);
+                    out.push(c);
+                } else {
+                    if c == '[' {
+                        mode = Mode::Regex { in_class: true };
+                    } else if c == ']' {
+                        mode = Mode::Regex { in_class: false };
+                    }
+                    out.push(' ');
+                }
+            }
+            // Handled before the match: flags are masked, then code resumes.
+            Mode::RegexFlags => out.push(c),
             Mode::LineComment => {
                 if c == '\n' {
                     mode = Mode::Code;

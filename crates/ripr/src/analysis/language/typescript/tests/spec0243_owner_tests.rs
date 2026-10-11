@@ -401,6 +401,32 @@ fn literal_and_comment_masking_keeps_code_identifiers() {
     );
 }
 
+/// A regex literal is masked as a whole, so a quote or `//` inside it does
+/// not open a string or comment that would hide a later owner reference;
+/// division stays code.
+#[test]
+fn literal_masking_reads_regex_literals_and_division() {
+    for (text, ident) in [
+        ("/^https:\\/\\//.test(buildUrl(x))", "buildUrl"),
+        ("/\"/.test(quote(s))", "quote"),
+        ("s.split(/'/).map(p)", "p"),
+        ("expect(/[/'\"]/g.test(p(1)))", "p"),
+        ("a / b / p(1)", "p"),
+        ("f(x) / 2 + p(1)", "p"),
+    ] {
+        let masked = ts_mask_literals_and_comments(text);
+        assert!(
+            ts_references_identifier(&masked, ident),
+            "{text} -> {masked}"
+        );
+        assert_eq!(masked.chars().count(), text.chars().count(), "{text}");
+    }
+    let masked = ts_mask_literals_and_comments("expect(/price/i.test(s))");
+    assert!(!ts_references_identifier(&masked, "price"), "{masked}");
+    assert!(!ts_references_identifier(&masked, "i"), "{masked}");
+    assert!(ts_references_identifier(&masked, "s"), "{masked}");
+}
+
 /// Example 17 renamed (Non-Goal): a default-import local gets no rule 7
 /// credit; it keeps `ImportedOwnerCall` and `weakly_exposed`.
 #[test]
