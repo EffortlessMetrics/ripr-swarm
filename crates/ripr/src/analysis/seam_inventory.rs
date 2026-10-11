@@ -1034,6 +1034,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
                                 test,
                                 &cached.index,
                                 &call.name,
+                                &syntax,
                             ) {
                                 return Err(unresolved(&call.name));
                             }
@@ -4964,7 +4965,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
             write_file(&lib, ORIGINAL)?;
             write_file(
                 &root.join("tests/basic.rs"),
-                "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
+                "#[test]\nfn basic() {\n    assert!(check(1));\n}\n",
             )?;
             let original_key = collect_workspace_state(&root, &config)?.cache_key();
 
@@ -8278,6 +8279,75 @@ pub fn owner(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }}
                 other => {
                     return Err(format!(
                         "{label} must retain a named unresolved limitation: {other:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_refuses_competing_bare_bindings() -> Result<(), String> {
+        let body =
+            "let _ = std::collections::BTreeMap::<usize, usize>::new(); assert_eq!(owner(1), 1);";
+        let mut controls = [
+            "use crate::support::owner;",
+            "use self::support::{owner};",
+            "use crate::support::*;",
+            "use crate::{support::*};",
+            "use crate::support::r#owner;",
+            "use crate::support::{r#owner};",
+            "use crate::support::owner as r#owner;",
+        ]
+        .into_iter()
+        .map(|import| {
+            (
+                import.to_string(),
+                format!(
+                    "#[cfg(test)] mod support {{ pub fn owner(x: i32) -> i32 {{ x }} }}\n#[test] fn selected() {{ {import} {body} }}"
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+        controls.push((
+            "lexical-support".into(),
+            format!("#[cfg(test)] mod support {{ pub fn owner(x: i32) -> i32 {{ x }} #[test] fn selected() {{ {body} }} }}"),
+        ));
+        controls.push((
+            "module-value".into(),
+            format!("#[cfg(test)] mod tests {{ const owner: fn(i32) -> i32 = |x| x; #[test] fn selected() {{ {body} }} }}"),
+        ));
+        for (label, tests) in controls {
+            let root = make_tempdir("targeted-competing-bare-binding")?;
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    r#"
+pub fn owner(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }}
+pub struct Alpha;
+impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}
+pub struct Beta;
+impl Beta {{ pub fn new(x: i32) -> i32 {{ if x > 1 {{ x }} else {{ 1 }} }} }}
+{tests}
+"#
+                ),
+            )?;
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            match result {
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                }) => {}
+                other => {
+                    return Err(format!(
+                        "{label} must refuse competing bare binding: {other:?}"
                     ));
                 }
             }

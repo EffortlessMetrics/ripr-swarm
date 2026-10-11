@@ -9012,6 +9012,7 @@ tests = [
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_preserves_exact_constructor_owner",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_refuses_unresolved_call_identity",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_refuses_shadowed_and_nested_constructor_paths",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_refuses_competing_bare_bindings",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_refuses_ambiguous_direct_production_owner",
   "crates/ripr/src/cli/rerun.rs::tests::unresolved_changed_test_selectors_are_named_limitations",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_requires_one_selector",

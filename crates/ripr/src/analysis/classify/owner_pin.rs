@@ -4538,12 +4538,30 @@ pub(in crate::analysis) fn targeted_bare_call_is_unshadowed(
     test: &TestSummary,
     index: &RustIndex,
     name: &str,
+    syntax: &OwnerPinSyntax,
 ) -> bool {
     !test_body_shadows_owner(test, name)
+        && !body_defines_value_twin(&test.body, name)
+        && !bound_by_macro(&mask_comments_and_strings(&test.body), name)
+        && !binds_outside_let(&mask_comments_and_strings(&test.body), name)
+        && !index
+            .functions()
+            .iter()
+            .any(|function| function.name == name && function.source_role.is_evidence_role())
         && index.files().get(&test.file).is_some_and(|facts| {
             !facts.used_lexical_fallback
                 && !file_renames_to(&facts.source, name)
                 && !file_imports_foreign_callee_name(&facts.source, name, &index.package_names)
+                // Without resolving imported bare owners, do not let a
+                // production-name match override a possible support binding.
+                && !file_use_statements(&facts.source).iter().any(|statement| {
+                    contains_as_whole_word(statement, name) || statement.contains('*')
+                })
+                && syntax.file_scopes(index, &test.file).is_some_and(|scopes| {
+                    scopes
+                        .scope_of_test(&facts.source, test)
+                        .is_some_and(|scope| !scope.has_twin(name))
+                })
         })
 }
 
