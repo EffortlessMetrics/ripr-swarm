@@ -19,7 +19,7 @@ all records and treats duplicate normalized keys as uncertainty.
 Wheel record additions, deletions, renames or changes, mixed diffs, other ledgers,
 product/package/xtask changes, workflow/selector edits and unavailable or malformed
 history retain qualification. Failed/skipped applicability or missing outputs
-also retain qualification. The separate `mcp_evidence_pair` manual dispatch has
+also retain qualification, while cancellation still stops expensive work. The separate `mcp_evidence_pair` manual dispatch has
 no applicability dependency and remains independently reachable. Distribution
 source checks remain inside qualifying wheel work; Windows and the broader
 #4633/#4493 programme retain their existing contracts.

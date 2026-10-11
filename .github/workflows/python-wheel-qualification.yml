@@ -63,7 +63,7 @@ jobs:
         run: cargo policy check-workflows
       - name: Select wheel applicability from immutable event history
         id: select
-        if: ${{ always() }}
+        if: ${{ always() && !cancelled() }}
         env:
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         shell: bash
@@ -74,7 +74,7 @@ jobs:
   build-wheel:
     needs: applicability
     # Only an explicit successful skip proof can avoid qualification.
-    if: ${{ always() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}
+    if: ${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}
     name: build and inspect Linux x64 wheel
     runs-on: ubuntu-22.04
     outputs:

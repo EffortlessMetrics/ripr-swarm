@@ -375,8 +375,38 @@ fn missing_history_partial_diff_and_manual_dispatch_are_conservative() -> TestRe
     fixture.expect("pull_request", "bad-base", &head, true)?;
     fixture.expect("pull_request", &base, &base, true)?; // checkout/head mismatch
     fixture.expect("workflow_dispatch", "", &head, true)?;
-    fixture.write_shim("git", "if test \"$1\" = diff; then printf 'policy/workflow_allowlist.txt\\0'; exit 9; fi\nexec /usr/local/bin/git \"$@\"\n")?;
-    fixture.expect("pull_request", &base, &head, true)
+    let git_path = fixture
+        .command("bash")?
+        .args(["-c", "command -v git"])
+        .output()?;
+    assert!(git_path.status.success());
+    let git_path = String::from_utf8(git_path.stdout)?.trim().to_owned();
+    // A resolved fixture-independent executable keeps the failure at diff, not setup.
+    fixture.write_shim("git", "if test \"$1\" = diff; then printf 'policy/workflow_allowlist.txt\\0'; printf 'partial-diff-control' >&2; exit 9; fi\nexec \"$REAL_GIT\" \"$@\"\n")?;
+    let output_path = fixture.0.join(".git/actions-output");
+    fs::write(&output_path, "")?;
+    let failed_diff = fixture
+        .command("bash")?
+        .args([
+            "-e",
+            "-o",
+            "pipefail",
+            "-c",
+            &shell("Select wheel applicability from immutable event history")?,
+        ])
+        .env("GITHUB_EVENT_NAME", "pull_request")
+        .env("EVENT_BASE_SHA", &base)
+        .env("CANDIDATE_SHA", &head)
+        .env("GITHUB_OUTPUT", &output_path)
+        .env("REAL_GIT", git_path)
+        .output()?;
+    assert!(failed_diff.status.success(), "{failed_diff:?}");
+    assert_eq!(fs::read_to_string(output_path)?, "qualify=true\n");
+    assert!(
+        String::from_utf8(failed_diff.stderr)?.contains("partial-diff-control"),
+        "the partial diff branch must be reached"
+    );
+    Ok(())
 }
 
 fn condition(source: &str) -> TestResult<&str> {
@@ -398,12 +428,38 @@ fn runnable(
     qualify: &str,
     dependency: bool,
 ) -> TestResult<bool> {
+    runnable_with_status(
+        fixture,
+        expression,
+        event,
+        pair,
+        result,
+        qualify,
+        (dependency, false),
+    )
+}
+
+fn runnable_with_status(
+    fixture: &Fixture,
+    expression: &str,
+    event: &str,
+    pair: bool,
+    result: &str,
+    qualify: &str,
+    status: (bool, bool),
+) -> TestResult<bool> {
+    let (dependency, cancelled) = status;
     // GitHub supplies implicit success() unless the actual expression has a status function.
-    if dependency && result != "success" && !expression.contains("always()") {
+    if dependency
+        && result != "success"
+        && !expression.contains("always()")
+        && !expression.contains("cancelled()")
+    {
         return Ok(false);
     }
     let translated = expression
         .replace("always()", "1 == 1")
+        .replace("!cancelled()", if cancelled { "1 == 0" } else { "1 == 1" })
         .replace("github.event_name", &format!("'{event}'"))
         .replace(
             "inputs.mcp_evidence_pair",
@@ -538,7 +594,7 @@ fn actual_job_conditions_cover_skip_failures_and_both_dispatch_routes() -> TestR
     // Demonstrate that each failure-sensitive assertion rejects a wrong graph.
     assert!(!runnable(
         &fixture,
-        &build_if.replace("always() && ", ""),
+        &build_if.replace("always() && !cancelled() && ", ""),
         "pull_request",
         false,
         "failure",
@@ -563,6 +619,24 @@ fn actual_job_conditions_cover_skip_failures_and_both_dispatch_routes() -> TestR
         "",
         true
     )?);
+    assert!(!runnable_with_status(
+        &fixture,
+        build_if,
+        "pull_request",
+        false,
+        "success",
+        "true",
+        (true, true)
+    )?);
+    assert!(runnable_with_status(
+        &fixture,
+        &build_if.replace("!cancelled() && ", ""),
+        "pull_request",
+        false,
+        "success",
+        "true",
+        (true, true)
+    )?);
     // Actual policy/selector failures, rather than only injected classifier booleans.
     fs::write(fixture.0.join(LEDGER), "malformed\n")?;
     assert!(!fixture.policy()?.status.success());
@@ -570,6 +644,8 @@ fn actual_job_conditions_cover_skip_failures_and_both_dispatch_routes() -> TestR
     let (failed, output) = fixture.select("pull_request", "", "")?;
     assert!(!failed.status.success());
     assert!(output.is_empty());
-    assert!(job(WORKFLOW, "applicability")?.contains("        if: ${{ always() }}"));
+    assert!(
+        job(WORKFLOW, "applicability")?.contains("        if: ${{ always() && !cancelled() }}")
+    );
     Ok(())
 }
