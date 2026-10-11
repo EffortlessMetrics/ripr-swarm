@@ -104,8 +104,8 @@ contradicting limitation. The rest is either correct but unstated
 ## Behavior
 
 Paths are relative to `crates/ripr/src/analysis/language/typescript/`.
-Paragraphs headed Rule 1 to Rule 8 mark behavior changes, numbered in
-reading order. Every other statement below is current behavior and is
+Paragraphs headed Rule 1 to Rule 11 mark behavior changes. Rules 1 to 8
+are numbered in reading order; rules 9 to 11 were added later. Every other statement below is current behavior and is
 normative.
 
 ### Verdict ladder
@@ -159,6 +159,24 @@ no accepted spec names the awaited form. An awaited subtest
   `return` argument, after removing one `await`.
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
   subtest) or inside a declaration initializer is not collected.
+
+**Rule 11. An inline literal table reads one concrete case per row.**
+Added after the TypeScript verdict corpus (#6686, #6654) showed
+`test.each` tables that pin a boundary scored false actionable. When a
+`test.each` / `it.each` table is an inline array, in the same call, of
+at most 64 rows that are each an inline array of literals, and the
+callback's plain parameters bind the row positions one to one, each row
+reads as the callback body with each parameter replaced by that row's
+literal: the input literals reach the boundary witness and the expected
+literal is the assertion's expected value, as a hand-written test per
+row would. Anything else keeps the row-parameter assertions and
+`typescript_table_case_unresolved`: a table held in a variable, a spread
+or non-literal cell, object rows, destructured, defaulted or rest
+parameters, a row whose length differs from the parameter count, a
+parameter used other than as a plain read, a parameter re-declared or
+shadowed in the body, a nested `function`, a template substitution, a
+regular-expression literal, a non-ASCII parameter or callback body, or a
+substituted body that does not re-parse.
 
 ### Recogniser order
 
@@ -232,9 +250,10 @@ identifier and a template literal stay `broad_error` / weak.
 
 **Rule 4. A payload that passes on both versions is not exact.** A
 payload whose whole text is `Error` reads `broad_error` / weak, because
-every thrown error is an `Error`, unless the old side of the changed line
-throws a primitive literal (`throw "bad"` changed to
-`throw new Error("bad")`), which no class check matches;
+every thrown error is an `Error`, unless both sides throw under the same
+tokens before `throw`, one a primitive literal and the other a built-in
+error class (`throw "bad"` changed to `throw new Error("bad")`, or back),
+because no class check matches a primitive;
 `globalThis.Error` already reads `broad_error` under the uppercase-first
 gate. A second exception covers a message-only change: the changed line
 is a `throw` line or a `Promise.reject(...)` line, and every token that
@@ -242,14 +261,20 @@ differs between its old and new text lies inside a string literal in the
 message argument of the thrown or rejected error (a literal in a condition on the same line does not count). The
 literal text of a template literal counts; a `${...}` interpolation does
 not, so a changed interpolation is not message-only. On such a change a
-payload credits only if it excludes the old message. A class payload
+payload credits only if it separates the two versions: it matches
+exactly one of the old and new messages. A test that passes on the new
+side and one that pins the old message and fails on the new side both
+discriminate the change; a payload that matches both, or neither, does
+not. A class payload
 (`TypeError`, `Errors.ParseError`) reads `broad_error` / weak, because
 the same class is thrown on both versions. A string payload is a
 substring match in Jest and Vitest, so it reads `exact_error_variant`
-only when it is not a substring of the old message. The old message is
-the old-side message argument with adjacent literals of a `+` chain
+only when it is a substring of exactly one of the old and new messages.
+Each message is
+that side's message argument with adjacent literals of a `+` chain
 joined (`"ba" + "d"` is `bad`); when any operand of that chain is not a
-literal, the payload reads `broad_error` / weak. `toThrow("blank")` after
+literal, the payload reads `broad_error` / weak. A literal respelled
+with the same value (`"bad"` to `'bad'`) is not a changed token. `toThrow("blank")` after
 `"not blank"` changed to `"blank"` reads `broad_error` / weak. On any
 other change, class and string payloads keep
 RIPR-SPEC-0097's reading: a class swap, or a changed condition that
@@ -299,17 +324,24 @@ strong:
   of the message, as Jest matches `toThrow("...")`.
 - `node:assert` `throws` or `rejects` (not chai `assert`, whose
   signature differs) whose second argument is a regex literal anchored
-  with `^` and `$`, with no unescaped `|` outside a character class, or
-  an all-literal object whose `message` is a string literal.
+  with `^` and `$`, with no unescaped `|` outside a character class and
+  no repeated wildcard (`.`, a character class, an escaped class such as
+  `\S`, or a group followed by `*`, `+` or `{`), or an all-literal object
+  whose top-level `message` is a string literal.
 
 Rule 4's message-only guard applies to all of them: on a message-only
-change, a chai string must not be a substring of the old message (as
-rule 4 assembles it), an object `message` must not equal it, and an
+change, a chai string must be a substring of exactly one of the old and
+new messages (as rule 4 assembles them), an object `message` must equal
+exactly one of them, and an
 anchored regex credits only when ripr can match it as a plain literal
-(no metacharacters between the anchors other than escapes) whose text,
-after removing a leading `Identifier: ` prefix (`node:assert` tests the
-regex against `String(err)`, such as `Error: blank`), differs from the
-old message; otherwise each reads `broad_error` / weak. A
+(no flags other than `u`, no metacharacters between the anchors other
+than escapes) whose text equals `String(err)` on exactly one side.
+`node:assert` tests the regex against `String(err)`: ripr knows it as
+`Name: message` for a built-in error class (`Error`, `TypeError`,
+`RangeError`, `SyntaxError`, `ReferenceError`, `EvalError`, `URIError`)
+with a non-empty message, and as the value of a thrown primitive; a user
+class may set any `name`, so it does not credit. Otherwise each reads
+`broad_error` / weak. A
 class argument, an unanchored regex, an identifier and a template literal
 stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
 
@@ -446,8 +478,13 @@ calls written in the test file; config-level mocks (`setupFiles`,
 discriminate Unknown, `static_limit_kind: mocked_module`,
 `gap_state: static_limitation` and `typescript_mock_only_observer`. The
 mock specifier resolves from the test file and the import source from the
-owner file; both must name the same module. An unresolved mock specifier
-counts as a match (fail closed). Other ladder results are unchanged.
+owner file; both must name the same module, and the same callee's module
+must be mocked in every such file (files that mock different callees each
+run the other callee for real, so `exposed` stands). An unresolved mock
+specifier counts as a match, and so does an unresolved non-relative
+specifier whose last segment names the resolved module's file or
+directory (fail closed: its identity is unknown, and the cost is an
+abstention, not a credit). Other ladder results are unchanged.
 
 Otherwise a static limit is advisory and never moves the class. An
 `exposed` finding then keeps `static_limit_kind`, the limit's `missing`
@@ -527,6 +564,18 @@ rejected alternative. Any can be reversed later without touching the rest.
     weak, which leaves those cases scored false actionable (#6654).
     Rejected: credit any `throws` argument, because a bare or unanchored
     regex can admit both messages.
+13. **Message-only payload reading (#6798).** Adopted: a payload credits
+    when it matches exactly one of the old and new messages. Rejected:
+    "excludes the old message", the first draft, because the corpus
+    scores tests that pin the old message and fail on the new one
+    (`jest-spec0234-ex12`, `mocha-spec14-chai-throw-string`) and those
+    discriminate the change, while a payload that matches neither
+    message fails on both versions whenever the throw runs and so
+    separates nothing.
+14. **Literal tables (#6798).** Adopted: rule 11, because a literal row
+    is the same evidence as a hand-written test with those literals.
+    Rejected: resolve tables held in a `const`, which needs scope
+    resolution the adapter does not have.
 
 ## Required Evidence
 
@@ -537,9 +586,10 @@ rejected alternative. Any can be reversed later without touching the rest.
   fixture `typescript_tothrow_exact_oracle` does not move: its change
   (`input === ""` to `input.trim() === ""`) is not message-only, so its
   class, string and object payloads all stay `exact_error_variant`.
-- Rules 1, 7 and 10 move a finding to a stronger class only for an
-  awaited root (rule 1), an alias-rename local (rule 7) or a literal
-  chai or `node:assert` message check (rule 10).
+- Rules 1, 7, 10 and 11 move a finding to a stronger class only for an
+  awaited root (rule 1), an alias-rename local (rule 7), a literal
+  chai or `node:assert` message check (rule 10) or an inline literal
+  table row (rule 11).
 - Rule 8 is the only path to a TypeScript `static_unknown`, and an
   `exposed` finding never carries `typescript_mock_only_observer`.
 - No TypeScript finding has class `reachable_unrevealed`.

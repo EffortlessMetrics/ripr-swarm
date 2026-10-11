@@ -1530,7 +1530,9 @@ The evidence-first fields are additive in schema `0.2`:
       `test.each(...)` / `it.each(...)` table case uses a row-derived dynamic
       matcher argument. The real producer uses table-call test extraction plus
       `has_dynamic_matcher_arg = true`; the limitation explains that syntax-only
-      preview evidence cannot bind the row to a concrete expected value.
+      preview evidence cannot bind the row to a concrete expected value. Inline
+      literal rows in the same file bind one concrete case per row and do not
+      fire it.
     - `typescript_oracle_helper_gated` — fired when an oracle-eligible related
       test calls an assertion-shaped helper around the changed owner call but no
       direct supported assertion is extracted. The limitation explains that the
