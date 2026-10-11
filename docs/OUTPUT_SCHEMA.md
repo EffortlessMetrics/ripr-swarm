@@ -15638,14 +15638,14 @@ The JSON shape uses schema `0.1`:
       },
       "verification": {
         "before_snapshot_command": "mkdir -p /work/repo/target/ripr/workflow && ripr check --root /work/repo --mode draft --format repo-exposure-json > /work/repo/target/ripr/workflow/before.repo-exposure.json",
-        "after_snapshot_command": "ripr check --root /work/repo --mode draft --format repo-exposure-json > /work/repo/target/ripr/workflow/after.repo-exposure.json",
+        "after_snapshot_command": "mkdir -p /work/repo/target/ripr/workflow && ripr check --root /work/repo --mode draft --format repo-exposure-json > /work/repo/target/ripr/workflow/after.repo-exposure.json",
         "verify_command": "ripr agent verify --root /work/repo --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
         "suggested_test_command": "cargo test discounted_total_boundary_discriminator"
       }
     }
   ],
   "next": {
-    "inspect_packet": "ripr check --root /work/repo --mode draft --format agent-seam-packets-json > /work/repo/target/ripr/workflow/agent-seam-packets.json",
+    "inspect_packet": "mkdir -p /work/repo/target/ripr/workflow && ripr check --root /work/repo --mode draft --format agent-seam-packets-json > /work/repo/target/ripr/workflow/agent-seam-packets.json",
     "verify_after_edit": "ripr agent verify --root /work/repo --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json"
   },
   "warnings": []
@@ -15667,9 +15667,11 @@ Field contract:
 - `top_seams[].packet_ref` — pointer to the full agent seam packet.
 - `top_seams[].verification` — before/after static evidence commands and an
   optional focused test command. The snapshot and verify commands are anchored
-  at the analyzed root, so they run from any directory; `before_snapshot_command`
-  first creates `target/ripr/workflow` under that root, because the before
-  snapshot is the loop's first write. `suggested_test_command` is a bare
+  at the analyzed root, so they run from any directory; both snapshot commands
+  first create `target/ripr/workflow` under that root, because in a fresh
+  checkout the redirect alone fails (#4592, #7289), and `next.inspect_packet`
+  carries the same prefix so every printed command runs verbatim in document
+  order. `suggested_test_command` is a bare
   `cargo test <name>` and runs from the analyzed root.
 
 Static examples use abbreviated JSON fragments to show routing behavior.
@@ -15703,7 +15705,7 @@ Diff-scoped touched seam:
         "seam_id": "f3c9e4d21a0b7c88"
       },
       "verification": {
-        "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json"
+        "after_snapshot_command": "mkdir -p target/ripr/workflow && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json"
       }
     }
   ],
