@@ -2,7 +2,7 @@
 use super::{
     REPAIR_ROUTE_BOUNDARY_TEST, REPAIR_ROUTE_SEAM, REPAIR_ROUTE_WEAK_TEST, assert_success,
     ignore_remove_dir_all, repair_route_after, repair_route_attempt_id, repair_route_before,
-    repair_route_manifest, repair_route_workspace, run_command, run_git, run_ripr,
+    repair_route_manifest, repair_route_workspace, run_command_with_env, run_git, run_ripr,
 };
 use std::path::PathBuf;
 
@@ -128,9 +128,9 @@ fn dirty_production_requires_recovery_despite_user_orderfile() -> TestResult {
 
         // Independently observe the stimulus with ordinary Git: the live
         // file reverses path order, and the dangling file really aborts it.
-        let git = run_command(
+        let git = run_command_with_env(
             "git",
-            Some(root),
+            root,
             &[
                 "diff",
                 "--no-renames",
@@ -140,6 +140,7 @@ fn dirty_production_requires_recovery_despite_user_orderfile() -> TestResult {
                 "HEAD",
                 "--",
             ],
+            &[("LC_ALL", "C")],
         )?;
         if mode == "dangling" {
             assert_eq!(git.status.code(), Some(128), "{git:?}");
