@@ -254,6 +254,13 @@ Git and GitHub carry source/PR state. Do not add a registry, daemon or scheduler
 prove consumer inactivity or authorize deletion. A successful build is not a
 storage closeout.
 
+Apply resource limits to the host/environment where their governing instruction
+applies. A historical shared-host budget is not a new floor for an isolated cloud
+worker. Establish the actual host's capacity, applicable reserve and conservative
+peak budget before generation; use its supported local or hosted proof route.
+Unknown capacity needs investigation, not an invented pass. Preserve every
+current host/tool restriction and accepted floor; do not lower one to admit work.
+
 Before allocating or generating, record in the existing task handoff:
 
 - exact worktree, Git common directory, effective Cargo target/build paths,
