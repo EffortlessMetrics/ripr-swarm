@@ -23,12 +23,12 @@ same source and test through the real TypeScript extractor and classifier.
 ## Then
 
 The diff changes the thrown rejection reason on line 3 and the normal return
-on line 5. The rejection finding is an
-`error_path` with an `exact_error_variant` / strong related-test oracle and
-is `exposed`. The return finding stays `weakly_exposed` with no relevant
-oracle because this test never observes a resolved value. Its displayed
-error oracle preserves the `.rejects` chain. This is
-static evidence, not a general runtime or mutation guarantee.
+on line 5. The rejection finding is an `error_path` with an
+`exact_error_variant` / strong related-test oracle and is `exposed`.
+The return finding stays `weakly_exposed` with no relevant oracle because
+this test never observes a resolved value. Its displayed error oracle
+preserves the `.rejects` chain. This is static evidence, not a general
+runtime or mutation guarantee.
 
 ## Controls
 
@@ -37,6 +37,9 @@ static evidence, not a general runtime or mutation guarantee.
 - Broad, dynamic, custom and negated rejection checks retain their limits.
 - New credit requires an unshadowed `expect` import from `vitest` or
   `@jest/globals`; implicit globals retain their existing preview behavior.
+- A relation-only re-export cannot bind a runner assertion. The sibling
+  `typescript_rejects_reexport_shadow` fixture consumes both correct and wrong
+  rejection reasons and must retain weak error-path credit.
 
 ## Must Not
 
@@ -50,3 +53,15 @@ load. Changing the normal return or replacing the exact rejection assertion
 with `toBeTruthy()` leaves the respective wrong-value control passing.
 These observations establish the two fixture expectations independently of
 the analyzer and its golden outputs.
+
+## Known Integration Blocker
+
+`counterexamples/unexercised-error` adds a second throw that this test never
+executes. Copy its owner into the pinned runtime fixture and apply its diff:
+the actual Vitest test passes on both versions, so the changed second throw
+must not be exposed. The candidate currently promotes it. The active unignored
+regression `rejection_literal_cannot_expose_an_unexercised_error_branch`
+intentionally fails and blocks readiness until the expected-value error-liveness
+owner (#6798) integrates a guard for the rejected literal. The literal stays
+in `expected_value_or_variant`, with no `error_payload`; incorporating
+#6798 alone is not proof that its guard covers this equality.

@@ -512,6 +512,28 @@ impl TypeScriptAssertionBindings {
             );
         }
         for stmt in statements {
+            // The relation inventory also records re-exports. Only actual
+            // local value imports can establish the new runner credit.
+            if let Statement::ImportDeclaration(import) = stmt {
+                if import.import_kind != ImportOrExportKind::Type
+                    && matches!(import.source.value.as_str(), "vitest" | "@jest/globals")
+                    && let Some(specifiers) = &import.specifiers
+                {
+                    for specifier in specifiers {
+                        if let ImportDeclarationSpecifier::ImportSpecifier(specifier) = specifier
+                            && specifier.import_kind != ImportOrExportKind::Type
+                            && super::owners::module_export_name_text(&specifier.imported)
+                                .as_deref()
+                                == Some("expect")
+                        {
+                            bindings
+                                .runner_expects
+                                .push(specifier.local.name.to_string());
+                        }
+                    }
+                }
+                continue;
+            }
             let Statement::VariableDeclaration(decl) = stmt else {
                 continue;
             };
@@ -568,11 +590,6 @@ impl TypeScriptAssertionBindings {
                 Some("expect") => self.chai_expects.push(local),
                 Some(_) => {}
             }
-        } else if matches!(module, "vitest" | "@jest/globals")
-            && imported == Some("expect")
-            && !namespace
-        {
-            self.runner_expects.push(local);
         }
     }
 

@@ -25,6 +25,7 @@ Linked issues:
 - #4103 (default-import and dynamic-import owner credit)
 - #4554 (workspace package-name resolution)
 - #6654 (corpus cases scored false actionable under the first draft)
+- #7315 (literal rejection equality observes the rejected reason)
 
 Linked PRs:
 
@@ -229,6 +230,11 @@ bindings and implicit globals retain the existing table and limitations;
 negated forms retain their existing admission rules. This bounded extension
 is pinned by `typescript_rejects_literal_equality` and
 `rejection_equality_tests`.
+
+The #7315 proposal remains blocked by its live unexercised-error-branch
+regression until the #6798 expected-value error-liveness owner integrates
+the rejected literal. The new literal uses `expected_value_or_variant`,
+not `error_payload`; this missing guard is not a readiness claim.
 
 A snapshot never reaches
 `exposed` by itself, because only a strong oracle does; it carries

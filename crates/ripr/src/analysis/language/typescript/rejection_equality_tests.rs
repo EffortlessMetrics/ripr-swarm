@@ -9,8 +9,23 @@ const TEST: &str = include_str!(
     "../../../../../../fixtures/typescript_rejects_literal_equality/input/tests/load.test.ts"
 );
 
+const REEXPORT_SHADOW: &str = include_str!(
+    "../../../../../../fixtures/typescript_rejects_reexport_shadow/input/tests/load.test.ts"
+);
+const UNEXERCISED_ERROR: &str = include_str!(
+    "../../../../../../fixtures/typescript_rejects_literal_equality/counterexamples/unexercised-error/load.ts"
+);
+
 fn finding(test_source: &str, line: usize) -> Result<Finding, String> {
-    let owners = extract_owners(Path::new("src/load.ts"), OWNER);
+    finding_for_owner(OWNER, test_source, line)
+}
+
+fn finding_for_owner(
+    owner_source: &str,
+    test_source: &str,
+    line: usize,
+) -> Result<Finding, String> {
+    let owners = extract_owners(Path::new("src/load.ts"), owner_source);
     assert_eq!(
         owners.len(),
         1,
@@ -23,7 +38,10 @@ fn finding(test_source: &str, line: usize) -> Result<Finding, String> {
         1,
         "fixture must contain its assertion"
     );
-    let line_text = OWNER.lines().nth(line - 1).ok_or("fixture line absent")?;
+    let line_text = owner_source
+        .lines()
+        .nth(line - 1)
+        .ok_or("fixture line absent")?;
     classify_change(
         Path::new("src/load.ts"),
         line,
@@ -135,4 +153,22 @@ fn unresolved_rejection_checks_do_not_gain_exact_error_credit() {
     let tests = extract_tests(Path::new("tests/load.test.ts"), &negated);
     assert_eq!(tests.len(), 1);
     assert!(tests[0].assertions.is_empty());
+}
+
+#[test]
+fn reexport_does_not_bind_the_local_rejection_assertion() -> Result<(), String> {
+    let got = finding(REEXPORT_SHADOW, 3)?;
+    assert_eq!(got.class, ExposureClass::WeaklyExposed, "{got:?}");
+    assert_eq!(got.related_tests[0].oracle_kind, OracleKind::Unknown);
+    Ok(())
+}
+
+#[test]
+fn rejection_literal_cannot_expose_an_unexercised_error_branch() -> Result<(), String> {
+    // Known integration blocker: #6798 owns expected-value error liveness.
+    // Keep this regression live rather than hiding the unsafe new promotion.
+    let got = finding_for_owner(UNEXERCISED_ERROR, TEST, 6)?;
+    assert_eq!(got.probe.family, ProbeFamily::ErrorPath);
+    assert_eq!(got.class, ExposureClass::WeaklyExposed, "{got:?}");
+    Ok(())
 }
