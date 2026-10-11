@@ -58,6 +58,7 @@ pub(in crate::analysis) fn selected_inherent_calls(
         if root.descendants().any(|node| {
             ast::Use::can_cast(node.kind())
                 || ast::ExternCrate::can_cast(node.kind())
+                || ast::TypeAlias::can_cast(node.kind())
                 || ast::MacroRules::can_cast(node.kind())
                 || ast::MacroDef::can_cast(node.kind())
         }) || root.descendants().filter_map(ast::Attr::cast).any(|attr| {
@@ -250,16 +251,66 @@ fn indexed_fn(
 
 fn sole_top_level_initializer_call(function: &ast::Fn, callee: &str) -> Option<ast::CallExpr> {
     let body = function.body()?;
-    let mut calls = body
+    // Type-qualified paths need a separate resolver; do not hide a competing
+    // reference behind an unsupported `<Type>::method` spelling.
+    if body
         .syntax()
         .descendants()
-        .filter_map(ast::CallExpr::cast)
-        .filter(|call| {
-            call.expr()
-                .is_some_and(|expr| expr.syntax().text() == callee)
+        .any(|node| ast::TypeAnchor::can_cast(node.kind()))
+    {
+        return None;
+    }
+    let expected: Vec<_> = callee.split("::").collect();
+    let mut references = body
+        .syntax()
+        .descendants()
+        .filter_map(ast::PathExpr::cast)
+        .filter(|expression| {
+            expression.path().and_then(path_names).is_some_and(|names| {
+                let names = if matches!(names.first().map(String::as_str), Some("self" | "crate")) {
+                    &names[1..]
+                } else {
+                    &names[..]
+                };
+                names
+                    .iter()
+                    .map(String::as_str)
+                    .eq(expected.iter().copied())
+            })
         });
-    let call = calls.next()?;
-    if calls.next().is_some() {
+    // Count equivalent root spellings and function-value escapes before
+    // admitting a supported direct call. Trivia is never identity authority.
+    let reference = references.next()?;
+    if references.next().is_some() {
+        return None;
+    }
+    let path = reference.path()?;
+    if path.syntax().descendants().any(|node| {
+        ast::GenericArgList::can_cast(node.kind())
+            || ast::NameRef::cast(node).is_some_and(|name| name.text().starts_with("r#"))
+    }) || path_names(path.clone())?
+        .iter()
+        .map(String::as_str)
+        .ne(expected.iter().copied())
+        || path
+            .syntax()
+            .descendants()
+            .filter_map(ast::Path::cast)
+            .any(|part| {
+                part.qualifier().is_none()
+                    && (part.coloncolon_token().is_some()
+                        || part
+                            .segment()
+                            .is_some_and(|segment| segment.coloncolon_token().is_some()))
+            })
+    {
+        return None;
+    }
+    let call = reference.syntax().parent().and_then(ast::CallExpr::cast)?;
+    if !call
+        .expr()
+        .is_some_and(|expr| expr.syntax() == reference.syntax())
+    {
         return None;
     }
     // `?` evaluates this exact call before testing its result. Retain the call
@@ -284,6 +335,18 @@ fn sole_top_level_initializer_call(function: &ast::Fn, callee: &str) -> Option<a
         .is_some_and(|expr| expr.syntax() == &initializer)
         && declaration.syntax().parent() == body.stmt_list().map(|list| list.syntax().clone()))
     .then_some(call)
+}
+
+fn path_names(path: ast::Path) -> Option<Vec<String>> {
+    let mut names = Vec::new();
+    let mut remaining = Some(path);
+    while let Some(part) = remaining {
+        let name = part.segment()?.name_ref()?.text().to_string();
+        names.push(name.strip_prefix("r#").unwrap_or(&name).to_owned());
+        remaining = part.qualifier();
+    }
+    names.reverse();
+    Some(names)
 }
 
 #[cfg(test)]
@@ -357,6 +420,77 @@ mod tests {
     }
 
     #[test]
+    fn refuses_trivia_equivalent_duplicate_selected_calls() -> Result<(), String> {
+        for duplicate in [
+            "Config :: parse(false)",
+            "Config /* receiver */ :: /* method */ parse(false)",
+            "Config\n::parse(false)",
+            "Config::r#parse(false)",
+            "r#Config::parse(false)",
+            "self::Config::parse(false)",
+            "crate::Config::parse(false)",
+            "(Config::parse)(false)",
+            "Config::parse",
+            "<Config>::parse(false)",
+        ] {
+            let source = SOURCE.replace(
+                "let malformed = Config::parse(true);",
+                &format!("let malformed = Config::parse(true); let again = {duplicate};"),
+            );
+            assert!(receipts(&source)?.is_empty(), "duplicate {duplicate}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn refuses_equivalent_duplicate_helper_references() -> Result<(), String> {
+        for duplicate in [
+            "r#collect(false)",
+            "self::collect(false)",
+            "crate::collect(false)",
+            "(collect)(false)",
+            "collect",
+        ] {
+            let source = SOURCE.replace(
+                "let errors = collect(flag);",
+                &format!("let errors = collect(flag); let again = {duplicate};"),
+            );
+            assert!(receipts(&source)?.is_empty(), "duplicate {duplicate}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn binds_unique_calls_with_path_trivia() -> Result<(), String> {
+        for spelling in [
+            "Config :: parse(true)",
+            "Config /* receiver */ :: /* method */ parse(true)",
+            "Config\n::parse(true)",
+        ] {
+            let source = SOURCE.replace("Config::parse(true)", spelling);
+            assert_eq!(receipts(&source)?.len(), 1, "unique {spelling}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn refuses_unsupported_unique_path_spellings() -> Result<(), String> {
+        for spelling in [
+            "Config::r#parse(true)",
+            "self::Config::parse(true)",
+            "crate::Config::parse(true)",
+            "::Config::parse(true)",
+            "Config::parse::<bool>(true)",
+            "(Config::parse)(true)",
+            "<Config>::parse(true)",
+        ] {
+            let source = SOURCE.replace("Config::parse(true)", spelling);
+            assert!(receipts(&source)?.is_empty(), "unsupported {spelling}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn refuses_ambiguous_or_unresolved_declaration_and_call_shapes() -> Result<(), String> {
         for (label, source) in [
             (
@@ -368,6 +502,16 @@ mod tests {
                 format!(
                     "type Other = Config;\n{}",
                     SOURCE.replace("Config::parse(true)", "Other::parse(true)")
+                ),
+            ),
+            (
+                "competing alias call",
+                format!(
+                    "type Alias = Config;\n{}",
+                    SOURCE.replace(
+                        "let malformed",
+                        "let again = Alias::parse(false); let malformed"
+                    )
                 ),
             ),
             (
