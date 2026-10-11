@@ -523,7 +523,7 @@ pub(crate) fn capture_output_measured(
         args,
         cwd,
         envs,
-        CaptureDeadline::FromStart(&deadline),
+        &mut CaptureDeadline::FromStart(&deadline),
         true,
         error_context,
     )?;
@@ -541,6 +541,7 @@ pub(crate) struct ReadinessDeadline<'a> {
     after_ready: Duration,
     probe: &'a mut dyn FnMut() -> Result<bool, String>,
     armed: Option<Instant>,
+    elapsed_at_abort: Option<Duration>,
     failure: Option<String>,
 }
 
@@ -556,6 +557,7 @@ impl<'a> ReadinessDeadline<'a> {
             after_ready,
             probe,
             armed: None,
+            elapsed_at_abort: None,
             failure: None,
         }
     }
@@ -574,14 +576,25 @@ impl CaptureDeadline<'_> {
             #[cfg(all(test, target_os = "linux"))]
             Self::AfterReadiness(phase) => {
                 if let Some(armed) = phase.armed {
-                    return armed.elapsed() >= phase.after_ready;
+                    let elapsed = armed.elapsed();
+                    if elapsed >= phase.after_ready {
+                        phase.elapsed_at_abort = Some(elapsed);
+                        return true;
+                    }
+                    return false;
                 }
                 if started.elapsed() >= phase.startup {
                     phase.failure = Some("readiness not observed within startup budget".into());
                     return true;
                 }
-                match (phase.probe)() {
-                    Ok(true) => phase.armed = Some(Instant::now()),
+                let readiness = (phase.probe)();
+                let observed_at = Instant::now();
+                if observed_at.duration_since(started) >= phase.startup {
+                    phase.failure = Some("readiness not observed within startup budget".into());
+                    return true;
+                }
+                match readiness {
+                    Ok(true) => phase.armed = Some(observed_at),
                     Ok(false) => {}
                     Err(error) => {
                         phase.failure = Some(format!("readiness observation failed: {error}"));
@@ -602,20 +615,21 @@ pub(crate) fn capture_output_measured_after_readiness(
     envs: &[(&str, &str)],
     deadline: ReadinessDeadline<'_>,
     error_context: &str,
-) -> Result<MeasuredOutput, String> {
-    let (output, peak_rss_bytes) = capture_output_sampled(
-        program,
-        args,
-        cwd,
-        envs,
-        CaptureDeadline::AfterReadiness(deadline),
-        true,
-        error_context,
-    )?;
-    Ok(MeasuredOutput {
-        output,
-        peak_rss_bytes,
-    })
+) -> Result<(MeasuredOutput, Option<Duration>), String> {
+    let mut deadline = CaptureDeadline::AfterReadiness(deadline);
+    let (output, peak_rss_bytes) =
+        capture_output_sampled(program, args, cwd, envs, &mut deadline, true, error_context)?;
+    let elapsed_at_abort = match deadline {
+        CaptureDeadline::AfterReadiness(phase) => phase.elapsed_at_abort,
+        CaptureDeadline::FromStart(_) => None,
+    };
+    Ok((
+        MeasuredOutput {
+            output,
+            peak_rss_bytes,
+        },
+        elapsed_at_abort,
+    ))
 }
 
 /// `capture_output_with_timeout` with no per-step wall-clock cap.
@@ -650,7 +664,7 @@ fn capture_output_with_deadline(
         args,
         None,
         envs,
-        CaptureDeadline::FromStart(&deadline),
+        &mut CaptureDeadline::FromStart(&deadline),
         false,
         error_context,
     )
@@ -662,7 +676,7 @@ fn capture_output_sampled(
     args: &[String],
     cwd: Option<&Path>,
     envs: &[(&str, &str)],
-    mut deadline: CaptureDeadline<'_>,
+    deadline: &mut CaptureDeadline<'_>,
     sample_rss: bool,
     error_context: &str,
 ) -> Result<(TimedOutput, Option<u64>), String> {
@@ -705,13 +719,8 @@ fn capture_output_sampled(
         spawn_stream_reader_channel(stderr)
     };
 
-    let wait_outcome = wait_for_child_sampled(
-        &mut child,
-        started,
-        &mut deadline,
-        sample_rss,
-        error_context,
-    )?;
+    let wait_outcome =
+        wait_for_child_sampled(&mut child, started, deadline, sample_rss, error_context)?;
 
     // Always use the bounded drain.  On a normal process exit the pipe
     // write-ends are already closed, so the reader threads finish promptly and
@@ -737,7 +746,7 @@ fn capture_output_sampled(
     )?;
 
     #[cfg(all(test, target_os = "linux"))]
-    if let CaptureDeadline::AfterReadiness(phase) = &deadline
+    if let CaptureDeadline::AfterReadiness(phase) = &*deadline
         && let Some(error) = phase.failure.as_deref().or_else(|| {
             phase
                 .armed
