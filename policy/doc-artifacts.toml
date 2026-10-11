@@ -1293,6 +1293,14 @@ owner = "product-analysis"
 standalone_reason = "Amends the TypeScript oracle rules from corpus mutation evidence: copy-for-identity changes need an identity matcher, and three nested callbacks that run before the test settles are collected."
 
 [[artifact]]
+id = "RIPR-SPEC-0247"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0247-typescript-literal-matcher-strength.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Amends the TypeScript matcher strengths from corpus mutation evidence: a literal mock-call payload on a test-local mock, loose equality against a coercion-safe literal, and a literal inline snapshot read exact."
+
+[[artifact]]
 id = "RIPR-SPEC-0243"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
