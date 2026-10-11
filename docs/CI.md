@@ -700,6 +700,13 @@ request `opened`, `synchronize`, and `reopened` events whose diff touches
 `crates/`, `fixtures/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain*`, or
 `.cargo/`. Label events and other pull requests skip the compile. It is not
 a required check. The Windows advisory lane runs the same command on Windows.
+The selector compares the immutable pull-request event base and head commits,
+not the synthetic merge checkout, so unrelated main-branch Rust changes do not
+select a docs-only candidate. Tests still run on the integration checkout.
+Filename records are NUL-delimited, and both sides of renames plus deletions
+participate. Invalid or unavailable identities/history, ambiguous ancestry,
+failed comparisons, and empty diffs conservatively run the lane; the job summary
+records the routing reason. Push and manual runs remain unconditional.
 The CI workflow also has an explicit MSRV job that pins Rust `1.95.0` and runs:
 
 ```bash

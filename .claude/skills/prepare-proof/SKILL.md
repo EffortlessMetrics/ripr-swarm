@@ -32,6 +32,7 @@ A bounded proof contract distinguishes the desired behavior from the strongest p
 - A failed prerequisite must not masquerade as a downstream analyzer failure.
 - Status zero with missing or structurally unrecognized evidence is incomplete, not clean.
 - Platform-specific branches require platform-capable proof.
+- Bounded subprocess-cleanup claims need an actual owned-descendant control that distinguishes primary-only termination from containment cleanup, including resistance to graceful termination when escalation is claimed. Observe terminal status, primary reaping, and descendant cleanup before deleting fixtures; a timeout return alone is insufficient. Use the existing platform-specific process owner: Linux process-group evidence does not qualify Windows containment, and unknown third-party processes are not owned. Record unavailable execution as not established.
 - Process success, static movement, semantic correctness, mutation adequacy, and merge readiness remain separate.
 
 # Subagents

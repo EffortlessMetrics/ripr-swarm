@@ -17,18 +17,21 @@ traceability without reconstructing intent from chat history.
    cd ripr-swarm
    ```
 
-3. For workflow-policy or agent-skill edits, get focused feedback before
-   building the product:
+3. For workflow-policy, agent-skill or executable-file edits, get focused feedback
+   before building the product:
 
    ```bash
    cargo policy check-workflows
    cargo policy check-agent-skills
+   cargo policy check-executable-files
    ```
 
-   Run the check that covers your edit, or `cargo policy preflight` for both.
+   Run the check that covers your edit. `cargo policy preflight` covers only
+   workflow and agent-skill checks; executable-file policy always reads the Git
+   index afresh and is not discharged by that receipt.
    These commands build the small, unpublished `repo-policy` package without
-   compiling `ripr` or its parser dependencies. The first run downloads and
-   compiles the helper's dependencies; subsequent unchanged runs reuse them.
+   compiling `xtask`, `ripr` or its parser dependencies. The first run downloads
+   and compiles the helper's dependencies; subsequent unchanged runs reuse them.
    Run from the repository root with the pinned Rust toolchain on `PATH`.
    Failures point to reports under `target/ripr/reports/`.
 

@@ -11490,52 +11490,6 @@ fixtures/other.rs|ExampleMarker|1|owners|different path
 }
 
 #[test]
-fn executable_allowlist_rejects_stale_row() -> Result<(), String> {
-    let allowlist = BTreeSet::from([
-        "deleted/script.sh".to_string(),
-        "demoted/script.sh".to_string(),
-    ]);
-    let stage = "\
-100644 abcdef0123456789abcdef0123456789abcdef01 0\tdemoted/script.sh
-100644 fedcba0123456789abcdef0123456789abcdef01 0\tordinary.rs
-";
-    let violations = super::executable_file_violations(&allowlist, stage);
-    if !violations.iter().any(|row| {
-        row.contains(
-            "deleted/script.sh allowlist entry is stale: path is not in git ls-files --stage; remove the entry",
-        )
-    }) {
-        return Err(format!(
-            "missing executable allowlist path must fail: {violations:?}"
-        ));
-    }
-    if !violations.iter().any(|row| {
-        row.contains(
-            "demoted/script.sh allowlist entry is stale: mode is 100644, expected 100755; remove the entry",
-        )
-    }) {
-        return Err(format!(
-            "demoted executable allowlist path must fail: {violations:?}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn executable_allowlist_accepts_live_100755_row() -> Result<(), String> {
-    let path = "packaging/npm/launcher/bin/ripr.cjs";
-    let allowlist = BTreeSet::from([path.to_string()]);
-    let stage = format!("100755 9cea22d6aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\t{path}\n");
-    let violations = super::executable_file_violations(&allowlist, &stage);
-    if !violations.is_empty() {
-        return Err(format!(
-            "a live 100755 allowlist row must still pass: {violations:?}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
 fn text_encoding_detects_only_bom_prefix() -> Result<(), String> {
     if !super::has_utf8_bom(&[0xEF, 0xBB, 0xBF, b'#']) {
         return Err("a leading EF BB BF must be detected as a BOM".to_string());
