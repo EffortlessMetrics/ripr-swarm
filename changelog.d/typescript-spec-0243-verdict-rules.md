@@ -4,7 +4,8 @@
   regex or a literal `message` object now pin the thrown error; an error
   payload that matches both the old and new message, or neither, no
   longer credits a message change, and a bare `Error` class credits only
-  when the old line throws a primitive; a file-local or chai `expect`
+  when a primitive throw becomes a built-in error under the same guard,
+  or back; a file-local or chai `expect`
   is not read as Jest's; a default import credits only a default-exported
   owner; owner and changed-token matches use whole identifiers (`address`
   no longer observes `add`); an `import { f as p }` local counts as the

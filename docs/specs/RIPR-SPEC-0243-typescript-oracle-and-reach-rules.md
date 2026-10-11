@@ -175,8 +175,8 @@ or non-literal cell, object rows, destructured, defaulted or rest
 parameters, a row whose length differs from the parameter count, a
 parameter used other than as a plain read, a parameter re-declared or
 shadowed in the body, a nested `function`, a template substitution, a
-regular-expression literal, or a substituted body that does not
-re-parse.
+regular-expression literal, a non-ASCII parameter or callback body, or a
+substituted body that does not re-parse.
 
 ### Recogniser order
 
@@ -250,10 +250,10 @@ identifier and a template literal stay `broad_error` / weak.
 
 **Rule 4. A payload that passes on both versions is not exact.** A
 payload whose whole text is `Error` reads `broad_error` / weak, because
-every thrown error is an `Error`, unless exactly one side of the changed
-line throws a primitive literal and both sides throw under the same
-tokens before `throw` (`throw "bad"` changed to
-`throw new Error("bad")`), because no class check matches a primitive;
+every thrown error is an `Error`, unless both sides throw under the same
+tokens before `throw`, one a primitive literal and the other a built-in
+error class (`throw "bad"` changed to `throw new Error("bad")`, or back),
+because no class check matches a primitive;
 `globalThis.Error` already reads `broad_error` under the uppercase-first
 gate. A second exception covers a message-only change: the changed line
 is a `throw` line or a `Promise.reject(...)` line, and every token that
@@ -324,18 +324,24 @@ strong:
   of the message, as Jest matches `toThrow("...")`.
 - `node:assert` `throws` or `rejects` (not chai `assert`, whose
   signature differs) whose second argument is a regex literal anchored
-  with `^` and `$`, with no unescaped `|` outside a character class, or
-  an all-literal object whose `message` is a string literal.
+  with `^` and `$`, with no unescaped `|` outside a character class and
+  no repeated wildcard (`.`, a character class, an escaped class such as
+  `\S`, or a group followed by `*`, `+` or `{`), or an all-literal object
+  whose top-level `message` is a string literal.
 
 Rule 4's message-only guard applies to all of them: on a message-only
 change, a chai string must be a substring of exactly one of the old and
 new messages (as rule 4 assembles them), an object `message` must equal
 exactly one of them, and an
 anchored regex credits only when ripr can match it as a plain literal
-(no metacharacters between the anchors other than escapes) whose text,
-after removing a leading `Identifier: ` prefix (`node:assert` tests the
-regex against `String(err)`, such as `Error: blank`), equals exactly one
-of them; otherwise each reads `broad_error` / weak. A
+(no flags other than `u`, no metacharacters between the anchors other
+than escapes) whose text equals `String(err)` on exactly one side.
+`node:assert` tests the regex against `String(err)`: ripr knows it as
+`Name: message` for a built-in error class (`Error`, `TypeError`,
+`RangeError`, `SyntaxError`, `ReferenceError`, `EvalError`, `URIError`)
+with a non-empty message, and as the value of a thrown primitive; a user
+class may set any `name`, so it does not credit. Otherwise each reads
+`broad_error` / weak. A
 class argument, an unanchored regex, an identifier and a template literal
 stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
 

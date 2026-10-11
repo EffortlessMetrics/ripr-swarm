@@ -928,9 +928,9 @@ pub(crate) fn split_regex_literal(text: &str) -> Option<(&str, &str)> {
 }
 
 /// Whether a regex pattern starts with `^`, ends with an unescaped `$`, and
-/// has no unescaped `|` outside a character class and no unbounded wildcard
-/// run (`.*`, `.+`, `[\s\S]*`): `/^.*$/` admits every message, as a broad
-/// check does.
+/// has no unescaped `|` outside a character class and no repeated wildcard
+/// (`.*`, `.+`, `.{0,}`, `[\s\S]*`, `\S+`, `(?:.)*`): `/^.*$/` admits every
+/// message, as a broad check does.
 fn regex_pattern_is_anchored(pattern: &str) -> bool {
     let Some(inner) = pattern
         .strip_prefix('^')
@@ -940,12 +940,13 @@ fn regex_pattern_is_anchored(pattern: &str) -> bool {
     };
     let mut escaped = false;
     let mut in_class = false;
-    // The previous atom was `.` or a character class.
+    // The previous atom was `.`, a character class, an escaped class such
+    // as `\S`, or a group.
     let mut wildcard_atom = false;
     for ch in inner.chars() {
         if escaped {
             escaped = false;
-            wildcard_atom = false;
+            wildcard_atom = ch.is_ascii_alphabetic();
             continue;
         }
         if in_class {
@@ -961,10 +962,10 @@ fn regex_pattern_is_anchored(pattern: &str) -> bool {
             '\\' => escaped = true,
             '[' => in_class = true,
             '|' => return false,
-            '*' | '+' if wildcard_atom => return false,
+            '*' | '+' | '{' if wildcard_atom => return false,
             _ => {}
         }
-        wildcard_atom = ch == '.';
+        wildcard_atom = ch == '.' || ch == ')';
     }
     // A trailing lone backslash would escape the closing `$`.
     !escaped

@@ -692,10 +692,13 @@ test("parse", async () => {
   assert.throws(() => parse(""), /^Error: blank$/i);
   assert.throws(() => parse(""), /^.*$/);
   assert.throws(() => parse(""), /^Error: [\s\S]+$/);
+  assert.throws(() => parse(""), /^.{0,}$/);
+  assert.throws(() => parse(""), /^(?:.)*$/);
+  assert.throws(() => parse(""), /^Error: \S+$/);
 });
 "#,
     );
-    assert_eq!(assertions.len(), 9, "{assertions:?}");
+    assert_eq!(assertions.len(), 12, "{assertions:?}");
     assert_oracle(
         &assertions[0],
         OracleKind::ExactErrorVariant,

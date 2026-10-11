@@ -117,3 +117,19 @@ fn non_literal_table_stays_unresolved() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// A non-ASCII parameter or body fails closed: the row substitution scans
+/// ASCII identifiers only.
+#[test]
+fn non_ascii_table_stays_unresolved() {
+    let parameter = "import { loyaltyTier } from \"../src/tier\";\n\ntest.each([\n  [999, \"silver\"],\n])(\"%i\", (pointsé, tier) => {\n  expect(loyaltyTier(pointsé)).toBe(tier);\n});\n";
+    assert_eq!(
+        observed_and_expected(parameter),
+        vec![(Some("loyaltyTier(pointsé)".to_string()), None, true, 6)]
+    );
+    let body = "import { loyaltyTier } from \"../src/tier\";\n\ntest.each([\n  [999, \"silver\"],\n])(\"%i\", (points, tier) => {\n  const pointsé = 1;\n  expect(loyaltyTier(points)).toBe(tier);\n});\n";
+    assert_eq!(
+        observed_and_expected(body),
+        vec![(Some("loyaltyTier(points)".to_string()), None, true, 7)]
+    );
+}

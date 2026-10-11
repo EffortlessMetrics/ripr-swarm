@@ -163,6 +163,22 @@ fn throws_primitive(throw: &[LineToken]) -> bool {
                     if word.chars().next().is_some_and(|c| c.is_ascii_digit()))))
 }
 
+/// Whether a `throw ...` token run throws a built-in error class
+/// (`new TypeError(...)` or `Error(...)`), which is an `Error`.
+fn throws_builtin_error(throw: &[LineToken]) -> bool {
+    let rest = match throw {
+        [LineToken::Other(keyword), LineToken::Other(new), rest @ ..]
+            if keyword == "throw" && new == "new" =>
+        {
+            rest
+        }
+        [LineToken::Other(keyword), rest @ ..] if keyword == "throw" => rest,
+        _ => return false,
+    };
+    matches!(rest, [LineToken::Other(class), LineToken::Other(open), ..]
+        if open == "(" && BUILTIN_ERROR_CLASSES.contains(&class.as_str()))
+}
+
 /// Drop a statement-ending `;`, which adds no behavior.
 fn without_trailing_semicolon(tokens: &[LineToken]) -> &[LineToken] {
     match tokens.split_last() {
@@ -200,9 +216,9 @@ pub(crate) struct ErrorChangeFacts {
     pub(crate) old_message: Option<String>,
     /// The new thrown message, read the same way.
     pub(crate) new_message: Option<String>,
-    /// Both sides throw under the same guard and exactly one of them throws
-    /// a primitive literal (`throw "bad"` to `throw new Error("bad")`): a
-    /// bare `Error` class check passes on one side only.
+    /// Both sides throw under the same guard, one a primitive literal and
+    /// the other a built-in error (`throw "bad"` to `throw new Error("bad")`,
+    /// or back): a bare `Error` class check passes on one side only.
     pub(crate) primitive_throw_flips: bool,
     /// `String(err)` of the old thrown value when ripr knows it: the message
     /// of a thrown primitive, or `Name: message` for a built-in error class
@@ -239,7 +255,8 @@ impl ErrorChangeFacts {
         let primitive_throw_flips = match (old_split, new_split) {
             (Some((old_prefix, old_throw)), Some((new_prefix, new_throw))) => {
                 old_prefix == new_prefix
-                    && throws_primitive(old_throw) != throws_primitive(new_throw)
+                    && ((throws_primitive(old_throw) && throws_builtin_error(new_throw))
+                        || (throws_builtin_error(old_throw) && throws_primitive(new_throw)))
             }
             _ => false,
         };
@@ -476,7 +493,12 @@ fn object_message_value(text: &str) -> Option<String> {
 /// The literal text an anchored regex matches when its pattern between `^`
 /// and `$` holds no metacharacters other than escapes.
 fn plain_anchored_regex_text(text: &str) -> Option<String> {
-    let (pattern, _) = split_regex_literal(text)?;
+    let (pattern, flags) = split_regex_literal(text)?;
+    // `i` and `m` widen what a literal pattern matches; ripr compares it
+    // as plain text only without them.
+    if !flags.chars().all(|flag| flag == 'u') {
+        return None;
+    }
     let inner = pattern.strip_prefix('^')?.strip_suffix('$')?;
     let mut literal = String::new();
     let mut chars = inner.chars();
@@ -669,6 +691,24 @@ mod tests {
             &payload(Kind::ThrowsClass, "Error"),
             &primitive
         ));
+        // The other direction: an `Error` becomes a primitive.
+        let to_primitive =
+            ErrorChangeFacts::read(Some(r#"throw new Error("empty");"#), r#"throw "empty";"#);
+        assert!(error_payload_credits(
+            &payload(Kind::ThrowsClass, "Error"),
+            &to_primitive
+        ));
+        // A side ripr cannot type (a variable, an object) is not an `Error`.
+        let variable = ErrorChangeFacts::read(Some("throw reason;"), r#"throw "bad";"#);
+        assert!(!error_payload_credits(
+            &payload(Kind::ThrowsClass, "Error"),
+            &variable
+        ));
+        let object = ErrorChangeFacts::read(Some(r#"throw { message: "x" };"#), r#"throw "x";"#);
+        assert!(!error_payload_credits(
+            &payload(Kind::ThrowsClass, "Error"),
+            &object
+        ));
         // Primitives on both sides fail `toThrow(Error)` on both sides.
         let both_primitive = ErrorChangeFacts::read(Some(r#"throw "a";"#), r#"throw "b";"#);
         assert!(!error_payload_credits(
@@ -739,6 +779,15 @@ mod tests {
         assert!(!error_payload_credits(
             &payload(Kind::AssertThrowsRegex, "/^TypeError: blank$/"),
             &facts
+        ));
+        // `i` widens the match: `/^Error: blank$/i` also matches `BLANK`.
+        let case = ErrorChangeFacts::read(
+            Some(r#"throw new Error("BLANK");"#),
+            r#"throw new Error("blank");"#,
+        );
+        assert!(!error_payload_credits(
+            &payload(Kind::AssertThrowsRegex, "/^Error: blank$/i"),
+            &case
         ));
         // A user class may set any `name`: its `String(err)` is unknown.
         let user_class = ErrorChangeFacts::read(
