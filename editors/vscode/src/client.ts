@@ -113,6 +113,13 @@ export const RIPR_DOCUMENT_SELECTORS: Array<{ language: string; scheme: 'file' }
 const SHOW_OUTPUT_ACTION = 'Show Output';
 const SELECT_WORKSPACE_ROOT_ACTION = 'Select Workspace Root';
 
+// Palette invocations of diagnostic-scoped commands arrive without the
+// payload a code action carries. Say how to invoke them with a target
+// instead of reporting evidence the handler never evaluated (#2083, #7341).
+// Platform-neutral: Quick Fix is Ctrl+. on Windows/Linux and Cmd+. on macOS.
+const DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE =
+  'ripr targeted-test commands run from a ripr diagnostic: open a file with ripr diagnostics, use Quick Fix (Ctrl+. or Cmd+.) on one, and pick the targeted-test command from there.';
+
 const RIPR_FILE_LANGUAGES = new Set(RIPR_DOCUMENT_SELECTORS.map((selector) => selector.language));
 // Editor selector language -> ripr.toml [languages] enablement name. The
 // server's `typescript` entry covers the JavaScript variants
@@ -1159,6 +1166,10 @@ export class RiprClientController {
   }
 
   async copySuggestedAssertion(target?: RiprSuggestedAssertionTarget): Promise<void> {
+    if (!target) {
+      this.runtime.showInformationMessage(DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE);
+      return;
+    }
     const assertion = typeof target?.assertion === 'string' ? target.assertion.trim() : '';
     if (!assertion) {
       this.runtime.showInformationMessage('No ripr suggested assertion is available for this diagnostic.');
@@ -1175,6 +1186,10 @@ export class RiprClientController {
   }
 
   async copyTargetedTestBrief(target?: RiprTargetedTestBriefTarget): Promise<void> {
+    if (!target) {
+      this.runtime.showInformationMessage(DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE);
+      return;
+    }
     const brief = typeof target?.brief === 'string' ? target.brief.trim() : '';
     if (!brief) {
       this.runtime.showInformationMessage('No ripr targeted test brief is available for this diagnostic.');
@@ -1381,6 +1396,10 @@ export class RiprClientController {
   }
 
   async openRelatedTest(target?: RiprRelatedTestTarget): Promise<void> {
+    if (!target) {
+      this.runtime.showInformationMessage(DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE);
+      return;
+    }
     const uri = uriFromTarget(target);
     if (!uri) {
       this.runtime.showInformationMessage('No ripr related test location is available for this diagnostic.');
