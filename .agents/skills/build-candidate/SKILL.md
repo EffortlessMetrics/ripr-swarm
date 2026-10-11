@@ -53,7 +53,8 @@ Bind background commands to retained task/session handles, candidate identities 
 9. Challenge authority/provenance, failure and rollback paths, transaction boundaries, concurrency, oracle grip, runtime/schema/docs/output parity, platforms, packaging and user-facing claims. Use an independent source/oracle/reviewer when it adds detection value, not merely a different persona.
 10. Repair accepted findings in the same candidate. Commit coherent changes without another routine permission pause so verification can bind to a real Git object.
     Before finalizing the candidate for publication or Draft -> Ready hosted
-    qualification, record its changelog disposition in the PR body:
+    qualification, record its changelog disposition in a local draft of the new
+    PR body or update the existing PR body:
     - Name the fragment under `changelog.d/` and compare it with the canonical
       example in [changelog.d/README.md](../../../changelog.d/README.md): first-line
       section marker, `- ` bullet and trailing issue/PR reference.
