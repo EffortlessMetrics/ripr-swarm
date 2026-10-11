@@ -89,6 +89,9 @@ fn mock_payload_another_call_could_satisfy_is_not_credited() {
         "const send = jest.fn(); announce(...[7], send);",
         // Passed at another parameter's position.
         "const send = jest.fn(); announce(send, 7);",
+        // A local definition with the owner's name reads as a second call
+        // and fails safe.
+        "function announce(a, b) {} const send = jest.fn(); announce(7, send);",
     ] {
         assert!(
             !notify_facts(Some(NOTIFY_OWNER)).credits(&payload, test),
