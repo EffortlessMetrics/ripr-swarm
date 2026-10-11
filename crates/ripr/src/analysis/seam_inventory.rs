@@ -8301,18 +8301,18 @@ pub fn owner(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }}
             (
                 import.to_string(),
                 format!(
-                    "#[cfg(test)] mod support {{ pub fn owner(x: i32) -> i32 {{ x }} }}\n#[test] fn selected() {{ {import} {body} }}"
+                    "#[cfg(test)]\nmod support {{\n    pub fn owner(x: i32) -> i32 {{ x }}\n}}\n#[test] fn selected() {{ {import} {body} }}"
                 ),
             )
         })
         .collect::<Vec<_>>();
         controls.push((
             "lexical-support".into(),
-            format!("#[cfg(test)] mod support {{ pub fn owner(x: i32) -> i32 {{ x }} #[test] fn selected() {{ {body} }} }}"),
+            format!("#[cfg(test)]\nmod support {{\n    pub fn owner(x: i32) -> i32 {{ x }}\n    #[test] fn selected() {{ {body} }}\n}}"),
         ));
         controls.push((
             "module-value".into(),
-            format!("#[cfg(test)] mod tests {{ const owner: fn(i32) -> i32 = |x| x; #[test] fn selected() {{ {body} }} }}"),
+            format!("#[cfg(test)]\nmod tests {{\n    const owner: fn(i32) -> i32 = |x| x;\n    #[test] fn selected() {{ {body} }}\n}}"),
         ));
         for (label, tests) in controls {
             let root = make_tempdir("targeted-competing-bare-binding")?;
@@ -8329,6 +8329,15 @@ impl Beta {{ pub fn new(x: i32) -> i32 {{ if x > 1 {{ x }} else {{ 1 }} }} }}
 "#
                 ),
             )?;
+            if label != "module-value" {
+                let index = crate::analysis::facts::build_index(&root, &[root.join("src/lib.rs")])?;
+                assert!(
+                    index.functions().any(|function| {
+                        function.name == "owner" && function.source_role.is_evidence_role()
+                    }),
+                    "{label}: fixture must contain the competing evidence-only helper"
+                );
+            }
             let result = inventory_changed_test_classified_seams_at_with_config_node(
                 &root,
                 &RiprConfig::default(),
