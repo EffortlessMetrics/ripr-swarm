@@ -4,6 +4,33 @@ CI should protect correctness without making ordinary contribution slow or
 noisy. Default CI is advisory for static exposure findings until calibration and
 configuration are mature enough to support opt-in failure policies.
 
+## Python wheel applicability (#4987)
+
+The Python wheel workflow retains its broad PR paths and ordinary manual
+qualification. Its lightweight `applicability` job independently runs the
+product-free `cargo policy check-workflows` before selecting expensive work.
+Only a diff confined to `policy/workflow_allowlist.txt`, with a unique unchanged
+wheel-owned record and unambiguous parsed records at both endpoints, can skip
+`build-wheel` and its two pip/uv consumers. Record comparison uses
+`merge-base(event base, event head)` to event head, matching three-dot selection.
+The validator keeps its existing duplicate-record policy; applicability retains
+all records and treats duplicate normalized keys as uncertainty.
+
+Wheel record additions, deletions, renames or changes, mixed diffs, other ledgers,
+product/package/xtask changes, workflow/selector edits and unavailable or malformed
+history retain qualification. Failed/skipped applicability or missing outputs
+also retain qualification. The separate `mcp_evidence_pair` manual dispatch has
+no applicability dependency and remains independently reachable. Distribution
+source checks remain inside qualifying wheel work; Windows and the broader
+#4633/#4493 programme retain their existing contracts.
+
+The expected avoidance for an eligible unrelated-ledger event is one release
+wheel build and two consumers, offset by the lightweight policy/selection job.
+No measured runner-time savings are claimed. Local controls execute the actual
+workflow shell with the production policy binary and real Git histories, and
+exercise the checked-in job predicates and dependency wiring; they do not claim
+hosted Actions or wheel qualification.
+
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it
