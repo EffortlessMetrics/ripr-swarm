@@ -221,7 +221,7 @@ impl Fixture {
             .output()?;
         Ok((output, fs::read_to_string(output_path)?))
     }
-    fn expect(&self, event: &str, base: &str, head: &str, qualify: bool) -> TestResult {
+    fn assert_selection(&self, event: &str, base: &str, head: &str, qualify: bool) -> TestResult {
         let (output, selected) = self.select(event, base, head)?;
         assert!(output.status.success(), "{output:?}");
         assert_eq!(selected, format!("qualify={qualify}\n"), "{output:?}");
@@ -262,7 +262,7 @@ fn unrelated_record_skip_still_executes_real_workflow_policy() -> TestResult {
     let policy = fixture.policy()?;
     assert!(policy.status.success(), "{policy:?}");
     assert!(String::from_utf8(policy.stdout)?.contains("check-workflows: pass"));
-    fixture.expect("pull_request", &base, &head, false)
+    fixture.assert_selection("pull_request", &base, &head, false)
 }
 
 #[test]
@@ -292,17 +292,17 @@ fn wheel_records_and_ambiguous_inputs_qualify() -> TestResult {
     for changed in mutations {
         fixture.git(&["reset", "--hard", &base])?;
         let head = fixture.change(LEDGER, &changed)?;
-        fixture.expect("pull_request", &base, &head, true)?;
+        fixture.assert_selection("pull_request", &base, &head, true)?;
         // Bad/absent record at merge base remains conservative after repair/addition.
         let repaired = fixture.change(LEDGER, &initial)?;
-        fixture.expect("pull_request", &head, &repaired, true)?;
+        fixture.assert_selection("pull_request", &head, &repaired, true)?;
     }
     fixture.git(&["reset", "--hard", &base])?;
     let mut bytes = initial.into_bytes();
     bytes.extend([b'\n', 0xff]);
     fs::write(fixture.0.join(LEDGER), bytes)?;
     let head = fixture.commit()?;
-    fixture.expect("pull_request", &base, &head, true)
+    fixture.assert_selection("pull_request", &base, &head, true)
 }
 
 #[test]
@@ -353,17 +353,36 @@ fn main_drift_and_independent_matching_edits_use_the_merge_base() -> TestResult 
         LEDGER,
         &format!("{original}\n# unrelated candidate record\n"),
     )?;
-    fixture.expect("pull_request", &main, &candidate, false)?;
+    fixture.assert_selection("pull_request", &main, &candidate, false)?;
     fixture.git(&["reset", "--hard", &fork])?;
-    let matching = fixture.change(LEDGER, &main_ledger)?;
+    fixture.change(LEDGER, &main_ledger)?;
+    fixture.git(&[
+        "commit",
+        "--amend",
+        "-m",
+        "independent candidate wheel edit",
+    ])?;
+    let matching = fixture.git(&["rev-parse", "HEAD"])?;
+    assert_ne!(
+        main, matching,
+        "independent identical edits need distinct commits"
+    );
+    assert_eq!(
+        fixture.git(&["merge-base", "--all", &main, &matching])?,
+        fork
+    );
+    assert_eq!(
+        fixture.git(&["diff", "--name-only", &fork, &matching])?,
+        LEDGER
+    );
     assert!(
         fixture
             .git(&["diff", "--name-only", &main, &matching])?
             .is_empty()
     );
-    fixture.expect("pull_request", &main, &matching, true)?;
+    fixture.assert_selection("pull_request", &main, &matching, true)?;
     fixture.git(&["reset", "--hard", &fork])?;
-    fixture.expect("pull_request", &main, &fork, true)
+    fixture.assert_selection("pull_request", &main, &fork, true)
 }
 
 #[test]
@@ -371,10 +390,10 @@ fn missing_history_partial_diff_and_manual_dispatch_are_conservative() -> TestRe
     let fixture = Fixture::new()?;
     let base = fixture.git(&["rev-parse", "HEAD"])?;
     let head = fixture.change(LEDGER, &format!("{}\n# unrelated\n", fixture.ledger()?))?;
-    fixture.expect("pull_request", &"0".repeat(40), &head, true)?;
-    fixture.expect("pull_request", "bad-base", &head, true)?;
-    fixture.expect("pull_request", &base, &base, true)?; // checkout/head mismatch
-    fixture.expect("workflow_dispatch", "", &head, true)?;
+    fixture.assert_selection("pull_request", &"0".repeat(40), &head, true)?;
+    fixture.assert_selection("pull_request", "bad-base", &head, true)?;
+    fixture.assert_selection("pull_request", &base, &base, true)?; // checkout/head mismatch
+    fixture.assert_selection("workflow_dispatch", "", &head, true)?;
     let git_path = fixture
         .command("bash")?
         .args(["-c", "command -v git"])
