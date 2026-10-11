@@ -1856,6 +1856,67 @@ impl OwnerReturnPin {
         }
     }
 
+    fn binding(&self) -> FreeOwnerBinding<'_> {
+        FreeOwnerBinding {
+            name: &self.name,
+            owner_file: &self.owner_file,
+            owner_start_line: self.owner_start_line,
+        }
+    }
+
+    fn path_reaches_owner(
+        &self,
+        prefix: &str,
+        test: &TestSummary,
+        test_source: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        self.binding()
+            .path_reaches_owner(prefix, test, test_source, index, syntax)
+    }
+
+    fn bare_call_reaches_owner(
+        &self,
+        test: &TestSummary,
+        test_source: &str,
+        index: &RustIndex,
+        syntax: &OwnerPinSyntax,
+    ) -> bool {
+        self.binding()
+            .bare_call_reaches_owner(test, test_source, index, syntax)
+    }
+
+    fn trait_in_scope(
+        &self,
+        test: &TestSummary,
+        test_source: Option<&str>,
+        trait_name: &str,
+        index: &RustIndex,
+    ) -> bool {
+        let Some(source) = test_source else {
+            return false;
+        };
+        if let Some(known) = self.trait_scope_by_file.borrow().get(&test.file) {
+            return *known;
+        }
+        let in_scope = trait_in_scope(source, trait_name, index);
+        self.trait_scope_by_file
+            .borrow_mut()
+            .insert(test.file.clone(), in_scope);
+        in_scope
+    }
+}
+
+/// Identity-only view shared by return pins and targeted owner selection.
+/// It carries no return-value probe, expected-value oracle or pin credit.
+struct FreeOwnerBinding<'a> {
+    name: &'a String,
+    owner_file: &'a PathBuf,
+    owner_start_line: usize,
+}
+
+impl FreeOwnerBinding<'_> {
     /// #6974: whether `prefix::name` can only name the owner. The path must
     /// resolve to exactly the module that declares the owner. An explicit
     /// `fn` there takes the value name from every glob, and any other item
@@ -1882,9 +1943,9 @@ impl OwnerReturnPin {
         syntax: &OwnerPinSyntax,
     ) -> bool {
         let key = (
-            self.owner_file.clone(),
+            (*self.owner_file).clone(),
             self.owner_start_line,
-            self.name.clone(),
+            (*self.name).clone(),
             prefix.to_string(),
             test.file.clone(),
             test.start_line,
@@ -1910,13 +1971,13 @@ impl OwnerReturnPin {
             return false;
         };
         let roots = syntax.target_roots(index);
-        let Some(owner_root) = roots.root(&self.owner_file, index) else {
+        let Some(owner_root) = roots.root(self.owner_file, index) else {
             return false;
         };
-        let owner_is_root = self.owner_file == owner_root;
+        let owner_is_root = *self.owner_file == owner_root;
         let mut module = match *root {
             "self" | "super" => {
-                if test.file != self.owner_file {
+                if test.file != *self.owner_file {
                     return false;
                 }
                 let Some(ItemNesting {
@@ -1965,10 +2026,10 @@ impl OwnerReturnPin {
             module.push((*segment).to_string());
         }
         syntax
-            .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
+            .item_nesting(index, self.owner_file, self.name, self.owner_start_line)
             .is_some_and(|owner| !owner.cfg_gated && owner.modules == module)
-            && !syntax.file_cfg_gated(index, &self.owner_file)
-            && !syntax.crate_may_hide_name(index, &owner_root, &self.name, roots)
+            && !syntax.file_cfg_gated(index, self.owner_file)
+            && !syntax.crate_may_hide_name(index, &owner_root, self.name, roots)
     }
 
     /// #6974: whether `root::` in `test` names the owner's library: an
@@ -1983,7 +2044,7 @@ impl OwnerReturnPin {
         syntax: &OwnerPinSyntax,
     ) -> bool {
         let roots = syntax.target_roots(index);
-        let Some(owner_root) = roots.root(&self.owner_file, index) else {
+        let Some(owner_root) = roots.root(self.owner_file, index) else {
             return false;
         };
         if file_renames_to(test_source, root)
@@ -2035,9 +2096,9 @@ impl OwnerReturnPin {
         syntax: &OwnerPinSyntax,
     ) -> bool {
         let key = (
-            self.owner_file.clone(),
+            (*self.owner_file).clone(),
             self.owner_start_line,
-            self.name.clone(),
+            (*self.name).clone(),
             test.file.clone(),
             test.start_line,
         );
@@ -2057,7 +2118,7 @@ impl OwnerReturnPin {
         syntax: &OwnerPinSyntax,
     ) -> bool {
         let Some(owner_inline) = syntax
-            .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
+            .item_nesting(index, self.owner_file, self.name, self.owner_start_line)
             .map(|nesting| nesting.modules)
         else {
             return false;
@@ -2071,11 +2132,11 @@ impl OwnerReturnPin {
         // The body binds first: an item there shadows every import, an
         // explicit `use` there shadows the module scope, and a glob there
         // shadows the module scope too.
-        if body_defines_value_twin(&test.body, &self.name) {
+        if body_defines_value_twin(&test.body, self.name) {
             return false;
         }
         let body_uses = flattened_use_paths(&test.body);
-        let (body_bindings, body_globs) = partition_name_uses(&body_uses, &self.name);
+        let (body_bindings, body_globs) = partition_name_uses(&body_uses, self.name);
         if !body_bindings.is_empty() {
             let context = ScopeContext {
                 file: &test.file,
@@ -2099,10 +2160,10 @@ impl OwnerReturnPin {
         // glob or lexical resolution, and an explicit `use` takes it from
         // a glob. Ancestor items are invisible without a glob, which the
         // glob rule below places.
-        if scope.has_twin(&self.name) {
+        if scope.has_twin(self.name) {
             return false;
         }
-        let (bindings, globs) = partition_name_uses(&scope.uses, &self.name);
+        let (bindings, globs) = partition_name_uses(&scope.uses, self.name);
         if !bindings.is_empty() {
             let context = ScopeContext {
                 file: &test.file,
@@ -2125,7 +2186,7 @@ impl OwnerReturnPin {
         // Neither: the owner is lexically visible only beside the test.
         // Anywhere else the bare name is unresolved, the prelude, or a
         // macro-emitted import ripr cannot see — never the owner.
-        test.file == self.owner_file && scope.stack == owner_inline
+        test.file == *self.owner_file && scope.stack == owner_inline
     }
 
     /// #7097: whether the binding `use_path` delivers the owner to
@@ -2141,7 +2202,7 @@ impl OwnerReturnPin {
         index: &RustIndex,
         syntax: &OwnerPinSyntax,
     ) -> bool {
-        let Some((first, middle)) = split_binding_use(use_path, &self.name) else {
+        let Some((first, middle)) = split_binding_use(use_path, self.name) else {
             return false;
         };
         let Some((target_file, target_stack)) =
@@ -2164,12 +2225,12 @@ impl OwnerReturnPin {
         index: &RustIndex,
         syntax: &OwnerPinSyntax,
     ) -> bool {
-        let Some((first, middle)) = split_binding_use(use_path, &self.name) else {
+        let Some((first, middle)) = split_binding_use(use_path, self.name) else {
             return false;
         };
         self.resolve_use_prefix(first, &middle, scope, index, syntax)
             .is_some_and(|(file, stack)| {
-                file == self.owner_file && stack.as_slice() == owner_inline
+                file == *self.owner_file && stack.as_slice() == owner_inline
             })
     }
 
@@ -2199,7 +2260,7 @@ impl OwnerReturnPin {
                 resolve_module_path(index, syntax, &file, &stack, &rest)
             }
             "crate" => {
-                let root = composed_root(&self.owner_file, index);
+                let root = composed_root(self.owner_file, index);
                 if composed_root(scope.file, index) != root {
                     return None;
                 }
@@ -2209,7 +2270,7 @@ impl OwnerReturnPin {
                 if !self.krate_root_names_owner_crate(first, scope.file, scope.source, index) {
                     return None;
                 }
-                let root = composed_root(&self.owner_file, index);
+                let root = composed_root(self.owner_file, index);
                 resolve_module_path(index, syntax, &root, &[], segments)
             }
         }
@@ -2249,7 +2310,7 @@ impl OwnerReturnPin {
         ) {
             return false;
         }
-        if target_file == self.owner_file && target_stack.as_slice() == owner_inline {
+        if target_file == *self.owner_file && target_stack.as_slice() == owner_inline {
             return true;
         }
         let context = ScopeContext {
@@ -2257,7 +2318,7 @@ impl OwnerReturnPin {
             source: &target_source,
             stack: &target.stack,
         };
-        let (transports, _) = partition_name_uses(&target.uses, &self.name);
+        let (transports, _) = partition_name_uses(&target.uses, self.name);
         transports.iter().any(|transport| {
             self.use_resolves_to_owner_module(transport, context, owner_inline, index, syntax)
         })
@@ -2301,7 +2362,7 @@ impl OwnerReturnPin {
         if first.is_empty() || file_renames_to(scope_source, first) {
             return false;
         }
-        let owner_root = composed_root(&self.owner_file, index);
+        let owner_root = composed_root(self.owner_file, index);
         if index
             .member_crates
             .import_names(scope_file, &owner_root)
@@ -2327,7 +2388,7 @@ impl OwnerReturnPin {
         index: &RustIndex,
         syntax: &OwnerPinSyntax,
     ) -> bool {
-        if scope.has_twin(&self.name) {
+        if scope.has_twin(self.name) {
             return true;
         }
         let context = ScopeContext {
@@ -2335,30 +2396,10 @@ impl OwnerReturnPin {
             source: scope_source,
             stack: &scope.stack,
         };
-        let (bindings, _) = partition_name_uses(&scope.uses, &self.name);
+        let (bindings, _) = partition_name_uses(&scope.uses, self.name);
         bindings.iter().any(|binding| {
             !self.use_resolves_to_owner_module(binding, context, owner_inline, index, syntax)
         })
-    }
-
-    fn trait_in_scope(
-        &self,
-        test: &TestSummary,
-        test_source: Option<&str>,
-        trait_name: &str,
-        index: &RustIndex,
-    ) -> bool {
-        let Some(source) = test_source else {
-            return false;
-        };
-        if let Some(known) = self.trait_scope_by_file.borrow().get(&test.file) {
-            return *known;
-        }
-        let in_scope = trait_in_scope(source, trait_name, index);
-        self.trait_scope_by_file
-            .borrow_mut()
-            .insert(test.file.clone(), in_scope);
-        in_scope
     }
 }
 
@@ -4534,35 +4575,51 @@ pub(in crate::analysis) fn targeted_type_name_is_unresolved(
         })
 }
 
-pub(in crate::analysis) fn targeted_bare_call_is_unshadowed(
+/// Admit only an actual parser-established free owner through the existing
+/// binding authority. Candidate ambiguity is reported by the selector first;
+/// unindexed/unsupported competing definitions still refuse here.
+pub(in crate::analysis) fn targeted_free_call_reaches_owner(
     test: &TestSummary,
+    owner: &FunctionSummary,
+    prefix: Option<&str>,
     index: &RustIndex,
-    name: &str,
     syntax: &OwnerPinSyntax,
 ) -> bool {
-    !test_body_shadows_owner(test, name)
-        && !body_defines_value_twin(&test.body, name)
-        && !bound_by_macro(&mask_comments_and_strings(&test.body), name)
-        && !binds_outside_let(&mask_comments_and_strings(&test.body), name)
-        && !index
-            .functions()
-            .iter()
-            .any(|function| function.name == name && function.source_role.is_evidence_role())
-        && index.files().get(&test.file).is_some_and(|facts| {
-            !facts.used_lexical_fallback
-                && !file_renames_to(&facts.source, name)
-                && !file_imports_foreign_callee_name(&facts.source, name, &index.package_names)
-                // Without resolving imported bare owners, do not let a
-                // production-name match override a possible support binding.
-                && !file_use_statements(&facts.source).iter().any(|statement| {
-                    contains_as_whole_word(statement, name) || statement.contains('*')
-                })
-                && syntax.file_scopes(index, &test.file).is_some_and(|scopes| {
-                    scopes
-                        .scope_of_test(&facts.source, test)
-                        .is_some_and(|scope| !scope.has_twin(name))
-                })
-        })
+    if !owner.item.has_body
+        || !matches!(pin_call(owner, index), Some(PinCall::Bare))
+        || other_definition_competes(owner, index, false)
+        || index
+            .files()
+            .get(&owner.file)
+            .is_none_or(|facts| facts.used_lexical_fallback)
+        || index
+            .files()
+            .get(&test.file)
+            .is_none_or(|facts| facts.used_lexical_fallback)
+    {
+        return false;
+    }
+    let Some(facts) = index.files().get(&test.file) else {
+        return false;
+    };
+    let binding = FreeOwnerBinding {
+        name: &owner.name,
+        owner_file: &owner.file,
+        owner_start_line: owner.start_line,
+    };
+    if let Some(prefix) = prefix {
+        return binding.path_reaches_owner(prefix, test, &facts.source, index, syntax);
+    }
+    let masked_body = mask_comments_and_strings(&test.body);
+    !syntax
+        .item_nesting(index, &owner.file, &owner.name, owner.start_line)
+        .is_none_or(|owner| owner.cfg_gated)
+        && !syntax.file_cfg_gated(index, &owner.file)
+        && !test_body_shadows_owner(test, &owner.name)
+        && !binds_outside_let(&masked_body, &owner.name)
+        && !bound_by_macro(&masked_body, &owner.name)
+        && !file_renames_to(&facts.source, &owner.name)
+        && binding.bare_call_reaches_owner(test, &facts.source, index, syntax)
 }
 
 /// Whether the file declares a type alias `type name`.

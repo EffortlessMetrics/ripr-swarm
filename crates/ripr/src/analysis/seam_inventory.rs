@@ -1026,14 +1026,33 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
                 super::classify::targeted_call_shapes(&call.text, &call.name)
             };
             for shape in shapes {
+                if matches!(shape, TargetedCallShape::Bare)
+                    && functions
+                        .iter()
+                        .filter(|function| {
+                            matches!(function.impl_context, FunctionImplContext::Free)
+                        })
+                        .count()
+                        > 1
+                {
+                    return Err(selector_limitation(
+                        CHANGED_TEST_OWNER_AMBIGUOUS,
+                        format!(
+                            "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
+                            call.name
+                        ),
+                        selected_tests.len(),
+                    ));
+                }
                 let mut matching = Vec::new();
                 for function in &functions {
                     match (&shape, &function.impl_context) {
                         (TargetedCallShape::Bare, FunctionImplContext::Free) => {
-                            if !super::classify::targeted_bare_call_is_unshadowed(
+                            if !super::classify::targeted_free_call_reaches_owner(
                                 test,
+                                function,
+                                None,
                                 &cached.index,
-                                &call.name,
                                 &syntax,
                             ) {
                                 return Err(unresolved(&call.name));
@@ -1069,11 +1088,25 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
                             }
                             matching.push(*function);
                         }
-                        (TargetedCallShape::Path { .. }, FunctionImplContext::Free) => {
+                        (
+                            TargetedCallShape::Path { prefix, generic },
+                            FunctionImplContext::Free,
+                        ) => {
                             if super::classify::call_text_may_call_free_function(
                                 &call.text, &call.name,
                             ) {
-                                return Err(unresolved(&call.name));
+                                if *generic
+                                    || !super::classify::targeted_free_call_reaches_owner(
+                                        test,
+                                        function,
+                                        Some(prefix),
+                                        &cached.index,
+                                        &syntax,
+                                    )
+                                {
+                                    return Err(unresolved(&call.name));
+                                }
+                                matching.push(*function);
                             }
                         }
                         (TargetedCallShape::Unsupported, _) | (_, FunctionImplContext::Unknown) => {
@@ -4962,10 +4995,14 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         for path in ["full", "compact", "counts", "review", "rerun"] {
             let root = make_tempdir(&format!("stream-moved-{path}"))?;
             let lib = root.join("src/lib.rs");
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
             write_file(&lib, ORIGINAL)?;
             write_file(
                 &root.join("tests/basic.rs"),
-                "#[test]\nfn basic() {\n    assert!(check(1));\n}\n",
+                "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
             )?;
             let original_key = collect_workspace_state(&root, &config)?.cache_key();
 
@@ -7935,6 +7972,10 @@ pub fn check_b(x: i32) -> bool { x < 0 }
     fn changed_test_inventory_recomputes_only_directly_called_owner_seams() -> Result<(), String> {
         let root = make_tempdir("targeted-test-owner-selection")?;
         write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"pricing_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
             &root.join("src/lib.rs"),
             r#"
 pub fn discounted_total(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }
@@ -7944,6 +7985,7 @@ pub fn unrelated_total(amount: i32) -> i32 { if amount >= 50 { amount - 5 } else
         write_file(
             &root.join("tests/pricing.rs"),
             r#"
+use pricing_fixture::{discounted_total};
 #[test]
 fn discounted_total_case() {
     assert_eq!(discounted_total(100), 90);
@@ -8003,6 +8045,10 @@ fn discounted_total_case() {
     fn changed_test_inventory_selects_one_test_node_within_a_file() -> Result<(), String> {
         let root = make_tempdir("targeted-test-node-selection")?;
         write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"pricing_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
             &root.join("src/lib.rs"),
             r#"
 pub fn discounted_total(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }
@@ -8012,6 +8058,7 @@ pub fn surcharge_total(amount: i32) -> i32 { if amount >= 50 { amount + 5 } else
         write_file(
             &root.join("tests/pricing.rs"),
             r#"
+use pricing_fixture::{discounted_total, surcharge_total};
 #[test]
 fn discounted_total_case() { assert_eq!(discounted_total(100), 90); }
 #[test]
@@ -8166,6 +8213,131 @@ use std::collections::BTreeMap;
             ));
         }
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    fn composed_grouped_import_fixture(callable_static: bool) -> Result<PathBuf, String> {
+        let root = make_tempdir("targeted-composed-grouped-import")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"selected_binding\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(&root.join("src/lib.rs"), "mod lsp;\n")?;
+        write_file(
+            &root.join("src/lsp.rs"),
+            "mod diagnostics;\n#[cfg(test)]\nmod tests;\n#[cfg(test)]\nmod support;\n",
+        )?;
+        write_file(
+            &root.join("src/lsp/diagnostics.rs"),
+            r#"
+pub struct Plan { pub published_payload_bytes: usize, pub suppressed_payload_bytes: usize }
+pub fn diagnostic_refresh_plan() -> Plan {
+    Plan { published_payload_bytes: 1, suppressed_payload_bytes: 0 }
+}
+"#,
+        )?;
+        write_file(
+            &root.join("src/lsp/support.rs"),
+            "pub static diagnostic_refresh_plan: fn() -> super::diagnostics::Plan = || super::diagnostics::Plan { published_payload_bytes: 9, suppressed_payload_bytes: 9 };\n",
+        )?;
+        let module = if callable_static {
+            "support"
+        } else {
+            "diagnostics"
+        };
+        write_file(
+            &root.join("src/lsp/tests.rs"),
+            &format!(
+                r#"
+use super::{module}::{{diagnostic_refresh_plan}};
+#[test] fn selected() {{
+    let plan = diagnostic_refresh_plan();
+    assert!(plan.published_payload_bytes > 0);
+}}
+"#
+            ),
+        )?;
+        let files = [
+            "src/lib.rs",
+            "src/lsp.rs",
+            "src/lsp/diagnostics.rs",
+            "src/lsp/tests.rs",
+            "src/lsp/support.rs",
+        ]
+        .map(|path| root.join(path));
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        assert!(
+            index
+                .functions()
+                .iter()
+                .any(|function| function.name == "diagnostic_refresh_plan"
+                    && !function.source_role.is_evidence_role())
+        );
+        assert!(
+            index
+                .tests()
+                .iter()
+                .any(|test| test.name == "selected" && test.file == root.join("src/lsp/tests.rs"))
+        );
+        assert!(
+            index
+                .files()
+                .get(&root.join("src/lsp/tests.rs"))
+                .is_some_and(|facts| !facts.used_lexical_fallback)
+        );
+        Ok(root)
+    }
+
+    #[test]
+    fn changed_test_inventory_composed_grouped_import_reaches_exact_owner() -> Result<(), String> {
+        let root = composed_grouped_import_fixture(false)?;
+        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lsp/tests.rs"),
+            Some("selected"),
+        )?;
+        assert_eq!(inventory.selected_test_count, 1);
+        assert_eq!(inventory.direct_call_names, ["diagnostic_refresh_plan"]);
+        assert!(!inventory.classified.is_empty());
+        assert!(
+            inventory.classified.iter().all(
+                |entry| entry.seam.owner() == "src/lsp/diagnostics.rs::diagnostic_refresh_plan"
+            )
+        );
+        for field in ["published_payload_bytes", "suppressed_payload_bytes"] {
+            assert!(
+                inventory
+                    .classified
+                    .iter()
+                    .any(|entry| entry.seam.expression().contains(field)),
+                "missing {field}"
+            );
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_composed_callable_static_refuses_owner() -> Result<(), String> {
+        let root = composed_grouped_import_fixture(true)?;
+        let result = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lsp/tests.rs"),
+            Some("selected"),
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        assert!(
+            matches!(
+                result,
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                })
+            ),
+            "callable static must select no production seams: {result:?}"
+        );
+        Ok(())
     }
 
     #[test]
