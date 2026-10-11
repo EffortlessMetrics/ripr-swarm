@@ -1499,13 +1499,11 @@ mod tests {
             .pointer("/metrics")
             .ok_or("metrics object must be present")?;
         for class in SeamGripClass::ALL {
-            if metrics[class.as_str()] != serde_json::Value::from(0) {
+            if metrics[class.as_str()] != 0 {
                 return Err(format!("metric {} must be zeroed: {value}", class.as_str()));
             }
         }
-        if metrics["seams_total"] != serde_json::Value::from(0)
-            || metrics["headline_eligible"] != serde_json::Value::from(0)
-        {
+        if metrics["seams_total"] != 0 || metrics["headline_eligible"] != 0 {
             return Err(format!("totals must be zeroed: {value}"));
         }
         Ok(())

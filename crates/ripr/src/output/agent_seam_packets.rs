@@ -3505,7 +3505,7 @@ mod tests {
                 return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
             }
         }
-        if value["packets_total"] != serde_json::Value::from(0) {
+        if value["packets_total"] != 0 {
             return Err(format!("packets_total must be 0: {value}"));
         }
         if value["packets"].as_array().map(Vec::len) != Some(0) {
