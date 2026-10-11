@@ -384,17 +384,14 @@ fn probe_paths_dirty(
         let status = &record[..2];
         let path = &record[3..];
         dirty.insert(currentness_comparison_key(path));
-        let rename_original = (status.contains('R') || status.contains('C'))
-            // The rename's other path arrives as the next NUL field; a
-            // real record always begins with its two status columns and
-            // a space, which a bare path cannot be assumed to.
-            .then(|| records.peek())
-            .flatten()
-            .map(|original| currentness_comparison_key(original))
-            .filter(|original| !looks_like_status_record(original));
-        if let Some(original) = rename_original {
-            dirty.insert(original);
-            records.next();
+        if status.contains('R') || status.contains('C') {
+            // The rename's other path arrives as the next NUL field, unquoted
+            // and unconditional in the -z format; a missing field means a
+            // truncated stream, which the terminator guard above already
+            // refused.
+            if let Some(original) = records.next() {
+                dirty.insert(currentness_comparison_key(original));
+            }
         }
     }
     Ok(())
@@ -410,15 +407,6 @@ fn currentness_comparison_key(path: &str) -> String {
     } else {
         path.to_string()
     }
-}
-
-/// Whether a `-z` porcelain field is a status record (`XY <path>`) rather
-/// than a rename's original-path continuation field.
-fn looks_like_status_record(field: &str) -> bool {
-    let bytes = field.as_bytes();
-    bytes.len() >= 3
-        && bytes[2] == b' '
-        && (bytes[0].is_ascii_uppercase() || bytes[0] == b'?' || bytes[0] == b'!')
 }
 
 /// The probe pathspecs in their filesystem spelling. `display_path` is a
@@ -2298,6 +2286,32 @@ mod tests {
         Ok(())
     }
 
+    /// Run one fixture git command with the repository-routing environment
+    /// removed: a hook or caller carrying GIT_DIR/GIT_WORK_TREE would
+    /// redirect the fixture setup at that repository instead of the temp
+    /// fixture.
+    fn currentness_test_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+        let output = std::process::Command::new("git")
+            .current_dir(root)
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .env_remove("GIT_COMMON_DIR")
+            .env_remove("GIT_OBJECT_DIRECTORY")
+            .env_remove("GIT_ALTERNATE_OBJECT_DIRECTORIES")
+            .args(args)
+            .output()
+            .map_err(|error| format!("git {args:?} failed to run: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+
     fn currentness_git_fixture(label: &str) -> Result<std::path::PathBuf, String> {
         let root = std::env::temp_dir().join(format!(
             "ripr-card-currentness-batch-{label}-{}-{}",
@@ -2309,31 +2323,11 @@ mod tests {
         ));
         std::fs::create_dir_all(root.join("src"))
             .map_err(|error| format!("fixture src failed: {error}"))?;
-        let git = |args: &[&str]| -> Result<(), String> {
-            let output = std::process::Command::new("git")
-                .current_dir(&root)
-                // A hook or caller carrying GIT_DIR/GIT_WORK_TREE would
-                // redirect the fixture setup at that repository instead of
-                // the temp fixture, so the routing family is stripped.
-                .env_remove("GIT_DIR")
-                .env_remove("GIT_WORK_TREE")
-                .env_remove("GIT_INDEX_FILE")
-                .args(args)
-                .output()
-                .map_err(|error| format!("git {args:?} failed to run: {error}"))?;
-            if output.status.success() {
-                Ok(())
-            } else {
-                Err(format!(
-                    "git {args:?} failed: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                ))
-            }
-        };
-        git(&["init", "--initial-branch", "main"]).or_else(|_| git(&["init"]))?;
-        git(&["config", "user.email", "test@example.com"])?;
-        git(&["config", "user.name", "Test"])?;
-        git(&["config", "commit.gpgsign", "false"])?;
+        currentness_test_git(&root, &["init", "--initial-branch", "main"])
+            .or_else(|_| currentness_test_git(&root, &["init"]))?;
+        currentness_test_git(&root, &["config", "user.email", "test@example.com"])?;
+        currentness_test_git(&root, &["config", "user.name", "Test"])?;
+        currentness_test_git(&root, &["config", "commit.gpgsign", "false"])?;
         Ok(root)
     }
 
@@ -2370,20 +2364,8 @@ mod tests {
                     .map_err(|error| format!("write {file}: {error}"))?;
                 entries.push(entry_for_file(&file));
             }
-            let git = |args: &[&str]| -> Result<(), String> {
-                let output = std::process::Command::new("git")
-                    .current_dir(&root)
-                    .args(args)
-                    .output()
-                    .map_err(|error| format!("git failed: {error}"))?;
-                if output.status.success() {
-                    Ok(())
-                } else {
-                    Err(String::from_utf8_lossy(&output.stderr).into_owned())
-                }
-            };
-            git(&["add", "."])?;
-            git(&["commit", "-q", "-m", "base"])?;
+            currentness_test_git(&root, &["add", "."])?;
+            currentness_test_git(&root, &["commit", "-q", "-m", "base"])?;
             // One tracked edit: seam 00's scope is dirty, the rest clean.
             std::fs::write(root.join("src/seam_00.rs"), "pub fn dirty() {}\n")
                 .map_err(|error| format!("dirty write: {error}"))?;
@@ -2438,20 +2420,8 @@ mod tests {
                 .map_err(|error| format!("write: {error}"))?;
             std::fs::write(root.join("src/ignored.rs"), "pub fn b() {}\n")
                 .map_err(|error| format!("write: {error}"))?;
-            let git = |args: &[&str]| -> Result<(), String> {
-                let output = std::process::Command::new("git")
-                    .current_dir(&root)
-                    .args(args)
-                    .output()
-                    .map_err(|error| format!("git failed: {error}"))?;
-                if output.status.success() {
-                    Ok(())
-                } else {
-                    Err(String::from_utf8_lossy(&output.stderr).into_owned())
-                }
-            };
-            git(&["add", "src/tracked.rs"])?;
-            git(&["commit", "-q", "-m", "base"])?;
+            currentness_test_git(&root, &["add", "src/tracked.rs"])?;
+            currentness_test_git(&root, &["commit", "-q", "-m", "base"])?;
             std::fs::write(root.join(".gitignore"), "src/ignored.rs\n")
                 .map_err(|error| format!("gitignore: {error}"))?;
             std::fs::write(root.join("src/untracked.rs"), "pub fn c() {}\n")
