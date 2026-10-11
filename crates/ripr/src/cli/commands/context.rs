@@ -140,8 +140,12 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             error,
         )
     };
-    let config = load_for_root(&input.root)
-        .map_err(|err| refuse(crate::cli::commands_context::config_load_refusal(&envelope_context.0, err)))?;
+    let config = load_for_root(&input.root).map_err(|err| {
+        refuse(crate::cli::commands_context::config_load_refusal(
+            &envelope_context.0,
+            err,
+        ))
+    })?;
     apply_to_check_input(&mut input, &config, explicit);
     let Some(selector) = selector else {
         return Err(super::missing_selector_error(

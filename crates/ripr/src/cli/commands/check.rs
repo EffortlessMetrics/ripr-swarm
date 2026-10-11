@@ -356,7 +356,8 @@ fn machine_refusal_document(
             let display = error.to_string();
             Some(
                 match output::limited_check::render_diff_scope_limited_check_json(
-                    envelope_input, &display,
+                    envelope_input,
+                    &display,
                 ) {
                     Ok(Some(rendered)) => Ok(rendered),
                     Ok(None) => {
@@ -384,12 +385,12 @@ fn machine_refusal_document(
         ))),
         // Repo-exposure and agent-seam-packets JSON: the format's own
         // run_status/limitations envelope with `refused` and zeroed arrays.
-        OutputFormat::RepoExposureJson => Some(Ok(output::repo_exposure::render_refusal_json(
-            &notice,
-        ))),
-        OutputFormat::AgentSeamPacketsJson => Some(Ok(
-            output::agent_seam_packets::render_refusal_json(&notice),
-        )),
+        OutputFormat::RepoExposureJson => {
+            Some(Ok(output::repo_exposure::render_refusal_json(&notice)))
+        }
+        OutputFormat::AgentSeamPacketsJson => {
+            Some(Ok(output::agent_seam_packets::render_refusal_json(&notice)))
+        }
         _ => None,
     }
 }

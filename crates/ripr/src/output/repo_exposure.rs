@@ -1471,10 +1471,9 @@ mod tests {
         // #7332: a refused repo-exposure run parses as repo-exposure-json —
         // the format's own run_status/limitations pair, zeroed metrics for
         // every grip class, and an empty seams array, never zero bytes.
-        let notice = crate::core_error::CoreError::seam_id_unknown(
-            "agent packet seam_id s was not found",
-        )
-        .refusal_notice();
+        let notice =
+            crate::core_error::CoreError::seam_id_unknown("agent packet seam_id s was not found")
+                .refusal_notice();
         let rendered = render_refusal_json(&notice);
         let value: serde_json::Value =
             serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
@@ -1490,8 +1489,7 @@ mod tests {
                 return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
             }
         }
-        if value["limitations"][0]["message"] != serde_json::Value::String(notice.message.clone())
-        {
+        if value["limitations"][0]["message"] != serde_json::Value::String(notice.message.clone()) {
             return Err(format!("limitation must echo the diagnostic: {value}"));
         }
         if value["seams"].as_array().map(Vec::len) != Some(0) {

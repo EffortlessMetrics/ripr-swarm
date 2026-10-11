@@ -573,10 +573,9 @@ mod tests {
         // #7332: the GitHub-format stream stays parseable workflow commands —
         // one error annotation whose escaped data carries the typed identity
         // and repair route, never zero bytes.
-        let notice = crate::core_error::CoreError::repository_root_unusable(
-            "not inside a Git work tree",
-        )
-        .refusal_notice();
+        let notice =
+            crate::core_error::CoreError::repository_root_unusable("not inside a Git work tree")
+                .refusal_notice();
         let rendered = super::render_refusal(&notice);
         assert!(
             rendered.starts_with("::error title=ripr refusal::"),

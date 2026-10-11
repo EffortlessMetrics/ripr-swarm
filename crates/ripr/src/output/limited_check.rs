@@ -525,7 +525,9 @@ mod tests {
                 "analysis/gap-ledger",
             ),
             (
-                CoreError::seam_id_unknown("agent packet seam_id s was not found. Run `ripr pilot`"),
+                CoreError::seam_id_unknown(
+                    "agent packet seam_id s was not found. Run `ripr pilot`",
+                ),
                 "seam_id_unknown",
                 "analysis/seam-inventory",
             ),
@@ -585,10 +587,14 @@ mod tests {
             }
         }
         if value.get("mode").is_some() {
-            return Err(format!("mode must be omitted when the command has none: {value}"));
+            return Err(format!(
+                "mode must be omitted when the command has none: {value}"
+            ));
         }
         if value.get("base").is_some() {
-            return Err(format!("base must be omitted when none was supplied: {value}"));
+            return Err(format!(
+                "base must be omitted when none was supplied: {value}"
+            ));
         }
         if value["findings"].as_array().map(Vec::len) != Some(0) {
             return Err(format!("findings must be empty: {value}"));

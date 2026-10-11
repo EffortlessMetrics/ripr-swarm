@@ -305,9 +305,8 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> 
         .map_err(|err| config_load_refusal(&options.root, err))?;
 
     let working_set = resolve_agent_brief_working_set(&input.root, &options.working_set)?;
-    let (classified, _) =
-        analysis::inventory_classified_seams_at_with_config(&input.root, &config)
-            .map_err(CoreError::from)?;
+    let (classified, _) = analysis::inventory_classified_seams_at_with_config(&input.root, &config)
+        .map_err(CoreError::from)?;
     let mut selection = select_agent_brief_seams(
         &classified,
         &working_set,
@@ -415,11 +414,8 @@ fn render_agent_packet_with_context(
     })?;
     let config =
         load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
-    let report = analysis::inventory_classified_seams_report_at_with_config(
-        &options.root,
-        &config,
-    )
-    .map_err(CoreError::from)?;
+    let report = analysis::inventory_classified_seams_report_at_with_config(&options.root, &config)
+        .map_err(CoreError::from)?;
     render_agent_packet_for_seam_with_report(&options.root, seam_id, &config, &report, context)
 }
 

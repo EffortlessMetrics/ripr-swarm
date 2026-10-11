@@ -2820,7 +2820,10 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
         )
     };
     let config = load_for_root(&options.root).map_err(|err| {
-        refuse(crate::cli::commands_context::config_load_refusal(&options.root, err))
+        refuse(crate::cli::commands_context::config_load_refusal(
+            &options.root,
+            err,
+        ))
     })?;
     // #3952 / RIPR-SPEC-0084: an omitted --base resolves the repository's
     // default branch through the same authority as `ripr check`, and an
@@ -2828,12 +2831,8 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
     // The typed core keeps the refusal identity (`base_unresolvable` /
     // `repository_root_unusable`) that the String wrapper would flatten
     // (#7331); Display is a pure projection, so stderr prose is unchanged.
-    let base = analysis::resolve_effective_base_core(
-        &options.root,
-        options.base.as_deref(),
-        None,
-    )
-    .map_err(&refuse)?;
+    let base = analysis::resolve_effective_base_core(&options.root, options.base.as_deref(), None)
+        .map_err(&refuse)?;
     let diff_text = analysis::load_diff_range(&options.root, &base, &options.head)
         .map_err(|err| refuse(crate::core_error::CoreError::from(err)))?;
     let changed_files = diff_changed_files_from_text(&diff_text);

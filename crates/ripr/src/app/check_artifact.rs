@@ -200,16 +200,20 @@ pub(crate) fn load_findings_for_reuse_core(
     match value.get("schema_version").and_then(|v| v.as_str()) {
         Some(CHECK_ARTIFACT_SCHEMA_VERSION) => {}
         Some(other) => {
-            return Err(crate::core_error::CoreError::check_artifact_unusable(format!(
-                "check artifact at {} has unsupported schema_version {other:?} (expected {CHECK_ARTIFACT_SCHEMA_VERSION:?}); re-run `ripr check --write-artifact` with this ripr",
-                path.display()
-            )));
+            return Err(crate::core_error::CoreError::check_artifact_unusable(
+                format!(
+                    "check artifact at {} has unsupported schema_version {other:?} (expected {CHECK_ARTIFACT_SCHEMA_VERSION:?}); re-run `ripr check --write-artifact` with this ripr",
+                    path.display()
+                ),
+            ));
         }
         None => {
-            return Err(crate::core_error::CoreError::check_artifact_unusable(format!(
-                "check artifact at {} is malformed: missing schema_version",
-                path.display()
-            )));
+            return Err(crate::core_error::CoreError::check_artifact_unusable(
+                format!(
+                    "check artifact at {} is malformed: missing schema_version",
+                    path.display()
+                ),
+            ));
         }
     }
     let artifact: CheckArtifactV1 = serde_json::from_value(value).map_err(|err| {
@@ -219,11 +223,13 @@ pub(crate) fn load_findings_for_reuse_core(
         ))
     })?;
     if artifact.tool != "ripr" {
-        return Err(crate::core_error::CoreError::check_artifact_unusable(format!(
-            "check artifact at {} was not written by ripr (tool {:?})",
-            path.display(),
-            artifact.tool
-        )));
+        return Err(crate::core_error::CoreError::check_artifact_unusable(
+            format!(
+                "check artifact at {} was not written by ripr (tool {:?})",
+                path.display(),
+                artifact.tool
+            ),
+        ));
     }
 
     verify_scope_assertions(&artifact.identity.diff_source, input, asserted_base, path)?;

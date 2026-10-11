@@ -3431,8 +3431,7 @@ fn assert_machine_refusal_basics(output: &Output) -> Result<String, String> {
     }
     if output.stdout.is_empty() {
         return Err(
-            "a machine format must emit its refusal document on stdout, got zero bytes"
-                .to_string(),
+            "a machine format must emit its refusal document on stdout, got zero bytes".to_string(),
         );
     }
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -3676,9 +3675,7 @@ fn check_sarif_refusal_emits_a_schema_valid_run() -> Result<(), String> {
         ));
     }
     if notification["properties"]["repair_route"] != "analysis/base-resolution" {
-        return Err(format!(
-            "notification must carry the repair route: {value}"
-        ));
+        return Err(format!("notification must carry the repair route: {value}"));
     }
     if run["results"].as_array().map(Vec::len) != Some(0) {
         return Err(format!("results must be empty: {value}"));
@@ -3720,7 +3717,9 @@ fn check_github_refusal_emits_one_error_annotation() -> Result<(), String> {
         return Err(format!("unexpected refusal line shape: {stdout}"));
     }
     if !stdout.contains("run_status=base_unresolvable") {
-        return Err(format!("annotation must carry the typed identity: {stdout}"));
+        return Err(format!(
+            "annotation must carry the typed identity: {stdout}"
+        ));
     }
     if !stdout.contains("repair_route=analysis/base-resolution") {
         return Err(format!("annotation must carry the repair route: {stdout}"));
@@ -3790,7 +3789,9 @@ fn check_repo_exposure_json_refusal_emits_the_refused_envelope() -> Result<(), S
     ] {
         let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
         if actual != Some(expected) {
-            return Err(format!("{pointer}: expected {expected}, got {actual:?}\n{stdout}"));
+            return Err(format!(
+                "{pointer}: expected {expected}, got {actual:?}\n{stdout}"
+            ));
         }
     }
     if value["seams"].as_array().map(Vec::len) != Some(0) {
@@ -3831,7 +3832,9 @@ fn check_agent_seam_packets_json_refusal_emits_the_refused_envelope() -> Result<
     ] {
         let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
         if actual != Some(expected) {
-            return Err(format!("{pointer}: expected {expected}, got {actual:?}\n{stdout}"));
+            return Err(format!(
+                "{pointer}: expected {expected}, got {actual:?}\n{stdout}"
+            ));
         }
     }
     if value["packets_total"] != serde_json::Value::from(0) {

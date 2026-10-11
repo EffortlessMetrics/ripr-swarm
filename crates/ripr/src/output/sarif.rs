@@ -243,10 +243,7 @@ pub(crate) fn render_refusal_sarif(
     properties.insert("scope".to_string(), json!("finding"));
     properties.insert("run_status".to_string(), json!("refused"));
     properties.insert("refusal_identity".to_string(), json!(notice.identity));
-    properties.insert(
-        "repair_route".to_string(),
-        json!(notice.repair_route),
-    );
+    properties.insert("repair_route".to_string(), json!(notice.repair_route));
     properties.insert("root".to_string(), json!(root.display().to_string()));
     if let Some(base) = base {
         properties.insert("base".to_string(), json!(base));
@@ -1056,8 +1053,7 @@ mod tests {
             return Err(format!("version must be 2.1.0: {sarif}"));
         }
         let run = &sarif["runs"][0];
-        if run["tool"]["driver"]["notifications"][0]["id"] != Value::String("run_refused".into())
-        {
+        if run["tool"]["driver"]["notifications"][0]["id"] != Value::String("run_refused".into()) {
             return Err(format!("driver must declare run_refused: {sarif}"));
         }
         let notification = &run["invocations"][0]["toolConfigurationNotifications"][0];
