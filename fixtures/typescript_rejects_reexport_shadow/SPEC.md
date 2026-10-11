@@ -29,7 +29,7 @@ A relation-only re-export does not establish an imported runner assertion.
 ## Must Not
 
 - Grant new exact rejection credit to the local helper.
-- Treat a passing wrong-reason runtime control as adequate observation.
+- Treat a passing wrong-reason runtime control as evidence that its value was compared.
 - Repair ordinary/global matcher binding behavior, separately owned by #6798.
 
 The inherited return-value classification is preserved here; this control's
