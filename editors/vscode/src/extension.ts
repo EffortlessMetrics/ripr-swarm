@@ -48,6 +48,25 @@ export async function startAfterWorkspaceTrust(
   await startServerOnce(currentController);
 }
 
+/** Shared entry point for the active-editor listener and controller tests. */
+export async function synchronizeWorkspaceRootOnce(
+  currentController: RiprClientController | undefined
+): Promise<void> {
+  if (currentController?.awaitingWorkspaceRoot()) {
+    await startServerOnce(currentController);
+  }
+}
+
+/** Shared entry point for the bound-folder removal listener. */
+export async function pauseRemovedWorkspaceRootOnce(
+  currentController: RiprClientController | undefined,
+  removed: readonly vscode.WorkspaceFolder[]
+): Promise<void> {
+  if (currentController?.sessionRootRemoved(removed)) {
+    await restartServerOnce(currentController);
+  }
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel('ripr', { log: true });
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
@@ -220,7 +239,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (controller?.sessionRootRemoved(event.removed)) {
         output.appendLine('ripr workspace folder for the running session was removed; restarting to re-resolve the root.');
         try {
-          await restartServerOnce(controller);
+          await pauseRemovedWorkspaceRootOnce(controller, event.removed);
         } catch (error) {
           output.appendLine(`ripr server restart after workspace folder removal failed: ${String(error)}`);
         }
@@ -275,13 +294,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     vscode.window.onDidChangeActiveTextEditor(async (editor) => {
       if (
         !editor
-        || !controller?.awaitingWorkspaceRoot()
         || !vscode.workspace.getWorkspaceFolder(editor.document.uri)
       ) {
         return;
       }
       try {
-        await startServerOnce(controller);
+        await synchronizeWorkspaceRootOnce(controller);
       } catch (error) {
         output.appendLine(`ripr server start after selecting a workspace file failed: ${String(error)}`);
       }
