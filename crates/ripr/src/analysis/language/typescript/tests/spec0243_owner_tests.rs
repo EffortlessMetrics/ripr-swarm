@@ -437,6 +437,10 @@ fn literal_masking_reads_regex_literals_and_division() {
         "x as 'p'",
         "x satisfies 'p'",
         "import q from 'p'",
+        "f(x) as 'p'",
+        "f(/* c */ 'p')",
+        "x = // c\n'p'",
+        "return /* c */ 'p'",
     ] {
         let masked = ts_mask_literals_and_comments(text);
         assert!(

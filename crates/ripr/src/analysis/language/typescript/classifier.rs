@@ -578,6 +578,12 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                     }
                     _ => out.push(c),
                 }
+                // A comment is whitespace: it keeps the lexical context
+                // before it, so `f(/* c */ 'p')` still opens a string.
+                if matches!(mode, Mode::LineComment | Mode::BlockComment) {
+                    after_space = true;
+                    continue;
+                }
                 if is_word_char(c) {
                     // Whitespace ends a word: `x as` is two words.
                     if !prev.is_some_and(is_word_char) || after_space {
@@ -4136,8 +4142,8 @@ fn ts_apply_post_ladder_rules(
     ) else {
         return;
     };
-    let limit = match static_limit.take() {
-        Some(limit) if limit.kind == StaticLimitKind::MockedModule => Some(limit),
+    let limit = match static_limit {
+        Some(limit) if limit.kind == StaticLimitKind::MockedModule => static_limit.take(),
         _ => mocked_module_limit(context.mock_paths),
     };
     if let Some(mut limit) = limit {
