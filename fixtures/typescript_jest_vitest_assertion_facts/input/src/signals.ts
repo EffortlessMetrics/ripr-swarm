@@ -24,3 +24,7 @@ export function notifyLiteral(sink: { record(value: string): void }): void {
 export async function loadProfile(id: string): Promise<string> {
   return await Promise.resolve(`profile:${id}`);
 }
+
+export function notifyAudit(sink: { record(value: string): void }): void {
+  sink.record("audit");
+}

@@ -100,9 +100,13 @@ impl MockCallFacts {
             return false;
         };
         let local = call.parameter.as_str();
+        // The mock is declared at the test callback's top level, so the
+        // name passed to the owner and asserted on is that binding and not
+        // an outer one a nested block shadows.
+        let scope = test_callback_block(test_body).unwrap_or(test_body);
         let made_in_test = match &call.method {
-            None => test_local_mock_binding(test_body, local),
-            Some(method) => test_local_mock_property(test_body, local, method),
+            None => test_local_mock_binding(scope, local),
+            Some(method) => test_local_mock_property(scope, local, method),
         };
         made_in_test
             && identifier_mentions_outside_expect(test_body, local) == 2
@@ -270,26 +274,6 @@ fn top_level_arguments(text: &str) -> Option<Vec<&str>> {
     None
 }
 
-/// The owner's source lines after the change, read from the workspace;
-/// `None` without a workspace root or a readable owner file.
-pub(crate) fn ts_owner_body_text(
-    owner: &TypeScriptOwner,
-    workspace_root: Option<&Path>,
-) -> Option<String> {
-    let source = std::fs::read_to_string(workspace_root?.join(&owner.file)).ok()?;
-    let lines: Vec<&str> = source
-        .lines()
-        .skip(owner.start_line.saturating_sub(1))
-        .take(
-            owner
-                .end_line
-                .saturating_add(1)
-                .saturating_sub(owner.start_line),
-        )
-        .collect();
-    (!lines.is_empty()).then(|| lines.join("\n"))
-}
-
 const CALL_LIKE_KEYWORDS: [&str; 10] = [
     "if", "for", "while", "switch", "catch", "return", "typeof", "await", "new", "function",
 ];
@@ -320,18 +304,22 @@ fn test_local_mock_binding(body: &str, name: &str) -> bool {
             let Some(rest) = rest.strip_prefix('=') else {
                 return false;
             };
-            starts_with_mock_factory(rest.trim_start()) && word_boundary_before(&masked, at)
+            starts_with_mock_factory(rest.trim_start())
+                && word_boundary_before(&masked, at)
+                && at_top_level(&masked, at)
         })
     })
 }
 
 /// `const db = { write: jest.fn() }`: `object` is bound to an object literal
-/// in the test whose `property` is a mock factory call.
+/// in the test whose `property` is a mock factory call. A spread, a second
+/// `property` key or a key that is not a plain identifier could replace the
+/// factory, so any of them refuses.
 fn test_local_mock_property(body: &str, object: &str, property: &str) -> bool {
     let masked = ts_mask_literals_and_comments(body);
     ["const", "let", "var"].iter().any(|keyword| {
         masked.match_indices(keyword).any(|(at, _)| {
-            if !word_boundary_before(&masked, at) {
+            if !word_boundary_before(&masked, at) || !at_top_level(&masked, at) {
                 return false;
             }
             let rest = &masked[at + keyword.len()..];
@@ -350,15 +338,61 @@ fn test_local_mock_property(body: &str, object: &str, property: &str) -> bool {
             let Some(literal) = literal_body(literal) else {
                 return false;
             };
-            literal.split(',').any(|entry| {
-                entry
-                    .trim()
-                    .strip_prefix(property)
-                    .and_then(|value| value.trim_start().strip_prefix(':'))
-                    .is_some_and(|value| starts_with_mock_factory(value.trim_start()))
-            })
+            // Every entry is `key: value` with a plain key, the property is
+            // keyed once, and no spread or other key can replace it.
+            let mut entries = Vec::new();
+            for entry in top_level_entries(literal) {
+                let Some((key, value)) = entry.split_once(':') else {
+                    return false;
+                };
+                let key = key.trim();
+                if !key.starts_with(is_identifier_start) || !key.chars().all(is_identifier_part) {
+                    return false;
+                }
+                entries.push((key, value.trim_start()));
+            }
+            let mut keyed = entries.iter().filter(|(key, _)| *key == property);
+            matches!(
+                (keyed.next(), keyed.next()),
+                (Some((_, value)), None) if starts_with_mock_factory(value)
+            )
         })
     })
+}
+
+/// The non-empty comma-separated entries of a flat literal body, split only
+/// outside parentheses and brackets.
+fn top_level_entries(literal: &str) -> Vec<&str> {
+    let mut entries = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (index, c) in literal.char_indices() {
+        match c {
+            '(' | '[' => depth += 1,
+            ')' | ']' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                entries.push(literal[start..index].trim());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    entries.push(literal[start..].trim());
+    entries.retain(|entry| !entry.is_empty());
+    entries
+}
+
+/// `true` when `at` sits outside every brace block of `masked`.
+fn at_top_level(masked: &str, at: usize) -> bool {
+    let mut depth = 0usize;
+    for c in masked[..at].chars() {
+        match c {
+            '{' => depth += 1,
+            '}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    depth == 0
 }
 
 fn strip_required_space(text: &str) -> Option<&str> {

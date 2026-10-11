@@ -77,9 +77,12 @@ all of these hold:
 - the changed line calls an owner parameter `p` as `p(...)`, or a method
   of it as `p.m(...)`, and the owner body mentions `p` exactly twice: its
   declaration and this call;
-- the asserted target is `p` (or `p.m`), the same name, bound in the test
-  with `const|let|var p = jest.fn(...)` or `vi.fn(...)` (or to a flat
-  object literal whose `m` is such a call);
+- the asserted target is `p` (or `p.m`), the same name, bound at the
+  test callback's top level (not inside a nested block, where it could
+  shadow an outer `p`) with `const|let|var p = jest.fn(...)` or
+  `vi.fn(...)`, or to a flat object literal whose `m` is such a call,
+  whose keys are plain identifiers, which keys `m` once and which has no
+  spread that could replace it;
 - the test mentions `p` exactly twice outside `expect(p)` /
   `expect(p.m)`: its declaration and one argument of the test's only
   owner call, at `p`'s parameter position with no spread before it.
@@ -93,7 +96,9 @@ elsewhere, a second owner call, or the mock at another argument position
 or after a spread. A mock whose name differs
 from the parameter's (`const send = vi.fn()` passed in `{ send }` to a
 parameter `notifier`) earns nothing; that costs a false gap, never false
-credit. Without a readable owner source, or for an owner whose parameters
+credit. The owner body is the source the owner was parsed from, so a
+committed-history diff reads the committed owner, not the worktree.
+Without that source, or for an owner whose parameters
 the adapter does not record (destructuring, rest), nothing is credited.
 Anything else keeps `mock_expectation` / medium, including a mock from
 `jest.mock`, `jest.spyOn` or a helper, `toHaveBeenCalledTimes`, and every
@@ -218,8 +223,10 @@ and the rejected alternative. Recorded on #6654.
    owner source: `mock_expectation` / medium, `weakly_exposed`.
 4. As example 1 with any of these in the test: `send("order 7")`,
    `remind(send, 7)`, a second `announce(8, send)`,
-   `send.call(null, "order 7")`, or `announce(send, 7)`:
-   `weakly_exposed`.
+   `send.call(null, "order 7")`, or `announce(send, 7)`; or with the
+   mock declared in a nested block (`if (ready) { const send = jest.fn() }`)
+   or, for example 2, `{ write: jest.fn(), ...defaults }` or a second
+   `write` key: `weakly_exposed`.
 5. As example 1 with `send` not an owner parameter, with
    `const send = jest.spyOn(mailer, "send")`, a `jest.mock` factory mock
    or `const send = makeSend()`, with an object payload `{ id: 7 }`, or
@@ -257,10 +264,11 @@ and the rejected alternative. Recorded on #6654.
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs`:
-  `MockCallFacts`, `ts_owner_body_text` (rule 1).
+  `MockCallFacts` (rule 1).
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `strongest_family_matching_oracle` and `ts_changed_value_is_observed`
-  read the credited payload as strong (rule 1).
+  read the credited payload as strong, and `project_credited_mock_rows`
+  shows it as strong on the related-test row (rule 1).
 - `crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs`:
   `loose_equality_pins_literal` (rule 2), `inline_snapshot_is_literal`
   (rule 3).

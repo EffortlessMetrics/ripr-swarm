@@ -1396,7 +1396,7 @@ fn closed_test_body_constants(
 
 /// The text inside a test callback's braces (`() => { ... }`, `async () =>
 /// { ... }`, `function () { ... }`), or `None` for any other shape.
-fn test_callback_block(body: &str) -> Option<&str> {
+pub(crate) fn test_callback_block(body: &str) -> Option<&str> {
     let arrow = body.find("=>");
     let open = match arrow {
         Some(arrow) => {
@@ -3436,6 +3436,36 @@ pub(crate) fn strongest_family_matching_oracle(
     (best_rank, best_kind)
 }
 
+/// RIPR-SPEC-0247 rule 1: a related row whose test holds a credited mock
+/// payload shows that assertion at its change-specific `mock_expectation` /
+/// strong reading, so the public row agrees with the verdict it supports.
+/// Rows map one-to-one onto `candidates` (`related_tests_for_candidates`).
+fn project_credited_mock_rows(
+    related: &mut [RelatedTest],
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    mock_facts: &MockCallFacts,
+) {
+    for (row, candidate) in related.iter_mut().zip(candidates) {
+        if !candidate_observes_owner_call(candidate)
+            || row.oracle_strength.rank() >= OracleStrength::Strong.rank()
+        {
+            continue;
+        }
+        let credited = candidate.test.assertions.iter().find(|assertion| {
+            matches!(assertion.oracle_kind, OracleKind::MockExpectation)
+                && assertion
+                    .mock_payload
+                    .as_ref()
+                    .is_some_and(|payload| mock_facts.credits(payload, &candidate.test.body_text))
+        });
+        if let Some(assertion) = credited {
+            row.oracle_kind = OracleKind::MockExpectation;
+            row.oracle_strength = OracleStrength::Strong;
+            row.oracle = Some(assertion_oracle_text(assertion));
+        }
+    }
+}
+
 /// Classify a changed TypeScript/JavaScript line and return a finding.
 ///
 /// `workspace_root` enforces package-local ownership when `Some`: a test in
@@ -3514,7 +3544,7 @@ pub(crate) fn classify_change_with_alias_state(
     // applies below, so a row never displays a wrong-family assertion while
     // classification judges another.
     let probe_shape = classify_probe_shape_detail(line_text);
-    let related = related_tests_for_candidates(&related_candidates, Some(&probe_shape.family));
+    let mut related = related_tests_for_candidates(&related_candidates, Some(&probe_shape.family));
     let bun_array_buffer_facts = collect_related_bun_array_buffer_facts(&related_candidates);
     let bun_bridge_hints = collect_related_bun_bridge_hints(&bun_array_buffer_facts);
     let mock_paths =
@@ -3632,11 +3662,15 @@ pub(crate) fn classify_change_with_alias_state(
             .iter()
             .any(|assertion| assertion.mock_payload.is_some())
     });
+    // The owner's parsed source, so a committed-history diff reads the same
+    // bytes the owner was extracted from (not the worktree).
     let owner_body = reads_mock_payload
-        .then(|| ts_owner_body_text(owner, workspace_root))
+        .then_some(owner.source_text.as_deref())
         .flatten();
-    let mock_facts =
-        MockCallFacts::read(line_text, owner_body.as_deref(), &owner.name, &owner.params);
+    let mock_facts = MockCallFacts::read(line_text, owner_body, &owner.name, &owner.params);
+    if reads_mock_payload {
+        project_credited_mock_rows(&mut related, &related_candidates, &mock_facts);
+    }
     let (strongest_strength, strongest_kind) = strongest_family_matching_oracle(
         &probe_shape.family,
         &related_candidates,

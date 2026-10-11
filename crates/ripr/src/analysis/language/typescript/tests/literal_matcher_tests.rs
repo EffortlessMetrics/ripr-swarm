@@ -54,6 +54,50 @@ fn mock_payload_on_the_parameters_own_mock_is_credited() {
         &called_with("db.write", "2"),
         "const db = { write: jest.fn() }; save(db, 1); expect(db.write).toHaveBeenCalledWith(2);"
     ));
+    assert!(facts.credits(
+        &called_with("db.write", "2"),
+        "const db = { write: jest.fn((a, b) => a), size: 1 }; save(db, 1);"
+    ));
+    // Inside a real test callback.
+    assert!(notify_facts(Some(NOTIFY_OWNER)).credits(
+        &order_payload(),
+        "it(\"announces\", () => { const send = jest.fn(); announce(7, send); expect(send).toHaveBeenCalledWith(\"order 7\"); })"
+    ));
+}
+
+#[test]
+fn mock_payload_on_a_binding_the_owner_may_not_receive_is_not_credited() {
+    let payload = order_payload();
+    // A nested block declares the mock, so `send` at the owner call is an
+    // outer binding (an imported mock that may already hold the payload).
+    for test in [
+        "it(\"t\", () => { if (ready) { const send = jest.fn(); } announce(7, send); expect(send).toHaveBeenCalledWith(\"order 7\"); })",
+        "it(\"t\", function () { { let send = vi.fn(); } announce(7, send); })",
+    ] {
+        assert!(
+            !notify_facts(Some(NOTIFY_OWNER)).credits(&payload, test),
+            "{test}"
+        );
+    }
+    let facts = MockCallFacts::read(
+        "  db.write(v + 2);",
+        Some("function save(db: Db, v: number) {\n  db.write(v + 2);\n}"),
+        "save",
+        &params(&["db", "v"]),
+    );
+    // A spread, a repeated key or a quoted key can replace the factory.
+    for test in [
+        "const db = { write: jest.fn(), ...defaults }; save(db, 1);",
+        "const db = { write: jest.fn(), write: defaults.write }; save(db, 1);",
+        "const db = { write: jest.fn(), \"write\": defaults.write }; save(db, 1);",
+        "const db = { write: jest.fn(), write }; save(db, 1);",
+        "it(\"t\", () => { if (ready) { const db = { write: jest.fn() }; } save(db, 1); })",
+    ] {
+        assert!(
+            !facts.credits(&called_with("db.write", "2"), test),
+            "{test}"
+        );
+    }
 }
 
 #[test]
