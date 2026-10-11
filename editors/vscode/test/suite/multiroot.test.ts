@@ -1,54 +1,346 @@
-//
-// Multi-root workspace e2e test (#1735).
-//
-// Proves that the ripr extension activates correctly in a multi-root
-// workspace and that the server does NOT auto-start when the workspace
-// is untrusted. This is the editor-side acceptance for #1577 (closed)
-// and #1623 (trust gate).
-//
-// The test uses the @vscode/test-electron harness which downloads a
-// real VS Code instance, loads the extension, and runs assertions in
-// the extension host.
-//
-
 import * as assert from 'assert';
+import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
+import type { ChildProcess, SpawnOptions } from 'child_process';
 import * as vscode from 'vscode';
+import type { LanguageClient } from 'vscode-languageclient/node';
 
-suite('Multi-root workspace activation', () => {
-    test('extension activates and is present', () => {
-        const extension = vscode.extensions.getExtension('effortlessmetrics.ripr');
-        assert.ok(extension, 'ripr extension should be installed');
-    });
+// Read observations from the activated controller without supplying a runtime,
+// resolver, client, root selector, status producer or diagnostic collection.
+// Private-field shape is intentionally checked at setup and fails closed.
+interface ControllerObservation {
+  client?: LanguageClient;
+  workspaceRoot?: string;
+  status: { kind: string };
+}
 
-    test('extension does not throw on activation in a standard workspace', async () => {
-        // In a standard (trusted) workspace, the extension should activate
-        // without throwing. The actual server start depends on a Rust
-        // workspace being open; we just verify activation doesn't crash.
-        const extension = vscode.extensions.getExtension('effortlessmetrics.ripr');
-        if (extension && !extension.isActive) {
-            await extension.activate();
+interface ProcessObservation {
+  child: ChildProcess;
+  pid?: number;
+  args: readonly string[];
+  cwd?: string;
+  session: boolean;
+  exits: number;
+  closes: number;
+}
+
+interface RootExpectation {
+  root: string;
+  source: string;
+  sourceMarker: string;
+  relatedTest: string;
+  testNames: readonly string[];
+}
+
+// Register only in the dedicated fresh-profile host. Other suites mutate the
+// single-root fixture; their execution cannot count towards this matrix.
+if (process.env.RIPR_TEST_MULTIROOT === '1') {
+  suite('Real multi-root server acceptance', function () {
+    this.timeout(180_000);
+    let controller: ControllerObservation;
+    let rootA: RootExpectation;
+    let rootB: RootExpectation;
+    let restoreSpawn: (() => void) | undefined;
+    let deactivateActual: (() => Promise<void>) | undefined;
+    const processes: ProcessObservation[] = [];
+    const stages: Record<string, unknown>[] = [];
+    let phase = 'setup';
+    let outcome = 'not_established';
+
+    suiteSetup(async () => {
+      const fixture = process.env.RIPR_TEST_MULTIROOT_PATH;
+      const server = process.env.RIPR_TEST_SERVER_PATH;
+      assert.ok(fixture && server, 'matrix needs staged roots and an exact server path');
+      assert.ok(path.isAbsolute(server) && fs.statSync(server).isFile());
+      rootA = {
+        root: path.join(fixture, 'root-a'), source: 'src/alpha.rs',
+        sourceMarker: 'pub fn alpha_discount(amount: i32, threshold: i32)',
+        relatedTest: 'tests/alpha_contract.rs',
+        testNames: ['alpha_below_boundary', 'alpha_far_above_boundary'],
+      };
+      rootB = {
+        root: path.join(fixture, 'root-b'), source: 'src/beta.rs',
+        sourceMarker: 'pub fn beta_shipping(weight: i32, cutoff: i32)',
+        relatedTest: 'tests/beta_contract.rs',
+        testNames: ['beta_light_parcel', 'beta_heavy_parcel'],
+      };
+      assert.deepStrictEqual(vscode.workspace.workspaceFolders?.map(f => f.uri.fsPath),
+        [rootA.root, rootB.root], 'must be the actual two-root .code-workspace');
+      assert.strictEqual(vscode.window.activeTextEditor, undefined,
+        'fresh profile must start without a selected file');
+      assert.strictEqual(vscode.workspace.isTrusted, true);
+      assert.strictEqual(vscode.workspace.getConfiguration('ripr').get('server.path'), server);
+
+      // Transparent spawn observation includes resolver probes as well as LSP
+      // sessions, forwarding the original arguments/options/streams untouched.
+      const cp = require('child_process') as typeof import('child_process');
+      const originalSpawn = cp.spawn;
+      cp.spawn = (function (command: string, argsOrOptions?: readonly string[] | SpawnOptions, options?: SpawnOptions) {
+        const child: ChildProcess = Reflect.apply(originalSpawn, cp, arguments);
+        if (command === server) {
+          const args = Array.isArray(argsOrOptions) ? argsOrOptions : [];
+          const spawnOptions = (Array.isArray(argsOrOptions) ? options : argsOrOptions) as SpawnOptions | undefined;
+          const cwd = spawnOptions?.cwd === undefined ? undefined : String(spawnOptions.cwd);
+          const session = [rootA.root, rootB.root].includes(cwd ?? '')
+            && (args ?? []).join(' ') === 'lsp --stdio';
+          const observed: ProcessObservation = {
+            child, pid: child.pid, args: [...(args ?? [])], cwd, session, exits: 0, closes: 0,
+          };
+          child.on('exit', () => observed.exits++);
+          child.on('close', () => observed.closes++);
+          processes.push(observed);
         }
-        assert.ok(extension?.isActive, 'extension should be active');
+        return child;
+      }) as typeof cp.spawn;
+      restoreSpawn = () => { cp.spawn = originalSpawn; };
+
+      // Capture the real activation-scoped instance via an existing command;
+      // the wrapper delegates the complete production implementation unchanged.
+      const extension = vscode.extensions.getExtension('EffortlessMetrics.ripr');
+      assert.ok(extension, 'real extension must be installed in this host');
+      // Load from the extension actually under test, including an extracted
+      // VSIX when the caller supplies RIPR_TEST_EXTENSION_PATH.
+      const { RiprClientController } = require(path.join(extension.extensionPath, 'out/src/client')) as typeof import('../../src/client');
+      deactivateActual = (require(path.join(extension.extensionPath, 'out/src/extension')) as typeof import('../../src/extension')).deactivate;
+      const originalShowStatus = RiprClientController.prototype.showStatus;
+      RiprClientController.prototype.showStatus = function () {
+        controller = this as unknown as ControllerObservation;
+        return originalShowStatus.call(this);
+      };
+      try {
+        await extension.activate();
+        await vscode.commands.executeCommand('ripr.showStatus');
+        assert.ok(controller?.status && typeof controller.status.kind === 'string',
+          'failed to observe the activated controller');
+      } finally {
+        RiprClientController.prototype.showStatus = originalShowStatus;
+      }
+      stages.push({ phase, server, sha256: crypto.createHash('sha256')
+        .update(fs.readFileSync(server)).digest('hex'), extension: extension.extensionPath,
+        extension_mode: process.env.RIPR_TEST_EXTENSION_PATH ? 'supplied extension' : 'development extension',
+        platform: process.platform });
     });
 
-    test('commands are registered', async () => {
-        const commands = await vscode.commands.getCommands(true);
-        const riprCommands = commands.filter((cmd) => cmd.startsWith('ripr.'));
-        assert.ok(
-            riprCommands.length > 0,
-            `expected ripr.* commands to be registered, got: ${riprCommands.join(', ')}`,
-        );
-        // Key commands that must exist. Note: `ripr.refresh` is intentionally
-        // NOT registered — there is no lightweight refresh-only command. The
-        // fallback retry hint in client.ts points users at `ripr: Restart
-        // Server` (ripr.restartServer) instead. See #2001.
-        assert.ok(commands.includes('ripr.restartServer'), 'ripr.restartServer should be registered');
-        assert.ok(commands.includes('ripr.showStatus'), 'ripr.showStatus should be registered');
+    test('ambiguity → A → B → active-root removal contains authority and reaps servers', async () => {
+      phase = 'no selected file';
+      assert.strictEqual(controller.status.kind, 'workspaceAmbiguous');
+      assert.strictEqual(controller.workspaceRoot, undefined);
+      assert.strictEqual(controller.client, undefined);
+      assert.strictEqual(processes.length, 0, 'ambiguity must not even resolve/spawn a server');
+      assertOnlyRootDiagnostics(undefined);
+      record();
+
+      phase = 'select root A';
+      await openAndSave(rootA);
+      const aActions = await assertRootEvidence(rootA, rootB);
+      assert.strictEqual(sessions().length, 1, 'A must start exactly one real session');
+      assert.strictEqual(sessions()[0].cwd, rootA.root);
+      assert.strictEqual(sessions()[0].exits, 0);
+      record();
+
+      phase = 'switch to root B';
+      // No manual restart/picker/runtime override: the active supported file
+      // and its real save event are the acceptance stimulus.
+      await openAndSave(rootB);
+      const bActions = await assertRootEvidence(rootB, rootA);
+      assert.strictEqual(sessions().length, 2, 'switch must start one B session');
+      assert.strictEqual(sessions()[1].cwd, rootB.root);
+      await assertReaped(sessions()[0]);
+      await assertCachedActionsBlocked(aActions);
+      record();
+
+      phase = 'remove active root B';
+      const changed = new Promise<void>(resolve => {
+        const subscription = vscode.workspace.onDidChangeWorkspaceFolders(event => {
+          if (event.removed.some(f => f.uri.fsPath === rootB.root)) {
+            subscription.dispose(); resolve();
+          }
+        });
+      });
+      assert.strictEqual(vscode.workspace.updateWorkspaceFolders(1, 1), true);
+      await bounded(changed, 'actual B removal event');
+      await waitFor(() => controller.client === undefined
+        && ['noWorkspace', 'workspaceAmbiguous'].includes(controller.status.kind),
+        'explicit no-root status after B removal');
+      assert.strictEqual(controller.workspaceRoot, undefined, 'removed root must lose authority');
+      assert.deepStrictEqual(vscode.workspace.workspaceFolders?.map(f => f.uri.fsPath), [rootA.root]);
+      assert.strictEqual(sessions().length, 2, 'remaining A must not start silently');
+      await assertReaped(sessions()[1]);
+      assertOnlyRootDiagnostics(undefined);
+      await assertNoRootActions(rootA);
+      await assertNoRootActions(rootB);
+      await assertCachedActionsBlocked(aActions);
+      await assertCachedActionsBlocked(bActions);
+      record();
+      outcome = 'passed';
     });
 
-    test('workspace folders are accessible', () => {
-        const folders = vscode.workspace.workspaceFolders;
-        assert.ok(folders, 'workspace should have folders');
-        assert.ok(folders.length >= 1, 'workspace should have at least one folder');
+    teardown(function () {
+      if (this.currentTest?.state === 'failed') {
+        outcome = 'failed';
+        stages.push({ phase, failure: String(this.currentTest.err) });
+      }
     });
-});
+
+    suiteTeardown(async () => {
+      // Production deactivation owns normal shutdown. Retain leak evidence
+      // before emergency cleanup of only the exact ChildProcess handles above.
+      let teardownError: unknown;
+      try {
+        if (deactivateActual) { await bounded(deactivateActual(), 'extension deactivation'); }
+        for (const observed of processes) { await assertReaped(observed); }
+      } catch (error) {
+        teardownError = error;
+        outcome = 'failed_teardown';
+        for (const { child } of processes) {
+          if (child.exitCode === null && child.signalCode === null) { child.kill(); }
+        }
+      } finally {
+        restoreSpawn?.();
+        const receipt = process.env.RIPR_TEST_MULTIROOT_RECEIPT;
+        assert.ok(receipt, 'matrix receipt path is required');
+        fs.writeFileSync(receipt, JSON.stringify({
+          outcome, last_phase: phase, stages,
+          processes: processes.map(({ child, ...observed }) => ({
+            ...observed, exit_code: child.exitCode, signal: child.signalCode,
+          })),
+          teardown_error: teardownError === undefined ? undefined : String(teardownError),
+          claim_limit: 'Real extension/LSP session acceptance; no final release-candidate qualification or Windows descendant-containment claim.',
+        }, null, 2));
+      }
+      if (teardownError !== undefined) { throw teardownError; }
+    });
+
+    function sessions(): ProcessObservation[] { return processes.filter(p => p.session); }
+    function record(): void {
+      stages.push({ phase, status: controller.status.kind, root: controller.workspaceRoot,
+        session_pids: sessions().map(p => p.pid), diagnostic_uris: riprDiagnostics().map(([uri]) => uri.toString()) });
+    }
+
+    async function assertRootEvidence(expected: RootExpectation, other: RootExpectation): Promise<vscode.Command[]> {
+      await waitFor(() => controller.workspaceRoot === expected.root && controller.client !== undefined,
+        `real session bound to ${expected.root}`);
+      const client = controller.client!;
+      assert.ok(client.serverProcess?.pid, 'selected session must own a real server process');
+      const status = await bounded(client.sendRequest('workspace/executeCommand', {
+        command: 'ripr.collectWorkspaceStatus', arguments: [],
+      }), 'framed workspace status') as { analysis_status?: { effective_root?: string; root_state?: string } };
+      assert.strictEqual(status.analysis_status?.effective_root, expected.root);
+      assert.strictEqual(status.analysis_status?.root_state, 'selected_single_root');
+      const uri = vscode.Uri.file(path.join(expected.root, expected.source));
+      await waitFor(() => vscode.languages.getDiagnostics(uri).some(d => d.source === 'ripr'
+        && (typeof d.code === 'object' ? d.code.value : d.code) === 'ripr-seam-weakly-gripped'),
+        `nonempty real seam diagnostics at ${uri}`);
+      assertOnlyRootDiagnostics(expected.root);
+      assert.strictEqual(vscode.languages.getDiagnostics(vscode.Uri.file(path.join(other.root, other.source)))
+        .filter(d => d.source === 'ripr').length, 0, 'other root must have no retained diagnostics');
+      const diagnostic = vscode.languages.getDiagnostics(uri).find(d => d.source === 'ripr'
+        && (typeof d.code === 'object' ? d.code.value : d.code) === 'ripr-seam-weakly-gripped')!;
+      const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
+        'vscode.executeCodeActionProvider', uri, diagnostic.range);
+      const commands = (actions ?? []).flatMap(action => {
+        const command = typeof action.command === 'string' ? action as vscode.Command : action.command;
+        return command?.command.startsWith('ripr.') ? [command] : [];
+      });
+      assert.ok(commands.length > 0, 'real LSP must return nonempty actions');
+      for (const command of commands) {
+        for (const target of command.arguments ?? []) {
+          if (target && typeof target === 'object' && typeof target.uri === 'string') {
+            assert.ok(target.uri.startsWith(vscode.Uri.file(expected.root).toString() + '/'),
+              `cross-root action target: ${JSON.stringify(command)}`);
+          }
+        }
+      }
+      const context = commands.find(c => c.command === 'ripr.copyContext');
+      const related = commands.find(c => c.command === 'ripr.openRelatedTest');
+      assert.ok(context && related, 'context and related-test actions must be produced by real LSP');
+      const relatedTarget = related.arguments?.[0] as { uri?: string; test_name?: string };
+      assert.strictEqual(relatedTarget.uri, vscode.Uri.file(path.join(expected.root, expected.relatedTest)).toString());
+      assert.ok(expected.testNames.includes(relatedTarget.test_name ?? ''), JSON.stringify(related));
+      await vscode.commands.executeCommand(related.command, ...(related.arguments ?? []));
+      const editor = vscode.window.activeTextEditor;
+      assert.strictEqual(editor?.document.uri.toString(), relatedTarget.uri);
+      assert.ok(expected.testNames.some(name => editor!.document.lineAt(editor!.selection.active.line).text.includes(name)),
+        'navigation must land on an independently expected test declaration');
+      await vscode.commands.executeCommand(context.command, ...(context.arguments ?? []));
+      const packet = await vscode.env.clipboard.readText();
+      assert.ok(packet.includes(expected.source), packet);
+      assert.ok(packet.includes(expected.sourceMarker.split('(')[0].replace('pub fn ', '')), packet);
+      assert.ok(!packet.includes(other.source), 'packet must not carry the other root source');
+      await assertNoRootActions(other);
+      stages.push({ phase, server_status: status, actions: commands });
+      return [context, related];
+    }
+
+    async function assertCachedActionsBlocked(commands: vscode.Command[]): Promise<void> {
+      await vscode.env.clipboard.writeText('multi-root stale-action sentinel');
+      const before = vscode.window.activeTextEditor?.document.uri.toString();
+      for (const command of commands) {
+        await vscode.commands.executeCommand(command.command, ...(command.arguments ?? []));
+      }
+      assert.strictEqual(await vscode.env.clipboard.readText(), 'multi-root stale-action sentinel');
+      assert.strictEqual(vscode.window.activeTextEditor?.document.uri.toString(), before,
+        'cached navigation must not open a stale root target');
+    }
+  });
+}
+
+function riprDiagnostics(): Array<[vscode.Uri, vscode.Diagnostic[]]> {
+  return vscode.languages.getDiagnostics().map(([uri, entries]): [vscode.Uri, vscode.Diagnostic[]] =>
+    [uri, entries.filter(d => d.source === 'ripr')]).filter(([, entries]) => entries.length > 0);
+}
+
+function assertOnlyRootDiagnostics(root: string | undefined): void {
+  for (const [uri] of riprDiagnostics()) {
+    assert.ok(root && uri.toString().startsWith(vscode.Uri.file(root).toString() + '/'),
+      `diagnostics leaked outside the active root: ${uri}`);
+  }
+}
+
+async function assertNoRootActions(root: RootExpectation): Promise<void> {
+  const uri = vscode.Uri.file(path.join(root.root, root.source));
+  const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
+    'vscode.executeCodeActionProvider', uri, new vscode.Range(0, 0, 6, 0));
+  assert.strictEqual((actions ?? []).filter(action => {
+    const command = typeof action.command === 'string' ? action.command : action.command?.command;
+    return command?.startsWith('ripr.');
+  }).length, 0, `inactive root must not offer ripr actions: ${uri}`);
+}
+
+async function openAndSave(root: RootExpectation): Promise<void> {
+  const uri = vscode.Uri.file(path.join(root.root, root.source));
+  const document = await vscode.workspace.openTextDocument(uri);
+  assert.strictEqual(document.languageId, 'rust');
+  assert.ok(document.getText().includes(root.sourceMarker), 'source identity must match the independent fixture pin');
+  const editor = await vscode.window.showTextDocument(document);
+  assert.strictEqual(await editor.edit(builder => builder.insert(document.positionAt(document.getText().length), '\n')), true);
+  assert.strictEqual(document.isDirty, true);
+  assert.strictEqual(await document.save(), true, 'must drive a real saved-workspace event');
+}
+
+async function assertReaped(observed: ProcessObservation): Promise<void> {
+  await waitFor(() => observed.exits === 1 && observed.closes === 1, `exit and close for owned PID ${observed.pid}`, 15_000);
+  assert.strictEqual(observed.child.exitCode, 0, 'server must terminate cleanly');
+  assert.strictEqual(observed.child.signalCode, null);
+  assert.ok(observed.pid, 'spawn must produce a native PID');
+  assert.throws(() => process.kill(observed.pid!, 0), (error: NodeJS.ErrnoException) => error.code === 'ESRCH',
+    `owned PID ${observed.pid} must be absent from the OS`);
+}
+
+async function waitFor(predicate: () => boolean, label: string, timeout = 60_000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (!predicate()) {
+    if (Date.now() >= deadline) { throw new Error(`timed out: ${label}`); }
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+}
+
+async function bounded<T>(promise: PromiseLike<T>, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([Promise.resolve(promise), new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`timed out: ${label}`)), 30_000);
+    })]);
+  } finally { if (timer) { clearTimeout(timer); } }
+}
