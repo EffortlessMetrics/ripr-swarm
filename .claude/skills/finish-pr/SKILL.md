@@ -29,6 +29,14 @@ Routine publication and convergence inside the selected repository claim—push 
 
 # Procedure
 
+"Protected squash merge" means the normal squash operation respecting existing
+enforcement. It does not require protection to exist or authorize installing it.
+Read applicable classic protection and active rulesets, preserving unreadable
+policy as an evidence gap. If no applicable protection exists, ordinary merge
+can still proceed after current-head review, findings and required proof are
+satisfied. Existing restrictions remain binding; never use admin bypass or
+change settings to obtain a merge.
+
 1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists.
 2. Write a complete body:
    - production and evidence delta;

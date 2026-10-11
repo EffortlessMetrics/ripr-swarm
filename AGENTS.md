@@ -116,6 +116,10 @@ candidate review. Missing hosted evidence keeps it in flight, not local-only.
 Only a current published-head `REVIEW_READY` proceeds to merge convergence.
 After acceptance, return to the parent goal and the next ready claim.
 
+For a phase change or bounded worker return, use `deliver-pr`'s continuation
+handoff. Its [paired scenarios](docs/agent-context/delivery-continuation-scenarios.md)
+challenge both useful continuation and genuine stop boundaries.
+
 Use implementation agents for independent ready claims when available, each
 with a candidate-owned worktree and one writer. Delegate the claim, input
 identity, question, non-goals, write boundary, proof and handback. The root
