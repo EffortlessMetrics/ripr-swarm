@@ -249,6 +249,53 @@ fn withheld_crate_root(path: &Path) -> Option<PathBuf> {
 }
 
 impl OwnerPinSyntax {
+    /// Bounded targeted-selection identity for a non-generic inherent call.
+    /// Cross-file imports, nested type paths and receiver inference stay
+    /// unresolved; this is not a general Rust name resolver.
+    pub(in crate::analysis) fn targeted_inherent_call_is_local(
+        &self,
+        test: &TestSummary,
+        owner: &FunctionSummary,
+        prefix: &str,
+        index: &RustIndex,
+    ) -> bool {
+        let FunctionContainer::Inherent { self_ty } = &owner.item.container else {
+            return false;
+        };
+        if owner.file != test.file || !is_plain_identifier(self_ty) {
+            return false;
+        }
+        let Some(facts) = index.files().get(&test.file) else {
+            return false;
+        };
+        if facts.used_lexical_fallback
+            || file_aliases_type(&facts.source, self_ty)
+            || file_renames_to(&facts.source, self_ty)
+            || file_imports_foreign_callee_name(&facts.source, self_ty, &index.package_names)
+            || declares_type(&mask_comments_and_strings(&test.body), self_ty)
+            || file_aliases_type(&test.body, self_ty)
+        {
+            return false;
+        }
+        let (Some(owner_scope), Some(test_scope)) = (
+            item_nesting_with_impl(&facts.source, &owner.name, owner.start_line, true),
+            self.item_nesting(index, &test.file, &test.name, test.start_line),
+        ) else {
+            return false;
+        };
+        if owner_scope.cfg_gated || self.file_cfg_gated(index, &owner.file) {
+            return false;
+        }
+        if prefix == self_ty {
+            owner_scope.modules == test_scope.modules
+        } else if prefix == format!("crate::{self_ty}") {
+            owner_scope.modules.is_empty()
+                && self.target_roots(index).root(&owner.file, index).as_ref() == Some(&owner.file)
+        } else {
+            false
+        }
+    }
+
     /// #6974: [`item_nesting`], kept per (file, name, line).
     fn item_nesting(
         &self,
@@ -2569,6 +2616,15 @@ struct ItemNesting {
 }
 
 fn item_nesting(source: &str, name: &str, line: usize) -> Option<ItemNesting> {
+    item_nesting_with_impl(source, name, line, false)
+}
+
+fn item_nesting_with_impl(
+    source: &str,
+    name: &str,
+    line: usize,
+    allow_impl: bool,
+) -> Option<ItemNesting> {
     let parse = parse_clean_source_file(source)?;
     let line_of = |offset: u32| source[..offset as usize].matches('\n').count() + 1;
     let base = |text: String| text.strip_prefix("r#").map_or(text.clone(), str::to_string);
@@ -2605,7 +2661,10 @@ fn item_nesting(source: &str, name: &str, line: usize) -> Option<ItemNesting> {
             cfg_gated |= has_cfg_attr(&module)
                 || module.item_list().is_some_and(|items| has_cfg_attr(&items));
             modules.push(base(module.name()?.text().to_string()));
-        } else if !ast::ItemList::can_cast(ancestor.kind())
+        } else if allow_impl && let Some(implementation) = ast::Impl::cast(ancestor.clone()) {
+            cfg_gated |= has_cfg_attr(&implementation);
+        } else if !(allow_impl && ast::AssocItemList::can_cast(ancestor.kind()))
+            && !ast::ItemList::can_cast(ancestor.kind())
             && !ast::SourceFile::can_cast(ancestor.kind())
         {
             return None;
@@ -4423,6 +4482,60 @@ pub(in crate::analysis) fn file_renames_to(source: &str, name: &str) -> bool {
     whole_word_offsets(&masked, "as")
         .into_iter()
         .any(|offset| starts_with_word(masked[offset + "as".len()..].trim_start(), name))
+}
+
+/// An alias cannot be excluded merely because its spelling differs from an
+/// indexed impl's self type. Retain a named refusal instead.
+pub(in crate::analysis) fn targeted_name_is_alias(index: &RustIndex, name: &str) -> bool {
+    index
+        .files()
+        .values()
+        .any(|facts| file_aliases_type(&facts.source, name) || file_renames_to(&facts.source, name))
+}
+
+pub(in crate::analysis) fn targeted_type_name_is_unresolved(
+    test: &TestSummary,
+    index: &RustIndex,
+    name: &str,
+) -> bool {
+    if name == "Self" || targeted_name_is_alias(index, name) {
+        return true;
+    }
+    let Some(facts) = index.files().get(&test.file) else {
+        return true;
+    };
+    let Some(parse) = parse_clean_source_file(&facts.source) else {
+        return true;
+    };
+    let Some(function) = resolve_owner_fn(
+        parse.tree().syntax(),
+        &facts.source,
+        OwnerScope::new(&test.name, test.start_line, &test.file),
+    ) else {
+        return true;
+    };
+    function
+        .syntax()
+        .descendants()
+        .filter_map(ast::TypeParam::cast)
+        .any(|parameter| {
+            parameter
+                .name()
+                .is_some_and(|parameter| parameter.text() == name)
+        })
+}
+
+pub(in crate::analysis) fn targeted_bare_call_is_unshadowed(
+    test: &TestSummary,
+    index: &RustIndex,
+    name: &str,
+) -> bool {
+    !test_body_shadows_owner(test, name)
+        && index.files().get(&test.file).is_some_and(|facts| {
+            !facts.used_lexical_fallback
+                && !file_renames_to(&facts.source, name)
+                && !file_imports_foreign_callee_name(&facts.source, name, &index.package_names)
+        })
 }
 
 /// Whether the file declares a type alias `type name`.
