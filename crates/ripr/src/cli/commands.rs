@@ -2808,8 +2808,7 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
     // stay prose-only. Config loading comes first and has no merged mode
     // yet, so its refusal names the parsed mode.
     let config = load_for_root(&options.root).map_err(|err| {
-        let error =
-            crate::cli::commands_context::config_load_refusal(&options.root, err);
+        let error = crate::cli::commands_context::config_load_refusal(&options.root, err);
         if !json {
             return error.to_string();
         }
