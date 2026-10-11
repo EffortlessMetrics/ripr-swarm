@@ -539,3 +539,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (15)
+
+Reason:
+RIPR-SPEC-0247 rule 1: literal toHaveBeenCalledWith on the parameter's own test-local vi.fn() reads strong; notifyStatus and notifyLiteral move to exposed
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

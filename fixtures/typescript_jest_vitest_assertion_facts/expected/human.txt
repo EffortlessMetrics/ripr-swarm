@@ -2,7 +2,7 @@ ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/typescript_jest_vitest_assertion_facts/input
 
-Summary: 6 probe(s), 2 exposed, 4 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 6 of 6 finding(s) unsuppressed
+Summary: 6 probe(s), 4 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 6 of 6 finding(s) unsuppressed
 
 Changed file(s) by language: typescript: 1.
 
@@ -36,8 +36,8 @@ Hidden:
   5 lower-priority finding(s) omitted from default human output (TypeScript preview: 5).
     - src/signals.ts:2 (exposed)
     - src/signals.ts:13 (weakly_exposed)
-    - src/signals.ts:17 (weakly_exposed)
-    - src/signals.ts:21 (weakly_exposed)
+    - src/signals.ts:17 (exposed)
+    - src/signals.ts:21 (exposed)
     - src/signals.ts:25 (exposed)
   Full evidence: rerun with --format human-full
   Machine data: rerun with --format json
