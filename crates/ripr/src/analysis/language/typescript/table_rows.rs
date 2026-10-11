@@ -36,6 +36,20 @@ pub(crate) fn table_row_assertions(
         return None;
     };
     let rows = literal_table_rows(each_call, source)?;
+    callback_case_assertions(callback, &rows, source, bindings)
+}
+
+/// The assertions of `callback` read once per row, each row's cells
+/// replacing the callback's plain parameters one to one, or `None` when
+/// any row fails closed (see the module documentation). Shared with the
+/// RIPR-SPEC-0246 nested-callback forms (`[1, 2].forEach(cb)`, a returned
+/// `p.then(cb)`).
+pub(crate) fn callback_case_assertions(
+    callback: &oxc_ast::ast::Argument<'_>,
+    rows: &[Vec<String>],
+    source: &SourceText<'_>,
+    bindings: &TypeScriptAssertionBindings,
+) -> Option<Vec<TypeScriptAssertion>> {
     let (params, callback_span, body_span) = plain_callback_parameters(callback)?;
     if rows.iter().any(|row| row.len() != params.len()) {
         return None;
@@ -54,7 +68,7 @@ pub(crate) fn table_row_assertions(
         return None;
     }
     let mut assertions = Vec::new();
-    for row in &rows {
+    for row in rows {
         let substituted = substitute_row(body, &params, row)?;
         let callback_text = format!(
             "{}{}{}",
@@ -110,7 +124,7 @@ fn literal_table_rows(
     Some(rows)
 }
 
-fn is_literal_cell(cell: &Expression<'_>) -> bool {
+pub(crate) fn is_literal_cell(cell: &Expression<'_>) -> bool {
     match cell {
         Expression::NumericLiteral(_)
         | Expression::StringLiteral(_)

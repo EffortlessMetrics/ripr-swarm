@@ -1,0 +1,178 @@
+//! RIPR-SPEC-0246 rule 1 (a copy-for-identity change needs an identity
+//! matcher) and rule 2 (literal `forEach`, returned or awaited `.then` and
+//! awaited `t.test` callbacks are read as the test's own assertions). Each
+//! test pins the parsed assertions before the class.
+
+use super::*;
+
+fn observed(path: &str, source: &str) -> Vec<(Option<String>, Option<String>, usize)> {
+    extract_tests(Path::new(path), source)
+        .iter()
+        .flat_map(|test| test.assertions.iter())
+        .map(|assertion| {
+            (
+                assertion.observed_expression.clone(),
+                assertion.expected_value_or_variant.clone(),
+                assertion.line,
+            )
+        })
+        .collect()
+}
+
+fn some(observed: &str, expected: &str, line: usize) -> (Option<String>, Option<String>, usize) {
+    (Some(observed.to_string()), Some(expected.to_string()), line)
+}
+
+#[test]
+fn literal_foreach_reads_one_case_per_element() {
+    let source = "import { price } from \"../src/price\";\ntest(\"price\", () => {\n  [150, 200].forEach((v) => { expect(price(v)).toBe(140); });\n});\n";
+    assert_eq!(
+        observed("tests/price.test.ts", source),
+        vec![some("price(150)", "140", 3), some("price(200)", "140", 3)]
+    );
+}
+
+/// A non-literal array, a callback with two parameters or a parameter read
+/// outside parentheses collects nothing (fail closed).
+#[test]
+fn other_foreach_forms_collect_nothing() {
+    for body in [
+        "  cases.forEach((v) => { expect(price(v)).toBe(140); });",
+        "  [150, n].forEach((v) => { expect(price(v)).toBe(140); });",
+        "  [150].forEach((v, i) => { expect(price(v)).toBe(i); });",
+        "  [].forEach((v) => { expect(price(v)).toBe(140); });",
+        "  [150].map((v) => { expect(price(v)).toBe(140); });",
+    ] {
+        let source = format!(
+            "import {{ price }} from \"../src/price\";\ntest(\"price\", () => {{\n{body}\n}});\n"
+        );
+        assert_eq!(observed("tests/price.test.ts", &source), vec![], "{body}");
+    }
+}
+
+#[test]
+fn returned_or_awaited_then_reads_the_resolved_receiver() {
+    for (head, line) in [
+        ("  return total([10, 20]).then((sum) => {", 3),
+        ("  await total([10, 20]).then((sum) => {", 3),
+    ] {
+        let source = format!(
+            "import {{ total }} from \"../src/order\";\ntest(\"total\", async () => {{\n{head}\n    expect(sum).toBe(30);\n  }});\n}});\n"
+        );
+        assert_eq!(
+            observed("tests/order.test.ts", &source),
+            vec![some("(total([10, 20]))", "30", line + 1)],
+            "{head}"
+        );
+    }
+    let no_parameter = "test(\"t\", () => {\n  return ready().then(() => {\n    expect(state()).toBe(1);\n  });\n});\n";
+    assert_eq!(
+        observed("tests/state.test.ts", no_parameter),
+        vec![some("state()", "1", 3)]
+    );
+}
+
+/// A `.then` callback the runner does not wait for may run after the test
+/// settles, so its assertions are not collected.
+#[test]
+fn floating_then_collects_nothing() {
+    let source = "test(\"total\", () => {\n  total([10, 20]).then((sum) => {\n    expect(sum).toBe(30);\n  });\n});\n";
+    assert_eq!(observed("tests/order.test.ts", source), vec![]);
+}
+
+#[test]
+fn awaited_subtest_on_the_receiver_is_collected() {
+    let source = "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { memberPrice } from \"../src/member\";\ntest(\"member\", async (t) => {\n  await t.test(\"five off\", (t2) => {\n    assert.strictEqual(memberPrice(30), 25);\n    t2.assert.ok(true);\n  });\n});\n";
+    assert_eq!(
+        observed("tests/member.test.ts", source),
+        vec![some("memberPrice(30)", "25", 6)]
+    );
+    for body in [
+        "  t.test(\"five off\", () => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
+        "  await other.test(\"five off\", () => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
+    ] {
+        let source = format!(
+            "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport {{ memberPrice }} from \"../src/member\";\ntest(\"member\", async (t) => {{\n{body}\n}});\n"
+        );
+        assert_eq!(observed("tests/member.test.ts", &source), vec![], "{body}");
+    }
+}
+
+const SETTINGS: &str = "export function ready(cfg: { ok: boolean }) {\n  return { ...cfg };\n}\n";
+const SETTINGS_LINE: (usize, &str) = (2, "  return { ...cfg };");
+
+fn settings_finding(label: &str, test: &str, removed: &str) -> Result<Finding, String> {
+    let root = ts_unique_tempdir(label)?;
+    ts_write_file(&root.join("src/settings.ts"), SETTINGS)?;
+    ts_write_file(&root.join("tests/settings.test.ts"), test)?;
+    let changed = ChangedFile {
+        path: PathBuf::from("src/settings.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: SETTINGS_LINE.0,
+            text: SETTINGS_LINE.1.to_string(),
+            new_side_line: SETTINGS_LINE.0,
+        }],
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: SETTINGS_LINE.0,
+            text: removed.to_string(),
+            new_side_line: SETTINGS_LINE.0,
+        }],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    result?
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == SETTINGS_LINE.0)
+        .ok_or_else(|| format!("{label}: expected a finding on the changed line"))
+}
+
+const STRUCTURAL_TEST: &str = "import { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).toEqual(cfg);\n});\n";
+
+#[test]
+fn copy_for_identity_change_needs_an_identity_matcher() -> Result<(), String> {
+    assert_eq!(
+        observed("tests/settings.test.ts", STRUCTURAL_TEST),
+        vec![(Some("ready(cfg)".to_string()), None, 4)]
+    );
+    let finding = settings_finding("identity-copy-structural", STRUCTURAL_TEST, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
+    let identity = "import { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg)).toBe(cfg);\n});\n";
+    let finding = settings_finding("identity-copy-pinned", identity, "  return cfg;")?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+
+    // A change that is not copy-only keeps the ladder verdict.
+    let finding = settings_finding(
+        "identity-copy-other-change",
+        STRUCTURAL_TEST,
+        "  return { ...cfg, ok: true };",
+    )?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn identity_copy_subject_reads_both_directions() {
+    for (old, new, subject) in [
+        ("return cfg;", "return { ...cfg };", Some("cfg")),
+        ("return { ...cfg };", "return cfg;", Some("cfg")),
+        ("return items", "return [...items]", Some("items")),
+        ("return cfg;", "return Object.assign({}, cfg);", Some("cfg")),
+        ("return cfg;", "return structuredClone(cfg);", Some("cfg")),
+        ("return cfg;", "return { ...cfg, ok: true };", None),
+        ("return cfg;", "return { ...other };", None),
+        ("return cfg;", "return cfg2;", None),
+        ("returned = cfg;", "returned = { ...cfg };", None),
+    ] {
+        assert_eq!(
+            ts_identity_copy_subject(old, new).as_deref(),
+            subject,
+            "{old} -> {new}"
+        );
+    }
+}

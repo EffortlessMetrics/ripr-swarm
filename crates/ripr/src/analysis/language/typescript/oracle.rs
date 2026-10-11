@@ -216,13 +216,23 @@ pub(crate) fn collect_expect_assertions_in_statement(
                 assertion_from_expression_any(&expr_stmt.expression, source, context)
             {
                 out.push(assertion);
+            } else {
+                collect_nested_callback_assertions(
+                    &expr_stmt.expression,
+                    false,
+                    source,
+                    context,
+                    out,
+                );
             }
         }
         Statement::ReturnStatement(return_stmt) => {
-            if let Some(argument) = &return_stmt.argument
-                && let Some(assertion) = assertion_from_expression_any(argument, source, context)
-            {
-                out.push(assertion);
+            if let Some(argument) = &return_stmt.argument {
+                if let Some(assertion) = assertion_from_expression_any(argument, source, context) {
+                    out.push(assertion);
+                } else {
+                    collect_nested_callback_assertions(argument, true, source, context, out);
+                }
             }
         }
         Statement::IfStatement(if_stmt) => {
@@ -282,6 +292,143 @@ pub(crate) fn collect_expect_assertions_in_statement(
             collect_expect_assertions_in_statement(&with_stmt.body, source, context, out);
         }
         _ => {}
+    }
+}
+
+/// RIPR-SPEC-0246 rule 2: the three nested callbacks whose assertions run
+/// before the test settles, read as the test's own assertions.
+/// - `[<literal>, ...].forEach((v) => body)`: one case per element, `v`
+///   replaced by the element, as RIPR-SPEC-0243 rule 11 reads a table row.
+/// - `return p.then((v) => body)` / `await p.then(...)`: the runner awaits
+///   the promise, so the body runs with `v` replaced by `(p)`, the value the
+///   assertion observes.
+/// - `await t.test(name, [options,] (t2) => body)` on the test's own
+///   receiver: node:test runs the awaited subtest inside the test.
+///
+/// Anything else, a callback that is not awaited or returned, or one the row
+/// reader refuses, collects nothing (fail closed).
+fn collect_nested_callback_assertions(
+    expr: &Expression<'_>,
+    returned: bool,
+    source: &SourceText<'_>,
+    context: &AssertionContext<'_>,
+    out: &mut Vec<TypeScriptAssertion>,
+) {
+    let (expr, awaited) = match expr.get_inner_expression() {
+        Expression::AwaitExpression(await_expr) => {
+            (await_expr.argument.get_inner_expression(), true)
+        }
+        other => (other, false),
+    };
+    let Expression::CallExpression(call) = expr else {
+        return;
+    };
+    let Some(member) = call.callee.as_member_expression() else {
+        return;
+    };
+    let Some(method) = member.static_property_name() else {
+        return;
+    };
+    let text: &str = source;
+    match method {
+        "forEach" => {
+            let [callback] = call.arguments.as_slice() else {
+                return;
+            };
+            let Expression::ArrayExpression(array) = member.object().get_inner_expression() else {
+                return;
+            };
+            if array.elements.is_empty() || array.elements.len() > 64 {
+                return;
+            }
+            let mut rows = Vec::new();
+            for element in &array.elements {
+                let Some(cell) = element.as_expression().filter(|cell| is_literal_cell(cell))
+                else {
+                    return;
+                };
+                let span = cell.span();
+                let Some(cell_text) = text.get(span.start as usize..span.end as usize) else {
+                    return;
+                };
+                rows.push(vec![cell_text.to_string()]);
+            }
+            if let Some(assertions) =
+                callback_case_assertions(callback, &rows, source, context.bindings)
+            {
+                out.extend(assertions);
+            }
+        }
+        "then" if returned || awaited => {
+            let Some(callback) = call.arguments.first() else {
+                return;
+            };
+            let span = member.object().span();
+            let Some(receiver) = text.get(span.start as usize..span.end as usize) else {
+                return;
+            };
+            if receiver.contains(['\n', '\r']) {
+                return;
+            }
+            if callback_parameter_count(callback) == Some(0) {
+                if let Some(statements) = function_body_statements_from_argument(callback) {
+                    collect_expect_assertions_from_statement_vec(statements, source, context, out);
+                }
+            } else if let Some(assertions) = callback_case_assertions(
+                callback,
+                &[vec![format!("({receiver})")]],
+                source,
+                context.bindings,
+            ) {
+                out.extend(assertions);
+            }
+        }
+        "test" if awaited => {
+            let Expression::Identifier(object) = member.object().get_inner_expression() else {
+                return;
+            };
+            if context.receiver != Some(object.name.as_str()) {
+                return;
+            }
+            let Some(callback) = call.arguments.last() else {
+                return;
+            };
+            let Some(statements) = function_body_statements_from_argument(callback) else {
+                return;
+            };
+            let subtest = AssertionContext {
+                receiver: first_plain_parameter(callback),
+                bindings: context.bindings,
+            };
+            collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
+        }
+        _ => {}
+    }
+}
+
+/// The number of parameters of an arrow or function callback.
+fn callback_parameter_count(callback: &oxc_ast::ast::Argument<'_>) -> Option<usize> {
+    match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => {
+            Some(arrow.params.items.len() + usize::from(arrow.params.rest.is_some()))
+        }
+        oxc_ast::ast::Argument::FunctionExpression(function) => {
+            Some(function.params.items.len() + usize::from(function.params.rest.is_some()))
+        }
+        _ => None,
+    }
+}
+
+/// The callback's first parameter when it is a plain identifier.
+fn first_plain_parameter<'a>(callback: &'a oxc_ast::ast::Argument<'a>) -> Option<&'a str> {
+    let params = match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
+        oxc_ast::ast::Argument::FunctionExpression(function) => &function.params,
+        _ => return None,
+    };
+    match &params.items.first()?.pattern {
+        oxc_ast::ast::BindingPattern::BindingIdentifier(ident) => Some(ident.name.as_str()),
+        _ => None,
     }
 }
 
