@@ -165,12 +165,13 @@ pub(in crate::analysis) fn selected_inherent_calls(
                 if definitions != 1 {
                     continue;
                 }
-                let Some(helper_call) = sole_top_level_initializer_call(&caller_fn, &helper.name)
+                let Some(helper_call) =
+                    sole_top_level_initializer_call(&caller_fn, &helper.name, root)
                 else {
                     continue;
                 };
                 let qualified = format!("{receiver_name}::{}", caller.name);
-                let Some(call) = sole_top_level_initializer_call(&test_fn, &qualified) else {
+                let Some(call) = sole_top_level_initializer_call(&test_fn, &qualified, root) else {
                     continue;
                 };
                 selected.push(SelectedInherentCall {
@@ -249,7 +250,11 @@ fn indexed_fn(
     candidates.next().is_none().then_some(candidate)
 }
 
-fn sole_top_level_initializer_call(function: &ast::Fn, callee: &str) -> Option<ast::CallExpr> {
+fn sole_top_level_initializer_call(
+    function: &ast::Fn,
+    callee: &str,
+    root: &SyntaxNode,
+) -> Option<ast::CallExpr> {
     let body = function.body()?;
     // Type-qualified paths need a separate resolver; do not hide a competing
     // reference behind an unsupported `<Type>::method` spelling.
@@ -261,29 +266,41 @@ fn sole_top_level_initializer_call(function: &ast::Fn, callee: &str) -> Option<a
         return None;
     }
     let expected: Vec<_> = callee.split("::").collect();
-    let mut references = body
-        .syntax()
-        .descendants()
-        .filter_map(ast::PathExpr::cast)
-        .filter(|expression| {
-            expression.path().and_then(path_names).is_some_and(|names| {
-                let names = if matches!(names.first().map(String::as_str), Some("self" | "crate")) {
-                    &names[1..]
-                } else {
-                    &names[..]
-                };
-                names
-                    .iter()
-                    .map(String::as_str)
-                    .eq(expected.iter().copied())
-            })
-        });
+    let mut selected = None;
+    for expression in body.syntax().descendants().filter_map(ast::PathExpr::cast) {
+        let names = path_names(expression.path()?)?;
+        let local = if matches!(names.first().map(String::as_str), Some("self" | "crate")) {
+            &names[1..]
+        } else {
+            &names[..]
+        };
+        if local
+            .iter()
+            .map(String::as_str)
+            .eq(expected.iter().copied())
+        {
+            if selected.replace(expression).is_some() {
+                return None;
+            }
+        } else if names.len() > 1
+            && (names.last().map(String::as_str) == expected.last().copied()
+                || matches!(
+                    names.first().map(String::as_str),
+                    Some("super" | "self" | "crate")
+                ))
+            && !(expected.len() == 2
+                && names.len() == 2
+                && plain_other_root_struct(root, &names[0], expected[0]))
+        {
+            // A parent re-export can make `super::helper` the same function.
+            // Unknown qualifications must not disappear from uniqueness;
+            // only a proven distinct nominal root receiver is noncompeting.
+            return None;
+        }
+    }
     // Count equivalent root spellings and function-value escapes before
     // admitting a supported direct call. Trivia is never identity authority.
-    let reference = references.next()?;
-    if references.next().is_some() {
-        return None;
-    }
+    let reference = selected?;
     let path = reference.path()?;
     if path.syntax().descendants().any(|node| {
         ast::GenericArgList::can_cast(node.kind())
@@ -335,6 +352,17 @@ fn sole_top_level_initializer_call(function: &ast::Fn, callee: &str) -> Option<a
         .is_some_and(|expr| expr.syntax() == &initializer)
         && declaration.syntax().parent() == body.stmt_list().map(|list| list.syntax().clone()))
     .then_some(call)
+}
+
+fn plain_other_root_struct(root: &SyntaxNode, name: &str, selected: &str) -> bool {
+    name != selected
+        && name_count(root, name) == 1
+        && root.children().filter_map(ast::Struct::cast).any(|item| {
+            item.generic_param_list().is_none()
+                && item
+                    .name()
+                    .is_some_and(|declaration| declaration.text() == name)
+        })
 }
 
 fn path_names(path: ast::Path) -> Option<Vec<String>> {
@@ -461,6 +489,54 @@ mod tests {
     }
 
     #[test]
+    fn refuses_parent_reexport_competing_helper_reference() -> Result<(), String> {
+        for (export, reference) in [
+            ("collect", "super::collect(false)"),
+            ("collect as alias", "super::alias(false)"),
+        ] {
+            let parent = format!("mod child; pub(crate) use child::{export};");
+            let child = SOURCE
+                .replace("fn collect", "pub(crate) fn collect")
+                .replace(
+                    "let errors = collect(flag);",
+                    &format!("let other = {reference}; let errors = collect(flag);"),
+                );
+            let mut facts = Vec::new();
+            for (path, source) in [
+                ("src/lib.rs", parent.as_str()),
+                ("src/child.rs", child.as_str()),
+            ] {
+                facts.push((
+                    PathBuf::from(path),
+                    crate::analysis::syntax::ra::summarize_file_with_parser(
+                        Path::new(path),
+                        source,
+                    )?,
+                ));
+            }
+            let index = RustIndex::from_owned(OwnedRustIndex {
+                functions: facts
+                    .iter()
+                    .flat_map(|(_, file)| file.functions.clone())
+                    .collect(),
+                tests: facts
+                    .iter()
+                    .flat_map(|(_, file)| file.tests.clone())
+                    .collect(),
+                files: facts.into_iter().collect(),
+                ..Default::default()
+            });
+            let helper = index
+                .functions()
+                .iter()
+                .find(|function| function.name == "collect")
+                .ok_or("missing helper")?;
+            assert!(selected_inherent_calls(helper, &index, true).is_empty());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn binds_unique_calls_with_path_trivia() -> Result<(), String> {
         for spelling in [
             "Config :: parse(true)",
@@ -470,6 +546,35 @@ mod tests {
             let source = SOURCE.replace("Config::parse(true)", spelling);
             assert_eq!(receipts(&source)?.len(), 1, "unique {spelling}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn refuses_unresolved_competing_qualifications_but_retains_distinct_root_receiver()
+    -> Result<(), String> {
+        for duplicate in [
+            "super::Config::parse(false)",
+            "foreign::parse(false)",
+            "crate::parent::Config::parse(false)",
+        ] {
+            let source = SOURCE.replace(
+                "let malformed = Config::parse(true);",
+                &format!("let other = {duplicate}; let malformed = Config::parse(true);"),
+            );
+            assert!(receipts(&source)?.is_empty(), "unresolved {duplicate}");
+        }
+        let source = format!(
+            "struct Other; impl Other {{ fn parse(flag: bool) -> Self {{ Self }} }}\n{}",
+            SOURCE.replace(
+                "let malformed = Config::parse(true);",
+                "let other = Other::parse(false); let malformed = Config::parse(true);"
+            )
+        );
+        assert_eq!(
+            receipts(&source)?.len(),
+            1,
+            "distinct nominal receiver must remain noncompeting"
+        );
         Ok(())
     }
 
