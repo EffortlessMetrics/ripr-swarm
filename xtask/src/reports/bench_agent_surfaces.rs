@@ -2801,7 +2801,10 @@ fn identity_overlay(binary: &Path, corpora: &[Corpus]) -> Result<Value, String> 
             // same HEAD with different worktree changes cannot share an
             // identity.
             (None, Some(base)) => {
-                let diff = run_output("git", &["diff", base])
+                let diff = canonical(&corpus.root)
+                    .and_then(|root| {
+                        git_args(&root.display().to_string(), &[], &[], &["diff", base])
+                    })
                     .map_err(|err| format!("repo diff for digest: {err}"))?;
                 crate::blind_journey::sha256_hex(diff.as_bytes())
             }
