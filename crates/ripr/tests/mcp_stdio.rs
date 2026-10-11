@@ -1590,6 +1590,13 @@ fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
             "fixture lost staged/unstaged/untracked subjects: {before}"
         ));
     }
+    let before_head = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?;
+    let before_diff =
+        common::fixture_git::fixture_git_output(&root, &["diff", "--binary", "HEAD"])?;
+    let before_index =
+        common::fixture_git::fixture_git_output(&root, &["diff", "--cached", "--binary"])?;
+    let before_untracked =
+        std::fs::read(root.join("src/untracked.rs")).map_err(|error| error.to_string())?;
     let check = |committed_only: bool| -> Result<Value, String> {
         let mut command = worktree_ripr();
         command
@@ -1661,7 +1668,18 @@ fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
     }
     drop(session);
     let after = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
-    if before != after {
+    let after_head = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?;
+    let after_diff = common::fixture_git::fixture_git_output(&root, &["diff", "--binary", "HEAD"])?;
+    let after_index =
+        common::fixture_git::fixture_git_output(&root, &["diff", "--cached", "--binary"])?;
+    let after_untracked =
+        std::fs::read(root.join("src/untracked.rs")).map_err(|error| error.to_string())?;
+    if before != after
+        || before_head != after_head
+        || before_diff != after_diff
+        || before_index != after_index
+        || before_untracked != after_untracked
+    {
         return Err(format!(
             "analysis changed the dirty fixture: before={before:?}, after={after:?}"
         ));
