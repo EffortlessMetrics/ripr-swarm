@@ -187,11 +187,16 @@ fn child(case: &Case, timeout: Duration) -> Result<crate::run::TimedOutput, Stri
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let path = crate::normalize_path(&case.fixture);
     #[cfg(not(target_os = "linux"))]
-    let envs = [(CHILD_PATH, path.as_str())];
+    let envs = [(CHILD_PATH, path.as_str()), ("CARGO_TERM_COLOR", "never")];
     #[cfg(target_os = "linux")]
     let marker = crate::normalize_path(&child_pid_path(case)?);
     #[cfg(target_os = "linux")]
-    let envs = [(CHILD_PATH, path.as_str()), (CHILD_PID, marker.as_str())];
+    // Keep Cargo's complete wait diagnostic stable under CI's inherited color.
+    let envs = [
+        (CHILD_PATH, path.as_str()),
+        (CHILD_PID, marker.as_str()),
+        ("CARGO_TERM_COLOR", "never"),
+    ];
     let result = crate::run::capture_output_measured(
         &exe.to_string_lossy(),
         &[
@@ -229,6 +234,7 @@ fn child_after_readiness(
             (CHILD_PATH, path.as_str()),
             (CHILD_PID, marker.as_str()),
             (CHILD_START_GATE, gate.as_str()),
+            ("CARGO_TERM_COLOR", "never"),
         ],
         deadline,
         "owned real fixture readiness process",
