@@ -122,13 +122,44 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             "ripr check --json",
         ));
     }
-    super::resolve_worktree_root(&mut input, worktree, root_explicitly_provided)?;
+    // #7331 review: implicit `--worktree` root discovery runs below argv
+    // parsing and can fail on the Git probe; `context` is JSON-only, so the
+    // failure writes the shared refusal envelope (with a root-unusable
+    // identity) instead of leaving stdout empty.
+    let root_resolution =
+        super::resolve_worktree_root(&mut input, worktree, root_explicitly_provided);
+    if let Err(err) = root_resolution {
+        return Err(crate::cli::commands_context::refuse_json_envelope(
+            crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+            "diff",
+            Some(input.mode.as_str()),
+            &input.root,
+            input.base.as_deref(),
+            crate::core_error::CoreError::repository_root_unusable(err),
+        ));
+    }
     // #7331: `context` produces JSON only, so every post-argv-parse failure
     // below writes the shared refusal envelope (keyed with the context
     // packet's own version) to stdout before the prose error reaches
     // stderr. The usage gates above (selector requirement, flag conflicts)
-    // stay prose-only, exactly like `check`. The closure owns its context
+    // stay prose-only, exactly like `check`. The refusal context owns its
     // snapshot so `input` can move into the pipeline call afterwards.
+    let parsed_context = (input.root.clone(), input.base.clone(), input.mode.as_str());
+    let config = load_for_root(&input.root).map_err(|err| {
+        crate::cli::commands_context::refuse_json_envelope(
+            crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+            "diff",
+            Some(parsed_context.2),
+            &parsed_context.0,
+            parsed_context.1.as_deref(),
+            crate::cli::commands_context::config_load_refusal(&parsed_context.0, err),
+        )
+    })?;
+    apply_to_check_input(&mut input, &config, explicit);
+    // Capture the effective mode after config merging: a configured
+    // `[analysis] mode` replaces the default, and later refusals must name
+    // the mode analysis actually ran with, not the pre-merge default
+    // (#7331 review).
     let envelope_context = (input.root.clone(), input.base.clone(), input.mode.as_str());
     let refuse = |error: crate::core_error::CoreError| -> String {
         crate::cli::commands_context::refuse_json_envelope(
@@ -140,13 +171,6 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             error,
         )
     };
-    let config = load_for_root(&input.root).map_err(|err| {
-        refuse(crate::cli::commands_context::config_load_refusal(
-            &envelope_context.0,
-            err,
-        ))
-    })?;
-    apply_to_check_input(&mut input, &config, explicit);
     let Some(selector) = selector else {
         return Err(super::missing_selector_error(
             "missing --at or --finding selector",

@@ -232,9 +232,17 @@ pub(crate) fn load_findings_for_reuse_core(
         ));
     }
 
-    verify_scope_assertions(&artifact.identity.diff_source, input, asserted_base, path)?;
-    let current = build_identity_at_load(input, config, &artifact.identity, path)?;
-    verify_identity(&artifact, &current, path)?;
+    // The verification stages diagnose with plain strings; `?` would
+    // flatten them into the untyped fallback identity. Map them into the
+    // artifact family so a scope or identity mismatch refuses as
+    // `check_artifact_unusable` like every structural branch above (#7331
+    // review).
+    verify_scope_assertions(&artifact.identity.diff_source, input, asserted_base, path)
+        .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
+    let current = build_identity_at_load(input, config, &artifact.identity, path)
+        .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
+    verify_identity(&artifact, &current, path)
+        .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
     Ok(artifact.findings)
 }
 

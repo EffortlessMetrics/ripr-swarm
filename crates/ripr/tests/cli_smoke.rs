@@ -3645,6 +3645,186 @@ fn agent_packet_json_unknown_seam_id_emits_refusal_envelope() -> Result<(), Stri
     Ok(())
 }
 
+/// #7331 review: `ripr agent packet --json --root <missing>` refuses with
+/// the shared envelope (`repository_root_unusable`) instead of exiting 2
+/// with zero stdout — the root gate sits below argv parsing, inside the
+/// refusal envelope's coverage.
+#[test]
+fn agent_packet_json_unusable_root_emits_refusal_envelope() -> Result<(), String> {
+    let root = unique_external_workspace("packet-json-missing-root")?;
+    // Deliberately not created: the root gate must be the refusing stage.
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "agent",
+        "packet",
+        "--json",
+        "--root",
+        &root_arg,
+        "--seam-id",
+        "seam:definitely-not-real-9f2a-7331",
+    ]);
+    let value = assert_json_refusal_envelope(
+        &output,
+        "0.5",
+        "repo",
+        "repository_root_unusable",
+        "analysis/repository-root",
+    )?;
+    if value["root"] != root_arg.as_str() {
+        return Err(format!(
+            "refusal must echo the caller-supplied root: {value}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7331 review: `ripr diff --json` in a workspace whose config selects a
+/// non-default mode refuses naming the effective mode (`deep`), not the
+/// pre-merge default — the same mode the check itself would have run with.
+#[test]
+fn diff_json_refusal_reports_configured_mode() -> Result<(), String> {
+    let root = init_check_refusal_repo("diff-json-configured-mode", 1)?;
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
+        .map_err(|e| format!("write ripr.toml: {e}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "diff",
+        "--json",
+        "--root",
+        &root_arg,
+        "--base",
+        "definitely-not-a-real-ref-9f2a-7331",
+    ]);
+    let value = assert_json_refusal_envelope(
+        &output,
+        "0.1",
+        "diff",
+        "base_unresolvable",
+        "analysis/base-resolution",
+    )?;
+    if value["mode"] != "deep" {
+        return Err(format!(
+            "refusal must report the config-selected mode: {value}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7331 review: `ripr context --from <missing>` in a workspace whose
+/// config selects a non-default mode refuses naming the effective mode.
+#[test]
+fn context_json_refusal_reports_configured_mode() -> Result<(), String> {
+    let root = init_check_refusal_repo("context-json-configured-mode", 1)?;
+    std::fs::write(root.join("ripr.toml"), "[analysis]\nmode = \"ready\"\n")
+        .map_err(|e| format!("write ripr.toml: {e}"))?;
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "context",
+        "--root",
+        &root_arg,
+        "--at",
+        "src/lib.rs:1",
+        "--from",
+        "nope-7331.json",
+    ]);
+    let value = assert_json_refusal_envelope(
+        &output,
+        "1.0",
+        "diff",
+        "check_artifact_unusable",
+        "analysis/check-artifact",
+    )?;
+    if value["mode"] != "ready" {
+        return Err(format!(
+            "refusal must report the config-selected mode: {value}"
+        ));
+    }
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
+/// #7331 review: an artifact reused with a conflicting `--base` assertion
+/// refuses as `check_artifact_unusable` — the typed artifact family with
+/// the exact mismatch diagnostic — never the untyped `analysis_failed`
+/// fallback a String conversion would publish.
+#[test]
+fn context_json_scope_mismatch_refuses_as_artifact_unusable() -> Result<(), String> {
+    let root = unique_temp_workspace("context-scope-mismatch");
+    let result = (|| {
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        run_git(&root, &["init"])?;
+        run_git(&root, &["config", "user.email", "test@test.com"])?;
+        run_git(&root, &["config", "user.name", "Test"])?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount >= threshold\n}\n",
+        )
+        .map_err(|err| format!("write base lib.rs: {err}"))?;
+        std::fs::write(
+            root.join("Cargo.toml"),
+            "[package]\nname = \"spec-7331-scope-fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )
+        .map_err(|err| format!("write Cargo.toml: {err}"))?;
+        run_git(&root, &["add", "."])?;
+        run_git(&root, &["commit", "-m", "initial"])?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+        )
+        .map_err(|err| format!("write dirty lib.rs: {err}"))?;
+
+        let root_str = root.to_string_lossy().into_owned();
+        let artifact = root.join("last-check.json");
+        let artifact_arg = artifact.display().to_string();
+        let check = run_ripr(&[
+            "check",
+            "--root",
+            &root_str,
+            "--base",
+            "HEAD",
+            "--worktree",
+            "--json",
+            "--write-artifact",
+            &artifact_arg,
+        ]);
+        assert_success(&check);
+
+        // The recording pins base "HEAD"; asserting "main" against it is a
+        // scope mismatch, one family with every structural artifact refusal.
+        let output = run_ripr(&[
+            "context",
+            "--root",
+            &root_str,
+            "--from",
+            &artifact_arg,
+            "--base",
+            "main",
+            "--at",
+            "src/lib.rs:1",
+        ]);
+        let value = assert_json_refusal_envelope(
+            &output,
+            "1.0",
+            "diff",
+            "check_artifact_unusable",
+            "analysis/check-artifact",
+        )?;
+        let message = value["run_limitations"][0]["message"]
+            .as_str()
+            .ok_or("refusal must carry a message")?;
+        if !message.contains("diff_source.base") {
+            return Err(format!(
+                "the message must name the mismatched scope field: {message}"
+            ));
+        }
+        Ok(())
+    })();
+    ignore_remove_dir_all(&root);
+    result
+}
+
 /// #7332: `check --format sarif` on a refused run emits a schema-valid SARIF
 /// log whose only signal is the tool-configuration notification carrying the
 /// typed identity — uploadable to code scanning, unlike zero bytes.

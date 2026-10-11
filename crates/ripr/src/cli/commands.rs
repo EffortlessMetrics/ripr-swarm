@@ -2805,8 +2805,11 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
     // #7331: every post-argv-parse failure of a JSON diff run writes the
     // shared refusal envelope (the diff report's own schema version) to
     // stdout before the prose error reaches stderr. Argv usage errors above
-    // stay prose-only.
-    let refuse = |error: crate::core_error::CoreError| -> String {
+    // stay prose-only. Config loading comes first and has no merged mode
+    // yet, so its refusal names the parsed mode.
+    let config = load_for_root(&options.root).map_err(|err| {
+        let error =
+            crate::cli::commands_context::config_load_refusal(&options.root, err);
         if !json {
             return error.to_string();
         }
@@ -2818,13 +2821,33 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
             options.base.as_deref(),
             error,
         )
-    };
-    let config = load_for_root(&options.root).map_err(|err| {
-        refuse(crate::cli::commands_context::config_load_refusal(
-            &options.root,
-            err,
-        ))
     })?;
+    // Effective mode after config merging: `run_diff_check_from_file`
+    // applies `config.analysis.mode()` unless `--mode` was explicit, and a
+    // later refusal must name the mode the check actually ran with, not
+    // the pre-merge default (#7331 review).
+    let effective_mode = if options.explicit.mode {
+        options.mode.clone()
+    } else {
+        config
+            .analysis
+            .mode()
+            .cloned()
+            .unwrap_or_else(|| options.mode.clone())
+    };
+    let refuse = |error: crate::core_error::CoreError| -> String {
+        if !json {
+            return error.to_string();
+        }
+        crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(effective_mode.as_str()),
+            &options.root,
+            options.base.as_deref(),
+            error,
+        )
+    };
     // #3952 / RIPR-SPEC-0084: an omitted --base resolves the repository's
     // default branch through the same authority as `ripr check`, and an
     // explicit one is verified there, instead of assuming `origin/main`.

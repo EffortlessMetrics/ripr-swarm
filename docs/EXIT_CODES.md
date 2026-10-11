@@ -74,10 +74,11 @@ document should branch on `exit`, not on free-text `stop_states`.
   `agent-seam-packets-json` render their format's degraded/refused envelope
   (zeroed counts, `run_status: "refused"`). Machine formats without an
   honest refusal shape yet — `repo-sarif`, `badge-plus`, `repo-badge-*`,
-  `shields`, `repo-seams-*`, and `repo-exposure-summary-json` — stay
-  prose-only on stdout for now; that gap is a named limitation, not a clean
-  result. Only argv usage errors stay prose-only with empty stdout on every
-  command. [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the refusal
+  `shields`, `repo-seams-*`, and `repo-exposure-summary-json` — write
+  nothing to stdout and put the prose diagnostic on stderr for now; that
+  gap is a named limitation, not a clean result. Exactly two cases stay
+  prose-only with empty stdout on every command: argv usage errors and
+  these not-yet-refusing machine formats. [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the refusal
   shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.

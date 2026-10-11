@@ -340,8 +340,13 @@ fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSel
 
 fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
     let json = options.json;
-    ensure_command_root(&options.root, "agent packet")
-        .map_err(|err| CoreError::repository_root_unusable(err))?;
+    // #7331 review: the root check is below argv parsing, so a `--json`
+    // packet run with an unusable `--root` refuses through the same
+    // envelope instead of exiting 2 with empty stdout.
+    if let Err(err) = ensure_command_root(&options.root, "agent packet") {
+        let error = CoreError::repository_root_unusable(err);
+        return Err(refuse_agent_packet(&options, error, json));
+    }
     match render_agent_packet(&options) {
         Ok(rendered) => {
             print!("{rendered}");

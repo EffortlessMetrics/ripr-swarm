@@ -749,8 +749,9 @@ format and each carrying the same typed identity and repair route:
 
 Machine formats without an honest refusal shape yet (`repo-sarif`,
 `badge-plus`, `repo-badge-*`, `shields`, `repo-seams-*`,
-`repo-exposure-summary-json`) stay prose-only on stdout for now; that gap is a
-named limitation, not a clean result.
+`repo-exposure-summary-json`) write nothing to stdout and put the prose
+diagnostic on stderr for now; that gap is a named limitation, not a clean
+result.
 
 Whether the analysis ran is implicit per identity, not a separate field.
 `suppression_policy_invalid` is the one identity where classification ran to
