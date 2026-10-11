@@ -26,6 +26,18 @@ fn remove_base(base: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// Human `Cache dir:` lines go through `output::path::human_path` (#7326), so
+/// the printed spelling can differ from `Path::display()` on Windows. Match
+/// the header by leaf name rather than duplicating the renderer.
+fn stdout_names_cache_dir(stdout: &str, cache_dir: &Path) -> bool {
+    let Some(name) = cache_dir.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+    stdout
+        .lines()
+        .any(|line| line.starts_with("Cache dir:") && line.contains(name))
+}
+
 /// The one spawn site for the exact `ripr` binary in this file.
 fn run_ripr(base: &Path, cache_dir: &Path, args: &[&str]) -> Result<std::process::Output, String> {
     Command::new(env!("CARGO_BIN_EXE_ripr"))
@@ -54,7 +66,7 @@ fn cache_clear_force_preserves_unrelated_siblings_through_exact_binary() -> Resu
         && !layer.exists()
         && sentinel.is_file()
         && cache_dir.is_dir()
-        && stdout.contains(&format!("Cache dir: {}", cache_dir.display()))
+        && stdout_names_cache_dir(&stdout, &cache_dir)
         && stdout.contains("Preserved the cache root and unrelated siblings");
     remove_base(&base)?;
 
@@ -133,7 +145,7 @@ fn cache_status_hint_names_a_published_command_that_clears_the_same_dir() -> Res
         && hint.contains("`ripr cache clear --force`")
         && !hint.contains("xtask");
     let preview_targets_same_dir = preview.status.success()
-        && preview_stdout.contains(&format!("Cache dir: {}", cache_dir.display()))
+        && stdout_names_cache_dir(&preview_stdout, &cache_dir)
         && entry_kept;
     if !(status.status.success() && names_published_command && preview_targets_same_dir) {
         return Err(format!(
