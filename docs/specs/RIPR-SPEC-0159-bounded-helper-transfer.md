@@ -115,7 +115,10 @@ can only hint that a caller "may lead here" without changing anything.
 - Returned mutable-ledger identity (#3215, ub-review #1363): a constructed
   field directly inside a record passed to an owner parameter's `push` can
   retain the first helper hop's mutable argument and returned local binding in
-  `PropagationWitnessV1`. The call must be the caller's final statement, its
+  `PropagationWitnessV1`. The source field must match uniquely by owner, line
+  and normalized field expression: probe locations do not retain occurrence
+  offsets, so identical same-line fields refuse identity. The call must be the
+  caller's final statement, its
   exact `&mut local` argument must match the resolved hop. Mutability comes
   from parsed `RefType`/`RefExpr` tokens, never a canonicalized text prefix;
   shared `&mutLedger` types and `&mut_errors` arguments refuse, as do raw

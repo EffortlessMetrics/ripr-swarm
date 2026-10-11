@@ -43,12 +43,12 @@ pub(crate) fn returned_ledger(
         .descendants()
         .find_map(ast::Fn::cast)?;
     let changed_line = probe.location.line.checked_sub(owner.start_line)?;
-    let field = function
+    let mut matching_fields = function
         .body()?
         .syntax()
         .descendants()
         .filter_map(ast::RecordExprField::cast)
-        .find(|field| {
+        .filter(|field| {
             let offset = usize::from(field.syntax().text_range().start());
             owner.body[..offset]
                 .bytes()
@@ -57,7 +57,13 @@ pub(crate) fn returned_ledger(
                 == changed_line
                 && field_identity(&field.syntax().text().to_string())
                     == field_identity(&probe.expression)
-        })?;
+        });
+    // Probe locations retain a line, not an occurrence range. Identical fields
+    // on that line cannot establish which receiver carries the changed value.
+    let field = matching_fields.next()?;
+    if matching_fields.next().is_some() {
+        return None;
+    }
     if function.async_token().is_some()
         || field.syntax().ancestors().find_map(ast::Fn::cast).as_ref() != Some(&function)
         || field.syntax().ancestors().any(|node| {
@@ -522,6 +528,25 @@ mod tests {
             assert!(
                 returned_ledger(&owner, &probe, &chain).is_none(),
                 "{caller}"
+            );
+        }
+    }
+
+    #[test]
+    fn same_line_field_identity_requires_a_unique_occurrence() {
+        let (mut owner, mut probe, mut chain) = route(
+            "fn collect() -> Vec<PolicyError> { let mut errors = Vec::new(); let mut discarded = Vec::new(); record(&mut errors, &mut discarded); errors }",
+        );
+        chain.hops[0].arguments.push("&mut discarded".to_string());
+        probe.location.line = owner.start_line;
+        for sibling in ["diagnostic", "unrelated"] {
+            owner.body = format!(
+                "fn record(errors: &mut Vec<PolicyError>, discarded: &mut Vec<PolicyError>) {{ errors.push(PolicyError {{ detail: format!(\"diagnostic\"), }}); discarded.push(PolicyError {{ detail: format!(\"{sibling}\"), }}); }}"
+            ).into();
+            assert_eq!(
+                returned_ledger(&owner, &probe, &chain).is_some(),
+                sibling == "unrelated",
+                "{sibling}"
             );
         }
     }
