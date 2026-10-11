@@ -4,7 +4,8 @@ Status: proposed
 
 Issue: #3296 (parent #3215; builds on #3294 / RIPR-SPEC-0157 and
 #3295 / RIPR-SPEC-0158). Classification of a uniqueness-only refusal:
-#7080. Raw-identifier receiver/path not an entry: #7270. Qualified
+#7080. Raw-identifier receiver/path not an entry: #7270. Reach and
+stop presentation of that rewrite: #7272. Qualified
 sibling of the uniqueness-stop hop is not an entry: #7268.
 
 ## Problem
@@ -58,6 +59,11 @@ can only hint that a caller "may lead here" without changing anything.
   associated function (or a non-unique caller of it, such as
   `from_str` wrapping a non-unique `parse`), the finding is
   `static_unknown` naming that function, not `no_static_path` (#7080).
+  That rewrite sets reach to `unknown` with an identity summary (not
+  `no`) and emits `helper_identity_unresolved` rather than
+  `static_probe_unknown` (#7272). Human stop text uses the domain
+  `describe()` gloss, which names callee-identity, not a missing probe
+  shape (ADR 0019).
   A uniqueness stop that no test enters — including a unique wrapper of a
   non-unique helper (`outer` wrapping a second `inner`), or a receiver
   call that only shares the bare name (`req.parse()`, `req.r#parse()`)
@@ -133,8 +139,10 @@ typed callee identity, workspace-complete uniqueness, and exact
 argument binding — and only that relation relates tests and carries
 values. A chain the typed relation cannot fully resolve keeps the 0114
 limitation unchanged, except the #7080 uniqueness-only case: when a
-test calls the ambiguous entry, classification becomes `static_unknown`
+  test calls the ambiguous entry, classification becomes `static_unknown`
 instead of leaving a false `no_static_path` for 0114 to annotate.
+Reach on that rewritten finding is `unknown` and the stop reason is
+`helper_identity_unresolved` (#7272).
 
 ## Required Evidence
 
@@ -172,7 +180,9 @@ instead of leaving a false `no_static_path` for 0114 to annotate.
   limitation remains), except a uniqueness-only stop that a test
   actually enters, which abstains as `static_unknown` naming the
   ambiguous function (#7080) rather than claiming no test reaches the
-  owner.
+  owner. That finding's reach stage is `unknown` and its stop reason
+  names callee-identity (`helper_identity_unresolved`), not a missing
+  probe shape (#7272).
 - The workspace-completeness gate is mandatory: a partial index never
   transfers (a same-named function in an unindexed file would make the
   name falsely unique).
@@ -197,7 +207,9 @@ instead of leaving a false `no_static_path` for 0114 to annotate.
 `analysis/classify/helper_transfer.rs` `tests`;
 `analysis/classifier.rs` (`given_helper_chain_refused_for_non_unique_entry_when_tests_call_it_then_static_unknown`,
 `given_helper_chain_refused_for_non_unique_callee_when_tests_call_a_unique_wrapper_then_no_static_path`,
-`given_helper_chain_refused_for_non_unique_entry_when_tests_only_call_a_receiver_then_no_static_path`);
+`given_helper_chain_refused_for_non_unique_entry_when_tests_only_call_a_receiver_then_no_static_path`,
+`assert_uniqueness_unknown_identity_stage`);
+`output/human/explain.rs` (`helper_identity_unresolved_explain_uses_domain_describe`);
 `analysis/classify/related_tests.rs` (the `HelperOwnerCall` relation
 branch); `analysis/classify/activation.rs` (transferred rows and the
 call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`;
@@ -223,6 +235,11 @@ propagation stop, rebinding stop).
 - `analysis/classify/context.rs` — the chain on `ProbeContext`.
 - `analysis/classifier/evidence.rs` — the hop-propagation stop
   (`helper_result_not_forwarded`).
+- `analysis/classifier.rs` (`withhold_helper_uniqueness_as_unknown`) —
+  uniqueness-only class rewrite, reach identity stage, and
+  `helper_identity_unresolved` (#7080 / #7272).
+- `domain/probe.rs` — `StopReason::HelperIdentityUnresolved`.
+- `output/human/explain.rs` — ADR 0019 gloss via `describe()`.
 
 ## Metrics
 
