@@ -294,7 +294,7 @@ fn sole_top_level_initializer_call(
         {
             // A parent re-export can make `super::helper` the same function.
             // Unknown qualifications must not disappear from uniqueness;
-            // only a proven distinct nominal root receiver is noncompeting.
+            // only a declared distinct nominal root receiver is noncompeting.
             return None;
         }
     }
