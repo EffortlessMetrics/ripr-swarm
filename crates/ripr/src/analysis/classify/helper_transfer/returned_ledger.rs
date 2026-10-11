@@ -3,7 +3,7 @@
 
 use super::{HelperChain, caller_rebinds_parameter};
 use crate::analysis::facts::FunctionSummary;
-use crate::analysis::syntax::parse_clean_source_file;
+use crate::analysis::syntax::{fn_name_binding_count, parse_clean_source_file};
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode,
@@ -115,14 +115,21 @@ pub(crate) fn returned_ledger(
     {
         return None;
     }
+    // Use the existing full-function binding authority: signature patterns,
+    // all body patterns and named items can replace this unqualified callee.
+    // Check both source spellings of a raw-capable identifier, failing closed
+    // when the authority cannot parse the declaration.
+    let name = owner.name.trim_start_matches("r#");
+    if fn_name_binding_count(&hop.caller.body, name)? != 0
+        || fn_name_binding_count(&hop.caller.body, &format!("r#{name}"))? != 0
+    {
+        return None;
+    }
     let body = caller_fn.body()?;
     // Imports, value/item declarations and opaque statement expansions can
     // replace the unqualified callee. Refuse before establishing an owner edge.
     if body.syntax().descendants().any(|node| {
         ast::Use::can_cast(node.kind())
-            || ast::Name::cast(node.clone()).is_some_and(|name| {
-                name.text().trim_start_matches("r#") == owner.name.trim_start_matches("r#")
-            })
             || ast::MacroCall::cast(node)
                 .is_some_and(|call| crate::analysis::syntax::macro_call_is_statement(&call))
     }) {
@@ -380,6 +387,42 @@ mod tests {
             )
         );
         Ok(())
+    }
+
+    #[test]
+    fn caller_signature_pattern_shadows_have_no_transfer() {
+        for parameters in [
+            "record: fn(&mut Vec<PolicyError>)",
+            "r#record: fn(&mut Vec<PolicyError>)",
+            "mut record: fn(&mut Vec<PolicyError>)",
+            "(record, _): (fn(&mut Vec<PolicyError>), bool)",
+            "(r#record, _): (fn(&mut Vec<PolicyError>), bool)",
+            "Callbacks { record }: Callbacks",
+            "Callbacks { r#record }: Callbacks",
+            "Callbacks { other: record }: Callbacks",
+        ] {
+            let caller = format!(
+                "fn collect({parameters}) -> Vec<PolicyError> {{ let mut errors = Vec::new(); record(&mut errors); errors }}"
+            );
+            let (owner, probe, chain) = route(&caller);
+            assert!(
+                returned_ledger(&owner, &probe, &chain).is_none(),
+                "{parameters}"
+            );
+        }
+        for parameters in [
+            "callback: fn(&mut Vec<PolicyError>)",
+            "Callbacks { record: callback }: Callbacks",
+        ] {
+            let caller = format!(
+                "fn collect({parameters}) -> Vec<PolicyError> {{ let mut errors = Vec::new(); record(&mut errors); errors }}"
+            );
+            let (owner, probe, chain) = route(&caller);
+            assert!(
+                returned_ledger(&owner, &probe, &chain).is_some(),
+                "{parameters}"
+            );
+        }
     }
 
     #[test]

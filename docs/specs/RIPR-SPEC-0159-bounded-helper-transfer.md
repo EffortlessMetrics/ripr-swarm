@@ -122,7 +122,8 @@ can only hint that a caller "may lead here" without changing anything.
   must match the parameter's pointee, without generic substitutions. Both
   declarations must bind uniquely to the indexed source and be synchronous;
   fact body fragments alone omit qualifiers and cannot establish execution. Caller
-  imports, callee-named value/item declarations, and opaque item/statement macro
+  imports, callee-named signature/body bindings (including raw names and
+  destructuring patterns), value/item declarations, and opaque item/statement macro
   expansions refuse the unqualified helper edge. Rebound,
   shadowed, discarded, sibling-field, transformed-return and later-write cases
   refuse this transfer. This is **partial identity evidence**, not an exception
