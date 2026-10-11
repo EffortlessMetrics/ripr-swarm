@@ -126,7 +126,11 @@ can only hint that a caller "may lead here" without changing anything.
   one mutable binding and no assignment, and the tail must return that local.
   Caller and owner must share source/type scope and the declared return type
   must match the parameter's pointee, without generic substitutions. Both
-  declarations must bind uniquely to the indexed source and be synchronous;
+  declarations must bind uniquely to the indexed source, be synchronous and
+  unattributed direct items in the same lexical source-file/module scope, with
+  unique direct declaration names. Const/static/block-local declarations,
+  associated functions, conditional declarations and different module scopes
+  refuse; SymbolId prefixes or a free-function fact alone are insufficient.
   fact body fragments alone omit qualifiers and cannot establish execution. Caller
   imports, callee-named signature/body bindings (including raw names and
   destructuring patterns), value/item declarations, and opaque item/statement macro

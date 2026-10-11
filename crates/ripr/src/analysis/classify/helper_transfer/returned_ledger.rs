@@ -7,7 +7,7 @@ use crate::analysis::syntax::{fn_name_binding_count, parse_clean_source_file};
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode,
-    ast::{self, HasArgList, HasGenericParams, HasName},
+    ast::{self, HasArgList, HasAttrs, HasGenericParams, HasName},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -277,6 +277,7 @@ fn synchronous_definitions(source: &str, facts: &[&FunctionSummary]) -> bool {
     let Some(parsed) = parse_clean_source_file(source) else {
         return false;
     };
+    let mut declaration_scope = None;
     facts.iter().all(|fact| {
         let mut matches = parsed
             .tree()
@@ -302,10 +303,45 @@ fn synchronous_definitions(source: &str, facts: &[&FunctionSummary]) -> bool {
             });
         // Same-line identical siblings have indistinguishable fact bodies.
         // Reject ambiguity before checking the matched declaration's qualifier.
-        matches
-            .next()
-            .is_some_and(|function| function.async_token().is_none())
-            && matches.next().is_none()
+        let Some(function) = matches.next() else {
+            return false;
+        };
+        if matches.next().is_some()
+            || function.async_token().is_some()
+            || function.attrs().next().is_some()
+        {
+            return false;
+        }
+        // Free-function facts also include declarations inside const/block
+        // expressions. Only direct, unconditional module items share the bare
+        // call's namespace; associated/local declarations are unsupported.
+        let Some(scope) = function.syntax().parent() else {
+            return false;
+        };
+        if !(ast::SourceFile::can_cast(scope.kind())
+            || (ast::ItemList::can_cast(scope.kind())
+                && scope
+                    .parent()
+                    .is_some_and(|parent| ast::Module::can_cast(parent.kind()))))
+            || declaration_scope
+                .as_ref()
+                .is_some_and(|previous| previous != &scope)
+        {
+            return false;
+        }
+        let count = scope
+            .children()
+            .filter_map(ast::AnyHasName::cast)
+            .filter_map(|item| item.name())
+            .filter(|name| {
+                name.text().trim_start_matches("r#") == fact.name.trim_start_matches("r#")
+            })
+            .count();
+        if count != 1 {
+            return false;
+        }
+        declaration_scope = Some(scope);
+        true
     })
 }
 
@@ -391,6 +427,37 @@ mod tests {
         );
         assert!(!synchronous_definitions(&source, &[&owner]));
         assert!(synchronous_definitions(&owner.body, &[&owner]));
+    }
+
+    #[test]
+    fn returned_ledger_requires_shared_lexical_module_scope() {
+        let owner = function("record", "fn record(errors: &mut Vec<PolicyError>) {}");
+        let caller = function("collect", "fn collect() {}");
+        for source in [
+            format!("{} {}", owner.body, caller.body),
+            format!("mod same {{ {} {} }}", owner.body, caller.body),
+        ] {
+            assert!(synchronous_definitions(&source, &[&owner, &caller]));
+        }
+        for source in [
+            format!(
+                "const record: fn(&mut Vec<PolicyError>) = |_| {{}}; const _: () = {{ {} }}; {}",
+                owner.body, caller.body
+            ),
+            format!("static HIDDEN: () = {{ {} }}; {}", owner.body, caller.body),
+            format!("fn outer() {{ {} }} {}", owner.body, caller.body),
+            format!("impl Collector {{ {} {} }}", owner.body, caller.body),
+            format!("mod a {{ {} }} mod b {{ {} }}", owner.body, caller.body),
+            format!(
+                "#[cfg(any())] {} const record: fn(&mut Vec<PolicyError>) = |_| {{}}; {}",
+                owner.body, caller.body
+            ),
+        ] {
+            assert!(
+                !synchronous_definitions(&source, &[&owner, &caller]),
+                "{source}"
+            );
+        }
     }
 
     #[test]
