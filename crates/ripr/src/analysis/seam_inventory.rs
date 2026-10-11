@@ -8320,6 +8320,62 @@ impl Beta { pub fn new(x: i32) -> i32 { if x > 5 { x } else { 5 } } }
     #[test]
     fn changed_test_inventory_refuses_shadowed_and_nested_constructor_paths() -> Result<(), String>
     {
+        for import in [
+            "use crate::support::Alpha;",
+            "use self::support::{Alpha};",
+            "use crate::support::*;",
+            "use crate::{support::*};",
+        ] {
+            let root = make_tempdir("targeted-import-shadowed-constructor")?;
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    r#"
+pub struct Alpha;
+impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}
+#[cfg(test)] mod support {{
+    pub struct Alpha;
+    impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 1 {{ x }} else {{ 1 }} }} }}
+}}
+#[test] fn selected() {{ {import} assert_eq!(Alpha::new(1), 1); }}
+#[test] fn explicit() {{ {import} assert_eq!(crate::Alpha::new(1), 1); }}
+"#
+                ),
+            )?;
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            let explicit = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("explicit"),
+            )?;
+            let explicit_owners = explicit
+                .classified
+                .iter()
+                .map(|entry| entry.seam.owner())
+                .collect::<BTreeSet<_>>();
+            if explicit.selected_test_count != 1
+                || explicit_owners != BTreeSet::from(["src/lib.rs::impl Alpha::new"])
+            {
+                return Err(format!(
+                    "{import} changed explicit root owner: {explicit_owners:?}"
+                ));
+            }
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            match result {
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                }) => {}
+                other => return Err(format!("{import} must refuse shadowed owner: {other:?}")),
+            }
+        }
         for call in ["Alpha::new(1)", "crate::first::Alpha::new(1)"] {
             let root = make_tempdir("targeted-shadowed-constructor")?;
             write_file(

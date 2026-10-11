@@ -287,7 +287,14 @@ impl OwnerPinSyntax {
             return false;
         }
         if prefix == self_ty {
+            // Imported bindings and globs can shadow the local type, including
+            // evidence-only support owners excluded from candidate collection.
+            // Without scope resolution, conservatively refuse any such import
+            // in this file; an explicit crate-root path is checked separately.
             owner_scope.modules == test_scope.modules
+                && !file_use_statements(&facts.source).iter().any(|statement| {
+                    use_statement_binds_name(statement, self_ty) || statement.contains('*')
+                })
         } else if prefix == format!("crate::{self_ty}") {
             owner_scope.modules.is_empty()
                 && self.target_roots(index).root(&owner.file, index).as_ref() == Some(&owner.file)
