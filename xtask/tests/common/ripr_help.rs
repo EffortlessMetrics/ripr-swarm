@@ -114,7 +114,7 @@ fn capture(mut command: Command, budget: Duration, group: bool) -> Result<Output
 }
 
 pub fn run(command: Command) -> Result<Output, String> {
-    capture(command, Duration::from_secs(600), true)
+    capture(command, Duration::from_mins(10), true)
 }
 
 pub fn require_success(output: Output, label: &str) -> Result<Output, String> {
