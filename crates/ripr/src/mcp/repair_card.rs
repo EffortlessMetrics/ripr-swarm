@@ -201,17 +201,15 @@ pub(crate) fn bind_snapshot_card_producers(
         }
         let entry_refs: Vec<&ClassifiedSeam> =
             bound_pairs.iter().map(|(entry, _)| *entry).collect();
-        let currentness = crate::app::repair_card_handoff::evidence_tree_currentness_batch(
-            root,
-            &entry_refs,
-        )
-        .map_err(|error| {
-            AttemptFailure::new(
-                CODE_ANALYSIS_FAILED,
-                format!("the evidence currentness probe failed during refresh: {error}"),
-                "retry with ripr_refresh",
-            )
-        })?;
+        let currentness =
+            crate::app::repair_card_handoff::evidence_tree_currentness_batch(root, &entry_refs)
+                .map_err(|error| {
+                    AttemptFailure::new(
+                        CODE_ANALYSIS_FAILED,
+                        format!("the evidence currentness probe failed during refresh: {error}"),
+                        "retry with ripr_refresh",
+                    )
+                })?;
         for ((entry, item), currentness) in bound_pairs.into_iter().zip(currentness) {
             bindings.push(SeamCardBinding {
                 item_canonical_id: item.canonical_id.clone(),

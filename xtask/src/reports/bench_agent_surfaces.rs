@@ -3354,16 +3354,15 @@ mod tests {
         // commit or the branch was left unborn).
         let outer = root.join("outer");
         let mut all: Vec<String> = vec!["-C".to_string(), outer.display().to_string()];
-        all.extend(["rev-parse", "HEAD"].iter().map(|value| (*value).to_string()));
-        let corrupted_head = crate::run::capture_process_output_isolated(
-            "git",
-            &all,
-            &[],
-            &[],
-            &[],
-        )
-        .map(|output| String::from_utf8_lossy(&output).trim().to_string())
-        .unwrap_or_else(|_| "<unresolvable>".to_string());
+        all.extend(
+            ["rev-parse", "HEAD"]
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
+        let corrupted_head =
+            crate::run::capture_process_output_isolated("git", &all, &[], &[], &[])
+                .map(|output| String::from_utf8_lossy(&output).trim().to_string())
+                .unwrap_or_else(|_| "<unresolvable>".to_string());
         let _ = commit;
         let _ = fs::remove_dir_all(&root);
         assert_ne!(
@@ -3429,7 +3428,11 @@ mod tests {
             "-C".to_string(),
             corpus.display().to_string(),
         ];
-        all.extend(["commit", "-q", "-m", "ripr bench corpus base"].iter().map(|value| (*value).to_string()));
+        all.extend(
+            ["commit", "-q", "-m", "ripr bench corpus base"]
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
         crate::run::capture_process_output_isolated(
             "git",
             &all,

@@ -5621,13 +5621,15 @@ index 0000000..1111111 100644
 
         let root = temp_root("probe-overlap")?;
         let result = (|| -> Result<(), String> {
-            fs::create_dir_all(root.join("src"))
-                .map_err(|err| format!("create src: {err}"))?;
+            fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
             write(
                 &root.join("Cargo.toml"),
                 "[package]\nname = \"probe-overlap-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
             )?;
-            write(&root.join("src/lib.rs"), "pub fn price(a: i32) -> i32 {\n    a - 1\n}\n")?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 1\n}\n",
+            )?;
             fixture_git(&root, &["init", "--initial-branch", "main"])
                 .or_else(|_| fixture_git(&root, &["init"]))?;
             fixture_git(&root, &["config", "user.email", "test@example.com"])?;
@@ -5637,10 +5639,16 @@ index 0000000..1111111 100644
             fixture_git(&root, &["commit", "-m", "base"])?;
             // A second commit makes `HEAD~1` resolvable as the worktree
             // base, and a dirty tracked edit gives the live diff content.
-            write(&root.join("src/lib.rs"), "pub fn price(a: i32) -> i32 {\n    a - 2\n}\n")?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 2\n}\n",
+            )?;
             fixture_git(&root, &["add", "."])?;
             fixture_git(&root, &["commit", "-m", "second"])?;
-            write(&root.join("src/lib.rs"), "pub fn price(a: i32) -> i32 {\n    a - 3\n}\n")?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 3\n}\n",
+            )?;
 
             let mut options = draft_diff_options(root.clone());
             options.base = Some("HEAD~1".to_string());
@@ -5671,8 +5679,7 @@ index 0000000..1111111 100644
                     elapsed.as_secs_f32()
                 ));
             }
-            let analysis =
-                analysis.map_err(|err| format!("worktree pipeline failed: {err}"))?;
+            let analysis = analysis.map_err(|err| format!("worktree pipeline failed: {err}"))?;
             // The overlap must not change the resolved values: the live
             // base was analyzed with its revisions named.
             let revisions = analysis

@@ -324,7 +324,10 @@ fn probe_paths_dirty(
     CURRENTNESS_PROBE_CHILDREN.fetch_add(1, std::sync::atomic::Ordering::Release);
     let output = git_output(root, &arg_refs)
         .map_err(|error| format!("agent card could not probe the working-tree state: {error}"))?;
-    let mut records = output.split('\0').filter(|record| !record.is_empty()).peekable();
+    let mut records = output
+        .split('\0')
+        .filter(|record| !record.is_empty())
+        .peekable();
     while let Some(record) = records.next() {
         // Porcelain v1: two status columns, one space, then the path. The
         // first column is a space for unstaged-only changes, so the record
@@ -336,16 +339,17 @@ fn probe_paths_dirty(
         let status = &record[..2];
         let path = &record[3..];
         dirty.insert(path.replace('\\', "/"));
-        if status.starts_with('R') || status.starts_with('C') {
-            if let Some(original) = records.peek() {
-                // The rename's other path arrives as the next NUL field; a
-                // real record always begins with its two status columns and
-                // a space, which a bare path cannot be assumed to.
-                if !looks_like_status_record(original) {
-                    dirty.insert(original.replace('\\', "/"));
-                    records.next();
-                }
-            }
+        let rename_original = (status.starts_with('R') || status.starts_with('C'))
+            // The rename's other path arrives as the next NUL field; a
+            // real record always begins with its two status columns and
+            // a space, which a bare path cannot be assumed to.
+            .then(|| records.peek())
+            .flatten()
+            .filter(|original| !looks_like_status_record(original))
+            .map(|original| original.replace('\\', "/"));
+        if let Some(original) = rename_original {
+            dirty.insert(original);
+            records.next();
         }
     }
     Ok(())
@@ -2393,7 +2397,7 @@ mod tests {
             // left as worktree state on purpose: the ignored file is
             // committed as tracked content here is wrong — keep it untracked
             // and ignored; the untracked draft stays untracked and reported.
-            let entries = vec![
+            let entries = [
                 entry_for_file("src/tracked.rs"),
                 entry_for_file("src/untracked.rs"),
                 entry_for_file("src/ignored.rs"),
