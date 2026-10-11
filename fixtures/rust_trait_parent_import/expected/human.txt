@@ -1,0 +1,29 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_trait_parent_import/input
+
+Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+
+Start here:
+  State: no gap selected for repair (no_actionable_gap)
+  Safe next action: no non-exposed diff finding was selected. This is not runtime proof, coverage adequacy, or mutation confirmation.
+  File: ./src/lib.rs:7
+  Static exposure: exposed (info, confidence 1.00)
+  Canonical gap: gap:rust:src/lib.rs:impl Render for Sample::render:return_value:return_value:string_from_lit
+  Changed behavior: String::from("")
+  Related test: src/helpers/render_tests.rs:4 render_is_empty
+  Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
+    - reach yes: Related tests appear to reach render: render_is_empty
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 6 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/rust_trait_parent_import/input --diff <cwd>/fixtures/rust_trait_parent_import/diff.patch --mode fast probe:src_lib.rs:return_value:b6bd8eab
+  ripr context --root <cwd>/fixtures/rust_trait_parent_import/input --diff <cwd>/fixtures/rust_trait_parent_import/diff.patch --mode fast --at probe:src_lib.rs:return_value:b6bd8eab
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

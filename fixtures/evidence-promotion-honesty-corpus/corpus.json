@@ -4679,6 +4679,204 @@
         { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
+    },
+    {
+      "id": "rust_trait_default_import",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_default_import",
+      "vector": "trait_dispatch_identity_default_import",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "advances",
+          "file": "src/lib.rs",
+          "line": 22,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_default_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_default_shadow",
+      "vector": "trait_dispatch_identity_default_shadow",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "advances",
+          "file": "src/lib.rs",
+          "line": 35,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_impl_import",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_impl_import",
+      "vector": "trait_dispatch_identity_impl_import",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "render_is_empty",
+          "file": "src/lib.rs",
+          "line": 18,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_impl_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_impl_shadow",
+      "vector": "trait_dispatch_identity_impl_shadow",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "render_is_empty",
+          "file": "src/lib.rs",
+          "line": 28,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_parent_import",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_parent_import",
+      "vector": "trait_dispatch_identity_parent_import",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "render_is_empty",
+          "file": "src/helpers/render_tests.rs",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "direct_owner_call"
+        }
+      ]
+    },
+    {
+      "id": "rust_trait_parent_shadow",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_trait_parent_shadow",
+      "vector": "trait_dispatch_identity_parent_shadow",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "render_is_empty",
+          "file": "src/helpers/render_tests.rs",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong",
+          "relation_reason": "weak_token_substring"
+        }
+      ]
     }
   ]
 }
