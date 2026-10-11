@@ -5279,76 +5279,6 @@ fn rust_conversion_candidates_json(
         .map_err(|err| format!("failed to serialize rust-conversion-candidates report: {err}"))
 }
 
-fn check_executable_files_impl() -> Result<(), String> {
-    let allowlist = read_path_allowlist_optional("policy/executable_allowlist.txt")?;
-    let output = run_output("git", &["ls-files", "--stage"])?;
-    let violations = executable_file_violations(&allowlist, &output);
-
-    finish_policy_report(
-        PolicyReportSpec {
-            report_file: "executable-files.md",
-            check: "check-executable-files",
-            why_it_matters: "Checked-in executable scripts make automation drift away from the Rust-first xtask surface.",
-            fix_kind: FixKind::PolicyExceptionRequired,
-            recommended_fixes: &[
-                "Remove the executable bit from ordinary files.",
-                "Move script behavior into xtask.",
-                "If an executable file is truly required, add a reviewed allowlist entry.",
-                "If an allowlist path is missing or no longer mode 100755, remove the entry.",
-            ],
-            rerun_command: "cargo xtask check-executable-files",
-            exception_template: Some("policy/executable_allowlist.txt entry:\npath/to/file"),
-        },
-        &violations,
-    )
-}
-
-fn executable_file_violations(
-    allowlist: &BTreeSet<String>,
-    git_ls_files_stage: &str,
-) -> Vec<String> {
-    let mut staged_modes = BTreeMap::new();
-    let mut violations = Vec::new();
-
-    for line in git_ls_files_stage.lines() {
-        let Some((mode, path)) = parse_git_stage_line(line) else {
-            continue;
-        };
-        let normalized = normalize_slashes(path);
-        staged_modes.insert(normalized.clone(), mode);
-        if mode == "100755" && !allowlist.contains(&normalized) {
-            violations.push(format!(
-                "checked-in executable file is not allowlisted: {normalized}\n  preferred: use cargo xtask instead of executable scripts"
-            ));
-        }
-    }
-
-    violations.extend(executable_allowlist_stale_row_violations(
-        allowlist,
-        &staged_modes,
-    ));
-    violations
-}
-
-fn executable_allowlist_stale_row_violations(
-    allowlist: &BTreeSet<String>,
-    staged_modes: &BTreeMap<String, &str>,
-) -> Vec<String> {
-    let mut violations = Vec::new();
-    for path in allowlist {
-        match staged_modes.get(path).copied() {
-            Some("100755") => {}
-            Some(mode) => violations.push(format!(
-                "{path} allowlist entry is stale: mode is {mode}, expected 100755; remove the entry"
-            )),
-            None => violations.push(format!(
-                "{path} allowlist entry is stale: path is not in git ls-files --stage; remove the entry"
-            )),
-        }
-    }
-    violations
-}
-
 fn check_text_encoding_impl() -> Result<(), String> {
     let mut violations = Vec::new();
 
@@ -19993,19 +19923,6 @@ fn strip_status_suffix(path: &str) -> &str {
     }
 }
 
-fn read_path_allowlist(path: &str) -> Result<BTreeSet<String>, String> {
-    let mut allowed = BTreeSet::new();
-    let text = read_text_lossy(Path::new(path))?;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        allowed.insert(normalize_slashes(trimmed));
-    }
-    Ok(allowed)
-}
-
 fn read_count_policy_allowlist(path: &str) -> Result<BTreeMap<(String, String), usize>, String> {
     let text = read_text_lossy(Path::new(path))?;
     parse_count_policy_allowlist(path, &text)
@@ -20417,14 +20334,6 @@ fn validate_file_policy_allow_entry(
         }
     }
     Ok(())
-}
-
-fn read_path_allowlist_optional(path: &str) -> Result<BTreeSet<String>, String> {
-    if Path::new(path).exists() {
-        read_path_allowlist(path)
-    } else {
-        Ok(BTreeSet::new())
-    }
 }
 
 fn spec_id_from_file_name(file_name: &str) -> Option<String> {
@@ -21601,15 +21510,6 @@ fn segment_parts_match(pattern: &[char], value: &[char]) -> bool {
             || (!value.is_empty() && segment_parts_match(pattern, &value[1..]));
     }
     !value.is_empty() && pattern[0] == value[0] && segment_parts_match(&pattern[1..], &value[1..])
-}
-
-fn parse_git_stage_line(line: &str) -> Option<(&str, &str)> {
-    let mut parts = line.split_whitespace();
-    let mode = parts.next()?;
-    let _object_type = parts.next()?;
-    let _hash = parts.next()?;
-    let stage_and_path = line.split('\t').nth(1)?;
-    Some((mode, stage_and_path))
 }
 
 fn forbidden_static_terms() -> Vec<String> {
