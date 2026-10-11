@@ -901,7 +901,7 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::doctor_discloses_missing_verification_tools_but_still_checks_manifest",
   "crates/ripr/tests/cli_smoke.rs::doctor_file_root_is_not_reported_as_missing",
   "crates/ripr/tests/cli_smoke.rs::doctor_missing_root_recommends_recovery_and_outside_git_recommends_runnable_command",
-  "crates/ripr/tests/cli_help_hierarchy.rs::doctor_exit_code_guide_distinguishes_analysis_and_source_build"
+  "xtask/tests/ripr_public_guide_contract.rs::doctor_exit_code_guide_distinguishes_analysis_and_source_build"
 ]
 fixtures = []
 code = [
