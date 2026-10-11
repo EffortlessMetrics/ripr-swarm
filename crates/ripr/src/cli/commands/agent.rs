@@ -8,7 +8,7 @@
 
 use crate::analysis;
 use crate::app::agent_brief::{
-    AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
+    AgentBriefPolicy, AgentBriefResolvedWorkingSet, AgentBriefSelection, select_agent_brief_seams,
 };
 use crate::app::{self, OutputFormat};
 use crate::cli::CommandError;
@@ -207,7 +207,7 @@ fn write_agent_start_with_report(
     report: &analysis::ClassifiedSeamsReport,
 ) -> Result<AgentStartWritten, String> {
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
-    let selection = select_agent_brief_seams(
+    let mut selection = select_agent_brief_seams(
         &report.classified,
         &working_set,
         1,
@@ -220,6 +220,7 @@ fn write_agent_start_with_report(
             unknown_seam_id_hint(&options.root, &options.seam_id)
         ));
     }
+    add_agent_brief_provenance_warning(&input.root, &mut selection);
 
     let out_dir = resolve_agent_start_out_dir(&input.root, &options.out_dir);
     std::fs::create_dir_all(&out_dir)
@@ -278,17 +279,7 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, String> {
         options.max_seams,
         AgentBriefPolicy::from_config(&config),
     );
-    // A supplied diff has no base even in a committed Git checkout. Probe the
-    // same HEAD/worktree adapters used by the artifact producer instead of
-    // inferring verification provenance from the working-set selector.
-    let provenance = crate::agent::artifact::current_git_head(&input.root)
-        .and_then(|_| crate::agent::artifact::current_git_worktree_status(&input.root));
-    if let Err(error) = provenance {
-        selection.warnings.push(format!(
-            "{} This root's Git/revision provenance is unavailable: {error}. Saved-patch analysis and agent brief remain supported; use an existing Git checkout with a committed HEAD and available worktree status for the snapshot/verify flow.",
-            crate::agent::artifact::VERIFY_GIT_PROVENANCE_REQUIREMENT,
-        ));
-    }
+    add_agent_brief_provenance_warning(&input.root, &mut selection);
     output::agent_brief::render_agent_brief_json(
         &input.root,
         &input.mode,
@@ -296,6 +287,20 @@ fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, String> {
         &working_set,
         &selection,
     )
+}
+
+fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSelection<'_>) {
+    // A supplied diff has no base even in a committed Git checkout. Probe the
+    // same HEAD/worktree adapters used by the artifact producer instead of
+    // inferring verification provenance from either brief route's selector.
+    let provenance = crate::agent::artifact::current_git_head(root)
+        .and_then(|_| crate::agent::artifact::current_git_worktree_status(root));
+    if let Err(error) = provenance {
+        selection.warnings.push(format!(
+            "{} This root's Git/revision provenance is unavailable: {error}. Saved-patch analysis and agent brief remain supported; use an existing Git checkout with a committed HEAD and available worktree status for the snapshot/verify flow.",
+            crate::agent::artifact::VERIFY_GIT_PROVENANCE_REQUIREMENT,
+        ));
+    }
 }
 
 fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {

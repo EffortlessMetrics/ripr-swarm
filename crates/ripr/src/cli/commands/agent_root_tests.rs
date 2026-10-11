@@ -660,6 +660,7 @@ fn cli_git_patch_brief_without_base_verifies_real_boundary_edit() -> Result<(), 
             .is_some_and(|text| text.contains("Git/revision provenance"))),
         "a null diff base must not claim missing Git: {warnings:?}"
     );
+    assert_eq!(started_brief(root, &brief)?["warnings"], brief["warnings"]);
     let before = root.join("target/identity/before.json");
     let after = root.join("target/identity/after.json");
     write_agent_repo_exposure_snapshot(root, &before)?;
@@ -712,6 +713,7 @@ fn cli_unborn_git_patch_brief_and_snapshot_disclose_missing_revision() -> Result
                 })
             })
     );
+    assert_eq!(started_brief(root, &brief)?["warnings"], brief["warnings"]);
     let snapshot = root.join("target/identity/unborn.json");
     write_agent_repo_exposure_snapshot(root, &snapshot)?;
     let raw = std::fs::read_to_string(snapshot).map_err(|error| error.to_string())?;
@@ -788,5 +790,6 @@ fn cli_git_patch_brief_and_snapshot_disclose_unavailable_worktree() -> Result<()
         "a concrete HEAD must not hide unavailable worktree provenance: {}",
         brief["warnings"]
     );
+    assert_eq!(started_brief(root, &brief)?["warnings"], brief["warnings"]);
     Ok(())
 }
