@@ -41,9 +41,10 @@ pub(in crate::analysis) use gap_admission::{
     REFUSALS_ARE_ANALYZER_LIMITS, withhold_unsupported_gap,
 };
 pub(in crate::analysis) use helper_transfer::{
-    HELPER_RESULT_NOT_FORWARDED, HelperChain, ambiguous_helper_entry_called_by_tests,
-    callee_is_unique, chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops,
-    helper_only_reach, resolve_chain,
+    HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
+    ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_forwards_to_observed_hops,
+    chain_passes_effect_target_to_observed_hops, helper_only_reach, resolve_chain, returned_ledger,
+    returned_ledger_caller_is_observed,
 };
 pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;
 pub(in crate::analysis) use operand_pin::operand_only_pin;
@@ -54,7 +55,7 @@ pub(in crate::analysis) use owner_pin::{
 pub(in crate::analysis) use owner_shape::is_assertion_shaped_owner;
 pub(in crate::analysis) use propagation_witness::{
     PropagationWitnessV1, assertion_observes_direct_collection, current_path_witness,
-    direct_collection_mutation_receiver,
+    direct_collection_mutation_receiver, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use reach::{
     is_proximity_only, is_trait_impl_method, owner_may_be_reached_unseen, reach_evidence,

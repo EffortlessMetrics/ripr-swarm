@@ -28,6 +28,9 @@
 //! alone never establishes propagation or discrimination — the oracle
 //! still has to observe the sink through the ordinary evidence stages.
 
+mod returned_ledger;
+pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
+
 use super::value_transfer::ExactInputs;
 use crate::analysis::facts::{CallFact, FunctionImplContext, FunctionSummary, RustIndex};
 
@@ -1010,6 +1013,32 @@ pub(crate) fn chain_forwards_to_observed_hops(
     )],
 ) -> bool {
     hops_forward_owner_result(owner_name, observed_hops(chain, related_tests))
+}
+
+/// The returned-ledger proof covers only the first caller. It may replace that
+/// hop's ordinary dropped-result explanation only when no higher hop is observed.
+/// Keep higher forwarding failures visible until their identity is established.
+pub(crate) fn returned_ledger_caller_is_observed(
+    ledger: &ReturnedLedger,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> bool {
+    let hops = observed_hops(chain, related_tests);
+    hops.len() == 1
+        && hops[0].caller.id == ledger.caller
+        && related_tests
+            .iter()
+            .any(|(_, reason)| *reason == crate::domain::RelationReason::HelperOwnerCall)
+        && related_tests.iter().all(|(test, reason)| {
+            *reason != crate::domain::RelationReason::HelperOwnerCall
+                || test.calls.iter().any(|call| {
+                    call.name == hops[0].caller.name
+                        && is_direct_call_site(&call.text, &hops[0].caller.name)
+                })
+        })
 }
 
 /// The hops a related test observes: up to the highest hop any

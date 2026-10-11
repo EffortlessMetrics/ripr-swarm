@@ -216,6 +216,92 @@ pub(in crate::analysis) fn current_path_witness(
     Some(witness)
 }
 
+/// A field-to-push route may contain a macro initializer that the complete
+/// local adapter refuses. Retain its exact local field as a candidate only;
+/// the independently parsed returned-ledger route never completes this path.
+pub(in crate::analysis) fn returned_ledger_witness(
+    probe: &Probe,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    if probe.family != ProbeFamily::FieldConstruction {
+        return None;
+    }
+    let owner = probe.owner.clone()?;
+    let identity = normalize_semantic_text(&probe.expression);
+    let sink = sinks.iter().find(|sink| {
+        sink.owner.as_ref() == Some(&owner)
+            && sink.kind == FlowSinkKind::StructField
+            && normalize_semantic_text(&sink.text) == identity
+    })?;
+    let mut witness = PropagationWitnessV1 {
+        schema_version: SCHEMA_VERSION,
+        behavior: BehaviorIdentity {
+            owner,
+            family: probe.family.as_str().to_string(),
+            delta: probe.delta.as_str().to_string(),
+            expression: identity.clone(),
+        },
+        source: PropagationEndpoint {
+            kind: "changed_behavior".to_string(),
+            identity: identity.clone(),
+            line: probe.location.line,
+        },
+        edges: vec![PropagationEdge {
+            kind: PropagationEdgeKind::StructField,
+            status: EdgeStatus::Candidate,
+            from: identity.clone(),
+            to: identity.clone(),
+        }],
+        sink: PropagationEndpoint {
+            kind: sink.kind.as_str().to_string(),
+            identity,
+            line: sink.line,
+        },
+        completeness: PathCompleteness::Partial,
+        limitations: vec!["observer_binding_not_modeled".to_string()],
+        semantic_digest: String::new(),
+    };
+    witness.semantic_digest = witness.compute_semantic_digest();
+    Some(witness)
+}
+
+/// Retain identity-only helper transfer in the existing witness. The pushed
+/// field is a candidate element, and no indexed observer has been established.
+/// This cannot satisfy the complete-direct-witness gate.
+pub(in crate::analysis) fn retain_returned_ledger(
+    witness: &mut PropagationWitnessV1,
+    owner: &SymbolId,
+    parameter: &str,
+    caller: &SymbolId,
+    local: &str,
+) {
+    let parameter_identity = format!("{}::{parameter}", owner.0);
+    let local_identity = format!("{}::{local}", caller.0);
+    witness.edges.push(PropagationEdge {
+        kind: PropagationEdgeKind::EffectTarget,
+        status: EdgeStatus::Candidate,
+        from: witness.sink.identity.clone(),
+        to: parameter_identity.clone(),
+    });
+    witness.edges.push(PropagationEdge {
+        kind: PropagationEdgeKind::EffectTarget,
+        status: EdgeStatus::Established,
+        from: parameter_identity,
+        to: local_identity.clone(),
+    });
+    witness.edges.push(PropagationEdge {
+        kind: PropagationEdgeKind::DirectReturn,
+        status: EdgeStatus::Established,
+        from: local_identity,
+        to: format!("{}::return {local}", caller.0),
+    });
+    witness.completeness = PathCompleteness::Partial;
+    witness
+        .limitations
+        .push("returned_mutable_ledger_observer_unresolved".to_string());
+    witness.semantic_digest = witness.compute_semantic_digest();
+}
+
 fn completeness_for_edge(kind: &PropagationEdgeKind, status: &EdgeStatus) -> PathCompleteness {
     // PR-B intentionally does not promote constructor-wrapped text such as
     // `Ok(amount)` or `Err(error)`: those remain candidate/partial until a

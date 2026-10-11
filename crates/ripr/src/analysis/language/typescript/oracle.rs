@@ -160,7 +160,25 @@ pub(crate) fn collect_assertions_in_statements_with_bindings(
     receiver: Option<&str>,
     bindings: &TypeScriptAssertionBindings,
 ) -> Vec<TypeScriptAssertion> {
-    let context = AssertionContext { receiver, bindings };
+    collect_callback_assertions(statements, source, receiver, bindings, true)
+}
+
+/// Like [`collect_assertions_in_statements_with_bindings`] for a callback
+/// body; `returns_to_runner` is `false` when the callback's return value is
+/// discarded (a `forEach` callback), so a `return p.then(...)` inside it
+/// floats (RIPR-SPEC-0246 rule 2).
+pub(crate) fn collect_callback_assertions(
+    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    source: &SourceText<'_>,
+    receiver: Option<&str>,
+    bindings: &TypeScriptAssertionBindings,
+    returns_to_runner: bool,
+) -> Vec<TypeScriptAssertion> {
+    let context = AssertionContext {
+        receiver,
+        bindings,
+        returns_to_runner,
+    };
     let mut out = Vec::new();
     for stmt in statements {
         collect_expect_assertions_in_statement(stmt, source, &context, &mut out);
@@ -173,6 +191,8 @@ pub(crate) fn collect_assertions_in_statements_with_bindings(
 pub(crate) struct AssertionContext<'a> {
     receiver: Option<&'a str>,
     bindings: &'a TypeScriptAssertionBindings,
+    /// Whether a `return` here hands its value to the test runner.
+    returns_to_runner: bool,
 }
 
 /// Try chai's BDD `expect(...).to.equal(...)` shape (only when the file binds
@@ -216,13 +236,29 @@ pub(crate) fn collect_expect_assertions_in_statement(
                 assertion_from_expression_any(&expr_stmt.expression, source, context)
             {
                 out.push(assertion);
+            } else {
+                collect_nested_callback_assertions(
+                    &expr_stmt.expression,
+                    false,
+                    source,
+                    context,
+                    out,
+                );
             }
         }
         Statement::ReturnStatement(return_stmt) => {
-            if let Some(argument) = &return_stmt.argument
-                && let Some(assertion) = assertion_from_expression_any(argument, source, context)
-            {
-                out.push(assertion);
+            if let Some(argument) = &return_stmt.argument {
+                if let Some(assertion) = assertion_from_expression_any(argument, source, context) {
+                    out.push(assertion);
+                } else {
+                    collect_nested_callback_assertions(
+                        argument,
+                        context.returns_to_runner,
+                        source,
+                        context,
+                        out,
+                    );
+                }
             }
         }
         Statement::IfStatement(if_stmt) => {
@@ -282,6 +318,262 @@ pub(crate) fn collect_expect_assertions_in_statement(
             collect_expect_assertions_in_statement(&with_stmt.body, source, context, out);
         }
         _ => {}
+    }
+}
+
+/// RIPR-SPEC-0246 rule 2: the three nested callbacks whose assertions run
+/// before the test settles, read as the test's own assertions.
+/// - `[<literal>, ...].forEach((v) => body)`: one case per element, `v`
+///   replaced by the element, as RIPR-SPEC-0243 rule 11 reads a table row.
+/// - `return p.then((v) => body)` / `await p.then(...)`: the runner awaits
+///   the promise, so the body runs with `v` replaced by `(p)`, the value the
+///   assertion observes.
+/// - `await t.test(name, [options,] (t2) => body)` on the test's own
+///   receiver: node:test runs the awaited subtest inside the test.
+///
+/// Anything else, a callback that is not awaited or returned, or one the row
+/// reader refuses, collects nothing (fail closed).
+fn collect_nested_callback_assertions(
+    expr: &Expression<'_>,
+    returned: bool,
+    source: &SourceText<'_>,
+    context: &AssertionContext<'_>,
+    out: &mut Vec<TypeScriptAssertion>,
+) {
+    let (expr, awaited) = match expr.get_inner_expression() {
+        Expression::AwaitExpression(await_expr) => {
+            (await_expr.argument.get_inner_expression(), true)
+        }
+        other => (other, false),
+    };
+    let Expression::CallExpression(call) = expr else {
+        return;
+    };
+    let Some(member) = call.callee.as_member_expression() else {
+        return;
+    };
+    let Some(method) = member.static_property_name() else {
+        return;
+    };
+    let text: &str = source;
+    match method {
+        "forEach" => {
+            let [callback] = call.arguments.as_slice() else {
+                return;
+            };
+            // `forEach` does not await an async callback: its failures
+            // reject a promise nobody waits for.
+            if callback_is_async_or_generator(callback) {
+                return;
+            }
+            let Expression::ArrayExpression(array) = member.object().get_inner_expression() else {
+                return;
+            };
+            if array.elements.is_empty() || array.elements.len() > 64 {
+                return;
+            }
+            let mut rows = Vec::new();
+            for element in &array.elements {
+                let Some(cell) = element.as_expression().filter(|cell| is_literal_cell(cell))
+                else {
+                    return;
+                };
+                let span = cell.span();
+                // A cell spanning lines would shift the re-parsed
+                // assertion lines (as `literal_table_rows` refuses).
+                let Some(cell_text) = text
+                    .get(span.start as usize..span.end as usize)
+                    .filter(|cell_text| !cell_text.contains(['\n', '\r']))
+                else {
+                    return;
+                };
+                rows.push(vec![cell_text.to_string()]);
+            }
+            if let Some(assertions) =
+                callback_case_assertions(callback, &rows, source, context.bindings, false)
+            {
+                out.extend(assertions);
+            }
+        }
+        "then" if returned || awaited => {
+            // A rejection handler can swallow the changed behavior.
+            let [callback] = call.arguments.as_slice() else {
+                return;
+            };
+            let span = member.object().span();
+            let Some(receiver) = text.get(span.start as usize..span.end as usize) else {
+                return;
+            };
+            // A multi-line receiver, or an earlier promise step that may
+            // replace the owner's value, is not substituted. The step is
+            // matched as a whole word so a computed `["then"]` member is
+            // refused too; an argument named `then` is a refused miss.
+            if receiver.contains(['\n', '\r'])
+                || receiver
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+                    .any(|word| matches!(word, "then" | "catch" | "finally"))
+                || receiver_chain_has_computed_member(member.object())
+            {
+                return;
+            }
+            if let Some(body) = callback_body_text(callback, text)
+                && receiver_identifiers(receiver)
+                    .any(|name| !scan_body_lexical_facts(body, name).declarations.is_empty())
+            {
+                return;
+            }
+            if callback_parameter_count(callback) == Some(0) {
+                if let Some(statements) = function_body_statements_from_argument(callback) {
+                    collect_expect_assertions_from_statement_vec(statements, source, context, out);
+                }
+            } else if let Some(assertions) = callback_case_assertions(
+                callback,
+                &[vec![format!("({receiver})")]],
+                source,
+                context.bindings,
+                true,
+            ) {
+                out.extend(assertions);
+            }
+        }
+        "test" if awaited => {
+            let Expression::Identifier(object) = member.object().get_inner_expression() else {
+                return;
+            };
+            if context.receiver != Some(object.name.as_str()) {
+                return;
+            }
+            let Some((callback, leading)) = call.arguments.split_last() else {
+                return;
+            };
+            // A name, then at most an options object that does not skip or
+            // mark the subtest todo (a todo failure does not fail the parent).
+            if leading.is_empty()
+                || leading.len() > 2
+                || !leading
+                    .iter()
+                    .enumerate()
+                    .all(|(index, argument)| subtest_leading_argument_runs(argument, index == 0))
+            {
+                return;
+            }
+            let Some(statements) = function_body_statements_from_argument(callback) else {
+                return;
+            };
+            let subtest = AssertionContext {
+                receiver: first_plain_parameter(callback),
+                bindings: context.bindings,
+                returns_to_runner: true,
+            };
+            collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
+        }
+        _ => {}
+    }
+}
+
+/// `true` when the receiver's member chain has a computed step
+/// (`p["th" + "en"](...)`): its name cannot be read, so it may be a promise
+/// step that replaces the owner's value. Array literals in call arguments
+/// are not on the chain and stay allowed.
+fn receiver_chain_has_computed_member(receiver: &Expression<'_>) -> bool {
+    let mut expr = receiver.get_inner_expression();
+    loop {
+        expr = match expr {
+            Expression::ComputedMemberExpression(_) => return true,
+            Expression::CallExpression(call) => call.callee.get_inner_expression(),
+            Expression::StaticMemberExpression(member) => member.object.get_inner_expression(),
+            Expression::PrivateFieldExpression(member) => member.object.get_inner_expression(),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                oxc_ast::ast::ChainElement::ComputedMemberExpression(_) => return true,
+                oxc_ast::ast::ChainElement::CallExpression(call) => {
+                    call.callee.get_inner_expression()
+                }
+                oxc_ast::ast::ChainElement::StaticMemberExpression(member) => {
+                    member.object.get_inner_expression()
+                }
+                oxc_ast::ast::ChainElement::PrivateFieldExpression(member) => {
+                    member.object.get_inner_expression()
+                }
+                _ => return true,
+            },
+            Expression::AwaitExpression(_) => return true,
+            _ => return false,
+        };
+    }
+}
+
+/// `true` for an `async` or generator arrow or function callback.
+fn callback_is_async_or_generator(callback: &oxc_ast::ast::Argument<'_>) -> bool {
+    match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => arrow.r#async,
+        oxc_ast::ast::Argument::FunctionExpression(function) => {
+            function.r#async || function.generator
+        }
+        _ => true,
+    }
+}
+
+/// The source text of an arrow or function callback's body.
+fn callback_body_text<'s>(callback: &oxc_ast::ast::Argument<'_>, text: &'s str) -> Option<&'s str> {
+    let span = match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => arrow.body.span,
+        oxc_ast::ast::Argument::FunctionExpression(function) => function.body.as_ref()?.span,
+        _ => return None,
+    };
+    text.get(span.start as usize..span.end as usize)
+}
+
+/// The identifiers a `.then` receiver reads, so a body that re-declares one
+/// of them refuses the substitution.
+fn receiver_identifiers(receiver: &str) -> impl Iterator<Item = &str> {
+    receiver
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        .filter(|word| word.chars().next().is_some_and(|c| !c.is_ascii_digit()))
+}
+
+/// A subtest name (a string or template literal) or an options object
+/// without `skip` or `todo`.
+fn subtest_leading_argument_runs(argument: &oxc_ast::ast::Argument<'_>, first: bool) -> bool {
+    match argument {
+        oxc_ast::ast::Argument::StringLiteral(_) | oxc_ast::ast::Argument::TemplateLiteral(_) => {
+            first
+        }
+        oxc_ast::ast::Argument::ObjectExpression(object) if !first => {
+            object.properties.iter().all(|property| match property {
+                oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property) => !matches!(
+                    property.key.static_name().as_deref(),
+                    Some("skip" | "todo") | None
+                ),
+                oxc_ast::ast::ObjectPropertyKind::SpreadProperty(_) => false,
+            })
+        }
+        _ => false,
+    }
+}
+
+/// The number of parameters of an arrow or function callback.
+fn callback_parameter_count(callback: &oxc_ast::ast::Argument<'_>) -> Option<usize> {
+    match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => {
+            Some(arrow.params.items.len() + usize::from(arrow.params.rest.is_some()))
+        }
+        oxc_ast::ast::Argument::FunctionExpression(function) => {
+            Some(function.params.items.len() + usize::from(function.params.rest.is_some()))
+        }
+        _ => None,
+    }
+}
+
+/// The callback's first parameter when it is a plain identifier.
+fn first_plain_parameter<'a>(callback: &'a oxc_ast::ast::Argument<'a>) -> Option<&'a str> {
+    let params = match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
+        oxc_ast::ast::Argument::FunctionExpression(function) => &function.params,
+        _ => return None,
+    };
+    match &params.items.first()?.pattern {
+        oxc_ast::ast::BindingPattern::BindingIdentifier(ident) => Some(ident.name.as_str()),
+        _ => None,
     }
 }
 

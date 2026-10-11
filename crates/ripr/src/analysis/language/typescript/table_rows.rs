@@ -36,6 +36,21 @@ pub(crate) fn table_row_assertions(
         return None;
     };
     let rows = literal_table_rows(each_call, source)?;
+    callback_case_assertions(callback, &rows, source, bindings, true)
+}
+
+/// The assertions of `callback` read once per row, each row's cells
+/// replacing the callback's plain parameters one to one, or `None` when
+/// any row fails closed (see the module documentation). Shared with the
+/// RIPR-SPEC-0246 nested-callback forms (`[1, 2].forEach(cb)`, a returned
+/// `p.then(cb)`).
+pub(crate) fn callback_case_assertions(
+    callback: &oxc_ast::ast::Argument<'_>,
+    rows: &[Vec<String>],
+    source: &SourceText<'_>,
+    bindings: &TypeScriptAssertionBindings,
+    returns_to_runner: bool,
+) -> Option<Vec<TypeScriptAssertion>> {
     let (params, callback_span, body_span) = plain_callback_parameters(callback)?;
     if rows.iter().any(|row| row.len() != params.len()) {
         return None;
@@ -54,7 +69,7 @@ pub(crate) fn table_row_assertions(
         return None;
     }
     let mut assertions = Vec::new();
-    for row in &rows {
+    for row in rows {
         let substituted = substitute_row(body, &params, row)?;
         let callback_text = format!(
             "{}{}{}",
@@ -67,6 +82,7 @@ pub(crate) fn table_row_assertions(
             callback_span.start,
             &callback_text,
             bindings,
+            returns_to_runner,
         )?);
     }
     Some(assertions)
@@ -110,7 +126,7 @@ fn literal_table_rows(
     Some(rows)
 }
 
-fn is_literal_cell(cell: &Expression<'_>) -> bool {
+pub(crate) fn is_literal_cell(cell: &Expression<'_>) -> bool {
     match cell {
         Expression::NumericLiteral(_)
         | Expression::StringLiteral(_)
@@ -323,6 +339,7 @@ fn reparse_row_assertions(
     callback_start: usize,
     callback_text: &str,
     bindings: &TypeScriptAssertionBindings,
+    returns_to_runner: bool,
 ) -> Option<Vec<TypeScriptAssertion>> {
     let prefix = original.get(..callback_start)?;
     if callback_start == 0 || prefix.ends_with('\n') || prefix.ends_with('\r') {
@@ -350,11 +367,12 @@ fn reparse_row_assertions(
             Expression::FunctionExpression(function) => &function.body.as_ref()?.statements,
             _ => return None,
         };
-        return Some(collect_assertions_in_statements_with_bindings(
+        return Some(collect_callback_assertions(
             statements,
             &SourceText::new(&synthesized),
             None,
             bindings,
+            returns_to_runner,
         ));
     }
     None
@@ -380,6 +398,7 @@ mod tests {
             start,
             "(a, b) => {\n  expect(f(1)).toBe(2);\n}",
             &bindings,
+            true,
         );
         assert_eq!(parsed.as_ref().map(Vec::len), Some(1), "{parsed:?}");
         assert_eq!(
@@ -394,12 +413,13 @@ mod tests {
                 original,
                 start,
                 "(a, b) => {\n  expect(f(1)).toBe(2;\n}",
-                &bindings
+                &bindings,
+                true
             ),
             None
         );
         assert_eq!(
-            reparse_row_assertions("(a) => {}", 0, "(a) => {}", &bindings),
+            reparse_row_assertions("(a) => {}", 0, "(a) => {}", &bindings, true),
             None
         );
         Ok(())
