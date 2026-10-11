@@ -1285,6 +1285,14 @@ owner = "product-analysis"
 standalone_reason = "Makes the Python adapter's assertion table, per-test oracle selection, error-path gate, reach order, static-limit precedence and verdict ladder normative, and closes order-dependent and substring-driven over-credit."
 
 [[artifact]]
+id = "RIPR-SPEC-0246"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0246-typescript-corpus-oracle-amendments.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Amends the TypeScript oracle rules from corpus mutation evidence: copy-for-identity changes need an identity matcher, and three nested callbacks that run before the test settles are collected."
+
+[[artifact]]
 id = "RIPR-SPEC-0243"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"

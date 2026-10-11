@@ -3773,6 +3773,7 @@ pub(crate) fn classify_change_with_alias_state(
         &TsPostLadderContext {
             probe_shape: &probe_shape,
             line_text,
+            old_line_text,
             owner,
             candidates: &related_candidates,
             ladder: Rule8LadderFacts {
@@ -4129,6 +4130,7 @@ struct TsLadderVerdict {
 struct TsPostLadderContext<'a> {
     probe_shape: &'a TypeScriptProbeShape,
     line_text: &'a str,
+    old_line_text: Option<&'a str>,
     owner: &'a TypeScriptOwner,
     candidates: &'a [TypeScriptRelatedCandidate<'a>],
     ladder: Rule8LadderFacts<'a>,
@@ -4137,16 +4139,33 @@ struct TsPostLadderContext<'a> {
     workspace_root: Option<&'a Path>,
 }
 
-/// Rules that re-read the ladder verdict, in order. Today only
-/// RIPR-SPEC-0243 rule 8: an `exposed` result whose exposing test files all
-/// mock a module the changed line calls reads `static_unknown`, because the
-/// mock can replace the changed value before any assertion sees it.
+/// Rules that re-read the ladder verdict, in order:
+/// - RIPR-SPEC-0246 rule 1: an `exposed` result whose change only swaps a
+///   returned object for a copy of itself (or back) reads `weakly_exposed`
+///   unless a related test pins identity, because a structural matcher
+///   passes on both versions.
+/// - RIPR-SPEC-0243 rule 8: an `exposed` result whose exposing test files all
+///   mock a module the changed line calls reads `static_unknown`, because the
+///   mock can replace the changed value before any assertion sees it.
 fn ts_apply_post_ladder_rules(
     verdict: &mut TsLadderVerdict,
     static_limit: &mut Option<TypeScriptStaticLimit>,
     context: &TsPostLadderContext<'_>,
 ) {
     if !matches!(verdict.class, ExposureClass::Exposed) {
+        return;
+    }
+    if let Some(subject) = context
+        .old_line_text
+        .and_then(|old| ts_identity_copy_subject(old, context.line_text))
+        && !ts_candidates_pin_identity(context.candidates, &context.owner.name)
+    {
+        verdict.class = ExposureClass::WeaklyExposed;
+        verdict.discriminate_state = StageState::Weak;
+        verdict.missing = vec![format!(
+            "The change to `{}` only replaces the returned `{subject}` with a copy of itself (or a copy with the original); structural matchers such as `toEqual` and `deepEqual` pass on both. Add an identity assertion such as `expect(result).toBe(input)` or `assert.strictEqual(result, input)`.",
+            context.owner.name
+        )];
         return;
     }
     let Some(callee) = ts_rule8_mocked_changed_callee(
@@ -4172,6 +4191,117 @@ fn ts_apply_post_ladder_rules(
         verdict.discriminate_state = StageState::Unknown;
         verdict.missing = vec![callee.missing_summary(&context.owner.name)];
     }
+}
+
+/// RIPR-SPEC-0246 rule 1: the identifier whose returned object the change
+/// swaps for a copy of itself, or back. Matches `return x` against
+/// `return { ...x }`, `return [...x]`, `return Object.assign({}, x)` or
+/// `return structuredClone(x)` in either direction; anything else (an added
+/// or overridden field, a different identifier) is `None`.
+pub(crate) fn ts_identity_copy_subject(old_line: &str, new_line: &str) -> Option<String> {
+    fn returned(line: &str) -> Option<String> {
+        let rest = line.trim().strip_prefix("return")?;
+        if !rest.starts_with(char::is_whitespace) {
+            return None;
+        }
+        let expr: String = rest
+            .trim()
+            .trim_end_matches(';')
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        (!expr.is_empty()).then_some(expr)
+    }
+    fn is_identifier(text: &str) -> bool {
+        let mut chars = text.chars();
+        chars
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_' || c == '$')
+            && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$')
+    }
+    fn copied(expr: &str) -> Option<&str> {
+        let inner = expr
+            .strip_prefix("{...")
+            .and_then(|rest| rest.strip_suffix('}'))
+            .or_else(|| {
+                expr.strip_prefix("[...")
+                    .and_then(|rest| rest.strip_suffix(']'))
+            })
+            .or_else(|| {
+                expr.strip_prefix("Object.assign({},")
+                    .and_then(|rest| rest.strip_suffix(')'))
+            })
+            .or_else(|| {
+                expr.strip_prefix("structuredClone(")
+                    .and_then(|rest| rest.strip_suffix(')'))
+            })?;
+        is_identifier(inner).then_some(inner)
+    }
+    let (old, new) = (returned(old_line)?, returned(new_line)?);
+    if is_identifier(&old) {
+        (copied(&new)? == old).then_some(old)
+    } else {
+        (is_identifier(&new) && copied(&old)? == new).then_some(new)
+    }
+}
+
+/// `true` when a related test that grants oracle credit pins identity. A
+/// heuristic (name-linked) relation cannot see the owner's result, so its
+/// `toBe` does not count. Heuristic candidates appear today only when no
+/// oracle relation exists, which never reaches `exposed`; the filter keeps
+/// rule 1 correct if that ordering changes.
+pub(super) fn ts_candidates_pin_identity(
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    owner: &str,
+) -> bool {
+    candidates.iter().any(|candidate| {
+        candidate.relation.uses_oracle() && ts_test_pins_identity(candidate.test, owner)
+    })
+}
+
+/// `true` when a test asserts directly on the owner call's result
+/// (`expect(owner(...))`, not a member of it or a local) with a matcher that
+/// compares identity for objects (`toBe`, `strictEqual`, AVA `t.is`). chai
+/// `equal` is excluded because the `.deep` flag is not part of the recorded
+/// matcher (fail closed).
+fn ts_test_pins_identity(test: &TypeScriptTest, owner: &str) -> bool {
+    test.assertions.iter().any(|assertion| {
+        // A literal expected value (`toBe(null)`) pins a branch, never the
+        // returned object's identity.
+        matches!(assertion.matcher.as_str(), "toBe" | "strictEqual" | "is")
+            && assertion.has_dynamic_matcher_arg
+            && assertion
+                .observed_expression
+                .as_deref()
+                .and_then(|observed| observed.trim().strip_prefix(owner))
+                .is_some_and(ts_is_one_argument_list)
+    })
+}
+
+/// `true` when `rest` is exactly one balanced `(...)`, so the observed
+/// expression is the owner call itself and not a member or call on it
+/// (`owner(x)["k"]`, `owner(x)?.has(k)`, `owner(x) .name`).
+fn ts_is_one_argument_list(rest: &str) -> bool {
+    if !rest.starts_with('(') {
+        return false;
+    }
+    // Blank literals first so a `)` inside a string (`owner("(") + f(")")`)
+    // cannot balance the count.
+    let masked = ts_mask_literals_and_comments(rest);
+    let mut depth = 0usize;
+    for (index, c) in masked.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return index + 1 == masked.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The finding-wide ladder facts rule 8 re-reads per test file: the parsed

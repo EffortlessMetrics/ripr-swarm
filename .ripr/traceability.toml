@@ -13887,6 +13887,34 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0246"
+name = "TypeScript corpus oracle amendments"
+spec = "docs/specs/RIPR-SPEC-0246-typescript-corpus-oracle-amendments.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::literal_foreach_reads_one_case_per_element",
+  "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::other_foreach_forms_collect_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::returned_or_awaited_then_reads_the_resolved_receiver",
+  "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::floating_or_unsafe_then_collects_nothing",
+  "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::awaited_subtest_on_the_receiver_is_collected",
+  "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::copy_for_identity_change_needs_an_identity_matcher",
+  "crates/ripr/src/analysis/language/typescript/tests/nested_callback_tests.rs::identity_copy_subject_reads_both_directions",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/oracle.rs",
+  "crates/ripr/src/analysis/language/typescript/table_rows.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0246-typescript-corpus-oracle-amendments.md",
+]
+metrics = [
+  "typescript_corpus_amendment_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"

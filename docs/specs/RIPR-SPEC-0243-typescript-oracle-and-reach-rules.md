@@ -158,7 +158,8 @@ no accepted spec names the awaited form. An awaited subtest
   `with`. An assertion is read from an expression statement or a
   `return` argument, after removing one `await`.
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
-  subtest) or inside a declaration initializer is not collected.
+  subtest) or inside a declaration initializer is not collected, except
+  the three forms RIPR-SPEC-0246 rule 2 names.
 
 **Rule 11. An inline literal table reads one concrete case per row.**
 Added after the TypeScript verdict corpus (#6686, #6654) showed
@@ -598,7 +599,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 ## Non-Goals
 
-- No collection of assertions inside nested callbacks or subtests.
+- No collection of assertions inside nested callbacks or subtests,
+  except the literal `forEach`, returned or awaited `.then` and awaited
+  `t.test` forms of RIPR-SPEC-0246 rule 2.
 - No resolution of custom matchers, `expect.extend`, or helper bodies.
 - No expected-value liveness check for ReturnValue or ErrorPath.
 - No infection or propagation modeling.
@@ -650,7 +653,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
    `test("price", ({ expect }) => { expect(price(150)).toBe(130); })`:
    `exposed` (unchanged, measured in review).
 10. `[150].forEach((v) => { expect(price(v)).toBe(130); });`: oracle
-    `unknown`, `weakly_exposed` (unchanged).
+    `unknown`, `weakly_exposed` (unchanged). Amended by RIPR-SPEC-0246
+    rule 2: the literal-array `forEach` body is collected, `exposed` when
+    the assertion pins the changed value.
 11. `if (ok) { expect(price(150)).toBe(130); }`: `exposed` (unchanged).
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
     "") { throw new Error("empty"); } return s; }`, formatted with the
