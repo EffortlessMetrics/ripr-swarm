@@ -9,9 +9,13 @@ does not replace that issue's runtime or immutable-candidate qualification.
 
 1. Pin the old and candidate instruction commits, runtime/tool version, actual
    host/shell, working directory and remote. Keep experiments separate from the
-   submitted candidate. Give each fresh worker only its repository, the inputs
-   below and the request to return first useful action, honored boundary and
-   next obligation. Do not supply expected outcomes or the author's conclusions.
+   submitted candidate. For a blind probe, use an admitted review-owned instruction
+   snapshot with this packet replaced by **Inputs only**, and retain examiner pins
+   outside the worker's supplied context. Preserve root/skill bytes and record the
+   fixture patch; leave the candidate unchanged. A checkout containing the full
+   packet supports scenario review, not a blind comparison. Give each fresh worker
+   only its snapshot, inputs and the request to return first useful action, honored
+   boundary and next obligation; no expected outcomes or author conclusions.
 2. The examiner fixes the literal outcomes below before editing guidance. They
    follow scope, ownership, capability and genuine access/review/resource limits;
    do not generate them from the candidate prose or worker answers.
@@ -19,6 +23,8 @@ does not replace that issue's runtime or immutable-candidate qualification.
    case as `pass`, `failed`, `limited`, `not_run` or `not_established`. Compare old
    and current separately. A tie establishes compatibility on that input, not
    detection uplift. A reasoned decision is not execution of its proposed action.
+   Retain actual read paths; if examiner data enters context or its visibility is
+   unknown, mark blinding `not_established` rather than claiming an independent probe.
 4. For real-task resumption, give a fresh worker only an authorized bounded task
    and its native issue/PR link. Observe root/skill discovery, verification of
    the current object and one useful next step. Missing hidden briefing must not
