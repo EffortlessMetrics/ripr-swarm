@@ -1539,6 +1539,7 @@ mod tests {
         unique_repo_relative_test_dir,
     };
     use super::*;
+    use crate::config::config_discovered_for_root;
 
     #[test]
     fn check_refuses_two_output_selections_that_disagree() -> Result<(), String> {
