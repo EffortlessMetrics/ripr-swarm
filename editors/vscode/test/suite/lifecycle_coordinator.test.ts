@@ -57,6 +57,24 @@ suite('Extension Lifecycle Coordinator', () => {
     await assert.rejects(coordinator.start(controller), /terminal shutdown/);
   });
 
+  test('a start overlapping pause waits for teardown before starting a replacement', async () => {
+    const coordinator = new ExtensionLifecycleCoordinator();
+    const events: string[] = [];
+    let running = false;
+    const controller: LifecycleController = {
+      start: async () => { events.push('start'); running = true; },
+      stop: async () => { events.push('stop'); running = false; },
+      isRunning: () => running
+    };
+    await coordinator.start(controller);
+    const pause = coordinator.pause(controller);
+    const start = coordinator.start(controller);
+    await Promise.all([pause, start]);
+    assert.deepStrictEqual(events, ['start', 'stop', 'start']);
+    assert.strictEqual(running, true);
+    await coordinator.stop(controller);
+  });
+
   test('pause during restart stop cancels replacement and stops the session once', async () => {
     const coordinator = new ExtensionLifecycleCoordinator();
     const stopping = deferred(); const entered = deferred();

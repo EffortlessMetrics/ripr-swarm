@@ -141,6 +141,25 @@ suite('Workspace Root Binding Controller', () => {
     } finally { await stopServerOnce(h.controller); }
   });
 
+  test('a passive start overlapping B removal waits for teardown and leaves no client', async () => {
+    const h = harness(); h.select(beta.uri.fsPath);
+    try {
+      await startServerOnce(h.controller);
+      h.removeBeta();
+      const removal = pauseRemovedWorkspaceRootOnce(h.controller, [beta]);
+      const passiveStart = startServerOnce(h.controller);
+      await Promise.all([removal, passiveStart]);
+      assert.strictEqual(h.controller.isRunning(), false, 'overlapping passive startup must not cancel teardown');
+      const state = h.controller as unknown as { workspaceRoot?: string; workspaceRootState: { kind: string } };
+      assert.strictEqual(state.workspaceRoot, undefined);
+      assert.strictEqual(state.workspaceRootState.kind, 'noWorkspace');
+      assert.deepStrictEqual(h.events, [
+        `start:${beta.uri.fsPath}`, `stop:${beta.uri.fsPath}`,
+        `dispose:${beta.uri.fsPath}`, `dispose:${beta.uri.fsPath}`
+      ]);
+    } finally { await stopServerOnce(h.controller); }
+  });
+
   test('cached navigation and context are suppressed after the session stops', async () => {
     const h = harness();
     try {
