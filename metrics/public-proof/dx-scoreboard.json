@@ -848,10 +848,10 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/typescript-verdict-corpus false_actionable_rate: 27/62",
+          "detail": "fixtures/typescript-verdict-corpus false_actionable_rate: 19/62",
           "repo": null,
           "status": "below_target",
-          "value": 0.4355
+          "value": 0.3065
         }
       ],
       "source": "verdict-corpus:fixtures/typescript-verdict-corpus#false_actionable_rate",
@@ -859,7 +859,7 @@
       "target": 0.05,
       "title": "Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap",
       "unit": "ratio",
-      "value": 0.4355
+      "value": 0.3065
     },
     {
       "baseline": {
@@ -874,10 +874,10 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/typescript-verdict-corpus false_exposed_rate: 9/39",
+          "detail": "fixtures/typescript-verdict-corpus false_exposed_rate: 2/39",
           "repo": null,
           "status": "below_target",
-          "value": 0.2308
+          "value": 0.0513
         }
       ],
       "source": "verdict-corpus:fixtures/typescript-verdict-corpus#false_exposed_rate",
@@ -885,7 +885,7 @@
       "target": 0.0,
       "title": "Authored TypeScript edits the project's tests miss that ripr credits as caught",
       "unit": "ratio",
-      "value": 0.2308
+      "value": 0.0513
     },
     {
       "baseline": {
