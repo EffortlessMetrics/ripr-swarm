@@ -3977,7 +3977,7 @@ fn check_repo_exposure_json_refusal_emits_the_refused_envelope() -> Result<(), S
     if value["seams"].as_array().map(Vec::len) != Some(0) {
         return Err(format!("seams must be empty: {value}"));
     }
-    if value["metrics"]["seams_total"] != serde_json::Value::from(0) {
+    if value["metrics"]["seams_total"] != 0 {
         return Err(format!("metrics must be zeroed: {value}"));
     }
     ignore_remove_dir_all(&root);
@@ -4017,7 +4017,7 @@ fn check_agent_seam_packets_json_refusal_emits_the_refused_envelope() -> Result<
             ));
         }
     }
-    if value["packets_total"] != serde_json::Value::from(0) {
+    if value["packets_total"] != 0 {
         return Err(format!("packets_total must be 0: {value}"));
     }
     if value["packets"].as_array().map(Vec::len) != Some(0) {
