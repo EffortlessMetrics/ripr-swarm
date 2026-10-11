@@ -107,7 +107,7 @@ fn dirty_production_requires_recovery_despite_user_orderfile() -> TestResult {
         )?;
         std::fs::write(
             root.join("tests/pricing.rs"),
-            format!("{REPAIR_ROUTE_WEAK_TEST}{REPAIR_ROUTE_BOUNDARY_TEST}"),
+            format!("{REPAIR_ROUTE_WEAK_TEST}\n// dirty focused test\n"),
         )?;
 
         // Independently observe the stimulus with ordinary Git: the live
