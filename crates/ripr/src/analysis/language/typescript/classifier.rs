@@ -514,7 +514,10 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
         match mode {
             Mode::Code => {
                 match c {
-                    '\'' | '"' => {
+                    // A string literal starts only where an operand is
+                    // expected; after a word or `)` a quote is JSX text
+                    // (`<b>Don't {p(1)}</b>`) and stays code.
+                    '\'' | '"' if operand_expected(prev, &word, word_after_dot) => {
                         mode = Mode::Quote(c);
                         out.push(c);
                     }
@@ -3629,122 +3632,119 @@ pub(crate) fn classify_change_with_alias_state(
             workspace_root,
         );
 
-    let (mut class, reach_state, mut observe_state, mut discriminate_state, mut missing) =
-        if related.is_empty() {
-            (
-                ExposureClass::NoStaticPath,
-                StageState::No,
-                StageState::No,
-                StageState::No,
-                // #4550: an uncredited owner import through an unresolved
-                // alias is the more specific no-reach cause; name it instead of
-                // claiming no test references the owner.
-                vec![match &alias_gap {
-                    Some(gap) => gap.no_static_path_missing(&owner.name),
-                    None => no_static_path_missing(owner),
-                }],
-            )
-        } else if !has_oracle_eligible_relation {
-            (
-                ExposureClass::WeaklyExposed,
-                StageState::Weak,
-                StageState::Weak,
-                StageState::Weak,
-                vec![format!(
-                    "Only heuristic TypeScript test links were found for `{}`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.",
-                    owner.name
-                )],
-            )
-        } else if reach_only_through_module_entry {
-            (
-                ExposureClass::WeaklyExposed,
-                StageState::Yes,
-                StageState::Weak,
-                StageState::Weak,
-                vec![module_entry_reach_summary(
-                    owner,
-                    &related_candidates,
-                    reexport_index,
-                    alias_map,
-                    workspace_root,
-                )],
-            )
-        } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
-            (
-                ExposureClass::Exposed,
-                StageState::Yes,
-                StageState::Yes,
-                StageState::Yes,
-                vec![format!(
-                    "Related test reaches `{}` with a `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.",
-                    owner.name,
-                    strongest_kind.as_str()
-                )],
-            )
-        } else if strongest_strength >= OracleStrength::Strong.rank() {
-            // Strong oracle exists but observation guard failed: downgrade to
-            // WeaklyExposed with a named limitation (RIPR-SPEC-0098), or the
-            // predicate boundary is not witnessed (RIPR-SPEC-0027).
-            let named_limitation = if boundary_witnessed {
-                ts_observation_guard_limitation(&probe_shape, line_text)
-            } else {
-                ts_predicate_boundary_limitation(&probe_shape, line_text, &owner.name)
-            };
-            (
-                ExposureClass::WeaklyExposed,
-                StageState::Yes,
-                StageState::Weak,
-                StageState::Weak,
-                vec![named_limitation],
-            )
+    let (class, reach_state, observe_state, discriminate_state, missing) = if related.is_empty() {
+        (
+            ExposureClass::NoStaticPath,
+            StageState::No,
+            StageState::No,
+            StageState::No,
+            // #4550: an uncredited owner import through an unresolved
+            // alias is the more specific no-reach cause; name it instead of
+            // claiming no test references the owner.
+            vec![match &alias_gap {
+                Some(gap) => gap.no_static_path_missing(&owner.name),
+                None => no_static_path_missing(owner),
+            }],
+        )
+    } else if !has_oracle_eligible_relation {
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Weak,
+            StageState::Weak,
+            StageState::Weak,
+            vec![format!(
+                "Only heuristic TypeScript test links were found for `{}`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.",
+                owner.name
+            )],
+        )
+    } else if reach_only_through_module_entry {
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![module_entry_reach_summary(
+                owner,
+                &related_candidates,
+                reexport_index,
+                alias_map,
+                workspace_root,
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
+        (
+            ExposureClass::Exposed,
+            StageState::Yes,
+            StageState::Yes,
+            StageState::Yes,
+            vec![format!(
+                "Related test reaches `{}` with a `{}` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant discriminator.",
+                owner.name,
+                strongest_kind.as_str()
+            )],
+        )
+    } else if strongest_strength >= OracleStrength::Strong.rank() {
+        // Strong oracle exists but observation guard failed: downgrade to
+        // WeaklyExposed with a named limitation (RIPR-SPEC-0098), or the
+        // predicate boundary is not witnessed (RIPR-SPEC-0027).
+        let named_limitation = if boundary_witnessed {
+            ts_observation_guard_limitation(&probe_shape, line_text)
         } else {
-            (
-                ExposureClass::WeaklyExposed,
-                StageState::Yes,
-                StageState::Weak,
-                StageState::Weak,
-                vec![weak_oracle_missing_summary(
-                    &owner.name,
-                    &strongest_kind,
-                    &probe_shape.family,
-                    mock_payload_oracle.as_deref(),
-                )],
-            )
+            ts_predicate_boundary_limitation(&probe_shape, line_text, &owner.name)
         };
-    // RIPR-SPEC-0243 rule 8: an `exposed` ladder result whose exposing test
-    // files all mock a module the changed line calls reads `static_unknown`;
-    // the mock can replace the changed value before any assertion sees it.
-    let mocked_changed_callee = if matches!(class, ExposureClass::Exposed) {
-        ts_rule8_mocked_changed_callee(
-            &probe_shape,
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![named_limitation],
+        )
+    } else {
+        (
+            ExposureClass::WeaklyExposed,
+            StageState::Yes,
+            StageState::Weak,
+            StageState::Weak,
+            vec![weak_oracle_missing_summary(
+                &owner.name,
+                &strongest_kind,
+                &probe_shape.family,
+                mock_payload_oracle.as_deref(),
+            )],
+        )
+    };
+    // Post-ladder rules re-read the ladder verdict and may rewrite it; a
+    // later rule joins `ts_apply_post_ladder_rules`, not this tuple (#7365).
+    let mut verdict = TsLadderVerdict {
+        class,
+        observe_state,
+        discriminate_state,
+        missing,
+    };
+    ts_apply_post_ladder_rules(
+        &mut verdict,
+        &mut static_limit,
+        &TsPostLadderContext {
+            probe_shape: &probe_shape,
             line_text,
             owner,
-            &related_candidates,
-            Rule8LadderFacts {
+            candidates: &related_candidates,
+            ladder: Rule8LadderFacts {
                 boundary: &predicate_boundary,
                 activations: &predicate_activations,
                 error_facts: &error_facts,
             },
+            mock_paths: &mock_paths,
             alias_map,
             workspace_root,
-        )
-    } else {
-        None
-    };
-    if let Some(callee) = &mocked_changed_callee {
-        let limit = match static_limit.take() {
-            Some(limit) if limit.kind == StaticLimitKind::MockedModule => Some(limit),
-            _ => mocked_module_limit(&mock_paths),
-        };
-        if let Some(mut limit) = limit {
-            limit.evidence.push(callee.evidence_line());
-            static_limit = Some(limit);
-            class = ExposureClass::StaticUnknown;
-            observe_state = StageState::Unknown;
-            discriminate_state = StageState::Unknown;
-            missing = vec![callee.missing_summary(&owner.name)];
-        }
-    }
+        },
+    );
+    let TsLadderVerdict {
+        class,
+        observe_state,
+        discriminate_state,
+        mut missing,
+    } = verdict;
     let static_unknown_by_mock = matches!(class, ExposureClass::StaticUnknown);
     // Collect named TS-specific limitations (RIPR-SPEC-0085 §PR4 taxonomy).
     // These are ADDITIVE evidence lines; existing `static_limit_kind` is
@@ -4069,6 +4069,63 @@ pub(crate) fn classify_change_with_alias_state(
         // Resolved above, before the probe moved into the finding (#3281).
         source_currentness,
     })
+}
+
+/// The ladder's verdict fields a post-ladder rule may rewrite.
+struct TsLadderVerdict {
+    class: ExposureClass,
+    observe_state: StageState,
+    discriminate_state: StageState,
+    missing: Vec<String>,
+}
+
+/// What the post-ladder rules read besides the verdict.
+struct TsPostLadderContext<'a> {
+    probe_shape: &'a TypeScriptProbeShape,
+    line_text: &'a str,
+    owner: &'a TypeScriptOwner,
+    candidates: &'a [TypeScriptRelatedCandidate<'a>],
+    ladder: Rule8LadderFacts<'a>,
+    mock_paths: &'a [String],
+    alias_map: Option<&'a TsAliasMap>,
+    workspace_root: Option<&'a Path>,
+}
+
+/// Rules that re-read the ladder verdict, in order. Today only
+/// RIPR-SPEC-0243 rule 8: an `exposed` result whose exposing test files all
+/// mock a module the changed line calls reads `static_unknown`, because the
+/// mock can replace the changed value before any assertion sees it.
+fn ts_apply_post_ladder_rules(
+    verdict: &mut TsLadderVerdict,
+    static_limit: &mut Option<TypeScriptStaticLimit>,
+    context: &TsPostLadderContext<'_>,
+) {
+    if !matches!(verdict.class, ExposureClass::Exposed) {
+        return;
+    }
+    let Some(callee) = ts_rule8_mocked_changed_callee(
+        context.probe_shape,
+        context.line_text,
+        context.owner,
+        context.candidates,
+        context.ladder,
+        context.alias_map,
+        context.workspace_root,
+    ) else {
+        return;
+    };
+    let limit = match static_limit.take() {
+        Some(limit) if limit.kind == StaticLimitKind::MockedModule => Some(limit),
+        _ => mocked_module_limit(context.mock_paths),
+    };
+    if let Some(mut limit) = limit {
+        limit.evidence.push(callee.evidence_line());
+        *static_limit = Some(limit);
+        verdict.class = ExposureClass::StaticUnknown;
+        verdict.observe_state = StageState::Unknown;
+        verdict.discriminate_state = StageState::Unknown;
+        verdict.missing = vec![callee.missing_summary(&context.owner.name)];
+    }
 }
 
 /// The finding-wide ladder facts rule 8 re-reads per test file: the parsed

@@ -417,6 +417,9 @@ fn literal_masking_reads_regex_literals_and_division() {
         ("await /'/.exec(p(1))", "p"),
         ("x.return / 2 + p(1)", "p"),
         ("total / 2 + p(1)", "p"),
+        // #7362: an apostrophe in JSX text is not a string.
+        ("render(<b>Don't {p(1)}</b>)", "p"),
+        ("render(<b>it's \"x\" {p(1)}</b>)", "p"),
     ] {
         let masked = ts_mask_literals_and_comments(text);
         assert!(
@@ -424,6 +427,14 @@ fn literal_masking_reads_regex_literals_and_division() {
             "{text} -> {masked}"
         );
         assert_eq!(masked.chars().count(), text.chars().count(), "{text}");
+    }
+    // Strings still open after an operator, `(` or a keyword.
+    for text in ["f('p')", "x = \"p\"", "return 'p'", "<a title='p'>"] {
+        let masked = ts_mask_literals_and_comments(text);
+        assert!(
+            !ts_references_identifier(&masked, "p"),
+            "{text} -> {masked}"
+        );
     }
     let masked = ts_mask_literals_and_comments("expect(/price/i.test(s))");
     assert!(!ts_references_identifier(&masked, "price"), "{masked}");
