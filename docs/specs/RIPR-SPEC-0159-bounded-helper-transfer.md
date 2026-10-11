@@ -19,6 +19,21 @@ can only hint that a caller "may lead here" without changing anything.
 
 ## Behavior
 
+- Identity-only prerequisite under #3215: the same helper-transfer producer
+  may retain a selected root test declaration, qualified call expression,
+  inherent callee SymbolId, root receiver struct declaration and direct helper
+  call expression as source-bound spans. This separate receipt does not alter
+  singleton-chain resolution, relatedness or exact-input rows. It requires a
+  unique same-file plain inherent receiver, one top-level let initializer call
+  at each selected edge (optionally followed by `?` without payload credit),
+  complete parser-backed inventory and synchronous
+  nongeneric declarations. Imports (including glob imports), aliases,
+  competing names, traits, deferred code, macro calls/declarations, transforming or
+  cfg attributes and multiple selected paths/occurrences refuse. Receipts may
+  accompany a Partial returned-ledger witness; they add no propagation edge,
+  activation, collection element/index, Config/Result payload or oracle credit.
+  Wrapper-local collection/field propagation remains refused.
+
 - One helper-transfer authority (`analysis/classify/helper_transfer.rs`)
   resolves the chain above the owner once; the relation stage
   (`find_related_tests`), the activation rows, and the call-operand

@@ -10245,6 +10245,8 @@ name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
   "crates/ripr/src/analysis/classify/helper_transfer/returned_ledger.rs::tests",
+  "crates/ripr/src/analysis/classify/helper_transfer/selected_inherent_call.rs::tests",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::gather_retains_selected_call_identity_without_completing_ledger_path",
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests",
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::uniqueness_stop_names_the_ambiguous_entry_tests_call",
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::uniqueness_stop_does_not_credit_qualified_sibling_of_the_hop",
@@ -10293,6 +10295,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/helper_transfer/returned_ledger.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer/selected_inherent_call.rs",
   "crates/ripr/src/analysis/classify/propagation_witness.rs",
   "crates/ripr/src/analysis/classify/helper_transfer.rs",
   "crates/ripr/src/analysis/classifier.rs",
