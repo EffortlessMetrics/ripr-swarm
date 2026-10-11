@@ -34,6 +34,8 @@ export function assertContextPacket(value: unknown, expected: RootExpectation): 
   assert.strictEqual(packet.line, 2);
   assert.strictEqual(packet.current_grip, 'weakly_gripped');
   assert.strictEqual(packet.task, 'write_targeted_test');
+  assert.deepStrictEqual(packet.allowed_edit_surface, [expected.relatedTest]);
+  assert.deepStrictEqual(packet.forbidden_files, [expected.source]);
   const recommended = object(packet.recommended_test);
   assert.strictEqual(recommended.file, expected.relatedTest);
   assert.strictEqual(recommended.name, `${expected.symbol}_boundary_discriminator`);
