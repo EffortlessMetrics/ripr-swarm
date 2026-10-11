@@ -216,7 +216,18 @@ fn has_statement_macro(body: &ast::BlockExpr) -> bool {
     body.syntax()
         .descendants()
         .filter_map(ast::MacroCall::cast)
-        .any(|call| crate::analysis::syntax::macro_call_is_statement(&call))
+        .any(|call| {
+            // A block-tail MacroExpr cannot introduce a binding visible to a
+            // subsequent push/call: its expression block has already ended.
+            // Keep expression tails such as `if ... { format!(...) }` allowed.
+            let block_tail = call.syntax().parent().is_some_and(|parent| {
+                ast::MacroExpr::can_cast(parent.kind())
+                    && parent
+                        .parent()
+                        .is_some_and(|node| ast::StmtList::can_cast(node.kind()))
+            });
+            !block_tail && crate::analysis::syntax::macro_call_is_statement(&call)
+        })
 }
 
 fn field_identity(text: &str) -> String {
@@ -491,6 +502,23 @@ mod tests {
                 "{caller}"
             );
         }
+    }
+
+    #[test]
+    fn owner_expression_tail_macros_preserve_the_parameter_identity() -> Result<(), String> {
+        let (mut owner, mut probe, chain) = route(
+            "fn collect() -> Vec<PolicyError> { let mut errors = Vec::new(); record(&mut errors); errors }",
+        );
+        let source = "fn record(errors: &mut Vec<PolicyError>) {\n    let _message = if true { format!(\"other\") } else { format!(\"other\") };\n    errors.push(PolicyError {\n        detail: format!(\"diagnostic\"),\n    });\n}";
+        let offset = source.find("detail:").ok_or("fixture field missing")?;
+        probe.location.line = owner.start_line
+            + source[..offset]
+                .bytes()
+                .filter(|byte| *byte == b'\n')
+                .count();
+        owner.body = source.into();
+        assert!(returned_ledger(&owner, &probe, &chain).is_some());
+        Ok(())
     }
 
     #[test]
