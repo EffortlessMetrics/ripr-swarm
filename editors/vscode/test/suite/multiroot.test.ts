@@ -361,7 +361,7 @@ async function cleanupOwnedProcess(observed: ProcessObservation): Promise<void> 
     `owned server cleanup exit/close for ${observed.pid}`, 5_000);
   if (observed.pid) {
     assert.throws(() => process.kill(observed.pid!, 0), (error: NodeJS.ErrnoException) => error.code === 'ESRCH',
-      `owned PID ${observed.pid} survived emergency cleanup`);
+      `owned PID ${observed.pid} remained after emergency cleanup`);
   }
 }
 
