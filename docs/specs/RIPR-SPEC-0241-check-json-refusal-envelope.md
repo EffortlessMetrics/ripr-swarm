@@ -176,3 +176,85 @@ probe observes.
 - `crates/ripr/src/analysis/diff/load.rs::GitRootProbe::TimedOut`
 - `crates/ripr/src/domain/git_candidate.rs::GitCandidateSubjectError::ExecutionTimedOut`
 - `crates/ripr/src/config.rs::CandidateConfigError`
+
+## Amendment (#7331, #7332): sibling JSON commands and machine check formats
+
+The Non-Goals "no generic every-command envelope: `check --json` only" is
+superseded. One envelope shape now covers every JSON-emitting command, and the
+machine-readable `check` formats carry their own refusal documents:
+
+- `ripr diff --json`, `ripr rerun --json`, `ripr context` (JSON only), `ripr
+  agent brief --json`, and `ripr agent packet --json` write the same envelope
+  as `check --json` for every post-argv-parse failure, keyed with the refusing
+  command's own `schema_version` (`"0.1"` for diff and agent brief,
+  `"ripr-targeted-rerun-v1"` for rerun, `"1.0"` for context, `"0.5"` for agent
+  packet). `mode` appears only on commands that accept `--mode` (check, diff,
+  context); `scope` is `"diff"` for diff-scoped commands and `"repo"` for
+  agent brief and agent packet; agent brief echoes the caller-supplied
+  `--base` when its working set selected one. Exit stays `2`, prose stays on
+  stderr, and argv usage errors stay prose-only with empty stdout.
+- The closed identity vocabulary gains three members, all with no claim that
+  analysis ran:
+
+| Identity | Repair route | Meaning |
+|---|---|---|
+| `check_artifact_unusable` | `analysis/check-artifact` | A named `ripr context --from` check artifact is unreadable, malformed, foreign, or identity-mismatched. |
+| `gap_ledger_unusable` | `analysis/gap-ledger` | A named `ripr rerun --gap-ledger` file cannot be read or parsed. |
+| `seam_id_unknown` | `analysis/seam-inventory` | A named `ripr agent packet --seam-id` matches no current seam. |
+
+- For `ripr check`, the machine-readable formats `sarif`, `github`,
+  `badge-json`, `repo-exposure-json`, and `agent-seam-packets-json` render a
+  per-format refusal document on stdout (SARIF tool-configuration
+  notification; one GitHub error annotation; the badge degraded-state
+  convention; the repo-exposure and agent-seam-packets refused envelopes with
+  zeroed arrays) instead of zero bytes. Machine formats without an honest
+  refusal shape yet (`repo-sarif`, `badge-plus`, `repo-badge-*`, `shields`,
+  `repo-seams-*`, `repo-exposure-summary-json`) stay prose-only; that gap is a
+  named limitation, not a clean result.
+
+The config-redaction duty (RIPR-SPEC-0007) and the verbatim-diagnostic echo
+apply to every refusal document, whatever the target format: one resolved
+`RefusalNotice` (identity, repair route, redacted-or-verbatim message) feeds
+all renderers.
+
+## Test Mapping (Amendment #7331, #7332)
+
+- `crates/ripr/tests/cli_smoke.rs::diff_json_unresolvable_base_emits_refusal_envelope`
+- `crates/ripr/tests/cli_smoke.rs::diff_json_outside_work_tree_emits_refusal_envelope`
+- `crates/ripr/tests/cli_smoke.rs::rerun_json_unreadable_gap_ledger_emits_refusal_envelope`
+- `crates/ripr/tests/cli_smoke.rs::context_json_missing_artifact_emits_refusal_envelope`
+- `crates/ripr/tests/cli_smoke.rs::agent_brief_json_unresolvable_base_emits_refusal_envelope`
+- `crates/ripr/tests/cli_smoke.rs::agent_packet_json_unknown_seam_id_emits_refusal_envelope`
+- `crates/ripr/tests/cli_smoke.rs::check_sarif_refusal_emits_a_schema_valid_run`
+- `crates/ripr/tests/cli_smoke.rs::check_github_refusal_emits_one_error_annotation`
+- `crates/ripr/tests/cli_smoke.rs::check_badge_json_refusal_emits_the_degraded_badge`
+- `crates/ripr/tests/cli_smoke.rs::check_repo_exposure_json_refusal_emits_the_refused_envelope`
+- `crates/ripr/tests/cli_smoke.rs::check_agent_seam_packets_json_refusal_emits_the_refused_envelope`
+- `crates/ripr/src/output/limited_check.rs::refusal_envelope_names_the_artifact_ledger_and_seam_identities`
+- `crates/ripr/src/output/limited_check.rs::sibling_refusal_envelope_omits_mode_and_base_when_unsupplied`
+- `crates/ripr/src/output/sarif.rs::refusal_sarif_is_a_schema_valid_run_with_the_typed_notification`
+- `crates/ripr/src/output/github.rs::refusal_renders_one_workflow_command_error_with_identity_and_route`
+- `crates/ripr/src/output/badge/tests.rs::refusal_badge_summary_applies_the_degraded_state_convention`
+- `crates/ripr/src/output/repo_exposure.rs::refusal_document_keeps_the_format_contract_with_zeroed_metrics`
+- `crates/ripr/src/output/agent_seam_packets.rs::refusal_document_keeps_the_packet_envelope_with_no_packets`
+
+## Implementation Mapping (Amendment #7331, #7332)
+
+- `crates/ripr/src/core_error.rs::CheckFailureKind::{CheckArtifactUnusable, GapLedgerUnusable, SeamIdUnknown}`
+- `crates/ripr/src/core_error.rs::RefusalNotice`
+- `crates/ripr/src/core_error.rs::refusal_notice`
+- `crates/ripr/src/output/limited_check.rs::RefusalEnvelopeContext`
+- `crates/ripr/src/output/limited_check.rs::render_refusal_envelope`
+- `crates/ripr/src/cli/commands_context.rs::refuse_json_envelope`
+- `crates/ripr/src/cli/commands/check.rs::machine_refusal_document`
+- `crates/ripr/src/output/sarif.rs::render_refusal_sarif`
+- `crates/ripr/src/output/github.rs::render_refusal`
+- `crates/ripr/src/output/badge/summaries.rs::refusal_badge_summary`
+- `crates/ripr/src/output/repo_exposure.rs::render_refusal_json`
+- `crates/ripr/src/output/agent_seam_packets.rs::render_refusal_json`
+- `crates/ripr/src/cli/commands.rs::diff` (refusal wiring)
+- `crates/ripr/src/cli/rerun.rs::run_refusing`
+- `crates/ripr/src/cli/commands/context.rs` (refusal wiring)
+- `crates/ripr/src/cli/commands/agent.rs::{refuse_agent_brief, refuse_agent_packet}`
+- `crates/ripr/src/app/check_artifact.rs::load_findings_for_reuse_core`
+- `crates/ripr/src/cli/rerun.rs::rerun_gap` (typed ledger errors)
