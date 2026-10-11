@@ -86,7 +86,15 @@ pub(crate) fn returned_ledger(
                 .ty()
                 .is_some_and(|ty| canonical(&ty.syntax().text().to_string()).starts_with("&mut"))
     })?;
-    if caller_rebinds_parameter(&owner.body, &parameter) {
+    // The sole binding must be the mutable parameter, including raw spelling.
+    // Opaque statement expansions may introduce a same-name local invisibly.
+    let name = parameter.trim_start_matches("r#");
+    if fn_name_binding_count(&owner.body, name)?
+        + fn_name_binding_count(&owner.body, &format!("r#{name}"))?
+        != 1
+        || has_statement_macro(&function.body()?)
+        || caller_rebinds_parameter(&owner.body, &parameter)
+    {
         return None;
     }
     if owner.file != hop.caller.file
@@ -128,11 +136,12 @@ pub(crate) fn returned_ledger(
     let body = caller_fn.body()?;
     // Imports, value/item declarations and opaque statement expansions can
     // replace the unqualified callee. Refuse before establishing an owner edge.
-    if body.syntax().descendants().any(|node| {
-        ast::Use::can_cast(node.kind())
-            || ast::MacroCall::cast(node)
-                .is_some_and(|call| crate::analysis::syntax::macro_call_is_statement(&call))
-    }) {
+    if body
+        .syntax()
+        .descendants()
+        .any(|node| ast::Use::can_cast(node.kind()))
+        || has_statement_macro(&body)
+    {
         return None;
     }
     if body.tail_expr()?.syntax().text() != local {
@@ -201,6 +210,13 @@ pub(crate) fn returned_ledger(
         local: local.to_string(),
         caller: hop.caller.id.clone(),
     })
+}
+
+fn has_statement_macro(body: &ast::BlockExpr) -> bool {
+    body.syntax()
+        .descendants()
+        .filter_map(ast::MacroCall::cast)
+        .any(|call| crate::analysis::syntax::macro_call_is_statement(&call))
 }
 
 fn field_identity(text: &str) -> String {
@@ -475,6 +491,37 @@ mod tests {
                 "{caller}"
             );
         }
+    }
+
+    #[test]
+    fn owner_parameter_shadows_have_no_transfer() -> Result<(), String> {
+        let (mut owner, mut probe, chain) = route(
+            "fn collect() -> Vec<PolicyError> { let mut errors = Vec::new(); record(&mut errors); errors }",
+        );
+        for declaration in [
+            "let mut errors = Vec::new();",
+            "let mut r#errors = Vec::new();",
+            "let (mut errors, _) = (Vec::new(), true);",
+            "let Ledgers { mut errors } = ledgers;",
+            "macro_rules! bind { ($name:ident) => { let mut $name = Vec::new(); }; } bind!(errors);",
+            "opaque!();",
+        ] {
+            let source = format!(
+                "fn record(errors: &mut Vec<PolicyError>) {{ {declaration}\n    errors.push(PolicyError {{\n        detail: format!(\"diagnostic\"),\n    }});\n}}"
+            );
+            let offset = source.find("detail:").ok_or("fixture field missing")?;
+            probe.location.line = owner.start_line
+                + source[..offset]
+                    .bytes()
+                    .filter(|byte| *byte == b'\n')
+                    .count();
+            owner.body = source.into();
+            assert!(
+                returned_ledger(&owner, &probe, &chain).is_none(),
+                "{declaration}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
