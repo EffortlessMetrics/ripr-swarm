@@ -5,7 +5,10 @@ fn automatic_pr_plan_placeholder_is_retired() -> Result<(), String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let workflow = ".github/workflows/pr-plan.yml";
     assert!(
-        !root.join(workflow).try_exists().map_err(|e| e.to_string())?,
+        !root
+            .join(workflow)
+            .try_exists()
+            .map_err(|e| e.to_string())?,
         "the retired PR Plan placeholder must not spend automatic runners"
     );
     let allowance = root.join("policy/workflow_allowlist.txt");
