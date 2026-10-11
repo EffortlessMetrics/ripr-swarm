@@ -155,7 +155,7 @@ for local builds and explicit server paths.
 
 If nothing appears, run `ripr: Show Status`, then `ripr: Show Output` to inspect
 setup or analysis errors. Save files before refreshing: the editor analyzes the
-saved workspace, not unsaved buffers, by default.
+saved workspace only; unsaved buffer content is never analyzed.
 
 See [the editor repair walkthrough](EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md) for
 verification and receipt steps. For Remote-SSH, containers, or WSL, install the

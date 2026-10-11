@@ -206,8 +206,8 @@ TypeScript/JavaScript is enabled only through `[languages] enabled` in
 
 Findings are static and advisory. An empty result does not establish test
 adequacy, and a before/after receipt is not runtime mutation confirmation.
-Generated CI is non-blocking by default. The editor analyzes saved files, not
-unsaved buffers, by default.
+Generated CI is non-blocking by default. The editor analyzes saved files only;
+unsaved buffer content is never analyzed.
 
 [Support tiers](docs/status/SUPPORT_TIERS.md) describe the supported workflows
 and limits; the [capability matrix](docs/CAPABILITY_MATRIX.md) and
