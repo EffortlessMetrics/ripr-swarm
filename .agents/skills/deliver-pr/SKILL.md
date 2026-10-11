@@ -61,6 +61,8 @@ authorized transition, or assigns it through an available worker. Before handbac
 or a remote-owned wait, retain in the existing issue/PR: claim and exact head,
 observed proof/review with artifact links, unmet acceptance, next action and its
 owner, and the actual prerequisite/capability/authorization boundary if any.
+When native writes are unavailable, use the existing task return and name the
+capable owner needed to mirror it; do not invent access or stop available proof.
 Keep that record current instead of relying on the long briefing or adding a
 tracker. A fresh worker reads those native objects and enters the earliest
 missing judgment. If no executable transition remains, name who/what can resume;

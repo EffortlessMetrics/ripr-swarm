@@ -31,6 +31,15 @@ review-owned experiment. Read-only decision probes qualify only observed routing
 and decisions, not authentication, actual provider loading outside that runtime,
 CI, merge, release or universal model compliance.
 
+The native route regression runs with
+`cargo test --locked -p repo-policy --test continuation_discovery`. It checks
+that both provider roots and their `deliver-pr` entrypoints resolve to this
+packet. Its literal route pins are separate from the policy checker's declaration
+markers. Missing packet or removed links fail; this establishes discoverability,
+not whether a worker reads the packet or follows its meaning. For an old-source
+comparison, run the unchanged test against old instructions in an admitted
+review-owned tree; never copy the missing new guidance into that control.
+
 ## Inputs
 
 Cases are independent. Use current instructions in the assigned repository.
