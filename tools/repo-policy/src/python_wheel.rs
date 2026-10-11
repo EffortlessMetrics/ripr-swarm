@@ -140,8 +140,12 @@ mod tests {
             format!("{wheel}bad|NaN|reason\n"),
             format!("{wheel}bad|1| \n"),
         ] {
-            assert!(unchanged_wheel_record(&wheel, &malformed).is_err());
-            assert!(unchanged_wheel_record(&malformed, &wheel).is_err());
+            for (before, after) in [(&wheel, &malformed), (&malformed, &wheel)] {
+                let Err(error) = unchanged_wheel_record(before, after) else {
+                    return Err("ambiguous records must reject a skip proof".into());
+                };
+                assert!(!error.is_empty());
+            }
         }
         let duplicate = parse_workflow_budgets(LEDGER, &format!("{wheel}{wheel}"))?;
         assert_eq!(
