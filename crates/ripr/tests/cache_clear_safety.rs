@@ -26,16 +26,44 @@ fn remove_base(base: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Human `Cache dir:` lines go through `output::path::human_path` (#7326), so
-/// the printed spelling can differ from `Path::display()` on Windows. Match
-/// the header by leaf name rather than duplicating the renderer.
-fn stdout_names_cache_dir(stdout: &str, cache_dir: &Path) -> bool {
-    let Some(name) = cache_dir.file_name().and_then(|name| name.to_str()) else {
+/// Independent host spelling of the human `Cache dir:` header (#7326).
+/// This copies the `human_path_text` rule instead of calling the production
+/// helper, so a wrong parent with the same leaf, or `Path::display()` on
+/// Windows, cannot satisfy the exact-binary tests.
+fn expected_cache_dir_line(cache_dir: &Path) -> Option<String> {
+    let text = cache_dir.to_str()?;
+    let shown = if cfg!(windows) {
+        match text.strip_prefix(r"\\?\") {
+            Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest.replace('\\', "/"),
+            Some(_) => text.to_string(),
+            None => text.replace('\\', "/"),
+        }
+    } else {
+        text.to_string()
+    };
+    Some(format!("Cache dir: {shown}"))
+}
+
+fn stdout_has_cache_dir_line(stdout: &str, cache_dir: &Path) -> bool {
+    let Some(expected) = expected_cache_dir_line(cache_dir) else {
         return false;
     };
-    stdout
-        .lines()
-        .any(|line| line.starts_with("Cache dir:") && line.contains(name))
+    stdout.lines().any(|line| line == expected)
+}
+
+#[test]
+fn cache_dir_line_matcher_rejects_same_leaf_wrong_parent() -> Result<(), String> {
+    let cache_dir = Path::new("target/ripr/actual-cache");
+    let expected = expected_cache_dir_line(cache_dir).ok_or("utf-8 cache dir")?;
+    let matching = format!("{expected}\ncleared\n");
+    let same_leaf = "Cache dir: other/ripr/actual-cache\ncleared\n";
+    if !stdout_has_cache_dir_line(&matching, cache_dir) {
+        return Err(format!("exact header must match: {expected}"));
+    }
+    if stdout_has_cache_dir_line(same_leaf, cache_dir) {
+        return Err("same leaf under a different parent must not match".to_string());
+    }
+    Ok(())
 }
 
 /// The one spawn site for the exact `ripr` binary in this file.
@@ -66,7 +94,7 @@ fn cache_clear_force_preserves_unrelated_siblings_through_exact_binary() -> Resu
         && !layer.exists()
         && sentinel.is_file()
         && cache_dir.is_dir()
-        && stdout_names_cache_dir(&stdout, &cache_dir)
+        && stdout_has_cache_dir_line(&stdout, &cache_dir)
         && stdout.contains("Preserved the cache root and unrelated siblings");
     remove_base(&base)?;
 
@@ -145,7 +173,7 @@ fn cache_status_hint_names_a_published_command_that_clears_the_same_dir() -> Res
         && hint.contains("`ripr cache clear --force`")
         && !hint.contains("xtask");
     let preview_targets_same_dir = preview.status.success()
-        && stdout_names_cache_dir(&preview_stdout, &cache_dir)
+        && stdout_has_cache_dir_line(&preview_stdout, &cache_dir)
         && entry_kept;
     if !(status.status.success() && names_published_command && preview_targets_same_dir) {
         return Err(format!(
