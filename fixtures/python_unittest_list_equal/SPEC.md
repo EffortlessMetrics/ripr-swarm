@@ -5,7 +5,7 @@ Spec: RIPR-SPEC-0028
 ## Given
 
 A return changes one short numeric list element. A direct standard unittest
-class uses `self.assertListEqual(labels(), [1, 2])` as its only test statement.
+module-level class uses `self.assertListEqual(labels(), [1, 2])` as its only test statement.
 The expected list is independently authored and contains literal values.
 
 Source provenance: CPython v3.14.0 commit
@@ -29,7 +29,7 @@ and `exposed`, through the real CLI and existing admission/alignment gates.
 
 Credit a same-name fake receiver, visible framework override, skipped test,
 unrelated operand repeating the changed literal, self-computed expectation, or
-slice. Broader assertion forms remain explicitly limited. Parser refusal remains
+slice, input-bearing owner call, or nested unittest class. Broader assertion forms remain explicitly limited. Parser refusal remains
 unsupported syntax rather than a clean zero finding.
 
 Independent native oracle: `python -m unittest discover -s tests` from `input`

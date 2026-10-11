@@ -185,13 +185,13 @@ mock expectations, and custom `assert_*` helpers.
 - `self.assertRaises(...)` â†’ error-path oracle
 - `self.assertListEqual(owner(), [literal elements])` supplies strong exact-value
   evidence for a whole returned list, including short numeric element changes.
-  This bounded shape requires a direct canonical `unittest.TestCase` or imported
+  This bounded shape requires a module-level direct canonical `unittest.TestCase` or imported
   `TestCase` base, no additional bases, class hooks/assignments/decorators, and an
   ordinary `self` method with that call as its only statement. Both positional
   operands are required; message arguments, slices, nonliteral expectations,
   custom receivers, inherited wrappers and visible framework rebinding remain
   unknown helpers. Visible owner rebinding cannot supply sink alignment. Credit
-  also requires the asserted operand to call the
+  also requires the asserted operand to make a zero-argument call to the
   same imported free-function owner; matching expected literals in another row
   or a nested wrapper cannot supply sink alignment. Skip and parser limitations
   remain governed by their existing admission paths.

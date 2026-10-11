@@ -63,7 +63,8 @@ pub(in crate::analysis::language::python) fn literal_call(call: &ast::ExprCall) 
             && matches!(attr.value.as_ref(), Expr::Name(name) if name.id.as_str() == "self"))
         && call.keywords.is_empty()
         && call.args.len() == 2
-        && matches!(call.args.first(), Some(Expr::Call(_)))
+        && matches!(call.args.first(), Some(Expr::Call(owner_call))
+            if owner_call.args.is_empty() && owner_call.keywords.is_empty())
         && matches!(call.args.get(1), Some(Expr::List(list))
             if list.elts.iter().all(|element| matches!(element, Expr::Constant(_))))
 }

@@ -53,6 +53,16 @@ fn unittest_list_equal_withholds_unresolved_or_nonobserving_calls() -> Result<()
         (
             "class Checks(unittest.TestCase):",
             "",
+            "self.assertListEqual(labels(ignore()), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
+            "self.assertListEqual(labels(value=ignore()), [10, 22])",
+        ),
+        (
+            "class Checks(unittest.TestCase):",
+            "",
             "fake.assertListEqual(labels(), [10, 22])",
         ),
         (
@@ -170,6 +180,25 @@ fn unittest_list_equal_withholds_module_binding_and_framework_writes() -> Result
             "{mutation}"
         );
     }
+    Ok(())
+}
+
+#[test]
+fn unittest_list_equal_withholds_nested_unittest_registration() -> Result<(), String> {
+    let tests = "import unittest\nfrom src.subject import labels\nclass Outer(unittest.TestCase):\n    class Inner(unittest.TestCase):\n        def test_labels(self):\n            self.assertListEqual(labels(), [1, 2])\n";
+    assert_eq!(
+        extract_tests(Path::new("tests/test_subject.py"), tests).len(),
+        1
+    );
+    let finding = classify_case(
+        "def labels():\n    return [1, 2]\n",
+        tests,
+        2,
+        "    return [1, 1]",
+        "    return [1, 2]",
+    )?;
+    assert_ne!(finding.class, ExposureClass::Exposed);
+    assert_ne!(finding.ripr.reveal.discriminate.state, StageState::Yes);
     Ok(())
 }
 

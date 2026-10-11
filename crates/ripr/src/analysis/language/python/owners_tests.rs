@@ -427,10 +427,11 @@ pub(super) fn collect_tests_from_statements(
                             body: imports,
                             definition: &definition_imports,
                             admission,
-                            standard_unittest_list: super::oracles::unittest_list::eligible_class(
-                                class,
-                                &definition_imports,
-                            ),
+                            standard_unittest_list: class_context.is_none()
+                                && super::oracles::unittest_list::eligible_class(
+                                    class,
+                                    &definition_imports,
+                                ),
                         },
                         out,
                     );
