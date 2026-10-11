@@ -317,7 +317,7 @@ fn fixture_cache_processes_keep_owned_facts_and_outputs_during_cargo_contention(
         lock.unlock().map_err(|e| e.to_string())?;
         let result = peer
             .join()
-            .map_err(|_| "fixture process driver panicked")??;
+            .map_err(|error| format!("fixture process driver panicked: {error:?}"))??;
         assert_child(&result);
         assert!(
             result
