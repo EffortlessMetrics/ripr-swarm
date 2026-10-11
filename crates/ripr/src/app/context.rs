@@ -89,6 +89,10 @@ pub(crate) fn collect_context_with_config_and_worktree(
 /// `max_related_tests` is a render-time knob: it is not part of the artifact
 /// identity and is honored fresh, including beyond the `check --json`
 /// render cap, because the artifact stores the uncapped related-tests list.
+///
+/// The typed error carries the refusal family (`check_artifact_unusable`,
+/// #7331) so the CLI refusal envelope names it; the selector-not-found
+/// branch stays an untyped message because no artifact defect is claimed.
 pub(crate) fn collect_context_from_artifact(
     input: CheckInput,
     selector: &str,
@@ -96,8 +100,8 @@ pub(crate) fn collect_context_from_artifact(
     config: &RiprConfig,
     artifact_path: &Path,
     asserted_base: Option<&str>,
-) -> Result<String, String> {
-    let findings = super::check_artifact::load_findings_for_reuse(
+) -> Result<String, crate::core_error::CoreError> {
+    let findings = super::check_artifact::load_findings_for_reuse_core(
         artifact_path,
         &input,
         config,
@@ -115,9 +119,8 @@ pub(crate) fn collect_context_from_artifact(
             // renders against it like every fresh route (#5996).
             input.root.as_path(),
         )),
-        None => Err(super::explain::no_finding_matched(
-            selector,
-            "ripr check --json",
+        None => Err(crate::core_error::CoreError::from(
+            super::explain::no_finding_matched(selector, "ripr check --json"),
         )),
     }
 }
