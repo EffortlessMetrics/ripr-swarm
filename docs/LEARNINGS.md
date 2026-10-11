@@ -3,6 +3,17 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-11: Digest `Related test (1 of N)` counts matched rows, not tests (#6807)
+
+`Finding::related_tests_total()` is `related_tests_matched_total`: matched
+related-test/oracle rows after dedup and before bounded packing, one row per
+admitted assertion plus examined-miss rows. The human digest used to print
+`Related test (1 of N)` from that count, so one test with 81 `assert_eq!`
+rows read as 81 tests. Name the unit (`matched rows`) in the renderer; do
+not treat the packed `related_tests` window as a distinct-test census, and
+do not add a JSON distinct-test field without a schema change. The
+all-no-path note already splits tests vs rows after #5359 (RIPR-SPEC-0090).
+
 ## 2026-10-10: A helper-chain uniqueness refusal is not `no_static_path` (#7080)
 
 `callee_is_unique` / `test_call_is_shadowed` correctly refuse a hop when

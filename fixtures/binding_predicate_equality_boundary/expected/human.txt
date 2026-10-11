@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:split_after:predicate_boundary:predicate:end==start
   Changed behavior: input.rfind(delim).map_or(1, |idx| idx)
   Analyzer limit: No clear propagation path from changed behavior to an observable sink
-  Related test (1 of 2): tests/split.rs:9 absent_delimiter_boundary_returns_head
+  Related test (1 of 2 matched rows): tests/split.rs:9 absent_delimiter_boundary_returns_head
   Next step: Escalate to real mutation testing or deep static analysis for this probe.
   Evidence: reach yes · infection yes · propagation unknown · observation yes · discriminator not established
     - reach yes: Related tests appear to reach split_after: absent_delimiter_boundary_returns_head, present_delimiter_returns_prefix

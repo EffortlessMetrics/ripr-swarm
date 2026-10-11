@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:amount==free_shipping
   Changed behavior: amount >= FREE_SHIPPING
   Missing discriminator (1 of 2): No detected boundary input for the changed predicate
-  Related test (1 of 2): tests/pricing.rs:17 shipping_boundary
+  Related test (1 of 2 matched rows): tests/pricing.rs:17 shipping_boundary
   Next step: Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
     - reach yes: Related tests appear to reach shipping: shipping_boundary

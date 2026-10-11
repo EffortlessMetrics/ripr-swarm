@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:impl ParserA::parse_summary:call_deletion:call_deletion:try_parse_summary_raw_.map_err_into_into
   Changed behavior: try_parse_summary(raw).map_err(Into::into)
   Missing discriminator: No strong discriminator was detected
-  Related test (1 of 2): tests/errors.rs:4 parse_summary_callee_witness_pins_variant (ripr could not confirm that this assertion observes the changed behavior)
+  Related test (1 of 2 matched rows): tests/errors.rs:4 parse_summary_callee_witness_pins_variant (ripr could not confirm that this assertion observes the changed behavior)
   Next step: Strengthen the related assertion so it discriminates the changed behavior.
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach parse_summary: parse_summary_callee_witness_pins_variant, parse_summary_other_receiver_pins_same_variant
