@@ -2953,3 +2953,161 @@ fn constant_row_table_pairs_each_row_with_its_boundary_input() -> Result<(), Str
     }
     Ok(())
 }
+
+/// #7175/#7117: identical assertion tokens can name a test-local trait or
+/// the production trait. Keep literal runtime truth outside the analyzed root,
+/// and graduate all three compiled shapes into the independent honesty gate.
+#[test]
+fn trait_shadow_corpus_matches_compiled_owner_dispatch() -> Result<(), String> {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let corpus: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixtures.join("evidence-promotion-honesty-corpus/corpus.json"))
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let cases = corpus["cases"].as_array().ok_or("missing honesty cases")?;
+
+    for (shape, shadow, test_file, line, name) in [
+        ("impl", true, "src/lib.rs", 28, "render_is_empty"),
+        ("impl", false, "src/lib.rs", 18, "render_is_empty"),
+        (
+            "parent",
+            true,
+            "src/helpers/render_tests.rs",
+            4,
+            "render_is_empty",
+        ),
+        (
+            "parent",
+            false,
+            "src/helpers/render_tests.rs",
+            4,
+            "render_is_empty",
+        ),
+        ("default", true, "src/lib.rs", 35, "advances"),
+        ("default", false, "src/lib.rs", 22, "advances"),
+    ] {
+        let fixture_name = format!(
+            "rust_trait_{shape}_{}",
+            if shadow { "shadow" } else { "import" }
+        );
+        let registered = cases
+            .iter()
+            .filter(|case| case["id"] == fixture_name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            registered.len(),
+            1,
+            "{fixture_name}: retain the charter member"
+        );
+        assert_eq!(
+            registered[0]["source_fixture"],
+            format!("fixtures/{fixture_name}"),
+            "{fixture_name}: the gate must consume this live golden fixture"
+        );
+
+        let fixture = fixtures.join(&fixture_name);
+        let source = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+            .map_err(|error| error.to_string())?;
+        let mut modules = Vec::new();
+        if shape == "parent" {
+            for relative in ["helpers.rs", "helpers/render_tests.rs"] {
+                let module = std::fs::read_to_string(fixture.join("input/src").join(relative))
+                    .map_err(|error| error.to_string())?;
+                modules.push((relative, module));
+            }
+        }
+        let runtime_modules = modules
+            .iter()
+            .map(|(path, source)| (*path, source.as_str()))
+            .collect::<Vec<_>>();
+        source_runtime_control_with(&source, &runtime_modules, &fixture_name, 1, false)?;
+
+        let (production, tests) = source
+            .split_once("#[cfg(test)]")
+            .ok_or("missing test root")?;
+        let (original, replacement) = if shape == "default" {
+            ("4 * self.step()", "4 + self.step()")
+        } else {
+            ("String::from(\"\")", "String::from(\"wrong\")")
+        };
+        assert_eq!(production.matches(original).count(), 1, "{fixture_name}");
+        let mutant = format!(
+            "{}#[cfg(test)]{tests}",
+            production.replace(original, replacement)
+        );
+        assert_ne!(
+            mutant, source,
+            "{fixture_name}: mutate the production owner"
+        );
+        source_runtime_control_with(
+            &mutant,
+            &runtime_modules,
+            &format!("{fixture_name}-wrong-production"),
+            1,
+            !shadow,
+        )?;
+
+        // Only the authored fixture belongs to this index; the compiled
+        // originals/mutants are separate Scratch roots and already released.
+        let scratch = Scratch::create()?;
+        let root = scratch.0.join("ws");
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::copy(fixture.join("input/Cargo.toml"), root.join("Cargo.toml"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+        for (relative, module) in &modules {
+            let path = root.join("src").join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(path, module).map_err(|error| error.to_string())?;
+        }
+        let report = check_workspace(CheckInput {
+            root,
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            ..CheckInput::default()
+        })?;
+        let json: serde_json::Value =
+            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                .map_err(|error| error.to_string())?;
+        let findings = json["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(
+            findings.len(),
+            1,
+            "{fixture_name}: one changed production tail"
+        );
+        let finding = &findings[0];
+        assert_eq!(finding["probe"]["family"], "return_value", "{fixture_name}");
+        assert_eq!(
+            finding["classification"],
+            if shadow { "weakly_exposed" } else { "exposed" },
+            "{fixture_name}: {finding}"
+        );
+        let related = finding["related_tests"]
+            .as_array()
+            .ok_or("missing related tests")?;
+        assert_eq!(
+            related.len(),
+            1,
+            "{fixture_name}: no borrowed or runtime test"
+        );
+        assert_eq!(related[0]["name"], name, "{fixture_name}");
+        assert_eq!(related[0]["file"], test_file, "{fixture_name}");
+        assert_eq!(related[0]["line"], line, "{fixture_name}");
+        assert_eq!(related[0]["oracle_kind"], "exact_value", "{fixture_name}");
+        assert_eq!(related[0]["oracle_strength"], "strong", "{fixture_name}");
+        assert_eq!(
+            related[0]["relation_reason"],
+            if shadow {
+                "weak_token_substring"
+            } else {
+                "direct_owner_call"
+            },
+            "{fixture_name}: dispatch identity, not assertion token matching"
+        );
+    }
+    Ok(())
+}
