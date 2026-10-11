@@ -233,27 +233,131 @@ pub(crate) fn evidence_tree_currentness(
     root: &Path,
     entry: &ClassifiedSeam,
 ) -> Result<RepairCardSnapshotCurrentness, String> {
-    let paths = evidence_probe_paths(entry);
+    Ok(evidence_tree_currentness_batch(root, &[entry])?.remove(0))
+}
+
+/// Upper bound on pathspecs per `git status` child: Windows command lines end
+/// near 32k characters, so a binding set with thousands of evidence paths
+/// chunks into several children instead of failing the spawn.
+const CURRENTNESS_PROBE_PATHS_PER_CHILD: usize = 180;
+
+/// #7292 test seam: children spawned by the batched currentness probe.
+#[cfg(test)]
+pub(crate) static CURRENTNESS_PROBE_CHILDREN: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// One working-tree probe for MANY seams: every binding's evidence scope
+/// shares one (chunked) `git status --porcelain --ignored` child instead of
+/// one child per seam. The MCP refresh binds card producers through this
+/// authority after its analysis, and ce154a67c made those bindings actually
+/// match — which turned the previously dead per-seam probe live on exactly
+/// the refresh path: one mid-corpus refresh paid twenty sequential `git
+/// status` children for twenty bound seams (#7292). The per-entry outcome is
+/// the single-entry probe's own: the entry's scope is dirty exactly when the
+/// status reports any of that entry's paths, so the batch keeps the
+/// single-entry contract while paying a fraction of the children.
+pub(crate) fn evidence_tree_currentness_batch(
+    root: &Path,
+    entries: &[&ClassifiedSeam],
+) -> Result<Vec<RepairCardSnapshotCurrentness>, String> {
+    if entries.is_empty() {
+        return Ok(Vec::new());
+    }
+    let probe_paths: Vec<Vec<std::path::PathBuf>> = entries
+        .iter()
+        .map(|entry| evidence_probe_paths(entry))
+        .collect();
+    // The union of every entry's evidence paths, deduplicated: one status
+    // child answers for all of them, and each entry reads only its own
+    // paths back out of the record set.
+    let mut union: Vec<String> = Vec::new();
+    for paths in &probe_paths {
+        for path in paths {
+            let spelling = path.to_string_lossy().replace('\\', "/");
+            if !union.contains(&spelling) {
+                union.push(spelling);
+            }
+        }
+    }
+    let mut dirty: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for chunk in union.chunks(CURRENTNESS_PROBE_PATHS_PER_CHILD) {
+        probe_paths_dirty(root, chunk, &mut dirty)?;
+    }
+    Ok(probe_paths
+        .into_iter()
+        .map(|paths| {
+            let scope_dirty = paths.iter().any(|path| {
+                let spelling = path.to_string_lossy().replace('\\', "/");
+                dirty.contains(&spelling)
+            });
+            if scope_dirty {
+                RepairCardSnapshotCurrentness::AcceptedDirtyDraft
+            } else {
+                RepairCardSnapshotCurrentness::Current
+            }
+        })
+        .collect())
+}
+
+/// Run one `git status --porcelain -z --ignored` over `paths` and record
+/// every reported path as dirty. The `-z` form never quotes paths, and a
+/// renamed or copied entry carries the original path as one more NUL field;
+/// both spellings are evidence scope.
+fn probe_paths_dirty(
+    root: &Path,
+    paths: &[String],
+    dirty: &mut std::collections::HashSet<String>,
+) -> Result<(), String> {
     let mut args: Vec<String> = vec![
         // Evidence filenames are literal paths, never patterns: a seam file
         // named `foo*bar.rs` must not glob-match unrelated files.
         "--literal-pathspecs".to_string(),
         "status".to_string(),
         "--porcelain".to_string(),
+        "-z".to_string(),
         "--ignored".to_string(),
         "--".to_string(),
     ];
-    for path in &paths {
-        args.push(path.to_string_lossy().into_owned());
-    }
+    args.extend(paths.iter().cloned());
     let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    #[cfg(test)]
+    CURRENTNESS_PROBE_CHILDREN.fetch_add(1, std::sync::atomic::Ordering::Release);
     let output = git_output(root, &arg_refs)
         .map_err(|error| format!("agent card could not probe the working-tree state: {error}"))?;
-    if output.trim().is_empty() {
-        Ok(RepairCardSnapshotCurrentness::Current)
-    } else {
-        Ok(RepairCardSnapshotCurrentness::AcceptedDirtyDraft)
+    let mut records = output.split('\0').filter(|record| !record.is_empty()).peekable();
+    while let Some(record) = records.next() {
+        // Porcelain v1: two status columns, one space, then the path. The
+        // first column is a space for unstaged-only changes, so the record
+        // splits on its columns, never on the first space.
+        let bytes = record.as_bytes();
+        if bytes.len() < 4 || bytes[2] != b' ' {
+            continue;
+        }
+        let status = &record[..2];
+        let path = &record[3..];
+        dirty.insert(path.replace('\\', "/"));
+        if status.starts_with('R') || status.starts_with('C') {
+            if let Some(original) = records.peek() {
+                // The rename's other path arrives as the next NUL field; a
+                // real record always begins with its two status columns and
+                // a space, which a bare path cannot be assumed to.
+                if !looks_like_status_record(original) {
+                    dirty.insert(original.replace('\\', "/"));
+                    records.next();
+                }
+            }
+        }
     }
+    Ok(())
+}
+
+/// Whether a `-z` porcelain field is a status record (`XY <path>`) rather
+/// than a rename's original-path continuation field.
+fn looks_like_status_record(field: &str) -> bool {
+    let bytes = field.as_bytes();
+    bytes.len() >= 3
+        && bytes[2] == b' '
+        && (bytes[0].is_ascii_uppercase() || bytes[0] == b'?' || bytes[0] == b'!')
 }
 
 /// The probe pathspecs in their filesystem spelling. `display_path` is a
@@ -2131,6 +2235,198 @@ mod tests {
             );
         };
         Ok(())
+    }
+
+    fn currentness_git_fixture(label: &str) -> Result<std::path::PathBuf, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-card-currentness-batch-{label}-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| format!("clock error: {error}"))?
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(root.join("src"))
+            .map_err(|error| format!("fixture src failed: {error}"))?;
+        let git = |args: &[&str]| -> Result<(), String> {
+            let output = std::process::Command::new("git")
+                .current_dir(&root)
+                .args(args)
+                .output()
+                .map_err(|error| format!("git {args:?} failed to run: {error}"))?;
+            if output.status.success() {
+                Ok(())
+            } else {
+                Err(format!(
+                    "git {args:?} failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ))
+            }
+        };
+        git(&["init", "--initial-branch", "main"]).or_else(|_| git(&["init"]))?;
+        git(&["config", "user.email", "test@example.com"])?;
+        git(&["config", "user.name", "Test"])?;
+        git(&["config", "commit.gpgsign", "false"])?;
+        Ok(root)
+    }
+
+    fn entry_for_file(file: &str) -> ClassifiedSeam {
+        weakly_gripped_entry_for_seam(RepoSeam::new(
+            file,
+            "pricing::discounted_total",
+            SeamKind::PredicateBoundary,
+            42,
+            8,
+            "amount >= discount_threshold",
+            RequiredDiscriminator::BoundaryValue {
+                description: "amount >= discount_threshold".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        ))
+    }
+
+    /// #7292 discriminating test: the batched currentness probe serves many
+    /// bound seams with ONE `git status` child. Before the batch, the MCP
+    /// refresh ran one child per bound seam (twenty sequential children for
+    /// one mid-corpus refresh). With the probe back on a per-entry loop
+    /// (pre-fix shape), the child count rises with the seam count and this
+    /// assertion fails.
+    #[test]
+    fn batched_currentness_spawns_one_child_for_many_seams() -> Result<(), String> {
+        use std::sync::atomic::Ordering;
+        let root = currentness_git_fixture("one-child")?;
+        let result = (|| -> Result<(), String> {
+            let mut entries = Vec::new();
+            for index in 0..25 {
+                let file = format!("src/seam_{index:02}.rs");
+                std::fs::write(root.join(&file), format!("pub fn f_{index}() {{}}\n"))
+                    .map_err(|error| format!("write {file}: {error}"))?;
+                entries.push(entry_for_file(&file));
+            }
+            let git = |args: &[&str]| -> Result<(), String> {
+                let output = std::process::Command::new("git")
+                    .current_dir(&root)
+                    .args(args)
+                    .output()
+                    .map_err(|error| format!("git failed: {error}"))?;
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    Err(String::from_utf8_lossy(&output.stderr).into_owned())
+                }
+            };
+            git(&["add", "."])?;
+            git(&["commit", "-q", "-m", "base"])?;
+            // One tracked edit: seam 00's scope is dirty, the rest clean.
+            std::fs::write(root.join("src/seam_00.rs"), "pub fn dirty() {}\n")
+                .map_err(|error| format!("dirty write: {error}"))?;
+
+            let refs: Vec<&ClassifiedSeam> = entries.iter().collect();
+            // Differential child count: other lib tests probe concurrently
+            // and share this process-global counter, so the assertion reads
+            // the counter across a one-seam run and the 25-seam run. The
+            // batched probe is flat in the seam count (delta ~0, tolerating
+            // a racing probe); the pre-fix per-entry loop grows with the
+            // seam count (delta 24).
+            CURRENTNESS_PROBE_CHILDREN.store(0, Ordering::Release);
+            let _single_outcomes = evidence_tree_currentness_batch(&root, &refs[..1])?;
+            let after_single = CURRENTNESS_PROBE_CHILDREN.load(Ordering::Acquire);
+            let outcomes = evidence_tree_currentness_batch(&root, &refs)?;
+            let after_all = CURRENTNESS_PROBE_CHILDREN.load(Ordering::Acquire);
+            let delta = after_all.saturating_sub(after_single);
+            // The bound sits far from both shapes: the batched probe is flat
+            // (delta ~0 plus concurrent-probe noise), the per-entry loop
+            // grows by 24. Concurrent lib tests share this process-global
+            // counter, so the tolerance absorbs a racing probe burst while
+            // staying well under the per-entry delta.
+            if delta > 12 {
+                return Err(format!(
+                    "the currentness probe grew from {after_single} to {after_all} git children \
+                     between 1 and 25 seams: it is per-entry, not batched"
+                ));
+            }
+            if outcomes[0] != RepairCardSnapshotCurrentness::AcceptedDirtyDraft {
+                return Err("the dirty seam must read AcceptedDirtyDraft".to_string());
+            }
+            if outcomes[1..]
+                .iter()
+                .any(|outcome| *outcome != RepairCardSnapshotCurrentness::Current)
+            {
+                return Err("the clean seams must read Current".to_string());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
+    }
+
+    /// The batch keeps the single-entry contract per seam: over a fixture
+    /// mixing a tracked edit, an untracked draft and an ignored file, every
+    /// batched outcome equals the per-entry probe's own.
+    #[test]
+    fn batched_currentness_matches_the_single_probe_per_entry() -> Result<(), String> {
+        let root = currentness_git_fixture("parity")?;
+        let result = (|| -> Result<(), String> {
+            std::fs::write(root.join("src/tracked.rs"), "pub fn a() {}\n")
+                .map_err(|error| format!("write: {error}"))?;
+            std::fs::write(root.join("src/ignored.rs"), "pub fn b() {}\n")
+                .map_err(|error| format!("write: {error}"))?;
+            let git = |args: &[&str]| -> Result<(), String> {
+                let output = std::process::Command::new("git")
+                    .current_dir(&root)
+                    .args(args)
+                    .output()
+                    .map_err(|error| format!("git failed: {error}"))?;
+                if output.status.success() {
+                    Ok(())
+                } else {
+                    Err(String::from_utf8_lossy(&output.stderr).into_owned())
+                }
+            };
+            git(&["add", "src/tracked.rs"])?;
+            git(&["commit", "-q", "-m", "base"])?;
+            std::fs::write(root.join(".gitignore"), "src/ignored.rs\n")
+                .map_err(|error| format!("gitignore: {error}"))?;
+            std::fs::write(root.join("src/untracked.rs"), "pub fn c() {}\n")
+                .map_err(|error| format!("write: {error}"))?;
+            // The ignore rule and the untracked draft must be committed or
+            // left as worktree state on purpose: the ignored file is
+            // committed as tracked content here is wrong — keep it untracked
+            // and ignored; the untracked draft stays untracked and reported.
+            let entries = vec![
+                entry_for_file("src/tracked.rs"),
+                entry_for_file("src/untracked.rs"),
+                entry_for_file("src/ignored.rs"),
+                entry_for_file("src/missing.rs"),
+            ];
+            // The tracked file gets a working-tree edit (dirty scope).
+            std::fs::write(root.join("src/tracked.rs"), "pub fn a2() {}\n")
+                .map_err(|error| format!("edit: {error}"))?;
+
+            let refs: Vec<&ClassifiedSeam> = entries.iter().collect();
+            let batched = evidence_tree_currentness_batch(&root, &refs)?;
+            for (entry, batched) in entries.iter().zip(&batched) {
+                let single = evidence_tree_currentness(&root, entry)?;
+                if *batched != single {
+                    return Err(format!(
+                        "batched outcome {batched:?} diverges from the single probe {single:?} for \
+                         {}",
+                        entry.seam.file().display()
+                    ));
+                }
+            }
+            // Sanity on the fixture itself: the edited tracked file reads
+            // dirty, the absent file reads current.
+            if batched[0] != RepairCardSnapshotCurrentness::AcceptedDirtyDraft {
+                return Err("the edited tracked file must be dirty".to_string());
+            }
+            if batched[3] != RepairCardSnapshotCurrentness::Current {
+                return Err("the absent file must be current".to_string());
+            }
+            Ok(())
+        })();
+        let _ = std::fs::remove_dir_all(&root);
+        result
     }
 
     /// #5007: the producer split keeps the typed kind and the verbatim human
