@@ -12,6 +12,8 @@ const SOURCE: &str = "fixtures/all_no_path_disclosure";
 const CHILD_PATH: &str = "RIPR_XTASK_FIXTURE_TEST_PATH";
 #[cfg(target_os = "linux")]
 const CHILD_PID: &str = "RIPR_XTASK_FIXTURE_TEST_PID";
+#[cfg(target_os = "linux")]
+const CHILD_START_GATE: &str = "RIPR_XTASK_FIXTURE_TEST_START_GATE";
 const CHILD: &str = "tests::fixture_cache::fixture_cache_process_child";
 
 /// Acquire only fresh paths. The parent owns them until every child is reaped,
@@ -201,6 +203,35 @@ fn child(case: &Case, timeout: Duration) -> Result<crate::run::TimedOutput, Stri
     Ok(result.output)
 }
 
+#[cfg(target_os = "linux")]
+fn child_after_readiness(
+    case: &Case,
+    gate: &Path,
+    deadline: crate::run::ReadinessDeadline<'_>,
+) -> Result<crate::run::TimedOutput, String> {
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let path = crate::normalize_path(&case.fixture);
+    let marker = crate::normalize_path(&child_pid_path(case)?);
+    let gate = crate::normalize_path(gate);
+    let result = crate::run::capture_output_measured_after_readiness(
+        &exe.to_string_lossy(),
+        &[
+            CHILD.to_string(),
+            "--exact".to_string(),
+            "--nocapture".to_string(),
+        ],
+        Some(&repo_root()?),
+        &[
+            (CHILD_PATH, path.as_str()),
+            (CHILD_PID, marker.as_str()),
+            (CHILD_START_GATE, gate.as_str()),
+        ],
+        deadline,
+        "owned real fixture readiness process",
+    )?;
+    Ok(result.output)
+}
+
 fn assert_child(output: &crate::run::TimedOutput) {
     assert!(
         !output.timed_out && output.status.is_some_and(|status| status.success()),
@@ -233,6 +264,11 @@ fn fixture_cache_process_child() -> Result<(), String> {
         let temporary = marker.with_extension("tmp");
         fs::write(&temporary, std::process::id().to_string()).map_err(|e| e.to_string())?;
         fs::rename(temporary, marker).map_err(|e| e.to_string())?;
+        if let Some(gate) = std::env::var_os(CHILD_START_GATE) {
+            while !Path::new(&gate).try_exists().map_err(|e| e.to_string())? {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
     }
     let fixture = PathBuf::from(path);
     let name = fixture
@@ -567,8 +603,8 @@ fn fixture_cache_owner_preserves_unknown_paths_and_cleans_failed_setup() -> Resu
 #[test]
 fn fixture_cache_aborted_process_is_reaped_before_owned_cleanup_and_recovers() -> Result<(), String>
 {
-    // Warm the real binary first, so abort concerns native lock contention,
-    // rather than a slow cold build or missing producer.
+    // Warm the producer, then deliberately delay this distinct child beyond
+    // the abort budget. Only its observed native waiter can arm that budget.
     let warm = Case::new("abort-warm")?;
     assert_child(&child(&warm, crate::run::tool_build_timeout()?)?);
     let facts = snapshot(&warm.cache)?;
@@ -588,9 +624,54 @@ fn fixture_cache_aborted_process_is_reaped_before_owned_cleanup_and_recovers() -
             .open(&lock_path)
             .map_err(|e| e.to_string())?;
         lock.lock().map_err(|e| e.to_string())?;
+        let key = held_lock_key(&lock)?;
+        let marker = child_pid_path(&aborted)?;
+        let gate = marker.with_file_name("start-gate");
+        let mut gated_since = None;
+        let mut released = false;
+        let mut ready_at = None;
+        let mut probe = || -> Result<bool, String> {
+            if !released {
+                if !marker.try_exists().map_err(|e| e.to_string())? {
+                    return Ok(false);
+                }
+                let since = *gated_since.get_or_insert_with(|| {
+                    eprintln!("observed owned child PID before delaying runner startup");
+                    Instant::now()
+                });
+                if since.elapsed() < Duration::from_secs(6) {
+                    return Ok(false);
+                }
+                if !stale.exists() {
+                    return Err("gated child reached runner before gate release".into());
+                }
+                fs::write(&gate, b"start").map_err(|e| e.to_string())?;
+                released = true;
+                eprintln!("owned child startup gate held for {:?}", since.elapsed());
+            }
+            let ready = !stale.exists() && owned_cargo_waiter(&key, &marker)?;
+            if ready {
+                ready_at = Some(Instant::now());
+                eprintln!("abort phase armed by cleared cache and owned native Cargo waiter");
+            }
+            Ok(ready)
+        };
         // The existing timed runner terminates/reaps its owned process group
         // before returning. Parent path ownership outlives that return.
-        let result = child(&aborted, Duration::from_secs(5))?;
+        let result = child_after_readiness(
+            &aborted,
+            &gate,
+            crate::run::ReadinessDeadline::new(
+                Duration::from_secs(20),
+                Duration::from_secs(5),
+                &mut probe,
+            ),
+        )?;
+        assert!(released, "must release the observed child's startup gate");
+        assert!(
+            ready_at.is_some_and(|ready| ready.elapsed() >= Duration::from_secs(5)),
+            "startup may not consume the five-second owned-waiter abort phase"
+        );
         assert!(
             result.timed_out && result.status.is_some_and(|status| !status.success()),
             "controlled abort must be native timeout: {}",
@@ -621,5 +702,141 @@ fn fixture_cache_aborted_process_is_reaped_before_owned_cleanup_and_recovers() -
         paths.iter().all(|p| !p.exists()),
         "reaped abort/recovery owner must clean its own paths"
     );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn fixture_cache_absent_readiness_reaps_gated_child_before_owned_cleanup() -> Result<(), String> {
+    let warm = Case::new("absent-readiness-warm")?;
+    assert_child(&child(&warm, crate::run::tool_build_timeout()?)?);
+    let facts = snapshot(&warm.cache)?;
+    let output = snapshot(&warm.output)?;
+    let paths = {
+        let case = Case::new("absent-readiness")?;
+        let stale = case.seed_stale()?;
+        let paths = case.owned.clone();
+        let gate = child_pid_path(&case)?.with_file_name("unreleased-start-gate");
+        let mut probe = || Ok(false);
+        let error = child_after_readiness(
+            &case,
+            &gate,
+            crate::run::ReadinessDeadline::new(
+                Duration::from_millis(500),
+                Duration::from_secs(5),
+                &mut probe,
+            ),
+        )
+        .expect_err("absent readiness must fail setup after owned termination and drains");
+        assert!(
+            error.contains("readiness not observed within startup budget"),
+            "{error}"
+        );
+        assert!(
+            error.contains("reaped status=") && error.contains("timed_out=true"),
+            "{error}"
+        );
+        assert!(
+            stale.exists(),
+            "gated child may not reach the real runner clear"
+        );
+        assert!(snapshot(&case.output)?.is_empty());
+        assert_eq!(snapshot(&warm.cache)?, facts);
+        assert_eq!(snapshot(&warm.output)?, output);
+        assert_child(&child(&case, crate::run::tool_build_timeout()?)?);
+        assert!(!snapshot(&case.cache)?.is_empty());
+        paths
+    };
+    assert!(paths.iter().all(|p| !p.exists()));
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn fixture_cache_wrong_waiter_owner_fails_closed_then_recovers() -> Result<(), String> {
+    let warm = Case::new("wrong-owner-warm")?;
+    assert_child(&child(&warm, crate::run::tool_build_timeout()?)?);
+    let facts = snapshot(&warm.cache)?;
+    let output = snapshot(&warm.output)?;
+    let paths = {
+        let case = Case::new("wrong-waiter-owner")?;
+        let stale = case.seed_stale()?;
+        let paths = case.owned.clone();
+        let binary = repo_root()?.join(crate::ripr_debug_binary());
+        let lock = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(
+                binary
+                    .parent()
+                    .ok_or("binary needs parent")?
+                    .join(".cargo-lock"),
+            )
+            .map_err(|e| e.to_string())?;
+        lock.lock().map_err(|e| e.to_string())?;
+        let key = held_lock_key(&lock)?;
+        let marker = child_pid_path(&case)?;
+        let actual_marker = marker.with_file_name("actual-child.pid");
+        let gate = marker.with_file_name("start-gate");
+        let mut replaced = false;
+        let mut actual_waiter_observed = false;
+        let mut probe = || -> Result<bool, String> {
+            if !replaced {
+                match fs::read(&marker) {
+                    Ok(pid) => fs::write(&actual_marker, pid).map_err(|e| e.to_string())?,
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                    Err(e) => return Err(e.to_string()),
+                }
+                // The adapter published atomically before waiting on this
+                // gate, so it cannot subsequently overwrite the wrong owner.
+                fs::write(&marker, std::process::id().to_string()).map_err(|e| e.to_string())?;
+                fs::write(&gate, b"start").map_err(|e| e.to_string())?;
+                replaced = true;
+            }
+            if !stale.exists() && owned_cargo_waiter(&key, &actual_marker)? {
+                actual_waiter_observed = true;
+                if owned_cargo_waiter(&key, &marker)? {
+                    return Ok(true);
+                }
+                return Err("actual native Cargo waiter rejected for wrong process owner".into());
+            }
+            Ok(false)
+        };
+        let error = child_after_readiness(
+            &case,
+            &gate,
+            crate::run::ReadinessDeadline::new(
+                Duration::from_secs(20),
+                Duration::from_millis(100),
+                &mut probe,
+            ),
+        )
+        .expect_err("wrong waiter ownership must fail setup through owned cleanup");
+        assert!(
+            actual_waiter_observed,
+            "must independently observe the real owned waiter"
+        );
+        assert!(error.contains("readiness observation failed: actual native Cargo waiter rejected for wrong process owner"), "{error}");
+        assert!(
+            error.contains("reaped status=") && error.contains("timed_out=true"),
+            "{error}"
+        );
+        assert!(
+            error.contains("Blocking waiting for file lock on artifact directory"),
+            "{error}"
+        );
+        assert!(
+            !owned_cargo_waiter(&key, &actual_marker)?,
+            "reaped capture group may not retain Cargo waiter"
+        );
+        assert!(snapshot(&case.output)?.is_empty());
+        assert_eq!(snapshot(&warm.cache)?, facts);
+        assert_eq!(snapshot(&warm.output)?, output);
+        lock.unlock().map_err(|e| e.to_string())?;
+        assert_child(&child(&case, crate::run::tool_build_timeout()?)?);
+        assert!(!snapshot(&case.cache)?.is_empty());
+        paths
+    };
+    assert!(paths.iter().all(|p| !p.exists()));
     Ok(())
 }
