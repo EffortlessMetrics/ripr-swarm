@@ -175,6 +175,10 @@ exactly one transition to `selected_single_root`.
   active-root removal, diagnostic/action containment and process teardown.
   Its execution is distinct from the framed server suite and final installed
   release-candidate qualification.
+- The #7404 extension consumer's controller tests in
+  `editors/vscode/test/suite/workspace_root_binding.test.ts` separately
+  discriminate rebinding, removal quarantine, stale actions and explicit
+  recovery; instrumented controller execution does not qualify the real host.
 
 ## Non-Goals
 

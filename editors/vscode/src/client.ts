@@ -373,6 +373,8 @@ export interface RiprClientRuntime {
   getConfig(resource?: vscode.Uri): RiprConfig;
   workspaceRootState(): RiprWorkspaceRootState;
   workspaceFolders(): readonly vscode.WorkspaceFolder[];
+  workspaceFolderForUri?(uri: vscode.Uri): vscode.WorkspaceFolder | undefined;
+  openTextDocument?(uri: vscode.Uri): Thenable<vscode.TextDocument>;
   showQuickPick<T extends vscode.QuickPickItem>(
     items: T[],
     options?: vscode.QuickPickOptions
@@ -467,6 +469,8 @@ export class RiprClientController {
    * honored while the picked folder is still one of the workspace folders.
    */
   private selectedWorkspaceRoot: string | undefined;
+  private pendingWorkspaceRoot: string | undefined;
+  private workspaceRootSelectionSuppressed = false;
   /**
    * In-flight start() promise, used to deduplicate concurrent start attempts.
    *
@@ -568,9 +572,9 @@ export class RiprClientController {
     if (!this.workspaceRoot) {
       this.updateStatus({
         kind: 'noWorkspace',
-        summary: 'Open a workspace for ripr diagnostics.',
-        detail: 'The extension needs a workspace folder before it can start the language server.',
-        nextStep: 'Open a workspace folder, then run ripr: Restart Server.'
+        summary: this.workspaceRootSelectionSuppressed ? 'The selected ripr workspace folder was removed.' : 'Open a workspace for ripr diagnostics.',
+        detail: this.workspaceRootSelectionSuppressed ? 'Analysis is paused; remaining folders are not selected automatically.' : 'The extension needs a workspace folder before it can start the language server.',
+        nextStep: this.workspaceRootSelectionSuppressed ? 'Run ripr: Select Workspace Root or ripr: Restart Server to resume.' : 'Open a workspace folder, then run ripr: Restart Server.'
       });
       this.output.appendLine('ripr workspace was not detected; open a workspace folder.');
       return;
@@ -737,6 +741,12 @@ export class RiprClientController {
       return;
     }
     await this.refreshSetupStatusFiles();
+    if (this.startGeneration !== startGeneration) {
+      return;
+    }
+    if (this.pendingWorkspaceRoot && this.workspaceRoot && sameWorkspaceRoot(this.pendingWorkspaceRoot, this.workspaceRoot)) {
+      this.pendingWorkspaceRoot = undefined;
+    }
     this.updateStatus({
       kind: 'analysisQueued',
       summary: 'ripr saved-workspace analysis is queued.',
@@ -760,6 +770,13 @@ export class RiprClientController {
    */
   private resolveWorkspaceRootState(): RiprWorkspaceRootState {
     const state = this.runtime.workspaceRootState();
+    if (this.workspaceRootSelectionSuppressed) {
+      return { kind: 'noWorkspace', roots: state.roots, detail: 'the selected workspace folder was removed' };
+    }
+    const pending = this.pendingWorkspaceRoot;
+    if (pending && state.roots.some(root => sameWorkspaceRoot(root, pending))) {
+      return { kind: 'selectedRoot', root: pending, roots: state.roots, detail: 'selected from active editor workspace folder' };
+    }
     if (state.kind !== 'ambiguousMultiRoot' || !this.selectedWorkspaceRoot) {
       return state;
     }
@@ -813,6 +830,11 @@ export class RiprClientController {
       return;
     }
     if (folders.length === 1) {
+      if (this.workspaceRootSelectionSuppressed) {
+        this.allowWorkspaceRootRecovery();
+        await this.restart();
+        return;
+      }
       await this.runtime.showInformationMessage(
         'ripr has a single workspace folder; no workspace root selection is needed.'
       );
@@ -826,6 +848,7 @@ export class RiprClientController {
       return;
     }
     this.selectedWorkspaceRoot = selected.root;
+    this.allowWorkspaceRootRecovery();
     this.output.appendLine(`ripr workspace root selected for this session: ${selected.root}`);
     await this.restart();
   }
@@ -854,16 +877,69 @@ export class RiprClientController {
     return this.client === undefined && this.status.kind === 'workspaceAmbiguous';
   }
 
+  /** Record active-editor intent before the coordinator awaits an old session. */
+  prepareWorkspaceRootChange(): boolean {
+    if (this.workspaceRootSelectionSuppressed) {
+      return false;
+    }
+    const state = this.runtime.workspaceRootState();
+    if (!state.root || (!this.client && !this.startingPromise && !this.awaitingWorkspaceRoot())) {
+      return false;
+    }
+    if (!this.pendingWorkspaceRoot && this.workspaceRoot && sameWorkspaceRoot(state.root, this.workspaceRoot)) {
+      return false;
+    }
+    this.pendingWorkspaceRoot = state.root;
+    return true;
+  }
+
+  workspaceRootNeedsRestart(): boolean {
+    return !this.workspaceRootSelectionSuppressed && this.pendingWorkspaceRoot !== undefined
+      && this.client !== undefined && this.workspaceRoot !== undefined
+      && !sameWorkspaceRoot(this.pendingWorkspaceRoot, this.workspaceRoot);
+  }
+
+  quarantineRemovedWorkspaceRoot(): void {
+    this.workspaceRootSelectionSuppressed = true;
+    this.pendingWorkspaceRoot = undefined;
+    this.selectedWorkspaceRoot = undefined;
+    // Cancel any setup for a folder removed before it acquired a client.
+    this.startGeneration++;
+  }
+
+  completeWorkspaceRootRemoval(): void {
+    if (!this.workspaceRootSelectionSuppressed) {
+      return;
+    }
+    this.workspaceRoot = undefined;
+    this.workspaceRootState = {
+      kind: 'noWorkspace', roots: this.runtime.workspaceRootState().roots,
+      detail: 'the selected workspace folder was removed; select a root explicitly to resume'
+    };
+    this.setupStatus = setupStatusWithoutWorkspace();
+    this.updateStatus({
+      kind: 'noWorkspace', summary: 'The selected ripr workspace folder was removed.',
+      detail: 'Analysis is paused; remaining folders are not selected automatically.',
+      nextStep: 'Run ripr: Select Workspace Root or ripr: Restart Server to resume.'
+    });
+  }
+
+  allowWorkspaceRootRecovery(): void {
+    this.workspaceRootSelectionSuppressed = false;
+    this.pendingWorkspaceRoot = undefined;
+  }
+
   /**
    * Whether a workspace-folder change removed the folder the running session
    * is bound to. The session is locked to one folder, so the server never
-   * sees the removal; the extension restarts to re-resolve the root.
+   * sees the removal; the extension pauses until explicit root recovery.
    */
   sessionRootRemoved(removed: readonly vscode.WorkspaceFolder[]): boolean {
     const root = this.workspaceRoot;
-    return this.client !== undefined
-      && root !== undefined
-      && removed.some((folder) => sameWorkspaceRoot(folder.uri.fsPath, root));
+    return removed.some(folder =>
+      (root !== undefined && sameWorkspaceRoot(folder.uri.fsPath, root))
+      || (this.pendingWorkspaceRoot !== undefined && sameWorkspaceRoot(folder.uri.fsPath, this.pendingWorkspaceRoot))
+    );
   }
 
   /**
@@ -919,6 +995,9 @@ export class RiprClientController {
     }
     this.server = undefined;
     this.receivedTypedAnalysisStatus = false;
+    this.workspaceRoot = undefined;
+    this.workspaceRootState = workspaceRootStateNoWorkspace();
+    this.setupStatus = setupStatusWithoutWorkspace();
     this.typedAnalysisStatusState = undefined;
     this.firstUsefulAction = undefined;
     this.dirtyRiprDocuments.clear();
@@ -982,6 +1061,7 @@ export class RiprClientController {
       this.runtime.showInformationMessage(rootBlocker);
       return;
     }
+    const generation = this.startGeneration;
 
     const directPacketLabel = target?.label === 'first_repair_packet'
       ? 'first repair packet'
@@ -1055,6 +1135,9 @@ export class RiprClientController {
           command: 'ripr.collectContext',
           arguments: [collectContextTarget],
         });
+        if (!this.actionRootStillCurrent(generation, documentUri)) {
+          return;
+        }
         if (packet && typeof packet === 'object') {
           await this.runtime.writeClipboard(JSON.stringify(packet, null, 2));
           this.runtime.showInformationMessage('Copied ripr context to clipboard.');
@@ -1066,7 +1149,10 @@ export class RiprClientController {
       }
     }
 
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(documentUri);
+    if (!this.actionRootStillCurrent(generation, documentUri)) {
+      return;
+    }
+    const workspaceFolder = this.workspaceFolderForUri(documentUri);
     if (!workspaceFolder) {
       this.runtime.showInformationMessage('ripr context requires a workspace folder.');
       return;
@@ -1074,7 +1160,7 @@ export class RiprClientController {
 
     const config = this.runtime.getConfig();
     const server = this.server ?? await this.resolveServerForCommand(config);
-    if (!server) {
+    if (!server || !this.actionRootStillCurrent(generation, documentUri)) {
       return;
     }
     const relativePath = path.relative(workspaceFolder.uri.fsPath, documentUri.fsPath);
@@ -1096,6 +1182,9 @@ export class RiprClientController {
 
     try {
       const context = await this.runtime.runRipr(server.command, args, workspaceFolder.uri.fsPath);
+      if (!this.actionRootStillCurrent(generation, documentUri)) {
+        return;
+      }
       await this.runtime.writeClipboard(context.trim());
       this.runtime.showInformationMessage('Copied ripr context to clipboard.');
     } catch (error) {
@@ -1224,7 +1313,11 @@ export class RiprClientController {
       return;
     }
 
+    const generation = this.startGeneration;
     const command = validatedAgentLoopCommand(target, await workspaceRedirectRoots(this.workspaceRoot));
+    if (!this.actionRootStillCurrent(generation, uriFromTarget(target))) {
+      return;
+    }
     if (!command) {
       this.runtime.showInformationMessage('No ripr agent loop command is available for this diagnostic.');
       return;
@@ -1409,7 +1502,12 @@ export class RiprClientController {
       this.runtime.showInformationMessage('ripr related test navigation requires a file URI.');
       return;
     }
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+    const rootBlocker = this.sessionRootBlocker();
+    if (rootBlocker) {
+      this.runtime.showInformationMessage(rootBlocker);
+      return;
+    }
+    const workspaceFolder = this.workspaceFolderForUri(uri);
     if (!workspaceFolder) {
       this.runtime.showInformationMessage('ripr related test must be inside the current workspace.');
       return;
@@ -1432,7 +1530,12 @@ export class RiprClientController {
       return;
     }
     try {
-      const document = await vscode.workspace.openTextDocument(uri);
+      const generation = this.startGeneration;
+      const document = await (this.runtime.openTextDocument?.(uri) ?? vscode.workspace.openTextDocument(uri));
+      if (generation !== this.startGeneration || this.sessionRootBlocker()) {
+        this.runtime.showInformationMessage('ripr related test navigation requires a running server with the current workspace root.');
+        return;
+      }
       const editor = await vscode.window.showTextDocument(document);
       const line = lineFromTarget(target) ?? 1;
       const position = new vscode.Position(Math.max(0, line - 1), 0);
@@ -2486,6 +2589,10 @@ export class RiprClientController {
   }
 
   private repairActionRootBlocker(targetUri?: vscode.Uri): string | undefined {
+    const blocker = this.sessionRootBlocker();
+    if (blocker) {
+      return blocker;
+    }
     const uri = targetUri ?? vscode.window.activeTextEditor?.document.uri;
     if (!uri) {
       return 'ripr repair actions require an active file or target URI in the current workspace.';
@@ -2493,7 +2600,7 @@ export class RiprClientController {
     if (uri.scheme !== 'file') {
       return 'ripr repair actions require a file URI in the current workspace.';
     }
-    const workspaceFolder = vscode.workspace.getWorkspaceFolder(uri);
+    const workspaceFolder = this.workspaceFolderForUri(uri);
     if (!workspaceFolder) {
       return 'ripr repair actions require the active or target file to belong to a workspace folder.';
     }
@@ -2501,6 +2608,27 @@ export class RiprClientController {
       return 'ripr repair actions are suppressed because the active or target file belongs to a different workspace root than the active ripr session.';
     }
     return undefined;
+  }
+
+  private workspaceFolderForUri(uri: vscode.Uri): vscode.WorkspaceFolder | undefined {
+    return this.runtime.workspaceFolderForUri
+      ? this.runtime.workspaceFolderForUri(uri)
+      : vscode.workspace.getWorkspaceFolder(uri);
+  }
+
+  private sessionRootBlocker(): string | undefined {
+    if (!this.client || !this.workspaceRoot || this.pendingWorkspaceRoot || this.workspaceRootSelectionSuppressed) {
+      return 'ripr action requires a running server with a selected workspace root.';
+    }
+    return undefined;
+  }
+
+  private actionRootStillCurrent(generation: number, uri?: vscode.Uri): boolean {
+    if (generation !== this.startGeneration || this.repairActionRootBlocker(uri)) {
+      this.runtime.showInformationMessage('ripr action requires a running server with the current workspace root.');
+      return false;
+    }
+    return true;
   }
 
 }

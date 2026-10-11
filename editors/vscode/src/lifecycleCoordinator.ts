@@ -21,7 +21,7 @@ export type LifecycleWait = (
 export const DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS = 30_000;
 
 type DesiredLifecycleState = 'running' | 'stopped';
-type LifecycleOperationKind = 'start' | 'restart' | 'stop';
+type LifecycleOperationKind = 'start' | 'restart' | 'pause' | 'stop';
 
 interface LifecycleOperation {
   kind: LifecycleOperationKind;
@@ -155,6 +155,32 @@ export class ExtensionLifecycleCoordinator {
       // later stop cannot interleave after the check but before replacement
       // startup begins.
       await this.startController(currentController);
+    });
+  }
+
+  /** Stop a removed root without making later explicit recovery terminal. */
+  pause(
+    currentController: LifecycleController | undefined,
+    settleBudgetMs = DEFAULT_LIFECYCLE_SETTLE_BUDGET_MS
+  ): Promise<void> {
+    if (!currentController) {
+      return Promise.resolve();
+    }
+    if (this.terminalShutdown) {
+      return this.terminalStopPromise ?? Promise.resolve();
+    }
+    if (this.desiredState === 'stopped' && this.currentOperation?.kind === 'pause') {
+      return this.currentOperation.promise;
+    }
+    this.desiredState = 'stopped';
+    const generation = this.nextGeneration();
+    return this.beginOperation('pause', generation, async (previous) => {
+      await this.waitForPriorOperation(previous, settleBudgetMs);
+      await this.waitForInFlightStart(settleBudgetMs);
+      if (this.operationGeneration !== generation || this.desiredState !== 'stopped') {
+        return;
+      }
+      await this.stopController(currentController);
     });
   }
 

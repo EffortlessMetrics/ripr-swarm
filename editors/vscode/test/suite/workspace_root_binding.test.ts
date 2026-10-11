@@ -4,7 +4,7 @@ import { RiprClientController, RiprClientRuntime, RiprWorkspaceRootState } from 
 import { RiprConfig } from '../../src/config';
 import {
   pauseRemovedWorkspaceRootOnce, resetLifecycleCoordinatorForTests,
-  startServerOnce, stopServerOnce, synchronizeWorkspaceRootOnce
+  startAfterFirstWorkspaceFolder, startServerOnce, stopServerOnce, synchronizeWorkspaceRootOnce
 } from '../../src/extension';
 import { compatibleLspEvidence } from './testCompatibility';
 
@@ -24,13 +24,19 @@ function harness() {
   let root: string | undefined = alpha.uri.fsPath;
   let stopGate = Promise.resolve();
   let onStop: () => void = () => undefined;
+  let enabled = true;
+  let startGate = Promise.resolve();
+  let gatedRoot: string | undefined;
+  let onStart: () => void = () => undefined;
+  let request: () => Promise<unknown> = async () => undefined;
   const runtime: RiprClientRuntime = {
-    getConfig: () => config,
+    getConfig: () => ({ ...config, enabled }),
     workspaceRootState: (): RiprWorkspaceRootState => ({
       kind: root ? (folders.length === 1 ? 'singleRoot' : 'selectedRoot') : 'ambiguousMultiRoot',
       root, roots: folders.map(f => f.uri.fsPath)
     }),
     workspaceFolders: () => folders,
+    workspaceFolderForUri: uri => folders.find(f => uri.fsPath.startsWith(`${f.uri.fsPath}/`)),
     showQuickPick: async () => undefined,
     resolveServer: async () => ({
       command: '/sentinel/binding/ripr', source: 'configured', detail: 'controller-only test',
@@ -41,8 +47,11 @@ function harness() {
       assert.strictEqual(options.workspaceFolder?.uri.fsPath, cwd);
       return {
         onNotification: () => ({ dispose: () => { events.push(`dispose:${cwd}`); } }),
-        sendRequest: async () => undefined, setTrace: () => undefined,
-        start: async () => { events.push(`start:${cwd}`); },
+        sendRequest: () => request(), setTrace: () => undefined,
+        start: async () => {
+          events.push(`start:${cwd}`);
+          if (cwd === gatedRoot) { onStart(); await startGate; }
+        },
         stop: async () => {
           events.push(`stop:${cwd}`); onStop(); await stopGate;
         }
@@ -60,7 +69,9 @@ function harness() {
     {} as vscode.ExtensionContext, { appendLine: () => undefined } as unknown as vscode.LogOutputChannel, runtime
   );
   return {
-    controller, events, infos,
+    controller, events, infos, runtime,
+    setRequest: (handler: () => Promise<unknown>) => { request = handler; },
+    disable: () => { enabled = false; },
     select: (selected: string | undefined) => { root = selected; },
     removeBeta: () => { folders = [alpha]; root = alpha.uri.fsPath; },
     holdStop: () => {
@@ -70,6 +81,15 @@ function harness() {
       const stopped = new Promise<void>(resolve => { entered = resolve; });
       onStop = entered;
       return { stopped, release };
+    },
+    holdStart: (targetRoot: string) => {
+      gatedRoot = targetRoot;
+      let release!: () => void;
+      let entered!: () => void;
+      startGate = new Promise<void>(resolve => { release = resolve; });
+      const started = new Promise<void>(resolve => { entered = resolve; });
+      onStart = entered;
+      return { started, release };
     }
   };
 }
@@ -108,6 +128,9 @@ suite('Workspace Root Binding Controller', () => {
       h.removeBeta();
       await pauseRemovedWorkspaceRootOnce(h.controller, [beta]);
       assert.strictEqual(h.controller.isRunning(), false);
+      const state = h.controller as unknown as { workspaceRoot?: string; workspaceRootState: { kind: string } };
+      assert.strictEqual(state.workspaceRoot, undefined);
+      assert.strictEqual(state.workspaceRootState.kind, 'noWorkspace');
       assert.deepStrictEqual(h.events, [
         `start:${beta.uri.fsPath}`, `stop:${beta.uri.fsPath}`,
         `dispose:${beta.uri.fsPath}`, `dispose:${beta.uri.fsPath}`
@@ -140,5 +163,142 @@ suite('Workspace Root Binding Controller', () => {
       assert.deepStrictEqual(h.events, [`start:${alpha.uri.fsPath}`]);
       assert.strictEqual(h.controller.isRunning(), true);
     } finally { await stopServerOnce(h.controller); }
+  });
+
+  test('duplicate B selections wait for A stop and create one B replacement', async () => {
+    const h = harness(); const gate = h.holdStop();
+    try {
+      await startServerOnce(h.controller); h.select(beta.uri.fsPath);
+      const first = synchronizeWorkspaceRootOnce(h.controller);
+      await gate.stopped;
+      const second = synchronizeWorkspaceRootOnce(h.controller);
+      assert.deepStrictEqual(h.events, [`start:${alpha.uri.fsPath}`, `stop:${alpha.uri.fsPath}`]);
+      await h.controller.openRelatedTest({ uri: vscode.Uri.file('/ws/alpha/tests/contract.rs').toString() });
+      assert.match(h.infos.at(-1) ?? '', /requires a running.*workspace root/);
+      gate.release(); await Promise.all([first, second]);
+      assert.strictEqual(h.events.filter(e => e === `start:${beta.uri.fsPath}`).length, 1);
+      assert.strictEqual(h.events.filter(e => e === `stop:${alpha.uri.fsPath}`).length, 1);
+    } finally { gate.release(); await stopServerOnce(h.controller); }
+  });
+
+  test('a newer A selection while stopping A supersedes the queued B root', async () => {
+    const h = harness(); const gate = h.holdStop();
+    try {
+      await startServerOnce(h.controller); h.select(beta.uri.fsPath);
+      const first = synchronizeWorkspaceRootOnce(h.controller); await gate.stopped;
+      h.select(alpha.uri.fsPath);
+      const newer = synchronizeWorkspaceRootOnce(h.controller);
+      gate.release(); await Promise.all([first, newer]);
+      assert.deepStrictEqual(h.events.filter(e => e.startsWith('start:')), [
+        `start:${alpha.uri.fsPath}`, `start:${alpha.uri.fsPath}`
+      ]);
+    } finally { gate.release(); await stopServerOnce(h.controller); }
+  });
+
+  test('removing queued B during A stop cancels the replacement without a second stop', async () => {
+    const h = harness(); const gate = h.holdStop();
+    try {
+      await startServerOnce(h.controller); h.select(beta.uri.fsPath);
+      const switching = synchronizeWorkspaceRootOnce(h.controller); await gate.stopped;
+      h.removeBeta();
+      const removal = pauseRemovedWorkspaceRootOnce(h.controller, [beta]);
+      gate.release(); await Promise.all([switching, removal]);
+      assert.strictEqual(h.controller.isRunning(), false);
+      assert.deepStrictEqual(h.events, [
+        `start:${alpha.uri.fsPath}`, `stop:${alpha.uri.fsPath}`,
+        `dispose:${alpha.uri.fsPath}`, `dispose:${alpha.uri.fsPath}`
+      ]);
+    } finally { gate.release(); await stopServerOnce(h.controller); }
+  });
+
+  test('explicit root selection resumes the sole remaining A after removing B', async () => {
+    const h = harness(); h.select(beta.uri.fsPath);
+    try {
+      await startServerOnce(h.controller); h.removeBeta();
+      await pauseRemovedWorkspaceRootOnce(h.controller, [beta]);
+      await h.controller.selectWorkspaceRoot();
+      assert.deepStrictEqual(h.events.filter(e => e.startsWith('start:')), [
+        `start:${beta.uri.fsPath}`, `start:${alpha.uri.fsPath}`
+      ]);
+      assert.strictEqual(h.controller.isRunning(), true);
+    } finally { await stopServerOnce(h.controller); }
+  });
+
+  test('a newer A selection during B startup is reconciled after the in-flight replacement', async () => {
+    const h = harness(); const gate = h.holdStart(beta.uri.fsPath);
+    try {
+      await startServerOnce(h.controller); h.select(beta.uri.fsPath);
+      const first = synchronizeWorkspaceRootOnce(h.controller); await gate.started;
+      h.select(alpha.uri.fsPath);
+      const newer = synchronizeWorkspaceRootOnce(h.controller);
+      gate.release(); await Promise.all([first, newer]);
+      assert.deepStrictEqual(h.events.filter(e => e.startsWith('start:')), [
+        `start:${alpha.uri.fsPath}`, `start:${beta.uri.fsPath}`, `start:${alpha.uri.fsPath}`
+      ]);
+      assert.strictEqual(h.events.filter(e => e === `stop:${beta.uri.fsPath}`).length, 1);
+    } finally { gate.release(); await stopServerOnce(h.controller); }
+  });
+
+  test('a disabled replacement settles without repeatedly trying to start B', async () => {
+    const h = harness();
+    try {
+      await startServerOnce(h.controller); h.select(beta.uri.fsPath); h.disable();
+      await synchronizeWorkspaceRootOnce(h.controller);
+      assert.strictEqual(h.controller.isRunning(), false);
+      assert.deepStrictEqual(h.events.filter(e => e.startsWith('start:')), [`start:${alpha.uri.fsPath}`]);
+    } finally { await stopServerOnce(h.controller); }
+  });
+
+  test('the existing first-folder startup entry can resume after a removed root', async () => {
+    const h = harness(); h.select(beta.uri.fsPath);
+    try {
+      await startServerOnce(h.controller); h.removeBeta();
+      await pauseRemovedWorkspaceRootOnce(h.controller, [beta]);
+      await startAfterFirstWorkspaceFolder(h.controller);
+      assert.deepStrictEqual(h.events.filter(e => e.startsWith('start:')), [
+        `start:${beta.uri.fsPath}`, `start:${alpha.uri.fsPath}`
+      ]);
+    } finally { await stopServerOnce(h.controller); }
+  });
+
+  test('navigation already awaiting a document cannot show it after stop', async () => {
+    const h = harness();
+    let release!: (document: vscode.TextDocument) => void;
+    let entered!: () => void;
+    const opened = new Promise<void>(resolve => { entered = resolve; });
+    const document = new Promise<vscode.TextDocument>(resolve => { release = resolve; });
+    h.runtime.openTextDocument = () => { entered(); return document; };
+    try {
+      await startServerOnce(h.controller);
+      const uri = vscode.Uri.file('/ws/alpha/tests/contract.rs');
+      const activeEditor = vscode.window.activeTextEditor;
+      const navigation = h.controller.openRelatedTest({ uri: uri.toString() });
+      await opened; await h.controller.stop(); release({ uri } as vscode.TextDocument);
+      await navigation;
+      assert.strictEqual(vscode.window.activeTextEditor, activeEditor);
+      assert.match(h.infos.at(-1) ?? '', /requires a running.*workspace root/);
+    } finally { release({} as vscode.TextDocument); await stopServerOnce(h.controller); }
+  });
+
+  test('context already awaiting the old session cannot copy after stop', async () => {
+    const h = harness();
+    let release!: (value: unknown) => void;
+    let entered!: () => void;
+    const requested = new Promise<void>(resolve => { entered = resolve; });
+    const response = new Promise<unknown>(resolve => { release = resolve; });
+    const copied: string[] = [];
+    h.setRequest(() => { entered(); return response; });
+    h.runtime.writeClipboard = async text => { copied.push(text); };
+    try {
+      await startServerOnce(h.controller);
+      const copying = h.controller.copyContext({
+        uri: vscode.Uri.file('/ws/alpha/src/alpha.rs').toString(), seam_id: 'cached-alpha'
+      });
+      await requested; await h.controller.stop();
+      release({ schema_version: '0.5', total_packets: 1, packets: [{ seam_id: 'cached-alpha' }] });
+      await copying;
+      assert.deepStrictEqual(copied, []);
+      assert.match(h.infos.at(-1) ?? '', /requires a running.*workspace root/);
+    } finally { release(undefined); await stopServerOnce(h.controller); }
   });
 });
