@@ -13,8 +13,8 @@ impl Fixture {
                 .map_err(|e| e.to_string())?
                 .as_nanos()
         ));
-        std::fs::create_dir_all(root.join("policy")).map_err(|e| e.to_string())?;
         let fixture = Self(root);
+        std::fs::create_dir_all(fixture.0.join("policy")).map_err(|e| e.to_string())?;
         fixture.git(&["init", "--quiet"])?;
         for name in ["allowed", "demoted", "ordinary", "unregistered"] {
             std::fs::write(fixture.0.join(name), format!("{name}\n")).map_err(|e| e.to_string())?;
