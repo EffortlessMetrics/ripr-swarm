@@ -43,6 +43,11 @@ fn tokenize(text: &str) -> Option<Vec<LineToken>> {
             i += 1;
             continue;
         }
+        // A trailing `// comment` is not code; an apostrophe in it must not
+        // open a literal.
+        if ch == '/' && chars.get(i + 1) == Some(&'/') {
+            break;
+        }
         if ch == '"' || ch == '\'' {
             let mut value = String::new();
             i += 1;
@@ -53,7 +58,7 @@ fn tokenize(text: &str) -> Option<Vec<LineToken>> {
                     break;
                 }
                 if c == '\\' {
-                    value.push(*chars.get(i)?);
+                    value.push(unescape(*chars.get(i)?)?);
                     i += 1;
                 } else {
                     value.push(c);
@@ -73,7 +78,7 @@ fn tokenize(text: &str) -> Option<Vec<LineToken>> {
                     break;
                 }
                 if c == '\\' {
-                    let escaped = *chars.get(i)?;
+                    let escaped = unescape(*chars.get(i)?)?;
                     i += 1;
                     if let Some(piece) = pieces.last_mut() {
                         piece.push(escaped);
@@ -132,6 +137,40 @@ fn tokenize(text: &str) -> Option<Vec<LineToken>> {
     Some(tokens)
 }
 
+/// The value of a one-character escape (`\n` is a newline). `None` for
+/// `\x`, `\u` and a line continuation, which ripr does not decode, so the
+/// literal stays unreadable rather than misread.
+fn unescape(escaped: char) -> Option<char> {
+    match escaped {
+        'n' => Some('\n'),
+        't' => Some('\t'),
+        'r' => Some('\r'),
+        'b' => Some('\u{8}'),
+        'f' => Some('\u{c}'),
+        'v' => Some('\u{b}'),
+        '0' => Some('\0'),
+        'x' | 'u' | '\n' | '\r' => None,
+        other => Some(other),
+    }
+}
+
+/// Whether a `throw ...` token run throws a primitive literal.
+fn throws_primitive(throw: &[LineToken]) -> bool {
+    matches!(throw, [LineToken::Other(keyword), operand, ..]
+        if keyword == "throw"
+            && (matches!(operand, LineToken::Literal(_) | LineToken::Template { .. })
+                || matches!(operand, LineToken::Other(word)
+                    if word.chars().next().is_some_and(|c| c.is_ascii_digit()))))
+}
+
+/// Drop a statement-ending `;`, which adds no behavior.
+fn without_trailing_semicolon(tokens: &[LineToken]) -> &[LineToken] {
+    match tokens.split_last() {
+        Some((LineToken::Other(last), rest)) if last == ";" => rest,
+        _ => tokens,
+    }
+}
+
 /// The tokens before and from the `throw` keyword or the `Promise.reject`
 /// callee, or `None` when the line has neither.
 fn split_at_throw(tokens: &[LineToken]) -> Option<(&[LineToken], &[LineToken])> {
@@ -161,8 +200,16 @@ pub(crate) struct ErrorChangeFacts {
     pub(crate) old_message: Option<String>,
     /// The new thrown message, read the same way.
     pub(crate) new_message: Option<String>,
-    /// The old side throws a primitive literal (`throw "bad"`).
-    pub(crate) old_throws_primitive: bool,
+    /// Both sides throw under the same guard and exactly one of them throws
+    /// a primitive literal (`throw "bad"` to `throw new Error("bad")`): a
+    /// bare `Error` class check passes on one side only.
+    pub(crate) primitive_throw_flips: bool,
+    /// `String(err)` of the old thrown value when ripr knows it: the message
+    /// of a thrown primitive, or `Name: message` for a built-in error class
+    /// (`Error: blank`). A user class may set any `name`, so it stays `None`.
+    pub(crate) old_string_form: Option<String>,
+    /// The new side's `String(err)`, read the same way.
+    pub(crate) new_string_form: Option<String>,
 }
 
 impl ErrorChangeFacts {
@@ -173,20 +220,26 @@ impl ErrorChangeFacts {
             return Self::default();
         };
         let old_split = split_at_throw(&old_tokens);
-        let old_throws_primitive = old_split.is_some_and(|(_, throw)| {
-            matches!(throw, [LineToken::Other(keyword), operand, ..]
-                if keyword == "throw"
-                    && (matches!(operand, LineToken::Literal(_) | LineToken::Template { .. })
-                        || matches!(operand, LineToken::Other(word)
-                            if word.chars().next().is_some_and(|c| c.is_ascii_digit()))))
-        });
         let old_message = old_split.and_then(|(_, throw)| thrown_message(throw));
+        let old_string_form = old_split.and_then(|(_, throw)| thrown_string_form(throw));
         let new_tokens = tokenize(new_line);
         let new_split = new_tokens.as_deref().and_then(split_at_throw);
         let new_message = new_split.and_then(|(_, throw)| thrown_message(throw));
+        let new_string_form = new_split.and_then(|(_, throw)| thrown_string_form(throw));
         let message_only = match (old_split, new_split) {
             (Some((old_prefix, old_throw)), Some((new_prefix, new_throw))) => {
-                old_prefix == new_prefix && literals_alone_differ(old_throw, new_throw)
+                old_prefix == new_prefix
+                    && literals_alone_differ(
+                        without_trailing_semicolon(old_throw),
+                        without_trailing_semicolon(new_throw),
+                    )
+            }
+            _ => false,
+        };
+        let primitive_throw_flips = match (old_split, new_split) {
+            (Some((old_prefix, old_throw)), Some((new_prefix, new_throw))) => {
+                old_prefix == new_prefix
+                    && throws_primitive(old_throw) != throws_primitive(new_throw)
             }
             _ => false,
         };
@@ -194,7 +247,9 @@ impl ErrorChangeFacts {
             message_only,
             old_message,
             new_message,
-            old_throws_primitive,
+            primitive_throw_flips,
+            old_string_form,
+            new_string_form,
         }
     }
 
@@ -204,6 +259,17 @@ impl ErrorChangeFacts {
     /// matching neither, or an unreadable message, is not established.
     fn separates(&self, matches: impl Fn(&str) -> bool) -> bool {
         match (self.old_message.as_deref(), self.new_message.as_deref()) {
+            (Some(old), Some(new)) => matches(old) != matches(new),
+            _ => false,
+        }
+    }
+
+    /// [`Self::separates`] over `String(err)` instead of the message.
+    fn separates_string_form(&self, matches: impl Fn(&str) -> bool) -> bool {
+        match (
+            self.old_string_form.as_deref(),
+            self.new_string_form.as_deref(),
+        ) {
             (Some(old), Some(new)) => matches(old) != matches(new),
             _ => false,
         }
@@ -281,6 +347,46 @@ fn thrown_message(throw: &[LineToken]) -> Option<String> {
     (!expect_operand).then_some(message)
 }
 
+/// Built-in error classes whose `name` is their class name.
+const BUILTIN_ERROR_CLASSES: &[&str] = &[
+    "Error",
+    "TypeError",
+    "RangeError",
+    "SyntaxError",
+    "ReferenceError",
+    "EvalError",
+    "URIError",
+];
+
+/// `String(err)` of a `throw ...` / `Promise.reject(...)` token run when
+/// ripr knows it: a thrown primitive literal reads as its value, and
+/// `new Error("m")` / `TypeError("m")` reads as `Error: m` / `TypeError: m`.
+/// A user error class may set any `name`, and an empty message renders
+/// without `: `, so both stay `None`.
+fn thrown_string_form(throw: &[LineToken]) -> Option<String> {
+    let message = thrown_message(throw)?;
+    let mut rest = throw.get(1..)?;
+    if let Some(LineToken::Other(word)) = rest.first()
+        && word == "("
+    {
+        rest = rest.get(1..)?;
+    }
+    if let [LineToken::Other(word), ..] = rest
+        && word == "new"
+    {
+        rest = rest.get(1..)?;
+    }
+    match rest {
+        [LineToken::Literal(_), ..] => Some(message),
+        [LineToken::Other(class), LineToken::Other(open), ..]
+            if open == "(" && BUILTIN_ERROR_CLASSES.contains(&class.as_str()) =>
+        {
+            (!message.is_empty()).then(|| format!("{class}: {message}"))
+        }
+        _ => None,
+    }
+}
+
 /// Whether an `exact_error_variant` assertion still pins the change under
 /// rule 4 (and rule 10's message guard). `false` means it reads
 /// `broad_error` / weak for this change.
@@ -291,10 +397,11 @@ pub(crate) fn error_payload_credits(
     use TypeScriptErrorPayloadKind as Kind;
     match payload.kind {
         Kind::ThrowsClass | Kind::RejectsThrowClass => {
-            // Every thrown error is an `Error`; only a primitive old throw
-            // fails that class check.
+            // Every thrown error is an `Error`, so this payload is a bare
+            // `toThrow()` (RIPR-SPEC-0243 decision 6); only a primitive throw
+            // on exactly one side, under the same guard, fails it there.
             if payload.expected.trim() == "Error" {
-                return facts.old_throws_primitive;
+                return facts.primitive_throw_flips;
             }
             // The same class is thrown on both versions of a message change.
             !facts.message_only
@@ -326,8 +433,9 @@ pub(crate) fn error_payload_credits(
             let Some(literal) = plain_anchored_regex_text(&payload.expected) else {
                 return false;
             };
-            let literal = strip_error_name_prefix(&literal);
-            facts.separates(|candidate| candidate == literal)
+            // `node:assert` tests the regex against `String(err)`, so
+            // `/^blank$/` never matches `Error: blank`.
+            facts.separates_string_form(|candidate| candidate == literal)
         }
     }
 }
@@ -343,12 +451,26 @@ fn string_literal_value(text: &str) -> Option<String> {
 /// The string value of the `message` property of an all-literal object.
 fn object_message_value(text: &str) -> Option<String> {
     let tokens = tokenize(text)?;
-    let position = tokens.windows(2).position(|pair| {
-        // A key may be bare or quoted (`{ "message": "..." }`).
-        matches!(&pair[0], LineToken::Other(key) | LineToken::Literal(key) if key == "message")
-            && matches!(&pair[1], LineToken::Other(colon) if colon == ":")
-    })?;
-    literal_value(tokens.get(position + 2)?).map(str::to_string)
+    // Only a top-level key counts: `{ cause: { message: "x" } }` does not.
+    let mut depth = 0usize;
+    for (index, token) in tokens.iter().enumerate() {
+        match token {
+            LineToken::Other(open) if open == "{" || open == "[" || open == "(" => depth += 1,
+            LineToken::Other(close) if close == "}" || close == "]" || close == ")" => {
+                depth = depth.checked_sub(1)?;
+            }
+            // A key may be bare or quoted (`{ "message": "..." }`).
+            LineToken::Other(key) | LineToken::Literal(key)
+                if depth == 1
+                    && key == "message"
+                    && matches!(tokens.get(index + 1), Some(LineToken::Other(colon)) if colon == ":") =>
+            {
+                return literal_value(tokens.get(index + 2)?).map(str::to_string);
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// The literal text an anchored regex matches when its pattern between `^`
@@ -375,18 +497,6 @@ fn plain_anchored_regex_text(text: &str) -> Option<String> {
         }
     }
     Some(literal)
-}
-
-/// `node:assert` tests a regex against `String(err)`, such as
-/// `Error: blank`; drop a leading `Identifier: ` to compare the message.
-fn strip_error_name_prefix(text: &str) -> String {
-    if let Some((name, message)) = text.split_once(": ")
-        && !name.is_empty()
-        && is_safe_javascript_identifier(name)
-    {
-        return message.to_string();
-    }
-    text.to_string()
 }
 
 #[cfg(test)]
@@ -431,6 +541,32 @@ mod tests {
         );
         assert!(!condition.message_only);
 
+        // A dropped `;` or a trailing comment adds no behavior.
+        let semicolon = ErrorChangeFacts::read(
+            Some(r#"    throw new Error("not blank")"#),
+            r#"    throw new Error("blank");"#,
+        );
+        assert!(semicolon.message_only);
+        let comment = ErrorChangeFacts::read(
+            Some(r#"    throw new Error("not blank");"#),
+            r#"    throw new Error("blank"); // don't trim"#,
+        );
+        assert!(comment.message_only);
+        assert_eq!(comment.new_message.as_deref(), Some("blank"));
+
+        // Escapes decode to their characters; `\u` stays unreadable.
+        let escaped = ErrorChangeFacts::read(
+            Some(r#"throw new Error("line\none");"#),
+            r#"throw new Error("line one");"#,
+        );
+        assert_eq!(escaped.old_message.as_deref(), Some("line\none"));
+        let unicode = ErrorChangeFacts::read(
+            Some(r#"throw new Error("\u00e9");"#),
+            r#"throw new Error("e");"#,
+        );
+        assert!(!unicode.message_only);
+        assert_eq!(unicode.old_message, None);
+
         // A changed interpolation is not message-only.
         let interpolation = ErrorChangeFacts::read(
             Some("throw new Error(`bad ${a}`);"),
@@ -462,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn rule_4_string_payload_must_exclude_the_old_message() {
+    fn rule_4_string_payload_must_match_exactly_one_message() {
         use TypeScriptErrorPayloadKind as Kind;
         let facts = ErrorChangeFacts::read(
             Some(r#"throw new Error("empty");"#),
@@ -533,6 +669,21 @@ mod tests {
             &payload(Kind::ThrowsClass, "Error"),
             &primitive
         ));
+        // Primitives on both sides fail `toThrow(Error)` on both sides.
+        let both_primitive = ErrorChangeFacts::read(Some(r#"throw "a";"#), r#"throw "b";"#);
+        assert!(!error_payload_credits(
+            &payload(Kind::ThrowsClass, "Error"),
+            &both_primitive
+        ));
+        // A changed guard decides which inputs throw: not established.
+        let guard = ErrorChangeFacts::read(
+            Some(r#"if (s === "") throw "empty";"#),
+            r#"if (s !== "") throw new Error("empty");"#,
+        );
+        assert!(!error_payload_credits(
+            &payload(Kind::ThrowsClass, "Error"),
+            &guard
+        ));
         // Object payloads are unaffected for Jest.
         assert!(error_payload_credits(
             &payload(Kind::ThrowsObject, r#"{ message: "empty" }"#),
@@ -577,6 +728,39 @@ mod tests {
         // A quoted `message` key reads the same as a bare one.
         assert!(error_payload_credits(
             &payload(Kind::AssertRejectsObject, r#"{ "message": "blank" }"#),
+            &facts
+        ));
+        // `node:assert` tests the regex against `String(err)`: a regex
+        // without the `Error: ` prefix matches neither version.
+        assert!(!error_payload_credits(
+            &payload(Kind::AssertThrowsRegex, "/^blank$/"),
+            &facts
+        ));
+        assert!(!error_payload_credits(
+            &payload(Kind::AssertThrowsRegex, "/^TypeError: blank$/"),
+            &facts
+        ));
+        // A user class may set any `name`: its `String(err)` is unknown.
+        let user_class = ErrorChangeFacts::read(
+            Some(r#"throw new ParseError("empty");"#),
+            r#"throw new ParseError("blank");"#,
+        );
+        assert!(!error_payload_credits(
+            &payload(Kind::AssertThrowsRegex, "/^ParseError: blank$/"),
+            &user_class
+        ));
+        // A thrown primitive renders as itself.
+        let primitive = ErrorChangeFacts::read(Some(r#"throw "empty";"#), r#"throw "blank";"#);
+        assert!(error_payload_credits(
+            &payload(Kind::AssertThrowsRegex, "/^blank$/"),
+            &primitive
+        ));
+        // Only a top-level `message` key is the error's message.
+        assert!(!error_payload_credits(
+            &payload(
+                Kind::AssertRejectsObject,
+                r#"{ cause: { message: "blank" }, message: "other" }"#
+            ),
             &facts
         ));
         // Not a message-only change: anchored regexes keep their credit.

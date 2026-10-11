@@ -16,8 +16,8 @@
 //! plain read inside parentheses or brackets (a member name, an object key
 //! or shorthand, an assignment, a statement of its own), a parameter
 //! re-declared or shadowed in the body, a nested `function`, template
-//! substitutions, regular-expression literals, and a substituted body that
-//! does not re-parse.
+//! substitutions, regular-expression literals, a non-ASCII parameter or
+//! body, and a substituted body that does not re-parse.
 
 use super::*;
 
@@ -42,6 +42,11 @@ pub(crate) fn table_row_assertions(
     }
     let text: &str = source;
     let body = text.get(body_span.clone())?;
+    // A non-ASCII identifier could abut a parameter name the ASCII
+    // scanner would then substitute inside it: fail closed.
+    if !body.is_ascii() {
+        return None;
+    }
     if params
         .iter()
         .any(|param| local_identifier_declared_in_test_body(body, param))
@@ -147,6 +152,10 @@ fn plain_callback_parameters(
             return None;
         };
         if param.initializer.is_some() {
+            return None;
+        }
+        // The substitution scanner reads ASCII identifiers only.
+        if !ident.name.is_ascii() {
             return None;
         }
         names.push(ident.name.to_string());

@@ -690,10 +690,12 @@ test("parse", async () => {
   await assert.rejects(charge(-1), { name: "Error" });
   assert.throws(() => parse(""), "blank");
   assert.throws(() => parse(""), /^Error: blank$/i);
+  assert.throws(() => parse(""), /^.*$/);
+  assert.throws(() => parse(""), /^Error: [\s\S]+$/);
 });
 "#,
     );
-    assert_eq!(assertions.len(), 7, "{assertions:?}");
+    assert_eq!(assertions.len(), 9, "{assertions:?}");
     assert_oracle(
         &assertions[0],
         OracleKind::ExactErrorVariant,

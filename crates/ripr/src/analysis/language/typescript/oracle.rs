@@ -928,7 +928,9 @@ pub(crate) fn split_regex_literal(text: &str) -> Option<(&str, &str)> {
 }
 
 /// Whether a regex pattern starts with `^`, ends with an unescaped `$`, and
-/// has no unescaped `|` outside a character class.
+/// has no unescaped `|` outside a character class and no unbounded wildcard
+/// run (`.*`, `.+`, `[\s\S]*`): `/^.*$/` admits every message, as a broad
+/// check does.
 fn regex_pattern_is_anchored(pattern: &str) -> bool {
     let Some(inner) = pattern
         .strip_prefix('^')
@@ -938,18 +940,31 @@ fn regex_pattern_is_anchored(pattern: &str) -> bool {
     };
     let mut escaped = false;
     let mut in_class = false;
+    // The previous atom was `.` or a character class.
+    let mut wildcard_atom = false;
     for ch in inner.chars() {
         if escaped {
             escaped = false;
+            wildcard_atom = false;
+            continue;
+        }
+        if in_class {
+            if ch == '\\' {
+                escaped = true;
+            } else if ch == ']' {
+                in_class = false;
+                wildcard_atom = true;
+            }
             continue;
         }
         match ch {
             '\\' => escaped = true,
             '[' => in_class = true,
-            ']' => in_class = false,
-            '|' if !in_class => return false,
+            '|' => return false,
+            '*' | '+' if wildcard_atom => return false,
             _ => {}
         }
+        wildcard_atom = ch == '.';
     }
     // A trailing lone backslash would escape the closing `$`.
     !escaped
