@@ -76,7 +76,9 @@ all of these hold:
   set to `undefined` as absent);
 - the changed line calls an owner parameter `p` as `p(...)`, or a method
   of it as `p.m(...)` (not through a computed receiver such as
-  `getTable(p).m(...)` or `t[p].m(...)`), and the owner body mentions `p` exactly twice: its
+  `getTable(p).m(...)` or `t[p].m(...)`), the owner body after its
+  parameter list has no loop, nested function or call back into the owner
+  (any of which could run the changed call more than once), and the owner body mentions `p` exactly twice: its
   declaration and this call;
 - the asserted target is `p` (or `p.m`), the same name, bound at the
   test callback's top level (not inside a nested block, where it could
@@ -220,7 +222,8 @@ and the rejected alternative. Recorded on #6654.
    changed `db.write(v + 2)` in `save(db, v)`: `exposed`.
 3. As example 1 with any of these in the owner: a second
    `send("order 7")`, `send.call(null, "order 7")`, `const s = send`,
-   `retry(send)`, or `[1].forEach((send) => send(1))`; or with no readable
+   `retry(send)`, `[1].forEach((send) => send(1))`, the call inside a
+   `for` loop or a nested arrow, or a recursive `announce(...)`; or with no readable
    owner source: `mock_expectation` / medium, `weakly_exposed`.
 4. As example 1 with any of these in the test: `send("order 7")`,
    `remind(send, 7)`, a second `announce(8, send)`,

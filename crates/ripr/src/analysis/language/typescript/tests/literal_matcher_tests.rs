@@ -58,6 +58,17 @@ fn mock_payload_on_the_parameters_own_mock_is_credited() {
         &called_with("db.write", "2"),
         "const db = { write: jest.fn((a, b) => a), size: 1 }; save(db, 1);"
     ));
+    // Arrow and method owners, with a block or an expression body.
+    for owner in [
+        "const announce = (id: number, send: (m: string) => void) => {\n  send(\"order \" + id);\n}",
+        "const announce = (id, send) => send(\"order \" + id)",
+        "announce(id: number, send: Send): void {\n  send(\"order \" + id);\n}",
+    ] {
+        assert!(
+            notify_facts(Some(owner)).credits(&order_payload(), NOTIFY_TEST),
+            "{owner}"
+        );
+    }
     // Inside a real test callback, with or without a destructured parameter.
     assert!(notify_facts(Some(NOTIFY_OWNER)).credits(
         &order_payload(),
@@ -144,6 +155,12 @@ fn mock_payload_another_call_could_satisfy_is_not_credited() {
         "function announce(id, send) {\n  send(\"order \" + id);\n  retry(send);\n}",
         "function announce(id, send) {\n  send(\"order \" + id);\n  [1].forEach((send) => send(1));\n}",
         "function announce(id, send) {\n  send(\"order \" + id);\n  arguments[1](\"order 7\");\n}",
+        // The changed call may run more than once, or never.
+        "function announce(ids, send) {\n  for (const id of ids) send(\"order \" + id);\n}",
+        "function announce(ids, send) {\n  while (ids.length) send(\"order \" + ids.pop());\n}",
+        "function announce(id, send) {\n  const later = () => send(\"order \" + id);\n}",
+        "function announce(id, send) {\n  return function () { send(\"order \" + id); };\n}",
+        "function announce(id, send) {\n  if (id > 0) announce(id - 1, s);\n  send(\"order \" + id);\n}",
     ] {
         assert!(
             !notify_facts(Some(owner)).credits(&payload, NOTIFY_TEST),

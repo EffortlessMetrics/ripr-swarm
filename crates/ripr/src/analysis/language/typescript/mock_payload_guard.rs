@@ -38,14 +38,17 @@ impl MockCallFacts {
     /// changed call must be the only way the owner reaches the parameter:
     /// the parameter appears exactly twice in the owner (its declaration and
     /// this call). A second call, `p.call(...)`, an alias, passing `p` on, or
-    /// an inner parameter shadowing it all add a mention and refuse.
+    /// an inner parameter shadowing it all add a mention and refuse. A loop,
+    /// a nested function or recursion could run the changed call more than
+    /// once (or never), so an owner body with any of them credits nothing.
     pub(crate) fn read(
         line_text: &str,
         owner_body: Option<&str>,
         owner_name: &str,
         owner_params: &[String],
     ) -> Self {
-        let Some(owner_body) = owner_body else {
+        let Some(owner_body) = owner_body.filter(|body| runs_each_statement_once(body, owner_name))
+        else {
             return Self::default();
         };
         let calls = calls_in(line_text)
@@ -428,6 +431,39 @@ fn callback_scope(masked: &str) -> Option<&str> {
         }
     }
     Some(masked)
+}
+
+/// `true` when the owner's body (after its header: the parameter list up
+/// to the first top-level `{` or `=>`) has no loop, no nested function and
+/// no call back into the owner, so the changed line runs at most once per
+/// owner call.
+fn runs_each_statement_once(owner_source: &str, owner_name: &str) -> bool {
+    let masked = ts_mask_literals_and_comments(owner_source);
+    let mut parens = 0usize;
+    let mut body_start = None;
+    for (index, c) in masked.char_indices() {
+        match c {
+            '(' => parens += 1,
+            ')' => parens = parens.saturating_sub(1),
+            '{' if parens == 0 => {
+                body_start = Some(index + 1);
+                break;
+            }
+            '=' if parens == 0 && masked[index..].starts_with("=>") => {
+                body_start = Some(index + 2);
+                break;
+            }
+            _ => {}
+        }
+    }
+    let Some(body_start) = body_start else {
+        return false;
+    };
+    let body = &masked[body_start..];
+    !body.contains("=>")
+        && ["for", "while", "do", "function", owner_name]
+            .iter()
+            .all(|word| identifier_offsets(body, word).is_empty())
 }
 
 /// `true` when `at` sits outside every brace block of `masked`.
