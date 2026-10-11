@@ -91,7 +91,14 @@ impl ClassifiedProbeEvidence {
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
         let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
             (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
-                crate::analysis::classify::returned_ledger(owner, context.probe, chain)
+                context.index.files().get(&owner.file).and_then(|file| {
+                    crate::analysis::classify::returned_ledger(
+                        owner,
+                        context.probe,
+                        chain,
+                        &file.source,
+                    )
+                })
             }
             _ => None,
         };

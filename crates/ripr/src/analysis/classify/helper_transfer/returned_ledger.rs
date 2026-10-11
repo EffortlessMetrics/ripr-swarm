@@ -25,8 +25,15 @@ pub(crate) fn returned_ledger(
     owner: &FunctionSummary,
     probe: &Probe,
     chain: &HelperChain,
+    source: &str,
 ) -> Option<ReturnedLedger> {
     if probe.family != ProbeFamily::FieldConstruction || probe.owner.as_ref() != Some(&owner.id) {
+        return None;
+    }
+    let hop = chain.hops.first()?;
+    // Fact bodies start at `fn`, excluding qualifiers such as `async`. Bind
+    // both definitions to the indexed source before claiming execution.
+    if !synchronous_definitions(source, &[owner, &hop.caller]) {
         return None;
     }
     let owner_parse = parse_clean_source_file(&owner.body)?;
@@ -82,7 +89,6 @@ pub(crate) fn returned_ledger(
     if caller_rebinds_parameter(&owner.body, &parameter) {
         return None;
     }
-    let hop = chain.hops.first()?;
     if owner.file != hop.caller.file
         || owner.id.0.rsplit_once("::")?.0 != hop.caller.id.0.rsplit_once("::")?.0
         || function.generic_param_list().is_some()
@@ -219,6 +225,42 @@ fn canonical(text: &str) -> String {
         .to_string()
 }
 
+fn synchronous_definitions(source: &str, facts: &[&FunctionSummary]) -> bool {
+    let Some(parsed) = parse_clean_source_file(source) else {
+        return false;
+    };
+    facts.iter().all(|fact| {
+        let mut matches = parsed
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Fn::cast)
+            .filter(|function| {
+                let Some(token) = function.fn_token() else {
+                    return false;
+                };
+                let start = usize::from(token.text_range().start());
+                let end = usize::from(function.syntax().text_range().end());
+                function
+                    .name()
+                    .is_some_and(|name| name.text() == fact.name.as_str())
+                    && source[..start]
+                        .bytes()
+                        .filter(|byte| *byte == b'\n')
+                        .count()
+                        + 1
+                        == fact.start_line
+                    && source.get(start..end) == Some(fact.body.as_str())
+            });
+        // Same-line identical siblings have indistinguishable fact bodies.
+        // Reject ambiguity before checking the matched declaration's qualifier.
+        matches
+            .next()
+            .is_some_and(|function| function.async_token().is_none())
+            && matches.next().is_none()
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -226,6 +268,17 @@ mod tests {
     use crate::analysis::facts::FunctionSourceRole;
     use crate::domain::{DeltaKind, ProbeId, SourceLocation, SymbolId};
     use std::path::PathBuf;
+
+    fn returned_ledger(
+        owner: &FunctionSummary,
+        probe: &Probe,
+        chain: &HelperChain,
+    ) -> Option<ReturnedLedger> {
+        let source = format!("{}\n{}", owner.body, chain.hops.first()?.caller.body);
+        let mut chain = chain.clone();
+        chain.hops.first_mut()?.caller.start_line = owner.body.lines().count() + 1;
+        super::returned_ledger(owner, probe, &chain, &source)
+    }
 
     fn function(name: &str, body: &str) -> FunctionSummary {
         FunctionSummary {
@@ -274,6 +327,38 @@ mod tests {
             stop_above: None,
         };
         (owner, probe, chain)
+    }
+
+    #[test]
+    fn returned_ledger_requires_unique_source_declarations() {
+        let owner = function("record", "fn record(errors: &mut Vec<PolicyError>) {}");
+        let source = format!(
+            "mod a {{ async {} }} mod b {{ {} }}",
+            owner.body, owner.body
+        );
+        assert!(!synchronous_definitions(&source, &[&owner]));
+        let source = format!(
+            "mod a {{ {} }} mod b {{ async {} }}",
+            owner.body, owner.body
+        );
+        assert!(!synchronous_definitions(&source, &[&owner]));
+        assert!(synchronous_definitions(&owner.body, &[&owner]));
+    }
+
+    #[test]
+    fn returned_ledger_refuses_async_qualifiers_omitted_from_fact_bodies() -> Result<(), String> {
+        let (mut owner, probe, chain) = route(
+            "fn collect() -> Vec<PolicyError> {\n    let mut errors = Vec::new();\n    record(&mut errors);\n    errors\n}",
+        );
+        let source = format!("async {}\n{}", owner.body, chain.hops[0].caller.body);
+        let mut chain = chain;
+        chain.hops[0].caller.start_line = owner.body.lines().count() + 1;
+        assert!(super::returned_ledger(&owner, &probe, &chain, &source).is_none());
+        let source = format!("{}\nasync {}", owner.body, chain.hops[0].caller.body);
+        assert!(super::returned_ledger(&owner, &probe, &chain, &source).is_none());
+        owner.start_line += 1;
+        assert!(super::returned_ledger(&owner, &probe, &chain, &source).is_none());
+        Ok(())
     }
 
     #[test]
