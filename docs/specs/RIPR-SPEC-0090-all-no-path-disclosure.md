@@ -121,8 +121,11 @@ count as a test count.
 
 The per-finding digest line uses the same unit: `Related test (1 of N matched
 rows)` (#6807). `N` is `related_tests_total()` (matched rows before packing).
-A distinct-test count of packed-away rows is not on the finding and is not
-invented from the packed window. JSON is unchanged.
+That count is the post-dedup related-test row total already stored as
+`related_tests_matched_total`: admitted assertion rows plus examined-miss
+rows. `RelatedTest::is_unmatched` flags an examined miss inside that unit; it
+is not a second denominator. A distinct-test count of packed-away rows is not
+on the finding and is not invented from the packed window. JSON is unchanged.
 
 If `summary.changed_rust_files` is zero, the scope sentence omits the changed
 Rust file count rather than fabricating a file count:
@@ -151,7 +154,10 @@ bump. The JSON `check.json` shape is unchanged.
 ## Non-Goals
 
 - Disclosure in JSON, SARIF, GitHub, badge, or repo-exposure output formats.
-- Changing the per-finding output for no-path/unknown findings.
+- Rewriting the per-finding no-path/unknown body (classification, weakness,
+  next-step, or evidence). Naming the existing digest related-test denominator
+  as matched rows is in scope (#6807); that is a unit label, not a new
+  per-finding section.
 - Runtime mutation testing, coverage measurement, or correctness claims.
 - Aggregating findings into a single entry or removing per-finding detail.
 
