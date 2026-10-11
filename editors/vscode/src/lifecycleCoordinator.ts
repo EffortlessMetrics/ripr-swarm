@@ -97,6 +97,11 @@ export class ExtensionLifecycleCoordinator {
     }
 
     const current = this.currentOperation;
+    if (current?.kind === 'pause') {
+      // Recoverable removal teardown must finish before a start can change
+      // intent. The controller decides whether explicit recovery is allowed.
+      return current.promise.then(() => this.start(currentController, settleBudgetMs));
+    }
     if (
       this.desiredState === 'running' &&
       current &&
