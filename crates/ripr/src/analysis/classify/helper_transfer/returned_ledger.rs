@@ -51,7 +51,13 @@ pub(crate) fn returned_ledger(
                 && field_identity(&field.syntax().text().to_string())
                     == field_identity(&probe.expression)
         })?;
-    if field.syntax().ancestors().find_map(ast::Fn::cast).as_ref() != Some(&function) {
+    if function.async_token().is_some()
+        || field.syntax().ancestors().find_map(ast::Fn::cast).as_ref() != Some(&function)
+        || field.syntax().ancestors().any(|node| {
+            ast::ClosureExpr::can_cast(node.kind())
+                || ast::BlockExpr::cast(node).is_some_and(|block| block.async_token().is_some())
+        })
+    {
         return None;
     }
     let literal = field.syntax().ancestors().find_map(ast::RecordExpr::cast)?;
@@ -96,7 +102,8 @@ pub(crate) fn returned_ledger(
         .syntax()
         .descendants()
         .find_map(ast::Fn::cast)?;
-    if caller_fn.generic_param_list().is_some()
+    if caller_fn.async_token().is_some()
+        || caller_fn.generic_param_list().is_some()
         || canonical(&caller_fn.ret_type()?.ty()?.syntax().text().to_string())
             != canonical(&target_type.syntax().text().to_string())
     {
@@ -319,6 +326,7 @@ mod tests {
             "fn collect() -> Vec<PolicyError> { let record = |_| {}; let mut errors = Vec::new(); record(&mut errors); errors }",
             "fn collect() -> Vec<PolicyError> { use other::record; let mut errors = Vec::new(); record(&mut errors); errors }",
             "fn collect() -> Vec<PolicyError> { use other::*; let mut errors = Vec::new(); record(&mut errors); errors }",
+            "async fn collect() -> Vec<PolicyError> { let mut errors = Vec::new(); record(&mut errors); errors }",
             "fn collect() -> OtherLedger { let mut errors = OtherLedger::new(); record(&mut errors); errors }",
         ] {
             let (owner, probe, chain) = route(caller);
@@ -327,6 +335,31 @@ mod tests {
                 "{caller}"
             );
         }
+    }
+
+    #[test]
+    fn deferred_owner_pushes_have_no_transfer() -> Result<(), String> {
+        let (mut owner, mut probe, chain) = route(
+            "fn collect() -> Vec<PolicyError> { let mut errors = Vec::new(); record(&mut errors); errors }",
+        );
+        for source in [
+            "async fn record(errors: &mut Vec<PolicyError>) {\n    errors.push(PolicyError {\n        detail: format!(\"diagnostic\"),\n    });\n}",
+            "fn record(errors: &mut Vec<PolicyError>) {\n    let _ = || { errors.push(PolicyError {\n        detail: format!(\"diagnostic\"),\n    }); };\n}",
+            "fn record(errors: &mut Vec<PolicyError>) {\n    let _ = async { errors.push(PolicyError {\n        detail: format!(\"diagnostic\"),\n    }); };\n}",
+        ] {
+            let offset = source.find("detail:").ok_or("fixture field missing")?;
+            probe.location.line = owner.start_line
+                + source[..offset]
+                    .bytes()
+                    .filter(|byte| *byte == b'\n')
+                    .count();
+            owner.body = source.to_string();
+            assert!(
+                returned_ledger(&owner, &probe, &chain).is_none(),
+                "{source}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
