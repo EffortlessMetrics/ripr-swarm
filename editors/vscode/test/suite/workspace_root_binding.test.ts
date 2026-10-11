@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import { RiprClientController, RiprClientRuntime, RiprWorkspaceRootState } from '../../src/client';
 import { RiprConfig } from '../../src/config';
 import {
-  pauseRemovedWorkspaceRootOnce, resetLifecycleCoordinatorForTests,
+  pauseRemovedWorkspaceRootOnce, resetLifecycleCoordinatorForTests, restartServerOnce,
   startAfterFirstWorkspaceFolder, startServerOnce, stopServerOnce, synchronizeWorkspaceRootOnce
 } from '../../src/extension';
 import { compatibleLspEvidence } from './testCompatibility';
@@ -68,6 +68,9 @@ function harness() {
   const controller = new RiprClientController(
     {} as vscode.ExtensionContext, { appendLine: () => undefined } as unknown as vscode.LogOutputChannel, runtime
   );
+  // Production picker recovery uses the extension's coordinated restart.
+  (runtime as RiprClientRuntime & { restartWorkspaceRoot: () => Promise<void> }).restartWorkspaceRoot =
+    () => restartServerOnce(controller);
   return {
     controller, events, infos, runtime,
     setRequest: (handler: () => Promise<unknown>) => { request = handler; },
@@ -241,6 +244,63 @@ suite('Workspace Root Binding Controller', () => {
       ]);
       assert.strictEqual(h.controller.isRunning(), true);
     } finally { await stopServerOnce(h.controller); }
+  });
+
+  test('picker recovery overlapping removal cannot restart after terminal shutdown', async () => {
+    const h = harness(); h.select(beta.uri.fsPath); const gate = h.holdStop();
+    const operations: Promise<unknown>[] = [];
+    try {
+      await startServerOnce(h.controller); h.removeBeta();
+      operations.push(pauseRemovedWorkspaceRootOnce(h.controller, [beta]));
+      await gate.stopped;
+      operations.push(h.controller.selectWorkspaceRoot());
+      operations.push(stopServerOnce(h.controller));
+      gate.release(); await Promise.all(operations);
+      assert.strictEqual(h.controller.isRunning(), false);
+      assert.deepStrictEqual(h.events, [
+        `start:${beta.uri.fsPath}`, `stop:${beta.uri.fsPath}`,
+        `dispose:${beta.uri.fsPath}`, `dispose:${beta.uri.fsPath}`
+      ]);
+    } finally {
+      gate.release(); await Promise.allSettled(operations);
+      await stopServerOnce(h.controller); await h.controller.stop();
+    }
+  });
+
+  test('terminal shutdown waits for picker recovery resolution and leaves no replacement', async () => {
+    const h = harness(); h.select(beta.uri.fsPath); const gate = h.holdStop();
+    let releaseResolver!: () => void; let enteredResolver!: () => void;
+    const resolverGate = new Promise<void>(resolve => { releaseResolver = resolve; });
+    const resolving = new Promise<void>(resolve => { enteredResolver = resolve; });
+    const originalResolve = h.runtime.resolveServer; let resolutions = 0;
+    h.runtime.resolveServer = async (...args) => {
+      if (++resolutions === 2) { enteredResolver(); await resolverGate; }
+      return originalResolve(...args);
+    };
+    const operations: Promise<unknown>[] = [];
+    try {
+      await startServerOnce(h.controller); h.removeBeta();
+      operations.push(pauseRemovedWorkspaceRootOnce(h.controller, [beta])); await gate.stopped;
+      operations.push(h.controller.selectWorkspaceRoot()); gate.release(); await resolving;
+      let terminalSettled = false;
+      operations.push(stopServerOnce(h.controller).then(() => { terminalSettled = true; }));
+      await new Promise<void>(resolve => setImmediate(resolve));
+      assert.strictEqual(terminalSettled, false, 'shutdown must retain ownership of pending recovery setup');
+      releaseResolver(); await Promise.all(operations);
+      assert.strictEqual(h.controller.isRunning(), false);
+      const state = h.controller as unknown as { workspaceRoot?: string };
+      assert.strictEqual(state.workspaceRoot, undefined);
+      await stopServerOnce(h.controller);
+      assert.strictEqual(h.controller.isRunning(), false, 'repeated shutdown cannot leave a late client');
+      assert.deepStrictEqual(h.events.filter(e => e.startsWith('start:')), [
+        `start:${beta.uri.fsPath}`, `start:${alpha.uri.fsPath}`
+      ]);
+      assert.strictEqual(h.events.filter(e => e === `stop:${beta.uri.fsPath}`).length, 1);
+      assert.strictEqual(h.events.filter(e => e === `stop:${alpha.uri.fsPath}`).length, 1);
+    } finally {
+      gate.release(); releaseResolver(); await Promise.allSettled(operations);
+      await stopServerOnce(h.controller); await h.controller.stop();
+    }
   });
 
   test('a newer A selection during B startup is reconciled after the in-flight replacement', async () => {
