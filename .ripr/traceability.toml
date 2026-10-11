@@ -12732,6 +12732,7 @@ tests = [
   "crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio",
   "crates/ripr/tests/mcp_sdk.rs",
   "crates/ripr/tests/mcp_stdio.rs::gap_tools_fail_closed_before_the_first_refresh",
+  "crates/ripr/tests/mcp_stdio.rs::unavailable_workspace_evidence_names_restart_before_any_refresh",
   "crates/ripr/tests/mcp_stdio.rs::resource_reads_match_tools_after_refresh",
   "crates/ripr/tests/mcp_stdio.rs::post_initialize_ping_with_handshake_meta_returns_an_empty_result",
   "crates/ripr/src/mcp/gaps.rs::tests::gap_projection_renders_every_served_file_root_relative",
