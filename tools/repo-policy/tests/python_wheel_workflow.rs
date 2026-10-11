@@ -22,8 +22,54 @@ fn job(source: &str, name: &str) -> TestResult<String> {
     Ok(lines.collect::<Vec<_>>().join("\n"))
 }
 
+fn policy_step_reachable_before_selection(source: &str) -> TestResult<bool> {
+    let applicability = job(source, "applicability")?;
+    let policy_name = "      - name: Validate workflow policy independently\n";
+    let selector_name = "      - name: Select wheel applicability from immutable event history\n";
+    let policy_offset = applicability
+        .find(policy_name)
+        .ok_or("policy step exists")?;
+    let selector_offset = applicability
+        .find(selector_name)
+        .ok_or("selector step exists")?;
+    let (_, tail) = applicability
+        .split_once(policy_name)
+        .ok_or("policy step body")?;
+    let policy = tail.split("      - ").next().ok_or("policy metadata")?;
+    Ok(policy_offset < selector_offset
+        && policy.contains("run: cargo policy check-workflows")
+        && !policy.lines().any(|line| {
+            let line = line.trim();
+            line.starts_with("if:") || line.starts_with("continue-on-error:")
+        }))
+}
+
 #[test]
 fn workflow_graph_retains_policy_and_dispatch_independence() -> TestResult {
+    assert!(policy_step_reachable_before_selection(WORKFLOW)?);
+    let conditional_policy = WORKFLOW.replace(
+        "      - name: Validate workflow policy independently\n",
+        "      - name: Validate workflow policy independently\n        if: ${{ false }}\n",
+    );
+    assert!(!policy_step_reachable_before_selection(
+        &conditional_policy
+    )?);
+    let ignored_failure = WORKFLOW.replace(
+        "      - name: Validate workflow policy independently\n",
+        "      - name: Validate workflow policy independently\n        continue-on-error: true\n",
+    );
+    assert!(!policy_step_reachable_before_selection(&ignored_failure)?);
+    let reversed = WORKFLOW
+        .replace("Validate workflow policy independently", "TEMP_STEP")
+        .replace(
+            "Select wheel applicability from immutable event history",
+            "Validate workflow policy independently",
+        )
+        .replace(
+            "TEMP_STEP",
+            "Select wheel applicability from immutable event history",
+        );
+    assert!(!policy_step_reachable_before_selection(&reversed)?);
     let applicability = job(WORKFLOW, "applicability")?;
     assert!(applicability.contains("cargo policy check-workflows"));
     assert!(applicability.contains("cargo policy python-wheel-applicability"));
