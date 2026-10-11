@@ -37,7 +37,18 @@ impl Drop for Scratch {
     }
 }
 
-fn capture(mut command: Command, budget: Duration, group: bool) -> Result<Output, String> {
+fn capture(command: Command, budget: Duration, group: bool) -> Result<Output, String> {
+    capture_with_cleanup(command, budget, group, |_, _| {})
+}
+
+// The process-contract target observes/injects cleanup outcomes only after both
+// real cleanup attempts; its failure controls never replace process ownership.
+pub(super) fn capture_with_cleanup(
+    mut command: Command,
+    budget: Duration,
+    group: bool,
+    cleanup_observer: impl FnOnce(&mut Result<(), String>, &mut Result<(), String>),
+) -> Result<Output, String> {
     #[cfg(not(unix))]
     let _ = group;
     let scratch = Scratch::new("help-command")?;
@@ -71,7 +82,7 @@ fn capture(mut command: Command, budget: Duration, group: bool) -> Result<Output
                 // Cargo/rustc descendants share this owned Unix process group;
                 // Windows containment belongs to OwnedProcess's Job Object.
                 #[cfg(unix)]
-                let group_cleanup = if group {
+                let mut group_cleanup = if group {
                     let mut kill = Command::new("kill");
                     kill.args(["-KILL", "--", &format!("-{}", child.id())]);
                     capture(kill, Duration::from_secs(5), false)
@@ -81,13 +92,19 @@ fn capture(mut command: Command, budget: Duration, group: bool) -> Result<Output
                     Ok(())
                 };
                 #[cfg(not(unix))]
-                let group_cleanup: Result<(), String> = Ok(());
-                let reap = child.terminate_tree();
-                group_cleanup?;
-                reap?;
-                return Err(format!(
+                let mut group_cleanup: Result<(), String> = Ok(());
+                let mut reap = child.terminate_tree();
+                cleanup_observer(&mut group_cleanup, &mut reap);
+                let mut error = format!(
                     "help proof command exceeded {budget:?} or could not be observed: {observation:?}"
-                ));
+                );
+                if let Err(cleanup) = group_cleanup {
+                    error.push_str(&format!("; process-group cleanup failed: {cleanup}"));
+                }
+                if let Err(cleanup) = reap {
+                    error.push_str(&format!("; primary cleanup failed: {cleanup}"));
+                }
+                return Err(error);
             }
         }
     };

@@ -130,7 +130,7 @@ fn doc_section(doc: &str, heading: &str) -> Result<String, String> {
 }
 
 /// Keep task ownership and executable entry points aligned without pinning
-/// editorial prose. The six rendered-help tests above remain unchanged.
+/// editorial prose.
 #[test]
 fn docs_keep_the_canonical_role_vocabulary() -> Result<(), String> {
     assert_doc_command_routes(COMMAND_HIERARCHY_DOC)?;
