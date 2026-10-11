@@ -268,7 +268,13 @@ impl ClassifiedProbeEvidence {
                         !chain_forwards_to_observed_hops(&owner.name, chain, &context.related_tests)
                     } =>
             {
-                if let Some(ledger) = returned_ledger.as_ref() {
+                if let Some(ledger) = returned_ledger.as_ref().filter(|ledger| {
+                    crate::analysis::classify::returned_ledger_caller_is_observed(
+                        ledger,
+                        chain,
+                        &context.related_tests,
+                    )
+                }) {
                     return_ledger_limit(&owner.name, ledger)
                 } else {
                     let stop = if effect_family {

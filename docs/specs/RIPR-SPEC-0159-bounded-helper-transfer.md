@@ -151,6 +151,9 @@ can only hint that a caller "may lead here" without changing anything.
   `returned_mutable_ledger_observer_unresolved`; Config field assignment, index
   selection, preceding appends, branch activation, and exact field observation
   remain unestablished. No oracle, score or exposure class is strengthened.
+  This observer limitation replaces the ordinary forwarding refusal only when
+  tests directly observe the proved first-hop caller. Higher observed wrappers
+  retain `helper_result_not_forwarded`; their identity is not established here.
   The bounded identity endpoints use these authorities consistently:
 
   | Endpoint | Named-binding authority | Opaque-binding refusal | Other constraints |
