@@ -92,6 +92,12 @@ pub(crate) enum CheckFailureKind {
     /// A `ripr agent packet --seam-id` names no seam in the current
     /// inventory (#7331).
     SeamIdUnknown,
+    /// A `--at`/`--finding`/`explain` selector matched no finding. This is
+    /// usage-class, not an operational failure: the CLI keeps it prose-only
+    /// (empty stdout, exit 2) instead of writing a refusal envelope, so the
+    /// kind is a sentinel for that routing decision, not an envelope
+    /// identity that reaches the wire.
+    SelectorMiss,
 }
 
 impl CheckFailureKind {
@@ -105,6 +111,7 @@ impl CheckFailureKind {
             Self::CheckArtifactUnusable => "check_artifact_unusable",
             Self::GapLedgerUnusable => "gap_ledger_unusable",
             Self::SeamIdUnknown => "seam_id_unknown",
+            Self::SelectorMiss => "selector_miss",
         }
     }
 
@@ -119,6 +126,7 @@ impl CheckFailureKind {
             Self::CheckArtifactUnusable => "analysis/check-artifact",
             Self::GapLedgerUnusable => "analysis/gap-ledger",
             Self::SeamIdUnknown => "analysis/seam-inventory",
+            Self::SelectorMiss => "analysis/selector",
         }
     }
 }
@@ -228,6 +236,25 @@ impl CoreError {
             kind: CheckFailureKind::SeamIdUnknown,
             detail: detail.into(),
         }
+    }
+
+    /// A `--at`/`--finding`/`explain` selector that matched no finding.
+    /// Usage-class, not an operational refusal: the CLI routes this to
+    /// prose-only output (empty stdout, exit 2), so the kind is the
+    /// routing sentinel — no artifact or analysis defect is claimed.
+    /// `detail` is the exact human diagnostic, kept verbatim.
+    pub(crate) fn selector_miss(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::SelectorMiss,
+            detail: detail.into(),
+        }
+    }
+
+    /// Whether this error is the usage-class selector miss the CLI keeps
+    /// prose-only instead of enveloping (#7331 review: selector misses
+    /// predate and stay outside the refusal-envelope contract).
+    pub(crate) fn is_selector_miss(&self) -> bool {
+        self.check_failure_kind() == Some(CheckFailureKind::SelectorMiss)
     }
 
     /// Attach human context without dropping a typed timeout kind.

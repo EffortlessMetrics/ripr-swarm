@@ -8234,8 +8234,12 @@ fn agent_repair_admits_a_cargo_lock_first_generated_between_the_phases()
 
 /// #4445: a repo-scoped format still records `--base` as snapshot
 /// provenance and names `--diff` as an input, so an unresolvable base or a
-/// missing diff file exits 2 with empty stdout, like the diff-scoped
-/// formats. A resolvable base keeps working.
+/// missing diff file exits 2, like the diff-scoped formats. #7332 changed
+/// what the two JSON repo formats write on that refusal: `repo-exposure-json`
+/// and `agent-seam-packets-json` render their format's refusal document
+/// (`run_status: "refused"`) on stdout instead of zero bytes, while
+/// `repo-sarif` still has no honest refusal shape and stays empty. A
+/// resolvable base keeps working.
 #[test]
 fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -8274,10 +8278,24 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
                 "{format} {bad:?}: stderr={}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            assert!(
-                output.stdout.is_empty(),
-                "{format} {bad:?} wrote stdout on a failed invocation"
-            );
+            if format == "repo-sarif" {
+                assert!(
+                    output.stdout.is_empty(),
+                    "{format} {bad:?} wrote stdout on a failed invocation"
+                );
+            } else {
+                // #7332: the JSON repo formats carry their refusal document
+                // on stdout rather than zero bytes.
+                assert!(
+                    !output.stdout.is_empty(),
+                    "{format} {bad:?} must write its refusal document on stdout"
+                );
+                let refusal: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                assert_eq!(
+                    refusal["run_status"], "refused",
+                    "{format} {bad:?}: stdout must be the refused envelope"
+                );
+            }
             let stderr = String::from_utf8_lossy(&output.stderr);
             assert!(
                 stderr.contains(bad[1]),

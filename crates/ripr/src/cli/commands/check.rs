@@ -46,13 +46,16 @@ Use --format json for diff-scoped findings, or --format repo-exposure-summary-js
 fn validate_repo_scope_diff_inputs(
     input: &CheckInput,
     base_explicitly_provided: bool,
-) -> Result<(), String> {
+) -> Result<(), crate::core_error::CoreError> {
     if let Some(diff) = input.diff_file.as_deref() {
         if diff != Path::new("-") && !diff.is_file() {
+            // Untyped on purpose: a missing `--diff` names no analysis
+            // stage, matching the diff-scoped loader's fallback identity.
             return Err(format!(
                 "check: --diff {} is not a readable file",
                 diff.display()
-            ));
+            )
+            .into());
         }
         return Ok(());
     }
@@ -71,10 +74,10 @@ fn validate_repo_scope_diff_inputs(
     if output.status.success() {
         Ok(())
     } else {
-        Err(format!(
+        Err(crate::core_error::CoreError::base_unresolvable(format!(
             "check: base revision {base:?} does not resolve to a commit in {}",
             input.root.display()
-        ))
+        )))
     }
 }
 

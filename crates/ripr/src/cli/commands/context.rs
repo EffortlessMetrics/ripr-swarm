@@ -162,6 +162,13 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // (#7331 review).
     let envelope_context = (input.root.clone(), input.base.clone(), input.mode.as_str());
     let refuse = |error: crate::core_error::CoreError| -> String {
+        // A selector miss is usage-class, not an operational refusal: the
+        // CLI failure contract keeps it prose-only (empty stdout, exit 2,
+        // guidance and the retry listing on stderr), exactly like
+        // `explain`, so it bypasses the envelope (#7331 review).
+        if error.is_selector_miss() {
+            return error.to_string();
+        }
         crate::cli::commands_context::refuse_json_envelope(
             crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
             "diff",
@@ -210,7 +217,7 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 worktree,
                 explicit.mode,
             )
-            .map_err(|err| refuse(crate::core_error::CoreError::from(err)))?
+            .map_err(|err| refuse(err))?
         }
     };
     println!("{rendered}");
