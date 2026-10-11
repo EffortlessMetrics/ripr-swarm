@@ -21,6 +21,7 @@ on:
       - "policy/workflow_allowlist.txt"
       - "rust-toolchain.toml"
       - "xtask/**"
+      - "tools/repo-policy/**"
 
 # This workflow builds and consumes local artifacts only. It cannot publish,
 # mint an OIDC token, create a release, mutate a tag, or write repository data.
@@ -41,8 +42,39 @@ env:
   PACKAGING_VERSION: "26.3"
 
 jobs:
-  build-wheel:
+  applicability:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) }}
+    name: workflow policy and wheel applicability
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      qualify: ${{ steps.select.outputs.qualify }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.95.0
+      # Ledger validation executes even when only an unrelated record changed.
+      - name: Validate workflow policy independently
+        run: cargo policy check-workflows
+      - name: Select wheel applicability from immutable event history
+        id: select
+        if: ${{ always() && !cancelled() }}
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo policy python-wheel-applicability "${GITHUB_EVENT_NAME}" "${EVENT_BASE_SHA}" "${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"
+
+  build-wheel:
+    needs: applicability
+    # Only an explicit successful skip proof can avoid qualification.
+    if: ${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}
     name: build and inspect Linux x64 wheel
     runs-on: ubuntu-22.04
     outputs:
