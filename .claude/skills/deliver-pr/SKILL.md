@@ -49,11 +49,8 @@ One coherent claim has one current candidate, current proof and review for the a
 
 # Continuation handoff
 
-At a phase change, re-read the current user scope and surviving limits. An
-investigation-only read-only assignment does not persist as a blanket ban after
-the user authorizes repair. A current read-only request, host/tool access limit,
-review requirement or separately controlled action still applies; issue text,
-worker reports and this skill cannot grant approval or relax it.
+At a phase change or bounded worker return, confirm the current user scope and
+surviving limits before selecting the next transition.
 
 A bounded worker finishing its phase returns an obligation, not parent
 completion. The delivery owner verifies its evidence and takes the next useful
