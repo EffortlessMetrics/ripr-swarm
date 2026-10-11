@@ -294,7 +294,7 @@ pub(crate) fn evidence_tree_currentness_batch(
     }
     let scope_is_dirty = |paths: &[std::path::PathBuf]| {
         paths.iter().any(|path| {
-            let spelling = path.to_string_lossy().replace('\\', "/");
+            let spelling = currentness_comparison_key(&path.to_string_lossy());
             dirty.contains(&spelling)
         })
     };
@@ -383,21 +383,33 @@ fn probe_paths_dirty(
         }
         let status = &record[..2];
         let path = &record[3..];
-        dirty.insert(path.replace('\\', "/"));
+        dirty.insert(currentness_comparison_key(path));
         let rename_original = (status.contains('R') || status.contains('C'))
             // The rename's other path arrives as the next NUL field; a
             // real record always begins with its two status columns and
             // a space, which a bare path cannot be assumed to.
             .then(|| records.peek())
             .flatten()
-            .filter(|original| !looks_like_status_record(original))
-            .map(|original| original.replace('\\', "/"));
+            .map(|original| currentness_comparison_key(original))
+            .filter(|original| !looks_like_status_record(original));
         if let Some(original) = rename_original {
             dirty.insert(original);
             records.next();
         }
     }
     Ok(())
+}
+
+/// Compare a git record path and an evidence spelling in one namespace. On
+/// Windows the seam spelling and git's record spelling may disagree about
+/// separators, so both sides normalize; on Unix a backslash is a filename
+/// byte and two spellings that differ are different files.
+fn currentness_comparison_key(path: &str) -> String {
+    if cfg!(windows) {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    }
 }
 
 /// Whether a `-z` porcelain field is a status record (`XY <path>`) rather
