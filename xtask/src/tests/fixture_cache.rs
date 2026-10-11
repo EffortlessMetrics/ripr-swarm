@@ -716,18 +716,36 @@ fn fixture_cache_absent_readiness_reaps_gated_child_before_owned_cleanup() -> Re
         let case = Case::new("absent-readiness")?;
         let stale = case.seed_stale()?;
         let paths = case.owned.clone();
-        let gate = child_pid_path(&case)?.with_file_name("unreleased-start-gate");
-        let mut probe = || Ok(false);
-        let error = child_after_readiness(
+        let marker = child_pid_path(&case)?;
+        let gate = marker.with_file_name("unreleased-start-gate");
+        let mut gated_child_observed = false;
+        let mut probe = || -> Result<bool, String> {
+            if marker.try_exists().map_err(|e| e.to_string())? {
+                gated_child_observed = true;
+            }
+            Ok(false)
+        };
+        let error = match child_after_readiness(
             &case,
             &gate,
             crate::run::ReadinessDeadline::new(
-                Duration::from_millis(500),
+                Duration::from_secs(20),
                 Duration::from_secs(5),
                 &mut probe,
             ),
-        )
-        .expect_err("absent readiness must fail setup after owned termination and drains");
+        ) {
+            Err(error) => error,
+            Ok(output) => {
+                return Err(format!(
+                    "absent readiness unexpectedly completed: {}",
+                    describe(&output)
+                ));
+            }
+        };
+        assert!(
+            gated_child_observed,
+            "must observe actual adapter at its unreleased gate"
+        );
         assert!(
             error.contains("readiness not observed within startup budget"),
             "{error}"
@@ -802,7 +820,7 @@ fn fixture_cache_wrong_waiter_owner_fails_closed_then_recovers() -> Result<(), S
             }
             Ok(false)
         };
-        let error = child_after_readiness(
+        let error = match child_after_readiness(
             &case,
             &gate,
             crate::run::ReadinessDeadline::new(
@@ -810,8 +828,15 @@ fn fixture_cache_wrong_waiter_owner_fails_closed_then_recovers() -> Result<(), S
                 Duration::from_millis(100),
                 &mut probe,
             ),
-        )
-        .expect_err("wrong waiter ownership must fail setup through owned cleanup");
+        ) {
+            Err(error) => error,
+            Ok(output) => {
+                return Err(format!(
+                    "wrong waiter ownership unexpectedly completed: {}",
+                    describe(&output)
+                ));
+            }
+        };
         assert!(
             actual_waiter_observed,
             "must independently observe the real owned waiter"
