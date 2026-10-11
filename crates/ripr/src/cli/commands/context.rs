@@ -123,7 +123,25 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         ));
     }
     super::resolve_worktree_root(&mut input, worktree, root_explicitly_provided)?;
-    let config = load_for_root(&input.root)?;
+    // #7331: `context` produces JSON only, so every post-argv-parse failure
+    // below writes the shared refusal envelope (keyed with the context
+    // packet's own version) to stdout before the prose error reaches
+    // stderr. The usage gates above (selector requirement, flag conflicts)
+    // stay prose-only, exactly like `check`. The closure owns its context
+    // snapshot so `input` can move into the pipeline call afterwards.
+    let envelope_context = (input.root.clone(), input.base.clone(), input.mode.as_str());
+    let refuse = |error: crate::core_error::CoreError| -> String {
+        crate::cli::commands_context::refuse_json_envelope(
+            crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+            "diff",
+            Some(envelope_context.2),
+            &envelope_context.0,
+            envelope_context.1.as_deref(),
+            error,
+        )
+    };
+    let config = load_for_root(&input.root)
+        .map_err(|err| refuse(crate::cli::commands_context::config_load_refusal(&envelope_context.0, err)))?;
     apply_to_check_input(&mut input, &config, explicit);
     let Some(selector) = selector else {
         return Err(super::missing_selector_error(
@@ -152,7 +170,8 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             &config,
             artifact_path,
             asserted_base.as_deref(),
-        )?,
+        )
+        .map_err(|err| refuse(err))?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
             app::collect_context_with_config_and_worktree(
@@ -162,7 +181,8 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 &config,
                 worktree,
                 explicit.mode,
-            )?
+            )
+            .map_err(|err| refuse(crate::core_error::CoreError::from(err)))?
         }
     };
     println!("{rendered}");
