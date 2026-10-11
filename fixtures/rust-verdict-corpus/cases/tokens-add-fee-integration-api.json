@@ -1,0 +1,56 @@
+{
+  "case_id": "tokens-add-fee-integration-api",
+  "subject_id": "authored-tokens",
+  "diff": "cases/tokens-add-fee-integration-api.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 10
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "integration_test_public_api_to_private_owner",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "total + 16",
+        "mutated_line": "total + 16",
+        "outcome": "tests_failed",
+        "failing_test": "public_total_adds_the_fee",
+        "equivalence_review": "not equivalent: public_total(3) becomes 46"
+      },
+      {
+        "replacement": "total - 15",
+        "mutated_line": "total - 15",
+        "outcome": "tests_failed",
+        "failing_test": "public_total_adds_the_fee",
+        "equivalence_review": "not equivalent: public_total(3) becomes 15"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "tests/public.rs pins public_total(3) to 45, and public_total is the only caller of the private add_fee. Spec cells: RIPR-SPEC-0118.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0114#1",
+    "RIPR-SPEC-0118#1"
+  ]
+}

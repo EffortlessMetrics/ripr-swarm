@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0234 rule 4: an error payload that passes on both versions of
+//! RIPR-SPEC-0243 rule 4: an error payload that passes on both versions of
 //! the changed line is not an exact discriminator.
 //!
 //! The oracle extractor reads `toThrow("...")`, `toThrow(SomeError)`, chai
@@ -9,7 +9,7 @@
 //! assertion as `broad_error` / weak.
 //!
 //! On a message-only change a payload credits when it matches exactly one
-//! of the old and new messages. RIPR-SPEC-0234 words this as "excludes the
+//! of the old and new messages. RIPR-SPEC-0243 words this as "excludes the
 //! old message", which assumes the test passes on the new side; the corpus
 //! (#6686) also scores tests that pin the old message and fail on the new
 //! one, and those discriminate the change just as well.

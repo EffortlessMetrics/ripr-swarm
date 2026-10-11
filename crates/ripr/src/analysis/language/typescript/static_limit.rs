@@ -1008,7 +1008,7 @@ pub(crate) fn mocked_module_limit(mock_paths: &[String]) -> Option<TypeScriptSta
     })
 }
 
-/// A changed-line callee whose module a test file mocks (RIPR-SPEC-0234
+/// A changed-line callee whose module a test file mocks (RIPR-SPEC-0243
 /// rule 8): the changed line calls `symbol`, imported by the owner file from
 /// `source`, and the test file `test_file` mocks that module with `mock`.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1040,7 +1040,7 @@ impl MockedChangedCallee {
     }
 }
 
-/// RIPR-SPEC-0234 rule 8: the first changed-line callee whose module each of
+/// RIPR-SPEC-0243 rule 8: the first changed-line callee whose module each of
 /// `test_files` mocks, or `None` when some test file mocks no module the
 /// changed line calls (or `test_files` is empty).
 ///

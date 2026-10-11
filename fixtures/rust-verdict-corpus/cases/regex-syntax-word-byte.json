@@ -1,0 +1,58 @@
+{
+  "case_id": "regex-syntax-word-byte",
+  "subject_id": "regex",
+  "diff": "cases/regex-syntax-word-byte.diff",
+  "anchor": {
+    "file": "regex-syntax/src/lib.rs",
+    "line": 380
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "unit_test_assert_bool",
+  "hard_case": "one match arm carries four ranges; one test pins only 'a' and '-'",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test -p regex-syntax --lib",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(remove `| b'_'`)",
+        "mutated_line": "b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Z'  => true,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: '_' stops being a word byte"
+      },
+      {
+        "replacement": "b'b'..=b'z'",
+        "mutated_line": "b'0'..=b'9' | b'b'..=b'z' | b'A'..=b'Z' | b'_' => true,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::word_byte",
+        "equivalence_review": "not equivalent: 'a' stops being a word byte"
+      },
+      {
+        "replacement": "b'A'..=b'Y'",
+        "mutated_line": "b'0'..=b'9' | b'a'..=b'z' | b'A'..=b'Y' | b'_' => true,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 'Z' stops being a word byte"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "word_byte asserts only is_word_byte(b'a') and !is_word_byte(b'-'), so dropping '_' or 'Z' keeps the tests passing. ripr's weakly_exposed gap is ideal.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

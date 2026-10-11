@@ -449,6 +449,12 @@ fn closed_analysis_options_view(options: &AnalysisOptions) -> (bool, Option<&Pat
         include_unchanged_tests,
         resolve_tsconfig_paths: _, // recorded via the config identity allowlist
         perl_facts_path,
+        // Transient producer-run state (#6828), not analysis identity: the
+        // artifact analyzes the input actually consumed. A failed exporter
+        // contributes no packet (`perl_facts_path` stays `None`, already
+        // hashed), and a re-run after fixing the exporter consumes a packet
+        // and hashes a different identity through that field.
+        perl_producer_failure: _,
         git_timeout: _, // resource bound (#2303), not analysis identity: a
         // deadline never changes what the analysis computes,
         // only whether a hung git invocation aborts the run

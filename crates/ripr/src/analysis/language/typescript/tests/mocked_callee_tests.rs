@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0234 rule 8: a mocked dependency on the changed line.
+//! RIPR-SPEC-0243 rule 8: a mocked dependency on the changed line.
 //!
 //! When every test file whose assertion would credit `exposed` mocks a module
 //! the changed line calls, the mock can replace the changed value, so the
@@ -120,7 +120,7 @@ fn assert_exposed_with_advisory_mock(finding: &Finding) {
 
 /// Example 24: the test mocks a module the owner does not import.
 #[test]
-fn spec0234_ex24_mock_of_unimported_module_stays_exposed_without_observer_limitation()
+fn spec0243_ex24_mock_of_unimported_module_stays_exposed_without_observer_limitation()
 -> Result<(), String> {
     let source = test_file(
         "jest.mock(\"../src/other\");",
@@ -134,7 +134,7 @@ fn spec0234_ex24_mock_of_unimported_module_stays_exposed_without_observer_limita
     let owners = extract_owners(Path::new("src/lib.ts"), BASE_OWNER);
     assert!(owners.iter().all(|owner| owner.imports.is_empty()));
     let finding = finding_for(&Subject {
-        label: "spec0234-ex24",
+        label: "spec0243-ex24",
         owner: BASE_OWNER,
         line: BASE_LINE,
         tests: &[("tests/lib.test.ts", source)],
@@ -146,7 +146,7 @@ fn spec0234_ex24_mock_of_unimported_module_stays_exposed_without_observer_limita
 /// Example 31: the only exposing test file mocks the module whose `fee` the
 /// changed line calls.
 #[test]
-fn spec0234_ex31_mocked_changed_line_callee_reads_static_unknown() -> Result<(), String> {
+fn spec0243_ex31_mocked_changed_line_callee_reads_static_unknown() -> Result<(), String> {
     let source = test_file(
         "jest.mock(\"../src/other\", () => ({ fee: () => 5 }));",
         "expect(price(150)).toBe(5);",
@@ -177,7 +177,7 @@ fn spec0234_ex31_mocked_changed_line_callee_reads_static_unknown() -> Result<(),
         Some((OracleKind::ExactValue, OracleStrength::Strong))
     );
     let finding = finding_for(&Subject {
-        label: "spec0234-ex31",
+        label: "spec0243-ex31",
         owner: FEE_OWNER,
         line: FEE_LINE,
         tests: &[("tests/lib.test.ts", source)],
@@ -188,14 +188,14 @@ fn spec0234_ex31_mocked_changed_line_callee_reads_static_unknown() -> Result<(),
 
 /// Example 32: the test mocks an unrelated module while the real `fee` runs.
 #[test]
-fn spec0234_ex32_mock_of_unrelated_module_stays_exposed_without_observer_limitation()
+fn spec0243_ex32_mock_of_unrelated_module_stays_exposed_without_observer_limitation()
 -> Result<(), String> {
     let source = test_file(
         "jest.mock(\"../src/unrelated\");",
         "expect(price(150)).toBe(130);",
     );
     let finding = finding_for(&Subject {
-        label: "spec0234-ex32",
+        label: "spec0243-ex32",
         owner: FEE_OWNER,
         line: FEE_LINE,
         tests: &[("tests/lib.test.ts", source)],
@@ -208,14 +208,14 @@ fn spec0234_ex32_mock_of_unrelated_module_stays_exposed_without_observer_limitat
 /// not every exposing file mocks the callee, so the class stays `exposed`.
 /// When both files mock it, the finding reads `static_unknown`.
 #[test]
-fn spec0234_rule8_reads_every_exposing_test_file() -> Result<(), String> {
+fn spec0243_rule8_reads_every_exposing_test_file() -> Result<(), String> {
     let mocked = test_file(
         "jest.mock(\"../src/other\");",
         "expect(price(150)).toBe(5);",
     );
     let real = test_file("", "expect(price(150)).toBe(130);");
     let finding = finding_for(&Subject {
-        label: "spec0234-rule8-one-real",
+        label: "spec0243-rule8-one-real",
         owner: FEE_OWNER,
         line: FEE_LINE,
         tests: &[
@@ -230,7 +230,7 @@ fn spec0234_rule8_reads_every_exposing_test_file() -> Result<(), String> {
         "expect(price(150)).toBe(130);",
     );
     let finding = finding_for(&Subject {
-        label: "spec0234-rule8-both-mocked",
+        label: "spec0243-rule8-both-mocked",
         owner: FEE_OWNER,
         line: FEE_LINE,
         tests: &[
@@ -249,7 +249,7 @@ fn spec0234_rule8_reads_every_exposing_test_file() -> Result<(), String> {
 /// `mock_names_import_module_resolves_each_specifier_from_its_own_file`. A
 /// weak ladder result is unchanged and keeps `typescript_mock_only_observer`.
 #[test]
-fn spec0234_rule8_leaves_non_exposed_ladder_results_unchanged() -> Result<(), String> {
+fn spec0243_rule8_leaves_non_exposed_ladder_results_unchanged() -> Result<(), String> {
     let unresolved = test_file(
         "const target = \"../src/other\";\njest.mock(target);",
         "expect(price(150)).toBe(5);",
@@ -260,7 +260,7 @@ fn spec0234_rule8_leaves_non_exposed_ladder_results_unchanged() -> Result<(), St
         Some(vec![UNRESOLVED_MOCK_SPECIFIER.to_string()])
     );
     let finding = finding_for(&Subject {
-        label: "spec0234-rule8-unresolved",
+        label: "spec0243-rule8-unresolved",
         owner: FEE_OWNER,
         line: FEE_LINE,
         tests: &[("tests/lib.test.ts", unresolved)],
@@ -277,7 +277,7 @@ fn spec0234_rule8_leaves_non_exposed_ladder_results_unchanged() -> Result<(), St
         "expect(price(150)).toBeGreaterThan(1);",
     );
     let finding = finding_for(&Subject {
-        label: "spec0234-rule8-weak",
+        label: "spec0243-rule8-weak",
         owner: FEE_OWNER,
         line: FEE_LINE,
         tests: &[("tests/lib.test.ts", weak)],

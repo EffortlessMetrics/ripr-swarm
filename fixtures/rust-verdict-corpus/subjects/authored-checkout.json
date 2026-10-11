@@ -1,0 +1,41 @@
+{
+  "subject_id": "authored-checkout",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for spec-defined cells",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "4d277a663cd5448ad43737b1dd76c8da5fee35cd8d8cfbe747178323a208fbfd"
+    },
+    {
+      "path": "src/fees.rs",
+      "sha256": "9f5fb7794970dc06f2ff820249f9e7fd63752eb2eeeec40155ef8e89b18ade3d"
+    },
+    {
+      "path": "src/invoice.rs",
+      "sha256": "2466bda1af24d84de6d1a0ccfb054310a1a1d4718c9d69de3a869e2db4bd8507"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "92e4d395fb8aa0f8f6fafa85782bf95d38e88e1a6768503cf75b3c1bcc856984"
+    },
+    {
+      "path": "src/limits.rs",
+      "sha256": "c53ae43612df5418628ed0dde97c0ad56aed26e18cced24cbbc3fd1398db5ac4"
+    },
+    {
+      "path": "src/payment.rs",
+      "sha256": "19733abfc9303bf4db2981a0836ff80160a9c2bf9bcf719d0edebf4176091ac0"
+    },
+    {
+      "path": "src/rates.rs",
+      "sha256": "b590d435a292f407f4f1cf235098be3db4ccf9049154709338a8f0e45c5bebf4"
+    },
+    {
+      "path": "src/store.rs",
+      "sha256": "5e4db7169be5f606270a0ef16502e3e8c01b40dae21fa82c63bbac6761dc2314"
+    }
+  ]
+}

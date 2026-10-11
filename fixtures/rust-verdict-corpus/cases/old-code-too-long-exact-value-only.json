@@ -1,0 +1,44 @@
+{
+  "case_id": "old-code-too-long-exact-value-only",
+  "subject_id": "authored-old-errors",
+  "diff": "cases/old-code-too-long-exact-value-only.diff",
+  "anchor": {
+    "file": "src/errors.rs",
+    "line": 28
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_variant",
+  "test_shape": "error_seam_only_exact_value_and_is_err",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(CodeError::NotDigit);",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a five-digit code reports NotDigit instead of TooLong"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "code_parses pins only the success value and long_code_is_rejected only checks is_err(), so returning NotDigit instead of TooLong passes every test. Spec cells: RIPR-SPEC-0103.",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

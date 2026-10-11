@@ -43,8 +43,10 @@ ripr agent packet --root . --seam-id f3c9e4d21a0b7c88 --json
 
 The packet command expands a brief `packet_ref` into the existing
 `agent-seam-packets-json` envelope filtered to one visible seam. It is not a
-second packet schema and must apply the same configured-off and hidden-class
-policy as the brief.
+second packet schema. Every seam the brief selects is packet-expandable; an
+explicitly named static-limitation seam (opaque or an `*_unknown` class)
+renders an `inspect_static_limitation` packet rather than a repair packet
+(#6775). Both surfaces apply the same configured-off policy.
 
 The expanded packet may also carry the shared repair-loop handoff: a
 `next.before_snapshot_command` that prepares its artifact directories before
@@ -78,6 +80,10 @@ The command should:
 - reject or clamp requests above the hard cap of ten seams;
 - avoid dumping the full repo seam inventory by default;
 - respect configured severity, suppressions, and explicit `off` policy;
+- select repair targets from gap classes only (`weakly_gripped`,
+  `ungripped`, `reachable_unrevealed`); omit static-limitation classes
+  (opaque and the `*_unknown` classes) with a named warning, matching
+  pilot's ranking population (#6775);
 - include `why_now` evidence explaining why each seam was selected;
 - include the nearest test to imitate when the static evidence can name one;
 - include missing discriminator, candidate value, and assertion-shape summaries
@@ -103,19 +109,23 @@ The first implementation should use a deterministic ranking policy:
 6. `explicit_seam_id`
 7. `repo_actionable_fallback`
 
-Tie-breakers:
+Tie-breakers (among retained repair targets; static-limitation seams are
+omitted before ranking and neither rank nor count toward the cap):
 
 1. configured severity (`warning`, then `info`, then `note`);
-2. grip class priority (`weakly_gripped`, `ungripped`,
-   `reachable_unrevealed`, unknown-stage classes, then `opaque`);
+2. grip class priority (`weakly_gripped`, `ungripped`, then
+   `reachable_unrevealed`);
 3. related-test confidence;
 4. file path;
 5. line;
 6. seam ID.
 
 `--seam-id` is an explicit lookup and should return that seam first when it is
-visible under current config. Other seams may be included only when the caller
-also asks for more than one result.
+a selectable repair target under current config. Other seams may be included
+only when the caller also asks for more than one result. A requested seam
+that is not selectable (a static limitation, a strongly-gripped,
+intentional, or suppressed seam, or a configured-off class) yields an empty
+brief with a named omission warning instead.
 
 When `changed_test_for_related_seam` comes from a file-only request, it is
 broader than a line-level `changed_assertion_near_related_test` match and
@@ -359,7 +369,7 @@ capped at three and reports that cap explicitly:
       "seam_id": "c2f1b5d0a8ee9b41",
       "file": "src/pricing.rs",
       "line": 119,
-      "grip_class": "activation_unknown",
+      "grip_class": "reachable_unrevealed",
       "why_now": { "reason": "same_file_seam", "confidence": "medium" }
     }
   ],
@@ -545,6 +555,8 @@ Planned tests:
 - `agent_brief_rejects_or_clamps_above_hard_cap`
 - `agent_brief_respects_configured_off_severity`
 - `agent_brief_omits_suppressed_seams`
+- `agent_brief_selector_omits_static_limitation_seams_as_repair_targets`
+- `agent_brief_selector_warns_when_explicit_seam_is_static_limitation`
 - `agent_brief_selector_uses_related_test_confidence_before_path`
 - `agent_brief_includes_config_fingerprint_without_source_text`
 - `agent_brief_reuses_agent_packet_assertion_shape`

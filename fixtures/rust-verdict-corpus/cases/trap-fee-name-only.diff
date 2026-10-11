@@ -1,0 +1,11 @@
+diff --git a/src/labels.rs b/src/labels.rs
+index 4b471f2..603ff7b 100644
+--- a/src/labels.rs
++++ b/src/labels.rs
+@@ -1,5 +1,5 @@
+ pub fn fee(amount: u32) -> u32 {
+-    amount / 50 + 1
++    1 + amount / 50
+ }
+ 
+ pub fn describe_fee() -> String {

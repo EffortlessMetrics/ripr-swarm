@@ -1,0 +1,59 @@
+{
+  "case_id": "trap-pile-first-element-control",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-pile-first-element-control.diff",
+  "anchor": {
+    "file": "src/piles.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_on_container_element",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 44",
+        "mutated_line": "base * 44",
+        "outcome": "tests_failed",
+        "failing_test": "piles::tests::pile_holds_the_entry",
+        "equivalence_review": "not equivalent: replaces `43 * base` with `base * 44`, which changes the result"
+      },
+      {
+        "replacement": "base + 43",
+        "mutated_line": "base + 43",
+        "outcome": "tests_failed",
+        "failing_test": "piles::tests::pile_holds_the_entry",
+        "equivalence_review": "not equivalent: replaces `43 * base` with `base + 43`, which changes the result"
+      },
+      {
+        "replacement": "base * 42",
+        "mutated_line": "base * 42",
+        "outcome": "tests_failed",
+        "failing_test": "piles::tests::pile_holds_the_entry",
+        "equivalence_review": "not equivalent: replaces `43 * base` with `base * 42`, which changes the result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Negative control for trap-stack-container-length: the same vec wrapper, asserting its element, so pile_holds_the_entry pins vec![pile(2)][0] == 86 and fails for each mutant.",
+  "labeling_observation": {
+    "ripr_commit": "fce75e1",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

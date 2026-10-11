@@ -2,9 +2,13 @@
 //!
 //! See #1771 / #1614 / #1862. The report captures the core checks (root,
 //! Cargo.toml, configuration, and tool availability) as typed `DoctorCheck`
-//! values and leaves deeper sub-checks (languages, cache, Perl, and test
-//! surfaces) for a follow-up projection. The structure here proves the dual
-//! human/JSON projection without a massive one-shot refactor.
+//! values. #5214 adds the environment facts the human screen reports and JSON
+//! previously dropped: detected languages, unanalyzed source languages,
+//! preview-language enablement gaps, effective config defaults, cache state,
+//! detected test surfaces, and the Perl preview/exporter state.
+//!
+//! Each typed value is produced once per run and both surfaces read it, so a
+//! fact cannot be present on one surface and absent from the other.
 //!
 //! `cli::commands::doctor` is an argv adapter only: it parses `--root` /
 //! `--json`, calls into this module to evaluate the core checks and probe
@@ -17,7 +21,7 @@
 //! claim an existing file does not exist (#5101).
 
 use crate::config::{CONFIG_FILE_NAME, RiprConfig, load_for_root};
-use crate::domain::LanguageId;
+use crate::domain::{LanguageId, LanguageStatus};
 pub(crate) use crate::output::path::command_root_display as doctor_command_root_display;
 use crate::output::path::{
     absolute_command_root_display as absolute_doctor_root_display, human_path,
@@ -43,15 +47,18 @@ pub(crate) const DOCTOR_FAILED_LINE: &str =
 /// recommended when the `tool_git` check actually passed (#4735). A root Git
 /// refuses gets the repository-free scan instead of a command that cannot run
 /// there (#4531); an unusable root (missing, or present but not a directory)
-/// keeps a runnable recovery command naming its lossless root spelling (#5010)
-/// plus `--root` guidance that names the actual filesystem state (#4606
-/// review, #5101), and is never probed for work-tree changes.
+/// recommends its recovery action, which names the actual filesystem state
+/// (#4606 review, #5101), because no check command can run there (#5252 item
+/// 3). The lossless root spelling (#5010) still serves the routes that can
+/// render one. Unusable roots are never probed for work-tree changes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DoctorFirstCommand {
-    /// `root_directory` failed while git runs: render the runnable recovery
-    /// command with its lossless root spelling, plus `--root` guidance that
-    /// distinguishes a missing path from an existing non-directory, and never
-    /// probe the work tree (#4531, #5010, #5101).
+    /// `root_directory` failed: recommend the recovery action with `--root`
+    /// guidance that distinguishes a missing path from an existing
+    /// non-directory, and never probe the work tree (#4531, #5101). No
+    /// check command is named: none can run here (#5252 item 3), whatever
+    /// the git state, because `check` validates an explicit `--root`
+    /// through `ensure_command_root` before reading any `--diff` input.
     MissingRoot,
     /// `git_repository` failed while git itself runs: the repository-free scan
     /// is the only route that can run here.
@@ -86,9 +93,12 @@ impl DoctorFirstCommand {
     /// probe runs: a missing root (#4531) must not be probed for work-tree
     /// changes — the probe would print a raw git failure for a problem the
     /// checks above already name — and a root Git refuses must not be sent to
-    /// `ripr check`, which cannot run there. A git binary that cannot run
-    /// still outranks the repository state (#4735), because `--diff PATH`
-    /// does not need git.
+    /// `ripr check`, which cannot run there. Root usability outranks git
+    /// availability: `check` validates an explicit `--root` through
+    /// `ensure_command_root` before reading any `--diff` input, so a failed
+    /// `root_directory` recommends recovery even on a gitless host. A git
+    /// binary that cannot run still outranks the repository state (#4735),
+    /// because `--diff PATH` does not need git — only a directory.
     pub(crate) fn resolve_for_report(
         report: &DoctorReport,
         dirty_worktree: impl FnOnce() -> bool,
@@ -100,15 +110,11 @@ impl DoctorFirstCommand {
                 .any(|check| check.name == name && check.status == DoctorCheckStatus::Pass)
         };
         if !passed("root_directory") {
-            // #5010 renders the lossless root spelling for recovery, so the
-            // route stays runnable; only the work-tree probe is withheld
-            // (#4531). Gitless hosts keep the `--diff` route, which does not
-            // need the root to exist.
-            if git_tool_can_run(report) {
-                Self::MissingRoot
-            } else {
-                Self::SavedDiff
-            }
+            // #5010 renders the lossless root spelling for recovery, and the
+            // work-tree probe stays withheld (#4531). No `--diff` route is
+            // kept: it renders with the same explicit `--root`, which
+            // `ensure_command_root` rejects before the diff is read.
+            Self::MissingRoot
         } else if !git_tool_can_run(report) {
             Self::SavedDiff
         } else if !passed("git_repository") {
@@ -167,18 +173,15 @@ impl DoctorFirstCommand {
     /// variant renders its own line.
     pub(crate) fn recommendation_lines_for(self, root: &Path) -> Vec<String> {
         match self {
-            // The recovery command names the lossless spelling of the unusable
-            // root exactly as the runnable variants do (#5010); the guidance
-            // line says what to replace it with (#4606 review, #5101).
+            // No check command can run against a root that is not there
+            // (#5252 item 3): naming `ripr check --root <missing>` prescribes
+            // the same failure doctor just diagnosed. The recovery action is
+            // the recommendation. The lossless-spelling machinery (#5010) is
+            // untouched for the routes that can render one.
             Self::MissingRoot => {
-                let mut lines =
-                    Self::recommendation_lines(Self::DefaultCheck.command_line_for_root(root));
-                lines.push(
-                    DoctorRootPath::classify(root)
-                        .recovery_guidance()
-                        .to_string(),
-                );
-                lines
+                let guidance = DoctorRootPath::classify(root).recovery_guidance();
+                let action = guidance.strip_prefix("- ").unwrap_or(guidance);
+                vec![format!("- Recommended first command: {action}")]
             }
             Self::OutsideGit => {
                 use crate::agent::loop_commands::shell_arg;
@@ -526,14 +529,168 @@ pub(crate) struct DoctorCheck {
     pub(crate) evidence: Option<String>,
 }
 
-/// A text-based section from a deeper check (languages, cache, etc.).
-/// Typed checks replace these incrementally.
+/// One language the marker scan found in the selected root.
+///
+/// This is what the root *contains*, not what the configuration enables: the
+/// enabled set is the top-level `languages` array. A language detected here with
+/// `enabled: false` is the state the human screen's enablement tip exists to
+/// warn about (#5214), and conflating the two would tell a consumer that a
+/// `pyproject.toml` project is analyzed when `ripr check` skips it.
+/// `enabled: null` means the configuration could not be loaded, so enablement
+/// is unknown rather than disabled.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-pub(crate) struct DoctorSection {
-    /// The section name (e.g. "detected_languages", "cache_status").
-    pub(crate) name: String,
-    /// The captured text output.
-    pub(crate) lines: Vec<String>,
+pub(crate) struct DoctorDetectedLanguage {
+    /// The `LanguageId` wire string for the detected language.
+    pub(crate) language: String,
+    /// The capability tier `ripr check` treats this language as.
+    pub(crate) status: LanguageStatus,
+    /// Whether the adapter for this language was compiled into this binary. A
+    /// detected language whose adapter is absent cannot be enabled at all.
+    pub(crate) adapter_available: bool,
+    /// Whether the effective configuration enables this language, `None` when
+    /// the configuration could not be loaded.
+    pub(crate) enabled: Option<bool>,
+}
+
+/// Source in a language no ripr adapter reads, counted per language.
+///
+/// Doctor names these so a Go or Java repository learns why `ripr check` finds
+/// nothing instead of reading an empty result as "no gaps". This is a
+/// non-coverage disclosure, never a finding.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct DoctorUnanalyzedLanguage {
+    /// The language name the discovery walk reports.
+    pub(crate) language: String,
+    /// How many source files of that language the walk found.
+    pub(crate) file_count: usize,
+}
+
+/// A detected preview language that `ripr check` will skip until it is enabled.
+///
+/// `config_entry` is what a user writes in `[languages] enabled` and is not
+/// always the detected source: a JavaScript-only workspace is analyzed by the
+/// `typescript` entry, so the pair differs there.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct DoctorPreviewLanguageGap {
+    /// The `[languages] enabled` entry that turns on analysis.
+    pub(crate) config_entry: String,
+    /// The detected source language that entry analyzes.
+    pub(crate) detected_language: String,
+}
+
+/// The effective configuration defaults the human screen reports.
+///
+/// `None` when the configuration could not be loaded at all: the field then
+/// carries no default rather than an unverified one. The `config` check owns
+/// the loaded/invalid state and its (redacted, RIPR-SPEC-0007) evidence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct DoctorConfigDefaults {
+    /// The `ripr.toml` this configuration was read from, in the human path
+    /// spelling, or `None` when the built-in defaults apply.
+    pub(crate) source_path: Option<String>,
+    /// The `[analysis] mode` default (`draft` when unset).
+    pub(crate) analysis_mode: String,
+    /// The `[lsp] seam_diagnostics` default (`true` when unset).
+    pub(crate) lsp_seam_diagnostics: bool,
+    /// The suppressions path the configuration points at.
+    pub(crate) suppressions_path: String,
+    /// Whether `[profiles.bun_ub]` is configured.
+    pub(crate) bun_ub_profile_configured: bool,
+    /// `[profiles.bun_ub].test_roots`, empty when the profile is absent.
+    pub(crate) bun_ub_test_roots: Vec<String>,
+    /// `[profiles.bun_ub].bridge_hints` in the portable display spelling,
+    /// or `None` when the profile is absent. The human screen prints the
+    /// same value, so automation keeps the actionable path (#5283 review).
+    pub(crate) bun_ub_bridge_hints: Option<String>,
+}
+
+/// Where the seam cache lives for this root and how big it is.
+///
+/// `size_bytes` is `0` when the directory does not exist or cannot be read,
+/// which is a legitimate state, not a failed measurement: doctor's contract is
+/// that a missing cache never fails the report.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct DoctorCacheStatus {
+    /// The resolved cache base directory, in the human path spelling.
+    pub(crate) cache_dir: String,
+    /// Whether `RIPR_CACHE_DIR` relocated the cache for this run.
+    pub(crate) relocated_by_env: bool,
+    /// Total bytes under the cache directory.
+    pub(crate) size_bytes: u64,
+    /// The human display of `size_bytes` (`B`, `KB`, `MB`, or `GB`).
+    pub(crate) size_display: String,
+}
+
+/// The test surface detected for one language.
+///
+/// `framework` is the detected framework name, or `None` when no framework
+/// marker was confirmed — doctor never claims a framework it cannot confirm.
+/// `evidence` is the exact `<language>: …` fragment the human screen prints,
+/// so a consumer reading the typed field reads the same words a user does.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct DoctorTestSurface {
+    /// The detected language this surface belongs to.
+    pub(crate) language: String,
+    /// The detected test framework name, when one was confirmed.
+    pub(crate) framework: Option<String>,
+    /// The exact fragment the human screen prints for this surface.
+    pub(crate) evidence: String,
+}
+
+/// Whether the configured `[perl].producer` accepts the managed argv.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DoctorPerlExporterState {
+    /// Answers `--version` and accepts the managed `ripr-facts` subcommand.
+    Compatible,
+    /// Answers `--version` but rejects `ripr-facts`, so managed mode would fail.
+    Incompatible,
+    /// No candidate answered `--version`.
+    NotFound,
+}
+
+/// The Perl fact exporter doctor probed for.
+///
+/// This is a capability probe, not an end-to-end proof: only `ripr check`
+/// validates an actual packet.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct DoctorPerlExporter {
+    pub(crate) state: DoctorPerlExporterState,
+    /// The probed binary, or `None` when nothing was found on PATH.
+    pub(crate) executable: Option<String>,
+    /// The probed binary's first `--version` line, when one answered.
+    pub(crate) version: Option<String>,
+}
+
+/// The Perl preview state for a root whose marker scan found Perl.
+///
+/// Every field is what the static layer can determine. Nothing here claims the
+/// producer works end to end.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub(crate) struct DoctorPerlPreview {
+    pub(crate) pm_files: usize,
+    pub(crate) pl_files: usize,
+    pub(crate) t_files: usize,
+    /// Whether this binary was built with `lang-perl`.
+    pub(crate) adapter_compiled: bool,
+    /// The configured `[perl].producer` name, or `None` when managed mode is
+    /// off.
+    pub(crate) producer: Option<String>,
+    /// A configured `[perl].executable` doctor refused to run because the
+    /// opt-in environment variable was not set. Reported so a user can see
+    /// why the configured path was not probed.
+    pub(crate) ignored_configured_executable: Option<String>,
+    pub(crate) exporter: DoctorPerlExporter,
+    /// The Perl fact packet schema this build consumes.
+    pub(crate) expected_schema: String,
+    /// Which of `t/` and `t2/` exist.
+    pub(crate) test_roots: Vec<&'static str>,
+    /// Test frameworks named by the `.t` sources, empty when none were found.
+    pub(crate) frameworks: Vec<&'static str>,
+    /// Perl test runners found on PATH, empty when none were found.
+    pub(crate) runners: Vec<&'static str>,
+    /// The exact next command for this state.
+    pub(crate) next_command: String,
 }
 
 /// The result of a language runtime probe. Primary runtimes for enabled
@@ -549,6 +706,30 @@ pub(crate) struct DoctorRuntimeProbe {
     pub(crate) hint: String,
 }
 
+/// Every environment fact both doctor surfaces report, computed once per run.
+///
+/// The human printers and the JSON document read these same values, so a fact
+/// cannot be printed for a user and missing from the machine document. Nothing
+/// here can change a check's status or the exit code.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct DoctorEnvironmentFacts {
+    /// What the root marker scan found, whether or not the configuration
+    /// enables it.
+    pub(crate) detected_languages: Vec<DoctorDetectedLanguage>,
+    /// Source languages no adapter reads.
+    pub(crate) unanalyzed_source_languages: Vec<DoctorUnanalyzedLanguage>,
+    /// Detected preview languages `ripr check` skips until they are enabled.
+    pub(crate) preview_language_gaps: Vec<DoctorPreviewLanguageGap>,
+    /// The effective configuration defaults, `None` when it could not load.
+    pub(crate) config_defaults: Option<DoctorConfigDefaults>,
+    /// Where the seam cache is and how large it is.
+    pub(crate) cache: DoctorCacheStatus,
+    /// The detected test surface per language.
+    pub(crate) test_surfaces: Vec<DoctorTestSurface>,
+    /// The Perl preview state, `None` when no Perl project was detected.
+    pub(crate) perl_preview: Option<DoctorPerlPreview>,
+}
+
 /// The full doctor report.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct DoctorReport {
@@ -561,7 +742,6 @@ pub(crate) struct DoctorReport {
     pub(crate) profile: DoctorProfile,
     pub(crate) status: DoctorStatus,
     pub(crate) checks: Vec<DoctorCheck>,
-    pub(crate) sections: Vec<DoctorSection>,
     pub(crate) runtime_probes: Vec<DoctorRuntimeProbe>,
     /// Enabled language wire strings from the effective config (#2072):
     /// the typed surface the generated CI consumes instead of parsing the
@@ -571,10 +751,44 @@ pub(crate) struct DoctorReport {
     /// The command adapter fills it; core evaluation leaves it unset.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) binary: Option<super::doctor_binary::DoctorBinaryIdentity>,
+    /// What the root marker scan found, whether or not the configuration
+    /// enables it (additive in schema `0.4`). Distinct from `languages`, which
+    /// is what `ripr.toml` enables.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) detected_languages: Vec<DoctorDetectedLanguage>,
+    /// Source languages no adapter reads (additive in schema `0.4`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) unanalyzed_source_languages: Vec<DoctorUnanalyzedLanguage>,
+    /// Detected preview languages `ripr check` skips until they are enabled
+    /// (additive in schema `0.4`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) preview_language_gaps: Vec<DoctorPreviewLanguageGap>,
+    /// The effective configuration defaults (additive in schema `0.4`).
+    /// `None` when the configuration could not be loaded.
+    #[serde(default)]
+    pub(crate) config_defaults: Option<DoctorConfigDefaults>,
+    /// Where the seam cache is and how large it is (additive in schema `0.4`).
+    /// The command adapter always fills it, so a released document never carries
+    /// `null` here and the published schema forbids it. `None` is only the
+    /// pre-adapter state of a report core evaluation produced; it serializes as
+    /// an absent key rather than a null, so no caller can read "not measured" as
+    /// a measurement, and a producer that stopped reporting the cache fails the
+    /// contract's `required` list instead of passing it (#5214 review).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) cache: Option<DoctorCacheStatus>,
+    /// One or more test-surface entries per detected language (additive in
+    /// schema `0.4`). Perl carries adapter, runner, and first-command status
+    /// lines as additional entries.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) test_surfaces: Vec<DoctorTestSurface>,
+    /// The Perl preview state, `None` when the marker scan found no Perl
+    /// project (additive in schema `0.4`).
+    #[serde(default)]
+    pub(crate) perl_preview: Option<DoctorPerlPreview>,
 }
 
 impl DoctorReport {
-    pub(crate) const SCHEMA_VERSION: &'static str = "0.3";
+    pub(crate) const SCHEMA_VERSION: &'static str = "0.4";
 
     pub(crate) fn new(root: &str) -> Self {
         Self {
@@ -586,11 +800,29 @@ impl DoctorReport {
             profile: DoctorProfile::Analysis,
             status: DoctorStatus::Pass,
             checks: Vec::new(),
-            sections: Vec::new(),
             runtime_probes: Vec::new(),
             languages: Vec::new(),
             binary: None,
+            detected_languages: Vec::new(),
+            unanalyzed_source_languages: Vec::new(),
+            preview_language_gaps: Vec::new(),
+            config_defaults: None,
+            cache: None,
+            test_surfaces: Vec::new(),
+            perl_preview: None,
         }
+    }
+
+    /// Attach the environment facts the human screen reports, so both surfaces
+    /// read one computation (#5214).
+    pub(crate) fn apply_environment(&mut self, facts: DoctorEnvironmentFacts) {
+        self.detected_languages = facts.detected_languages;
+        self.unanalyzed_source_languages = facts.unanalyzed_source_languages;
+        self.preview_language_gaps = facts.preview_language_gaps;
+        self.config_defaults = facts.config_defaults;
+        self.cache = Some(facts.cache);
+        self.test_surfaces = facts.test_surfaces;
+        self.perl_preview = facts.perl_preview;
     }
 
     /// Add a typed check and update the overall status.
@@ -648,16 +880,14 @@ impl DoctorReport {
         });
     }
 
-    /// Add a text-based section.
-    #[cfg(test)]
-    pub(crate) fn add_section(&mut self, name: &str, lines: Vec<String>) {
-        self.sections.push(DoctorSection {
-            name: name.to_string(),
-            lines,
-        });
-    }
-
-    /// Render the report as human-readable text (mirrors the existing prose output).
+    /// Render the report as human-readable text.
+    ///
+    /// Test-only. The released human screen prints from the same typed values
+    /// this report serializes, through the command adapter's printers; this
+    /// renderer exists only so the report struct itself is readable in a unit
+    /// test. Schema `0.4` removed the sibling `sections` text array rather than
+    /// giving it a producer: it was structurally incapable of carrying
+    /// information (#5214).
     #[cfg(test)]
     pub(crate) fn render_text(&self) -> String {
         let mut out = String::new();
@@ -678,12 +908,6 @@ impl DoctorReport {
                 out.push_str(&format!("{icon} {evidence}\n"));
             } else {
                 out.push_str(&format!("{icon} {}\n", check.name));
-            }
-        }
-        for section in &self.sections {
-            for line in &section.lines {
-                out.push_str(line);
-                out.push('\n');
             }
         }
         match self.status {
@@ -904,14 +1128,16 @@ pub(crate) fn rust_toolchain_scope(
 /// different state from git running and reporting no work tree, and only the
 /// second one has a repair the user can act on. `rev-parse` exiting nonzero
 /// is git answering, so that arm reports `false` rather than the unknown.
-enum WorkTreeProbe {
+/// Shared with `init`, whose non-repo warning needs the same three-way
+/// verdict (#5252 item 7).
+pub(crate) enum WorkTreeProbe {
     Inside,
     Outside,
     /// Git refused the repository for its owner (#4530); carries the repair.
     Refused(String),
 }
 
-fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
+pub(crate) fn work_tree_probe(root: &Path) -> Option<WorkTreeProbe> {
     let output = crate::git::run_git_output_with_deadline(
         root,
         &["rev-parse", "--is-inside-work-tree"],
@@ -1003,6 +1229,10 @@ fn evaluate_doctor_core_with_probe_for_profile(
     let (root_status, root_evidence) = root_path.root_directory_evidence(root);
     report.add_check("root_directory", root_status, Some(root_evidence));
     if let RustToolchainScope::NotInScope(reason) = &rust_scope {
+        report.add_skipped_check("cargo_toml", format!("Cargo.toml check skipped: {reason}"));
+    } else if let Some(reason) = root_path.unusable_skip_reason() {
+        // #5252 item 3: a root that is not there cannot have a manifest;
+        // fail only `root_directory` and skip here like the tool checks.
         report.add_skipped_check("cargo_toml", format!("Cargo.toml check skipped: {reason}"));
     } else if root.join("Cargo.toml").exists() {
         report.add_check(
@@ -2109,11 +2339,9 @@ mod tests {
             DoctorStatus::Fail,
             Some("no Cargo.toml".to_string()),
         );
-        report.add_section("guidance", vec!["run ripr doctor --help".to_string()]);
         let text = report.render_text();
         assert!(text.contains("✓ root exists"));
         assert!(text.contains("! no Cargo.toml"));
-        assert!(text.contains("run ripr doctor --help"));
         assert!(text.contains("! doctor checks failed"));
         // The remedy is on the failing check's own line, so the closing line
         // must not send the reader to help text instead.
@@ -2924,27 +3152,144 @@ mod tests {
             DoctorStatus::Pass,
             Some("root exists".to_string()),
         );
-        report.add_section("cache", vec!["cache: target/ripr/cache".to_string()]);
         let json = report.render_json()?;
         let parsed: serde_json::Value =
             serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
-        assert_eq!(parsed["schema_version"], "0.3");
+        assert_eq!(parsed["schema_version"], "0.4");
         assert_eq!(parsed["tool"], "ripr");
         assert_eq!(parsed["status"], "pass");
         assert_eq!(parsed["checks"][0]["name"], "root_directory");
         assert_eq!(parsed["checks"][0]["status"], "pass");
-        assert_eq!(parsed["sections"][0]["name"], "cache");
         Ok(())
     }
 
     #[test]
-    fn sections_are_optional() -> Result<(), String> {
+    fn an_unfilled_report_omits_the_cache_rather_than_emitting_a_null() -> Result<(), String> {
+        // Core evaluation alone produces a report with no cache measurement. The
+        // published schema forbids `cache: null`, so the unfilled state must
+        // serialize as an absent key: a consumer cannot read "not measured" as a
+        // measurement, and that absence is what the `required` list then catches
+        // (#5214 review).
         let report = DoctorReport::new("/workspace");
+        let parsed: serde_json::Value = serde_json::from_str(&report.render_json()?)
+            .map_err(|e| format!("invalid JSON: {e}"))?;
+        assert!(
+            parsed.get("cache").is_none(),
+            "an unfilled report must omit the cache key, not null it: {parsed}"
+        );
+        Ok(())
+    }
+
+    /// #5214: schema `0.3` published a `sections` array whose only mutator and
+    /// only reader were `#[cfg(test)]`, so every released document carried
+    /// `"sections": []`. The field is gone in `0.4` rather than populated: its
+    /// content is carried by typed fields now, and a text array with no
+    /// production producer would be a field claiming more than it enforces.
+    #[test]
+    fn the_dead_sections_array_is_gone_from_the_serialized_report() -> Result<(), String> {
+        let mut report = DoctorReport::new("/workspace");
+        report.apply_environment(DoctorEnvironmentFacts {
+            detected_languages: Vec::new(),
+            unanalyzed_source_languages: Vec::new(),
+            preview_language_gaps: Vec::new(),
+            config_defaults: None,
+            cache: DoctorCacheStatus {
+                cache_dir: "target/ripr/cache".to_string(),
+                relocated_by_env: false,
+                size_bytes: 0,
+                size_display: "0 B".to_string(),
+            },
+            test_surfaces: Vec::new(),
+            perl_preview: None,
+        });
         let json = report.render_json()?;
         let parsed: serde_json::Value =
             serde_json::from_str(&json).map_err(|e| format!("invalid JSON: {e}"))?;
-        assert!(parsed["sections"].is_array());
-        assert_eq!(parsed["sections"].as_array().map(Vec::len), Some(0));
+        assert!(
+            parsed.get("sections").is_none(),
+            "a permanently-empty array must not stay in the released document: {parsed}"
+        );
+        assert_eq!(parsed["cache"]["cache_dir"], "target/ripr/cache");
+        assert_eq!(parsed["cache"]["size_display"], "0 B");
+        assert!(parsed["cache"]["size_bytes"].is_number());
+        assert!(parsed.get("perl_preview").is_some());
+        assert!(parsed["perl_preview"].is_null());
+        assert!(parsed.get("config_defaults").is_some());
+        assert!(parsed["config_defaults"].is_null());
+        // No language was detected here, so the detected set is omitted rather
+        // than published as an empty array that reads as a verified answer.
+        assert!(parsed.get("detected_languages").is_none());
+        Ok(())
+    }
+
+    /// The typed environment fields are serialized with the values the human
+    /// screen prints, so a consumer reads the same words (#5214).
+    #[test]
+    fn typed_environment_fields_serialize_the_human_values() -> Result<(), String> {
+        let mut report = DoctorReport::new("/workspace");
+        report.apply_environment(DoctorEnvironmentFacts {
+            detected_languages: vec![DoctorDetectedLanguage {
+                language: "python".to_string(),
+                status: LanguageStatus::Preview,
+                adapter_available: true,
+                enabled: Some(false),
+            }],
+            unanalyzed_source_languages: vec![DoctorUnanalyzedLanguage {
+                language: "Go".to_string(),
+                file_count: 2,
+            }],
+            preview_language_gaps: vec![DoctorPreviewLanguageGap {
+                config_entry: "python".to_string(),
+                detected_language: "python".to_string(),
+            }],
+            config_defaults: Some(DoctorConfigDefaults {
+                source_path: None,
+                analysis_mode: "draft".to_string(),
+                lsp_seam_diagnostics: true,
+                suppressions_path: ".ripr/suppressions.toml".to_string(),
+                bun_ub_profile_configured: false,
+                bun_ub_test_roots: Vec::new(),
+                bun_ub_bridge_hints: None,
+            }),
+            cache: DoctorCacheStatus {
+                cache_dir: "target/ripr/cache".to_string(),
+                relocated_by_env: true,
+                size_bytes: 1024,
+                size_display: "1.00 KB".to_string(),
+            },
+            test_surfaces: vec![DoctorTestSurface {
+                language: "python".to_string(),
+                framework: Some("pytest".to_string()),
+                evidence: "python: pytest".to_string(),
+            }],
+            perl_preview: None,
+        });
+        let parsed: serde_json::Value = serde_json::from_str(&report.render_json()?)
+            .map_err(|e| format!("invalid JSON: {e}"))?;
+        assert_eq!(parsed["detected_languages"][0]["language"], "python");
+        assert_eq!(parsed["detected_languages"][0]["status"], "preview");
+        assert_eq!(parsed["detected_languages"][0]["enabled"], false);
+        assert_eq!(parsed["detected_languages"][0]["adapter_available"], true);
+        assert_eq!(parsed["unanalyzed_source_languages"][0]["language"], "Go");
+        assert_eq!(parsed["unanalyzed_source_languages"][0]["file_count"], 2);
+        assert_eq!(parsed["preview_language_gaps"][0]["config_entry"], "python");
+        assert_eq!(
+            parsed["preview_language_gaps"][0]["detected_language"],
+            "python"
+        );
+        assert_eq!(parsed["config_defaults"]["analysis_mode"], "draft");
+        assert_eq!(parsed["config_defaults"]["lsp_seam_diagnostics"], true);
+        assert_eq!(
+            parsed["config_defaults"]["suppressions_path"],
+            ".ripr/suppressions.toml"
+        );
+        assert_eq!(
+            parsed["config_defaults"]["source_path"],
+            serde_json::Value::Null
+        );
+        assert_eq!(parsed["cache"]["relocated_by_env"], true);
+        assert_eq!(parsed["test_surfaces"][0]["framework"], "pytest");
+        assert_eq!(parsed["test_surfaces"][0]["evidence"], "python: pytest");
         Ok(())
     }
 
@@ -3212,6 +3557,37 @@ mod tests {
         assert!(!denied.evidence.contains("--diff"));
     }
 
+    /// #5252 item 3: a root that is not there cannot have a manifest, so
+    /// the manifest check skips like the tool checks instead of failing
+    /// beside the `root_directory` failure it only restates.
+    #[test]
+    fn doctor_cargo_toml_check_skips_for_an_unusable_root() -> Result<(), String> {
+        let missing = unique_test_dir("doctor-cargo-toml-skip").join("absent");
+        assert!(!missing.exists(), "fixture root must stay missing");
+        let report = evaluate_doctor_core(&missing, &[]);
+        let manifest = report
+            .checks
+            .iter()
+            .find(|check| check.name == "cargo_toml")
+            .ok_or_else(|| "missing cargo_toml check".to_string())?;
+        assert_eq!(
+            manifest.status,
+            DoctorCheckStatus::Skipped,
+            "a missing root must skip the manifest check, not fail it: {report:?}"
+        );
+        let root = report
+            .checks
+            .iter()
+            .find(|check| check.name == "root_directory")
+            .ok_or_else(|| "missing root_directory check".to_string())?;
+        assert_eq!(
+            root.status,
+            DoctorCheckStatus::Fail,
+            "the root failure stays the one real signal: {report:?}"
+        );
+        Ok(())
+    }
+
     #[test]
     fn doctor_first_command_prefers_saved_diff_when_git_cannot_run() -> Result<(), String> {
         let mut probed = false;
@@ -3283,17 +3659,43 @@ mod tests {
                 ],
                 "the repository-free route quotes and translates like the runnable ones"
             );
+            // #5252 item 3: no check command can run against a root that is
+            // not there, so the recovery action is the recommendation. The old
+            // pin named `ripr check --root <missing>`, which fails the same
+            // way doctor just did; the guidance line below it was the only
+            // actionable half.
             assert_eq!(
                 DoctorFirstCommand::MissingRoot
                     .recommendation_lines_for(Path::new("/work/missing")),
                 [
-                    "- Recommended first command: ripr check --root /work/missing",
-                    "- The selected root does not exist; rerun with `--root <path>` naming an \
-                     existing repository directory",
+                    "- Recommended first command: The selected root does not exist; rerun with \
+                     `--root <path>` naming an existing repository directory",
                 ],
-                "the missing-root recovery names the runnable command and the --root guidance"
+                "a missing root recommends its recovery action, not a failing check"
             );
         }
+        // Host-independent twin of the Unix pin above: a missing root
+        // recommends its recovery action on every platform (#5252 item 3).
+        let missing = unique_test_dir("missing-root-guidance").join("absent");
+        assert!(!missing.exists(), "fixture root must stay missing");
+        let lines = DoctorFirstCommand::MissingRoot.recommendation_lines_for(&missing);
+        assert_eq!(
+            lines.len(),
+            1,
+            "a missing root recommends one recovery line, not a command plus guidance: {lines:?}"
+        );
+        assert!(
+            lines[0].starts_with("- Recommended first command: "),
+            "unexpected recommendation shape: {lines:?}"
+        );
+        assert!(
+            lines[0].contains("does not exist") && lines[0].contains("rerun with `--root <path>`"),
+            "the recovery line must name the state and the fix: {lines:?}"
+        );
+        assert!(
+            !lines[0].contains("ripr check"),
+            "no check command can run against a missing root: {lines:?}"
+        );
         let file_root_dir = unique_test_dir("missing-root-guidance-file");
         std::fs::create_dir_all(&file_root_dir)
             .map_err(|error| format!("create file-root fixture: {error}"))?;
@@ -3393,8 +3795,22 @@ mod tests {
                 probed = true;
                 true
             }),
-            DoctorFirstCommand::SavedDiff,
-            "a gitless host still routes the missing root to the --diff recovery"
+            DoctorFirstCommand::MissingRoot,
+            "a missing root recommends recovery even when git cannot run: the --diff route renders with the same explicit --root, which ensure_command_root rejects before the diff is read"
+        );
+        let mut file_root_gitless = DoctorReport::new(".");
+        file_root_gitless.add_check(
+            "root_directory",
+            DoctorStatus::Fail,
+            Some("root is not a directory".to_string()),
+        );
+        assert_eq!(
+            DoctorFirstCommand::resolve_for_report(&file_root_gitless, || {
+                probed = true;
+                true
+            }),
+            DoctorFirstCommand::MissingRoot,
+            "a file root recommends recovery even when git cannot run"
         );
         let mut missing_root_git = DoctorReport::new(".");
         missing_root_git.add_check(

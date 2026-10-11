@@ -18,12 +18,13 @@ product meaning.
 | --- | --- | --- | --- |
 | `product.rust.formatting` | `cargo fmt --check` | required | Rust |
 | `product.rust.workspace_check` | `cargo check --workspace --all-targets` | required | Rust |
+| `product.rust.all_features_check` | `cargo check -p ripr --all-targets --all-features` | required | Rust |
 | `product.rust.clippy` | `cargo clippy --workspace --all-targets -- -D warnings` | required | Rust |
 | `product.rust.workspace_tests` | `cargo nextest run --workspace --profile ci` | required | Rust |
 | `product.rust.workspace_doc_tests` | `cargo test --workspace --doc` | required | Rust |
 | `product.repository.precommit` | `cargo xtask precommit` | required | repository policy |
 | `product.evidence.promotion_honesty` | `cargo xtask check-evidence-promotion-honesty` | required | evidence |
-| `product.repository.agent_skills` | `cargo xtask check-agent-skills` | required | repository policy |
+| `product.repository.agent_skills` | `cargo policy preflight` | required | repository policy |
 | `product.repository.dependencies` | `cargo xtask check-dependencies` | required | repository policy |
 | `product.repository.process_policy` | `cargo xtask check-process-policy` | required | repository policy |
 | `product.repository.network_policy` | `cargo xtask check-network-policy` | required | repository policy |
@@ -38,7 +39,7 @@ intentionally dual:
 | --- | --- | --- | --- |
 | lib, bin, integration, and example test binaries | `cargo nextest run --workspace --profile ci` | default | fresh `junit.xml` naming at least one test, plus `run-context.txt` with checkout SHA, tool versions, and blob identities of `Cargo.lock`, `.config/nextest.toml`, and `rust-gates.yml` |
 | Rust doctests | `cargo test --workspace --doc` | default | job log only |
-| `lang-perl` and other non-default-feature tests | not in the required lane | all / perl / no-default | advisory Test Analytics, the `Perl and release proof` job, and the Windows advisory feature matrix |
+| `lang-perl` and other non-default-feature tests | compiled (not run) by `cargo check -p ripr --all-targets --all-features`; not executed in the required lane | all / perl / no-default | advisory Test Analytics, the `Perl and release proof` job, and the Windows advisory feature matrix |
 
 Nextest cannot execute doctests, so a green nextest row never stands in for the
 doctest row, and neither row claims non-default-feature subjects. The `ci`
@@ -135,3 +136,32 @@ the command that happens to produce it.
 This is observational groundwork. Existing workflows remain authoritative, and
 future migration must compare their selected rows with this plan before any
 required check is rerouted.
+
+## Product-independent policy bootstrap (#7158)
+
+`cargo policy preflight` compiles only the unpublished `repo-policy` package and
+its small JSON/hash dependency graph. It runs the existing workflow policy
+(including composite actions, assistant-loop corpus, routed workflow and scratch
+lease contracts) and agent-skill policy. Both the reusable Rust lane and docs lane
+run it before `cargo xtask precommit`. The latter consumes
+`RIPR_POLICY_PREFLIGHT_RECEIPT` only after checking its exact input, implementation
+and compiler identities. Missing, unreadable or stale receipts fail closed.
+Without that environment variable, local precommit retains its workflow check.
+
+The existing `cargo xtask check-workflows` and `check-agent-skills` commands
+delegate to the same implementation. `cargo policy check-workflows` and
+`cargo policy check-agent-skills` offer individual lightweight commands. Always
+use Cargo to rebuild against current source; direct retained executables also
+reject a source or compiler identity mismatch. Writable target directories remain
+private to their execution owner. This extraction does not make the remaining
+precommit table or the full docs lane product-independent. Workspace nextest and
+Cargo doctests include the new package in the existing required test lane.
+
+The policy executable anchors identity and policy reads to the nearest repository
+workspace when started in a repository or member subdirectory. Cargo selects a
+manifest before starting the executable: a separate or malformed nested fixture
+package can therefore reject both `cargo policy` and the existing `cargo xtask`
+alias before either binary runs. Invoke from the repository root, or use
+`cargo run --locked --manifest-path /path/to/repository/Cargo.toml -p repo-policy -- preflight`
+with the actual repository manifest when working inside such a fixture. The alias
+does not promise to override nested Cargo package selection.

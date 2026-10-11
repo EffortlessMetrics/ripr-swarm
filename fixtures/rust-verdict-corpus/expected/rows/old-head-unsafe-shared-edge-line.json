@@ -1,0 +1,22 @@
+{
+  "case_id": "old-head-unsafe-shared-edge-line",
+  "subject_id": "authored-old-errors",
+  "origin": "authored",
+  "anchor": "src/raw.rs:6",
+  "behavior_family": "static_unknown_unsafe_block",
+  "test_shape": "unsafe_block_shares_line_with_let",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -637,7 +637,7 @@ test('receiver', (t) => {
     assert_eq!(assertions[0].oracle_kind, OracleKind::ExactValue);
 }
 
-/// RIPR-SPEC-0234 rule 10 (example 14): a non-negated chai `throw` with one
+/// RIPR-SPEC-0243 rule 10 (example 14): a non-negated chai `throw` with one
 /// string literal pins the error; a class, no argument, or `not` stays broad.
 #[test]
 fn chai_throw_string_literal_is_exact_error_variant() {
@@ -669,7 +669,7 @@ it("parse", () => {
     }
 }
 
-/// RIPR-SPEC-0234 rule 10 (examples 34, 35): `node:assert` `throws` with an
+/// RIPR-SPEC-0243 rule 10 (examples 34, 35): `node:assert` `throws` with an
 /// anchored regex and `rejects` with a literal `message` object pin the
 /// error; an unanchored or alternating regex, an object without `message`
 /// and a string second argument (the assertion's own message) stay broad.
@@ -731,7 +731,7 @@ it("parse", () => {
     assert_eq!(assertions[0].oracle_kind, OracleKind::BroadError);
 }
 
-/// RIPR-SPEC-0234 rule 3 (examples 7, 8, 9): a bare `expect` is read as the
+/// RIPR-SPEC-0243 rule 3 (examples 7, 8, 9): a bare `expect` is read as the
 /// Jest/Vitest matcher API only when it is the runner's.
 #[test]
 fn only_a_test_runner_expect_reads_jest_matchers() {

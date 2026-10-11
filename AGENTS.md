@@ -178,6 +178,9 @@ Do not promote static evidence to `killed`, `survived`, `untested`, `proven` or
 ## Architecture and implementation
 
 Keep one published package/library/binary `ripr`, plus unpublished `xtask`.
+The unpublished `repo-policy` package is the bounded #7158 automation exception:
+it owns only workflow-policy and agent-skill checks and has no normal/build
+dependency on the product or its parser stack. It does not expose a product API.
 Do not split it into `ripr-core`, `ripr-cli`, `ripr-lsp`, `ripr-engine` or
 `ripr-schema` without a real external contract.
 

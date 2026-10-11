@@ -19,6 +19,7 @@ Rust and repository-policy proof:
 ```text
 cargo fmt --check
 cargo check --workspace --all-targets
+cargo check -p ripr --all-targets --all-features
 cargo clippy --workspace --all-targets -- -D warnings
 cargo nextest run --workspace --profile ci
 cargo test --workspace --doc

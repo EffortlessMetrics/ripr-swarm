@@ -1,0 +1,68 @@
+//! A boundary on a counter derived from input length, and bitwise `|`/`<<`
+//! arithmetic, each pinned exactly in one function and loosely in another.
+
+#[derive(Debug, PartialEq)]
+pub enum ChunkError {
+    TooLong,
+    BadDigit,
+}
+
+pub fn chunk_size(hex: &[u8]) -> Result<u64, ChunkError> {
+    let mut size: u64 = 0;
+    let mut count = 0;
+    for &b in hex {
+        count += 1;
+        if count > 16 {
+            return Err(ChunkError::TooLong);
+        }
+        let digit = (b as char).to_digit(16).ok_or(ChunkError::BadDigit)?;
+        size = (size << 4) | u64::from(digit);
+    }
+    Ok(size)
+}
+
+pub fn token_len(name: &[u8]) -> Result<usize, ChunkError> {
+    let mut count = 0;
+    for _ in name {
+        count += 1;
+        if count > 64 {
+            return Err(ChunkError::TooLong);
+        }
+    }
+    Ok(count)
+}
+
+pub fn pack(hi: u8, lo: u8) -> u16 {
+    (u16::from(hi) << 8) | u16::from(lo)
+}
+
+pub fn with_flag(base: u8) -> u8 {
+    base | 0x80
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn chunk_sizes_parse_up_to_sixteen_digits() {
+        assert_eq!(chunk_size(b"ff"), Ok(255));
+        assert_eq!(chunk_size(&[b'f'; 16]), Ok(u64::MAX));
+        assert_eq!(chunk_size(&[b'f'; 17]), Err(ChunkError::TooLong));
+    }
+
+    #[test]
+    fn short_tokens_are_measured() {
+        assert_eq!(token_len(b"host"), Ok(4));
+    }
+
+    #[test]
+    fn pack_puts_hi_first() {
+        assert_eq!(pack(0x12, 0x34), 0x1234);
+    }
+
+    #[test]
+    fn flagged_values_are_nonzero() {
+        assert!(with_flag(1) > 0);
+    }
+}

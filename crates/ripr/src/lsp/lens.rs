@@ -413,6 +413,7 @@ mod tests {
             analysis_outcome: None,
             diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::<ValidatedGapArtifact>::new(),
             gap_artifact_rejections: Vec::<GapArtifactRejection>::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
@@ -423,6 +424,7 @@ mod tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
         }
     }
 

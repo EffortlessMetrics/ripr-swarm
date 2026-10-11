@@ -252,6 +252,46 @@ fn contract_rejects_a_watchdog_without_the_in_flight_check() -> Result<(), Strin
     Ok(())
 }
 
+/// A conflicting (`dirty`) PR silently gets zero `pull_request` runs:
+/// `routed-rust.yml` evaluates from the merge ref, which does not exist while
+/// the PR conflicts (#7079). The report must carry each PR's `mergeable_state`
+/// so the conflicted dark mode ("merge main first") is distinguishable from a
+/// dropped delivery ("re-toggle Draft -> Ready").
+const WATCHDOG_MERGEABLE_STATE_QUERY: &str = "repos/$REPOSITORY/pulls/$number";
+const WATCHDOG_MERGEABLE_STATE_COLUMN: &str = "| PR | head | mergeable_state | disposition |";
+
+fn watchdog_reports_mergeable_state(source: &str) -> bool {
+    source.contains(WATCHDOG_MERGEABLE_STATE_QUERY)
+        && source.contains(".mergeable_state")
+        && source.contains(WATCHDOG_MERGEABLE_STATE_COLUMN)
+        && source.contains("DARK (conflicted)")
+}
+
+#[test]
+fn staleness_watchdog_reports_mergeable_state() -> Result<(), String> {
+    let source = repo_file(WATCHDOG)?;
+    assert!(
+        watchdog_reports_mergeable_state(&source),
+        "watchdog must report each PR's mergeable_state so a conflicted dark head is distinguishable from a dropped delivery",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_rejects_a_watchdog_without_mergeable_state() -> Result<(), String> {
+    let source = repo_file(WATCHDOG)?;
+    let changed = source.replace(
+        WATCHDOG_MERGEABLE_STATE_QUERY,
+        "repos/$REPOSITORY/issues/$number",
+    );
+    assert_ne!(changed, source, "mergeable-state mutation must engage");
+    assert!(
+        !watchdog_reports_mergeable_state(&changed),
+        "a watchdog that stops reading the single-PR mergeable_state must violate the contract",
+    );
+    Ok(())
+}
+
 #[test]
 fn contract_rejects_a_dispatching_watchdog() -> Result<(), String> {
     let source = repo_file(WATCHDOG)?;

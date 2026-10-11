@@ -49,7 +49,7 @@ Usage: ripr pilot [--root PATH] [--out PATH] [--mode MODE] [--max-seams N] [--ti
 
 Options:
   --root PATH       Workspace root to analyze. Defaults to current directory.
-  --out PATH        Output directory for the pilot packet. Defaults to target/ripr/pilot.
+  --out PATH        Output directory for the pilot packet. Defaults to target/ripr/pilot under --root.
   --mode MODE       instant, draft, fast, deep, or ready. Defaults to draft unless ripr.toml sets one.
   --max-seams N     Maximum ranked seams in the pilot summary. Defaults to 5.
   --timeout-ms MS   Maximum analysis budget before writing a partial summary. Defaults to
@@ -97,11 +97,13 @@ Options:
 
 The outcome receipt is advisory. It compares static repo-exposure snapshots by
 seam_id and check-output snapshots by canonical_gap_id, then reports moved,
-unchanged, regressed, new, and removed gaps or seams. Check output whose
-findings carry no canonical_gap_id (Rust `ripr check --json` today) is refused
-rather than compared. For Rust, use `ripr check --format repo-exposure-json`
-for both; repo exposure carries no Python or TypeScript seams, so preview
-findings without a canonical_gap_id have no comparable receipt. Its
+unchanged, regressed, new, and removed gaps or seams. Rust `ripr check --json`
+findings carry canonical_gap_id and are compared by it. Check output whose
+findings carry no canonical_gap_id is refused rather than compared; repo
+exposure carries no Python or TypeScript seams, so preview findings without a
+canonical_gap_id have no comparable receipt. When head-identity verification
+matters, capture both snapshots with `ripr check --format repo-exposure-json`,
+because check JSON carries no repository head. The
 review receipt summarizes what changed, what RIPR flagged before, which focused
 proof signals moved, what remains weak or unknown, and what reviewers should
 inspect or avoid inferring. It does not run analysis, edit source, generate
@@ -130,7 +132,12 @@ Options:
   --base REV               Base revision for git diff. When omitted, ripr uses
                            the local origin/HEAD ref, then origin/main,
                            origin/master, main, and master in order; when none
-                           of those resolves, the analysis does not run.
+                           of those resolves, the analysis does not run. The
+                           diff ends at HEAD on a clean tree and at the working
+                           tree when it has uncommitted changes (see
+                           --worktree and --committed); the human, JSON,
+                           GitHub, and SARIF outputs name the base and head
+                           that were analyzed.
   --diff PATH              Read a unified diff file instead of running git diff.
                            Use --diff - to read from stdin (e.g.
                            `git diff origin/main | ripr check --diff -`).
@@ -143,7 +150,16 @@ Options:
                            tree.
   --worktree               Diff the base revision against the live working tree
                            instead of HEAD, including staged and unstaged
-                           tracked edits. Cannot be combined with --diff.
+                           tracked edits. This is already the default when the
+                           tree has staged or unstaged tracked edits;
+                           untracked files never select it and stay out of
+                           the diff until staged (`git add -N`).
+                           Cannot be combined with --diff.
+  --committed              Diff committed history only (base...HEAD) even when
+                           the working tree has uncommitted changes; the
+                           output then notes that those edits were not
+                           analyzed. Cannot be combined with --worktree,
+                           --diff, --candidate-tree, or repo-scope formats.
   --mode MODE              How much of the workspace is indexed: instant
                            (changed files only, cheapest), draft (packages the
                            diff touches; the default), fast (same as draft for
@@ -249,15 +265,18 @@ Environment variables:
                                     Default: 2000.
   RIPR_MAX_DIFF_INDEX_FILES         Maximum Rust files loaded into the diff
                                     index before check fails closed as
-                                    diff_scope_oversized. With --json, stdout
-                                    carries a non-consumable limited artifact.
-                                    Under RIPR_DIFF_DEPENDENT_SCOPE=auto a
-                                    Draft/Fast selection over it because of
-                                    dependent packages narrows instead.
-                                    Default: 1200.
+                                    diff_scope_oversized (a memory guard).
+                                    With --json, stdout carries a
+                                    non-consumable limited artifact.
+                                    Default: 10000.
+  RIPR_DIFF_NARROW_INDEX_FILES      Index size above which Draft/Fast
+                                    narrows dependent packages and stops
+                                    widening reach searches. Bounds time,
+                                    never refuses; clamped to
+                                    RIPR_MAX_DIFF_INDEX_FILES. Default: 1200.
   RIPR_DIFF_DEPENDENT_SCOPE         How Draft/Fast indexes packages that
                                     depend on the changed ones: auto (whole
-                                    while under RIPR_MAX_DIFF_INDEX_FILES,
+                                    while under RIPR_DIFF_NARROW_INDEX_FILES,
                                     else named), named (only files that can
                                     change a result), or full. Default: auto.
   RIPR_PARTIAL_DIFF_FILE_BUDGET     Changed-line files analyzed before check
@@ -298,6 +317,7 @@ Examples:
   ripr check
   ripr check --base HEAD~1
   ripr check --base HEAD --worktree
+  ripr check --base origin/main --committed
   ripr check --diff crates/ripr/examples/sample/example.diff --format github
   ripr check --mode ready --json
   ripr check --base origin/main --json --suppression-policy policy/ripr-suppressions.toml
@@ -488,6 +508,9 @@ Server-executed commands (workspace/executeCommand), with their arguments:
   `ripr/listActionableItems` (custom request) lists the delivered and
   omitted diagnostics by canonical id, and under `hidden_gaps` the gaps the
   default actionable profile never publishes because they have no repair
-  route, such as a new function no test calls. Set `[lsp] diagnostic_profile =
-  "full"` in ripr.toml to publish those as diagnostics too.
+  route, such as a new function no test calls. Each listed canonical id and
+  hidden-gap finding_id is accepted by `ripr.collectContext` (seam ids
+  together with the envelope's `seam_evidence_identity`). Set `[lsp]
+  diagnostic_profile = "full"` in ripr.toml to publish those as diagnostics
+  too.
 "#;

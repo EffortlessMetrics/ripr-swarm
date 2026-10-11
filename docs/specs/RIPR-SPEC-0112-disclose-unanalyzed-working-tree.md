@@ -38,6 +38,27 @@ Policy impact:
 - No new crates, binaries, dependencies, parsers, runtime executors, or LSP
   servers introduced by this spec.
 
+## Amendment (RIPR-SPEC-0116 dirty-tree default)
+
+`ripr check` now reads the working tree by default when it has uncommitted
+changes (RIPR-SPEC-0116 amendment), with or without `--base`. A
+committed-history read of a dirty tree therefore happens only when the user
+forces it with `--committed` (or, rarely, when the dirtiness probe cannot run
+and the run falls back to committed history). The disclosure keeps its
+trigger, the committed-content overlay's dirty adapter-routed paths, so it
+stays honest in both cases; in practice it now fires only for `--committed`
+runs on a dirty tree. The note names the remedies that include the edits:
+
+```
+Note: uncommitted source and test changes were not analyzed; this run read
+each file as committed at HEAD; drop `--committed` (or pass `--worktree`) to
+include staged and unstaged edits (for example `ripr check --worktree`).
+```
+
+Acceptance examples 1 and 4 below now need `--committed` to reach the
+committed-history read; without it the same dirty tree is analyzed as a
+working tree and no disclosure fires.
+
 ## Amendment (#3888, default base)
 
 The original problem statement below assumed that `ripr check` without
@@ -137,17 +158,17 @@ When `unanalyzed_working_tree` is true, the following note is appended:
 In the empty-findings branch (after "No diff-derived static exposure probes found."):
 
 ```
-Note: uncommitted source and test changes were not analyzed; `ripr check`
-reads each file as committed at HEAD; add `--worktree` to include staged and
-unstaged edits (for example `ripr check --worktree`).
+Note: uncommitted source and test changes were not analyzed; this run read
+each file as committed at HEAD; drop `--committed` (or pass `--worktree`) to
+include staged and unstaged edits (for example `ripr check --worktree`).
 ```
 
 In the non-empty-findings branch (after the all-no-path-disclosure):
 
 ```
-Note: uncommitted source and test changes were not analyzed; `ripr check`
-reads each file as committed at HEAD; add `--worktree` to include staged and
-unstaged edits (for example `ripr check --worktree`).
+Note: uncommitted source and test changes were not analyzed; this run read
+each file as committed at HEAD; drop `--committed` (or pass `--worktree`) to
+include staged and unstaged edits (for example `ripr check --worktree`).
 ```
 
 The note does not change the exit code or pass/fail status.
@@ -228,7 +249,8 @@ required per the additive field policy in [`docs/OUTPUT_SCHEMA.md`](../OUTPUT_SC
 
 - `crates/ripr/tests/cli_smoke.rs::check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure`
 - `crates/ripr/tests/cli_smoke.rs::check_base_head_with_clean_worktree_does_not_show_unanalyzed_working_tree_disclosure`
-- `crates/ripr/tests/cli_smoke.rs::check_default_base_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure`
+- `crates/ripr/tests/cli_smoke.rs::check_default_base_with_uncommitted_edit_analyzes_the_working_tree`
+  (`--committed` half)
 - `crates/ripr/tests/cli_smoke.rs::check_default_base_with_clean_worktree_keeps_no_scope_note_only`
 - `crates/ripr/tests/cli_smoke.rs::check_base_names_diff_files_with_uncommitted_edits`
 

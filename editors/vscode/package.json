@@ -80,7 +80,7 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "@types/node": "^24.13.6",
+    "@types/node": "^24.19.1",
     "@types/vscode": "~1.90.0",
     "@vscode/test-electron": "^2.4.1",
     "@vscode/vsce": "^3.9.2",
@@ -177,8 +177,8 @@
         },
         "ripr.baseRef": {
           "type": "string",
-          "default": "origin/main",
-          "description": "Git base ref used by ripr editor diagnostics and context commands."
+          "default": "",
+          "description": "Git base ref used by ripr editor diagnostics and context commands. Empty uses the repository's default branch, resolved like `ripr check`: origin/HEAD, then origin/main, origin/master, main, master. If none resolves, set this to the branch to compare against."
         },
         "ripr.includeUnchangedTests": {
           "type": "boolean",

@@ -3,7 +3,10 @@
 Status: proposed
 
 Issue: #3296 (parent #3215; builds on #3294 / RIPR-SPEC-0157 and
-#3295 / RIPR-SPEC-0158)
+#3295 / RIPR-SPEC-0158). Classification of a uniqueness-only refusal:
+#7080. Raw-identifier receiver/path not an entry: #7270. Reach and
+stop presentation of that rewrite: #7272. Qualified
+sibling of the uniqueness-stop hop is not an entry: #7268.
 
 ## Problem
 
@@ -32,6 +35,91 @@ can only hint that a caller "may lead here" without changing anything.
   direct call would produce. The owner's exact input rows bind down
   the chain, so #3295's boundary machinery evaluates the helper's
   operands with the tests' literals.
+- The chain relation outranks any file-path, test-name or token
+  proximity reason (#6694, #6672): a test that calls a resolved hop's
+  caller relates as `HelperOwnerCall`, not `same_test_file`,
+  `owner_named_test` or `weak_token_substring`. A test that calls no hop
+  caller keeps its proximity reason.
+- A hop-caller call that a test-local binding shadows (a nested
+  `fn <name>` anywhere in the test body, or a `let` binding naming it at
+  or before the call, such as `let order_discount = |_: u32| 5;`) is not a
+  call of the hop caller: it earns no `HelperOwnerCall` and binds no row
+  down the chain. The shadow authority is the seam-call one: parser body
+  facts on parser-backed files, the masked-body lexical scanners
+  otherwise. The call is also treated as shadowed (fail closed) when the
+  hop caller's name is not unique among workspace functions (a same-named
+  `fn` in `mod tests` or a test file), or when the test's file imports
+  another item under that name: a `use .. as <name>` rename, or a `use`
+  of `<name>` from a foreign crate. Known gap (#3727): the parser path
+  collects only `let` statements, so `if let`/`while let`, match-arm,
+  closure-parameter, `for` and macro-introduced bindings do not shadow on
+  parser-backed files. That uniqueness refusal stays fail-closed for
+  relation and row transfer.   When no other relation remains *and* a test
+  calls the ambiguous name as a free function or path-qualified
+  associated function (or a non-unique caller of it, such as
+  `from_str` wrapping a non-unique `parse`), the finding is
+  `static_unknown` naming that function, not `no_static_path` (#7080).
+  That rewrite sets reach to `unknown` with an identity summary (not
+  `no`) and emits `helper_identity_unresolved` rather than
+  `static_probe_unknown` (#7272). Human stop text uses the domain
+  `describe()` gloss, which names callee-identity, not a missing probe
+  shape (ADR 0019).
+  A uniqueness stop that no test enters — including a unique wrapper of a
+  non-unique helper (`outer` wrapping a second `inner`), or a receiver
+  call that only shares the bare name (`req.parse()`, `req.r#parse()`)
+  even when that line also contains the string or comment text `parse(` —
+  stays `no_static_path`. A foreign-qualified raw identifier
+  (`foreign::r#parse()`) is not a workspace free-function entry. Bare
+  `r#parse(...)` is the same identifier as `parse(...)` and still enters
+  (#7270). Spaced and turbofish calls the extractor records
+  (`parse (...)`, `parse::<T>(...)`) still enter. A path-qualified call
+  enters only when some workspace function of that name could be the `T`
+  in `T::name(` (`VersionReq::from_str` yes; `serde_json::from_str` no).
+  When the uniqueness-stop name is also a resolved hop (`A::parse`
+  calling unique `op`), a type-qualified sibling (`B::parse`) does not
+  enter that hop; bind the hop like extras already bind wrappers
+  (`tests_call_function`). Bare unresolved `parse(...)` still enters
+  (#7268 / #7080).
+  A wrapper-local or test-local `fn`/`let` of the refused name, including
+  on a lexical-fallback file, is not an entry. An `fn` item on the call
+  line (`fn parse() { ... }`) is not a free-function entry.
+- Hop propagation (#6780): for probe families observed through the
+  owner's returned value (every family except `side_effect` and
+  `call_deletion`), when the related tests reach the owner only
+  through the chain (some `HelperOwnerCall`, no `DirectOwnerCall`), the
+  owner's result must be forwarded unchanged through every hop up to the
+  highest hop whose caller a `HelperOwnerCall` test calls directly (the
+  maximum across those tests); hops above it are not checked, because no
+  related test observes their result. When any such test's directly
+  called hop cannot be found, the whole chain is checked (fail closed).
+  A hop forwards when its caller has no `return` or `?`, does not rebind
+  or assign a parameter it forwards, and its tail is the hop call itself
+  or `if <call> { L1 } else { L2 }` / `if !<call> ..` with literals `L1`,
+  `L2` of distinct value. Otherwise the propagation stage is `unknown`
+  (`helper_result_not_forwarded`), so the finding abstains instead of
+  crediting the entry's oracle or reporting a gap. Arithmetic or
+  let-bound use of the result is not followed in V1.
+- Effect propagation (#6780): a `side_effect` or `call_deletion` probe
+  acts on state rather than on a returned value, so it is not judged by
+  result forwarding. Under the same chain-only reach and the same
+  observed-hop bound, it keeps its owner-local effect-sink propagation
+  only when the probe expression names at least one owner parameter (the
+  effect target, `out` in `out.push(10)`) and every observed hop passes
+  each such parameter through as one of its own parameters, by name and
+  not rebound or assigned (`wrapper(out) { record(out) }`). Any other
+  argument at that position — a fresh temporary (`record(&mut
+  Vec::new())`), a wrapper-local (`let mut v = ..; record(&mut v)`), a
+  field, a static or an expression — and a probe that names no owner
+  parameter make propagation `unknown` (`helper_result_not_forwarded`):
+  the caller's test cannot see that state, so the finding abstains.
+- Boundary pairing through the entry (RIPR-SPEC-0186) reads only rows
+  recomputed from the asserting test, and requires the assertion's
+  subject to hold exactly one entry call whose arguments are each a whole
+  literal, identifier or path; a scalar buried in a compound argument
+  (`entry(std::cmp::max(10, 50))`, `entry(10 * 2)`) does not pair.
+- A hop argument that is a caller parameter the caller rebinds or assigns
+  (`let qty = qty * 2;`, `qty += 1`, a `let`/`for`/closure/match pattern
+  naming it) stops the row transfer like a computed argument.
 - A comparison operand that is a **direct call to a unique helper**
   (`is_word_start(input, 0) == want`) evaluates through the helper's
   return when the body is simple single-line `let` statements plus a
@@ -50,7 +138,11 @@ classification. The 0159 transfer is a different, stronger relation —
 typed callee identity, workspace-complete uniqueness, and exact
 argument binding — and only that relation relates tests and carries
 values. A chain the typed relation cannot fully resolve keeps the 0114
-limitation unchanged.
+limitation unchanged, except the #7080 uniqueness-only case: when a
+  test calls the ambiguous entry, classification becomes `static_unknown`
+instead of leaving a false `no_static_path` for 0114 to annotate.
+Reach on that rewritten finding is `unknown` and the stop reason is
+`helper_identity_unresolved` (#7272).
 
 ## Required Evidence
 
@@ -69,8 +161,10 @@ limitation unchanged.
   `must_not_promote` and every repair guard stay intact.
   `rust_transitive_reach_positive` keeps its SPEC-0114 pin exactly: a
   second same-name `inner` makes the callee non-unique, the typed
-  transfer refuses, and the lexical-walk limitation stays the pinned
-  outcome (golden byte-identical to main).
+  transfer refuses, tests call the unique wrapper `outer` rather than
+  `inner`, and the lexical-walk limitation stays the pinned
+  `no_static_path` outcome. A test that instead calls the non-unique
+  entry reads `static_unknown` naming that entry (#7080).
 - The fixture corpus: one-hop positive/negative with exact tests,
   bounded multi-hop, the fail-closed controls (same-name helper in
   another module, computed argument, wrong-sink assertion).
@@ -83,7 +177,12 @@ limitation unchanged.
   the oracle still has to observe the sink through the ordinary
   evidence stages.
 - A chain that stops keeps the pre-#3296 output exactly (the 0114
-  limitation remains).
+  limitation remains), except a uniqueness-only stop that a test
+  actually enters, which abstains as `static_unknown` naming the
+  ambiguous function (#7080) rather than claiming no test reaches the
+  owner. That finding's reach stage is `unknown` and its stop reason
+  names callee-identity (`helper_identity_unresolved`), not a missing
+  probe shape (#7272).
 - The workspace-completeness gate is mandatory: a partial index never
   transfers (a same-named function in an unindexed file would make the
   name falsely unique).
@@ -106,9 +205,16 @@ limitation unchanged.
 ## Test Mapping
 
 `analysis/classify/helper_transfer.rs` `tests`;
+`analysis/classifier.rs` (`given_helper_chain_refused_for_non_unique_entry_when_tests_call_it_then_static_unknown`,
+`given_helper_chain_refused_for_non_unique_callee_when_tests_call_a_unique_wrapper_then_no_static_path`,
+`given_helper_chain_refused_for_non_unique_entry_when_tests_only_call_a_receiver_then_no_static_path`,
+`assert_uniqueness_unknown_identity_stage`);
+`output/human/explain.rs` (`helper_identity_unresolved_explain_uses_domain_describe`);
 `analysis/classify/related_tests.rs` (the `HelperOwnerCall` relation
 branch); `analysis/classify/activation.rs` (transferred rows and the
-call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`.
+call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`;
+`crates/ripr/tests/helper_wrapper_reach.rs` (relation precedence, hop
+propagation stop, rebinding stop).
 
 ## Non-Goals
 
@@ -127,6 +233,13 @@ call operand); fixtures `helper_chain_{one_hop,multi_hop,controls}`.
 - `analysis/classify/related_tests.rs` — the relation branch.
 - `analysis/classify/activation.rs` — transferred rows, call operands.
 - `analysis/classify/context.rs` — the chain on `ProbeContext`.
+- `analysis/classifier/evidence.rs` — the hop-propagation stop
+  (`helper_result_not_forwarded`).
+- `analysis/classifier.rs` (`withhold_helper_uniqueness_as_unknown`) —
+  uniqueness-only class rewrite, reach identity stage, and
+  `helper_identity_unresolved` (#7080 / #7272).
+- `domain/probe.rs` — `StopReason::HelperIdentityUnresolved`.
+- `output/human/explain.rs` — ADR 0019 gloss via `describe()`.
 
 ## Metrics
 

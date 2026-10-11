@@ -517,12 +517,119 @@ pub(crate) fn capture_output_measured(
     timeout: Duration,
     error_context: &str,
 ) -> Result<MeasuredOutput, String> {
-    let (output, peak_rss_bytes) =
-        capture_output_sampled(program, args, cwd, envs, Some(timeout), true, error_context)?;
+    let deadline = Some(timeout);
+    let (output, peak_rss_bytes) = capture_output_sampled(
+        program,
+        args,
+        cwd,
+        envs,
+        &mut CaptureDeadline::FromStart(&deadline),
+        true,
+        error_context,
+    )?;
     Ok(MeasuredOutput {
         output,
         peak_rss_bytes,
     })
+}
+
+/// Test-only phase budget. Readiness failures still use the capture owner's
+/// termination, reap, process-group confirmation and bounded pipe drains.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) struct ReadinessDeadline<'a> {
+    startup: Duration,
+    after_ready: Duration,
+    probe: &'a mut dyn FnMut() -> Result<bool, String>,
+    armed: Option<Instant>,
+    elapsed_at_abort: Option<Duration>,
+    failure: Option<String>,
+}
+
+#[cfg(all(test, target_os = "linux"))]
+impl<'a> ReadinessDeadline<'a> {
+    pub(crate) fn new(
+        startup: Duration,
+        after_ready: Duration,
+        probe: &'a mut dyn FnMut() -> Result<bool, String>,
+    ) -> Self {
+        Self {
+            startup,
+            after_ready,
+            probe,
+            armed: None,
+            elapsed_at_abort: None,
+            failure: None,
+        }
+    }
+}
+
+enum CaptureDeadline<'a> {
+    FromStart(&'a Option<Duration>),
+    #[cfg(all(test, target_os = "linux"))]
+    AfterReadiness(ReadinessDeadline<'a>),
+}
+
+impl CaptureDeadline<'_> {
+    fn expired(&mut self, started: Instant) -> bool {
+        match self {
+            Self::FromStart(timeout) => timeout.is_some_and(|timeout| started.elapsed() >= timeout),
+            #[cfg(all(test, target_os = "linux"))]
+            Self::AfterReadiness(phase) => {
+                if let Some(armed) = phase.armed {
+                    let elapsed = armed.elapsed();
+                    if elapsed >= phase.after_ready {
+                        phase.elapsed_at_abort = Some(elapsed);
+                        return true;
+                    }
+                    return false;
+                }
+                if started.elapsed() >= phase.startup {
+                    phase.failure = Some("readiness not observed within startup budget".into());
+                    return true;
+                }
+                let readiness = (phase.probe)();
+                let observed_at = Instant::now();
+                if observed_at.duration_since(started) >= phase.startup {
+                    phase.failure = Some("readiness not observed within startup budget".into());
+                    return true;
+                }
+                match readiness {
+                    Ok(true) => phase.armed = Some(observed_at),
+                    Ok(false) => {}
+                    Err(error) => {
+                        phase.failure = Some(format!("readiness observation failed: {error}"));
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn capture_output_measured_after_readiness(
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+    envs: &[(&str, &str)],
+    deadline: ReadinessDeadline<'_>,
+    error_context: &str,
+) -> Result<(MeasuredOutput, Option<Duration>), String> {
+    let mut deadline = CaptureDeadline::AfterReadiness(deadline);
+    let (output, peak_rss_bytes) =
+        capture_output_sampled(program, args, cwd, envs, &mut deadline, true, error_context)?;
+    let elapsed_at_abort = match deadline {
+        CaptureDeadline::AfterReadiness(phase) => phase.elapsed_at_abort,
+        CaptureDeadline::FromStart(_) => None,
+    };
+    Ok((
+        MeasuredOutput {
+            output,
+            peak_rss_bytes,
+        },
+        elapsed_at_abort,
+    ))
 }
 
 /// `capture_output_with_timeout` with no per-step wall-clock cap.
@@ -552,8 +659,16 @@ fn capture_output_with_deadline(
     deadline: Option<Duration>,
     error_context: &str,
 ) -> Result<TimedOutput, String> {
-    capture_output_sampled(program, args, None, envs, deadline, false, error_context)
-        .map(|(output, _)| output)
+    capture_output_sampled(
+        program,
+        args,
+        None,
+        envs,
+        &mut CaptureDeadline::FromStart(&deadline),
+        false,
+        error_context,
+    )
+    .map(|(output, _)| output)
 }
 
 fn capture_output_sampled(
@@ -561,7 +676,7 @@ fn capture_output_sampled(
     args: &[String],
     cwd: Option<&Path>,
     envs: &[(&str, &str)],
-    deadline: Option<Duration>,
+    deadline: &mut CaptureDeadline<'_>,
     sample_rss: bool,
     error_context: &str,
 ) -> Result<(TimedOutput, Option<u64>), String> {
@@ -629,6 +744,21 @@ fn capture_output_sampled(
         "stderr",
         error_context,
     )?;
+
+    #[cfg(all(test, target_os = "linux"))]
+    if let CaptureDeadline::AfterReadiness(phase) = &*deadline
+        && let Some(error) = phase.failure.as_deref().or_else(|| {
+            phase
+                .armed
+                .is_none()
+                .then_some("child exited before readiness was observed")
+        })
+    {
+        return Err(format!(
+            "{error_context}: {error}; reaped status={}, timed_out={}; stdout={stdout}; stderr={stderr}",
+            wait_outcome.status, wait_outcome.timed_out
+        ));
+    }
 
     Ok((
         TimedOutput {
@@ -961,13 +1091,19 @@ fn wait_for_child_with_deadline(
     deadline: Option<Duration>,
     error_context: &str,
 ) -> Result<WaitOutcome, String> {
-    wait_for_child_sampled(child, started, deadline, false, error_context)
+    wait_for_child_sampled(
+        child,
+        started,
+        &mut CaptureDeadline::FromStart(&deadline),
+        false,
+        error_context,
+    )
 }
 
 fn wait_for_child_sampled(
     child: &mut OwnedProcess,
     started: Instant,
-    deadline: Option<Duration>,
+    deadline: &mut CaptureDeadline<'_>,
     sample_rss: bool,
     error_context: &str,
 ) -> Result<WaitOutcome, String> {
@@ -991,9 +1127,7 @@ fn wait_for_child_sampled(
             });
         }
 
-        if let Some(timeout) = deadline
-            && started.elapsed() >= timeout
-        {
+        if deadline.expired(started) {
             #[cfg(unix)]
             let pgid = child.id();
             let termination_requested = terminate_after_timeout(child, error_context)?;
@@ -1015,10 +1149,14 @@ fn wait_for_child_sampled(
             });
         }
 
-        // Measured runs poll finer so a sub-second command's wall time is not
-        // rounded up to the next 100 ms tick.
-        thread::sleep(Duration::from_millis(if sample_rss { 10 } else { 100 }));
+        thread::sleep(poll_interval(sample_rss));
     }
+}
+
+/// Measured runs poll finer so a sub-second command's wall time is not
+/// rounded up to the next 100 ms tick; scoreboard timings depend on it.
+pub(crate) fn poll_interval(sample_rss: bool) -> Duration {
+    Duration::from_millis(if sample_rss { 10 } else { 100 })
 }
 
 /// Peak resident set size of a live process from `/proc/<pid>/status`
@@ -1253,9 +1391,93 @@ fn classify_group_probe(success: bool, stderr: &str) -> GroupProbe {
     }
 }
 
+/// POSIX ESRCH ("No such process"). Reading `/proc/<pid>/stat` after the
+/// task has exited between `readdir` and the read fails with this code, not
+/// with `ErrorKind::NotFound` (ENOENT).
+#[cfg(any(target_os = "linux", test))]
+const PROC_STAT_ESRCH: i32 = 3;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(any(target_os = "linux", test))]
+enum ProcStatContribution {
+    Live,
+    Ignore,
+    Incomplete,
+}
+
+/// A vanished `/proc/<pid>/stat` is gone. Permission and other failures stay
+/// unreadable so the scan remains fail-closed.
+#[cfg(any(target_os = "linux", test))]
+fn proc_stat_error_is_gone(err: &std::io::Error) -> bool {
+    err.kind() == std::io::ErrorKind::NotFound || err.raw_os_error() == Some(PROC_STAT_ESRCH)
+}
+
+/// One `/proc/<pid>/stat` outcome for a group scan. Matching live members
+/// contribute their pid; vanished members are ignored; unreadable or
+/// unparseable members make the scan incomplete.
+#[cfg(any(target_os = "linux", test))]
+fn contribute_proc_stat(pgid: u32, stat: Result<&str, &std::io::Error>) -> ProcStatContribution {
+    match stat {
+        Ok(text) => match parse_stat_pgrp(text) {
+            Some(ProcStatPgrp::Live { pgrp, .. }) if pgrp == pgid => ProcStatContribution::Live,
+            Some(_) => ProcStatContribution::Ignore,
+            None => ProcStatContribution::Incomplete,
+        },
+        Err(err) if proc_stat_error_is_gone(err) => ProcStatContribution::Ignore,
+        Err(_) => ProcStatContribution::Incomplete,
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn apply_proc_stat_contribution(
+    live: &mut Vec<u32>,
+    complete: &mut bool,
+    pid: u32,
+    contribution: ProcStatContribution,
+) {
+    match contribution {
+        ProcStatContribution::Live => live.push(pid),
+        ProcStatContribution::Ignore => {}
+        ProcStatContribution::Incomplete => *complete = false,
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn finish_proc_group_scan(live: Vec<u32>, complete: bool) -> ProcGroupScan {
+    if complete {
+        ProcGroupScan::Complete { live }
+    } else {
+        ProcGroupScan::Incomplete
+    }
+}
+
+#[cfg(test)]
+fn scan_from_stat_reads<'a, I>(pgid: u32, reads: I) -> ProcGroupScan
+where
+    I: IntoIterator<Item = (u32, Result<&'a str, &'a std::io::Error>)>,
+{
+    let mut live = Vec::new();
+    let mut complete = true;
+    for (pid, stat) in reads {
+        apply_proc_stat_contribution(
+            &mut live,
+            &mut complete,
+            pid,
+            contribute_proc_stat(pgid, stat),
+        );
+    }
+    finish_proc_group_scan(live, complete)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_proc_dir_pid(name: &std::ffi::OsStr) -> Option<u32> {
+    name.to_str()?.parse().ok()
+}
+
 /// Non-zombie PIDs whose `/proc/<pid>/stat` pgrp matches `pgid`, regardless
 /// of uid. `None` if `/proc` cannot be listed. `Incomplete` if a numeric
-/// entry exists but its `stat` is unreadable for a reason other than NotFound.
+/// entry exists but its `stat` is unreadable for a reason other than a
+/// vanished process (`NotFound` / ESRCH).
 #[cfg(target_os = "linux")]
 fn scan_proc_pgrp(pgid: u32) -> Option<ProcGroupScan> {
     let entries = fs::read_dir("/proc").ok()?;
@@ -1269,28 +1491,16 @@ fn scan_proc_pgrp(pgid: u32) -> Option<ProcGroupScan> {
                 continue;
             }
         };
-        let name = entry.file_name();
-        let Some(pid_str) = name.to_str() else {
+        let Some(pid) = parse_proc_dir_pid(&entry.file_name()) else {
             continue;
         };
-        let Ok(pid) = pid_str.parse::<u32>() else {
-            continue;
+        let contribution = match fs::read_to_string(entry.path().join("stat")) {
+            Ok(stat) => contribute_proc_stat(pgid, Ok(stat.as_str())),
+            Err(err) => contribute_proc_stat(pgid, Err(&err)),
         };
-        match fs::read_to_string(entry.path().join("stat")) {
-            Ok(stat) => match parse_stat_pgrp(&stat) {
-                Some(ProcStatPgrp::Live { pgrp, .. }) if pgrp == pgid => live.push(pid),
-                Some(_) => {}
-                None => complete = false,
-            },
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => complete = false,
-        }
+        apply_proc_stat_contribution(&mut live, &mut complete, pid, contribution);
     }
-    Some(if complete {
-        ProcGroupScan::Complete { live }
-    } else {
-        ProcGroupScan::Incomplete
-    })
+    Some(finish_proc_group_scan(live, complete))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1541,6 +1751,15 @@ fn spawn_stream_file_writer_channel<T: Read + Send + 'static>(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn measured_runs_poll_ten_times_finer_than_plain_timed_runs() {
+        assert_eq!(super::poll_interval(true), super::Duration::from_millis(10));
+        assert_eq!(
+            super::poll_interval(false),
+            super::Duration::from_millis(100)
+        );
+    }
+
     #[cfg(unix)]
     use super::POST_KILL_GROUP_CONFIRM_GRACE;
     use super::{
@@ -2403,6 +2622,111 @@ mod tests {
                 "readable pid 1 in group {pgrp} must appear in the scan, got {other:?}"
             )),
         }
+    }
+
+    #[test]
+    fn proc_stat_error_is_gone_treats_vanished_tasks_not_permission() -> Result<(), String> {
+        let not_found = std::io::Error::from(std::io::ErrorKind::NotFound);
+        if !super::proc_stat_error_is_gone(&not_found) {
+            return Err("ENOENT / NotFound must be a vanished member".to_string());
+        }
+        let permission = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        if super::proc_stat_error_is_gone(&permission) {
+            return Err("PermissionDenied must stay unreadable, not gone".to_string());
+        }
+        let interrupted = std::io::Error::from(std::io::ErrorKind::Interrupted);
+        if super::proc_stat_error_is_gone(&interrupted) {
+            return Err("Interrupted must stay unreadable, not gone".to_string());
+        }
+        let eacces = std::io::Error::from_raw_os_error(13);
+        if super::proc_stat_error_is_gone(&eacces) {
+            return Err("EACCES must stay unreadable, not gone".to_string());
+        }
+        let eperm = std::io::Error::from_raw_os_error(1);
+        if super::proc_stat_error_is_gone(&eperm) {
+            return Err("EPERM must stay unreadable, not gone".to_string());
+        }
+        let esrch = std::io::Error::from_raw_os_error(super::PROC_STAT_ESRCH);
+        if !super::proc_stat_error_is_gone(&esrch) {
+            return Err(format!(
+                "mid-scan ESRCH must be gone even when ErrorKind is {:?}, raw {:?}",
+                esrch.kind(),
+                esrch.raw_os_error()
+            ));
+        }
+        let io_error = std::io::Error::from_raw_os_error(5);
+        if super::proc_stat_error_is_gone(&io_error) {
+            return Err("EIO / other OS errors must stay unreadable, not gone".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn scan_from_stat_reads_keeps_live_members_when_unrelated_pids_exit() -> Result<(), String> {
+        let live_stat = "1 (init) S 0 1 1 0";
+        let other_group = "9 (sleep) S 1 99 0 -1";
+        let esrch = std::io::Error::from_raw_os_error(super::PROC_STAT_ESRCH);
+        let gone = std::io::Error::from(std::io::ErrorKind::NotFound);
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        let eio = std::io::Error::from_raw_os_error(5);
+
+        match super::scan_from_stat_reads(
+            1,
+            [
+                (1, Ok(live_stat)),
+                (4242, Err(&esrch)),
+                (7, Ok(other_group)),
+            ],
+        ) {
+            super::ProcGroupScan::Complete { live } if live == vec![1] => {}
+            other => {
+                return Err(format!(
+                    "ESRCH on an unrelated pid must not drop a readable live member, got {other:?}"
+                ));
+            }
+        }
+
+        match super::scan_from_stat_reads(1, [(1, Ok(live_stat)), (8, Err(&gone))]) {
+            super::ProcGroupScan::Complete { live } if live == vec![1] => {}
+            other => {
+                return Err(format!(
+                    "NotFound on another pid must leave a complete live scan, got {other:?}"
+                ));
+            }
+        }
+
+        if super::scan_from_stat_reads(1, [(1, Ok(live_stat)), (3, Err(&denied))])
+            != super::ProcGroupScan::Incomplete
+        {
+            return Err(
+                "PermissionDenied must keep the scan Incomplete even when pid 1 is readable"
+                    .to_string(),
+            );
+        }
+        if super::scan_from_stat_reads(1, [(1, Ok(live_stat)), (4, Err(&eio))])
+            != super::ProcGroupScan::Incomplete
+        {
+            return Err("non-ESRCH OS errors must keep the scan Incomplete".to_string());
+        }
+        if super::scan_from_stat_reads(1, [(1, Ok(live_stat)), (5, Ok("no-paren-line"))])
+            != super::ProcGroupScan::Incomplete
+        {
+            return Err("unparseable stat must keep the scan Incomplete".to_string());
+        }
+        match super::scan_from_stat_reads(1, [(9, Err(&esrch))]) {
+            super::ProcGroupScan::Complete { live } if live.is_empty() => {}
+            other => {
+                return Err(format!(
+                    "a matching member that exits mid-scan must be gone, not Incomplete, got {other:?}"
+                ));
+            }
+        }
+        if super::contribute_proc_stat(1, Ok("9 (sleep) Z 1 1 1 0"))
+            != super::ProcStatContribution::Ignore
+        {
+            return Err("zombies must not count as live members".to_string());
+        }
+        Ok(())
     }
 
     #[test]

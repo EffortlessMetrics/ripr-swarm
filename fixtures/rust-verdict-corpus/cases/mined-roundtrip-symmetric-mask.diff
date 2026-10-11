@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 9ea04c7..2cfee57 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -42,7 +42,7 @@ pub fn header(bytes: &[u8]) -> Status {
+     }
+ }
+ 
+-const MASK: u8 = 0x5a;
++const MASK: u8 = 90;
+ 
+ /// Masks a payload in place; masking twice restores it.
+ pub fn mask(payload: &mut [u8]) {

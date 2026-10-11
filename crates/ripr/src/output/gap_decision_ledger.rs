@@ -295,6 +295,7 @@ fn command_role_label(role: CommandRole) -> &'static str {
         CommandRole::Regeneration => "regeneration",
         CommandRole::Inspection => "inspection",
         CommandRole::TargetedRerun => "targeted_rerun",
+        CommandRole::RepairStart => "repair_start",
     }
 }
 
@@ -1431,6 +1432,13 @@ fn python_agent_packet_eligibility(
         );
     }
     match (oracle_alignment, alignment_reason) {
+        // A related row with no family-relevant assertion, or one that now
+        // shows a different assertion than the strength-only pick
+        // (RIPR-SPEC-0224, #5572), is not an established bounded repair route: the
+        // suggested test may exercise another behavior or owner.
+        (_, Some("no_family_relevant_assertion" | "other_behavior_assertion_passed_over")) => {
+            (false, "python_family_selection_not_delegatable")
+        }
         (Some("direct"), Some("strong_oracle_observes_owner_name")) => {
             (true, "python_direct_owner_oracle")
         }
@@ -1961,7 +1969,7 @@ fn gap_record_from_perl_preview_finding(finding: &Value, index: usize) -> Option
             "ripr_plus_count".to_string(),
             ProjectionEligibility {
                 eligible: false,
-                reason: "Preview Perl evidence does not contribute to badges.".to_string(),
+                reason: "Preview Perl evidence does not contribute to calibrated RIPR 0 or ripr+ badge gap counts.".to_string(),
             },
         ),
     ]);
@@ -4607,6 +4615,7 @@ mod tests {
         let mut direct = 0usize;
         let mut no_strong = 0usize;
         let mut orthogonal = 0usize;
+        let mut family_selection = 0usize;
         for entry in fs::read_dir(&fixture_root).map_err(|error| error.to_string())? {
             let entry = entry.map_err(|error| error.to_string())?;
             let name = entry.file_name().to_string_lossy().to_string();
@@ -4673,6 +4682,12 @@ mod tests {
                             return Err(format!("no-strong fixture denied: {name}"));
                         }
                     }
+                    (_, Some("no_family_relevant_assertion")) => {
+                        family_selection += 1;
+                        if eligible {
+                            return Err(format!("no-family-relevant fixture eligible: {name}"));
+                        }
+                    }
                     (Some("orthogonal"), Some("strong_oracle_observes_different_sink")) => {
                         orthogonal += 1;
                         if eligible {
@@ -4697,10 +4712,17 @@ mod tests {
         // `DISCOUNT_THRESHOLD` boundary in
         // `python_same_stem_sibling_owner_not_related`). A returned relational
         // comparison read as a predicate adds one more direct-aligned boundary
-        // card (`python_return_comparison_boundary`).
-        if (direct, no_strong, orthogonal) != (6, 28, 11) {
+        // card (`python_return_comparison_boundary`). #6652: the smoke twin in
+        // `python_functools_memoization_not_indirection` adds one
+        // `no_strong_oracle` repair card; the credited exact twin is `exposed`
+        // and does not carry a card. #5572: the error-path card of
+        // `python_adversarial_error_path_untaken_branch` no longer surfaces the
+        // alignment of its normal-value assertion, which is not relevant to the
+        // changed raise, so it moves from eligible `direct` to the
+        // never-delegated `no_family_relevant_assertion` (RIPR-SPEC-0224).
+        if (direct, no_strong, orthogonal, family_selection) != (5, 29, 11, 1) {
             return Err(format!(
-                "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}"
+                "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));
         }
         Ok(())

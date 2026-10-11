@@ -21,7 +21,13 @@ import {
 import { compatibleLspEvidence } from './testCompatibility';
 
 suite('Extension Smoke', () => {
-  suiteSetup(async () => {
+  suiteSetup(async function (this: Mocha.Context) {
+    // Activation awaits full server start: candidate compatibility probe
+    // (START_TIMEOUT_MS = 10s), client start, and configureTestServer may
+    // await five config updates. A single real-server test below needs 11s+
+    // on this host, so the hook's share of the global 10s budget cannot hold
+    // (#6845); give the hook a generous budget like the real-server tests.
+    this.timeout(120000);
     await cleanupEditorGapSmokeFiles();
     await configureTestServer();
     await activateExtension();
@@ -77,6 +83,9 @@ suite('Extension Smoke', () => {
     assert.ok(commands.includes('ripr.copyTopVerifyCommand'));
     assert.ok(commands.includes('ripr.openReport'));
     assert.ok(commands.includes('ripr.showTopLimitation'));
+    // Repair-attempt status (#5366): attempt_status.test.ts drives the
+    // controller method directly, so registration is pinned here.
+    assert.ok(commands.includes('ripr.showAttemptStatus'));
   });
 
   test('trusted-host gate is limited to explicit untrusted harness mode', () => {
@@ -862,13 +871,23 @@ suite('Extension Smoke', () => {
       );
       assert.ok(staticLimitText.includes('TypeScript preview smoke uses syntax-first evidence.'), staticLimitText);
 
+      // #4001: the copied gap route names the selected workspace (either
+      // spelling when the folder is a symlink), not the portable `--root .`.
+      const selectedRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+      assert.ok(selectedRoot, 'test workspace root must be open');
+      const rootArgs = [selectedRoot, await fs.realpath(selectedRoot)].map((root) =>
+        serverShellArg(root.replace(/\\/g, '/'))
+      );
+      const boundGapCommand = (verb: string) => (text: string) =>
+        rootArgs.some((rootArg) => text === `ripr agent ${verb} --root ${rootArg} --json`);
+
       await vscode.commands.executeCommand(verifyCommand.command, ...(verifyCommand.arguments ?? []));
-      const verifyText = await waitForClipboardText((text) => text.includes('ripr agent verify --root . --json'));
-      assert.strictEqual(verifyText, 'ripr agent verify --root . --json');
+      const verifyText = await waitForClipboardText((text) => text.startsWith('ripr agent verify --root '));
+      assert.ok(boundGapCommand('verify')(verifyText), verifyText);
 
       await vscode.commands.executeCommand(receiptCommand.command, ...(receiptCommand.arguments ?? []));
-      const receiptText = await waitForClipboardText((text) => text.includes('ripr agent receipt --root . --json'));
-      assert.strictEqual(receiptText, 'ripr agent receipt --root . --json');
+      const receiptText = await waitForClipboardText((text) => text.startsWith('ripr agent receipt --root '));
+      assert.ok(boundGapCommand('receipt')(receiptText), receiptText);
 
       await vscode.commands.executeCommand(relatedTestCommand.command, ...(relatedTestCommand.arguments ?? []));
       const activeEditor = vscode.window.activeTextEditor;
@@ -1377,6 +1396,15 @@ suite('Extension Smoke', () => {
       assert.ok(String(context.status.tooltip).includes('disabled or unavailable preview languages stay silent'));
       assert.ok(String(context.status.tooltip).includes('enabled and available in this ripr build'));
       assert.ok(String(context.status.tooltip).includes('Evidence freshness: current saved-workspace status reported by server refresh'));
+      // The zero-diagnostics branch must name the enablement mechanism for
+      // routed-but-disabled preview languages, not just "enabled languages"
+      // generically (#6846).
+      assert.ok(
+        String(context.status.tooltip).includes('routed by the editor but missing from ripr.toml [languages] enabled'),
+        String(context.status.tooltip)
+      );
+      assert.ok(String(context.status.tooltip).includes('typescript and python'), String(context.status.tooltip));
+      assert.ok(String(context.status.tooltip).includes('then run ripr: Restart Server'));
 
       context.client.emitNotification('window/logMessage', {
         message: 'ripr analysis refresh completed in 42 ms: generation=1, diagnostics=0, files=0, findings=0, seam_diagnostics=0, enabled_languages=0, enabled_language_names=, published_files=0, cleared_files=0'
@@ -1522,6 +1550,13 @@ suite('Extension Smoke', () => {
       });
       assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
       assert.ok(String(context.status.tooltip).includes('ripr: Refresh Diagnostics'));
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'failed',
+        retry_command: 'ripr.refresh',
+        failure: { kind: 'analysis_error', message: 'could not resolve a default base (no origin/main, origin/master, or local main/master found). Pass `--base <ref>`.' }
+      });
+      assert.ok(String(context.status.tooltip).includes('Set ripr.baseRef to a ref this repository has'));
 
       for (const [retryCommand, expectedCommand] of [
         ['ripr.refresh', 'ripr: Refresh Diagnostics'],
@@ -1856,6 +1891,46 @@ suite('Extension Smoke', () => {
       // budget remedy must survive composition with the component recovery.
       assert.ok(
         tooltip.includes('Next safe action: Run ripr: Show Top Limitation to see which budget stopped the run (RIPR_PARTIAL_DIFF_FILE_BUDGET or RIPR_PARTIAL_DIFF_LINE_BUDGET), raise it or narrow the diff, then run ripr: Refresh Diagnostics. Run ripr check to regenerate the gap decision ledger'),
+        tooltip
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('limited partial scope renders the server retry recovery over the canned refresh tail (#5999)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1',
+        tool: 'ripr',
+        kind: 'analysis_status',
+        state: 'succeeded',
+        run_status: 'limited_partial_scope',
+        attempt_id: 'run-partial-retry-recovery',
+        snapshot_id: 'snapshot:run-partial-retry-recovery',
+        // #5999: the server declares this run retry-unlifted, so the client
+        // must render the raise + restart route instead of a same-process
+        // refresh that provably re-runs the identical partition.
+        retry_command: null,
+        retry_recovery: {
+          kind: 'increase_configured_limit',
+          detail: 'ripr.refresh re-runs the identical limited partition and cannot widen it; raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then restart the language server so the raised environment is read; raise further if this document is still reported not_analyzed'
+        }
+      });
+
+      assert.ok(context.status.text.includes('$(warning) ripr: limited'), context.status.text);
+      const tooltip = String(context.status.tooltip);
+      assert.ok(
+        tooltip.includes('Next safe action: ripr.refresh re-runs the identical limited partition and cannot widen it; raise RIPR_PARTIAL_DIFF_FILE_BUDGET to at least 2, then restart the language server'),
+        tooltip
+      );
+      // The canned tail prescribes a refresh after raising the budget; the
+      // running sidecar still reads the old environment, so it must be gone.
+      assert.ok(
+        !tooltip.includes('raise it or narrow the diff, then run ripr: Refresh Diagnostics'),
         tooltip
       );
     } finally {
@@ -3967,11 +4042,38 @@ suite('Extension Smoke', () => {
 
       assert.strictEqual(context.client.requests.length, 1);
       assert.strictEqual(context.runRiprCalls.length, 1);
+      const args = context.runRiprCalls[0].args;
+      assert.strictEqual(args[args.indexOf('--base') + 1], 'origin/main');
       assert.deepStrictEqual(JSON.parse(context.clipboardWrites[0]), {
         fallback: true
       });
     } finally {
       await context.dispose();
+    }
+  });
+
+  test('copyContext CLI fallback omits --base when ripr.baseRef is blank', async () => {
+    for (const baseRef of ['', '   ']) {
+      const context = createControllerTestContext({
+        baseRef,
+        lspResult: null,
+        cliResult: '{"fallback":true}\n'
+      });
+      try {
+        await context.controller.start();
+        await context.controller.copyContext({
+          uri: workspaceFileUri('src/lib.rs').toString(),
+          line: 9,
+          seam_id: 'abc123'
+        });
+
+        assert.strictEqual(context.runRiprCalls.length, 1);
+        const args = context.runRiprCalls[0].args;
+        assert.ok(!args.includes('--base'), `baseRef ${JSON.stringify(baseRef)} sent ${args.join(' ')}`);
+        assert.strictEqual(args[0], 'context');
+      } finally {
+        await context.dispose();
+      }
     }
   });
 
@@ -4110,6 +4212,15 @@ suite('Extension Smoke', () => {
         agentLoopCommandTarget(
           'gap_receipt',
           'ripr agent receipt --root . --json'
+        ),
+        // #4001: the server binds gap routes to the selected workspace.
+        agentLoopCommandTarget(
+          'gap_verify',
+          `ripr agent verify --root ${rootArg} --json`
+        ),
+        agentLoopCommandTarget(
+          'gap_receipt',
+          `ripr agent receipt --root ${rootArg} --json`
         )
       ];
 
@@ -4306,6 +4417,14 @@ suite('Extension Smoke', () => {
     )));
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', 'ripr agent verify --root . --json $(touch pwned)')));
     assert.ok(!accepts(agentLoopCommandTarget('gap_verify', 'ripr agent verify --root . --json <(touch pwned)')));
+    // #4001: a gap route bound to the selected workspace is accepted, even
+    // with the workspace path's quoted `&` and `$`; another root, or an
+    // operator after the bound root, is not.
+    assert.ok(accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot} --json`)));
+    assert.ok(accepts(agentLoopCommandTarget('gap_receipt', `ripr agent receipt --root ${commandRoot} --json`)));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${otherRoot} --json`)));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot} --json; touch pwned`)));
+    assert.ok(!accepts(agentLoopCommandTarget('gap_verify', `ripr agent verify --root ${commandRoot}x --json`)));
     // The double-quoted base the client used to expect, and a base the payload
     // does not carry.
     assert.ok(!accepts(snapshot(' --base "HEAD~1"', 'HEAD~1')));
@@ -4853,6 +4972,7 @@ interface ControllerTestOptions {
   includeUnchangedTests?: boolean;
   seamDiagnostics?: boolean;
   diagnosticProfile?: 'actionable' | 'full';
+  baseRef?: string;
   lspResult?: unknown;
   lspError?: Error;
   cliResult?: string;
@@ -5266,7 +5386,7 @@ function createControllerTestContext(options: ControllerTestOptions) {
         serverVersion: '',
         downloadBaseUrl: '',
         checkMode: 'draft',
-        baseRef: 'origin/main',
+        baseRef: options.baseRef ?? 'origin/main',
         includeUnchangedTests: options.includeUnchangedTests ?? true,
         seamDiagnostics: options.seamDiagnostics,
         diagnosticProfile: options.diagnosticProfile,

@@ -1,0 +1,6 @@
+use meter::*;
+
+#[test]
+fn lamp_gives_eight_hundred_lumens() {
+    assert_eq!(Lamp::lumens(), 800);
+}

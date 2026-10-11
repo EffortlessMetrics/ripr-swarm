@@ -1141,7 +1141,8 @@ fn route_from_gap_records(records: &[(usize, GapRecord)]) -> TargetedRerunRoute 
 /// FIX (round-1 review): producers reuse command ids across argument sets
 /// (every receipt spec id is `ripr:agent:receipt`), so distinct typed
 /// invocations must not collapse. Dedupe by the full semantic identity —
-/// the sha256 digest over the serialized spec — keeping the first
+/// the sha256 digest over the serialized spec with its display emptied
+/// (#3999), so specs differing only in display merge — keeping the first
 /// occurrence. A spec whose digest cannot be computed has no stable
 /// identity and stays legacy-string-only (fail closed).
 fn stable_unique_specs(specs: impl IntoIterator<Item = CommandSpec>) -> Vec<CommandSpec> {
@@ -3683,7 +3684,7 @@ mod tests {
         );
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "rejects_boundary".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 4,
@@ -3697,7 +3698,7 @@ mod tests {
                 evidence_summary: "broad error assertion".to_string(),
                 relation_reason: RelationReason::DirectOwnerCall,
                 relation_confidence: RelationConfidence::High,
-            }],
+            })],
             reach: stage("owner is reached"),
             activate: stage("exact error variant flows"),
             propagate: stage("error channel flow"),
@@ -3714,6 +3715,7 @@ mod tests {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         };
         let class = classify_seam(&seam, &evidence);
         ClassifiedSeam {

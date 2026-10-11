@@ -1,0 +1,44 @@
+{
+  "case_id": "jest-mined-toequal-copy-not-identity",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-mined-toequal-copy-not-identity.diff",
+  "anchor": {
+    "file": "src/settings.ts",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_toequal_misses_copy_for_reuse",
+  "hard_case": "toEqual cannot tell a copy from the same object (mined from immer)",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "return { ...cfg };",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: a copy is a different object with equal fields"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The edit returns a copy instead of the same object; toEqual compares structure, so the test passes. ripr reports exposed on the anchor, false credit.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

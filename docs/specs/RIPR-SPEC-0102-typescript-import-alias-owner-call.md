@@ -38,7 +38,7 @@ Policy impact:
 
 ## Problem
 
-When a test imports an owner via an explicit renaming alias —
+When a test imports an owner via an explicit renaming alias â€”
 
 ```typescript
 import { computeValue as cv } from '../src/compute';
@@ -49,11 +49,11 @@ test('alias call', () => {
 ```
 
 ripr ALREADY credits the relation (via `TypeScriptRelationKind::ImportedOwnerCall`),
-but `ts_relation_to_domain` maps `ImportedOwnerCall` →
+but `ts_relation_to_domain` maps `ImportedOwnerCall` â†’
 `RelationReason::ImportPathAffinity` / `RelationConfidence::Medium`.
 
 That understates the evidence. The `as` rename is syntactically explicit AND the
-test body verifiably calls the local alias — equivalent certainty to a
+test body verifiably calls the local alias â€” equivalent certainty to a
 `DirectOwnerCall`. The test WAS already found; only the stated reason and
 confidence are wrong.
 
@@ -62,7 +62,7 @@ confidence are wrong.
 | Signal | DirectOwnerCall | ImportAliasOwnerCall |
 |---|---|---|
 | Import from owner file confirmed | yes | yes |
-| Imported name matches owner name | — (same file) | yes (import.imported == owner.name) |
+| Imported name matches owner name | â€” (same file) | yes (import.imported == owner.name) |
 | Local name explicitly bound to alias | n/a | yes (import.local != owner.name) |
 | Body calls the local alias | yes | yes |
 | Shadow guard applied | yes (owner_name_shadowed_by_unrelated_import) | yes (new: local_identifier_declared_in_test_body) |
@@ -88,12 +88,12 @@ All other import forms are unchanged:
 | `import { X as local }` + `local(...)` (no shadow) | ImportAliasOwnerCall | direct_owner_call | High |
 | `import { X as local }` + `local(...)` (local shadowed) | falls through | unchanged | unchanged |
 | `import * as ns` + `ns.X(...)` | ImportedOwnerCall | import_path_affinity | Medium |
-| `import { Y as local }` (Y ≠ X) + `local(...)` | not credited | — | — |
+| `import { Y as local }` (Y â‰  X) + `local(...)` | not credited | â€” | â€” |
 
 Owner-module mock guard (issue #2269): when the test file mocks the changed
 owner's OWN module (`jest.mock('../src/owner')` / `vi.mock('../src/owner')`),
 `owner_call_relation` credits NO owner-call relation for Function/ArrowFunction
-owners — the owner call executes the mock, not the changed code. This is the
+owners â€” the owner call executes the mock, not the changed code. This is the
 same `test_mocks_owner_module` guard the Method/ClassMethod/ModuleFunction
 relation paths already applied; the Function-owner arm was simply missed. The
 advisory proximity heuristics may still link the test (at most
@@ -111,7 +111,7 @@ Add `ImportAliasOwnerCall` to
 - `rank()` = 5 (same as `DirectOwnerCall`)
 - included in `uses_oracle()` (same as `DirectOwnerCall`)
 - `as_str()` = `"import_alias_owner_call"` (internal diagnostic only; not
-  emitted in public JSON output — the domain reason is `direct_owner_call`)
+  emitted in public JSON output â€” the domain reason is `direct_owner_call`)
 
 ### 2. Split the `ImportedOwnerCall` arm in `owner_call_relation`
 
@@ -131,7 +131,7 @@ The existing namespace arm falls through to `ImportedOwnerCall` (unchanged).
 A non-namespace import where `local == owner.name` is not a rename: it is handled
 by the earlier `DirectOwnerCall` arm (no change).
 
-### 3. Map `ImportAliasOwnerCall` → `DirectOwnerCall`/`High` in `ts_relation_to_domain`
+### 3. Map `ImportAliasOwnerCall` â†’ `DirectOwnerCall`/`High` in `ts_relation_to_domain`
 
 ```rust
 TypeScriptRelationKind::ImportAliasOwnerCall => RelationReason::DirectOwnerCall,
@@ -139,13 +139,13 @@ TypeScriptRelationKind::ImportAliasOwnerCall => RelationReason::DirectOwnerCall,
 TypeScriptRelationKind::ImportAliasOwnerCall => RelationConfidence::High,
 ```
 
-No new `RelationReason` variant is needed — `DirectOwnerCall` is the correct
+No new `RelationReason` variant is needed â€” `DirectOwnerCall` is the correct
 domain meaning: the test syntactically calls the owner.
 
 ## Shadow Guard
 
 Because this upgrade moves the alias case to `High` confidence, we must close
-the falsifier: a test that re-declares the alias name in the body —
+the falsifier: a test that re-declares the alias name in the body â€”
 
 ```typescript
 import { computeValue as cv } from '../src/compute';
@@ -156,7 +156,7 @@ test('shadow', () => {
 });
 ```
 
-— calls the LOCAL shadow, not the owner. The existing helper
+â€” calls the LOCAL shadow, not the owner. The existing helper
 `local_identifier_declared_in_test_body` (already used in
 `module_initializer_observer_relation` and `class_method_owner_call_relation`)
 is applied to `import.local` before crediting `ImportAliasOwnerCall`. If the
@@ -167,9 +167,9 @@ the prior behavior was (likely uncredited / heuristic).
 
 - Under-emit fix only: the alias-rename test was ALREADY credited (exposure class
   `exposed`); this spec only upgrades the stated reason and confidence.
-- NEVER over-claim: wrong-name alias (`import { otherFn as cv }`, otherFn ≠ owner)
-  must NOT be credited — `import.imported.as_deref() == Some(owner.name)` guard.
-- NEVER credit a shadowed alias at High — shadow guard applied before crediting.
+- NEVER over-claim: wrong-name alias (`import { otherFn as cv }`, otherFn â‰  owner)
+  must NOT be credited â€” `import.imported.as_deref() == Some(owner.name)` guard.
+- NEVER credit a shadowed alias at High â€” shadow guard applied before crediting.
 - Namespace imports (`import * as ns`): OUT OF SCOPE. They remain
   `ImportedOwnerCall` / `import_path_affinity` / Medium.
 
@@ -178,10 +178,10 @@ the prior behavior was (likely uncredited / heuristic).
 The shadow guard `local_identifier_declared_in_test_body` is **line-based**: it
 scans each source line for a `const`/`let`/`var` declaration of the alias at the
 start of the (trimmed) line. A shadow declared **inline on the same source line**
-as other statements — e.g. `test('x', () => { const cv = f; expect(cv(5))... })`
-all on one physical line — is NOT detected, so such a case would still be credited
+as other statements â€” e.g. `test('x', () => { const cv = f; expect(cv(5))... })`
+all on one physical line â€” is NOT detected, so such a case would still be credited
 at `direct_owner_call` / High. This form is rare and discouraged by standard
-formatters (prettier/eslint split it onto its own line, where the guard fires —
+formatters (prettier/eslint split it onto its own line, where the guard fires â€”
 verified behaviorally). The mis-statement is confined to the **advisory relation
 reason/confidence metadata**; it never changes the exposure class. This matches
 the pre-existing behavior of the `ImportedOwnerCall` path, which used the same
@@ -199,34 +199,41 @@ Unit tests in
 `crates/ripr/src/analysis/language/typescript/tests.rs`:
 
 1. **POSITIVE** (`find_related_tests_matches_named_import_alias_calls` extended):
-   `import { applyDiscount as subject }` + `subject(...)` → relation kind
+   `import { applyDiscount as subject }` + `subject(...)` â†’ relation kind
    `ImportAliasOwnerCall`, relation_reason `direct_owner_call`,
    relation_confidence `high`.
 
 2. **WRONG-NAME** (`find_related_tests_alias_wrong_name_not_credited`):
-   `import { otherFn as cv }` (otherFn ≠ owner) + `cv(...)` →
+   `import { otherFn as cv }` (otherFn â‰  owner) + `cv(...)` â†’
    NOT `ImportAliasOwnerCall`.
 
 3. **SHADOW** (`find_related_tests_alias_shadowed_local_not_credited_high`):
-   `import { computeValue as cv }` + `const cv = ...; cv(5)` →
+   `import { computeValue as cv }` + `const cv = ...; cv(5)` â†’
    NOT `ImportAliasOwnerCall` (shadow guard).
 
 4. **NON-ALIAS UNCHANGED** (`find_related_tests_non_alias_import_still_direct_owner_call`):
-   `import { computeValue }` + `computeValue(5)` → still `DirectOwnerCall`/high.
+   `import { computeValue }` + `computeValue(5)` â†’ still `DirectOwnerCall`/high.
 
 5. **NAMESPACE UNCHANGED** (`find_related_tests_namespace_import_unchanged_imported_owner_call`):
-   `import * as ns` + `ns.computeValue(5)` → still `ImportedOwnerCall` →
+   `import * as ns` + `ns.computeValue(5)` â†’ still `ImportedOwnerCall` â†’
    `import_path_affinity` / Medium.
 
 ## Test Mapping
 
 | Test | Control case |
 |---|---|
-| `find_related_tests_matches_named_import_alias_calls` (extended) | 1 — POSITIVE: alias-rename + call → ImportAliasOwnerCall / direct_owner_call / High |
-| `find_related_tests_alias_wrong_name_not_credited` | 2 — WRONG-NAME: alias of a different export is not credited |
-| `find_related_tests_alias_shadowed_local_not_credited_high` | 3 — SHADOW: re-declared local binding not credited at High |
-| `find_related_tests_non_alias_import_still_direct_owner_call` | 4 — NON-ALIAS: non-renaming import remains DirectOwnerCall |
-| `find_related_tests_namespace_import_unchanged_imported_owner_call` | 5 — NAMESPACE: namespace import stays ImportedOwnerCall / import_path_affinity / Medium |
+| `find_related_tests_matches_named_import_alias_calls` (extended) | 1 â€” POSITIVE: alias-rename + call â†’ ImportAliasOwnerCall / direct_owner_call / High |
+| `find_related_tests_alias_wrong_name_not_credited` | 2 â€” WRONG-NAME: alias of a different export is not credited |
+| `find_related_tests_alias_shadowed_local_not_credited_high` | 3 â€” SHADOW: re-declared local binding not credited at High |
+| `find_related_tests_non_alias_import_still_direct_owner_call` | 4 â€” NON-ALIAS: non-renaming import remains DirectOwnerCall |
+| `find_related_tests_namespace_import_unchanged_imported_owner_call` | 5 â€” NAMESPACE: namespace import stays ImportedOwnerCall / import_path_affinity / Medium |
+
+## Later Amendment
+
+RIPR-SPEC-0243 rule 7 (2026-10-04) makes the TypeScript observation guard
+honor the `exposed` class this spec states: an observed expression naming
+the alias `local`, directly or through a one-hop local initializer,
+counts as referencing the owner. Default-import locals get no such credit.
 
 ## Metrics
 

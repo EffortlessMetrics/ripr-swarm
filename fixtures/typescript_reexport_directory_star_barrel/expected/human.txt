@@ -26,8 +26,8 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/typescript_reexport_directory_star_barrel/input --diff fixtures/typescript_reexport_directory_star_barrel/diff.patch --mode fast probe:src_utils.ts:typescript_preview:a6254543
-  ripr context --root fixtures/typescript_reexport_directory_star_barrel/input --diff fixtures/typescript_reexport_directory_star_barrel/diff.patch --mode fast --at probe:src_utils.ts:typescript_preview:a6254543
+  ripr explain --root <cwd>/fixtures/typescript_reexport_directory_star_barrel/input --diff <cwd>/fixtures/typescript_reexport_directory_star_barrel/diff.patch --mode fast probe:src_utils.ts:typescript_preview:a6254543
+  ripr context --root <cwd>/fixtures/typescript_reexport_directory_star_barrel/input --diff <cwd>/fixtures/typescript_reexport_directory_star_barrel/diff.patch --mode fast --at probe:src_utils.ts:typescript_preview:a6254543
 
 More:
   Full evidence: rerun with --format human-full

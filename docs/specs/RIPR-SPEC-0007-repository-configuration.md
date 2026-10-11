@@ -23,6 +23,11 @@ The configuration layer should:
 - stop after checking a Cargo manifest with a `[workspace]` table or at a
   `.git` boundary; a package-only `Cargo.toml` does not stop discovery;
 - use behavior-preserving defaults when the file is absent;
+- treat a present `ripr.toml` directory entry, including a dangling or
+  self-referencing symlink, as present rather than as built-in defaults
+  (`load_for_root`, workspace-status presence, Python repair
+  config-profile detection, first-pr preflight, and agent-receipt
+  config fingerprinting share that presence rule);
 - reject malformed config with actionable errors;
 - reject unknown keys so typos do not silently change policy;
 - keep explicit CLI options ahead of repository config;
@@ -175,6 +180,16 @@ command;
 and a workspace with no such language gets neither.
 ```
 
+### Present dangling or unreadable config is not built-in defaults
+
+```text
+Given a workspace whose ripr.toml is a symlink to a missing file,
+or a regular file whose lookup or read fails with a non-absence error,
+when first-pr preflight or an agent-receipt config fingerprint runs,
+then the config is present but unreadable,
+and it is not described as using built-in defaults.
+```
+
 ### Doctor separates analysis readiness from source-build prerequisites
 
 ```text
@@ -203,6 +218,14 @@ then the probe runs in the selected root rather than the caller's directory.
 Current tests:
 
 - `crates/ripr/src/config.rs::tests::missing_config_uses_behavior_preserving_defaults`
+- `crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
+- `crates/ripr/src/app/python_repair_binding.rs::tests::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
+- `crates/ripr/src/app/python_repair_verification.rs::python_repair_verification_semantics::dangling_ripr_toml_symlink_is_subject_config_not_defaults`
+- `crates/ripr/src/output/first_pr/preflight.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
+- `crates/ripr/src/output/first_pr/preflight.rs::tests::unreadable_regular_ripr_toml_is_present_not_ok`
+- `crates/ripr/src/output/first_pr/preflight.rs::tests::fifo_ripr_toml_is_present_not_ok_and_does_not_block`
+- `crates/ripr/src/cli/commands_agent_support.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
+- `crates/ripr/src/cli/commands_agent_support.rs::tests::unreadable_ripr_toml_lookup_is_not_built_in_defaults`
 - `crates/ripr/src/config.rs::tests::config_file_sets_core_operational_defaults`
 - `crates/ripr/src/config.rs::tests::explicit_cli_mode_wins_over_config_mode`
 - `crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit`
@@ -254,8 +277,10 @@ Planned tests:
 
 Current implementation:
 
-- `crates/ripr/src/config.rs` owns config parsing, defaults, validation, and
-  precedence helpers.
+- `crates/ripr/src/config.rs` owns config parsing, defaults, validation,
+  presence (`config_entry_present` / `config_present_at_root`), and
+  precedence helpers. Workspace status and Python repair config-profile
+  detection consume that presence rule instead of `Path::is_file`.
 - `crates/ripr/src/cli/commands.rs` loads repo config for `check`, `explain`,
   and `context`, and reports config status through `doctor`.
 - `crates/ripr/src/app.rs` provides config-aware orchestration for CLI and LSP

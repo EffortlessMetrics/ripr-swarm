@@ -29,6 +29,11 @@ fixtures/evidence-quality-benchmark/regex-word-boundary-empty/basis/matcher-orig
 fixtures/evidence-quality-benchmark/regex-word-boundary-empty/outputs/*.stdout -text -whitespace
 fixtures/evidence-quality-benchmark/regex-word-boundary-empty/patches/*.patch -text whitespace=-blank-at-eol
 
+# SPEC-0108 human reports are byte-exact producer captures with terminal blanks.
+# Retain their hashes and all other whitespace checks; LF rules above still apply.
+fixtures/evidence-promotion-honesty-corpus/discarded-matcher-reports/*/human.txt whitespace=-blank-at-eof
+fixtures/evidence-promotion-honesty-corpus/discarded-matcher-reports/*/human-full.txt whitespace=-blank-at-eof
+
 # Exact Git commit object used only by the custody boundary fixture. Its signed
 # header contains significant space-only continuation lines; never normalize it.
 xtask/src/reports/release/candidate_harness/live_head/fixtures/last-integrated.commit -text -whitespace

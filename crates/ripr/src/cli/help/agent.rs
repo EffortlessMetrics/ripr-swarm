@@ -132,12 +132,19 @@ prose only, like the sibling verify and repair commands.
 
 pub(super) const AGENT_STUB_HELP: &str = r#"Write a compiling Rust test stub for one gap, ready to fill and run.
 
-Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE) [--write] [--json]
+Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE [--kind FAMILY]) [--write] [--json]
 
 Options:
   --root PATH      Workspace root. Defaults to current directory.
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
+  --kind FAMILY    With --at: the finding's probe family (`predicate`,
+                   `return_value`, `error_path`, `match_arm`). Only seams of
+                   that kind are tried, so a line holding several changes
+                   stubs the one the finding reported; two separate seams of
+                   that kind on one line are refused with their seam IDs.
+                   `ripr check` prints it. Without it, --at tries only the
+                   file's reported gaps, so a seam tests pin is refused.
   --write          Apply the stub: insert it into the owner file's inline
                    `#[cfg(test)]` module (or a new one), or create the
                    proposed `tests/` file. Refuses when the file changed
@@ -374,4 +381,12 @@ Inline `#[cfg(test)]` modules don't qualify their file: a repository
 whose only tests are inline in non-test-surface files is permanently out
 of repair scope — the repair workflow consumes only file-level cage
 authority. The before phase refuses such seams before creating anything.
+
+Environment variables:
+  RIPR_PERSIST_LATENCY_TRACE  When present, emits diagnostic persist-phase
+                                    trace lines for baseline capture, attempt
+                                    publication, and after-phase state
+                                    recapture. Presence enables tracing even
+                                    if the value is empty or 0; it does not
+                                    change any verdict.
 "#;

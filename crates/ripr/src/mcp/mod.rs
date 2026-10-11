@@ -13,6 +13,14 @@ use std::path::PathBuf;
 pub(super) const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 
+/// Wire-calibrated ceiling for one tool document that a caller can narrow
+/// with paging (#6021): the tool envelope's text copy escapes every byte in
+/// the worst case, so a document at half the response bound (minus fixed
+/// envelope overhead) always renders a deliverable response even in the
+/// pathological all-escapes case. Pagination targets this ceiling so an
+/// approved page can never be overturned by the wire.
+pub(super) const MAX_TOOL_DOCUMENT_BYTES: usize = MAX_RESPONSE_BYTES / 2 - 256;
+
 pub(crate) const MCP_HELP: &str = r#"Expose RIPR's bounded, read-only workspace session over the Model Context Protocol.
 
 Usage: ripr mcp [--stdio] [--root PATH]

@@ -226,7 +226,7 @@ fn without_reassigned_commonjs_exports(
 
 /// Mark a top-level function owner as the module's default export when a
 /// separate statement exports its binding as `default`: `export default
-/// price;` or a source-less `export { price as default }` (RIPR-SPEC-0234
+/// price;` or a source-less `export { price as default }` (RIPR-SPEC-0243
 /// rule 5). Without this, a default import of such an owner would lose its
 /// declaration anchor. Only class-free owners qualify: a method is never the
 /// module's default export itself.

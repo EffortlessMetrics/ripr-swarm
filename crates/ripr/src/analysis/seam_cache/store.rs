@@ -4,6 +4,7 @@
 //! Shard membership is chosen from encoded bytes first; record count is only a
 //! secondary cap. Load/decode bounds remain the read-side sibling.
 
+use super::related_test_table::PrettyTableSizer;
 use super::{
     CACHE_ENVELOPE_DIGEST_DOMAIN, CLASSIFIED_SEAM_CACHE_STORE_IO_BUFFER_BYTES, CacheStoreStatus,
     CachedSeamLimitInfo, RepoSeamCacheKey, RepoSeamFactCache,
@@ -17,7 +18,7 @@ use crate::analysis::seam_classification::reset_classified_seam_clone_count;
 use serde::Serialize;
 use std::io::{self, Write};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[cfg(test)]
 std::thread_local! {
@@ -26,6 +27,26 @@ std::thread_local! {
     static FAIL_AFTER_SHARDS: std::cell::Cell<Option<usize>> = const { std::cell::Cell::new(None) };
     static FAIL_NEXT_FILL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static FAIL_AFTER_PARK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static AFTER_COMMIT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        const { std::cell::RefCell::new(None) };
+    static LOCK_WAIT_OVERRIDE: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
+    static PLAN_MODEL_MISMATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static MODEL_SKEW: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Run `hook` once right after the next sharded manifest commit, standing in for a
+/// competing process that restores an older single entry in that window.
+#[cfg(test)]
+pub(super) fn after_next_manifest_commit(hook: Box<dyn FnOnce()>) {
+    AFTER_COMMIT_HOOK.with(|slot| *slot.borrow_mut() = Some(hook));
+}
+
+#[cfg(test)]
+fn run_after_commit_hook() {
+    if let Some(hook) = AFTER_COMMIT_HOOK.with(|slot| slot.borrow_mut().take()) {
+        hook();
+    }
 }
 
 #[cfg(test)]
@@ -95,17 +116,38 @@ pub(super) fn publish_classified_generation(
         return Err("classified seam cache encoded shard ceiling must be positive".to_string());
     }
     crate::analysis::cancellation::checkpoint()?;
-    match plan_publication(
+    let plan = plan_publication(
         key,
         seams,
         limit_info,
         lexical_fallback_files,
         record_limit,
         byte_ceiling,
-    )? {
-        PublicationPlan::SkipOversized { index } => Ok(CacheStoreStatus {
-            label: format!("skipped_oversized_record_index_{index}_ceiling_{byte_ceiling}"),
-        }),
+    )?;
+    if let PublicationPlan::SkipOversized {
+        index,
+        encoded_bytes,
+    } = plan
+    {
+        return Ok(oversized_skip_status(index, encoded_bytes, byte_ceiling));
+    }
+    // One writer per key from the first mutation through cleanup, so the
+    // stat-then-remove and rollback-restore windows cannot interleave.
+    let _publication_lock = match acquire_publication_lock(cache, key)? {
+        PublicationLock::Held(lock) => Some(lock),
+        PublicationLock::Unsupported => None,
+        PublicationLock::Busy => {
+            return Ok(CacheStoreStatus {
+                label: PUBLICATION_BUSY_LABEL.to_string(),
+                advisory: None,
+            });
+        }
+    };
+    match plan {
+        PublicationPlan::SkipOversized {
+            index,
+            encoded_bytes,
+        } => Ok(oversized_skip_status(index, encoded_bytes, byte_ceiling)),
         PublicationPlan::Single => {
             publish_single_entry(cache, key, seams, limit_info, lexical_fallback_files)
         }
@@ -121,10 +163,82 @@ pub(super) fn publish_classified_generation(
     }
 }
 
+const PUBLICATION_BUSY_LABEL: &str = "skipped_publication_busy";
+const PUBLICATION_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+const PUBLICATION_LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+
+fn publication_lock_wait() -> std::time::Duration {
+    #[cfg(test)]
+    if let Some(wait) = LOCK_WAIT_OVERRIDE.with(std::cell::Cell::get) {
+        return wait;
+    }
+    PUBLICATION_LOCK_WAIT
+}
+
+/// Holds the advisory lock until dropped. The OS also releases it when the
+/// file closes or the process dies, so a crashed writer never leaves a stale lock.
+struct PublicationLockGuard(std::fs::File);
+
+impl Drop for PublicationLockGuard {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+enum PublicationLock {
+    Held(PublicationLockGuard),
+    /// Another writer holds the key past the wait; skip rather than race it.
+    Busy,
+    /// The lock file or the filesystem cannot lock; publish as before.
+    Unsupported,
+}
+
+/// Take the per-key advisory publication lock in the sharded layer directory.
+/// Readers never lock. A cache that cannot lock (read-only mount, a
+/// filesystem without advisory locks) keeps the unlocked behavior, since
+/// cache writes are best effort. Cancellation is checked while waiting.
+fn acquire_publication_lock(
+    cache: &RepoSeamFactCache,
+    key: &RepoSeamCacheKey,
+) -> Result<PublicationLock, String> {
+    let stem = key.filename();
+    let stem = stem.strip_suffix(".json").unwrap_or(stem.as_str());
+    let name = format!("{stem}.lock");
+    if std::fs::create_dir_all(&cache.sharded_dir).is_err() {
+        return Ok(PublicationLock::Unsupported);
+    }
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(cache.sharded_dir.join(name))
+    else {
+        return Ok(PublicationLock::Unsupported);
+    };
+    let deadline = std::time::Instant::now() + publication_lock_wait();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(PublicationLock::Held(PublicationLockGuard(file))),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if std::time::Instant::now() >= deadline {
+                    return Ok(PublicationLock::Busy);
+                }
+                crate::analysis::cancellation::checkpoint()?;
+                std::thread::sleep(PUBLICATION_LOCK_POLL);
+            }
+            Err(std::fs::TryLockError::Error(_)) => return Ok(PublicationLock::Unsupported),
+        }
+    }
+}
+
 enum PublicationPlan {
     Single,
     Sharded(Vec<Range<usize>>),
-    SkipOversized { index: usize },
+    SkipOversized {
+        /// Record that cannot fit; `None` when the metadata around the records overflows.
+        index: Option<usize>,
+        encoded_bytes: usize,
+    },
 }
 
 fn plan_publication(
@@ -141,16 +255,57 @@ fn plan_publication(
             return Ok(PublicationPlan::Single);
         }
         if seams.is_empty() {
-            return Ok(PublicationPlan::SkipOversized { index: 0 });
+            return Ok(PublicationPlan::SkipOversized {
+                index: None,
+                encoded_bytes: checksummed_pretty_len(&single)?,
+            });
         }
     }
     let ranges = match plan_shard_ranges(key, seams, record_limit, byte_ceiling)? {
         ShardPlan::Ranges(ranges) => ranges,
         ShardPlan::Oversized { index } => {
-            return Ok(PublicationPlan::SkipOversized { index });
+            let encoded_bytes = single_record_shard_len(key, seams, index)?;
+            return Ok(PublicationPlan::SkipOversized {
+                index: Some(index),
+                encoded_bytes,
+            });
         }
     };
     Ok(PublicationPlan::Sharded(ranges))
+}
+
+fn single_record_shard_len(
+    key: &RepoSeamCacheKey,
+    seams: &[ClassifiedSeam],
+    index: usize,
+) -> Result<usize, String> {
+    let Some(slice) = seams.get(index..index.saturating_add(1)) else {
+        return Err("oversized classified cache record index is out of bounds".to_string());
+    };
+    checksummed_pretty_len(&borrowed_shard_envelope(key, index, seams.len(), slice))
+}
+
+fn oversized_skip_status(
+    index: Option<usize>,
+    encoded_bytes: usize,
+    byte_ceiling: usize,
+) -> CacheStoreStatus {
+    let (label, subject) = match index {
+        Some(index) => (
+            format!("skipped_oversized_record_index_{index}_ceiling_{byte_ceiling}"),
+            format!("seam record {index}"),
+        ),
+        None => (
+            format!("skipped_oversized_metadata_ceiling_{byte_ceiling}"),
+            "the cache metadata".to_string(),
+        ),
+    };
+    CacheStoreStatus {
+        label,
+        advisory: Some(format!(
+            "classified seam cache not stored: {subject} encodes to {encoded_bytes} bytes, above the {byte_ceiling}-byte ceiling, so every run recomputes; set RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES to at least {encoded_bytes} to restore warm runs"
+        )),
+    }
 }
 
 enum ShardPlan {
@@ -172,7 +327,7 @@ fn plan_shard_ranges(
     let mut start = 0;
     while start < seams.len() {
         let max_end = start.saturating_add(record_limit).min(seams.len());
-        match largest_fitting_end(
+        let planned = match modeled_fitting_end(
             key,
             seams,
             start,
@@ -181,6 +336,18 @@ fn plan_shard_ranges(
             conservative_shard_count,
             byte_ceiling,
         )? {
+            Some(end) => Some(end),
+            None => largest_fitting_end(
+                key,
+                seams,
+                start,
+                max_end,
+                ranges.len(),
+                conservative_shard_count,
+                byte_ceiling,
+            )?,
+        };
+        match planned {
             Some(end) => ranges.push(start..end),
             None => return Ok(ShardPlan::Oversized { index: start }),
         }
@@ -190,6 +357,57 @@ fn plan_shard_ranges(
             .ok_or_else(|| "classified cache shard planner lost the current range".to_string())?;
     }
     Ok(ShardPlan::Ranges(ranges))
+}
+
+/// The shard's end from [`PrettyTableSizer`]: one encode per seam instead of
+/// one per probe of a growing prefix (#5364). The modeled length of the
+/// chosen shard is checked against one real encode, bounded by the ceiling,
+/// so a shard can never exceed it. `None` sends the caller to the probing
+/// search: when the first seam alone does not fit, or when the model and the
+/// encode disagree.
+fn modeled_fitting_end(
+    key: &RepoSeamCacheKey,
+    seams: &[ClassifiedSeam],
+    start: usize,
+    max_end: usize,
+    shard_index: usize,
+    conservative_shard_count: usize,
+    byte_ceiling: usize,
+) -> Result<Option<usize>, String> {
+    let empty = borrowed_shard_envelope(key, shard_index, conservative_shard_count, &[]);
+    let Some(base) = checksummed_pretty_len_within(&empty, byte_ceiling)? else {
+        return Ok(None);
+    };
+    let mut sizer = PrettyTableSizer::default();
+    let mut end = start;
+    while end < max_end {
+        crate::analysis::cancellation::checkpoint()?;
+        let Some(seam) = seams.get(end) else {
+            break;
+        };
+        let measured = sizer.measure(seam)?;
+        if base.saturating_add(sizer.bytes_over_empty_with(&measured)) > byte_ceiling {
+            break;
+        }
+        sizer.add(measured)?;
+        end = end.saturating_add(1);
+    }
+    if end == start {
+        return Ok(None);
+    }
+    let modeled = base.saturating_add(sizer.bytes_over_empty());
+    #[cfg(test)]
+    let modeled = modeled.saturating_add(MODEL_SKEW.with(std::cell::Cell::get));
+    let Some(slice) = seams.get(start..end) else {
+        return Ok(None);
+    };
+    let envelope = borrowed_shard_envelope(key, shard_index, conservative_shard_count, slice);
+    if checksummed_pretty_len_within(&envelope, byte_ceiling)? == Some(modeled) {
+        return Ok(Some(end));
+    }
+    #[cfg(test)]
+    PLAN_MODEL_MISMATCHES.with(|count| count.set(count.get().saturating_add(1)));
+    Ok(None)
 }
 
 fn largest_fitting_end(
@@ -288,6 +506,7 @@ fn publish_single_entry(
     stream_checksummed_cache_file(cache.entry_path(key), "cache", &envelope, digest)?;
     Ok(CacheStoreStatus {
         label: "ok".to_string(),
+        advisory: None,
     })
 }
 
@@ -304,6 +523,7 @@ fn publish_sharded_generation(
         return Err("sharded classified cache publication requires at least one shard".to_string());
     }
     let shard_count = ranges.len();
+    let started_at = std::time::SystemTime::now();
     let sharded_dir = cache.sharded_entry_dir(key);
     std::fs::create_dir_all(&sharded_dir)
         .map_err(|err| format!("create sharded cache dir failed: {err}"))?;
@@ -370,9 +590,17 @@ fn publish_sharded_generation(
         parked.commit();
     }
     unpublished.retain();
+    #[cfg(test)]
+    run_after_commit_hook();
+    remove_single_entry_older_than(&cache.entry_path(key), started_at);
     if let Some(previous) = previous {
         remove_replaced_generation_files(&sharded_dir, &previous, &publication_id);
     }
+    sweep_orphan_generations(
+        &sharded_dir,
+        std::time::SystemTime::now(),
+        ORPHAN_GENERATION_GRACE,
+    );
     Ok(CacheStoreStatus {
         label: format!(
             "sharded_ok_seams_{}_shards_{}_limit_{}",
@@ -380,7 +608,22 @@ fn publish_sharded_generation(
             shard_count,
             record_limit
         ),
+        advisory: None,
     })
+}
+
+/// The loader prefers a single entry over a manifest. A competing writer that rolls
+/// back after parking can restore an older single entry after this writer's manifest
+/// commit (a re-check after its `hard_link` usually catches that, so this is defence
+/// in depth). Remove only an entry last written before this publication began: a
+/// single entry a later writer published is newer and stays.
+fn remove_single_entry_older_than(entry: &Path, started_at: std::time::SystemTime) {
+    let Ok(modified) = std::fs::symlink_metadata(entry).and_then(|meta| meta.modified()) else {
+        return;
+    };
+    if modified < started_at {
+        let _ = std::fs::remove_file(entry);
+    }
 }
 
 fn read_previous_manifest(
@@ -388,7 +631,68 @@ fn read_previous_manifest(
     key: &RepoSeamCacheKey,
 ) -> Option<ShardedCacheManifest> {
     let bytes = std::fs::read(cache.sharded_manifest_path(key)).ok()?;
-    codec::decode_sharded_manifest(&bytes).ok()
+    let manifest = codec::decode_sharded_manifest(&bytes).ok()?;
+    // The digest is keyless, so it catches corruption, not a hostile writer; deletes
+    // are bounded by only ever touching files under `g*/`.
+    manifest.validate_integrity().ok()?;
+    Some(manifest)
+}
+
+/// Generation directories a terminated or superseded writer left behind stay until they
+/// are this old, so a concurrent writer's in-progress generation is not swept. A writer
+/// stalled longer than this between creating its last shard and committing can lose its
+/// generation; the loader checks every listed shard, so that is a cache miss, never wrong data.
+const ORPHAN_GENERATION_GRACE: std::time::Duration = std::time::Duration::from_hours(1);
+
+/// Remove `g*` generation directories under `sharded_dir` that the current manifest
+/// does not reference and that have not been touched for `grace`. Any doubt (no
+/// readable valid manifest, unreadable metadata, symlinks) keeps the directory.
+fn sweep_orphan_generations(
+    sharded_dir: &Path,
+    now: std::time::SystemTime,
+    grace: std::time::Duration,
+) -> usize {
+    let Ok(bytes) = std::fs::read(sharded_dir.join("manifest.json")) else {
+        return 0;
+    };
+    let Ok(manifest) = codec::decode_sharded_manifest(&bytes) else {
+        return 0;
+    };
+    if manifest.validate_integrity().is_err() {
+        return 0;
+    }
+    let referenced: std::collections::BTreeSet<&str> = manifest
+        .shards
+        .iter()
+        .filter_map(|shard| shard.file.split('/').next())
+        .collect();
+    let Ok(entries) = std::fs::read_dir(sharded_dir) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with('g') || referenced.contains(name) {
+            continue;
+        }
+        let path = entry.path();
+        let Ok(meta) = std::fs::symlink_metadata(&path) else {
+            continue;
+        };
+        if !meta.file_type().is_dir() {
+            continue;
+        }
+        let old_enough = meta
+            .modified()
+            .ok()
+            .and_then(|modified| now.duration_since(modified).ok())
+            .is_some_and(|age| age >= grace);
+        if old_enough && std::fs::remove_dir_all(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 fn remove_replaced_generation_files(
@@ -398,16 +702,59 @@ fn remove_replaced_generation_files(
 ) {
     let retained_prefix = format!("g{retained_publication_id}/");
     for shard in &previous.shards {
-        if shard.file.starts_with(&retained_prefix) {
+        // Only generation files are ours to delete; a listed manifest path is hostile.
+        let in_generation_dir = shard
+            .file
+            .split_once('/')
+            .is_some_and(|(dir, rest)| dir.starts_with('g') && !rest.is_empty());
+        if shard.file.starts_with(&retained_prefix) || !in_generation_dir {
             continue;
         }
         if let Ok(path) = resolve_sharded_cache_file(sharded_dir, &shard.file) {
+            if !has_no_symlinked_ancestor(sharded_dir, &path) {
+                continue;
+            }
             let _ = std::fs::remove_file(&path);
             if let Some(parent) = path.parent().filter(|parent| *parent != sharded_dir) {
                 let _ = std::fs::remove_dir(parent);
             }
         }
     }
+}
+
+/// True when `root` and no directory between it and `path` (exclusive) is a
+/// symlink, so a delete through `path` cannot leave the cache. An unreadable
+/// component counts as unsafe: cleanup is best effort, so it skips.
+fn has_no_symlinked_ancestor(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    // The entry directory itself must be a real directory, or every descendant
+    // check below would run inside the symlink target.
+    match std::fs::symlink_metadata(root) {
+        Ok(meta) if meta.file_type().is_dir() => {}
+        _ => return false,
+    }
+    let mut current = root.to_path_buf();
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
+        // Defense in depth: the caller resolves the path, but a `..` or root
+        // component must never reach a delete, including as the last component.
+        if !matches!(component, Component::Normal(_)) {
+            return false;
+        }
+        // The last component is the file itself; `remove_file` unlinks a symlink
+        // there without following it.
+        if components.peek().is_none() {
+            return true;
+        }
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_dir() => {}
+            _ => return false,
+        }
+    }
+    true
 }
 
 struct UnpublishedGeneration {
@@ -552,7 +899,6 @@ fn stream_checksummed_cache_file<T: Serialize>(
     })
 }
 
-#[cfg(test)]
 fn checksummed_pretty_len<T: Serialize>(body: &T) -> Result<usize, String> {
     let mut counter = DiscardingCounter::default();
     encode_checksummed_pretty_to_writer(body, placeholder_payload_digest(), &mut counter)?;
@@ -560,25 +906,31 @@ fn checksummed_pretty_len<T: Serialize>(body: &T) -> Result<usize, String> {
 }
 
 fn checksummed_pretty_fits<T: Serialize>(body: &T, ceiling: usize) -> Result<bool, String> {
+    Ok(checksummed_pretty_len_within(body, ceiling)?.is_some())
+}
+
+/// The encoded length, or `None` once it passes `ceiling`, where encoding stops.
+fn checksummed_pretty_len_within<T: Serialize>(
+    body: &T,
+    ceiling: usize,
+) -> Result<Option<usize>, String> {
     let mut counter = CeilingCounter {
         count: 0,
         ceiling,
         exceeded: false,
     };
     match encode_checksummed_pretty_to_writer(body, placeholder_payload_digest(), &mut counter) {
-        Ok(()) => Ok(true),
-        Err(_) if counter.exceeded => Ok(false),
+        Ok(()) => Ok(Some(counter.count)),
+        Err(_) if counter.exceeded => Ok(None),
         Err(err) => Err(err),
     }
 }
 
-#[cfg(test)]
 #[derive(Default)]
 struct DiscardingCounter {
     count: usize,
 }
 
-#[cfg(test)]
 impl Write for DiscardingCounter {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         self.count = self.count.saturating_add(buf.len());
@@ -893,6 +1245,7 @@ mod tests {
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "discriminate"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         ClassifiedSeam {
@@ -1034,6 +1387,164 @@ mod tests {
         assert_eq!(
             checksummed_pretty_len(&borrowed_shard)?,
             owned_shard_bytes.len()
+        );
+        Ok(())
+    }
+
+    /// The probing search alone, as the planner ran before #5364: the oracle
+    /// for the modeled plan.
+    fn probed_shard_ranges(
+        key: &RepoSeamCacheKey,
+        seams: &[ClassifiedSeam],
+        record_limit: usize,
+        byte_ceiling: usize,
+    ) -> Result<Option<Vec<Range<usize>>>, String> {
+        let mut ranges = Vec::new();
+        let mut start = 0;
+        while start < seams.len() {
+            let max_end = start.saturating_add(record_limit).min(seams.len());
+            let Some(end) = largest_fitting_end(
+                key,
+                seams,
+                start,
+                max_end,
+                ranges.len(),
+                seams.len(),
+                byte_ceiling,
+            )?
+            else {
+                return Ok(None);
+            };
+            ranges.push(start..end);
+            start = end;
+        }
+        Ok(Some(ranges))
+    }
+
+    /// Seams whose related tests repeat across seams, sometimes within one
+    /// seam, and whose tables pass 10 and 100 entries, so later indices are
+    /// wider than earlier ones. Some seams have no related tests.
+    fn mixed_seams(count: usize, distinct_tests: usize, seed: u64) -> Vec<ClassifiedSeam> {
+        use super::super::related_test_table::tests::{related, seam};
+        use crate::domain::RelationReason;
+        let mut state = seed;
+        let mut next = move |bound: usize| {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            usize::try_from(state >> 33).unwrap_or(0) % bound.max(1)
+        };
+        (0..count)
+            .map(|line| {
+                let tests = (0..next(6))
+                    .map(|_| {
+                        let name = format!("t{}", next(distinct_tests));
+                        let reason = if next(4) == 0 {
+                            RelationReason::DirectOwnerCall
+                        } else {
+                            RelationReason::SameModule
+                        };
+                        related(&name, reason)
+                    })
+                    .collect();
+                let mut classified = seam(line.saturating_add(1), tests);
+                classified.evidence.reach =
+                    StageEvidence::new(StageState::Yes, Confidence::High, "r".repeat(next(400)));
+                classified
+            })
+            .collect()
+    }
+
+    #[test]
+    fn modeled_shard_plan_matches_the_probing_search() -> Result<(), String> {
+        let key = empty_key();
+        PLAN_MODEL_MISMATCHES.with(|count| count.set(0));
+        let mut sharded_plans = 0;
+        for (count, distinct, seed) in [(40, 3, 1), (180, 150, 2), (300, 40, 3), (64, 1, 4)] {
+            let seams = mixed_seams(count, distinct, seed);
+            let whole = checksummed_pretty_len(&borrowed_shard_envelope(&key, 0, count, &seams))?;
+            for divisor in [2, 3, 7, 20] {
+                let ceiling = whole / divisor;
+                for record_limit in [5, 64, count] {
+                    let modeled = match plan_shard_ranges(&key, &seams, record_limit, ceiling)? {
+                        ShardPlan::Ranges(ranges) => Some(ranges),
+                        ShardPlan::Oversized { .. } => None,
+                    };
+                    let probed = probed_shard_ranges(&key, &seams, record_limit, ceiling)?;
+                    assert_eq!(
+                        modeled, probed,
+                        "{count} seams, {distinct} tests, ceiling {ceiling}, limit {record_limit}"
+                    );
+                    if modeled.as_ref().is_some_and(|ranges| ranges.len() > 1) {
+                        sharded_plans += 1;
+                    }
+                }
+            }
+        }
+        assert!(sharded_plans > 20, "only {sharded_plans} plans sharded");
+        assert_eq!(
+            PLAN_MODEL_MISMATCHES.with(std::cell::Cell::get),
+            0,
+            "the size model disagreed with a real encode"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn a_shard_that_lands_exactly_on_the_ceiling_keeps_its_last_seam() -> Result<(), String> {
+        let key = empty_key();
+        let seams = mixed_seams(30, 10, 6);
+        for k in [2, 5, 11] {
+            let prefix = seams
+                .get(..k)
+                .ok_or("the corpus is shorter than the prefix")?;
+            let exact = checksummed_pretty_len(&borrowed_shard_envelope(&key, 0, 30, prefix))?;
+            for (ceiling, first_end) in [(exact, k), (exact.saturating_sub(1), k - 1)] {
+                PLAN_MODEL_MISMATCHES.with(|count| count.set(0));
+                let ShardPlan::Ranges(ranges) = plan_shard_ranges(&key, &seams, 30, ceiling)?
+                else {
+                    return Err(format!("ceiling {ceiling} should shard"));
+                };
+                assert_eq!(
+                    ranges.first(),
+                    Some(&(0..first_end)),
+                    "prefix {k}, ceiling {ceiling}"
+                );
+                assert_eq!(
+                    Some(ranges),
+                    probed_shard_ranges(&key, &seams, 30, ceiling)?
+                );
+                assert_eq!(
+                    PLAN_MODEL_MISMATCHES.with(std::cell::Cell::get),
+                    0,
+                    "prefix {k}, ceiling {ceiling}: the size model disagreed with a real encode"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_wrong_size_model_falls_back_to_the_probing_search() -> Result<(), String> {
+        let key = empty_key();
+        let seams = mixed_seams(60, 20, 5);
+        let whole = checksummed_pretty_len(&borrowed_shard_envelope(&key, 0, 60, &seams))?;
+        let ceiling = whole / 4;
+        let ShardPlan::Ranges(expected) = plan_shard_ranges(&key, &seams, 60, ceiling)? else {
+            return Err("the inventory should shard".to_string());
+        };
+        PLAN_MODEL_MISMATCHES.with(|count| count.set(0));
+        MODEL_SKEW.with(|skew| skew.set(1));
+        let skewed = plan_shard_ranges(&key, &seams, 60, ceiling);
+        MODEL_SKEW.with(|skew| skew.set(0));
+        let ShardPlan::Ranges(skewed) = skewed? else {
+            return Err("the skewed plan should still shard".to_string());
+        };
+        assert_eq!(skewed, expected);
+        assert_eq!(
+            PLAN_MODEL_MISMATCHES.with(std::cell::Cell::get),
+            expected.len(),
+            "every shard's modeled length must be checked and rejected"
         );
         Ok(())
     }
@@ -1451,6 +1962,472 @@ mod tests {
             body, b"newer-single",
             "an unchanged leftover sharded manifest must not block restoring the parked single entry"
         );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    fn sharded_fixture(
+        label: &str,
+        count: usize,
+    ) -> Result<
+        (
+            PathBuf,
+            RepoSeamFactCache,
+            RepoSeamCacheKey,
+            Vec<ClassifiedSeam>,
+        ),
+        String,
+    > {
+        let dir = isolated_dir(label);
+        ignore_remove_dir_all(&dir);
+        let cache = RepoSeamFactCache::at_dir(dir.clone());
+        let key = empty_key();
+        let seams: Vec<_> = (0..count)
+            .map(|i| classified_with_pad(&format!("{label}-{i}")))
+            .collect();
+        Ok((dir, cache, key, seams))
+    }
+
+    #[test]
+    fn oversized_record_skip_names_the_record_its_size_and_the_remedy() -> Result<(), String> {
+        let (dir, cache, key, _) = sharded_fixture("oversized-advisory", 0)?;
+        let seams = vec![classified_with_pad(&"x".repeat(4096))];
+        let status = cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 8, 1_024)?;
+        assert_eq!(
+            status.label,
+            "skipped_oversized_record_index_0_ceiling_1024"
+        );
+        let advisory = status
+            .advisory
+            .ok_or_else(|| "an oversized skip must carry an advisory".to_string())?;
+        assert!(advisory.contains("seam record 0"), "{advisory}");
+        assert!(
+            advisory.contains("above the 1024-byte ceiling"),
+            "{advisory}"
+        );
+        assert!(
+            advisory.contains("RIPR_CLASSIFIED_SEAM_CACHE_SHARD_BYTES"),
+            "{advisory}"
+        );
+        let size: usize = advisory
+            .split("encodes to ")
+            .nth(1)
+            .and_then(|rest| rest.split(' ').next())
+            .and_then(|n| n.parse().ok())
+            .ok_or_else(|| format!("advisory must state the encoded size: {advisory}"))?;
+        assert!(
+            size > 4096,
+            "size must be the real encoded record size: {size}"
+        );
+        // The advised value must actually restore warm runs.
+        let retried = cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 8, size)?;
+        assert!(retried.advisory.is_none(), "{retried:?}");
+        round_trip(&cache, &key, &seams)?;
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn oversized_metadata_skip_names_metadata_not_a_record() -> Result<(), String> {
+        let (dir, cache, key, _) = sharded_fixture("oversized-metadata", 0)?;
+        let status =
+            cache.store_classified_seams_with_record_and_byte_limits(&key, &[], None, 8, 8)?;
+        assert_eq!(status.label, "skipped_oversized_metadata_ceiling_8");
+        let advisory = status
+            .advisory
+            .ok_or_else(|| "an oversized skip must carry an advisory".to_string())?;
+        assert!(advisory.contains("the cache metadata"), "{advisory}");
+        assert!(!advisory.contains("seam record"), "{advisory}");
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn older_single_entry_restored_after_a_sharded_commit_never_hides_it() -> Result<(), String> {
+        let (dir, cache, key, seams) = sharded_fixture("late-restore", 6)?;
+        let older = vec![classified_with_pad("older-single")];
+        cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &older, None, 8, 1_000_000)?;
+        let stale_single = std::fs::read(cache.entry_path(&key)).map_err(|err| err.to_string())?;
+        let entry = cache.entry_path(&key);
+        // A competing writer rolls back after this commit and restores its parked entry.
+        after_next_manifest_commit(Box::new(move || {
+            if let Ok(file) = std::fs::File::create(&entry) {
+                use std::io::Write;
+                let mut file = file;
+                let _ = file.write_all(&stale_single);
+                let _ = file.set_modified(
+                    std::time::SystemTime::now() - std::time::Duration::from_hours(1),
+                );
+            }
+        }));
+        cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        assert!(
+            !cache.entry_path(&key).exists(),
+            "a restored older single entry must not survive a newer sharded commit"
+        );
+        round_trip(&cache, &key, &seams)?;
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn publication_skips_while_another_writer_holds_the_key_lock() -> Result<(), String> {
+        let (dir, cache, key, seams) = sharded_fixture("publication-lock", 6)?;
+        LOCK_WAIT_OVERRIDE.with(|wait| wait.set(Some(std::time::Duration::from_millis(50))));
+        std::fs::create_dir_all(&cache.sharded_dir).map_err(|err| err.to_string())?;
+        let stem = key.filename();
+        let stem = stem.strip_suffix(".json").unwrap_or(stem.as_str());
+        let lock_path = cache.sharded_dir.join(format!("{stem}.lock"));
+        let holder = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|err| err.to_string())?;
+        holder
+            .try_lock()
+            .map_err(|err| format!("fixture must take the key lock: {err:?}"))?;
+        let busy = cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        assert_eq!(busy.label, PUBLICATION_BUSY_LABEL);
+        assert!(
+            busy.advisory.is_none(),
+            "another writer is publishing this key, so no next step is owed"
+        );
+        assert!(
+            !cache.sharded_manifest_path(&key).exists() && !cache.entry_path(&key).exists(),
+            "a skipped publication must not mutate the cache"
+        );
+        holder.unlock().map_err(|err| err.to_string())?;
+        // The lock file stays behind; an unlocked leftover must not block a writer.
+        assert!(lock_path.exists());
+        let stored = cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        assert_ne!(stored.label, PUBLICATION_BUSY_LABEL);
+        round_trip(&cache, &key, &seams)?;
+        LOCK_WAIT_OVERRIDE.with(|wait| wait.set(None));
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn publication_skips_a_competing_publisher_inside_the_commit_window() -> Result<(), String> {
+        // Writer B publishes the same key from inside writer A's sharded
+        // commit window (via the after-commit hook, while A still holds
+        // the key lock): B must see Busy and mutate nothing, and A must
+        // complete with its own seams intact.
+        let (dir, cache, key, seams) = sharded_fixture("publication-race", 6)?;
+        LOCK_WAIT_OVERRIDE.with(|wait| wait.set(Some(std::time::Duration::from_millis(50))));
+        let cache = std::rc::Rc::new(cache);
+        let cache_b = std::rc::Rc::clone(&cache);
+        let key_b = key.clone();
+        let rival = vec![classified_with_pad("rival-publisher")];
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let seen_b = std::rc::Rc::clone(&seen);
+        after_next_manifest_commit(Box::new(move || {
+            let status = cache_b.store_classified_seams_with_record_and_byte_limits(
+                &key_b, &rival, None, 2, 1_000_000,
+            );
+            *seen_b.borrow_mut() = Some(status.map(|status| status.label));
+        }));
+        let stored = cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        assert_ne!(stored.label, PUBLICATION_BUSY_LABEL);
+        let seen_label = seen.borrow().clone().transpose()?;
+        assert_eq!(
+            seen_label.as_deref(),
+            Some(PUBLICATION_BUSY_LABEL),
+            "the competing publish must have run inside the commit window and seen Busy"
+        );
+        round_trip(&cache, &key, &seams)?;
+        LOCK_WAIT_OVERRIDE.with(|wait| wait.set(None));
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn single_entry_published_after_a_sharded_commit_is_kept() -> Result<(), String> {
+        let (dir, cache, key, seams) = sharded_fixture("newer-single", 6)?;
+        let newer = vec![classified_with_pad("newer-single")];
+        let entry = cache.entry_path(&key);
+        let bytes = {
+            let scratch = RepoSeamFactCache::at_dir(isolated_dir("newer-single-scratch"));
+            scratch.store_classified_seams_with_record_and_byte_limits(
+                &key, &newer, None, 8, 1_000_000,
+            )?;
+            std::fs::read(scratch.entry_path(&key)).map_err(|err| err.to_string())?
+        };
+        // A competing single publication lands after this writer's manifest commit.
+        after_next_manifest_commit(Box::new(move || {
+            if let Some(parent) = entry.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            let _ = std::fs::write(&entry, bytes);
+            // The kernel's coarse file clock can land just behind `started_at`; pin it.
+            if let Ok(file) = std::fs::OpenOptions::new().write(true).open(&entry) {
+                let _ = file
+                    .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5));
+            }
+        }));
+        cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        assert!(
+            cache.entry_path(&key).exists(),
+            "a single entry published after the commit is newer and must stay"
+        );
+        round_trip(&cache, &key, &newer)?;
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn orphan_generations_are_swept_only_when_old_and_unreferenced() -> Result<(), String> {
+        let (dir, cache, key, seams) = sharded_fixture("orphan-sweep", 6)?;
+        cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        let sharded = cache.sharded_entry_dir(&key);
+        let live = listed_generation_dirs(&cache, &key)?;
+        assert_eq!(
+            live.len(),
+            1,
+            "fixture must publish one generation: {live:?}"
+        );
+        // A writer terminated mid-write leaves a generation no manifest names.
+        let orphan = sharded.join("g99-1-0");
+        std::fs::create_dir_all(&orphan).map_err(|err| err.to_string())?;
+        std::fs::write(orphan.join("shard-00000.json"), b"partial")
+            .map_err(|err| err.to_string())?;
+        let now = std::time::SystemTime::now();
+        assert_eq!(
+            sweep_orphan_generations(&sharded, now, ORPHAN_GENERATION_GRACE),
+            0,
+            "a young orphan may belong to a writer still running"
+        );
+        assert!(orphan.exists());
+        let later = now + std::time::Duration::from_hours(2);
+        assert_eq!(
+            sweep_orphan_generations(&sharded, later, ORPHAN_GENERATION_GRACE),
+            1
+        );
+        assert!(
+            !orphan.exists(),
+            "an old unreferenced generation must be removed"
+        );
+        assert_eq!(listed_generation_dirs(&cache, &key)?, live);
+        round_trip(&cache, &key, &seams)?;
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn sharded_publication_sweeps_an_old_orphan_generation() -> Result<(), String> {
+        let (dir, cache, key, seams) = sharded_fixture("orphan-wired", 6)?;
+        cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        let sharded = cache.sharded_entry_dir(&key);
+        let old = sharded.join("g98-1-0");
+        let young = sharded.join("g99-1-0");
+        for orphan in [&old, &young] {
+            std::fs::create_dir_all(orphan).map_err(|err| err.to_string())?;
+            std::fs::write(orphan.join("shard-00000.json"), b"partial")
+                .map_err(|err| err.to_string())?;
+        }
+        std::fs::File::open(&old)
+            .and_then(|file| {
+                file.set_modified(std::time::SystemTime::now() - std::time::Duration::from_hours(2))
+            })
+            .map_err(|err| err.to_string())?;
+        let next: Vec<_> = (0..6)
+            .map(|i| classified_with_pad(&format!("wired-{i}")))
+            .collect();
+        cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &next, None, 2, 1_000_000)?;
+        assert!(!old.exists(), "publication must sweep an old orphan");
+        assert!(young.exists(), "a young orphan may belong to a live writer");
+        round_trip(&cache, &key, &next)?;
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn orphan_sweep_does_nothing_without_a_valid_manifest() -> Result<(), String> {
+        let (dir, cache, key, seams) = sharded_fixture("orphan-sweep-doubt", 6)?;
+        cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        let sharded = cache.sharded_entry_dir(&key);
+        let orphan = sharded.join("g99-1-0");
+        std::fs::create_dir_all(&orphan).map_err(|err| err.to_string())?;
+        let manifest = sharded.join("manifest.json");
+        let mut bytes = std::fs::read(&manifest).map_err(|err| err.to_string())?;
+        bytes.push(b'x');
+        std::fs::write(&manifest, bytes).map_err(|err| err.to_string())?;
+        let later = std::time::SystemTime::now() + std::time::Duration::from_hours(2);
+        assert_eq!(
+            sweep_orphan_generations(&sharded, later, std::time::Duration::ZERO),
+            0
+        );
+        assert!(
+            orphan.exists(),
+            "an unreadable manifest must keep every generation"
+        );
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn replaced_generation_cleanup_only_deletes_files_inside_generation_directories()
+    -> Result<(), String> {
+        let dir = isolated_dir("cleanup-scope");
+        ignore_remove_dir_all(&dir);
+        let generation = dir.join("g1-1-0");
+        std::fs::create_dir_all(&generation).map_err(|err| err.to_string())?;
+        std::fs::write(generation.join("shard-00000.json"), b"old")
+            .map_err(|err| err.to_string())?;
+        for sibling in ["gfoo.json", "manifest.json"] {
+            std::fs::write(dir.join(sibling), b"keep").map_err(|err| err.to_string())?;
+        }
+        let refs = ["g1-1-0/shard-00000.json", "gfoo.json", "manifest.json"]
+            .iter()
+            .enumerate()
+            .map(|(index, file)| ShardedCacheShardRef {
+                index,
+                file: (*file).to_string(),
+                seams: 1,
+            })
+            .collect();
+        let previous = ShardedCacheManifest::new(empty_key(), 3, 3, refs, None, Vec::new());
+        remove_replaced_generation_files(&dir, &previous, "2-2-0");
+        assert!(
+            !generation.join("shard-00000.json").exists(),
+            "a replaced generation file is removed"
+        );
+        for sibling in ["gfoo.json", "manifest.json"] {
+            assert!(
+                dir.join(sibling).exists(),
+                "{sibling} is outside any g*/ directory"
+            );
+        }
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_generation_cleanup_does_not_follow_a_symlinked_generation_directory()
+    -> Result<(), String> {
+        let dir = isolated_dir("cleanup-symlink");
+        ignore_remove_dir_all(&dir);
+        let outside = isolated_dir("cleanup-symlink-outside");
+        ignore_remove_dir_all(&outside);
+        let real = dir.join("g1-1-0");
+        std::fs::create_dir_all(&real).map_err(|err| err.to_string())?;
+        std::fs::write(real.join("shard-00000.json"), b"old").map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|err| err.to_string())?;
+        std::fs::write(outside.join("victim.json"), b"must survive")
+            .map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&outside, dir.join("g2-2-0")).map_err(|err| err.to_string())?;
+        let refs = ["g1-1-0/shard-00000.json", "g2-2-0/victim.json"]
+            .iter()
+            .enumerate()
+            .map(|(index, file)| ShardedCacheShardRef {
+                index,
+                file: (*file).to_string(),
+                seams: 1,
+            })
+            .collect();
+        let previous = ShardedCacheManifest::new(empty_key(), 2, 2, refs, None, Vec::new());
+        remove_replaced_generation_files(&dir, &previous, "3-3-0");
+        assert!(
+            !real.join("shard-00000.json").exists(),
+            "a file in a real generation directory is still removed"
+        );
+        assert!(
+            outside.join("victim.json").exists(),
+            "a file reached through a symlinked generation directory must survive"
+        );
+        ignore_remove_dir_all(&dir);
+        ignore_remove_dir_all(&outside);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_generation_cleanup_does_not_follow_a_symlinked_entry_directory()
+    -> Result<(), String> {
+        let base = isolated_dir("cleanup-symlink-root");
+        ignore_remove_dir_all(&base);
+        let outside = base.join("outside");
+        std::fs::create_dir_all(outside.join("g1-1-0")).map_err(|err| err.to_string())?;
+        std::fs::write(outside.join("g1-1-0/victim.json"), b"must survive")
+            .map_err(|err| err.to_string())?;
+        let entry = base.join("entry");
+        std::os::unix::fs::symlink(&outside, &entry).map_err(|err| err.to_string())?;
+        let refs = vec![ShardedCacheShardRef {
+            index: 0,
+            file: "g1-1-0/victim.json".to_string(),
+            seams: 1,
+        }];
+        let previous = ShardedCacheManifest::new(empty_key(), 2, 1, refs, None, Vec::new());
+        remove_replaced_generation_files(&entry, &previous, "3-3-0");
+        assert!(
+            outside.join("g1-1-0/victim.json").exists(),
+            "a symlinked entry directory must not be a delete root"
+        );
+        ignore_remove_dir_all(&base);
+        Ok(())
+    }
+
+    #[test]
+    fn symlink_guard_rejects_parent_and_root_components() {
+        let root = Path::new("/cache/sharded");
+        assert!(!has_no_symlinked_ancestor(root, &root.join("g1/../x.json")));
+        assert!(!has_no_symlinked_ancestor(root, &root.join("g1/..")));
+        assert!(!has_no_symlinked_ancestor(
+            root,
+            Path::new("/elsewhere/x.json")
+        ));
+    }
+
+    #[test]
+    fn tampered_previous_manifest_never_deletes_the_live_manifest() -> Result<(), String> {
+        let (dir, cache, key, seams) = sharded_fixture("tampered-manifest", 6)?;
+        cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        let manifest = cache.sharded_manifest_path(&key);
+        let text = std::fs::read_to_string(&manifest).map_err(|err| err.to_string())?;
+        let marker = "shard-00000.json";
+        let start = text
+            .find(marker)
+            .and_then(|end| text[..end].rfind('"'))
+            .ok_or_else(|| "fixture manifest must list a first shard".to_string())?;
+        let end = text.find(marker).map_or(start, |at| at + marker.len());
+        // A path inside a `g*/` directory passes the deletion-scope guard, so only
+        // the integrity check on the previous manifest can protect this file.
+        let victim = cache
+            .sharded_entry_dir(&key)
+            .join("gzz")
+            .join("victim.json");
+        std::fs::create_dir_all(victim.parent().ok_or("victim parent")?)
+            .map_err(|err| err.to_string())?;
+        std::fs::write(&victim, b"must survive").map_err(|err| err.to_string())?;
+        let tampered = format!("{}\"gzz/victim.json{}", &text[..start], &text[end..]);
+        std::fs::write(&manifest, tampered).map_err(|err| err.to_string())?;
+        let next: Vec<_> = (0..6)
+            .map(|i| classified_with_pad(&format!("after-tamper-{i}")))
+            .collect();
+        cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &next, None, 2, 1_000_000)?;
+        assert!(manifest.exists(), "the new manifest must survive");
+        assert!(
+            victim.exists(),
+            "a file named only by a tampered previous manifest must not be deleted"
+        );
+        round_trip(&cache, &key, &next)?;
         ignore_remove_dir_all(&dir);
         Ok(())
     }

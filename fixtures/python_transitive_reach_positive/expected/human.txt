@@ -26,8 +26,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/python_transitive_reach_positive/input --diff fixtures/python_transitive_reach_positive/diff.patch --mode fast probe:src_table.py:python_preview:6c6d80d7
-  ripr context --root fixtures/python_transitive_reach_positive/input --diff fixtures/python_transitive_reach_positive/diff.patch --mode fast --at probe:src_table.py:python_preview:6c6d80d7
+  ripr explain --root <cwd>/fixtures/python_transitive_reach_positive/input --diff <cwd>/fixtures/python_transitive_reach_positive/diff.patch --mode fast probe:src_table.py:python_preview:6c6d80d7
+  ripr context --root <cwd>/fixtures/python_transitive_reach_positive/input --diff <cwd>/fixtures/python_transitive_reach_positive/diff.patch --mode fast --at probe:src_table.py:python_preview:6c6d80d7
 
 More:
   Full evidence: rerun with --format human-full

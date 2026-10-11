@@ -1,0 +1,22 @@
+{
+  "case_id": "vitest-orders-audit-logger-called-with",
+  "subject_id": "authored-ts-vitest-orders",
+  "origin": "authored",
+  "anchor": "src/audit.ts:2",
+  "behavior_family": "side_effect",
+  "test_shape": "vitest_vi_fn_tohavebeencalledwith",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

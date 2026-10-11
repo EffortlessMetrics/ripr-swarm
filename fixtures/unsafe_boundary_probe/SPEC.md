@@ -21,7 +21,9 @@ cargo xtask fixtures unsafe_boundary_probe
 Three findings render. The interior boundary line projects the parser-backed
 `unsafe_boundary` probe (expression `unsafe block`, family `static_unknown`)
 deduplicated by the boundary's byte identity; the changed binding outside the
-boundary keeps its ordinary `field_construction` probe; and `read_first`'s
+boundary keeps its ordinary probe, `static_unknown` with the changed `let`
+statement as its expression (a `let` type annotation is not a struct-literal
+field, RIPR-SPEC-0228 / #6676); and `read_first`'s
 changed statement renders its own ordinary `static_unknown` finding whose
 expression is the changed statement — not an `unsafe block` boundary
 projection — so a boundary probe wrongly attached to the shared edge line
@@ -35,6 +37,8 @@ would flip the recorded expression and fail the golden.
 - Attach an `unsafe block` boundary projection to lines outside a boundary or
   to a boundary edge line shared with outside code.
 - Suppress the ordinary probes beside the boundary context: the golden pins
-  the `field_construction` probe for the changed binding.
+  the changed binding's own `static_unknown` probe (expression
+  `let mut total: u8 = 1;`), never an `unsafe block` projection, and never a
+  `field_construction` probe for a `let` annotation.
 - Change the output schema; the probe id and family strings are the already
   registered `static_unknown` values.

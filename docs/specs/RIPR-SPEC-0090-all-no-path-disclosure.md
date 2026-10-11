@@ -110,6 +110,14 @@ Where N is the total no-path/unknown count
 M is `summary.changed_rust_files` when non-zero, and T is the count of unique
 related tests by file, name, and line across all findings.
 
+When bounded packing dropped related-test rows from any finding, the retained
+unique count is a lower bound and each finding's packed row count counts
+matched related-test rows, not tests. The scope then reads "at least T statically
+linked related test(s) across R matched related-test row(s)", where R is the
+packed row count for a single finding and "at least" the larger of the packed
+row count and T across several findings, so the note never presents a row
+count as a test count.
+
 If `summary.changed_rust_files` is zero, the scope sentence omits the changed
 Rust file count rather than fabricating a file count:
 
@@ -140,6 +148,22 @@ bump. The JSON `check.json` shape is unchanged.
 - Changing the per-finding output for no-path/unknown findings.
 - Runtime mutation testing, coverage measurement, or correctness claims.
 - Aggregating findings into a single entry or removing per-finding detail.
+
+### Unlinked Python tests (#6340)
+
+When the disclosure fires and a Rust file produced a `no_static_path`
+finding, the note appends one sentence if the repository also contains Python
+test files (`test_*.py`, `*_test.py`, or any `.py` under `tests/` or `test/`,
+excluding virtualenvs, tool caches and the default ignored directories). It
+names the count (`at least N` when the bounded walk hit its entry cap or could not read a directory), one
+example path, and says ripr does not link Python tests to Rust changes. It makes
+no claim about whether those tests would catch the change. The walk runs only for human-rendered output (`human`, `human-full`) and only
+when the note can fire: no finding is exposed, weakly exposed or reachable, every
+finding is a no-path or unknown class, and no finding carries `reach: yes`. JSON
+output, LSP refreshes and other machine consumers never walk. The count is not part
+of any serialized output; verdicts, classes, JSON, SARIF and gate output are
+unchanged. A walk that finds no Python test adds nothing, and a cancelled walk
+fails the analysis rather than yielding a partial count.
 
 ## Required Evidence
 

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 97eae71..9ac3455 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -71,7 +71,7 @@ pub fn default_port(scheme: &str) -> Option<u16> {
+         "http" => Some(80),
+         "https" => Some(443),
+         "ftp" => Some(21),
+-        "gopher" => Some(70),
++        "gopher" => Some(0x46),
+         _ => None,
+     }
+ }

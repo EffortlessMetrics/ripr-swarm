@@ -1,0 +1,52 @@
+{
+  "case_id": "grid-match-exact",
+  "subject_id": "authored-grid-match",
+  "diff": "cases/grid-match-exact.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "exact_pin_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(delete the match arm)",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "tests::canada_is_zone_two",
+        "equivalence_review": "not equivalent: canada_is_zone_two fails on it"
+      },
+      {
+        "replacement": "\"MX\" | \"CA\" => 1,",
+        "mutated_line": "\"MX\" | \"CA\" => 1,",
+        "outcome": "tests_failed",
+        "failing_test": "tests::canada_is_zone_two",
+        "equivalence_review": "not equivalent: canada_is_zone_two fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: match arm (pattern alternatives reordered or literal respelled; mutants delete the arm or change its value) x exact_pin_assert. The test pins the result at concrete inputs with assert/assert_eq; 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0229, RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

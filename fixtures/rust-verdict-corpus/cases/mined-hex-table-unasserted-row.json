@@ -1,0 +1,51 @@
+{
+  "case_id": "mined-hex-table-unasserted-row",
+  "subject_id": "authored-mined-wire",
+  "diff": "cases/mined-hex-table-unasserted-row.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 57
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "static_lookup_table_row_unasserted",
+  "hard_case": "Negative twin of mined-hex-table-tested-row: the same table, but no test renders a nibble from 10 to 15. In httparse, dropping `~` from TOKEN_MAP is likewise missed by every test.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "b'A', b'b', b'c', b'd', b'e', b'f',",
+        "mutated_line": "b'A', b'b', b'c', b'd', b'e', b'f',",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: nibble 10 renders as 'A'"
+      },
+      {
+        "replacement": "b'a', b'b', b'c', b'd', b'e', b'e',",
+        "mutated_line": "b'a', b'b', b'c', b'd', b'e', b'e',",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: nibble 15 renders as 'e'"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only test renders nibbles 0 to 9, so no test reads the a-f row and both mutants pass.",
+  "labeling_observation": {
+    "ripr_commit": "da6a44d",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

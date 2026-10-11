@@ -1,0 +1,13 @@
+pub fn dampen(base: u32) -> u32 {
+    base * 21
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dampen_cancels_out() {
+        assert_eq!(dampen(2) * 0, 0);
+    }
+}

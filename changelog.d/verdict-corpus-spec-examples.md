@@ -5,4 +5,4 @@
   gaps (4 are the literal shapes the spec credits), and a tautological
   `retries: c.retries` reads `exposed`. Result-side oracles: an
   `is_err`/`is_ok` boundary test and the rule 3b `?` side flip read as gaps. Field writes:
-  9 of 10 read `static_unknown`. Corpus 2026-10-04.7, 147 cases.
+  9 of 10 read `static_unknown`. Corpus 2026-10-04.7, 147 cases (#6338).
