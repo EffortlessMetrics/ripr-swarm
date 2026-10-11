@@ -36,6 +36,9 @@ mod python_source_admission;
 mod receipt_recovery_root;
 #[path = "cli_smoke/related_test_count.rs"]
 mod related_test_count;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/repair_orderfile.rs"]
+mod repair_orderfile;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
 #[cfg(unix)]
