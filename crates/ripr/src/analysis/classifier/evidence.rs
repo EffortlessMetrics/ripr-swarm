@@ -63,6 +63,20 @@ pub(in crate::analysis) struct AssertionRefusalNote {
     pub(in crate::analysis) is_analyzer_limit: bool,
 }
 
+fn return_ledger_limit(
+    owner: &str,
+    ledger: &crate::analysis::classify::ReturnedLedger,
+) -> StageEvidence {
+    StageEvidence::new(
+        StageState::Unknown,
+        Confidence::Low,
+        format!(
+            "Propagation unknown: `{owner}` parameter `{}` mutably borrows local `{}` from `{}`, which returns that same local ledger; transfer to the exact indexed field observer is unestablished (returned_mutable_ledger_observer_unresolved)",
+            ledger.parameter, ledger.local, ledger.caller.0
+        ),
+    )
+}
+
 impl ClassifiedProbeEvidence {
     pub(in crate::analysis) fn gather(context: &ProbeContext<'_>, reveal_expression: &str) -> Self {
         let test_summaries = context.related_test_summaries();
@@ -75,8 +89,37 @@ impl ClassifiedProbeEvidence {
                 .is_none_or(|owner| owner_may_be_reached_unseen(owner, context.index))
         });
         let flow_sinks = local_flow_sinks(context.probe, context.owner_fn);
+        let returned_ledger = match (context.owner_fn, context.helper_chain.as_ref()) {
+            (Some(owner), Some(chain)) if helper_only_reach(&context.related_tests) => {
+                context.index.files().get(&owner.file).and_then(|file| {
+                    crate::analysis::classify::returned_ledger(
+                        owner,
+                        context.probe,
+                        chain,
+                        &file.source,
+                    )
+                })
+            }
+            _ => None,
+        };
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
-            .map(PropagationWitnessDiagnostic::from_witness);
+            .or_else(|| {
+                returned_ledger.as_ref().and_then(|_| {
+                    crate::analysis::classify::returned_ledger_witness(context.probe, &flow_sinks)
+                })
+            })
+            .map(|mut witness| {
+                if let (Some(owner), Some(ledger)) = (context.owner_fn, returned_ledger.as_ref()) {
+                    crate::analysis::classify::retain_returned_ledger(
+                        &mut witness,
+                        &owner.id,
+                        &ledger.parameter,
+                        &ledger.caller,
+                        &ledger.local,
+                    );
+                }
+                PropagationWitnessDiagnostic::from_witness(witness)
+            });
         let gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
@@ -225,19 +268,29 @@ impl ClassifiedProbeEvidence {
                         !chain_forwards_to_observed_hops(&owner.name, chain, &context.related_tests)
                     } =>
             {
-                let stop = if effect_family {
-                    "a caller that does not pass the changed state through from its own parameter"
+                if let Some(ledger) = returned_ledger.as_ref().filter(|ledger| {
+                    crate::analysis::classify::returned_ledger_caller_is_observed(
+                        ledger,
+                        chain,
+                        &context.related_tests,
+                    )
+                }) {
+                    return_ledger_limit(&owner.name, ledger)
                 } else {
-                    "a caller that does not forward its result unchanged"
-                };
-                StageEvidence::new(
-                    StageState::Unknown,
-                    Confidence::Low,
-                    format!(
-                        "Propagation unknown: the related tests reach `{}` only through {stop} ({HELPER_RESULT_NOT_FORWARDED})",
-                        owner.name
-                    ),
-                )
+                    let stop = if effect_family {
+                        "a caller that does not pass the changed state through from its own parameter"
+                    } else {
+                        "a caller that does not forward its result unchanged"
+                    };
+                    StageEvidence::new(
+                        StageState::Unknown,
+                        Confidence::Low,
+                        format!(
+                            "Propagation unknown: the related tests reach `{}` only through {stop} ({HELPER_RESULT_NOT_FORWARDED})",
+                            owner.name
+                        ),
+                    )
+                }
             }
             _ => propagate,
         };

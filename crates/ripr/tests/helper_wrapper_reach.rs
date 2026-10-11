@@ -88,6 +88,67 @@ fn discriminate_summary(finding: &Value) -> &str {
         .unwrap_or_default()
 }
 
+fn returned_ledger_source(outer_body: &str, observed: &str, expected: usize) -> String {
+    format!(
+        "struct Error {{ detail: String }}\nfn record(errors: &mut Vec<Error>) {{\n    errors.push(Error {{\n        detail: format!(\"diagnostic\"),\n    }});\n}}\nfn collect() -> Vec<Error> {{ let mut errors = Vec::new(); record(&mut errors); errors }}\nfn outer() -> Vec<Error> {{ {outer_body} }}\n#[test]\nfn observes() {{ assert_eq!({observed}().len(), {expected}); }}\n"
+    )
+}
+
+const RETURNED_LEDGER_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -3,3 +3,3 @@\n     errors.push(Error {\n-        detail: format!(\"old diagnostic\"),\n+        detail: format!(\"diagnostic\"),\n     });\n";
+
+#[test]
+fn returned_ledger_higher_observed_routes_keep_forwarding_limitation() -> Result<(), String> {
+    // Neither a dropped result nor a syntactically forwarded higher result is
+    // covered by the first-hop ledger proof. Do not invent an upper identity.
+    for (outer, expected) in [("let _ = collect(); Vec::new()", 0), ("collect()", 1)] {
+        let finding = family_finding(
+            &returned_ledger_source(outer, "outer", expected),
+            RETURNED_LEDGER_DIFF,
+            "field_construction",
+        )?;
+        assert_eq!(
+            finding["classification"], "propagation_unknown",
+            "{finding}"
+        );
+        let summary = finding["ripr"]["propagate"]["summary"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(summary.contains("helper_result_not_forwarded"), "{finding}");
+        assert!(
+            !summary.contains("returned_mutable_ledger_observer_unresolved"),
+            "{finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn returned_ledger_direct_observation_keeps_partial_identity() -> Result<(), String> {
+    for outer in ["collect()", "let _ = collect(); Vec::new()"] {
+        let finding = family_finding(
+            &returned_ledger_source(outer, "collect", 1),
+            RETURNED_LEDGER_DIFF,
+            "field_construction",
+        )?;
+        assert_eq!(
+            finding["classification"], "propagation_unknown",
+            "{finding}"
+        );
+        let summary = finding["ripr"]["propagate"]["summary"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            summary.contains("returned_mutable_ledger_observer_unresolved"),
+            "{finding}"
+        );
+        assert!(
+            !summary.contains("helper_result_not_forwarded"),
+            "{finding}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn forwarding_wrapper_relates_and_pairs_its_boundary_pin() -> Result<(), String> {
     let finding = predicate_finding(&bulk_source(FORWARDING, BOUNDARY_TESTS), BULK_DIFF)?;
