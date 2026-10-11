@@ -121,7 +121,9 @@ can only hint that a caller "may lead here" without changing anything.
   Caller and owner must share source/type scope and the declared return type
   must match the parameter's pointee, without generic substitutions. Both
   declarations must bind uniquely to the indexed source and be synchronous;
-  fact body fragments alone omit qualifiers and cannot establish execution. Rebound,
+  fact body fragments alone omit qualifiers and cannot establish execution. Caller
+  imports, callee-named value/item declarations, and opaque item/statement macro
+  expansions refuse the unqualified helper edge. Rebound,
   shadowed, discarded, sibling-field, transformed-return and later-write cases
   refuse this transfer. This is **partial identity evidence**, not an exception
   to the complete propagation refusal above. A pushed element remains a

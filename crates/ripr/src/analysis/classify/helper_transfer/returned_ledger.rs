@@ -116,30 +116,16 @@ pub(crate) fn returned_ledger(
         return None;
     }
     let body = caller_fn.body()?;
-    // A block import (including a glob) can shadow this unqualified callee.
-    // This bounded transfer does not resolve imports, so refuse them.
-    if body
-        .syntax()
-        .descendants()
-        .any(|node| ast::Use::can_cast(node.kind()))
-        || body
-            .syntax()
-            .descendants()
-            .filter_map(ast::Fn::cast)
-            .any(|nested| {
-                nested
-                    .name()
-                    .is_some_and(|name| name.text() == owner.name.as_str())
+    // Imports, value/item declarations and opaque statement expansions can
+    // replace the unqualified callee. Refuse before establishing an owner edge.
+    if body.syntax().descendants().any(|node| {
+        ast::Use::can_cast(node.kind())
+            || ast::Name::cast(node.clone()).is_some_and(|name| {
+                name.text().trim_start_matches("r#") == owner.name.trim_start_matches("r#")
             })
-        || body
-            .syntax()
-            .descendants()
-            .filter_map(ast::IdentPat::cast)
-            .any(|pat| {
-                pat.name()
-                    .is_some_and(|name| name.text() == owner.name.as_str())
-            })
-    {
+            || ast::MacroCall::cast(node)
+                .is_some_and(|call| crate::analysis::syntax::macro_call_is_statement(&call))
+    }) {
         return None;
     }
     if body.tail_expr()?.syntax().text() != local {
@@ -394,6 +380,32 @@ mod tests {
             )
         );
         Ok(())
+    }
+
+    #[test]
+    fn callee_item_and_macro_shadows_have_no_transfer() {
+        for declaration in [
+            "const record: fn(&mut Vec<PolicyError>) = |_| {};",
+            "static record: fn(&mut Vec<PolicyError>) = |_| {};",
+            "const r#record: fn(&mut Vec<PolicyError>) = |_| {};",
+            "macro_rules! bind { ($name:ident) => { let $name: fn(&mut Vec<PolicyError>) = |_| {}; }; } bind!(record);",
+            "macro_rules! bind { ($name:ident) => { static $name: fn(&mut Vec<PolicyError>) = |_| {}; }; } bind!{record}",
+            "opaque!();",
+        ] {
+            let caller = format!(
+                "fn collect() -> Vec<PolicyError> {{ {declaration} let mut errors = Vec::new(); record(&mut errors); errors }}"
+            );
+            let (owner, probe, chain) = route(&caller);
+            assert!(
+                returned_ledger(&owner, &probe, &chain).is_none(),
+                "{declaration}"
+            );
+        }
+        // Formatting inside an expression does not add a caller-scope binding.
+        let (owner, probe, chain) = route(
+            "fn collect() -> Vec<PolicyError> { let _message = format!(\"diagnostic\"); let mut errors = Vec::new(); record(&mut errors); errors }",
+        );
+        assert!(returned_ledger(&owner, &probe, &chain).is_some());
     }
 
     #[test]

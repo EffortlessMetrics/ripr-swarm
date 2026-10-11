@@ -2341,13 +2341,7 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
                 .path()
                 .map(|path| path.syntax().text().to_string())
                 .unwrap_or_default();
-            let statement = call.syntax().parent().is_none_or(|parent| {
-                !ast::MacroExpr::can_cast(parent.kind())
-                    || parent.parent().is_none_or(|grandparent| {
-                        ast::ExprStmt::can_cast(grandparent.kind())
-                            || ast::StmtList::can_cast(grandparent.kind())
-                    })
-            });
+            let statement = macro_call_is_statement(&call);
             if name == "include" || statement && !STATEMENT_MACROS.contains(&name.as_str()) {
                 return None;
             }
@@ -2415,6 +2409,18 @@ fn std_thread_item(path: &ast::PathExpr, function: &ast::Fn) -> Option<String> {
         }
     }
     (imported || !needs_import).then(|| item.to_string())
+}
+
+/// Item/statement macro expansions may introduce caller-visible bindings.
+/// Expression expansions remain confined to their expression's scope.
+pub(crate) fn macro_call_is_statement(call: &ast::MacroCall) -> bool {
+    call.syntax().parent().is_none_or(|parent| {
+        !ast::MacroExpr::can_cast(parent.kind())
+            || parent.parent().is_none_or(|grandparent| {
+                ast::ExprStmt::can_cast(grandparent.kind())
+                    || ast::StmtList::can_cast(grandparent.kind())
+            })
+    })
 }
 
 /// Standard macros that may stand as a statement without bringing an item
