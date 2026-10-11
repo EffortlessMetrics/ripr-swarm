@@ -44,12 +44,18 @@ fn other_foreach_forms_collect_nothing() {
         "  [150].map((v) => { expect(price(v)).toBe(140); });",
         "  [150].forEach(async (v) => { await tick(); expect(price(v)).toBe(140); });",
         "  [150].forEach((v) => { return load(v).then((r) => { expect(r).toBe(2); }); });",
+        "  [150].forEach(function* (v) { expect(price(v)).toBe(140); });",
     ] {
         let source = format!(
             "import {{ price }} from \"../src/price\";\ntest(\"price\", () => {{\n{body}\n}});\n"
         );
         assert_eq!(observed("tests/price.test.ts", &source), vec![], "{body}");
     }
+    let many = vec!["150"; 65].join(", ");
+    let source = format!(
+        "import {{ price }} from \"../src/price\";\ntest(\"price\", () => {{\n  [{many}].forEach((v) => {{ expect(price(v)).toBe(140); }});\n}});\n"
+    );
+    assert_eq!(observed("tests/price.test.ts", &source), vec![]);
 }
 
 #[test]
@@ -85,6 +91,9 @@ fn floating_or_unsafe_then_collects_nothing() {
         "  return total([10, 20]).then((sum) => {\n    expect(sum).toBe(30);\n  }, () => {});",
         "  return total([10, 20]).then(() => 30).then((sum) => {\n    expect(sum).toBe(30);\n  });",
         "  return total(items).then((sum) => {\n    const items = [];\n    expect(sum).toBe(30);\n  });",
+        "  return total(\n    [10, 20],\n  ).then((sum) => {\n    expect(sum).toBe(30);\n  });",
+        "  return total([10, 20]).catch(() => 30).then((sum) => {\n    expect(sum).toBe(30);\n  });",
+        "  return total([10, 20]).then (() => 30).then((sum) => {\n    expect(sum).toBe(30);\n  });",
     ] {
         let source = format!("test(\"total\", () => {{\n{body}\n}});\n");
         assert_eq!(observed("tests/order.test.ts", &source), vec![], "{body}");
@@ -111,6 +120,10 @@ fn awaited_subtest_on_the_receiver_is_collected() {
         "  await t.test(\"five off\", { skip: true }, () => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
         "  await t.test(\"five off\", { todo: true }, () => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
         "  await other.test(\"five off\", () => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
+        "  await t.test(() => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
+        "  await t.test(name, () => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
+        "  await t.test({ timeout: 50 }, () => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
+        "  await t.test(\"five off\", { ...opts }, () => {\n    assert.strictEqual(memberPrice(30), 25);\n  });",
     ] {
         let source = format!(
             "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport {{ memberPrice }} from \"../src/member\";\ntest(\"member\", async (t) => {{\n{body}\n}});\n"
@@ -171,6 +184,34 @@ fn copy_for_identity_change_needs_an_identity_matcher() -> Result<(), String> {
     let member = "import { ready } from \"../src/settings\";\ntest(\"ready\", () => {\n  const cfg = { ok: true };\n  expect(ready(cfg).ok).toBe(true);\n  expect(ready(cfg)).toEqual(cfg);\n});\n";
     let finding = settings_finding("identity-copy-member", member, "  return cfg;")?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+
+    // Nor does a member or call read the observed text hides behind
+    // brackets or optional chaining, or a pin on a literal (a branch).
+    for (label, pin) in [
+        (
+            "identity-copy-index",
+            "expect(ready(cfg)[\"ok\"]).toBe(true);",
+        ),
+        (
+            "identity-copy-optional",
+            "expect(ready(cfg)?.ok).toBe(true);",
+        ),
+        ("identity-copy-literal", "expect(ready(cfg)).toBe(null);"),
+        (
+            "identity-copy-compound",
+            "expect(ready(cfg) && ready(cfg)).toBe(cfg);",
+        ),
+        (
+            "identity-copy-string-paren",
+            "expect(ready(\"(\") + f(\")\")).toBe(cfg);",
+        ),
+    ] {
+        let test = format!(
+            "import {{ ready }} from \"../src/settings\";\ntest(\"ready\", () => {{\n  const cfg = {{ ok: true }};\n  {pin}\n  expect(ready(cfg)).toEqual(cfg);\n}});\n"
+        );
+        let finding = settings_finding(label, &test, "  return cfg;")?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{pin}");
+    }
 
     // A change that is not copy-only keeps the ladder verdict.
     let finding = settings_finding(

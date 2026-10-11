@@ -401,7 +401,11 @@ fn collect_nested_callback_assertions(
             };
             // A multi-line receiver, or an earlier `.then` step that may
             // replace the owner's value, is not substituted.
-            if receiver.contains(['\n', '\r']) || receiver.contains(".then(") {
+            if receiver.contains(['\n', '\r'])
+                || [".then", ".catch", ".finally"]
+                    .iter()
+                    .any(|step| receiver.contains(step))
+            {
                 return;
             }
             if let Some(body) = callback_body_text(callback, text)
@@ -436,7 +440,8 @@ fn collect_nested_callback_assertions(
             };
             // A name, then at most an options object that does not skip or
             // mark the subtest todo (a todo failure does not fail the parent).
-            if leading.len() > 2
+            if leading.is_empty()
+                || leading.len() > 2
                 || !leading
                     .iter()
                     .enumerate()
@@ -494,7 +499,7 @@ fn subtest_leading_argument_runs(argument: &oxc_ast::ast::Argument<'_>, first: b
         oxc_ast::ast::Argument::StringLiteral(_) | oxc_ast::ast::Argument::TemplateLiteral(_) => {
             first
         }
-        oxc_ast::ast::Argument::ObjectExpression(object) => {
+        oxc_ast::ast::Argument::ObjectExpression(object) if !first => {
             object.properties.iter().all(|property| match property {
                 oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property) => !matches!(
                     property.key.static_name().as_deref(),

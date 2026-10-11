@@ -4255,19 +4255,42 @@ pub(crate) fn ts_identity_copy_subject(old_line: &str, new_line: &str) -> Option
 /// matcher (fail closed).
 fn ts_test_pins_identity(test: &TypeScriptTest, owner: &str) -> bool {
     test.assertions.iter().any(|assertion| {
+        // A literal expected value (`toBe(null)`) pins a branch, never the
+        // returned object's identity.
         matches!(assertion.matcher.as_str(), "toBe" | "strictEqual" | "is")
+            && assertion.has_dynamic_matcher_arg
             && assertion
                 .observed_expression
                 .as_deref()
-                .is_some_and(|observed| {
-                    let observed = observed.trim();
-                    observed
-                        .strip_prefix(owner)
-                        .is_some_and(|rest| rest.starts_with('('))
-                        && observed.ends_with(')')
-                        && !observed.contains(").")
-                })
+                .and_then(|observed| observed.trim().strip_prefix(owner))
+                .is_some_and(ts_is_one_argument_list)
     })
+}
+
+/// `true` when `rest` is exactly one balanced `(...)`, so the observed
+/// expression is the owner call itself and not a member or call on it
+/// (`owner(x)["k"]`, `owner(x)?.has(k)`, `owner(x) .name`).
+fn ts_is_one_argument_list(rest: &str) -> bool {
+    if !rest.starts_with('(') {
+        return false;
+    }
+    // Blank literals first so a `)` inside a string (`owner("(") + f(")")`)
+    // cannot balance the count.
+    let masked = ts_mask_literals_and_comments(rest);
+    let mut depth = 0usize;
+    for (index, c) in masked.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return index + 1 == masked.len();
+                }
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 /// The finding-wide ladder facts rule 8 re-reads per test file: the parsed

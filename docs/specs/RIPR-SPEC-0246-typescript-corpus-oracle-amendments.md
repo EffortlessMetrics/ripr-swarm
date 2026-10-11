@@ -75,9 +75,11 @@ the change alters the identity of the returned object. For a plain object
 or array a structural matcher (`toEqual`, `toStrictEqual`, `deepEqual`,
 `deepStrictEqual`, chai `eql` or `deep.equal`) passes on both versions.
 An `exposed` ladder result then reads `weakly_exposed` unless a related
-test asserts on the owner call's result itself (`expect(owner(...))`, not
-a member of it or a local) with `toBe`, `strictEqual` or AVA `t.is`,
-which compare objects by identity. chai `equal` does not count, because
+test asserts on the owner call's result itself (`expect(owner(...))` with
+nothing after the argument list, not a member, index or optional chain on
+it, nor a local) with `toBe`, `strictEqual` or AVA `t.is`, which compare
+objects by identity, against a non-literal expected value. A literal such
+as `toBe(null)` pins a branch, not the returned object. chai `equal` does not count, because
 the recorded matcher does not carry the `.deep` flag (fail closed). Any
 other change on the line, such as an added or overridden field, is not
 copy-only and keeps the ladder result. Rule 1 runs before RIPR-SPEC-0243
@@ -99,14 +101,16 @@ assertions are collected as the test's own:
   exactly as a rule 11 table row. A `return` inside the body does not
   reach the runner, because `forEach` discards it.
 - `return p.then((v) => body)` or `await p.then((v) => body)`, with a
-  single argument, a receiver `p` on one line that contains no `.then(`,
+  single argument, a receiver `p` on one line that contains no `.then`,
+  `.catch` or `.finally` step,
   and a body that declares none of the names `p` reads: the runner waits
   for the returned or awaited promise, so the body runs before the test
   settles. With one plain parameter the body reads with `v` replaced by
   `(p)`, the expression whose resolved value the assertion observes. With
   no parameter the body is collected as written.
 - `await t.test(name, [options,] (t2) => body)`, where `t` is the test
-  callback's own receiver, `name` is a string or template literal and
+  callback's own receiver, `name` is present and is a string or template
+  literal, and
   `options` is an object literal with no `skip` or `todo` key and no
   spread: node:test runs an awaited subtest inside its parent, and a
   failing subtest fails the parent. The body is collected with `t2` as its
@@ -120,7 +124,8 @@ rejection handler (it can swallow the change), a chained or multi-line
 receiver, or a body that re-declares a receiver name; a subtest that is
 not awaited, not on the test's receiver, or skipped or todo (a todo
 failure does not fail the parent); and any body the rule 11 row reader
-refuses.
+refuses. A subtest with no name, a non-literal name, or options without a
+name is also refused.
 
 ### Decisions
 
@@ -190,7 +195,8 @@ and the rejected alternative.
    or `[150].forEach((v) => { return load(v).then(...); })`: no assertion.
 10. `return cfg` becomes `return { ...cfg }`, test
     `expect(ready(cfg).ok).toBe(true); expect(ready(cfg)).toEqual(cfg)`:
-    `weakly_exposed`.
+    `weakly_exposed`. So too with `ready(cfg)["ok"]`, `ready(cfg)?.ok`, or
+    `expect(ready(cfg)).toBe(null)` in place of the member pin.
 
 ## Test Mapping
 
