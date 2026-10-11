@@ -1461,6 +1461,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/agent/loop_commands.rs",
+  "crates/ripr/src/git.rs",
   "crates/ripr/src/agent/provenance.rs",
   "crates/ripr/src/agent/artifact.rs",
   "crates/ripr/src/output/markdown.rs",

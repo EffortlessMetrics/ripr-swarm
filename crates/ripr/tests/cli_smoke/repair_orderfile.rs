@@ -2,8 +2,7 @@
 use super::{
     REPAIR_ROUTE_BOUNDARY_TEST, REPAIR_ROUTE_SEAM, REPAIR_ROUTE_WEAK_TEST, assert_success,
     ignore_remove_dir_all, repair_route_after, repair_route_attempt_id, repair_route_before,
-    repair_route_commit, repair_route_manifest, repair_route_workspace, run_command, run_git,
-    run_ripr,
+    repair_route_manifest, repair_route_workspace, run_command, run_git, run_ripr,
 };
 use std::path::PathBuf;
 
@@ -65,7 +64,24 @@ fn repair_completes_despite_user_orderfile() -> TestResult {
             )?;
             if committed {
                 run_git(root, &["add", "tests/pricing.rs"])?;
-                repair_route_commit(root, "focused boundary test")?;
+                // Fixture setup must commit even when ordinary Git would
+                // read the hostile orderfile. This per-command override does
+                // not change the repository config inherited by ripr.
+                run_git(
+                    root,
+                    &[
+                        "-c",
+                        "diff.orderFile=/dev/null",
+                        "-c",
+                        "user.name=RIPR test",
+                        "-c",
+                        "user.email=ripr@example.invalid",
+                        "commit",
+                        "--no-gpg-sign",
+                        "-qm",
+                        "focused boundary test",
+                    ],
+                )?;
             }
             let after = repair_route_after(root, &attempt);
             assert_success(&after);
@@ -173,14 +189,17 @@ fn dirty_production_requires_recovery_despite_user_orderfile() -> TestResult {
         );
         // Admission allocates an operational .before.lock, even on refusal;
         // that store directory is not a published repair attempt.
-        for entry in std::fs::read_dir(root.join("target/ripr/repair-attempts"))? {
-            assert!(
-                !entry?
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with("repair-attempt-"),
-                "{mode}: refused premise published an attempt"
-            );
+        let attempts = root.join("target/ripr/repair-attempts");
+        if attempts.exists() {
+            for entry in std::fs::read_dir(attempts)? {
+                assert!(
+                    !entry?
+                        .file_name()
+                        .to_string_lossy()
+                        .starts_with("repair-attempt-"),
+                    "{mode}: refused premise published an attempt"
+                );
+            }
         }
         assert!(!root.join("target/ripr/workflow").exists());
     }
