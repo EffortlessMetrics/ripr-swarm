@@ -1,7 +1,11 @@
 #[path = "source_identity.rs"]
 mod source_identity;
 fn main() -> Result<(), String> {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    // Cargo can reuse this compiled script in another worktree. Its synthesized
+    // manifest environment must be read when the script runs, not baked in.
+    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
+        .ok_or_else(|| "policy build environment is missing CARGO_MANIFEST_DIR".to_string())?;
+    let root = std::path::PathBuf::from(manifest_dir).join("../..");
     for path in [
         "Cargo.toml",
         "Cargo.lock",
