@@ -4155,6 +4155,38 @@ suite('Extension Smoke', () => {
     await vscode.commands.executeCommand('ripr.copyTargetedTestBrief');
   });
 
+  test('diagnostic-scoped copy commands guide palette invocations instead of claiming missing evidence (#7341)', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.copySuggestedAssertion();
+      await context.controller.copyTargetedTestBrief();
+      await context.controller.openRelatedTest();
+
+      assert.strictEqual(context.infoMessages.length, 3);
+      for (const message of context.infoMessages) {
+        assert.ok(
+          message.includes('use Quick Fix (Ctrl+. or Cmd+.)'),
+          `palette invocation should point at Quick Fix, got: ${message}`
+        );
+        assert.ok(
+          !message.includes('No ripr'),
+          `palette invocation must not claim missing evidence: ${message}`
+        );
+      }
+
+      context.infoMessages.length = 0;
+      // A supplied-but-empty target is a real evaluated miss and keeps the
+      // original missing-evidence message (#7341).
+      await context.controller.copySuggestedAssertion({ assertion: '' });
+      assert.strictEqual(
+        context.infoMessages[0],
+        'No ripr suggested assertion is available for this diagnostic.'
+      );
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('copyAgentLoopCommand copies command text', async () => {
     const relativePath = 'src/agent-loop-command.rs';
     const uri = workspaceFileUri(relativePath);
