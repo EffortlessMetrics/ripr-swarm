@@ -375,6 +375,7 @@ export interface RiprClientRuntime {
   workspaceFolders(): readonly vscode.WorkspaceFolder[];
   workspaceFolderForUri?(uri: vscode.Uri): vscode.WorkspaceFolder | undefined;
   openTextDocument?(uri: vscode.Uri): Thenable<vscode.TextDocument>;
+  restartWorkspaceRoot?(): Promise<void>;
   showQuickPick<T extends vscode.QuickPickItem>(
     items: T[],
     options?: vscode.QuickPickOptions
@@ -418,6 +419,7 @@ const defaultRuntime: RiprClientRuntime = {
   workspaceRootState: currentWorkspaceRootState,
   workspaceFolders: () => vscode.workspace.workspaceFolders ?? [],
   showQuickPick: (items, options) => vscode.window.showQuickPick(items, options),
+  restartWorkspaceRoot: async () => { await vscode.commands.executeCommand('ripr.restartServer'); },
   resolveServer,
   createLanguageClient: (serverOptions, clientOptions, experimentalCapabilities) =>
     experimentalCapabilities
@@ -832,7 +834,7 @@ export class RiprClientController {
     if (folders.length === 1) {
       if (this.workspaceRootSelectionSuppressed) {
         this.allowWorkspaceRootRecovery();
-        await this.restart();
+        await this.restartSelectedWorkspaceRoot();
         return;
       }
       await this.runtime.showInformationMessage(
@@ -850,6 +852,15 @@ export class RiprClientController {
     this.selectedWorkspaceRoot = selected.root;
     this.allowWorkspaceRootRecovery();
     this.output.appendLine(`ripr workspace root selected for this session: ${selected.root}`);
+    await this.restartSelectedWorkspaceRoot();
+  }
+
+  private async restartSelectedWorkspaceRoot(): Promise<void> {
+    if (this.runtime.restartWorkspaceRoot) {
+      await this.runtime.restartWorkspaceRoot();
+      return;
+    }
+    // Legacy injected controller runtimes have no extension lifecycle owner.
     await this.restart();
   }
 
