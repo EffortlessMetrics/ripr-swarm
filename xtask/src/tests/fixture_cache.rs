@@ -2,12 +2,16 @@
 
 use super::*;
 use std::collections::BTreeMap;
+#[cfg(target_os = "linux")]
+use std::os::fd::AsRawFd;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(target_os = "linux")]
 use std::time::Instant;
 
 const SOURCE: &str = "fixtures/all_no_path_disclosure";
 const CHILD_PATH: &str = "RIPR_XTASK_FIXTURE_TEST_PATH";
+#[cfg(target_os = "linux")]
+const CHILD_PID: &str = "RIPR_XTASK_FIXTURE_TEST_PID";
 const CHILD: &str = "tests::fixture_cache::fixture_cache_process_child";
 
 /// Acquire only fresh paths. The parent owns them until every child is reaped,
@@ -176,6 +180,12 @@ fn snapshot(path: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>, String> {
 fn child(case: &Case, timeout: Duration) -> Result<crate::run::TimedOutput, String> {
     let exe = std::env::current_exe().map_err(|e| e.to_string())?;
     let path = crate::normalize_path(&case.fixture);
+    #[cfg(not(target_os = "linux"))]
+    let envs = [(CHILD_PATH, path.as_str())];
+    #[cfg(target_os = "linux")]
+    let marker = crate::normalize_path(&child_pid_path(case)?);
+    #[cfg(target_os = "linux")]
+    let envs = [(CHILD_PATH, path.as_str()), (CHILD_PID, marker.as_str())];
     let result = crate::run::capture_output_measured(
         &exe.to_string_lossy(),
         &[
@@ -184,7 +194,7 @@ fn child(case: &Case, timeout: Duration) -> Result<crate::run::TimedOutput, Stri
             "--nocapture".to_string(),
         ],
         Some(&repo_root()?),
-        &[(CHILD_PATH, &path)],
+        &envs,
         timeout,
         "owned real fixture test process",
     )?;
@@ -216,6 +226,14 @@ fn fixture_cache_process_child() -> Result<(), String> {
     let Some(path) = std::env::var_os(CHILD_PATH) else {
         return Ok(());
     };
+    #[cfg(target_os = "linux")]
+    {
+        let marker =
+            PathBuf::from(std::env::var_os(CHILD_PID).ok_or("child needs owned PID marker")?);
+        let temporary = marker.with_extension("tmp");
+        fs::write(&temporary, std::process::id().to_string()).map_err(|e| e.to_string())?;
+        fs::rename(temporary, marker).map_err(|e| e.to_string())?;
+    }
     let fixture = PathBuf::from(path);
     let name = fixture
         .file_name()
@@ -249,6 +267,115 @@ fn fixture_cache_process_child() -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(target_os = "linux")]
+fn child_pid_path(case: &Case) -> Result<PathBuf, String> {
+    // Immutable acquisition root, not the runner path: the shared-path mutant
+    // must never publish its marker into the authored corpus.
+    case.owned
+        .first()
+        .map(|root| root.join("child.pid"))
+        .ok_or_else(|| "fixture process needs an acquired marker root".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn held_lock_key(lock: &fs::File) -> Result<String, String> {
+    let path = format!("/proc/self/fdinfo/{}", lock.as_raw_fd());
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("observe held native Cargo lock {path}: {error}"))?;
+    text.lines()
+        .find_map(|line| {
+            let fields: Vec<_> = line.split_ascii_whitespace().collect();
+            if fields.first() == Some(&"lock:")
+                && fields.get(2) == Some(&"FLOCK")
+                && fields.get(3) == Some(&"ADVISORY")
+                && fields.get(4) == Some(&"WRITE")
+            {
+                fields.get(6).map(|key| key.to_string())
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| format!("held Cargo FLOCK identity unavailable in {path}"))
+}
+
+#[cfg(target_os = "linux")]
+fn proc_waiter_gone(error: &std::io::Error) -> bool {
+    // Match run.rs's vanished-process handling: ESRCH is Linux error 3.
+    // Disappearance never contributes a successful waiter observation.
+    error.kind() == std::io::ErrorKind::NotFound || error.raw_os_error() == Some(3)
+}
+
+#[cfg(target_os = "linux")]
+fn owned_cargo_waiter(key: &str, marker: &Path) -> Result<bool, String> {
+    let pid = match fs::read_to_string(marker) {
+        Ok(text) => text
+            .trim()
+            .parse::<u32>()
+            .map_err(|error| format!("read owned child PID {}: {error}", marker.display()))?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!(
+                "read owned child PID {}: {error}",
+                marker.display()
+            ));
+        }
+    };
+    let locks = fs::read_to_string("/proc/locks")
+        .map_err(|error| format!("observe native Cargo waiters /proc/locks: {error}"))?;
+    for line in locks.lines() {
+        let fields: Vec<_> = line.split_ascii_whitespace().collect();
+        if fields.get(1) != Some(&"->")
+            || fields.get(2) != Some(&"FLOCK")
+            || fields.get(3) != Some(&"ADVISORY")
+            || fields.get(4) != Some(&"WRITE")
+            || fields.get(6) != Some(&key)
+        {
+            continue;
+        }
+        let waiter = fields
+            .get(5)
+            .ok_or("native waiter needs PID")?
+            .parse::<u32>()
+            .map_err(|error| format!("read native Cargo waiter PID: {error}"))?;
+        let stat_path = format!("/proc/{waiter}/stat");
+        let stat = match fs::read_to_string(&stat_path) {
+            Ok(stat) => stat,
+            Err(error) if proc_waiter_gone(&error) => continue,
+            Err(error) => return Err(format!("observe native Cargo waiter {stat_path}: {error}")),
+        };
+        let group = stat
+            .rsplit_once(')')
+            .and_then(|(_, rest)| rest.split_ascii_whitespace().nth(2))
+            .ok_or_else(|| format!("native waiter process group unavailable in {stat_path}"))?
+            .parse::<u32>()
+            .map_err(|error| format!("read native Cargo waiter group: {error}"))?;
+        // configure_timed_child_command makes the captured adapter its group
+        // leader. The runner's Cargo child inherits that owned group.
+        if group != pid {
+            continue;
+        }
+        let cmd_path = format!("/proc/{waiter}/cmdline");
+        let cmd = match fs::read(&cmd_path) {
+            Ok(cmd) => cmd,
+            Err(error) if proc_waiter_gone(&error) => continue,
+            Err(error) => return Err(format!("observe native Cargo command {cmd_path}: {error}")),
+        };
+        let mut args = cmd.split(|byte| *byte == 0).filter(|arg| !arg.is_empty());
+        let cargo = args
+            .next()
+            .and_then(|exe| exe.rsplit(|byte| *byte == b'/').next());
+        if cargo == Some(b"cargo".as_slice())
+            && args.next() == Some(b"build".as_slice())
+            && args.next() == Some(b"-p".as_slice())
+            && args.next() == Some(b"ripr".as_slice())
+            && args.next().is_none()
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 // Linux Cargo's artifact lock uses flock, as does File::lock. The ownership
 // repair and the two binding tests are platform independent; this specific
 // native contention discriminator is Linux evidence.
@@ -280,11 +407,22 @@ fn fixture_cache_processes_keep_owned_facts_and_outputs_during_cargo_contention(
             .map_err(|e| format!("open {}: {e}", lock_path.display()))?;
         lock.lock()
             .map_err(|e| format!("lock {}: {e}", lock_path.display()))?;
+        let key = held_lock_key(&lock)?;
+        let marker = child_pid_path(&b)?;
         let peer = scope.spawn(|| child(&b, crate::run::tool_build_timeout()?));
         let deadline = Instant::now() + Duration::from_secs(20);
-        while stale.exists() && !peer.is_finished() && Instant::now() < deadline {
+        let mut blocked = false;
+        while !peer.is_finished() && Instant::now() < deadline {
+            if !stale.exists() && owned_cargo_waiter(&key, &marker)? {
+                blocked = true;
+                break;
+            }
             std::thread::sleep(Duration::from_millis(10));
         }
+        assert!(
+            blocked,
+            "owned Cargo process must reach its native artifact FLOCK wait"
+        );
         assert!(
             !stale.exists(),
             "peer must reach the real runner's pre-build clear"
@@ -311,9 +449,8 @@ fn fixture_cache_processes_keep_owned_facts_and_outputs_during_cargo_contention(
             !b.output.join("check.json").exists(),
             "peer may not publish before the current-binary build"
         );
-        // Keep the native lock held long enough for Cargo to report its wait;
-        // its captured stderr below verifies the wait rather than assuming it.
-        std::thread::sleep(Duration::from_millis(200));
+        // The owned native Cargo waiter is observed before snapshots/unlock;
+        // captured stderr below independently retains Cargo's diagnostic.
         lock.unlock().map_err(|e| e.to_string())?;
         let result = peer
             .join()
