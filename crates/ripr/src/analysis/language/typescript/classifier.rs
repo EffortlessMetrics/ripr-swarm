@@ -510,10 +510,9 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
             Some(c) => "(,=:[!&|?{};+-*%<>~^".contains(c),
         }
     }
-    fn string_expected(prev: Option<char>, word: &str, word_after_dot: bool) -> bool {
-        // `.` covers a spread (`[...'p']`); no member name is a string.
+    fn string_expected(prev: Option<char>, word: &str, word_after_dot: bool, spread: bool) -> bool {
         operand_expected(prev, word, word_after_dot)
-            || prev == Some('.')
+            || spread
             || (prev.is_some_and(is_word_char)
                 && !word_after_dot
                 && STRING_OPERAND_KEYWORDS.contains(&word))
@@ -527,6 +526,9 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
     let mut word = String::new();
     let mut word_after_dot = false;
     let mut after_space = false;
+    // Consecutive `.` ending at `prev`: three is a spread (`[...'p']`), while
+    // a sentence's `.` in JSX text (`Hi. "Bye {p(1)}`) is not.
+    let mut dots = 0usize;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
@@ -544,7 +546,7 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                     // A string literal starts only where an operand is
                     // expected; after a word or `)` a quote is JSX text
                     // (`<b>Don't {p(1)}</b>`) and stays code.
-                    '\'' | '"' if string_expected(prev, &word, word_after_dot) => {
+                    '\'' | '"' if string_expected(prev, &word, word_after_dot, dots >= 3) => {
                         mode = Mode::Quote(c);
                         out.push(c);
                     }
@@ -600,6 +602,15 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                     word.push(c);
                 } else if !c.is_whitespace() {
                     word.clear();
+                }
+                if c == '.' {
+                    dots = if prev == Some('.') && !after_space {
+                        dots + 1
+                    } else {
+                        1
+                    };
+                } else if !c.is_whitespace() {
+                    dots = 0;
                 }
                 after_space = c.is_whitespace();
                 if !after_space {

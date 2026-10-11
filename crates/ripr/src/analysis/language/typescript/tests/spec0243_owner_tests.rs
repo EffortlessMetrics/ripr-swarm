@@ -420,6 +420,7 @@ fn literal_masking_reads_regex_literals_and_division() {
         // #7362: an apostrophe in JSX text is not a string.
         ("render(<b>Don't {p(1)}</b>)", "p"),
         ("render(<b>it's \"x\" {p(1)}</b>)", "p"),
+        ("render(<b>Hi. \"Bye {p(1)}</b>)", "p"),
     ] {
         let masked = ts_mask_literals_and_comments(text);
         assert!(
@@ -439,6 +440,7 @@ fn literal_masking_reads_regex_literals_and_division() {
         "import q from 'p'",
         "f(x) as 'p'",
         "[...'p']",
+        "[... 'p']",
         "(x): x is 'p'",
         "declare module 'p'",
         "class C { static 'p'() {} }",
