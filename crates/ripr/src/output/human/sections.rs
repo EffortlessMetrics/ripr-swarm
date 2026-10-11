@@ -124,12 +124,15 @@ pub(crate) fn render_finding_digest_with_config(
         out.push_str(&format!("  {label}: {}\n", one_line(missing)));
     }
     if let Some(test) = finding.related_tests.first() {
-        // #4320: the digest shows only the first related test; carry the total
-        // so the reader knows how much reaching-test evidence exists (the
-        // evidence window in the full form discloses the same bound).
+        // #4320: the digest shows only the first related-test row; carry the
+        // total so the reader knows how much reaching-test evidence exists
+        // (the evidence window in the full form discloses the same bound).
+        // #6807: that total is matched related-test rows (one assertion, plus
+        // examined-miss rows), not distinct tests. Name the unit so a packed
+        // finding with 81 rows cannot read as 81 tests.
         let related_tests_total = finding.related_tests_total();
         let label = if related_tests_total > 1 {
-            format!("Related test (1 of {related_tests_total})")
+            format!("Related test (1 of {related_tests_total} matched rows)")
         } else {
             "Related test".to_string()
         };

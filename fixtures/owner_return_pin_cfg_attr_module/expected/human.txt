@@ -19,7 +19,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:weight:return_value:return_value:input*3
   Changed behavior: input * 3
   Missing discriminator (1 of 2): No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)
-  Related test (1 of 2): tests/weight_tests.rs:2 inner (assertion not credited: ripr could not establish that it runs as the standard macro)
+  Related test (1 of 2 matched rows): tests/weight_tests.rs:2 inner (assertion not credited: ripr could not establish that it runs as the standard macro)
   Next step: ripr did not credit the `assert_eq!` in inner at tests/weight_tests.rs:2; the "not
     credited" note says why. That shape can keep the assertion from checking the change, so this is
     not a static limit: make the check run on every default test run, as the standard `assert_eq!`,

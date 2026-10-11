@@ -14,7 +14,7 @@ Start here:
   Static exposure: exposed (info, confidence 1.00)
   Canonical gap: gap:rust:src/lib.rs:try_get_int:return_value:return_value:ok_sign_extend_self.try_get_uint_nbytes_nbytes
   Changed behavior: Ok(sign_extend(self.try_get_uint(nbytes)?, nbytes))
-  Related test (1 of 3): tests/buf_tests.rs:11 try_get_int_reports_short_input
+  Related test (1 of 3 matched rows): tests/buf_tests.rs:11 try_get_int_reports_short_input
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
     - reach yes: Related tests appear to reach try_get_int: try_get_int_reports_short_input, try_get_int_sign_extends
     - infection yes: Reachable tests can plausibly activate this changed behavior
