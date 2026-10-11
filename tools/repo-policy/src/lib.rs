@@ -1,10 +1,11 @@
-//! Repository workflow and agent policy, independent of the RIPR product.
+//! Repository workflow, agent and executable-file policy, independent of the RIPR product.
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 pub mod agent_skills;
 pub mod ci_scratch;
+pub mod executable_files;
 mod identity;
 pub use identity::{enter_workspace_root, preflight, verify_executable_identity, verify_preflight};
 pub const ROUTED_RUST_REQUIRED_RESULT_NAME: &str = "Ripr Rust Small Result";
