@@ -257,10 +257,13 @@ pub(crate) fn ts_changed_value_is_observed(
                         workspace_root,
                     ));
                 }
-                // Rule 6: whole-identifier occurrences only.
+                // Rule 6: whole-identifier occurrences only. Owner names are
+                // identifiers, so a string literal or comment that spells one
+                // (`expect('p').toBe('p')`) is not a reference.
+                let observed_code = ts_mask_literals_and_comments(observed);
                 if owner_names
                     .iter()
-                    .any(|name| ts_references_identifier(observed, name))
+                    .any(|name| ts_references_identifier(&observed_code, name))
                 {
                     return true;
                 }
@@ -400,10 +403,12 @@ fn ts_observed_local_aliases_owner(
                     .unwrap_or(test_body.len());
                 let rhs = &test_body[rhs_start..rhs_end];
                 // RIPR-SPEC-0243 rules 6 and 7: the same whole-identifier
-                // test, over the owner name and its alias-rename locals.
+                // test, over the owner name and its alias-rename locals
+                // (in code, not in a string or comment).
+                let rhs_code = ts_mask_literals_and_comments(rhs);
                 if owner_names
                     .iter()
-                    .any(|name| ts_references_identifier(rhs, name))
+                    .any(|name| ts_references_identifier(&rhs_code, name))
                     || changed_tokens
                         .iter()
                         .any(|tok| ts_references_identifier(rhs, tok))
@@ -441,6 +446,113 @@ pub(crate) fn ts_references_identifier(text: &str, ident: &str) -> bool {
             .is_none_or(|c| !is_ident_char(c));
         before_ok && after_ok
     })
+}
+
+/// `text` with string-literal contents, template-literal text and comments
+/// replaced by spaces, so an identifier search sees only code. Template
+/// `${...}` interpolations stay code. Quotes and backticks are kept, so a
+/// masked literal still separates the identifiers around it.
+pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
+    #[derive(Clone, Copy)]
+    enum Mode {
+        Code,
+        Quote(char),
+        Template,
+        LineComment,
+        BlockComment,
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut mode = Mode::Code;
+    // One entry per open `${`: the brace depth inside that interpolation.
+    let mut interpolations: Vec<usize> = Vec::new();
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match mode {
+            Mode::Code => match c {
+                '\'' | '"' => {
+                    mode = Mode::Quote(c);
+                    out.push(c);
+                }
+                '`' => {
+                    mode = Mode::Template;
+                    out.push(c);
+                }
+                '/' if chars.peek() == Some(&'/') => {
+                    chars.next();
+                    mode = Mode::LineComment;
+                    out.push_str("  ");
+                }
+                '/' if chars.peek() == Some(&'*') => {
+                    chars.next();
+                    mode = Mode::BlockComment;
+                    out.push_str("  ");
+                }
+                '{' => {
+                    if let Some(depth) = interpolations.last_mut() {
+                        *depth += 1;
+                    }
+                    out.push(c);
+                }
+                '}' => {
+                    match interpolations.last_mut() {
+                        Some(0) => {
+                            interpolations.pop();
+                            mode = Mode::Template;
+                        }
+                        Some(depth) => *depth -= 1,
+                        None => {}
+                    }
+                    out.push(c);
+                }
+                _ => out.push(c),
+            },
+            Mode::Quote(quote) => {
+                if c == '\\' {
+                    chars.next();
+                    out.push_str("  ");
+                } else if c == quote || c == '\n' {
+                    mode = Mode::Code;
+                    out.push(c);
+                } else {
+                    out.push(' ');
+                }
+            }
+            Mode::Template => {
+                if c == '\\' {
+                    chars.next();
+                    out.push_str("  ");
+                } else if c == '`' {
+                    mode = Mode::Code;
+                    out.push(c);
+                } else if c == '$' && chars.peek() == Some(&'{') {
+                    chars.next();
+                    interpolations.push(0);
+                    mode = Mode::Code;
+                    out.push_str("${");
+                } else {
+                    out.push(' ');
+                }
+            }
+            Mode::LineComment => {
+                if c == '\n' {
+                    mode = Mode::Code;
+                    out.push(c);
+                } else {
+                    out.push(' ');
+                }
+            }
+            Mode::BlockComment => {
+                if c == '*' && chars.peek() == Some(&'/') {
+                    chars.next();
+                    mode = Mode::Code;
+                    out.push_str("  ");
+                } else {
+                    out.push(' ');
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Build the named limitation message for the RIPR-SPEC-0098 downgrade arm.

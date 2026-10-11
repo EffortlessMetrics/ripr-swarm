@@ -242,6 +242,51 @@ fn spec0243_rule8_reads_every_exposing_test_file() -> Result<(), String> {
     Ok(())
 }
 
+/// `price` calls `fee` from `./other` and `tax` from `./unrelated` on the
+/// changed line (line 6).
+const TWO_CALLEE_OWNER: &str = "import { fee } from \"./other\";\nimport { tax } from \"./unrelated\";\n\nexport function price(amount: number): number {\n  if (amount > 100) {\n    return fee(amount - 20) + tax(amount - 20);\n  }\n  return amount;\n}\n";
+const TWO_CALLEE_LINE: (usize, &str) = (6, "    return fee(amount - 20) + tax(amount - 20);");
+
+/// Rule 8 needs one callee mocked by every exposing file. When one file
+/// mocks `fee` and the other mocks `tax`, each file runs the other callee for
+/// real, so the class stays `exposed`. When both files mock `fee`, the
+/// finding reads `static_unknown`.
+#[test]
+fn spec0243_rule8_needs_the_same_callee_mocked_in_every_file() -> Result<(), String> {
+    let mocks_fee = test_file(
+        "jest.mock(\"../src/other\");",
+        "expect(price(150)).toBe(260);",
+    );
+    let mocks_tax = test_file(
+        "jest.mock(\"../src/unrelated\");",
+        "expect(price(150)).toBe(260);",
+    );
+    let finding = finding_for(&Subject {
+        label: "spec0243-rule8-different-callees",
+        owner: TWO_CALLEE_OWNER,
+        line: TWO_CALLEE_LINE,
+        tests: &[
+            ("tests/fee.test.ts", mocks_fee.clone()),
+            ("tests/tax.test.ts", mocks_tax),
+        ],
+    })?;
+    assert_eq!(finding.class, ExposureClass::Exposed);
+    assert!(finding.stop_reasons.is_empty());
+    assert_evidence_lacks(&finding, "typescript_mock_only_observer");
+
+    let finding = finding_for(&Subject {
+        label: "spec0243-rule8-same-callee",
+        owner: TWO_CALLEE_OWNER,
+        line: TWO_CALLEE_LINE,
+        tests: &[
+            ("tests/fee.test.ts", mocks_fee.clone()),
+            ("tests/fee2.test.ts", mocks_fee),
+        ],
+    })?;
+    assert_mocked_static_unknown(&finding);
+    Ok(())
+}
+
 /// Rule 8 moves only an `exposed` ladder result. An unresolved mock
 /// specifier already withholds the owner relation (it may mock the owner's
 /// own module, #4294), so the ladder never reaches `exposed` and rule 8 does

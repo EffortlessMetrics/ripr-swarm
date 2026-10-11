@@ -1040,9 +1040,9 @@ impl MockedChangedCallee {
     }
 }
 
-/// RIPR-SPEC-0243 rule 8: the first changed-line callee whose module each of
-/// `test_files` mocks, or `None` when some test file mocks no module the
-/// changed line calls (or `test_files` is empty).
+/// RIPR-SPEC-0243 rule 8: the first changed-line callee whose module every
+/// one of `test_files` mocks, or `None` when no single callee is mocked by
+/// every file (or `test_files` is empty).
 ///
 /// `test_files` holds one test per test file (`mocks_in_file` is per file).
 /// The changed line's callees are the owner file's imports it calls
@@ -1065,22 +1065,23 @@ pub(crate) fn changed_line_callee_mocked_by_every_file(
     if callees.is_empty() || test_files.is_empty() {
         return None;
     }
-    let mut first: Option<MockedChangedCallee> = None;
-    for test in test_files {
-        let matched = callees.iter().find_map(|import| {
-            test.mocks_in_file
-                .iter()
-                .find(|mock| {
-                    mock_names_import_module(
-                        mock,
-                        &test.file,
-                        import,
-                        &owner.file,
-                        alias_map,
-                        workspace_root,
-                    )
-                })
-                .map(|mock| MockedChangedCallee {
+    // One callee must be mocked by every file: when files mock different
+    // callees, each file still runs the others for real.
+    callees.iter().find_map(|import| {
+        let mut first: Option<MockedChangedCallee> = None;
+        for test in test_files {
+            let mock = test.mocks_in_file.iter().find(|mock| {
+                mock_names_import_module(
+                    mock,
+                    &test.file,
+                    import,
+                    &owner.file,
+                    alias_map,
+                    workspace_root,
+                )
+            })?;
+            if first.is_none() {
+                first = Some(MockedChangedCallee {
                     symbol: if import.namespace {
                         format!("{}.*", import.local)
                     } else {
@@ -1089,18 +1090,11 @@ pub(crate) fn changed_line_callee_mocked_by_every_file(
                     source: import.source.clone(),
                     mock: mock.clone(),
                     test_file: test.file.clone(),
-                })
-        });
-        match matched {
-            Some(callee) => {
-                if first.is_none() {
-                    first = Some(callee);
-                }
+                });
             }
-            None => return None,
         }
-    }
-    first
+        first
+    })
 }
 
 /// `true` when the mock specifier `mock` (written in `test_file`) may name

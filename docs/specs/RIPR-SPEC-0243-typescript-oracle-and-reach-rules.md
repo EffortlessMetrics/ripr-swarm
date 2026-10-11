@@ -478,8 +478,13 @@ calls written in the test file; config-level mocks (`setupFiles`,
 discriminate Unknown, `static_limit_kind: mocked_module`,
 `gap_state: static_limitation` and `typescript_mock_only_observer`. The
 mock specifier resolves from the test file and the import source from the
-owner file; both must name the same module. An unresolved mock specifier
-counts as a match (fail closed). Other ladder results are unchanged.
+owner file; both must name the same module, and the same callee's module
+must be mocked in every such file (files that mock different callees each
+run the other callee for real, so `exposed` stands). An unresolved mock
+specifier counts as a match, and so does an unresolved non-relative
+specifier whose last segment names the resolved module's file or
+directory (fail closed: its identity is unknown, and the cost is an
+abstention, not a credit). Other ladder results are unchanged.
 
 Otherwise a static limit is advisory and never moves the class. An
 `exposed` finding then keeps `static_limit_kind`, the limit's `missing`

@@ -355,6 +355,52 @@ fn rule7_alias_local_prefix_is_not_an_owner_observation() -> Result<(), String> 
     Ok(())
 }
 
+/// An alias name spelled inside a string is not a reference: calling
+/// `p(150)` and asserting `expect('p').toBe('p')` observes nothing of the
+/// owner, directly or through a string-initialized local.
+#[test]
+fn rule7_alias_name_inside_a_string_is_not_an_owner_observation() -> Result<(), String> {
+    let owners = owners_of(&price_lib("export ", ""));
+    let owner = price_owner(&owners)?;
+    for (body, observed) in [
+        ("  p(150);\n  expect('p').toBe('p');\n", "'p'"),
+        ("  p(150);\n  expect(`p ${1}`).toBe('p 1');\n", "`p ${1}`"),
+        (
+            "  const r = 'p'; // p(1)\n  p(150);\n  expect(r).toBe('p');\n",
+            "r",
+        ),
+    ] {
+        let tests = tests_of(&format!(
+            "import {{ price as p }} from \"../src/lib\";\n\ntest(\"price\", () => {{\n{body}}});\n"
+        ));
+        assert_eq!(only_observed(&tests)?, observed);
+        assert_eq!(
+            relations(owner, &tests),
+            vec![TypeScriptRelationKind::ImportAliasOwnerCall]
+        );
+        let finding = classify(&owners, &tests)?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{body}");
+        assert!(has_propagation_unknown(&finding), "{:?}", finding.missing);
+    }
+    Ok(())
+}
+
+#[test]
+fn literal_and_comment_masking_keeps_code_identifiers() {
+    let masked = ts_mask_literals_and_comments("f('p') + g(\"p\\\"p\") /* p */ + `p${p(1)}p` // p");
+    assert!(!masked.contains("'p'"));
+    assert_eq!(masked.matches('p').count(), 1, "{masked}");
+    assert!(ts_references_identifier(&masked, "p"));
+    assert!(ts_references_identifier(&masked, "f"));
+    assert!(ts_references_identifier(&masked, "g"));
+    assert_eq!(
+        masked.chars().count(),
+        "f('p') + g(\"p\\\"p\") /* p */ + `p${p(1)}p` // p"
+            .chars()
+            .count()
+    );
+}
+
 /// Example 17 renamed (Non-Goal): a default-import local gets no rule 7
 /// credit; it keeps `ImportedOwnerCall` and `weakly_exposed`.
 #[test]
