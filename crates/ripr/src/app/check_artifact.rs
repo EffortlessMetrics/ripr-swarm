@@ -369,6 +369,17 @@ fn verify_identity(
     ))
 }
 
+/// The `--from` + `--diff -` argv conflict, shared verbatim between the
+/// app-layer scope verification (library callers) and the CLI usage gate
+/// that keeps it prose-only: the stdin sentinel can never verify a
+/// recorded diff-file identity (RIPR-SPEC-0140).
+pub(crate) fn from_stdin_sentinel_scope_conflict() -> String {
+    "--from cannot be combined with --diff -: stdin cannot verify a recorded \
+     diff-file identity; save stdin to a named diff file and pass --diff \
+     <path> when creating and reusing the artifact"
+        .to_string()
+}
+
 /// Verify explicitly passed scope flags (`--diff`, `--base`) against the
 /// recorded diff source. They are assertions, never overrides.
 fn verify_scope_assertions(
@@ -382,10 +393,7 @@ fn verify_scope_assertions(
         // The stdin sentinel is not an assertion about a file named '-'.
         // Do not accept that unrelated file as evidence for supplied stdin.
         if asserted_diff == Path::new("-") {
-            return Err(
-                "--from cannot be combined with --diff -: stdin cannot verify a recorded diff-file identity; save stdin to a named diff file and pass --diff <path> when creating and reusing the artifact"
-                    .to_string(),
-            );
+            return Err(from_stdin_sentinel_scope_conflict());
         }
         let asserted = std::fs::canonicalize(asserted_diff).map_err(|err| {
             format!(

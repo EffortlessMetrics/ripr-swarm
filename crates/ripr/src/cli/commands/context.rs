@@ -122,6 +122,15 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             "ripr check --json",
         ));
     }
+    // #7331 review: `--from` + `--diff -` is an argv usage conflict, not an
+    // artifact defect — the stdin sentinel can never verify a recorded
+    // diff-file identity (RIPR-SPEC-0140) — so the CLI keeps it prose-only
+    // (empty stdout, exit 2) like the gates above, before any refusal
+    // envelope can reach stdout. The app layer keeps the identical check
+    // for library callers.
+    if from_artifact.is_some() && input.diff_file.as_deref() == Some(std::path::Path::new("-")) {
+        return Err(app::check_artifact::from_stdin_sentinel_scope_conflict());
+    }
     // #7331 review: implicit `--worktree` root discovery runs below argv
     // parsing and can fail on the Git probe; `context` is JSON-only, so the
     // failure writes the shared refusal envelope (with a root-unusable
@@ -382,6 +391,32 @@ mod tests {
         assert!(
             !matches!(&result, Err(message) if message.contains("cannot be combined with --diff")),
             "`--from` + `--base` + `--diff` is the reuse-verification path, not a diff-source conflict: {result:?}"
+        );
+    }
+
+    /// #7331 review: `--from` + `--diff -` is an argv usage conflict, not an
+    /// artifact defect, so the CLI gate must fire before any refusal
+    /// envelope — and before the artifact is even read — with the exact
+    /// prose the smoke contract pins (empty stdout, exit 2, `pass --diff
+    /// <path>` guidance on stderr).
+    #[test]
+    fn context_rejects_from_with_stdin_diff_as_usage_conflict() {
+        let expected = Err(
+            "--from cannot be combined with --diff -: stdin cannot verify a recorded \
+             diff-file identity; save stdin to a named diff file and pass --diff <path> \
+             when creating and reusing the artifact"
+                .to_string(),
+        );
+        assert_eq!(
+            context(&args(&[
+                "--from",
+                "missing-artifact.json",
+                "--diff",
+                "-",
+                "--at",
+                "probe:src_lib.rs:error_path:abcd",
+            ])),
+            expected
         );
     }
 }
