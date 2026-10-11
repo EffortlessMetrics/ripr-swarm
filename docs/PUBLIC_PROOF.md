@@ -44,7 +44,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **6.2%** | <= 0.0% | below the bar | no earlier measurement |
 | Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt (mutation spot check, 14 of 15 seam-precise `strongly_gripped` mutants scored; 1 unscored) |
 | Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt (mutation spot check, 23 of 23 seam-precise `ungripped` mutants scored; 0 unscored) |
-| Trust | Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap | **25.8%** | <= 5.0% | below the bar | no earlier measurement |
+| Trust | Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap | **12.9%** | <= 5.0% | below the bar | no earlier measurement |
 | Trust | Authored TypeScript edits the project's tests miss that ripr credits as caught | **2.6%** | <= 0.0% | below the bar | no earlier measurement |
 | Trust | Authored TypeScript edits the project's tests miss that ripr reports as fine | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
 | Trust | When ripr pilot ranks a seam in its top ten, a real mutant there is missed | not measured | >= 60.0% | not measured | no earlier measurement |

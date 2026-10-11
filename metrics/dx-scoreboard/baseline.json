@@ -848,10 +848,10 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/typescript-verdict-corpus false_actionable_rate: 16/62",
+          "detail": "fixtures/typescript-verdict-corpus false_actionable_rate: 8/62",
           "repo": null,
           "status": "below_target",
-          "value": 0.2581
+          "value": 0.129
         }
       ],
       "source": "verdict-corpus:fixtures/typescript-verdict-corpus#false_actionable_rate",
@@ -859,7 +859,7 @@
       "target": 0.05,
       "title": "Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap",
       "unit": "ratio",
-      "value": 0.2581
+      "value": 0.129
     },
     {
       "baseline": {

@@ -300,7 +300,8 @@ mirrors RIPR-SPEC-0238 rule 1.
 - `node:assert` / chai `assert`: `strictEqual` and `deepStrictEqual` are
   `exact_value` / strong; `equal` is strong only under a strict module or
   the `strict` export; `deepEqual` is strong unless the module is legacy
-  `node:assert`; the other equality forms and `match` are
+  `node:assert`; a loose `equal` / `deepEqual` against a literal coercion
+  cannot reach is strong (RIPR-SPEC-0247 rule 2); the other equality forms and `match` are
   `relational_check` / weak; `ok`, chai `is*` and a callable `assert(x)`
   are `smoke_only` / smoke; `throws`, `doesNotThrow`, `rejects` and
   `doesNotReject` are `broad_error` / weak, except as rule 10 states. A binding shadowed in the test
@@ -504,6 +505,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    `exposed` from a snapshot, which is what RIPR-SPEC-0027's "weak /
    static-limited" protects. RIPR-SPEC-0027 is amended. Rejected: weak,
    which would split TypeScript from Rust for no class difference.
+   Amended by RIPR-SPEC-0247 rule 3: an inline snapshot with literal text
+   reads `snapshot` / strong.
 2. **Value-family guard.** Adopted: the code's guard on ReturnValue and
    FieldConstruction, because it is the fail-closed reading and existing
    tests pin it (`ts_returnvalue_unrelated_strong_assertion_downgrades`).
@@ -557,7 +560,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 11. **Mock strength.** Adopted: `mock_expectation` / medium, so a mock
     matcher never yields `exposed`, matching RIPR-SPEC-0231 step 9.
     Rejected: strong for `toHaveBeenCalledWith` with literals, which no
-    spec promises.
+    spec promises. Amended by RIPR-SPEC-0247 rule 1: an all-literal
+    payload on a test-local mock the owner calls once through a parameter
+    reads `mock_expectation` / strong.
 12. **chai and `node:assert` message checks (#6686).** Adopted: rule 10,
     because the corpus mutants show the first draft's `broad_error`
     reading was a false actionable verdict for a literal message check,
@@ -746,7 +751,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
 30. `src/lib.ts` is `export function save(db: Db, v: number) {
     db.write(v + 1); }`, changed to `v + 2`; test
     `save(db, 1); expect(db.write).toHaveBeenCalledWith(3)`:
-    `mock_expectation` / medium, `weakly_exposed` (unchanged).
+    `mock_expectation` / medium, `weakly_exposed` (unchanged). With
+    `const db = { write: jest.fn() }` in the test, RIPR-SPEC-0247 rule 1
+    reads `mock_expectation` / strong, `exposed`.
 31. `src/lib.ts` is `import { fee } from "./other";` plus the base
     `price`, whose line reads `return fee(amount - 10);`, changed to
     `return fee(amount - 20);`; the test
