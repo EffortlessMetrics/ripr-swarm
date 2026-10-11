@@ -186,8 +186,12 @@ official SDK transport:
   evidence: identity, typed outcome, the full item index, and the stored
   selection summary.
 - Reads may bind an explicit `snapshot_id`; a mismatch fails closed with
-  `stale_snapshot` and the current identity. Reads before the first
-  successful refresh fail closed with `no_snapshot`; reads during an
+  `stale_snapshot` and the current identity. Snapshot-dependent reads on
+  a root resolved unavailable at startup fail closed with
+  `workspace_unavailable` and the same restart-with-root recovery as
+  `ripr_refresh`; the adapter does not discover or recheck the root again.
+  On a usable root, reads before the first successful refresh fail closed
+  with `no_snapshot`; reads during an
   attempt report `analysis_in_flight`; unknown item ids fail closed with
   `item_not_found`; a document that cannot fit the 128-KiB response bound
   fails closed with `result_too_large` — for tool responses the envelope
@@ -231,7 +235,13 @@ official SDK transport:
 - `crates/ripr/tests/mcp_stdio.rs` — raw-wire controls: tool/resource
   equality, rejection arms, and the new fail-closed control proving a
   stock-shaped client receives typed `no_snapshot` failures (and the
-  resource-miss mapping) before the first refresh.
+  resource-miss mapping) before the first refresh on a usable root.
+  `unavailable_workspace_evidence_names_restart_before_any_refresh`
+  exercises four snapshot tools and three evidence resources before and
+  after refresh for markerless and missing explicit roots: each names
+  `workspace_unavailable` and the actionable restart recovery, while
+  status remains readable. Removing the shared snapshot availability
+  guard restores the misleading `no_snapshot` recovery and fails it.
   `resource_reads_match_tools_after_refresh` pins gap tool/resource
   parsed-document equality plus the snapshot envelope
   (`ripr-mcp-snapshot-v1`, identity, typed outcome) after refresh
@@ -277,8 +287,11 @@ official SDK transport:
    `ripr://workspace/status`, `ripr://snapshot/{snapshot_id}`, and
    `ripr://gap/{canonical_id}` — no report-file, clipboard, log, or
    LSP-protocol archaeology involved.
-2. Before any refresh, list/get/snapshot reads fail closed with typed
-   `no_snapshot`; during an attempt they report `analysis_in_flight`; a
+2. An unavailable startup root makes snapshot-dependent reads fail closed
+   with `workspace_unavailable` and the restart-with-root recovery before
+   any refresh. On a usable root, pre-refresh list/get/snapshot reads fail
+   closed with typed `no_snapshot`; during an attempt they report
+   `analysis_in_flight`; a
    named snapshot that is not current fails with `stale_snapshot` naming
    the current identity.
 3. A refresh whose outcome is `unsupported_input` or `analysis_failed`

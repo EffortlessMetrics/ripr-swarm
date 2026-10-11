@@ -1131,6 +1131,191 @@ fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<
     Ok(())
 }
 
+/// The first evidence read must name the root problem and a recovery that
+/// can change it, on tools and resources alike (#7346).
+#[test]
+fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(), String> {
+    struct FixtureRoot(PathBuf);
+    impl Drop for FixtureRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let temp = std::env::temp_dir();
+    std::fs::create_dir_all(&temp).map_err(|error| format!("create temp root: {error}"))?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = temp.join(format!(
+        "ripr-mcp-unavailable-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&path).map_err(|error| format!("create markerless root: {error}"))?;
+    let fixture = FixtureRoot(path);
+    let missing = fixture.0.join("missing");
+    for (root, root_error) in [
+        (fixture.0.as_path(), "repository_marker_missing"),
+        (missing.as_path(), "root_missing"),
+    ] {
+        let mut requests = vec![
+            line(json!({
+                "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+                "params": { "_meta": current_meta() }
+            }))?,
+            line(json!({
+                "jsonrpc": "2.0", "id": "status", "method": "tools/call",
+                "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
+            }))?,
+        ];
+        for phase in ["before", "after"] {
+            if phase == "after" {
+                requests.push(line(json!({
+                    "jsonrpc": "2.0", "id": "refresh", "method": "tools/call",
+                    "params": { "_meta": current_meta(), "name": "ripr_refresh", "arguments": {} }
+                }))?);
+            }
+            for (name, arguments) in [
+                ("ripr_list_gaps", json!({})),
+                ("ripr_get_gap", json!({ "canonical_id": "gap:any" })),
+                ("ripr_prepare_repair", json!({ "canonical_id": "gap:any" })),
+                ("ripr_get_repair_card", json!({ "canonical_id": "gap:any" })),
+            ] {
+                requests.push(line(json!({
+                    "jsonrpc": "2.0", "id": format!("{phase}-{name}"), "method": "tools/call",
+                    "params": { "_meta": current_meta(), "name": name, "arguments": arguments }
+                }))?);
+            }
+            for uri in [
+                "ripr://snapshot/snapshot:sha256:any",
+                "ripr://gap/gap:any",
+                "ripr://repair-card/gap:any",
+            ] {
+                requests.push(line(json!({
+                    "jsonrpc": "2.0", "id": format!("{phase}-{uri}"), "method": "resources/read",
+                    "params": { "_meta": current_meta(), "uri": uri }
+                }))?);
+            }
+        }
+        requests.push(line(json!({
+            "jsonrpc": "2.0", "id": "survivor", "method": "tools/call",
+            "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
+        }))?);
+        let output = run_mcp(root, &[&requests.concat()])?;
+        let responses = response_lines(&output)?;
+        if responses.len() != 18 {
+            return Err(format!(
+                "expected 18 replies for {root_error}, got {}",
+                responses.len()
+            ));
+        }
+        let by_id: std::collections::HashMap<&str, &Value> = responses
+            .iter()
+            .filter_map(|response| {
+                response
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(|id| (id, response))
+            })
+            .collect();
+        if by_id.len() != 18 {
+            return Err(format!(
+                "expected 18 unique reply ids for {root_error}, got {}",
+                by_id.len()
+            ));
+        }
+        for phase in ["before", "after"] {
+            for subject in [
+                "ripr_list_gaps",
+                "ripr_get_gap",
+                "ripr_prepare_repair",
+                "ripr_get_repair_card",
+                "ripr://snapshot/snapshot:sha256:any",
+                "ripr://gap/gap:any",
+                "ripr://repair-card/gap:any",
+            ] {
+                let id = format!("{phase}-{subject}");
+                if !by_id.contains_key(id.as_str()) {
+                    return Err(format!(
+                        "missing intended evidence reply {id} for {root_error}"
+                    ));
+                }
+            }
+        }
+        for id in ["status", "survivor"] {
+            let reply = by_id.get(id).ok_or_else(|| format!("missing {id} reply"))?;
+            if reply
+                .pointer("/result/structuredContent/workspace/workspace_state")
+                .and_then(Value::as_str)
+                != Some("unavailable")
+                || reply
+                    .pointer("/result/structuredContent/workspace/root/error_code")
+                    .and_then(Value::as_str)
+                    != Some(root_error)
+                || reply
+                    .pointer("/result/structuredContent/session/attempt_state")
+                    .and_then(Value::as_str)
+                    != Some("no_snapshot")
+            {
+                return Err(format!(
+                    "fixture or survivor state lost {root_error}: {reply}"
+                ));
+            }
+        }
+        let recovery = "restart the server with `ripr mcp --stdio --root <repository>`";
+        let refresh = by_id
+            .get("refresh")
+            .ok_or_else(|| "missing refresh reply".to_string())?;
+        let expected_failure = refresh
+            .pointer("/result/structuredContent/failure")
+            .ok_or_else(|| format!("refresh lost typed root failure: {refresh}"))?;
+        if expected_failure.get("code").and_then(Value::as_str) != Some("workspace_unavailable")
+            || expected_failure.get("recovery").and_then(Value::as_str) != Some(recovery)
+        {
+            return Err(format!("refresh lost the actionable recovery: {refresh}"));
+        }
+        for (id, reply) in &by_id {
+            if !id.starts_with("before-") && !id.starts_with("after-") && *id != "refresh" {
+                continue;
+            }
+            let resource = id.contains("ripr://");
+            let failure = if resource {
+                if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+                    return Err(format!("{id} lost resource failure semantics: {reply}"));
+                }
+                reply.pointer("/error/data/failure")
+            } else {
+                if reply.pointer("/result/isError").and_then(Value::as_bool) != Some(true) {
+                    return Err(format!("{id} lost typed tool failure: {reply}"));
+                }
+                let text = reply
+                    .pointer("/result/content/0/text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !text.contains("workspace_unavailable") || !text.contains(recovery) {
+                    return Err(format!("{id} rendered an unusable recovery: {reply}"));
+                }
+                reply.pointer("/result/structuredContent/failure")
+            };
+            if failure
+                .and_then(|value| value.get("code"))
+                .and_then(Value::as_str)
+                != Some("workspace_unavailable")
+                || failure
+                    .and_then(|value| value.get("recovery"))
+                    .and_then(Value::as_str)
+                    != Some(recovery)
+                || failure != Some(expected_failure)
+            {
+                return Err(format!(
+                    "{id} must share refresh's root failure before and after refresh: {reply}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The evidence tools fail closed on the wire before the first refresh:
 /// a stock-shaped raw client gets typed structured failures (never a
 /// partial document), and the snapshot/gap resource reads route through the
