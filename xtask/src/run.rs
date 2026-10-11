@@ -517,12 +517,119 @@ pub(crate) fn capture_output_measured(
     timeout: Duration,
     error_context: &str,
 ) -> Result<MeasuredOutput, String> {
-    let (output, peak_rss_bytes) =
-        capture_output_sampled(program, args, cwd, envs, Some(timeout), true, error_context)?;
+    let deadline = Some(timeout);
+    let (output, peak_rss_bytes) = capture_output_sampled(
+        program,
+        args,
+        cwd,
+        envs,
+        &mut CaptureDeadline::FromStart(&deadline),
+        true,
+        error_context,
+    )?;
     Ok(MeasuredOutput {
         output,
         peak_rss_bytes,
     })
+}
+
+/// Test-only phase budget. Readiness failures still use the capture owner's
+/// termination, reap, process-group confirmation and bounded pipe drains.
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) struct ReadinessDeadline<'a> {
+    startup: Duration,
+    after_ready: Duration,
+    probe: &'a mut dyn FnMut() -> Result<bool, String>,
+    armed: Option<Instant>,
+    elapsed_at_abort: Option<Duration>,
+    failure: Option<String>,
+}
+
+#[cfg(all(test, target_os = "linux"))]
+impl<'a> ReadinessDeadline<'a> {
+    pub(crate) fn new(
+        startup: Duration,
+        after_ready: Duration,
+        probe: &'a mut dyn FnMut() -> Result<bool, String>,
+    ) -> Self {
+        Self {
+            startup,
+            after_ready,
+            probe,
+            armed: None,
+            elapsed_at_abort: None,
+            failure: None,
+        }
+    }
+}
+
+enum CaptureDeadline<'a> {
+    FromStart(&'a Option<Duration>),
+    #[cfg(all(test, target_os = "linux"))]
+    AfterReadiness(ReadinessDeadline<'a>),
+}
+
+impl CaptureDeadline<'_> {
+    fn expired(&mut self, started: Instant) -> bool {
+        match self {
+            Self::FromStart(timeout) => timeout.is_some_and(|timeout| started.elapsed() >= timeout),
+            #[cfg(all(test, target_os = "linux"))]
+            Self::AfterReadiness(phase) => {
+                if let Some(armed) = phase.armed {
+                    let elapsed = armed.elapsed();
+                    if elapsed >= phase.after_ready {
+                        phase.elapsed_at_abort = Some(elapsed);
+                        return true;
+                    }
+                    return false;
+                }
+                if started.elapsed() >= phase.startup {
+                    phase.failure = Some("readiness not observed within startup budget".into());
+                    return true;
+                }
+                let readiness = (phase.probe)();
+                let observed_at = Instant::now();
+                if observed_at.duration_since(started) >= phase.startup {
+                    phase.failure = Some("readiness not observed within startup budget".into());
+                    return true;
+                }
+                match readiness {
+                    Ok(true) => phase.armed = Some(observed_at),
+                    Ok(false) => {}
+                    Err(error) => {
+                        phase.failure = Some(format!("readiness observation failed: {error}"));
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+pub(crate) fn capture_output_measured_after_readiness(
+    program: &str,
+    args: &[String],
+    cwd: Option<&Path>,
+    envs: &[(&str, &str)],
+    deadline: ReadinessDeadline<'_>,
+    error_context: &str,
+) -> Result<(MeasuredOutput, Option<Duration>), String> {
+    let mut deadline = CaptureDeadline::AfterReadiness(deadline);
+    let (output, peak_rss_bytes) =
+        capture_output_sampled(program, args, cwd, envs, &mut deadline, true, error_context)?;
+    let elapsed_at_abort = match deadline {
+        CaptureDeadline::AfterReadiness(phase) => phase.elapsed_at_abort,
+        CaptureDeadline::FromStart(_) => None,
+    };
+    Ok((
+        MeasuredOutput {
+            output,
+            peak_rss_bytes,
+        },
+        elapsed_at_abort,
+    ))
 }
 
 /// `capture_output_with_timeout` with no per-step wall-clock cap.
@@ -552,8 +659,16 @@ fn capture_output_with_deadline(
     deadline: Option<Duration>,
     error_context: &str,
 ) -> Result<TimedOutput, String> {
-    capture_output_sampled(program, args, None, envs, deadline, false, error_context)
-        .map(|(output, _)| output)
+    capture_output_sampled(
+        program,
+        args,
+        None,
+        envs,
+        &mut CaptureDeadline::FromStart(&deadline),
+        false,
+        error_context,
+    )
+    .map(|(output, _)| output)
 }
 
 fn capture_output_sampled(
@@ -561,7 +676,7 @@ fn capture_output_sampled(
     args: &[String],
     cwd: Option<&Path>,
     envs: &[(&str, &str)],
-    deadline: Option<Duration>,
+    deadline: &mut CaptureDeadline<'_>,
     sample_rss: bool,
     error_context: &str,
 ) -> Result<(TimedOutput, Option<u64>), String> {
@@ -629,6 +744,21 @@ fn capture_output_sampled(
         "stderr",
         error_context,
     )?;
+
+    #[cfg(all(test, target_os = "linux"))]
+    if let CaptureDeadline::AfterReadiness(phase) = &*deadline
+        && let Some(error) = phase.failure.as_deref().or_else(|| {
+            phase
+                .armed
+                .is_none()
+                .then_some("child exited before readiness was observed")
+        })
+    {
+        return Err(format!(
+            "{error_context}: {error}; reaped status={}, timed_out={}; stdout={stdout}; stderr={stderr}",
+            wait_outcome.status, wait_outcome.timed_out
+        ));
+    }
 
     Ok((
         TimedOutput {
@@ -961,13 +1091,19 @@ fn wait_for_child_with_deadline(
     deadline: Option<Duration>,
     error_context: &str,
 ) -> Result<WaitOutcome, String> {
-    wait_for_child_sampled(child, started, deadline, false, error_context)
+    wait_for_child_sampled(
+        child,
+        started,
+        &mut CaptureDeadline::FromStart(&deadline),
+        false,
+        error_context,
+    )
 }
 
 fn wait_for_child_sampled(
     child: &mut OwnedProcess,
     started: Instant,
-    deadline: Option<Duration>,
+    deadline: &mut CaptureDeadline<'_>,
     sample_rss: bool,
     error_context: &str,
 ) -> Result<WaitOutcome, String> {
@@ -991,9 +1127,7 @@ fn wait_for_child_sampled(
             });
         }
 
-        if let Some(timeout) = deadline
-            && started.elapsed() >= timeout
-        {
+        if deadline.expired(started) {
             #[cfg(unix)]
             let pgid = child.id();
             let termination_requested = terminate_after_timeout(child, error_context)?;

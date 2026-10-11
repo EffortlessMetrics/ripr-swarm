@@ -4,6 +4,7 @@
 //! unchanged.
 
 mod discarded_matcher_honesty;
+mod fixture_cache;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
 
@@ -8327,8 +8328,8 @@ fn fixture_run_writes_its_facts_into_the_cache_the_runner_cleared() -> Result<()
     }
 
     with_repo_cwd(|| {
-        let name = "all_no_path_disclosure";
-        let fixture = PathBuf::from("fixtures").join(name);
+        let owned = fixture_cache::Case::new("binding")?;
+        let fixture = owned.fixture.clone();
         let workspace_cache = fixture
             .join("input")
             .join("target")
@@ -8336,7 +8337,7 @@ fn fixture_run_writes_its_facts_into_the_cache_the_runner_cleared() -> Result<()
             .join("cache");
         ignore_remove_dir_all(fixture.join("input").join("target"));
 
-        let cache_dir = super::fixture_cache_dir(name)?;
+        let cache_dir = &owned.cache;
         let stale = cache_dir
             .join("repo-file-facts")
             .join("0.2")
@@ -8362,7 +8363,7 @@ fn fixture_run_writes_its_facts_into_the_cache_the_runner_cleared() -> Result<()
             cache_dir.display()
         );
         assert!(
-            file_count(&cache_dir)? > 0,
+            file_count(cache_dir)? > 0,
             "the cleared cache must be the cache the child populates, but {} is empty",
             cache_dir.display()
         );
@@ -52503,12 +52504,12 @@ fn count_policy_gates_have_no_stale_bounds() -> Result<(), String> {
 #[test]
 fn golden_comparison_runs_consume_the_cache_the_runner_cleared() -> Result<(), String> {
     with_repo_cwd(|| {
-        let name = "all_no_path_disclosure";
-        let fixture = PathBuf::from("fixtures").join(name);
+        let owned = fixture_cache::Case::new("golden")?;
+        let fixture = owned.fixture.clone();
         let leaked = fixture.join("input").join("target");
         ignore_remove_dir_all(&leaked);
 
-        let cache_dir = super::fixture_cache_dir(name)?;
+        let cache_dir = &owned.cache;
         let stale = cache_dir
             .join("repo-file-facts")
             .join("0.2")
