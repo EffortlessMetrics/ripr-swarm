@@ -719,6 +719,131 @@ fn cleanup(root: &Path) {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// #7289: each artifact command in a brief must prepare its own redirect,
+/// even when pasted before the before-snapshot command from a foreign cwd.
+#[test]
+fn brief_artifact_command_inspect_packet_prepares_its_directory() -> Result<(), String> {
+    brief_artifact_command_journey("/next/inspect_packet", "agent-seam-packets.json", "packets")
+}
+
+#[test]
+fn brief_artifact_command_after_snapshot_prepares_its_directory() -> Result<(), String> {
+    brief_artifact_command_journey(
+        "/top_seams/0/verification/after_snapshot_command",
+        "after.repo-exposure.json",
+        "seams",
+    )
+}
+
+#[test]
+fn brief_artifact_command_before_snapshot_prepares_its_directory() -> Result<(), String> {
+    brief_artifact_command_journey(
+        "/top_seams/0/verification/before_snapshot_command",
+        "before.repo-exposure.json",
+        "seams",
+    )
+}
+
+fn brief_artifact_command_journey(
+    pointer: &str,
+    artifact: &str,
+    subjects: &str,
+) -> Result<(), String> {
+    let Some(bash) = shell_prerequisite()? else {
+        return Ok(());
+    };
+    let base = unique_temp_workspace("brief-artifact-command");
+    let result = (|| -> Result<(), String> {
+        let relative_root = "selected repo's root café";
+        let root = base.join(relative_root);
+        std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
+        init_producer_fixture_repo(&root)?;
+        let diff = root.join("diff.patch");
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/diff.patch"),
+            &diff,
+        )
+        .map_err(|error| format!("copy brief diff: {error}"))?;
+        let output = run_ripr(
+            &base,
+            &[
+                "agent",
+                "brief",
+                "--root",
+                relative_root,
+                "--diff",
+                "diff.patch",
+                "--json",
+            ],
+        )?;
+        assert_success(&output, "ripr agent brief with a relative root")?;
+        let brief: Value = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("parse brief JSON: {error}"))?;
+        let seam_id = brief
+            .pointer("/top_seams/0/seam_id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| format!("brief has no selected seam: {brief}"))?;
+        let command = brief
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .filter(|command| !command.is_empty())
+            .ok_or_else(|| format!("brief has no {pointer}: {brief}"))?;
+        let workflow = root.join("target/ripr/workflow");
+        if workflow.exists() {
+            return Err("brief setup unexpectedly prepared the workflow directory".to_string());
+        }
+        let journey = Journey {
+            root_arg: root_arg_of(&root),
+            launch_dir: foreign_launch_dir(&base)?,
+            path_env: shell_path_env()?,
+            bash,
+            seam_id: seam_id.to_string(),
+            root,
+        };
+        // First execution has no output directory; the second must also
+        // succeed and remain bound to the selected root.
+        for _ in 0..2 {
+            let output = run_in_shell(&journey, command)?;
+            assert_success(&output, &format!("printed {pointer}: {command}"))?;
+            let document = read_json(&workflow_artifact(&journey.root, artifact))?;
+            let rows = document
+                .get(subjects)
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("{artifact} has no {subjects}: {document}"))?;
+            if !rows
+                .iter()
+                .any(|row| row.get("seam_id").and_then(Value::as_str) == Some(seam_id))
+            {
+                return Err(format!(
+                    "{artifact} does not contain selected seam {seam_id}: {document}"
+                ));
+            }
+            if journey.launch_dir.join("target").exists() || base.join("target").exists() {
+                return Err("printed brief command wrote outside the selected root".to_string());
+            }
+        }
+        // Removal control: keep the producer and redirect byte-identical,
+        // remove only preparation, and observe the intended shell failure.
+        std::fs::remove_dir_all(&workflow).map_err(|error| format!("remove workflow: {error}"))?;
+        let (_, bare_command) = command
+            .split_once(" && ")
+            .ok_or_else(|| format!("{pointer} has no preparation to remove: {command}"))?;
+        let output = run_in_shell(&journey, bare_command)?;
+        if output.status.success()
+            || !String::from_utf8_lossy(&output.stderr).contains(artifact)
+            || workflow_artifact(&journey.root, artifact).exists()
+        {
+            return Err(format!(
+                "removing {pointer} preparation did not reject its redirect: {output:?}"
+            ));
+        }
+        Ok(())
+    })();
+    cleanup(&base);
+    result
+}
+
 struct ReviewCardFixture(PathBuf);
 
 impl Drop for ReviewCardFixture {
