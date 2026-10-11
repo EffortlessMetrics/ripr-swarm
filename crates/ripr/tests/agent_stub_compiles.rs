@@ -742,6 +742,84 @@ fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), S
     scratch.cleanup()
 }
 
+const STRONGLY_GRIPPED_CLAMP: &str = "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn at_boundary_clamps() {\n        assert_eq!(clamp_to(100), 100);\n        assert_eq!(clamp_to(99), 99);\n        assert_eq!(clamp_to(500), 100);\n    }\n}\n";
+
+/// #7290: `ripr agent stub --at --kind` still yields a ready scaffold for a
+/// seam inventory classifies `strongly_gripped`, and both JSON and human
+/// output disclose that class with the packet/repair omission reason.
+#[test]
+fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String> {
+    let scratch = kind_refusal_crate(STRONGLY_GRIPPED_CLAMP)?;
+    let root = &scratch.directory;
+    assert_eq!(
+        STRONGLY_GRIPPED_CLAMP.lines().nth(1),
+        Some("    if x >= 100 { 100 } else { x }")
+    );
+
+    let json = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("predicate")),
+        root,
+        "strongly-gripped-json",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        json.status.success(),
+        "a strongly gripped seam stays a ready stub: {}{}",
+        String::from_utf8_lossy(&json.stdout),
+        String::from_utf8_lossy(&json.stderr)
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&json.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(document["state"], "ready");
+    assert_eq!(document["grip_class"], "strongly_gripped");
+    assert_eq!(document["classification"], "exposed");
+    let warnings = document["warnings"]
+        .as_array()
+        .ok_or_else(|| format!("warnings must be an array: {document}"))?;
+    assert_eq!(warnings.len(), 1, "{document}");
+    let warning = warnings[0]
+        .as_str()
+        .ok_or_else(|| format!("warning must be a string: {document}"))?;
+    assert!(
+        warning.contains(
+            "is configured off for strongly_gripped seams and is not included in agent results"
+        ),
+        "{warning}"
+    );
+
+    let mut human = ripr_command();
+    human.args(["agent", "stub", "--root"]).arg(root).args([
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "predicate",
+    ]);
+    let human = run_bounded(
+        human,
+        root,
+        "strongly-gripped-human",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        human.status.success(),
+        "human ready path stays exit 0: {}{}",
+        String::from_utf8_lossy(&human.stdout),
+        String::from_utf8_lossy(&human.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        stdout.contains(
+            "is configured off for strongly_gripped seams and is not included in agent results"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Test stub"),
+        "scaffold text remains after the disclosure: {stdout}"
+    );
+    scratch.cleanup()
+}
+
 #[test]
 fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Result<(), String> {
     let scratch = kind_refusal_crate(KIND_NEAREST_SOURCE)?;
