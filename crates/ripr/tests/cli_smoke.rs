@@ -2310,6 +2310,154 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
     Ok(())
 }
 
+fn posix_flag_value<'a>(words: &'a [String], flag: &str) -> Result<&'a str, String> {
+    words
+        .iter()
+        .position(|word| word == flag)
+        .and_then(|at| words.get(at + 1))
+        .map(String::as_str)
+        .ok_or_else(|| format!("command omitted {flag}: {words:?}"))
+}
+
+fn path_matches_printed(printed: &str, expected: &Path) -> bool {
+    let printed_path = Path::new(printed);
+    match (printed_path.canonicalize(), expected.canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => {
+            printed_path.to_string_lossy().replace('\\', "/")
+                == expected.to_string_lossy().replace('\\', "/")
+        }
+    }
+}
+
+fn replay_printed_ripr(command: &str, from: &Path) -> Result<Output, String> {
+    let words = shell_words::posix_words(command.trim())?;
+    let args: Vec<&str> = words.iter().map(String::as_str).collect();
+    if args.first() != Some(&"ripr") {
+        return Err(format!("printed command is not a ripr command: {command}"));
+    }
+    run_command(env!("CARGO_BIN_EXE_ripr"), Some(from), &args[1..])
+        .map_err(|err| format!("replay `{command}` from {}: {err}", from.display()))
+}
+
+/// #6942: `check_human_navigation_commands_replay_custom_scope` and the other
+/// posix_words replay sites run on roots with no space or apostrophe, so they
+/// still pass if reverted to `split_whitespace`. This copies a small fixture
+/// under `ripr it's a repo/` and replays the printed explain, context, and
+/// agent-stub lines from a foreign directory.
+///
+/// `agent_command_journey` already walks the first-action funnel in a hostile
+/// root, and `native_path_roots` already checks that `check` itself runs
+/// there. This test owns only the cli_smoke check → explain/context paste gap.
+#[test]
+fn check_explain_and_context_replay_from_a_checkout_path_with_space_and_apostrophe()
+-> Result<(), String> {
+    let base = unique_temp_workspace("quoted-checkout-replay");
+    std::fs::create_dir_all(&base)
+        .map_err(|err| format!("create base {}: {err}", base.display()))?;
+    let root = base.join("ripr it's a repo");
+    if let Err(err) = std::fs::create_dir_all(&root) {
+        ignore_remove_dir_all(&base);
+        // Space and apostrophe are valid on Windows and POSIX. A create
+        // failure is a host defect, not an optional skip.
+        return Err(format!(
+            "host rejected checkout path with a space and an apostrophe ({}): {err}",
+            root.display()
+        ));
+    }
+    let decoy = unique_temp_workspace("quoted-checkout-decoy");
+    let result = (|| {
+        std::fs::create_dir_all(&decoy)
+            .map_err(|err| format!("create decoy {}: {err}", decoy.display()))?;
+        init_producer_fixture_repo(&root).map_err(|err| format!("copy fixture: {err}"))?;
+        std::fs::write(
+            root.join("src/lib.rs"),
+            "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 20\n    } else {\n        amount\n    }\n}\n",
+        )
+        .map_err(|err| format!("write production change: {err}"))?;
+        let root_arg = root.display().to_string();
+        let output = run_ripr(&["check", "--root", &root_arg]);
+        assert_success(&output);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let explain_line = stdout
+            .lines()
+            .find(|line| line.trim_start().starts_with("ripr explain "))
+            .ok_or_else(|| format!("check output omitted explain command:\n{stdout}"))?;
+        let context_line = stdout
+            .lines()
+            .find(|line| line.trim_start().starts_with("ripr context "))
+            .ok_or_else(|| format!("check output omitted context command:\n{stdout}"))?;
+        if !explain_line.contains(r"'\''") || !context_line.contains(r"'\''") {
+            return Err(format!(
+                "printed commands must POSIX-quote the apostrophe in the checkout path:\n{explain_line}\n{context_line}"
+            ));
+        }
+        let explain_words = shell_words::posix_words(explain_line)?;
+        let context_words = shell_words::posix_words(context_line)?;
+        let printed_root = posix_flag_value(&explain_words, "--root")?;
+        if !printed_root.contains(' ') || !printed_root.contains('\'') {
+            return Err(format!(
+                "decoded --root must keep the space and apostrophe as one argument: {printed_root}"
+            ));
+        }
+        if !path_matches_printed(printed_root, &root) {
+            return Err(format!(
+                "decoded --root {printed_root} is not {}",
+                root.display()
+            ));
+        }
+        if posix_flag_value(&context_words, "--root")? != printed_root {
+            return Err(format!(
+                "explain and context named different roots:\n{explain_line}\n{context_line}"
+            ));
+        }
+        let explain = replay_printed_ripr(explain_line, &decoy)?;
+        assert_success(&explain);
+        let context = replay_printed_ripr(context_line, &decoy)?;
+        assert_success(&context);
+        if !String::from_utf8_lossy(&context.stdout).contains("\"version\": \"1.0\"") {
+            return Err("context command did not return its JSON packet".to_string());
+        }
+        let explain_stdout = String::from_utf8_lossy(&explain.stdout);
+        let next_line = explain_stdout
+            .lines()
+            .find_map(|line| line.trim_start().strip_prefix("Next: ripr context "))
+            .ok_or_else(|| {
+                format!(
+                    "explain output omitted its scope-preserving context command:\n{explain_stdout}"
+                )
+            })?;
+        let next_words = shell_words::posix_words(next_line)?;
+        if posix_flag_value(&next_words, "--root")? != printed_root {
+            return Err(format!(
+                "explain Next: command lost the quoted root: {next_line}"
+            ));
+        }
+        if let Some(stub_line) = stdout
+            .lines()
+            .find(|line| line.trim_start().starts_with("ripr agent stub "))
+        {
+            if !stub_line.contains(r"'\''") {
+                return Err(format!(
+                    "agent stub command must POSIX-quote the apostrophe:\n{stub_line}"
+                ));
+            }
+            let stub_words = shell_words::posix_words(stub_line)?;
+            if posix_flag_value(&stub_words, "--root")? != printed_root {
+                return Err(format!(
+                    "agent stub command lost the quoted root: {stub_line}"
+                ));
+            }
+            let stub = replay_printed_ripr(stub_line, &decoy)?;
+            assert_success(&stub);
+        }
+        Ok(())
+    })();
+    ignore_remove_dir_all(&decoy);
+    ignore_remove_dir_all(&base);
+    result
+}
+
 #[test]
 fn check_navigation_replays_explicit_draft_over_configured_ready() -> Result<(), String> {
     let (root, diff) =
@@ -13616,22 +13764,20 @@ fn pilot_snapshot_is_the_agent_verify_baseline() -> Result<(), Box<dyn std::erro
         .ok_or("pilot summary names no after-snapshot command")?;
     // Run the printed command's arguments, not a hand-written equivalent:
     // a drift between pilot's identity and the command it prints is the bug.
-    let (check_part, redirect) = after_command
-        .split_once(" > ")
-        .ok_or_else(|| format!("after command has no redirect: {after_command}"))?;
-    let check_words = shell_words::posix_words(
-        check_part
-            .strip_prefix("ripr ")
-            .ok_or_else(|| format!("after command is not a ripr command: {after_command}"))?,
-    )?;
-    let check_args: Vec<&str> = check_words.iter().map(String::as_str).collect();
+    // Split the redirect after POSIX words so a quoted root that contains
+    // ` > ` stays one argument (#6942).
+    let (after_words, redirect_word) = shell_words::posix_words_with_redirect(after_command)?;
+    let check_args: Vec<&str> = after_words
+        .iter()
+        .map(String::as_str)
+        .skip_while(|word| *word == "ripr")
+        .collect();
+    if check_args.first() != Some(&"check") {
+        return Err(format!("after command is not a ripr check command: {after_command}").into());
+    }
     // Pilot anchors the redirect at the resolved root (#3938), so the printed
     // target may be absolute; either way it must land in pilot's own out dir.
-    let redirect_words = shell_words::posix_words(redirect)?;
-    let [redirect_word] = redirect_words.as_slice() else {
-        return Err(format!("after command redirect is not one word: {after_command}").into());
-    };
-    let redirect_path = std::path::Path::new(redirect_word);
+    let redirect_path = std::path::Path::new(&redirect_word);
     let after = if redirect_path.is_absolute() {
         redirect_path.to_path_buf()
     } else {
@@ -22000,13 +22146,7 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
     let failed_command = repair_route_before(&root)?;
     std::fs::write(root.join("tests/pricing.rs"), &focused_test)?;
     std::fs::write(root.join("stray.txt"), "outside the edit cage\n")?;
-    let failed_attempt = failed_command
-        .split_whitespace()
-        .skip_while(|word| *word != "--attempt")
-        .nth(1)
-        .unwrap_or_default()
-        .trim_matches('\'')
-        .to_string();
+    let failed_attempt = repair_route_attempt_id(&failed_command)?;
     let after = run_ripr(&[
         "agent",
         "repair",
@@ -22094,12 +22234,21 @@ fn agent_status_restarts_a_failed_attempt_and_completes_a_finished_one()
 
 /// The attempt ID inside a printed `--attempt <id> --phase after` command.
 fn repair_route_attempt_id(command: &str) -> Result<String, String> {
-    command
-        .split_whitespace()
-        .skip_while(|word| *word != "--attempt")
-        .nth(1)
-        .map(|id| id.trim_matches('\'').to_string())
+    let words = shell_words::posix_words(command)?;
+    words
+        .iter()
+        .position(|word| word == "--attempt")
+        .and_then(|at| words.get(at + 1))
+        .cloned()
         .ok_or_else(|| format!("no attempt ID in `{command}`"))
+}
+
+#[test]
+fn repair_route_attempt_id_survives_a_quoted_root_with_an_apostrophe() -> Result<(), String> {
+    let command =
+        "ripr agent repair --root 'ripr it'\\''s a repo' --attempt 'abc def' --phase after";
+    assert_eq!(repair_route_attempt_id(command)?, "abc def");
+    Ok(())
 }
 
 fn repair_route_after(root: &Path, attempt_id: &str) -> std::process::Output {
