@@ -215,7 +215,7 @@ fn plain_sync(function: &ast::Fn) -> bool {
         && function.body().is_some()
         && function.syntax().descendants().all(|node| {
             !ast::ClosureExpr::can_cast(node.kind())
-                && !ast::BlockExpr::cast(node).is_some_and(|block| block.async_token().is_some())
+                && ast::BlockExpr::cast(node).is_none_or(|block| block.async_token().is_none())
         })
 }
 
