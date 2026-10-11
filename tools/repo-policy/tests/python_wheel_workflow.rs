@@ -290,6 +290,7 @@ fn wheel_records_and_ambiguous_inputs_qualify() -> TestResult {
     ];
     let base = fixture.git(&["rev-parse", "HEAD"])?;
     for changed in mutations {
+        assert_ne!(changed, initial, "every mutation must alter the ledger");
         fixture.git(&["reset", "--hard", &base])?;
         let head = fixture.change(LEDGER, &changed)?;
         fixture.assert_selection("pull_request", &base, &head, true)?;
@@ -347,6 +348,7 @@ fn main_drift_and_independent_matching_edits_use_the_merge_base() -> TestResult 
     let original = fixture.ledger()?;
     let fork = fixture.git(&["rev-parse", "HEAD"])?;
     let main_ledger = original.replace("|194|", "|195|");
+    assert_ne!(main_ledger, original, "wheel budget fixture value changed");
     let main = fixture.change(LEDGER, &main_ledger)?;
     fixture.git(&["checkout", "-b", "candidate", &fork])?;
     let candidate = fixture.change(
