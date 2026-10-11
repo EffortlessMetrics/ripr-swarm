@@ -492,7 +492,15 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             gap_ledger,
         },
         (None, Some(_), None) => {
-            return Err("rerun --gap requires --gap-ledger <path>".to_string());
+            let root = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+            );
+            return Err(format!(
+                "rerun --gap requires --gap-ledger <path>.\n\
+                 Rust: run `ripr check --root {root} --format repo-exposure-json` and save stdout as repo-exposure.json, then run `ripr reports gap-ledger --root {root} --repo-exposure repo-exposure.json --out gap-ledger.json`.\n\
+                 TypeScript: repeat the check that produced the gap with --json, save stdout as check.json, then run `ripr reports gap-ledger --root {root} --check-output check.json --out gap-ledger.json`.\n\
+                 Command forms: Bash. Keep the same root and source scope; the ledger must contain the selected canonical gap ID. Producing a ledger does not translate IDs absent from it; retry with `--gap-ledger gap-ledger.json`."
+            ));
         }
         (None, None, Some(_)) => {
             return Err("rerun --gap-ledger requires --gap".to_string());
@@ -2551,11 +2559,14 @@ mod tests {
     }
 
     #[test]
-    fn rerun_gap_requires_explicit_ledger() {
-        assert_eq!(
-            parse_options(&args(&["--gap", "gap:example"])),
-            Err("rerun --gap requires --gap-ledger <path>".to_string())
-        );
+    fn rerun_gap_requires_explicit_ledger() -> Result<(), String> {
+        let Err(message) = parse_options(&args(&["--gap", "gap:example"])) else {
+            return Err("a gap without a ledger must refuse".to_string());
+        };
+        assert!(message.starts_with("rerun --gap requires --gap-ledger <path>"));
+        assert!(message.contains("--repo-exposure repo-exposure.json --out gap-ledger.json"));
+        assert!(message.contains("--check-output check.json --out gap-ledger.json"));
+        Ok(())
     }
 
     #[test]

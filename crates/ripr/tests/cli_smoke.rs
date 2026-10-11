@@ -39,6 +39,9 @@ mod related_test_count;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/repair_orderfile.rs"]
 mod repair_orderfile;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/rerun_ledger_recovery.rs"]
+mod rerun_ledger_recovery;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
 #[cfg(unix)]

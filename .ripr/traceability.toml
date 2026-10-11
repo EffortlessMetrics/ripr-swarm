@@ -9010,6 +9010,8 @@ tests = [
   "crates/ripr/src/cli/rerun.rs::tests::unresolved_changed_test_selectors_are_named_limitations",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_requires_one_selector",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_gap_requires_explicit_ledger",
+  "crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs::rerun_missing_gap_ledger_recovery_executes_the_rust_producer",
+  "crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs::rerun_missing_gap_ledger_help_names_source_specific_capture_steps",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_cache_disclosure_names_reuse_and_fallbacks",
   "crates/ripr/src/cli/rerun.rs::tests::canonical_gap_selection_retains_explicit_seam_after_gap_identity_closes",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_parses_gap_selector_with_explicit_ledger",

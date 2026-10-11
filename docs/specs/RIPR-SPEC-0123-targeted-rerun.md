@@ -296,6 +296,16 @@ The benchmark does not justify a universal latency claim.
 
 ## Required Evidence
 
+- A missing `--gap-ledger` refuses before writing artifacts and names the
+  existing source-specific ledger producers: `reports gap-ledger
+  --repo-exposure` for Rust inventory and `--check-output` for TypeScript.
+  Capture steps explain saving stdout, preserving the selected root/source
+  scope, and supplying the resulting ledger explicitly. Help describes the
+  same route. A ledger must contain the selected canonical ID: generation
+  does not translate Rust diff finding IDs into repo-inventory identities.
+- The Rust recovery command is replayed from a foreign CWD on an ordinary
+  pricing crate, with nonzero matched records and recomputed seams. An ID
+  absent from that ledger retains `canonical_gap_unresolved` and zero seams.
 - CLI parsing rejects zero or multiple selectors and invalid changed-test nodes.
 - Fixture-backed tests pin `--gap` identity projection and `--changed-test`
   affected-seam selection.
@@ -314,6 +324,9 @@ The benchmark does not justify a universal latency claim.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs` pins the missing-ledger
+  refusal, source-specific help, literal command arguments, quoted root,
+  producer execution, exact selected identity and absent-ID limitation.
 - Targeted selection tests prove a canonical gap resolves only through supplied
   domain identity, groups all matching seam records, deduplicates recomputation
   scopes and returned seams, preserves current scopes beside named stale or
