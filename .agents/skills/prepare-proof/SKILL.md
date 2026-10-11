@@ -28,6 +28,7 @@ A bounded proof contract can distinguish the intended behavior from the stronges
 
 - Output presence is not behavioral proof.
 - A golden can encode an incorrect expectation; use an independent corpus or invariant where promotion risk is material.
+- Derive expected semantic values from the contract, with literal pins or an independent invariant; do not compute them with the production decision being checked. Shared setup helpers are fine. When a targeted wrong-result or removal control materially strengthens behavioral proof, verify that the unchanged expected values reject it; record unexecuted discrimination as not established.
 - A setup helper must fail at setup rather than manufacture a downstream product failure.
 - A status-zero command with missing or unrecognized evidence is not clean.
 - Platform-specific branches require platform-capable proof.
