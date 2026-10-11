@@ -1559,6 +1559,8 @@ fn structured_tool_success(reply: &Value, context: &str) -> Result<Value, String
 fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
     let root = install_b4_repair_ready_fixture()?;
     let _cleanup = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
+    commit_fixture(&root, "ignore generated analysis artifacts")?;
     fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
     let committed_diff = common::fixture_git::fixture_git_output(&root, &["diff", "main...HEAD"])?;
     if !committed_diff.trim().is_empty() {
