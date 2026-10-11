@@ -31,11 +31,6 @@ pub(crate) fn returned_ledger(
         return None;
     }
     let hop = chain.hops.first()?;
-    // Fact bodies start at `fn`, excluding qualifiers such as `async`. Bind
-    // both definitions to the indexed source before claiming execution.
-    if !synchronous_definitions(source, &[owner, &hop.caller]) {
-        return None;
-    }
     let owner_parse = parse_clean_source_file(&owner.body)?;
     let function = owner_parse
         .tree()
@@ -213,6 +208,11 @@ pub(crate) fn returned_ledger(
             .map(|arg| canonical(arg))
             .collect::<Vec<_>>()
     {
+        return None;
+    }
+    // Fact bodies start at `fn`, excluding qualifiers such as `async`. Bind
+    // both definitions to the indexed source before claiming execution.
+    if !synchronous_definitions(source, &[owner, &hop.caller]) {
         return None;
     }
     Some(ReturnedLedger {

@@ -71,8 +71,8 @@ fn return_ledger_limit(
         StageState::Unknown,
         Confidence::Low,
         format!(
-            "Propagation unknown: `{owner}` mutably borrows `{}` from `{}`, which returns that same local ledger; transfer to the exact indexed field observer is unestablished (returned_mutable_ledger_observer_unresolved)",
-            ledger.parameter, ledger.caller.0
+            "Propagation unknown: `{owner}` parameter `{}` mutably borrows local `{}` from `{}`, which returns that same local ledger; transfer to the exact indexed field observer is unestablished (returned_mutable_ledger_observer_unresolved)",
+            ledger.parameter, ledger.local, ledger.caller.0
         ),
     )
 }

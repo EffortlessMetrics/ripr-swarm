@@ -118,7 +118,7 @@ can only hint that a caller "may lead here" without changing anything.
   `PropagationWitnessV1`. The source field must match uniquely by owner, line
   and normalized field expression: probe locations do not retain occurrence
   offsets, so identical same-line fields refuse identity. The call must be the
-  caller's final statement, its
+  caller's final statement, and its
   exact `&mut local` argument must match the resolved hop. Mutability comes
   from parsed `RefType`/`RefExpr` tokens, never a canonicalized text prefix;
   shared `&mutLedger` types and `&mut_errors` arguments refuse, as do raw
@@ -132,7 +132,7 @@ can only hint that a caller "may lead here" without changing anything.
   associated functions, attributed enclosing modules (which may rewrite their
   declarations), conditional declarations and different module scopes
   refuse; SymbolId prefixes or a free-function fact alone are insufficient.
-  fact body fragments alone omit qualifiers and cannot establish execution. Caller
+  Fact body fragments alone omit qualifiers and cannot establish execution. Caller
   imports, callee-named signature/body bindings (including raw names and
   destructuring patterns), value/item declarations, and opaque item/statement macro
   expansions refuse the unqualified helper edge. The owner parameter must be
