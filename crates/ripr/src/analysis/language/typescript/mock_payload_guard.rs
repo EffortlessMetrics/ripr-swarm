@@ -57,11 +57,14 @@ impl MockCallFacts {
                     _ => return None,
                 };
                 let index = owner_params.iter().position(|param| *param == call.root)?;
-                (identifier_mentions(owner_body, &call.root) == 2).then_some(ParameterCall {
-                    parameter: call.root,
-                    index,
-                    method,
-                })
+                // `arguments[i]` reaches a parameter without naming it.
+                (identifier_mentions(owner_body, &call.root) == 2
+                    && identifier_mentions(owner_body, "arguments") == 0)
+                    .then_some(ParameterCall {
+                        parameter: call.root,
+                        index,
+                        method,
+                    })
             })
             .collect();
         Self {
@@ -181,34 +184,66 @@ fn identifier_mentions(text: &str, name: &str) -> usize {
     identifier_offsets(&ts_mask_literals_and_comments(text), name).len()
 }
 
-/// Mentions of `name` other than as the whole subject of `expect(name` /
-/// `expect(name.member`.
+/// Mentions of `name` other than as the whole subject of `expect(name)` /
+/// `expect(name.member)`. `expect(name(...))` calls the mock, so it counts.
 fn identifier_mentions_outside_expect(text: &str, name: &str) -> usize {
     let masked = ts_mask_literals_and_comments(text);
     identifier_offsets(&masked, name)
         .into_iter()
         .filter(|at| {
             let before = masked[..*at].trim_end();
-            !(before.ends_with('(') && before[..before.len() - 1].trim_end().ends_with("expect"))
+            let opens_expect = before.strip_suffix('(').is_some_and(|head| {
+                let head = head.trim_end();
+                head.strip_suffix("expect").is_some_and(|prefix| {
+                    prefix
+                        .chars()
+                        .next_back()
+                        .is_none_or(|c| !is_identifier_part(c) && c != '.')
+                })
+            });
+            !(opens_expect && closes_expect_subject(&masked[at + name.len()..]))
         })
         .count()
 }
 
-/// `true` when exactly one call `owner(...)` in the test passes `local` as
-/// a whole argument, and it sits at `index`.
+/// `true` when `rest` (the text after the subject name) is `)` or one
+/// `.member` then `)`.
+fn closes_expect_subject(rest: &str) -> bool {
+    let rest = rest.trim_start();
+    let rest = match rest.strip_prefix('.') {
+        Some(member) => member
+            .trim_start()
+            .trim_start_matches(is_identifier_part)
+            .trim_start(),
+        None => rest,
+    };
+    rest.starts_with(')')
+}
+
+/// `true` when the test calls the owner exactly once (bare or as a method)
+/// and that call passes `local` as a whole argument at `index`, with no
+/// spread before it.
 fn owner_call_passes_at(test_body: &str, owner_name: &str, local: &str, index: usize) -> bool {
     let masked = ts_mask_literals_and_comments(test_body);
-    let mut passing = masked.match_indices(owner_name).filter_map(|(at, _)| {
+    let mut calls = masked.match_indices(owner_name).filter_map(|(at, _)| {
         if !(word_boundary_before(&masked, at) || masked[..at].ends_with('.')) {
             return None;
         }
         let rest = masked[at + owner_name.len()..].trim_start();
-        let arguments = top_level_arguments(rest.strip_prefix('(')?)?;
-        arguments
-            .iter()
-            .position(|argument| argument.trim() == local)
+        top_level_arguments(rest.strip_prefix('(')?)
     });
-    passing.next() == Some(index) && passing.next().is_none()
+    let (Some(arguments), None) = (calls.next(), calls.next()) else {
+        return false;
+    };
+    arguments
+        .iter()
+        .position(|argument| argument.trim() == local)
+        .is_some_and(|at| {
+            at == index
+                && !arguments[..at]
+                    .iter()
+                    .any(|argument| argument.trim_start().starts_with("..."))
+        })
 }
 
 /// The comma-separated top-level arguments of a call whose `(` was just

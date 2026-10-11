@@ -80,15 +80,17 @@ all of these hold:
 - the asserted target is `p` (or `p.m`), the same name, bound in the test
   with `const|let|var p = jest.fn(...)` or `vi.fn(...)` (or to a flat
   object literal whose `m` is such a call);
-- the test mentions `p` exactly twice outside `expect(p...)`: its
-  declaration and one argument of the test's only owner call that passes
-  it, at `p`'s parameter position.
+- the test mentions `p` exactly twice outside `expect(p)` /
+  `expect(p.m)`: its declaration and one argument of the test's only
+  owner call, at `p`'s parameter position with no spread before it.
+  `expect(p(...))` calls the mock and counts as a mention.
 
 `toHaveBeenCalledWith` passes when any recorded call matches, so every
 other way a call could reach the mock refuses: a second call in the
-owner, `p.call(...)`, an alias, passing `p` on, an inner parameter of the
-same name, the test calling or passing the mock elsewhere, a second owner
-call, or the mock at another argument position. A mock whose name differs
+owner, `p.call(...)`, `arguments[i]`, an alias, passing `p` on, an inner
+parameter of the same name, the test calling or passing the mock
+elsewhere, a second owner call, or the mock at another argument position
+or after a spread. A mock whose name differs
 from the parameter's (`const send = vi.fn()` passed in `{ send }` to a
 parameter `notifier`) earns nothing; that costs a false gap, never false
 credit. Without a readable owner source, or for an owner whose parameters

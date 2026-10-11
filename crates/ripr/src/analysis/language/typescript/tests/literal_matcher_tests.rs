@@ -69,6 +69,7 @@ fn mock_payload_another_call_could_satisfy_is_not_credited() {
         "function announce(id, send) {\n  const s = send;\n  send(\"order \" + id);\n}",
         "function announce(id, send) {\n  send(\"order \" + id);\n  retry(send);\n}",
         "function announce(id, send) {\n  send(\"order \" + id);\n  [1].forEach((send) => send(1));\n}",
+        "function announce(id, send) {\n  send(\"order \" + id);\n  arguments[1](\"order 7\");\n}",
     ] {
         assert!(
             !notify_facts(Some(owner)).credits(&payload, NOTIFY_TEST),
@@ -82,6 +83,10 @@ fn mock_payload_another_call_could_satisfy_is_not_credited() {
         "const send = jest.fn(); announce(7, send); announce(8, send);",
         "const send = jest.fn(); send.call(null, \"order 7\"); announce(7, send);",
         "const send = jest.fn(); const invoke = send; announce(7, send); invoke(\"order 7\");",
+        "const send = jest.fn(); announce(7, send); expect(send(\"order 7\")).toBeUndefined();",
+        "const send = jest.fn(); const reexpect = (f) => f(1); announce(7, send); reexpect(send);",
+        "const send = jest.fn(); announce(7, jest.fn()); fake.announce(7, send);",
+        "const send = jest.fn(); announce(...[7], send);",
         // Passed at another parameter's position.
         "const send = jest.fn(); announce(send, 7);",
     ] {
