@@ -81,6 +81,10 @@ pub enum StopReason {
     /// unknown rather than a gap. A `static_limit_kind` names the missing
     /// link. See RIPR-SPEC-0240.
     GapEvidenceUnresolved,
+    /// A helper-chain uniqueness stop that tests enter: ripr saw a call of
+    /// the ambiguous name but cannot bind it to one workspace function.
+    /// Classification is `static_unknown`. See RIPR-SPEC-0159 / #7272.
+    HelperIdentityUnresolved,
 }
 
 impl StopReason {
@@ -100,6 +104,7 @@ impl StopReason {
             StopReason::TransitiveReachUnresolved => "transitive_reach_unresolved",
             StopReason::MacroReachUnresolved => "macro_reach_unresolved",
             StopReason::GapEvidenceUnresolved => "gap_evidence_unresolved",
+            StopReason::HelperIdentityUnresolved => "helper_identity_unresolved",
         }
     }
 
@@ -157,6 +162,10 @@ impl StopReason {
             StopReason::GapEvidenceUnresolved => {
                 "ripr could not establish the evidence a gap needs for this change, so it does \
                  not claim one"
+            }
+            StopReason::HelperIdentityUnresolved => {
+                "ripr cannot tell which workspace function a test call names because that name \
+                 is not unique"
             }
         }
     }
@@ -670,6 +679,7 @@ mod tests {
             StopReason::TransitiveReachUnresolved,
             StopReason::MacroReachUnresolved,
             StopReason::GapEvidenceUnresolved,
+            StopReason::HelperIdentityUnresolved,
         ] {
             let gloss = reason.describe();
             assert!(!gloss.contains("  "), "{}: {gloss}", reason.as_str());

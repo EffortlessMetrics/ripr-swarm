@@ -233,6 +233,9 @@ fn stop_reason_meaning(reason: &StopReason) -> &'static str {
         StopReason::GapEvidenceUnresolved => {
             "a related test asserts, but ripr could not tie that assertion to this change"
         }
+        // ADR 0019: the domain gloss is the stop-reason owner. Do not invent
+        // a second identity-unknown sentence here.
+        StopReason::HelperIdentityUnresolved => reason.describe(),
     }
 }
 
@@ -311,6 +314,27 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("assert the exact `Kind::Beta`"), "{text}");
+    }
+
+    #[test]
+    fn helper_identity_unresolved_explain_uses_domain_describe() {
+        let reason = StopReason::HelperIdentityUnresolved;
+        assert_eq!(stop_reason_meaning(&reason), reason.describe());
+        assert!(
+            reason.describe().contains("workspace function")
+                && reason.describe().contains("not unique"),
+            "{}",
+            reason.describe()
+        );
+        assert!(
+            !reason.describe().contains("probe"),
+            "{}",
+            reason.describe()
+        );
+        assert_ne!(
+            stop_reason_meaning(&StopReason::StaticProbeUnknown),
+            reason.describe()
+        );
     }
 
     /// #5508: a Perl row whose observation ripr could not confirm is an
