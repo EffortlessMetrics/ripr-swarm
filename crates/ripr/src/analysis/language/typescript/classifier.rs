@@ -482,6 +482,19 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
         "await",
         "of",
     ];
+    // Keywords that take a string operand (`x as 'p'`, `from 'p'`) though a
+    // `/` after them is not a regex; a quote after any other word is JSX text.
+    const STRING_OPERAND_KEYWORDS: [&str; 9] = [
+        "as",
+        "satisfies",
+        "extends",
+        "from",
+        "import",
+        "export",
+        "default",
+        "else",
+        "do",
+    ];
     fn is_word_char(c: char) -> bool {
         c.is_alphanumeric() || c == '_' || c == '$'
     }
@@ -492,6 +505,12 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
             Some(c) => "(,=:[!&|?{};+-*%<>~^".contains(c),
         }
     }
+    fn string_expected(prev: Option<char>, word: &str, word_after_dot: bool) -> bool {
+        operand_expected(prev, word, word_after_dot)
+            || (prev.is_some_and(is_word_char)
+                && !word_after_dot
+                && STRING_OPERAND_KEYWORDS.contains(&word))
+    }
     let mut out = String::with_capacity(text.len());
     let mut mode = Mode::Code;
     // The last non-whitespace code character, to tell a regex from division.
@@ -500,6 +519,7 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
     // it (a member name).
     let mut word = String::new();
     let mut word_after_dot = false;
+    let mut after_space = false;
     // One entry per open `${`: the brace depth inside that interpolation.
     let mut interpolations: Vec<usize> = Vec::new();
     let mut chars = text.chars().peekable();
@@ -517,7 +537,7 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                     // A string literal starts only where an operand is
                     // expected; after a word or `)` a quote is JSX text
                     // (`<b>Don't {p(1)}</b>`) and stays code.
-                    '\'' | '"' if operand_expected(prev, &word, word_after_dot) => {
+                    '\'' | '"' if string_expected(prev, &word, word_after_dot) => {
                         mode = Mode::Quote(c);
                         out.push(c);
                     }
@@ -559,7 +579,8 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                     _ => out.push(c),
                 }
                 if is_word_char(c) {
-                    if !prev.is_some_and(is_word_char) {
+                    // Whitespace ends a word: `x as` is two words.
+                    if !prev.is_some_and(is_word_char) || after_space {
                         word.clear();
                         word_after_dot = prev == Some('.');
                     }
@@ -567,7 +588,8 @@ pub(crate) fn ts_mask_literals_and_comments(text: &str) -> String {
                 } else if !c.is_whitespace() {
                     word.clear();
                 }
-                if !c.is_whitespace() {
+                after_space = c.is_whitespace();
+                if !after_space {
                     prev = Some(c);
                 }
             }

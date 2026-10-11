@@ -429,7 +429,15 @@ fn literal_masking_reads_regex_literals_and_division() {
         assert_eq!(masked.chars().count(), text.chars().count(), "{text}");
     }
     // Strings still open after an operator, `(` or a keyword.
-    for text in ["f('p')", "x = \"p\"", "return 'p'", "<a title='p'>"] {
+    for text in [
+        "f('p')",
+        "x = \"p\"",
+        "return 'p'",
+        "<a title='p'>",
+        "x as 'p'",
+        "x satisfies 'p'",
+        "import q from 'p'",
+    ] {
         let masked = ts_mask_literals_and_comments(text);
         assert!(
             !ts_references_identifier(&masked, "p"),
