@@ -902,20 +902,55 @@ pub const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored
 pub const ROUTED_RUST_DRAFT_GUARD_SNIPPET: &str = "github.event.pull_request.draft";
 
 pub fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
-    workflow.lines().map(str::trim).find_map(|line| {
-        line.strip_prefix("types:")
-            .map(str::trim)
-            .filter(|rest| rest.starts_with('['))
-            .map(|rest| {
-                rest.trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToOwned::to_owned)
-                    .collect()
-            })
-    })
+    // Parse the repository's static inline on.pull_request.types declaration.
+    // A commented declaration, dispatch input, or job's block-scalar text must
+    // not impersonate event admission. Unsupported layouts return None so the
+    // policy caller can reject unauditable declarations.
+    let mut in_events = false;
+    let mut in_pull_request = false;
+    for raw in workflow.lines() {
+        let line = raw.split(" #").next()?.trim_end();
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
+        if line == "on:" {
+            in_events = true;
+            continue;
+        }
+        if !in_events {
+            continue;
+        }
+        if !line.starts_with(' ') {
+            break;
+        }
+        if line.starts_with("  ") && !line.starts_with("   ") {
+            in_pull_request = line == "  pull_request:";
+            continue;
+        }
+        if in_pull_request && let Some(types) = line.strip_prefix("    types:") {
+            let items = types.trim().strip_prefix('[')?.strip_suffix(']')?;
+            if items.trim().is_empty() {
+                return Some(Vec::new());
+            }
+            return items
+                .split(',')
+                .map(|item| {
+                    let value = item.trim();
+                    let value = if let Some(quoted) = value.strip_prefix('\'') {
+                        quoted.strip_suffix('\'')?
+                    } else if let Some(quoted) = value.strip_prefix('"') {
+                        quoted.strip_suffix('"')?
+                    } else {
+                        value
+                    };
+                    (!value.is_empty()
+                        && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+                    .then(|| value.to_owned())
+                })
+                .collect();
+        }
+    }
+    None
 }
 
 pub fn routed_rust_event_route(

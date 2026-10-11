@@ -226,15 +226,15 @@ The brief should use schema version `0.1`:
         "seam_id": "f3c9e4d21a0b7c88"
       },
       "verification": {
-        "before_snapshot_command": "mkdir -p target/ripr/workflow target/ripr/reports && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json",
-        "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
+        "before_snapshot_command": "mkdir -p target/ripr/workflow && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/before.repo-exposure.json",
+        "after_snapshot_command": "mkdir -p target/ripr/workflow && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
         "verify_command": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json",
         "suggested_test_command": "cargo test discounted_total_boundary_discriminator"
       }
     }
   ],
   "next": {
-    "inspect_packet": "ripr check --root . --mode draft --format agent-seam-packets-json > target/ripr/workflow/agent-seam-packets.json",
+    "inspect_packet": "mkdir -p target/ripr/workflow && ripr check --root . --mode draft --format agent-seam-packets-json > target/ripr/workflow/agent-seam-packets.json",
     "verify_after_edit": "ripr agent verify --root . --before target/ripr/workflow/before.repo-exposure.json --after target/ripr/workflow/after.repo-exposure.json --json > target/ripr/workflow/agent-verify.json",
     "write_receipt": "ripr agent receipt --root . --verify-json target/ripr/workflow/agent-verify.json --seam-id f3c9e4d21a0b7c88 --json --out target/ripr/reports/agent-receipt.json"
   },
@@ -270,7 +270,9 @@ Field contract:
 - `top_seams[].why_now.confidence` — `high`, `medium`, `low`, or `unknown`.
 - `top_seams[].packet_ref` — stable pointer to the full packet shape.
 - `top_seams[].verification` — commands the agent can run to compare static
-  evidence before and after a focused test.
+  evidence before and after a focused test. Every command that redirects into
+  `target/ripr/workflow` carries a `mkdir -p` prefix for that directory, so
+  each runs verbatim in a fresh checkout (#4592, #7289).
 - `next.write_receipt` — optional handoff command that narrows the verify JSON
   to the selected seam. It records review metadata but does not run tests.
 - `warnings[]` — advisory warnings, such as hidden seams due to configured
@@ -327,7 +329,7 @@ high-confidence `changed_line_intersects_seam` reason:
         "seam_id": "f3c9e4d21a0b7c88"
       },
       "verification": {
-        "after_snapshot_command": "ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
+        "after_snapshot_command": "mkdir -p target/ripr/workflow && ripr check --root . --mode draft --format repo-exposure-json > target/ripr/workflow/after.repo-exposure.json",
         "suggested_test_command": "cargo test discounted_total_boundary_discriminator"
       }
     }

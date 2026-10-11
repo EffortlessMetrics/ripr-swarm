@@ -12694,6 +12694,8 @@ id = "RIPR-SPEC-0211"
 name = "MCP workspace session evidence"
 spec = "docs/specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md"
 tests = [
+  "crates/ripr/tests/mcp_stdio.rs::pre_call_contract_discloses_committed_scope_on_wire_and_help",
+  "crates/ripr/tests/mcp_stdio.rs::dirty_tree_cli_and_mcp_retain_their_distinct_inputs",
   "crates/ripr/src/mcp/workspace.rs::tests::complete_zero_and_incomplete_zero_stay_distinct",
   "crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults",
   "crates/ripr/src/mcp/workspace.rs::tests::unsupported_input_never_becomes_a_snapshot",
@@ -12732,6 +12734,7 @@ tests = [
   "crates/ripr/tests/mcp_stdio.rs::optional_tool_arguments_reject_null_and_recover_over_stdio",
   "crates/ripr/tests/mcp_sdk.rs",
   "crates/ripr/tests/mcp_stdio.rs::gap_tools_fail_closed_before_the_first_refresh",
+  "crates/ripr/tests/mcp_stdio.rs::unavailable_workspace_evidence_names_restart_before_any_refresh",
   "crates/ripr/tests/mcp_stdio.rs::resource_reads_match_tools_after_refresh",
   "crates/ripr/tests/mcp_stdio.rs::post_initialize_ping_with_handshake_meta_returns_an_empty_result",
   "crates/ripr/src/mcp/gaps.rs::tests::gap_projection_renders_every_served_file_root_relative",
@@ -13884,14 +13887,40 @@ metrics = [
 id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
-tests = []
-fixtures = []
+tests = [
+  "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::chai_throw_string_literal_is_exact_error_variant",
+  "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::node_assert_anchored_regex_and_message_object_are_exact_error_variants",
+  "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::chai_assert_throws_stays_broad",
+  "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::only_a_test_runner_expect_reads_jest_matchers",
+  "crates/ripr/src/analysis/language/typescript/error_payload_guard.rs::tests::rule_4_string_payload_must_match_exactly_one_message",
+  "crates/ripr/src/analysis/language/typescript/error_payload_guard.rs::tests::rule_4_class_payloads_on_message_and_other_changes",
+  "crates/ripr/src/analysis/language/typescript/error_payload_guard.rs::tests::rule_10_node_assert_payloads_under_the_message_guard",
+  "crates/ripr/src/analysis/language/typescript/tests/error_payload_tests.rs::rule4_ex13_class_payload_reads_broad_on_a_message_only_change",
+  "crates/ripr/src/analysis/language/typescript/tests/error_payload_tests.rs::rule4_string_payload_credits_only_when_it_separates_the_messages",
+  "crates/ripr/src/analysis/language/typescript/tests/spec0243_owner_tests.rs::rule5_ex16_default_import_of_other_default_export_is_not_an_owner_call",
+  "crates/ripr/src/analysis/language/typescript/tests/spec0243_owner_tests.rs::rule5_ex17_default_import_of_default_owner_stays_direct_owner_call",
+  "crates/ripr/src/analysis/language/typescript/tests/spec0243_owner_tests.rs::rule6_ex22_prefix_named_local_is_not_an_owner_observation",
+  "crates/ripr/src/analysis/language/typescript/tests/spec0243_owner_tests.rs::rule6_whole_identifier_reference_boundaries",
+  "crates/ripr/src/analysis/language/typescript/tests/spec0243_owner_tests.rs::rule7_ex18_alias_local_call_is_an_owner_observation",
+  "crates/ripr/src/analysis/language/typescript/tests/spec0243_owner_tests.rs::rule7_ex19_alias_local_initializer_is_an_owner_observation",
+  "crates/ripr/src/analysis/language/typescript/tests/mocked_callee_tests.rs::spec0243_ex31_mocked_changed_line_callee_reads_static_unknown",
+  "crates/ripr/src/analysis/language/typescript/tests/mocked_callee_tests.rs::spec0243_ex32_mock_of_unrelated_module_stays_exposed_without_observer_limitation",
+  "crates/ripr/src/analysis/language/typescript/tests/mocked_callee_tests.rs::spec0243_rule8_reads_every_exposing_test_file",
+  "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::literal_table_rows_pinning_the_boundary_are_exposed",
+  "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::non_literal_table_stays_unresolved",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
 code = [
   "crates/ripr/src/analysis/language/typescript/actionability.rs",
   "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/error_payload_guard.rs",
   "crates/ripr/src/analysis/language/typescript/oracle.rs",
+  "crates/ripr/src/analysis/language/typescript/owners.rs",
   "crates/ripr/src/analysis/language/typescript/related_tests.rs",
   "crates/ripr/src/analysis/language/typescript/static_limit.rs",
+  "crates/ripr/src/analysis/language/typescript/table_rows.rs",
   "crates/ripr/src/analysis/language/typescript/tests_extract.rs",
 ]
 outputs = [

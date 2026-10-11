@@ -37,6 +37,10 @@ impl McpServer {
         // refresh attempt runs under, so `ripr_workspace_status` never
         // discloses a language gate the analysis does not have.
         let profile = workspace::SessionProfile::resolve(analysis_root.as_deref());
+        let session = workspace::WorkspaceSession {
+            workspace_failure: workspace::available_root(analysis_root.as_deref()).err(),
+            ..Default::default()
+        };
         let mut server = Self {
             tools: typed(protocol::tools_list_result())?,
             resources: typed(protocol::resources_list_result())?,
@@ -45,7 +49,7 @@ impl McpServer {
             root_identity: status.root.identity.clone(),
             analysis_root,
             status,
-            session: Arc::new(Mutex::new(workspace::WorkspaceSession::default())),
+            session: Arc::new(Mutex::new(session)),
         };
         // Domain JSON carries status/catalog data, not version-dependent SDK
         // result metadata. SDK constructors supply current result fields and
@@ -96,13 +100,11 @@ impl McpServer {
     }
 
     async fn refresh_tool(&self) -> Result<CallToolResponse, ErrorData> {
-        let Some(root) = self.analysis_root.clone() else {
-            let failure = workspace::AttemptFailure::new(
-                workspace::CODE_WORKSPACE_UNAVAILABLE,
-                "the workspace root is not usable, so no analysis can run",
-                "restart the server with `ripr mcp --stdio --root <repository>`",
-            );
-            return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
+        let root = match workspace::available_root(self.analysis_root.as_deref()) {
+            Ok(root) => root.to_path_buf(),
+            Err(failure) => {
+                return self.typed_failure(failure, workspace::REFRESH_SCHEMA_VERSION);
+            }
         };
         let root_identity = self.root_identity.clone();
         let session = self.session.clone();

@@ -1,5 +1,16 @@
 use super::*;
 
+/// These controls exercise a healthy root before its first analysis. Bind
+/// both facts returned by the production root resolver, rather than pairing
+/// a ready status with an artificially unavailable analysis root.
+fn healthy_server() -> Result<McpServer, String> {
+    let (status, root) = WorkspaceStatus::resolve_with_root(None);
+    if root.is_none() {
+        return Err("healthy MCP fixture did not resolve a usable root".to_string());
+    }
+    McpServer::new(status, root).map_err(|error| error.to_string())
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn delayed_durable_read_leaves_the_async_executor_and_status_available() -> Result<(), String>
 {
@@ -231,8 +242,7 @@ fn sdk_server_declares_snapshot_and_gap_resource_templates() -> Result<(), Strin
 
 #[tokio::test]
 async fn list_gaps_before_any_refresh_is_a_typed_no_snapshot_failure() -> Result<(), String> {
-    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
-        .map_err(|error| error.to_string())?;
+    let server = healthy_server()?;
     let response = server
         .list_gaps_tool(None)
         .await
@@ -270,8 +280,7 @@ async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(),
     // #6021: paging arguments are part of the input contract. A pre-refresh
     // server answers past dispatch with typed `no_snapshot` — proving the
     // arguments were accepted — while malformed values stay invalid params.
-    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
-        .map_err(|error| error.to_string())?;
+    let server = healthy_server()?;
     for arguments in [
         serde_json::json!({}),
         serde_json::json!({"offset": 0}),
@@ -360,8 +369,7 @@ async fn get_gap_accepts_canonical_id_at_the_dispatch_edge() -> Result<(), Strin
     // (`canonical_id`), not the old `gap_id` name. A pre-refresh server
     // answers past-dispatch calls with typed `no_snapshot`, which proves
     // the dispatch edge accepted the spelling.
-    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
-        .map_err(|error| error.to_string())?;
+    let server = healthy_server()?;
     let arguments = serde_json::from_value(serde_json::json!({"canonical_id": "gap:x"}))
         .map_err(|error| error.to_string())?;
     let response = server
@@ -446,8 +454,7 @@ fn gap_resource_templates_spell_the_identity_canonical_id() -> Result<(), String
 
 #[tokio::test]
 async fn prepare_repair_fails_closed_before_refresh() -> Result<(), String> {
-    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
-        .map_err(|error| error.to_string())?;
+    let server = healthy_server()?;
     let arguments = serde_json::from_value(serde_json::json!({"canonical_id": "gap:any"}))
         .map_err(|error| error.to_string())?;
     let response = server
@@ -567,8 +574,7 @@ async fn receipt_status_fails_closed_before_refresh() -> Result<(), String> {
 
 #[tokio::test]
 async fn repair_card_fails_closed_before_refresh() -> Result<(), String> {
-    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
-        .map_err(|error| error.to_string())?;
+    let server = healthy_server()?;
     let arguments = serde_json::from_value(serde_json::json!({"canonical_id": "gap:test:1"}))
         .map_err(|error| error.to_string())?;
     let response = server

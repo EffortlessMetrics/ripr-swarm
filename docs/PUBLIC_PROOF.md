@@ -44,8 +44,8 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **6.2%** | <= 0.0% | below the bar | no earlier measurement |
 | Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt (mutation spot check, 14 of 15 seam-precise `strongly_gripped` mutants scored; 1 unscored) |
 | Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt (mutation spot check, 23 of 23 seam-precise `ungripped` mutants scored; 0 unscored) |
-| Trust | Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap | **43.5%** | <= 5.0% | below the bar | no earlier measurement |
-| Trust | Authored TypeScript edits the project's tests miss that ripr credits as caught | **23.1%** | <= 0.0% | below the bar | no earlier measurement |
+| Trust | Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap | **30.6%** | <= 5.0% | below the bar | no earlier measurement |
+| Trust | Authored TypeScript edits the project's tests miss that ripr credits as caught | **5.1%** | <= 0.0% | below the bar | no earlier measurement |
 | Trust | Authored TypeScript edits the project's tests miss that ripr reports as fine | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
 | Trust | When ripr pilot ranks a seam in its top ten, a real mutant there is missed | not measured | >= 60.0% | not measured | no earlier measurement |
 | Trust | Real mutants that join a ripr seam precisely (join coverage; 37 of 1745 enter an agreement rate) | **10.0%** | >= 50.0% | below the bar | first receipt (mutation spot check) |
@@ -361,7 +361,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `semver-leading-zero` | upstream | discriminated | credited | limited | no_static_path | abstained | none |
 | `semver-less-pre` | upstream | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
 | `semver-max-comparators` | upstream | partially_discriminated | gap | limited | no_static_path | abstained | none |
-| `semver-op-greater-eq` | upstream | discriminated | credited | limited | no_static_path | abstained | none |
+| `semver-op-greater-eq` | upstream | discriminated | credited | limited | static_unknown | abstained | none |
 | `semver-req-separator` | upstream | discriminated | credited | limited | no_static_path | abstained | none |
 | `semver-tilde-pre-ge` | upstream | discriminated | credited | limited | infection_unknown, propagation_unknown | abstained | none |
 | `serde-derive-rename-field-upper` | upstream | discriminated | credited | credited | exposed | ideal | none |

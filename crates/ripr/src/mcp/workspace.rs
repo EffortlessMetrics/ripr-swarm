@@ -152,6 +152,19 @@ impl AttemptFailure {
     }
 }
 
+/// Project the root fact already resolved at server startup. This is not a
+/// root discovery or a filesystem recheck: unavailable sessions need a
+/// restart, and refresh and snapshot reads must name the same recovery.
+pub(crate) fn available_root(root: Option<&Path>) -> Result<&Path, AttemptFailure> {
+    root.ok_or_else(|| {
+        AttemptFailure::new(
+            CODE_WORKSPACE_UNAVAILABLE,
+            "the workspace root is not usable, so no analysis can run",
+            "restart the server with `ripr mcp --stdio --root <repository>`",
+        )
+    })
+}
+
 fn bounded_detail(detail: impl Into<String>) -> String {
     let detail = detail.into();
     let mut chars = detail.chars();
@@ -386,6 +399,9 @@ fn freshness_state(session: &WorkspaceSession) -> &'static str {
 /// recent terminal failure. A failure never replaces `last_good`.
 #[derive(Default)]
 pub(crate) struct WorkspaceSession {
+    /// The startup root failure, independent of analysis attempt state.
+    /// A healthy root leaves the existing snapshot lifecycle unchanged.
+    pub(crate) workspace_failure: Option<AttemptFailure>,
     pub(crate) in_flight: bool,
     pub(crate) last_good: Option<Arc<Snapshot>>,
     pub(crate) last_failure: Option<AttemptFailure>,
@@ -424,6 +440,9 @@ impl WorkspaceSession {
         &self,
         requested: Option<&str>,
     ) -> Result<&Arc<Snapshot>, AttemptFailure> {
+        if let Some(failure) = &self.workspace_failure {
+            return Err(failure.clone());
+        }
         if self.in_flight {
             return Err(AttemptFailure::new(
                 CODE_ANALYSIS_IN_FLIGHT,
@@ -1247,6 +1266,7 @@ mod tests {
             in_flight: false,
             last_good: Some(Arc::new(snapshot)),
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
@@ -1275,6 +1295,7 @@ mod tests {
             in_flight: false,
             last_good: Some(Arc::new(limited_snapshot)),
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
@@ -1450,6 +1471,7 @@ mod tests {
             in_flight: false,
             last_good: Some(Arc::new(snapshot)),
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
@@ -1977,6 +1999,7 @@ mod tests {
             in_flight: false,
             last_good: Some(Arc::new(snapshot)),
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
@@ -2048,6 +2071,7 @@ mod tests {
             in_flight: false,
             last_good: Some(Arc::new(untracked_snapshot)),
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
@@ -2216,6 +2240,7 @@ mod tests {
                 in_flight: false,
                 last_good: Some(Arc::new(snapshot)),
                 last_failure: None,
+                workspace_failure: None,
                 repairs: std::collections::BTreeMap::new(),
                 superseded_attempts: std::collections::BTreeMap::new(),
                 superseded_order: std::collections::VecDeque::new(),

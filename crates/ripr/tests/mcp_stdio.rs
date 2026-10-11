@@ -584,6 +584,92 @@ fn readable_request_id_larger_than_output_cap_terminates_without_oversized_reply
 }
 
 #[test]
+fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), String> {
+    let root = workspace_root()?;
+    let requests = [
+        line(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": { "name": "scope-contract-test", "version": "1" } }
+        }))?,
+        line(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))?,
+        line(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }))?,
+    ]
+    .concat();
+    let output = run_mcp(&root, &[&requests])?;
+    let replies = response_lines(&output)?;
+    if replies.len() != 2 {
+        return Err(format!(
+            "expected initialize and tools/list replies: {replies:?}"
+        ));
+    }
+    let instructions = replies[0]
+        .pointer("/result/instructions")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "initialize omitted instructions".to_string())?;
+    let refresh = replies[1]
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "ripr_refresh"))
+        .ok_or_else(|| "tools/list omitted ripr_refresh".to_string())?;
+    let description = refresh
+        .get("description")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "ripr_refresh omitted its description".to_string())?;
+    if refresh.pointer("/inputSchema/properties") != Some(&json!({})) {
+        return Err(format!(
+            "refresh must retain its argument-free scope: {refresh}"
+        ));
+    }
+    let discovery = line(json!({ "jsonrpc": "2.0", "id": 1,
+        "method": "server/discover", "params": { "_meta": current_meta() } }))?;
+    let discover_output = run_mcp(&root, &[&discovery])?;
+    let discovered = response_lines(&discover_output)?;
+    let discover_instructions = discovered
+        .first()
+        .and_then(|reply| reply.pointer("/result/instructions"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "server/discover omitted instructions".to_string())?;
+    let help = worktree_ripr()
+        .args(["mcp", "--help"])
+        .output()
+        .map_err(|error| format!("run MCP help: {error}"))?;
+    if !help.status.success() {
+        return Err(format!("MCP help failed: {:?}", help.status.code()));
+    }
+    let help = String::from_utf8(help.stdout).map_err(|error| error.to_string())?;
+    // Literal acceptance expectations, independent of descriptor constants.
+    // Test the delivered surfaces before any analysis call, even on a clean root.
+    let mut failures = Vec::new();
+    for (surface, text) in [
+        ("initialize", instructions),
+        ("tools/list ripr_refresh", description),
+        ("server/discover", discover_instructions),
+        ("mcp --help", help.as_str()),
+    ] {
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        for required in [
+            "committed default-branch diff",
+            "staged and unstaged tracked edits and untracked files are outside",
+            "`ripr check` defaults to the working tree when staged or unstaged tracked edits exist",
+            "shared check authority does not mean identical input",
+            "`ripr check --committed`",
+        ] {
+            if !text.contains(required) {
+                failures.push(format!("{surface} omitted {required:?}"));
+            }
+        }
+        if text.contains("the same analysis `ripr check`") {
+            failures.push(format!("{surface} promises identical CLI input"));
+        }
+    }
+    if !failures.is_empty() {
+        return Err(failures.join("\n"));
+    }
+    Ok(())
+}
+
+#[test]
 fn legacy_stdio_lifecycle_lists_and_reads_the_same_bounded_status() -> Result<(), String> {
     let root = workspace_root()?;
     let initialize = line(json!({
@@ -1045,6 +1131,191 @@ fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<
     Ok(())
 }
 
+/// The first evidence read must name the root problem and a recovery that
+/// can change it, on tools and resources alike (#7346).
+#[test]
+fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(), String> {
+    struct FixtureRoot(PathBuf);
+    impl Drop for FixtureRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let temp = std::env::temp_dir();
+    std::fs::create_dir_all(&temp).map_err(|error| format!("create temp root: {error}"))?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = temp.join(format!(
+        "ripr-mcp-unavailable-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&path).map_err(|error| format!("create markerless root: {error}"))?;
+    let fixture = FixtureRoot(path);
+    let missing = fixture.0.join("missing");
+    for (root, root_error) in [
+        (fixture.0.as_path(), "repository_marker_missing"),
+        (missing.as_path(), "root_missing"),
+    ] {
+        let mut requests = vec![
+            line(json!({
+                "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+                "params": { "_meta": current_meta() }
+            }))?,
+            line(json!({
+                "jsonrpc": "2.0", "id": "status", "method": "tools/call",
+                "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
+            }))?,
+        ];
+        for phase in ["before", "after"] {
+            if phase == "after" {
+                requests.push(line(json!({
+                    "jsonrpc": "2.0", "id": "refresh", "method": "tools/call",
+                    "params": { "_meta": current_meta(), "name": "ripr_refresh", "arguments": {} }
+                }))?);
+            }
+            for (name, arguments) in [
+                ("ripr_list_gaps", json!({})),
+                ("ripr_get_gap", json!({ "canonical_id": "gap:any" })),
+                ("ripr_prepare_repair", json!({ "canonical_id": "gap:any" })),
+                ("ripr_get_repair_card", json!({ "canonical_id": "gap:any" })),
+            ] {
+                requests.push(line(json!({
+                    "jsonrpc": "2.0", "id": format!("{phase}-{name}"), "method": "tools/call",
+                    "params": { "_meta": current_meta(), "name": name, "arguments": arguments }
+                }))?);
+            }
+            for uri in [
+                "ripr://snapshot/snapshot:sha256:any",
+                "ripr://gap/gap:any",
+                "ripr://repair-card/gap:any",
+            ] {
+                requests.push(line(json!({
+                    "jsonrpc": "2.0", "id": format!("{phase}-{uri}"), "method": "resources/read",
+                    "params": { "_meta": current_meta(), "uri": uri }
+                }))?);
+            }
+        }
+        requests.push(line(json!({
+            "jsonrpc": "2.0", "id": "survivor", "method": "tools/call",
+            "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
+        }))?);
+        let output = run_mcp(root, &[&requests.concat()])?;
+        let responses = response_lines(&output)?;
+        if responses.len() != 18 {
+            return Err(format!(
+                "expected 18 replies for {root_error}, got {}",
+                responses.len()
+            ));
+        }
+        let by_id: std::collections::HashMap<&str, &Value> = responses
+            .iter()
+            .filter_map(|response| {
+                response
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(|id| (id, response))
+            })
+            .collect();
+        if by_id.len() != 18 {
+            return Err(format!(
+                "expected 18 unique reply ids for {root_error}, got {}",
+                by_id.len()
+            ));
+        }
+        for phase in ["before", "after"] {
+            for subject in [
+                "ripr_list_gaps",
+                "ripr_get_gap",
+                "ripr_prepare_repair",
+                "ripr_get_repair_card",
+                "ripr://snapshot/snapshot:sha256:any",
+                "ripr://gap/gap:any",
+                "ripr://repair-card/gap:any",
+            ] {
+                let id = format!("{phase}-{subject}");
+                if !by_id.contains_key(id.as_str()) {
+                    return Err(format!(
+                        "missing intended evidence reply {id} for {root_error}"
+                    ));
+                }
+            }
+        }
+        for id in ["status", "survivor"] {
+            let reply = by_id.get(id).ok_or_else(|| format!("missing {id} reply"))?;
+            if reply
+                .pointer("/result/structuredContent/workspace/workspace_state")
+                .and_then(Value::as_str)
+                != Some("unavailable")
+                || reply
+                    .pointer("/result/structuredContent/workspace/root/error_code")
+                    .and_then(Value::as_str)
+                    != Some(root_error)
+                || reply
+                    .pointer("/result/structuredContent/session/attempt_state")
+                    .and_then(Value::as_str)
+                    != Some("no_snapshot")
+            {
+                return Err(format!(
+                    "fixture or survivor state lost {root_error}: {reply}"
+                ));
+            }
+        }
+        let recovery = "restart the server with `ripr mcp --stdio --root <repository>`";
+        let refresh = by_id
+            .get("refresh")
+            .ok_or_else(|| "missing refresh reply".to_string())?;
+        let expected_failure = refresh
+            .pointer("/result/structuredContent/failure")
+            .ok_or_else(|| format!("refresh lost typed root failure: {refresh}"))?;
+        if expected_failure.get("code").and_then(Value::as_str) != Some("workspace_unavailable")
+            || expected_failure.get("recovery").and_then(Value::as_str) != Some(recovery)
+        {
+            return Err(format!("refresh lost the actionable recovery: {refresh}"));
+        }
+        for (id, reply) in &by_id {
+            if !id.starts_with("before-") && !id.starts_with("after-") && *id != "refresh" {
+                continue;
+            }
+            let resource = id.contains("ripr://");
+            let failure = if resource {
+                if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+                    return Err(format!("{id} lost resource failure semantics: {reply}"));
+                }
+                reply.pointer("/error/data/failure")
+            } else {
+                if reply.pointer("/result/isError").and_then(Value::as_bool) != Some(true) {
+                    return Err(format!("{id} lost typed tool failure: {reply}"));
+                }
+                let text = reply
+                    .pointer("/result/content/0/text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !text.contains("workspace_unavailable") || !text.contains(recovery) {
+                    return Err(format!("{id} rendered an unusable recovery: {reply}"));
+                }
+                reply.pointer("/result/structuredContent/failure")
+            };
+            if failure
+                .and_then(|value| value.get("code"))
+                .and_then(Value::as_str)
+                != Some("workspace_unavailable")
+                || failure
+                    .and_then(|value| value.get("recovery"))
+                    .and_then(Value::as_str)
+                    != Some(recovery)
+                || failure != Some(expected_failure)
+            {
+                return Err(format!(
+                    "{id} must share refresh's root failure before and after refresh: {reply}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The evidence tools fail closed on the wire before the first refresh:
 /// a stock-shaped raw client gets typed structured failures (never a
 /// partial document), and the snapshot/gap resource reads route through the
@@ -1464,6 +1735,141 @@ fn structured_tool_success(reply: &Value, context: &str) -> Result<Value, String
         .get("structuredContent")
         .cloned()
         .ok_or_else(|| format!("{context} omitted structuredContent: {result}"))
+}
+
+/// Keep the wording tied to actual input selection: the same dirty fixture
+/// yields CLI findings but a committed-only MCP snapshot with scope disclosure.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
+    commit_fixture(&root, "ignore generated analysis artifacts")?;
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
+    let committed_diff = common::fixture_git::fixture_git_output(&root, &["diff", "main...HEAD"])?;
+    if !committed_diff.trim().is_empty() {
+        return Err("fixture must have an empty committed default-branch diff".to_string());
+    }
+    let source = root.join("src/lib.rs");
+    let committed = std::fs::read_to_string(&source).map_err(|error| error.to_string())?;
+    std::fs::write(&source, committed.replace("amount - 10", "amount - 20"))
+        .map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["add", "src/lib.rs"])?;
+    std::fs::write(
+        &source,
+        committed.replace("amount - 10", "amount - 20").replace(
+            "amount > discount_threshold",
+            "amount >= discount_threshold",
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/untracked.rs"),
+        "pub fn untracked() -> i32 { 42 }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let before = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
+    if !before.contains("MM src/lib.rs") || !before.contains("?? src/untracked.rs") {
+        return Err(format!(
+            "fixture lost staged/unstaged/untracked subjects: {before}"
+        ));
+    }
+    let before_head = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?;
+    let before_diff =
+        common::fixture_git::fixture_git_output(&root, &["diff", "--binary", "HEAD"])?;
+    let before_index =
+        common::fixture_git::fixture_git_output(&root, &["diff", "--cached", "--binary"])?;
+    let before_untracked =
+        std::fs::read(root.join("src/untracked.rs")).map_err(|error| error.to_string())?;
+    let check = |committed_only: bool| -> Result<Value, String> {
+        let mut command = worktree_ripr();
+        command
+            .args(["check", "--format", "json", "--root"])
+            .arg(&root);
+        if committed_only {
+            command.arg("--committed");
+        }
+        let output = command.output().map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(format!(
+                "check failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+    };
+    let live = check(false)?;
+    if live.pointer("/head/source").and_then(Value::as_str) != Some("working_tree")
+        || live
+            .get("findings")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
+    {
+        return Err(format!(
+            "dirty default CLI must analyze real findings: {live}"
+        ));
+    }
+    let committed_cli = check(true)?;
+    if committed_cli
+        .get("findings")
+        .and_then(Value::as_array)
+        .is_none_or(|items| !items.is_empty())
+        || committed_cli.get("unanalyzed_working_tree") != Some(&json!(true))
+    {
+        return Err(format!(
+            "--committed must exclude dirty edits and disclose them: {committed_cli}"
+        ));
+    }
+    let mut session = SequentialStdio::spawn(&root)?;
+    let timeout = Duration::from_mins(1);
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), timeout)?;
+    let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
+    if refresh.pointer("/attempt/state").and_then(Value::as_str) != Some("completed")
+        || refresh
+            .pointer("/snapshot/outcome_kind")
+            .and_then(Value::as_str)
+            != Some("no_scope")
+        || refresh
+            .pointer("/snapshot/total_items")
+            .and_then(Value::as_u64)
+            != Some(0)
+        || refresh.pointer("/scope/analyzed").and_then(Value::as_str)
+            != Some("committed default-branch diff")
+        || refresh
+            .pointer("/scope/untracked_edits/total")
+            .and_then(Value::as_u64)
+            != Some(1)
+    {
+        return Err(format!(
+            "MCP must retain committed-only no_scope with dirty disclosure: {refresh}"
+        ));
+    }
+    let status = session.call_tool("status", "ripr_workspace_status", json!({}), timeout)?;
+    let status = structured_tool_success(&status, "ripr_workspace_status")?;
+    if status.pointer("/session/scope") != refresh.get("scope") {
+        return Err(format!("status lost refresh scope disclosure: {status}"));
+    }
+    drop(session);
+    let after = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
+    let after_head = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?;
+    let after_diff = common::fixture_git::fixture_git_output(&root, &["diff", "--binary", "HEAD"])?;
+    let after_index =
+        common::fixture_git::fixture_git_output(&root, &["diff", "--cached", "--binary"])?;
+    let after_untracked =
+        std::fs::read(root.join("src/untracked.rs")).map_err(|error| error.to_string())?;
+    if before != after
+        || before_head != after_head
+        || before_diff != after_diff
+        || before_index != after_index
+        || before_untracked != after_untracked
+    {
+        return Err(format!(
+            "analysis changed the dirty fixture: before={before:?}, after={after:?}"
+        ));
+    }
+    Ok(())
 }
 
 /// Presentation-only command displays bind the portable `.` on MCP and the
