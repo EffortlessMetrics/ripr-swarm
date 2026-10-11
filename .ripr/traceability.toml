@@ -12694,6 +12694,8 @@ id = "RIPR-SPEC-0211"
 name = "MCP workspace session evidence"
 spec = "docs/specs/RIPR-SPEC-0211-mcp-workspace-session-evidence.md"
 tests = [
+  "crates/ripr/tests/mcp_stdio.rs::pre_call_contract_discloses_committed_scope_on_wire_and_help",
+  "crates/ripr/tests/mcp_stdio.rs::dirty_tree_cli_and_mcp_retain_their_distinct_inputs",
   "crates/ripr/src/mcp/workspace.rs::tests::complete_zero_and_incomplete_zero_stay_distinct",
   "crates/ripr/src/workspace_status.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults",
   "crates/ripr/src/mcp/workspace.rs::tests::unsupported_input_never_becomes_a_snapshot",

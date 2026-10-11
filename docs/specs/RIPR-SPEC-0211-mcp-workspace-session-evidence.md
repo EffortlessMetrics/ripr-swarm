@@ -101,8 +101,14 @@ official SDK transport:
   snapshot's typed `AnalysisOutcome`, and profile/support facts. No
   evidence detail is returned.
 - `ripr_refresh` runs one bounded static analysis through the shared
-  `app::check_workspace` authority (identical in-process analysis to
-  `ripr check` and the LSP) and commits the completed snapshot. The call
+  `app::check_workspace` authority on the committed default-branch diff
+  and commits the completed snapshot. Initialize/discover instructions,
+  the refresh tool description, and MCP help disclose before invocation
+  that staged and unstaged tracked edits and untracked files are excluded.
+  Shared authority does not mean identical input: `ripr check` defaults
+  to the working tree when staged or unstaged tracked edits exist, while
+  `ripr check --committed` selects committed input. The response scope
+  disclosure and MCP's runtime input remain unchanged. The call
   blocks to a terminal state and reports it. An attempt runs to a terminal
   state: cancelling the MCP request never rolls an attempt back or
   manufactures a snapshot, and a cancelled or superseded attempt is never

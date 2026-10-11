@@ -100,9 +100,16 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
 - the transport, tool, resource, resource-template, and byte bounds under
   `mcp`.
 
-`ripr_refresh` runs one bounded static analysis of the workspace diff through
-the same shared check authority as `ripr check` and the language server, then
-commits the completed snapshot into the session. The call blocks until the
+`ripr_refresh` analyzes the committed default-branch diff through the shared
+check authority, then commits the completed snapshot into the session.
+Staged and unstaged tracked edits and untracked files are outside this scope.
+The initialize/discover instructions, refresh tool description, and MCP help
+disclose this before invocation. `ripr check` defaults to the working tree
+when staged or unstaged tracked edits exist; sharing the authority does not
+mean identical input. `ripr check --committed` selects committed input;
+`ripr check --worktree --format json` analyzes staged and unstaged tracked
+edits outside MCP. The existing response `scope` note discloses detected
+excluded edits. The call blocks until the
 attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
 canonical item identities, and each item's evidence digest — equivalent
