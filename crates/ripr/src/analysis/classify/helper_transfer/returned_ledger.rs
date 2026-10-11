@@ -103,15 +103,21 @@ pub(crate) fn returned_ledger(
         return None;
     }
     let body = caller_fn.body()?;
+    // A block import (including a glob) can shadow this unqualified callee.
+    // This bounded transfer does not resolve imports, so refuse them.
     if body
         .syntax()
         .descendants()
-        .filter_map(ast::Fn::cast)
-        .any(|nested| {
-            nested
-                .name()
-                .is_some_and(|name| name.text() == owner.name.as_str())
-        })
+        .any(|node| ast::Use::can_cast(node.kind()))
+        || body
+            .syntax()
+            .descendants()
+            .filter_map(ast::Fn::cast)
+            .any(|nested| {
+                nested
+                    .name()
+                    .is_some_and(|name| name.text() == owner.name.as_str())
+            })
         || body
             .syntax()
             .descendants()
@@ -311,6 +317,8 @@ mod tests {
             "fn collect() -> Vec<PolicyError> { let mut errors = Vec::new(); record(&mut errors); errors.clone() }",
             "fn collect() -> Vec<PolicyError> { fn record(_: &mut Vec<PolicyError>) {} let mut errors = Vec::new(); record(&mut errors); errors }",
             "fn collect() -> Vec<PolicyError> { let record = |_| {}; let mut errors = Vec::new(); record(&mut errors); errors }",
+            "fn collect() -> Vec<PolicyError> { use other::record; let mut errors = Vec::new(); record(&mut errors); errors }",
+            "fn collect() -> Vec<PolicyError> { use other::*; let mut errors = Vec::new(); record(&mut errors); errors }",
             "fn collect() -> OtherLedger { let mut errors = OtherLedger::new(); record(&mut errors); errors }",
         ] {
             let (owner, probe, chain) = route(caller);
