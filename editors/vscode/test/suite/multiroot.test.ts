@@ -5,6 +5,7 @@ import * as path from 'path';
 import type { ChildProcess, SpawnOptions } from 'child_process';
 import * as vscode from 'vscode';
 import type { LanguageClient } from 'vscode-languageclient/node';
+import { assertActionTargets, assertContextPacket, RootExpectation } from '../multiRootAssertions';
 
 // Read observations from the activated controller without supplying a runtime,
 // resolver, client, root selector, status producer or diagnostic collection.
@@ -23,14 +24,6 @@ interface ProcessObservation {
   session: boolean;
   exits: number;
   closes: number;
-}
-
-interface RootExpectation {
-  root: string;
-  source: string;
-  sourceMarker: string;
-  relatedTest: string;
-  testNames: readonly string[];
 }
 
 // Register only in the dedicated fresh-profile host. Other suites mutate the
@@ -55,13 +48,17 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       assert.ok(path.isAbsolute(server) && fs.statSync(server).isFile());
       rootA = {
         root: path.join(fixture, 'root-a'), source: 'src/alpha.rs',
-        sourceMarker: 'pub fn alpha_discount(amount: i32, threshold: i32)',
+        sourceContents: 'pub fn alpha_discount(amount: i32, threshold: i32) -> i32 {\n    if amount >= threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n',
+        testContents: 'use root_alpha::alpha_discount;\n\n#[test]\nfn alpha_below_boundary() {\n    assert_eq!(alpha_discount(50, 100), 50);\n}\n\n#[test]\nfn alpha_far_above_boundary() {\n    assert_eq!(alpha_discount(10_000, 100), 9_990);\n}\n',
+        symbol: 'alpha_discount', changedExpression: 'amount >= threshold',
         relatedTest: 'tests/alpha_contract.rs',
         testNames: ['alpha_below_boundary', 'alpha_far_above_boundary'],
       };
       rootB = {
         root: path.join(fixture, 'root-b'), source: 'src/beta.rs',
-        sourceMarker: 'pub fn beta_shipping(weight: i32, cutoff: i32)',
+        sourceContents: 'pub fn beta_shipping(weight: i32, cutoff: i32) -> i32 {\n    if weight >= cutoff {\n        weight * 3\n    } else {\n        7\n    }\n}\n',
+        testContents: 'use root_beta::beta_shipping;\n\n#[test]\nfn beta_light_parcel() {\n    assert_eq!(beta_shipping(5, 10), 7);\n}\n\n#[test]\nfn beta_heavy_parcel() {\n    assert_eq!(beta_shipping(100, 10), 300);\n}\n',
+        symbol: 'beta_shipping', changedExpression: 'weight >= cutoff',
         relatedTest: 'tests/beta_contract.rs',
         testNames: ['beta_light_parcel', 'beta_heavy_parcel'],
       };
@@ -151,15 +148,18 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       record();
 
       phase = 'remove active root B';
+      let subscription: vscode.Disposable | undefined;
       const changed = new Promise<void>(resolve => {
-        const subscription = vscode.workspace.onDidChangeWorkspaceFolders(event => {
+        subscription = vscode.workspace.onDidChangeWorkspaceFolders(event => {
           if (event.removed.some(f => f.uri.fsPath === rootB.root)) {
-            subscription.dispose(); resolve();
+            subscription?.dispose(); resolve();
           }
         });
       });
-      assert.strictEqual(vscode.workspace.updateWorkspaceFolders(1, 1), true);
-      await bounded(changed, 'actual B removal event');
+      try {
+        assert.strictEqual(vscode.workspace.updateWorkspaceFolders(1, 1), true);
+        await bounded(changed, 'actual B removal event');
+      } finally { subscription?.dispose(); }
       await waitFor(() => controller.client === undefined
         && ['noWorkspace', 'workspaceAmbiguous'].includes(controller.status.kind),
         'explicit no-root status after B removal');
@@ -187,14 +187,20 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       // Production deactivation owns normal shutdown. Retain leak evidence
       // before emergency cleanup of only the exact ChildProcess handles above.
       let teardownError: unknown;
+      let beforeCleanup: unknown;
+      const cleanupErrors: string[] = [];
       try {
         if (deactivateActual) { await bounded(deactivateActual(), 'extension deactivation'); }
         for (const observed of processes) { await assertReaped(observed); }
       } catch (error) {
         teardownError = error;
         outcome = 'failed_teardown';
-        for (const { child } of processes) {
-          if (child.exitCode === null && child.signalCode === null) { child.kill(); }
+        beforeCleanup = processes.map(({ child, ...observed }) => ({
+          ...observed, exit_code: child.exitCode, signal: child.signalCode,
+        }));
+        for (const observed of processes) {
+          try { await cleanupOwnedProcess(observed); }
+          catch (cleanupError) { cleanupErrors.push(String(cleanupError)); }
         }
       } finally {
         restoreSpawn?.();
@@ -206,6 +212,8 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
             ...observed, exit_code: child.exitCode, signal: child.signalCode,
           })),
           teardown_error: teardownError === undefined ? undefined : String(teardownError),
+          before_emergency_cleanup: beforeCleanup,
+          emergency_cleanup_errors: cleanupErrors,
           claim_limit: 'Real extension/LSP session acceptance; no final release-candidate qualification or Windows descendant-containment claim.',
         }, null, 2));
       }
@@ -219,10 +227,14 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
     }
 
     async function assertRootEvidence(expected: RootExpectation, other: RootExpectation): Promise<vscode.Command[]> {
-      await waitFor(() => controller.workspaceRoot === expected.root && controller.client !== undefined,
+      await waitFor(() => controller.workspaceRoot === expected.root && controller.client?.isRunning() === true
+        && controller.client.serverProcess?.pid !== undefined,
         `real session bound to ${expected.root}`);
       const client = controller.client!;
       assert.ok(client.serverProcess?.pid, 'selected session must own a real server process');
+      // Interactive save refreshes deliberately defer expensive seam evidence.
+      // Drive the existing public full-refresh command; it does not select roots.
+      await vscode.commands.executeCommand('ripr.refreshDiagnostics');
       const status = await bounded(client.sendRequest('workspace/executeCommand', {
         command: 'ripr.collectWorkspaceStatus', arguments: [],
       }), 'framed workspace status') as { analysis_status?: { effective_root?: string; root_state?: string } };
@@ -237,6 +249,9 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         .filter(d => d.source === 'ripr').length, 0, 'other root must have no retained diagnostics');
       const diagnostic = vscode.languages.getDiagnostics(uri).find(d => d.source === 'ripr'
         && (typeof d.code === 'object' ? d.code.value : d.code) === 'ripr-seam-weakly-gripped')!;
+      assert.strictEqual(diagnostic.message,
+        `Weakly gripped behavioral seam (predicate_boundary): ${expected.changedExpression}`);
+      assert.strictEqual(diagnostic.range.start.line, 1);
       const actions = await vscode.commands.executeCommand<Array<vscode.CodeAction | vscode.Command>>(
         'vscode.executeCodeActionProvider', uri, diagnostic.range);
       const commands = (actions ?? []).flatMap(action => {
@@ -244,15 +259,10 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
         return command?.command.startsWith('ripr.') ? [command] : [];
       });
       assert.ok(commands.length > 0, 'real LSP must return nonempty actions');
-      for (const command of commands) {
-        for (const target of command.arguments ?? []) {
-          if (target && typeof target === 'object' && typeof target.uri === 'string') {
-            assert.ok(target.uri.startsWith(vscode.Uri.file(expected.root).toString() + '/'),
-              `cross-root action target: ${JSON.stringify(command)}`);
-          }
-        }
-      }
-      const context = commands.find(c => c.command === 'ripr.copyContext');
+      assertActionTargets(commands, expected, uri.toString(),
+        vscode.Uri.file(path.join(expected.root, expected.relatedTest)).toString());
+      const context = commands.find(c => c.command === 'ripr.copyContext'
+        && c.arguments?.[0]?.label === undefined);
       const related = commands.find(c => c.command === 'ripr.openRelatedTest');
       assert.ok(context && related, 'context and related-test actions must be produced by real LSP');
       const relatedTarget = related.arguments?.[0] as { uri?: string; test_name?: string };
@@ -261,16 +271,23 @@ if (process.env.RIPR_TEST_MULTIROOT === '1') {
       await vscode.commands.executeCommand(related.command, ...(related.arguments ?? []));
       const editor = vscode.window.activeTextEditor;
       assert.strictEqual(editor?.document.uri.toString(), relatedTarget.uri);
-      assert.ok(expected.testNames.some(name => editor!.document.lineAt(editor!.selection.active.line).text.includes(name)),
-        'navigation must land on an independently expected test declaration');
+      assert.strictEqual(editor!.document.getText().replace(/\r\n/g, '\n'), expected.testContents);
+      assert.strictEqual(editor!.selection.active.line, 3 + 5 * expected.testNames.indexOf(relatedTarget.test_name!));
+      assert.strictEqual(editor!.document.lineAt(editor!.selection.active.line).text,
+        `fn ${relatedTarget.test_name}() {`, 'navigation must land on the actual expected declaration');
       await vscode.commands.executeCommand(context.command, ...(context.arguments ?? []));
       const packet = await vscode.env.clipboard.readText();
-      assert.ok(packet.includes(expected.source), packet);
-      assert.ok(packet.includes(expected.sourceMarker.split('(')[0].replace('pub fn ', '')), packet);
-      assert.ok(!packet.includes(other.source), 'packet must not carry the other root source');
+      assertContextPacket(JSON.parse(packet), expected);
+      const rootedCommands = commands.filter(c => c.command.startsWith('ripr.copy')
+        && typeof c.arguments?.[0]?.command === 'string');
+      for (const command of rootedCommands) {
+        await vscode.commands.executeCommand(command.command, ...(command.arguments ?? []));
+        assert.strictEqual(await vscode.env.clipboard.readText(), command.arguments![0].command,
+          'real command handler must copy the root-contained command unchanged');
+      }
       await assertNoRootActions(other);
       stages.push({ phase, server_status: status, actions: commands });
-      return [context, related];
+      return [context, related, ...rootedCommands];
     }
 
     async function assertCachedActionsBlocked(commands: vscode.Command[]): Promise<void> {
@@ -312,7 +329,8 @@ async function openAndSave(root: RootExpectation): Promise<void> {
   const uri = vscode.Uri.file(path.join(root.root, root.source));
   const document = await vscode.workspace.openTextDocument(uri);
   assert.strictEqual(document.languageId, 'rust');
-  assert.ok(document.getText().includes(root.sourceMarker), 'source identity must match the independent fixture pin');
+  assert.strictEqual(document.getText().replace(/\r\n/g, '\n'), root.sourceContents,
+    'source contents must match an independent literal fixture pin');
   const editor = await vscode.window.showTextDocument(document);
   assert.strictEqual(await editor.edit(builder => builder.insert(document.positionAt(document.getText().length), '\n')), true);
   assert.strictEqual(document.isDirty, true);
@@ -326,6 +344,25 @@ async function assertReaped(observed: ProcessObservation): Promise<void> {
   assert.ok(observed.pid, 'spawn must produce a native PID');
   assert.throws(() => process.kill(observed.pid!, 0), (error: NodeJS.ErrnoException) => error.code === 'ESRCH',
     `owned PID ${observed.pid} must be absent from the OS`);
+}
+
+async function cleanupOwnedProcess(observed: ProcessObservation): Promise<void> {
+  const { child } = observed;
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGTERM');
+    try {
+      await waitFor(() => child.exitCode !== null || child.signalCode !== null, 'owned server graceful cleanup', 5_000);
+    } catch {
+      // Escalate only this recorded, still-live ChildProcess handle.
+      child.kill('SIGKILL');
+    }
+  }
+  await waitFor(() => observed.exits === 1 && observed.closes === 1,
+    `owned server cleanup exit/close for ${observed.pid}`, 5_000);
+  if (observed.pid) {
+    assert.throws(() => process.kill(observed.pid!, 0), (error: NodeJS.ErrnoException) => error.code === 'ESRCH',
+      `owned PID ${observed.pid} survived emergency cleanup`);
+  }
 }
 
 async function waitFor(predicate: () => boolean, label: string, timeout = 60_000): Promise<void> {

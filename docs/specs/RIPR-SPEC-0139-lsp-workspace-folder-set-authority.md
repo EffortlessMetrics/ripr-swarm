@@ -169,6 +169,12 @@ exactly one transition to `selected_single_root`.
 - The `workspace_folder_transitions` framed duplex test suite in
   `crates/ripr/src/lsp/tests.rs` covering the #2036 fixture matrix, with the
   fake client answering every server-originated request.
+- The consuming #1873 real extension-host matrix in
+  `editors/vscode/test/suite/multiroot.test.ts`, using independent two-root
+  Git fixtures and the actual server for ambiguity, root selection/switch,
+  active-root removal, diagnostic/action containment and process teardown.
+  Its execution is distinct from the framed server suite and final installed
+  release-candidate qualification.
 
 ## Non-Goals
 
