@@ -6821,13 +6821,15 @@ language = "rust"
 
         let missing_before_path = dir.join("missing-before.json");
         let missing_before_display = output::outcome::display_path(&missing_before_path);
-        let missing_before = outcome(&args(&[
-            "--before",
-            &missing_before_path.display().to_string(),
-            "--after",
-            &dir.join("missing-after.json").display().to_string(),
-        ]))
-        .expect_err("missing --before must fail");
+        let missing_before = err_message(
+            outcome(&args(&[
+                "--before",
+                &missing_before_path.display().to_string(),
+                "--after",
+                &dir.join("missing-after.json").display().to_string(),
+            ])),
+            "missing --before must fail",
+        )?;
         assert_missing_snapshot_named_capture(
             &missing_before,
             &missing_before_display,
@@ -6841,13 +6843,15 @@ language = "rust"
 
         let missing_after_path = dir.join("missing-after.json");
         let missing_after_display = output::outcome::display_path(&missing_after_path);
-        let missing_after = outcome(&args(&[
-            "--before",
-            &before.display().to_string(),
-            "--after",
-            &missing_after_path.display().to_string(),
-        ]))
-        .expect_err("missing --after must fail");
+        let missing_after = err_message(
+            outcome(&args(&[
+                "--before",
+                &before.display().to_string(),
+                "--after",
+                &missing_after_path.display().to_string(),
+            ])),
+            "missing --after must fail",
+        )?;
         assert_missing_snapshot_named_capture(
             &missing_after,
             &missing_after_display,
@@ -6870,13 +6874,15 @@ language = "rust"
         std::fs::write(&after, outcome_after_json())
             .map_err(|err| format!("write after snapshot: {err}"))?;
 
-        let message = outcome(&args(&[
-            "--before",
-            &before.display().to_string(),
-            "--after",
-            &after.display().to_string(),
-        ]))
-        .expect_err("invalid UTF-8 must fail");
+        let message = err_message(
+            outcome(&args(&[
+                "--before",
+                &before.display().to_string(),
+                "--after",
+                &after.display().to_string(),
+            ])),
+            "invalid UTF-8 must fail",
+        )?;
         let displayed = output::outcome::display_path(&before);
         assert!(
             message.starts_with(&format!("read {displayed} failed:")),
@@ -6986,14 +6992,16 @@ language = "rust"
 
         let missing_mutants = dir.join("missing-mutants.json");
         let missing_mutants_display = output::outcome::display_path(&missing_mutants);
-        let mutants_message = calibrate(&args(&[
-            "cargo-mutants",
-            "--mutants-json",
-            &missing_mutants.display().to_string(),
-            "--repo-exposure-json",
-            &repo.display().to_string(),
-        ]))
-        .expect_err("missing --mutants-json must fail");
+        let mutants_message = err_message(
+            calibrate(&args(&[
+                "cargo-mutants",
+                "--mutants-json",
+                &missing_mutants.display().to_string(),
+                "--repo-exposure-json",
+                &repo.display().to_string(),
+            ])),
+            "missing --mutants-json must fail",
+        )?;
         assert_missing_snapshot_named_capture(
             &mutants_message,
             &missing_mutants_display,
@@ -7006,14 +7014,16 @@ language = "rust"
 
         let missing_repo = dir.join("missing-repo-exposure.json");
         let missing_repo_display = output::outcome::display_path(&missing_repo);
-        let repo_message = calibrate(&args(&[
-            "cargo-mutants",
-            "--mutants-json",
-            &missing_mutants.display().to_string(),
-            "--repo-exposure-json",
-            &missing_repo.display().to_string(),
-        ]))
-        .expect_err("missing --repo-exposure-json must fail");
+        let repo_message = err_message(
+            calibrate(&args(&[
+                "cargo-mutants",
+                "--mutants-json",
+                &missing_mutants.display().to_string(),
+                "--repo-exposure-json",
+                &missing_repo.display().to_string(),
+            ])),
+            "missing --repo-exposure-json must fail",
+        )?;
         assert_missing_snapshot_named_capture(
             &repo_message,
             &missing_repo_display,
@@ -7023,14 +7033,16 @@ language = "rust"
 
         let empty_dir = dir.join("empty-mutants-out");
         std::fs::create_dir_all(&empty_dir).map_err(|err| format!("create empty dir: {err}"))?;
-        let directory_message = calibrate(&args(&[
-            "cargo-mutants",
-            "--mutants-json",
-            &empty_dir.display().to_string(),
-            "--repo-exposure-json",
-            &repo.display().to_string(),
-        ]))
-        .expect_err("empty cargo-mutants directory must fail");
+        let directory_message = err_message(
+            calibrate(&args(&[
+                "cargo-mutants",
+                "--mutants-json",
+                &empty_dir.display().to_string(),
+                "--repo-exposure-json",
+                &repo.display().to_string(),
+            ])),
+            "empty cargo-mutants directory must fail",
+        )?;
         assert!(
             directory_message
                 .contains("is a directory but contains neither outcomes.json nor mutants.json"),
@@ -7045,10 +7057,12 @@ language = "rust"
     }
 
     #[test]
-    fn read_calibration_text_names_capture_command_per_kind() {
+    fn read_calibration_text_names_capture_command_per_kind() -> Result<(), String> {
         let missing = PathBuf::from("definitely-missing-snapshot.json");
-        let outcome = read_calibration_text(&missing, SnapshotCaptureKind::Outcome)
-            .expect_err("missing outcome snapshot must fail");
+        let outcome = err_message(
+            read_calibration_text(&missing, SnapshotCaptureKind::Outcome),
+            "missing outcome snapshot must fail",
+        )?;
         assert_missing_snapshot_named_capture(
             &outcome,
             "definitely-missing-snapshot.json",
@@ -7060,8 +7074,10 @@ language = "rust"
             "outcome kind must mention check JSON:\n{outcome}"
         );
 
-        let repo = read_calibration_text(&missing, SnapshotCaptureKind::RepoExposure)
-            .expect_err("missing repo-exposure snapshot must fail");
+        let repo = err_message(
+            read_calibration_text(&missing, SnapshotCaptureKind::RepoExposure),
+            "missing repo-exposure snapshot must fail",
+        )?;
         assert_missing_snapshot_named_capture(
             &repo,
             "definitely-missing-snapshot.json",
@@ -7069,8 +7085,10 @@ language = "rust"
             &["cargo mutants", "ripr check --json"],
         );
 
-        let mutants = read_calibration_text(&missing, SnapshotCaptureKind::CargoMutants)
-            .expect_err("missing cargo-mutants snapshot must fail");
+        let mutants = err_message(
+            read_calibration_text(&missing, SnapshotCaptureKind::CargoMutants),
+            "missing cargo-mutants snapshot must fail",
+        )?;
         assert_missing_snapshot_named_capture(
             &mutants,
             "definitely-missing-snapshot.json",
@@ -7080,6 +7098,17 @@ language = "rust"
                 "ripr check --json",
             ],
         );
+        Ok(())
+    }
+
+    fn err_message<T: std::fmt::Debug>(
+        result: Result<T, String>,
+        context: &str,
+    ) -> Result<String, String> {
+        match result {
+            Err(message) => Ok(message),
+            Ok(value) => Err(format!("{context}; got Ok({value:?})")),
+        }
     }
 
     fn assert_missing_snapshot_named_capture(
