@@ -218,7 +218,19 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 | `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty` | `relational_check` / weak |
 | any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` |
 
-`.resolves` and `.rejects` use the same table. A snapshot never reaches
+`.resolves` uses the same table. For an unshadowed `expect` import from
+`vitest` or `@jest/globals`, `.rejects.toBe`, `.rejects.toEqual` and
+`.rejects.toStrictEqual` with exactly one concrete literal argument instead
+read `exact_error_variant` / strong: they compare the rejected reason, so
+they match an error path and cannot credit a normal return value (#7315).
+The existing literal admission also accepts safe all-literal objects.
+Their rendered oracle retains `.rejects`. Dynamic arguments, unknown
+bindings and implicit globals retain the existing table and limitations;
+negated forms retain their existing admission rules. This bounded extension
+is pinned by `typescript_rejects_literal_equality` and
+`rejection_equality_tests`.
+
+A snapshot never reaches
 `exposed` by itself, because only a strong oracle does; it carries
 `typescript_snapshot_discriminator_unresolved`. A mock matcher never
 reaches `exposed` either, even with a literal payload.
@@ -724,6 +736,11 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Test Mapping
 
+- #7315: `crates/ripr/src/analysis/language/typescript/rejection_equality_tests.rs`
+  pins literal rejection equality, resolved-value domain separation,
+  unshadowed runner imports and unchanged unresolved forms. Fixture
+  `fixtures/typescript_rejects_literal_equality` exercises the real CLI;
+  the shared evidence-promotion honesty corpus pins both verdict directions.
 - Existing: `crates/ripr/src/analysis/language/typescript/tests.rs`:
   `ts_returnvalue_unrelated_strong_assertion_downgrades`,
   `ts_returnvalue_owner_aliased_local_observation_stays_exposed`,
@@ -747,6 +764,10 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Implementation Mapping
 
+- #7315: `expect_assertion_from_expression` reads the rejection modifier and
+  concrete expected argument; `TypeScriptAssertionBindings` supplies the
+  explicit runner import and existing scope filter. The existing
+  `ts_oracle_kind_matches_seam` authority handles the resulting error kind.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`: rules 2 to 4, 9
   and 10
   (`expect_call_from_assertion_inner`, `call_expression_is_expect`,

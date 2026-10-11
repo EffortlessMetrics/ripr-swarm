@@ -79,6 +79,8 @@ mod ambient_declaration_tests;
 mod parse;
 mod paths;
 mod probe_shape;
+#[cfg(test)]
+mod rejection_equality_tests;
 mod related_tests;
 mod static_limit;
 #[cfg(test)]
