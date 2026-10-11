@@ -171,7 +171,17 @@ fn dirty_production_requires_recovery_despite_user_orderfile() -> TestResult {
             !stderr.contains("failed to read orderfile"),
             "{mode}: {stderr}"
         );
-        assert!(!root.join("target/ripr/repair-attempts").exists());
+        // Admission allocates an operational .before.lock, even on refusal;
+        // that store directory is not a published repair attempt.
+        for entry in std::fs::read_dir(root.join("target/ripr/repair-attempts"))? {
+            assert!(
+                !entry?
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("repair-attempt-"),
+                "{mode}: refused premise published an attempt"
+            );
+        }
         assert!(!root.join("target/ripr/workflow").exists());
     }
     Ok(())
