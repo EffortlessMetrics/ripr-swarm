@@ -1625,8 +1625,7 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
             corpus
                 .cases
                 .iter()
-                .any(|c| c.case_id.starts_with(&prefix)
-                    && c.spec_examples.iter().any(|id| *id == cited)),
+                .any(|c| c.case_id.starts_with(&prefix) && c.spec_examples.contains(&cited)),
             "no case citing RIPR-SPEC-0238 example {example}"
         );
     }
