@@ -22,3 +22,10 @@ The test imports unchanged y as module. Python parses 0 <module>(1) as a chained
 
 Runtime rejection is an independent control, not a static mutation outcome or
 proof of test adequacy. No new owner identity or shell command is invented.
+
+## Must Not
+
+- Drop the changed finding or replace the original source, assertion, import or diff identity.
+- Credit an unrelated assertion merely because no useful sink token remains.
+- Downgrade the genuine short-function output control by stopping before its existing credit branch.
+- Claim broader module-read, relation-scanner, runtime mutation or test-adequacy support.
