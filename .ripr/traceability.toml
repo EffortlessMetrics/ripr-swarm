@@ -13926,6 +13926,32 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0249"
+name = "TypeScript instance class pin"
+spec = "docs/specs/RIPR-SPEC-0249-typescript-instance-class-pin.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::owner_returns_distinct_classes_only_when_the_module_settles_them",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_pin_exposes_a_predicate_whose_paths_return_different_classes",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_pin_stays_weak_without_a_settled_class_split",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_pin_does_not_credit_a_returned_message_change",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_facts_read_predicate_changes_only",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/instance_class_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/oracle.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0249-typescript-instance-class-pin.md",
+]
+metrics = [
+  "typescript_instance_pin_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0248"
 name = "TypeScript dropped additive term"
 spec = "docs/specs/RIPR-SPEC-0248-typescript-dropped-additive-term.md"

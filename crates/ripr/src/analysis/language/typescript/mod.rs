@@ -63,6 +63,7 @@ mod classifier;
 mod discovery;
 mod dropped_term_guard;
 mod error_payload_guard;
+mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_matcher_guard;
@@ -108,6 +109,7 @@ pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use discovery::*;
 pub(crate) use dropped_term_guard::*;
+pub(crate) use instance_class_guard::*;
 pub(crate) use error_payload_guard::*;
 pub(crate) use literal_matcher_guard::*;
 pub(crate) use mock_payload_guard::*;

@@ -750,6 +750,8 @@ pub(crate) struct TsBoundaryRowContext<'a> {
     pub(crate) sibling_tests: &'a [TypeScriptTest],
     pub(crate) alias_map: Option<&'a TsAliasMap>,
     pub(crate) workspace_root: Option<&'a Path>,
+    /// RIPR-SPEC-0249 rule 1 class pins that read strong for this change.
+    pub(crate) instance_facts: Option<&'a InstanceClassFacts>,
 }
 
 /// One related test's activation of the changed predicate boundary (#5527).
@@ -827,6 +829,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         sibling_tests,
         alias_map,
         workspace_root,
+        instance_facts,
     } = *context;
     let (left, right, nullish_boundary) = match boundary {
         TsPredicateBoundary::NotPredicate => return TypeScriptPredicateActivation::NotApplicable,
@@ -865,8 +868,11 @@ pub(crate) fn ts_predicate_boundary_row_activation(
     // expected-side guard refused the assertion: present, not discriminated.
     let mut reached = false;
     for assertion in &candidate.test.assertions {
-        if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
-            || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate)
+        let pins_class =
+            instance_facts.is_some_and(|facts| facts.credits(&candidate.test.file, assertion));
+        if !pins_class
+            && (assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+                || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate))
         {
             continue;
         }
@@ -2480,7 +2486,7 @@ fn numeric_literal_value(token: &str) -> Option<String> {
 /// while a same-named method on any other receiver (`other.total(...)`) is
 /// not — this is the receiver resolution that keeps genuine namespace-import
 /// witnesses credited without crediting unrelated receivers.
-fn owner_namespace_receivers(
+pub(crate) fn owner_namespace_receivers(
     test: &TypeScriptTest,
     owner: &TypeScriptOwner,
     alias_map: Option<&TsAliasMap>,
@@ -3388,6 +3394,7 @@ pub(crate) fn strongest_family_matching_oracle(
     candidates: &[TypeScriptRelatedCandidate<'_>],
     error_facts: &ErrorChangeFacts,
     mock_facts: &MockCallFacts,
+    instance_facts: &InstanceClassFacts,
 ) -> (u8, OracleKind) {
     let mut best_rank: u8 = 0;
     let mut best_kind = OracleKind::Unknown;
@@ -3416,6 +3423,11 @@ pub(crate) fn strongest_family_matching_oracle(
                         && mock_facts.credits(payload, &candidate.test.body_text) =>
                 {
                     (OracleKind::MockExpectation, OracleStrength::Strong)
+                }
+                // RIPR-SPEC-0249 rule 1: a class pin on a predicate whose
+                // branches return different classes.
+                _ if instance_facts.credits(&candidate.test.file, assertion) => {
+                    (OracleKind::ExactValue, OracleStrength::Strong)
                 }
                 _ => (
                     assertion.oracle_kind.clone(),
@@ -3464,6 +3476,58 @@ fn project_credited_mock_rows(
             row.oracle = Some(assertion_oracle_text(assertion));
         }
     }
+}
+
+/// RIPR-SPEC-0249 rule 1: a related row whose test holds a credited
+/// `toBeInstanceOf` pin shows it at its `exact_value` / strong reading, so
+/// the public row agrees with the verdict it supports.
+fn project_credited_instance_rows(
+    related: &mut [RelatedTest],
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    instance_facts: &InstanceClassFacts,
+) {
+    for (row, candidate) in related.iter_mut().zip(candidates) {
+        if row.oracle_strength.rank() >= OracleStrength::Strong.rank() {
+            continue;
+        }
+        let credited = candidate
+            .test
+            .assertions
+            .iter()
+            .find(|assertion| instance_facts.credits(&candidate.test.file, assertion));
+        if let Some(assertion) = credited {
+            row.oracle_kind = OracleKind::ExactValue;
+            row.oracle_strength = OracleStrength::Strong;
+            row.oracle = Some(assertion_oracle_text(assertion));
+        }
+    }
+}
+
+/// `true` when `assertion` observes the whole result of one owner call:
+/// `owner(...)` or `ns.owner(...)`, optionally awaited, or a local bound
+/// once to that call. `owner(...).field` and `f(owner(...))` do not.
+pub(crate) fn ts_observes_whole_owner_result(
+    test: &TypeScriptTest,
+    assertion: &TypeScriptAssertion,
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+) -> bool {
+    let Some(observed) = assertion.observed_expression.as_deref() else {
+        return false;
+    };
+    let observed = observed.trim();
+    let observed = observed
+        .strip_prefix("await ")
+        .map_or(observed, str::trim_start);
+    let bare = std::iter::once(String::new())
+        .chain(receivers.iter().map(|receiver| format!("{receiver}.")))
+        .any(|prefix| {
+            observed
+                .strip_prefix(prefix.as_str())
+                .and_then(|rest| rest.strip_prefix(owner.name.as_str()))
+                .is_some_and(ts_is_one_argument_list)
+        });
+    bare || ts_observed_local_owner_call_arguments(test, assertion, &owner.name, receivers).is_some()
 }
 
 /// Classify a changed TypeScript/JavaScript line and return a finding.
@@ -3671,11 +3735,22 @@ pub(crate) fn classify_change_with_alias_state(
     if reads_mock_payload {
         project_credited_mock_rows(&mut related, &related_candidates, &mock_facts);
     }
+    let instance_facts = ts_instance_class_facts(
+        &probe_shape.family,
+        owner,
+        &related_candidates,
+        alias_map,
+        workspace_root,
+    );
+    if !instance_facts.is_empty() {
+        project_credited_instance_rows(&mut related, &related_candidates, &instance_facts);
+    }
     let (strongest_strength, strongest_kind) = strongest_family_matching_oracle(
         &probe_shape.family,
         &related_candidates,
         &error_facts,
         &mock_facts,
+        &instance_facts,
     );
     let mock_payload_oracle = related_mock_payload_oracle(&related);
 
@@ -3708,6 +3783,7 @@ pub(crate) fn classify_change_with_alias_state(
             sibling_tests: all_tests,
             alias_map,
             workspace_root,
+            instance_facts: Some(&instance_facts),
         };
         ts_predicate_boundary_row_activation(&context, candidate)
     };
@@ -3862,6 +3938,7 @@ pub(crate) fn classify_change_with_alias_state(
                 activations: &predicate_activations,
                 error_facts: &error_facts,
                 mock_facts: &mock_facts,
+                instance_facts: &instance_facts,
             },
             mock_paths: &mock_paths,
             alias_map,
@@ -4596,6 +4673,7 @@ struct Rule8LadderFacts<'a> {
     activations: &'a [TypeScriptPredicateActivation],
     error_facts: &'a ErrorChangeFacts,
     mock_facts: &'a MockCallFacts,
+    instance_facts: &'a InstanceClassFacts,
 }
 
 /// RIPR-SPEC-0243 rule 8 over the related candidates of an `exposed` ladder
@@ -4621,6 +4699,7 @@ fn ts_rule8_mocked_changed_callee(
         activations,
         error_facts,
         mock_facts,
+        instance_facts,
     } = ladder;
     let mut files: Vec<&Path> = Vec::new();
     for candidate in candidates {
@@ -4655,7 +4734,13 @@ fn ts_rule8_mocked_changed_callee(
             .filter(|candidate| candidate.relation.uses_oracle())
             .all(|candidate| candidate.relation == TypeScriptRelationKind::ModuleEntryCall);
         let (strength, _) =
-            strongest_family_matching_oracle(&probe_shape.family, &subset, error_facts, mock_facts);
+            strongest_family_matching_oracle(
+            &probe_shape.family,
+            &subset,
+            error_facts,
+            mock_facts,
+            instance_facts,
+        );
         if !only_module_entry
             && strength >= OracleStrength::Strong.rank()
             && ts_predicate_boundary_witnessed_by_rows(boundary, &subset_activations)
