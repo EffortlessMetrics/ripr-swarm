@@ -846,7 +846,8 @@ fn node_test_context_assert_reads_as_legacy_node_assert() {
         );
         let assertions = only_assertions("test/latefee.test.ts", &source);
         let [assertion] = assertions.as_slice() else {
-            panic!("{label}: expected one assertion, got {assertions:?}");
+            assert_eq!(assertions.len(), 1, "{label}: {assertions:?}");
+            continue;
         };
         assert_oracle(assertion, kind, strength, rendered);
         let observed = assertion.observed_expression.as_deref();
