@@ -34,7 +34,13 @@ use std::path::Path;
 const SARIF_SCHEMA: &str = "https://json.schemastore.org/sarif-2.1.0.json";
 const SARIF_VERSION: &str = "2.1.0";
 const RIPR_SARIF_SCHEMA_VERSION: &str = "0.1";
-const SARIF_SPEC_URI: &str = "https://github.com/EffortlessMetrics/ripr/blob/main/docs/specs/RIPR-SPEC-0008-sarif-ci-policy.md";
+/// Per-class rule help anchors (#7371). Finding rules point at the exposure
+/// class table a maintainer landing on a code-scanning rule page needs; seam
+/// rules point at the seam inventory spec's classification contract. The
+/// SARIF policy spec (RIPR-SPEC-0008) documents severity mapping, not
+/// per-class meaning, so it no longer backs every rule's helpUri.
+const STATIC_EXPOSURE_MODEL_URI: &str = "https://github.com/EffortlessMetrics/ripr/blob/main/docs/STATIC_EXPOSURE_MODEL.md#exposure-classes";
+const SEAM_GRIP_SPEC_URI: &str = "https://github.com/EffortlessMetrics/ripr/blob/main/docs/specs/RIPR-SPEC-0005-repo-seam-inventory.md";
 const PYTHON_PREVIEW_AUTHORITY_BOUNDARY: &str = "preview_advisory_only";
 
 /// Render diff-scoped Findings as SARIF.
@@ -935,10 +941,14 @@ fn finding_rules() -> Vec<Value> {
     all_exposure_classes()
         .iter()
         .map(|class| {
+            let (full_description, help) = finding_class_help(*class);
             rule(
                 finding_rule_id(class),
                 format!("ripr {}", class.as_str()),
                 format!("Static exposure finding classified as {}", class.as_str()),
+                full_description,
+                help,
+                STATIC_EXPOSURE_MODEL_URI,
             )
         })
         .collect()
@@ -948,23 +958,127 @@ fn seam_rules() -> Vec<Value> {
     SeamGripClass::ALL
         .iter()
         .map(|class| {
+            let (full_description, help) = seam_class_help(*class);
             rule(
                 seam_rule_id(*class),
                 format!("ripr seam {}", class.as_str()),
                 format!("Repo seam grip evidence classified as {}", class.as_str()),
+                full_description,
+                help,
+                SEAM_GRIP_SPEC_URI,
             )
         })
         .collect()
 }
 
-fn rule(id: String, name: String, short_description: String) -> Value {
+/// Per-class rule metadata for someone who has never seen ripr (#7371): one
+/// or two sentences defining the class, stating the static/advisory boundary,
+/// and naming the typical next step. The vocabulary mirrors
+/// `docs/STATIC_EXPOSURE_MODEL.md` and the seam inventory spec; these strings
+/// are the rule-page text code scanning shows on its alert and rule pages.
+fn finding_class_help(class: ExposureClass) -> (&'static str, &'static str) {
+    match class {
+        ExposureClass::Exposed => (
+            "Static analysis found a complete path from the changed code to a test oracle strong enough to observe the changed behavior.",
+            "This is static evidence, not a runtime verdict: ripr did not execute any test. Next step: run the linked related test and confirm it observes the changed sink.",
+        ),
+        ExposureClass::WeaklyExposed => (
+            "A static path from the change to a related test exists, but the infection or the oracle's discrimination looks weak, so the test could pass even when the behavior is wrong.",
+            "Static evidence only; no test was executed. Next step: strengthen the nearest assertion so it observes the changed sink directly, then re-run ripr check.",
+        ),
+        ExposureClass::ReachableUnrevealed => (
+            "Related tests appear to reach the changed code, but no meaningful oracle was found that would notice a wrong result.",
+            "Static evidence only; no test was executed. Next step: add or sharpen an assertion that discriminates the changed behavior.",
+        ),
+        ExposureClass::NoStaticPath => (
+            "No static test path to the changed owner was found; the change appears to have no test coverage at all.",
+            "This is a reachability statement, not a runtime coverage measurement. Next step: add a focused test that exercises the changed behavior.",
+        ),
+        ExposureClass::InfectionUnknown => (
+            "Tests may reach the change, but the input or fixture evidence is opaque, so static analysis cannot tell whether a wrong result would propagate.",
+            "Static evidence only; no test was executed. Next step: make the decisive input or fixture value explicit, then re-run ripr check.",
+        ),
+        ExposureClass::PropagationUnknown => (
+            "The changed behavior crosses a boundary static analysis cannot see through, so it is unknown whether a wrong result would reach an observable sink.",
+            "Static evidence only; no test was executed. Next step: add an assertion at an observable sink beyond the boundary.",
+        ),
+        ExposureClass::StaticUnknown => (
+            "Syntax-first analysis could not make a credible judgment for this finding, usually because parsing or symbol resolution was incomplete.",
+            "This is an analysis limitation disclosure, not a coverage verdict. Next step: re-run with fuller analysis settings or triage the finding manually.",
+        ),
+    }
+}
+
+fn seam_class_help(class: SeamGripClass) -> (&'static str, &'static str) {
+    match class {
+        SeamGripClass::StronglyGripped => (
+            "Current tests strongly grip this seam: a related test reaches it with a discriminating oracle.",
+            "Static grip evidence only; ripr did not execute any test. Confirm by running the related test named on the result.",
+        ),
+        SeamGripClass::WeaklyGripped => (
+            "Tests reach this seam, but the grip is weak: infection or discrimination is thin, so the seam could move without any test failing.",
+            "Static evidence only; no test was executed. Next step: strengthen the nearest assertion so it observes the seam's sink.",
+        ),
+        SeamGripClass::Ungripped => (
+            "No related test grips this seam; it appears to have no test coverage at all.",
+            "Static reachability evidence, not a runtime coverage measurement. Next step: add a focused test for this seam.",
+        ),
+        SeamGripClass::ReachableUnrevealed => (
+            "Related tests appear to reach this seam, but no oracle was found that would notice a wrong outcome.",
+            "Static evidence only; no test was executed. Next step: add a discriminating assertion at the seam's sink.",
+        ),
+        SeamGripClass::ActivationUnknown => (
+            "Whether the changed path can be activated at all is unknown from the static evidence.",
+            "This is an analysis limitation, not a verdict. Next step: exercise the path in a test to establish activation.",
+        ),
+        SeamGripClass::PropagationUnknown => (
+            "The seam's effect crosses an opaque propagation boundary, so static analysis cannot tell whether a wrong outcome would reach an observable sink.",
+            "Static evidence only. Next step: assert at a sink beyond the boundary.",
+        ),
+        SeamGripClass::ObservationUnknown => (
+            "The sink a wrong outcome would manifest at is unknown, so no oracle can be checked against it.",
+            "This is an analysis limitation. Next step: identify where the effect is observable and assert there.",
+        ),
+        SeamGripClass::DiscriminationUnknown => (
+            "An oracle observes the seam, but whether its assertion discriminates the changed behavior is unknown.",
+            "Static evidence only. Next step: run the test with a deliberate behavior change to see whether it notices.",
+        ),
+        SeamGripClass::Opaque => (
+            "The seam sits behind an opaque helper or boundary that static analysis cannot see through.",
+            "Static limitation disclosure, not a coverage verdict. Next step: make the boundary transparent to tests or assert across it.",
+        ),
+        SeamGripClass::Intentional => (
+            "This seam is intentionally left without a discriminating test, recorded as such by the project.",
+            "No action is required unless the intention changes.",
+        ),
+        SeamGripClass::Suppressed => (
+            "This seam's exposure gap is suppressed by project policy for a recorded reason and expiry.",
+            "No action is required while the suppression is active; check the suppression entry before relying on this seam.",
+        ),
+    }
+}
+
+fn rule(
+    id: String,
+    name: String,
+    short_description: String,
+    full_description: &'static str,
+    help: &'static str,
+    help_uri: &'static str,
+) -> Value {
     json!({
         "id": id,
         "name": name,
         "shortDescription": {
             "text": short_description
         },
-        "helpUri": SARIF_SPEC_URI
+        "fullDescription": {
+            "text": full_description
+        },
+        "help": {
+            "text": help
+        },
+        "helpUri": help_uri
     })
 }
 
@@ -1930,6 +2044,67 @@ weakly_gripped = "note"
 
     fn parse_json(text: &str) -> Result<Value, String> {
         serde_json::from_str(text).map_err(|err| err.to_string())
+    }
+
+    /// #7371: every rule carries a real per-class fullDescription, help, and
+    /// a helpUri worth clicking — not the class name rearranged and one
+    /// shared spec link.
+    #[test]
+    fn rules_carry_per_class_help_and_meaningful_help_uri() -> Result<(), String> {
+        let finding = finding_rules();
+        assert_eq!(finding.len(), 7);
+        let seam = seam_rules();
+        assert_eq!(seam.len(), 11);
+        for rule in finding.iter().chain(seam.iter()) {
+            let id = rule["id"]
+                .as_str()
+                .ok_or_else(|| "rule missing id".to_string())?;
+            if rule["shortDescription"]["text"]
+                .as_str()
+                .is_none()
+            {
+                return Err(format!("rule {id} missing shortDescription"));
+            }
+            let full = rule["fullDescription"]["text"]
+                .as_str()
+                .ok_or_else(|| format!("rule {id} missing fullDescription"))?;
+            let help = rule["help"]["text"]
+                .as_str()
+                .ok_or_else(|| format!("rule {id} missing help"))?;
+            let help_uri = rule["helpUri"]
+                .as_str()
+                .ok_or_else(|| format!("rule {id} missing helpUri"))?;
+            let class = id.strip_prefix("ripr.finding.").or_else(|| id.strip_prefix("ripr.seam."));
+            let Some(class) = class else {
+                return Err(format!("rule id {id} does not name its class"));
+            };
+            if full == format!("Static exposure finding classified as {class}")
+                || full == format!("Repo seam grip evidence classified as {class}")
+            {
+                return Err(format!("rule {id} fullDescription restates the class name"));
+            }
+            if help.len() < 20 {
+                return Err(format!("rule {id} help is too thin: {help}"));
+            }
+            if help_uri.contains("RIPR-SPEC-0008") {
+                return Err(format!(
+                    "rule {id} keeps the severity-policy helpUri instead of a class anchor"
+                ));
+            }
+        }
+        // Spot anchors: the finding rules point at the exposure class table,
+        // the seam rules at the seam inventory spec.
+        assert!(
+            finding_rules()[0]["helpUri"]
+                .as_str()
+                .is_some_and(|uri| uri.contains("STATIC_EXPOSURE_MODEL.md#exposure-classes"))
+        );
+        assert!(
+            seam_rules()[0]["helpUri"]
+                .as_str()
+                .is_some_and(|uri| uri.contains("RIPR-SPEC-0005-repo-seam-inventory.md"))
+        );
+        Ok(())
     }
 
     fn rule_ids(sarif: &Value) -> Result<Vec<String>, String> {
