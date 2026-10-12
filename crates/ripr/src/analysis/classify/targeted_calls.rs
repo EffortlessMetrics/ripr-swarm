@@ -438,7 +438,7 @@ fn collect(
 }
 
 /// Opaque token text can never lend an exact parsed occurrence. Preserve every
-/// existing captured name even when a proven same-name call shares its line.
+/// existing captured name even when an established same-name call shares its line.
 fn opaque(
     node: &SyntaxNode,
     source: &str,

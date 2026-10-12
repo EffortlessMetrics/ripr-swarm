@@ -8451,7 +8451,7 @@ fn selected() {
             (
                 "format",
                 "",
-                "assert_eq!(Alpha::new(1), 1, \"{}\", foreign::Alpha::new(2));",
+                "assert_eq!(Alpha::new(1), 1, \"{}\", Alpha::new(2));",
             ),
             (
                 "custom-assert",
