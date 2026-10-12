@@ -140,11 +140,14 @@ pub(crate) fn ts_owner_returned_field_key(owner_source: &str, line_text: &str) -
         literal.push_str(line.get(start..end)?);
         literal.push('\n');
     }
-    // The one entry named `key` must be the one the changed line opens:
-    // a changed line that continues another entry's value (the `adult : x`
-    // arm of a multi-line `status: flag ?` ternary) only looks like a field.
+    // The changed line must hold exactly one entry, the one named `key`,
+    // opening at the start of the line and ending on it. A changed line that
+    // continues another entry's value (the `adult : x` arm of a multi-line
+    // `status: flag ?` ternary) or that also holds a later entry
+    // (`adult: x, senior: <changed>`) only looks like the `key` field.
     let mut named = 0usize;
-    let mut opens_changed_line = false;
+    let mut on_changed_line = 0usize;
+    let mut key_owns_changed_line = false;
     for (offset, raw) in top_level_entries(&literal) {
         let entry = raw.trim();
         if entry.is_empty() {
@@ -155,16 +158,20 @@ pub(crate) fn ts_owner_returned_field_key(owner_source: &str, line_text: &str) -
         if !(after.is_empty() || after.starts_with([':', '('])) {
             return None; // `get adult()`, `async adult()`, `adult?:`
         }
+        let entry_start = offset + (raw.len() - raw.trim_start().len());
+        let starts_on_changed = open_line + literal[..entry_start].matches('\n').count() == changed;
+        if starts_on_changed {
+            on_changed_line += 1;
+        }
         if name == key {
             named += 1;
-            let entry_start = offset + (raw.len() - raw.trim_start().len());
             let line_start = literal[..entry_start].rfind('\n').map_or(0, |at| at + 1);
-            opens_changed_line = open_line + literal[..entry_start].matches('\n').count()
-                == changed
-                && literal[line_start..entry_start].trim().is_empty();
+            key_owns_changed_line = starts_on_changed
+                && literal[line_start..entry_start].trim().is_empty()
+                && !entry.contains('\n');
         }
     }
-    (named == 1 && opens_changed_line).then(|| key.to_string())
+    (named == 1 && on_changed_line == 1 && key_owns_changed_line).then(|| key.to_string())
 }
 
 /// The entries of an object literal's body, split at its top-level commas,

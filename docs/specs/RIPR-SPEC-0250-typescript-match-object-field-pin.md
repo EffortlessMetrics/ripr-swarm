@@ -98,7 +98,8 @@ these hold:
   so it is the whole returned value (`return { ... }.adult` fails);
 - every top-level entry of that literal, the changed line's own included,
   is a plain `name: value`, shorthand `name` or method `name()`, and
-  exactly one names `key`, the entry that the changed line itself opens (a quoted or computed key, a spread, an accessor
+  exactly one names `key`: the only entry on the changed line, which
+  opens at the start of that line and ends on it (a quoted or computed key, a spread, an accessor
   or a second `key` entry fails);
 - `o` lists `key` at its top level.
 
@@ -165,8 +166,10 @@ documented decisions and proceed"). Recorded on #6654.
 6. As example 1 with a second `return`, the field in a nested literal, a
    spread, a later `adult:`, `"adult":` or `["adult"]:` entry (on its
    own line, after another entry, or on the changed line), an accessor,
-   `return { ... }.adult`, or a changed `adult : 18 <= age` line that is
-   the second arm of a multi-line `status: admin ?` ternary: rule 1 reads no pin.
+   `return { ... }.adult`, a changed `adult : 18 <= age` line that is
+   the second arm of a multi-line `status: admin ?` ternary, or a changed
+   `adult: age >= 18, senior: 18 <= age,` line where only `senior` changed:
+   rule 1 reads no pin.
 
 ## Test Mapping
 

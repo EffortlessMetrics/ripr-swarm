@@ -71,6 +71,19 @@ fn returned_field_key_reads_only_a_top_level_field_of_the_one_returned_literal()
             "      adult : 18 <= age,",
         ),
         (
+            "a later entry on the changed line holds the change",
+            PROFILE.replace(FIELD_OLD, "    adult: age >= 18, senior: 18 <= age,"),
+            "    adult: age >= 18, senior: 18 <= age,",
+        ),
+        (
+            "a later entry after multi-byte text holds the change",
+            PROFILE.replace(
+                FIELD_OLD,
+                "    adult: age >= 18, label: \"\u{e9}\u{2014}\u{fc}\", senior: 18 <= age,",
+            ),
+            "    adult: age >= 18, label: \"\u{e9}\u{2014}\u{fc}\", senior: 18 <= age,",
+        ),
+        (
             "a second entry on the changed line",
             PROFILE.replace(FIELD_OLD, "    adult: age >= 18, adult: true,"),
             "    adult: age >= 18, adult: true,",
