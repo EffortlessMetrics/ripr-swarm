@@ -547,7 +547,9 @@ fn unresolved_assertion_macro_invocations(
 /// (`Bar::new(`, `x.len(`) may name a different item with the same last
 /// segment, so it does not count; neither does an argument list that runs
 /// past a `;` or holds a `'`: char literals are not masked, so `'('` can
-/// unbalance the delimiters.
+/// unbalance the delimiters. Arguments holding a nested macro invocation
+/// (`stringify!(owner(1))`) do not count either, since that macro may never
+/// evaluate the call.
 fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bool {
     let Some(rest) = masked.get(after_bang..) else {
         return false;
@@ -578,7 +580,6 @@ fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bo
     let Some(arguments) = close.and_then(|close| rest.get(open + 1..close)) else {
         return false;
     };
-    // A nested macro (`stringify!(owner(1))`) may never evaluate its tokens.
     if arguments.contains('\'') || contains_macro_invocation(arguments) {
         return false;
     }
@@ -587,7 +588,7 @@ fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bo
             .trim_end()
             .chars()
             .next_back()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '.'));
+            .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | ':' | '.'));
         let after = &arguments[start + owner_name.len()..];
         !qualified_or_ident && after.trim_start().starts_with('(')
     })
@@ -600,7 +601,7 @@ fn contains_macro_invocation(text: &str) -> bool {
         before
             .chars()
             .next_back()
-            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
             && after.starts_with(['(', '[', '{'])
     })
 }
@@ -1019,6 +1020,17 @@ mod tests {
         assert!(!super::macro_arguments_call("assert_open!(", 12, "bulk"));
         assert!(super::macro_arguments_call(
             "assert_flag!(bulk(1));",
+            12,
+            "bulk"
+        ));
+        // Non-ASCII identifier characters qualify a name or a nested macro.
+        assert!(!super::macro_arguments_call(
+            "assert_flag!(quoté!(bulk(1)));",
+            12,
+            "bulk"
+        ));
+        assert!(!super::macro_arguments_call(
+            "assert_flag!(ébulk(1));",
             12,
             "bulk"
         ));
