@@ -13920,6 +13920,32 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0248"
+name = "TypeScript dropped additive term"
+spec = "docs/specs/RIPR-SPEC-0248-typescript-dropped-additive-term.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_additive_term_reads_both_directions_and_forms",
+  "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::parameter_is_stable_only_when_the_body_never_rebinds_it",
+  "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_keeps_credit_only_with_a_non_zero_tested_input",
+  "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_does_not_bind_a_rebound_parameter",
+  "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_leaves_an_error_seam_alone",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/dropped_term_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0248-typescript-dropped-additive-term.md",
+]
+metrics = [
+  "typescript_dropped_term_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0247"
 name = "TypeScript literal matcher strength"
 spec = "docs/specs/RIPR-SPEC-0247-typescript-literal-matcher-strength.md"

@@ -874,18 +874,18 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/typescript-verdict-corpus false_exposed_rate: 1/39",
+          "detail": "fixtures/typescript-verdict-corpus false_exposed_rate: 0/39",
           "repo": null,
-          "status": "below_target",
-          "value": 0.0256
+          "status": "meets_target",
+          "value": 0.0
         }
       ],
       "source": "verdict-corpus:fixtures/typescript-verdict-corpus#false_exposed_rate",
-      "status": "below_target",
+      "status": "meets_target",
       "target": 0.0,
       "title": "Authored TypeScript edits the project's tests miss that ripr credits as caught",
       "unit": "ratio",
-      "value": 0.0256
+      "value": 0.0
     },
     {
       "baseline": {

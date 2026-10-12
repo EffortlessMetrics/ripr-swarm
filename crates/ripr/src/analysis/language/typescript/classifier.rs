@@ -4228,6 +4228,9 @@ struct TsPostLadderContext<'a> {
 /// - RIPR-SPEC-0243 rule 8: an `exposed` result whose exposing test files all
 ///   mock a module the changed line calls reads `static_unknown`, because the
 ///   mock can replace the changed value before any assertion sees it.
+/// - RIPR-SPEC-0248 rule 1: an `exposed` value-seam result whose change
+///   only adds or drops one additive term reads `weakly_exposed` unless an
+///   observed owner call folds the term to a non-zero number.
 fn ts_apply_post_ladder_rules(
     verdict: &mut TsLadderVerdict,
     static_limit: &mut Option<TypeScriptStaticLimit>,
@@ -4249,7 +4252,7 @@ fn ts_apply_post_ladder_rules(
         )];
         return;
     }
-    let Some(callee) = ts_rule8_mocked_changed_callee(
+    if let Some(callee) = ts_rule8_mocked_changed_callee(
         context.probe_shape,
         context.line_text,
         context.owner,
@@ -4257,20 +4260,190 @@ fn ts_apply_post_ladder_rules(
         context.ladder,
         context.alias_map,
         context.workspace_root,
-    ) else {
+    ) {
+        let limit = match static_limit {
+            Some(limit) if limit.kind == StaticLimitKind::MockedModule => static_limit.take(),
+            _ => mocked_module_limit(context.mock_paths),
+        };
+        if let Some(mut limit) = limit {
+            limit.evidence.push(callee.evidence_line());
+            *static_limit = Some(limit);
+            verdict.class = ExposureClass::StaticUnknown;
+            verdict.observe_state = StageState::Unknown;
+            verdict.discriminate_state = StageState::Unknown;
+            verdict.missing = vec![callee.missing_summary(&context.owner.name)];
+            return;
+        }
+    }
+    // A value seam only: an error message, a mock payload or a state write
+    // is observed by matchers the fold cannot read, and demoting it would
+    // ask for a repair the test does not need.
+    if !matches!(
+        context.probe_shape.family,
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction | ProbeFamily::Predicate
+    ) {
+        return;
+    }
+    let Some(term) = context
+        .old_line_text
+        .and_then(|old| ts_dropped_additive_term(old, context.line_text))
+    else {
         return;
     };
-    let limit = match static_limit {
-        Some(limit) if limit.kind == StaticLimitKind::MockedModule => static_limit.take(),
-        _ => mocked_module_limit(context.mock_paths),
+    let reason = match ts_dropped_term_witness(
+        &term,
+        context.owner,
+        context.candidates,
+        context.alias_map,
+        context.workspace_root,
+    ) {
+        DroppedTermWitness::NonZero => return,
+        DroppedTermWitness::Zero => {
+            "is 0 for every tested input, so both versions return the same value"
+        }
+        DroppedTermWitness::Unknown => {
+            "is not shown to be non-zero for any tested input, and an exact assertion passes on both versions wherever it is 0"
+        }
     };
-    if let Some(mut limit) = limit {
-        limit.evidence.push(callee.evidence_line());
-        *static_limit = Some(limit);
-        verdict.class = ExposureClass::StaticUnknown;
-        verdict.observe_state = StageState::Unknown;
-        verdict.discriminate_state = StageState::Unknown;
-        verdict.missing = vec![callee.missing_summary(&context.owner.name)];
+    verdict.class = ExposureClass::WeaklyExposed;
+    verdict.discriminate_state = StageState::Weak;
+    verdict.missing = vec![format!(
+        "The change to `{}` only adds or drops the additive term `{term}`, which {reason}. Add a case whose input makes `{term}` non-zero.",
+        context.owner.name
+    )];
+}
+
+/// What the observed owner calls show about the RIPR-SPEC-0248 rule 1 term.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum DroppedTermWitness {
+    /// The term folds to a non-zero number for one observed call.
+    NonZero,
+    /// The term folds to 0 for every observed call, and at least one exists.
+    Zero,
+    /// Some observed call leaves the term unfolded, and none folds non-zero.
+    Unknown,
+}
+
+/// RIPR-SPEC-0248 rule 1: fold `term` for the arguments of every owner call
+/// whose whole result a strong assertion of an oracle relation observes
+/// (`owner(...)`, `ns.owner(...)`, or a local bound once to that call). A parameter is bound to
+/// its numeric literal argument only when the owner body never rebinds it; a
+/// constant-shaped name reads the owner module's integer `const`. Calls,
+/// members and anything else unbound fail the fold.
+pub(crate) fn ts_dropped_term_witness(
+    term: &str,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> DroppedTermWitness {
+    let constants: Vec<(String, f64)> = term
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        .filter(|word| is_constant_shaped_operand(word) && !owner.params.iter().any(|p| p == word))
+        .filter_map(|word| {
+            let value = ts_owner_module_constant_value(word, owner, workspace_root)?;
+            Some((word.to_string(), value.parse::<f64>().ok()?))
+        })
+        .collect();
+    // Stability depends only on the owner, so it is read once per parameter.
+    let stable: Vec<bool> = owner
+        .params
+        .iter()
+        .map(|name| {
+            owner
+                .source_text
+                .as_deref()
+                .is_some_and(|source| ts_parameter_is_stable(source, name))
+        })
+        .collect();
+    let (mut zero, mut unknown) = (false, false);
+    for candidate in candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+    {
+        if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
+            continue;
+        }
+        let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        for assertion in &candidate.test.assertions {
+            // A value matcher sees the returned value; an error matcher
+            // (`rejects.toThrow`) sees only that the call fails.
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+                || !matches!(
+                    assertion.oracle_kind,
+                    OracleKind::ExactValue | OracleKind::WholeObjectEquality | OracleKind::Snapshot
+                )
+            {
+                continue;
+            }
+            let Some(observed) = assertion.observed_expression.as_deref() else {
+                continue;
+            };
+            // Only an assertion on the call's whole result sees the term:
+            // `quote(6000, 5).tier` does not.
+            let bare = std::iter::once(String::new())
+                .chain(receivers.iter().map(|receiver| format!("{receiver}.")))
+                .any(|prefix| {
+                    let observed = observed.trim();
+                    observed
+                        .strip_prefix("await ")
+                        .map_or(observed, str::trim_start)
+                        .strip_prefix(prefix.as_str())
+                        .and_then(|rest| rest.strip_prefix(owner.name.as_str()))
+                        .is_some_and(ts_is_one_argument_list)
+                });
+            // One call only: in `price(price(6000, 7), 0)` the inner call's
+            // `fee` is not the asserted result's.
+            let mut argument_lists = if bare {
+                owner_call_arguments(observed, &owner.name, &receivers)
+            } else {
+                Vec::new()
+            };
+            if argument_lists.len() != 1 {
+                argument_lists.clear();
+            }
+            if argument_lists.is_empty()
+                && let Some(arguments) = ts_observed_local_owner_call_arguments(
+                    candidate.test,
+                    assertion,
+                    &owner.name,
+                    &receivers,
+                )
+            {
+                argument_lists.push(arguments);
+            }
+            for arguments in argument_lists {
+                let arguments = substitute_constant_arguments(
+                    arguments,
+                    candidate.test,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                );
+                let mut bindings = constants.clone();
+                for (index, name) in owner.params.iter().enumerate() {
+                    let value = arguments
+                        .get(index)
+                        .and_then(|argument| numeric_literal_value(argument))
+                        .and_then(|value| value.parse::<f64>().ok());
+                    if let Some(value) = value
+                        && stable.get(index).copied().unwrap_or(false)
+                    {
+                        bindings.push((name.clone(), value));
+                    }
+                }
+                match fold_numeric_expression(term, &bindings) {
+                    Some(value) if value.abs() > 1e-9 => return DroppedTermWitness::NonZero,
+                    Some(_) => zero = true,
+                    None => unknown = true,
+                }
+            }
+        }
+    }
+    if zero && !unknown {
+        DroppedTermWitness::Zero
+    } else {
+        DroppedTermWitness::Unknown
     }
 }
 

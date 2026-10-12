@@ -193,7 +193,7 @@ fn calls_in(text: &str) -> Vec<Call> {
 
 /// Byte offsets of `name` as a whole identifier that is not a member name
 /// (`x.name`), outside literals and comments.
-fn identifier_offsets(masked: &str, name: &str) -> Vec<usize> {
+pub(super) fn identifier_offsets(masked: &str, name: &str) -> Vec<usize> {
     masked
         .match_indices(name)
         .filter(|(at, _)| {
@@ -433,37 +433,36 @@ fn callback_scope(masked: &str) -> Option<&str> {
     Some(masked)
 }
 
-/// `true` when the owner's body (after its header: the parameter list up
-/// to the first top-level `{` or `=>`) has no loop, no nested function and
-/// no call back into the owner, so the changed line runs at most once per
-/// owner call.
-fn runs_each_statement_once(owner_source: &str, owner_name: &str) -> bool {
+/// The owner's masked body: the text after its header (the parameter list up
+/// to the first top-level `{` or `=>`), or `None` when no body opens.
+pub(super) fn masked_owner_body(owner_source: &str) -> Option<String> {
     let masked = ts_mask_literals_and_comments(owner_source);
     let mut parens = 0usize;
-    let mut body_start = None;
     for (index, c) in masked.char_indices() {
         match c {
             '(' => parens += 1,
             ')' => parens = parens.saturating_sub(1),
-            '{' if parens == 0 => {
-                body_start = Some(index + 1);
-                break;
-            }
+            '{' if parens == 0 => return Some(masked[index + 1..].to_string()),
             '=' if parens == 0 && masked[index..].starts_with("=>") => {
-                body_start = Some(index + 2);
-                break;
+                return Some(masked[index + 2..].to_string());
             }
             _ => {}
         }
     }
-    let Some(body_start) = body_start else {
+    None
+}
+
+/// `true` when the owner's body has no loop, no nested function and no call
+/// back into the owner, so the changed line runs at most once per owner
+/// call.
+fn runs_each_statement_once(owner_source: &str, owner_name: &str) -> bool {
+    let Some(body) = masked_owner_body(owner_source) else {
         return false;
     };
-    let body = &masked[body_start..];
     !body.contains("=>")
         && ["for", "while", "do", "function", owner_name]
             .iter()
-            .all(|word| identifier_offsets(body, word).is_empty())
+            .all(|word| identifier_offsets(&body, word).is_empty())
 }
 
 /// `true` when `at` sits outside every brace block of `masked`.
