@@ -239,6 +239,16 @@ sections of the reviewer packet without being treated as production behavior.
 format and numbering, and the policy surfaces that should fail quickly before
 review.
 
+`cargo xtask check-fast` also runs `check-support-tiers` for committed spec
+Markdown, the support map, root README, Rust repair trust corpus, xtask source,
+and referenced workflow/script path changes. It runs before compilation-bearing
+Rust checks and Clippy, reuses the existing leaf diagnostics, and records actual
+execution or non-applicability in its report. See
+[RIPR-SPEC-0060](specs/RIPR-SPEC-0060-source-of-truth-stack.md#early-local-support-tier-validation).
+The established selector remains `origin/main...HEAD`; while authoring
+uncommitted or untracked specs, run `cargo xtask check-support-tiers` explicitly.
+This is one applicable local scan; precommit and hosted routing are unchanged.
+
 Local command diagnostics reuse the existing reports: `precommit-v2.{json,md}`
 records diff-check and selected Clippy children, `file-policy.md` records actual
 covered-by warmup/list children, and `check-fast.md` records fmt and workspace

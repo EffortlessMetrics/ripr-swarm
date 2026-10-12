@@ -737,6 +737,15 @@ fn check_fast_gates(
     check_command_catalog()?;
     ran.push("check-command-catalog");
 
+    // RIPR-SPEC-0060: validate applicable support declarations before the
+    // compilation-bearing Rust gates, using the unchanged leaf/report owner.
+    if categories.support_tiers {
+        check_support_tiers()?;
+        ran.push("check-support-tiers");
+    } else {
+        skipped.push("check-support-tiers (not applicable)");
+    }
+
     // Conditional gates based on changed file categories.
     if categories.rust_src {
         check_no_panic_family()?;
@@ -840,6 +849,7 @@ fn check_fast_failure_report(
 }
 
 struct ChangedFileCategories {
+    support_tiers: bool,
     rust_src: bool,
     workflow: bool,
     policy: bool,
@@ -848,6 +858,17 @@ struct ChangedFileCategories {
 
 fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
     ChangedFileCategories {
+        // Direct leaf inputs plus proof-command/catalog owners. One bounded
+        // scan per applicable invocation; unrelated changes retain the no-op.
+        support_tiers: files.iter().any(|f| {
+            (f.starts_with("docs/specs/") && f.ends_with(".md"))
+                || f == SUPPORT_TIERS_PATH
+                || f == "README.md"
+                || f == RUST_REPAIR_TRUST_CORPUS_PATH
+                || f.starts_with("xtask/src/")
+                || f.starts_with(".github/workflows/")
+                || f.starts_with("scripts/")
+        }),
         rust_src: files.iter().any(|f| {
             f == "Cargo.lock"
                 || f == "Cargo.toml"
