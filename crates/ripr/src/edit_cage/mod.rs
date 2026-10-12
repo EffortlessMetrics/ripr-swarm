@@ -2163,7 +2163,7 @@ mod tests {
         if delta
             .changes
             .iter()
-            .any(|change| change.path == "src/pricing.rs")
+            .any(|change| change.path.as_path() == std::path::Path::new("src/pricing.rs"))
         {
             return Err(format!(
                 "the EOL flip entered the delta as an edit: {delta:?}"
@@ -2185,7 +2185,7 @@ mod tests {
         if !delta
             .changes
             .iter()
-            .any(|change| change.path == "src/pricing.rs")
+            .any(|change| change.path.as_path() == std::path::Path::new("src/pricing.rs"))
         {
             return Err("a real edit to the flipped file must enter the delta".to_string());
         }
