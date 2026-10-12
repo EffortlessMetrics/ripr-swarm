@@ -20,7 +20,7 @@
     {
       "id": "mock_interaction_without_payload_proof",
       "source_fixture": "fixtures/typescript_jest_vitest_assertion_facts",
-      "source_finding_id": "probe:src_signals.ts:typescript_preview:5f264af5",
+      "source_finding_id": "probe:src_signals.ts:typescript_preview:b16c08c1",
       "language": "typescript",
       "language_status": "preview",
       "risk_class": "mock interaction without payload proof",
@@ -36,9 +36,9 @@
       "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
       "future_support": "mock payload support must name the callee, expected arguments, verify command, receipt command, evidence refs, and edit boundaries",
       "must_remain_non_actionable": true,
-      "required_evidence_fragment": "mock_payload_evidence: expect(sink.record).toHaveBeenCalledWith(\"ready\")",
+      "required_evidence_fragment": "mock_payload_evidence: expect(record).toHaveBeenCalledWith(\"audit\")",
       "raw_evidence_refs": [
-        "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json#probe:src_signals.ts:typescript_preview:5f264af5"
+        "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json#probe:src_signals.ts:typescript_preview:b16c08c1"
       ],
       "non_claims": [
         "no provider calls",

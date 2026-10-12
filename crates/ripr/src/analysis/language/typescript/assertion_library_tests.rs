@@ -193,7 +193,7 @@ const { assert } = require('chai')
 const chai = require('chai')
 
 it('totals', function () {
-  assert.equal(total([1, 2]), 3)
+  assert.equal(total([0, 1]), 1)
   assert.isTrue(isEmpty([]))
   chai.assert.deepEqual(items(), ['a'])
 })
@@ -201,7 +201,8 @@ it('totals', function () {
     );
     assert_eq!(assertions.len(), 3, "{assertions:?}");
     // chai's `assert.equal` is loose `==` (#4638 review): relational, not an
-    // exact value. Its `deepEqual` is strict deep equality.
+    // exact value, while `1 == true` (RIPR-SPEC-0247 rule 2). Its
+    // `deepEqual` is strict deep equality.
     assert_oracle(
         &assertions[0],
         OracleKind::RelationalCheck,
@@ -569,9 +570,9 @@ import assert from 'node:assert'
 import { equal, deepEqual as same, strictEqual } from 'assert'
 
 it('adds', () => {
-  assert.equal(add(1, 2), 3)
+  assert.equal(add(0, 1), 1)
   assert.deepEqual(pair(), [1, 2])
-  equal(add(1, 2), 3)
+  equal(add(0, 1), 1)
   same(pair(), [1, 2])
   strictEqual(add(1, 2), 3)
   assert.deepStrictEqual(pair(), [1, 2])

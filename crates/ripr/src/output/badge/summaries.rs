@@ -21,6 +21,44 @@ use super::model::{
     BadgeSummary,
 };
 
+/// A refusal badge summary (#7332): the degraded-state convention the
+/// badge family already uses for "no honest count exists" (Warn + lightgrey,
+/// zeroed counts, named message, explanation in `warnings`) applied to a run
+/// that refused before analysis. The typed identity selects the message;
+/// the repair route and human diagnostic ride in the first warning.
+pub(crate) fn refusal_badge_summary(notice: &crate::core_error::RefusalNotice) -> BadgeSummary {
+    BadgeSummary {
+        kind: BadgeKind::Ripr,
+        scope: BadgeScope::Diff,
+        basis: BadgeBasis::FindingExposure,
+        message: format!("refused: {}", notice.identity),
+        status: BadgeStatus::Warn,
+        color: "lightgrey",
+        counts: BadgeCounts {
+            unsuppressed_exposure_gaps: 0,
+            unsuppressed_test_efficiency_findings: 0,
+            intentional_test_efficiency_findings: 0,
+            suppressed_exposure_gaps: 0,
+            suppressed_test_efficiency_findings: 0,
+            unknowns: 0,
+            unknowns_test_efficiency: 0,
+            analyzed_findings: 0,
+            analyzed_seams: 0,
+            analyzed_gap_records: 0,
+            analyzed_tests: 0,
+        },
+        reason_counts: BTreeMap::new(),
+        policy: BadgePolicy::default(),
+        warnings: vec![format!(
+            "run refused: {}; repair route: {}",
+            notice.message, notice.repair_route
+        )],
+        preview_skipped: Vec::new(),
+        projection: None,
+        analysis_outcome: None,
+    }
+}
+
 /// Returns the list of language names (e.g. `"typescript"`) that appear in
 /// `preview_language_advisories` with `enabled == false`. A non-empty list
 /// means preview-language files were detected in the diff but the adapter

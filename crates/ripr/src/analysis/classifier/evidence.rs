@@ -117,6 +117,20 @@ impl ClassifiedProbeEvidence {
                         &ledger.caller,
                         &ledger.local,
                     );
+                    if let Some(helper) = context
+                        .index
+                        .functions()
+                        .iter()
+                        .find(|function| function.id == ledger.caller)
+                    {
+                        witness.selected_helper_calls =
+                            crate::analysis::classify::selected_inherent_calls(
+                                helper,
+                                context.index,
+                                context.workspace_complete,
+                            );
+                        witness.semantic_digest = witness.compute_semantic_digest();
+                    }
                 }
                 PropagationWitnessDiagnostic::from_witness(witness)
             });
@@ -1705,6 +1719,92 @@ mod tests {
             caller_names_for(&source, "src/lib.rs::tax")?,
             ["hop1", "hop2", "hop3", "hop4", "hop5", "hop6"],
             "callers six hops out reach the owner; the seventh hop does not"
+        );
+        Ok(())
+    }
+    #[test]
+    fn gather_retains_selected_call_identity_without_completing_ledger_path() -> Result<(), String>
+    {
+        use crate::analysis::classify::resolve_chain;
+        use crate::domain::{
+            DeltaKind, Probe, ProbeFamily, ProbeId, RelationReason, SourceLocation, StageState,
+        };
+        let source = "struct PolicyError { detail: String }\nstruct Config { errors: Vec<PolicyError> }\nfn record(errors: &mut Vec<PolicyError>) {\n    errors.push(PolicyError { detail: \"diagnostic\".to_owned() });\n}\nfn collect(flag: bool) -> Vec<PolicyError> { let mut errors = Vec::new(); record(&mut errors); errors }\nimpl Config { fn parse(flag: bool) -> Self { let errors = collect(flag); Self { errors } } }\nfn sibling() { let ignored = collect(false); }\n#[test]\nfn direct_test() { let ignored = collect(false); }\n#[test]\nfn observes() { let malformed = Config::parse(true); check_detail(malformed); }\nfn check_detail(config: Config) { if config.errors[0].detail != \"diagnostic\" { std::panic::panic_any(\"wrong detail\"); } }\n";
+        let path = PathBuf::from("src/lib.rs");
+        let facts = crate::analysis::syntax::ra::summarize_file_with_parser(&path, source)?;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: facts.functions.clone(),
+            tests: facts.tests.clone(),
+            files: [(path, facts)].into_iter().collect(),
+            ..Default::default()
+        });
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.name == "record")
+            .ok_or("missing owner")?;
+        let direct = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "direct_test")
+            .ok_or("missing direct test")?;
+        let chain = resolve_chain("record", &index, true, &[]);
+        assert_eq!(chain.hops.len(), 1);
+        let probe = Probe {
+            id: ProbeId("probe:selected-ledger-caller".into()),
+            location: SourceLocation::new("src/lib.rs", 4, 1),
+            owner: Some(owner.id.clone()),
+            family: ProbeFamily::FieldConstruction,
+            delta: DeltaKind::Value,
+            before: None,
+            after: None,
+            expression: "detail: \"diagnostic\".to_owned()".into(),
+            expected_sinks: Vec::new(),
+            required_oracles: Vec::new(),
+        };
+        let context = ProbeContext::new(
+            &probe,
+            Some(owner),
+            vec![(direct, RelationReason::HelperOwnerCall)],
+            false,
+            &index,
+            true,
+        )
+        .with_helper_chain(Some(chain));
+        let evidence = ClassifiedProbeEvidence::gather(&context, &probe.expression);
+        let diagnostic = evidence
+            .propagation_witness()
+            .ok_or("missing retained witness")?;
+        assert!(!diagnostic.is_invalid());
+        let witness = diagnostic.witness();
+        assert_eq!(witness.selected_helper_calls.len(), 1);
+        assert_eq!(witness.selected_helper_calls[0].test_name, "observes");
+        assert_eq!(
+            witness.selected_helper_calls[0].callee.0,
+            "src/lib.rs::impl Config::parse"
+        );
+        assert_eq!(
+            serde_json::to_value(witness).map_err(|error| error.to_string())?["completeness"],
+            "partial"
+        );
+        assert!(
+            serde_json::to_value(witness).map_err(|error| error.to_string())?["edges"]
+                .as_array()
+                .ok_or("missing edges")?
+                .iter()
+                .any(|edge| edge["status"] == "candidate")
+        );
+        assert_eq!(evidence.propagate.state, StageState::Unknown);
+        assert!(witness.digest_matches());
+        let serialized = serde_json::to_string(witness).map_err(|error| error.to_string())?;
+        let round_trip: crate::analysis::classify::PropagationWitnessV1 =
+            serde_json::from_str(&serialized).map_err(|error| error.to_string())?;
+        assert_eq!(round_trip, *witness);
+        let mut forged = witness.clone();
+        forged.selected_helper_calls[0].callee = SymbolId("unrelated::parse".into());
+        assert!(
+            !forged.digest_matches(),
+            "callee identity must be bound to semantic digest"
         );
         Ok(())
     }

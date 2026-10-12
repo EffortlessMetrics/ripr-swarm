@@ -8,10 +8,13 @@ use crate::analysis::{
     workspace_cache_key_at_with_config,
 };
 use crate::app::repair_route_readiness;
-use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
+use crate::cli::commands_context::{
+    config_load_refusal, ensure_command_root, load_root_input_and_config, refuse_json_envelope,
+};
 use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
+use crate::core_error::CoreError;
 use crate::domain::{CommandExecutionMode, CommandSpec, CommandSpecDigest};
 use crate::output::gap_decision_ledger::{GapRecord, parse_gap_record_source_json};
 use crate::output::outcome::{TargetedRerunStaticSeam, targeted_rerun_movement_from_json};
@@ -31,6 +34,13 @@ struct RerunOptions {
     before: Option<PathBuf>,
     check_parity: bool,
 }
+
+/// The `ripr rerun --json` refusal envelope keys its document with the
+/// targeted rerun report's schema version (#7331). Owner: the
+/// `TargetedRerunReport.schema_version` literal in the report construction
+/// (pinned by the output-contract version gate), mirrored here because the
+/// report value exists only on the success path.
+const TARGETED_RERUN_REFUSAL_SCHEMA_VERSION: &str = "ripr-targeted-rerun-v1";
 
 #[derive(Debug, PartialEq, Eq)]
 enum RerunSelector {
@@ -359,32 +369,61 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     let options = parse_options(args)?;
-    ensure_command_root(&options.root, "rerun")?;
-    let (input, config) = load_root_input_and_config(&options.root)?;
+    run_refusing(options)
+}
+
+/// The parsed-invocation body of `rerun` (#7331): every failure below the
+/// argv parser routes through `refuse`, which writes the shared refusal
+/// envelope to stdout on `--json` runs before the prose error reaches
+/// stderr. Argv usage errors above stay prose-only.
+fn run_refusing(options: RerunOptions) -> Result<(), String> {
+    let json = options.json;
+    let refuse = |error: CoreError| -> String {
+        if !json {
+            return error.to_string();
+        }
+        refuse_json_envelope(
+            TARGETED_RERUN_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            None,
+            &options.root,
+            None,
+            error,
+        )
+    };
+    ensure_command_root(&options.root, "rerun")
+        .map_err(|err| refuse(CoreError::repository_root_unusable(err)))?;
+    let (input, config) = load_root_input_and_config(&options.root)
+        .map_err(|err| refuse(config_load_refusal(&options.root, err)))?;
     let mut report = match options.selector {
         RerunSelector::ChangedTest { file, node } => {
-            rerun_changed_test(&input.root, &config, &file, node.as_deref())?
+            rerun_changed_test(&input.root, &config, &file, node.as_deref())
+                .map_err(|err| refuse(CoreError::from(err)))?
         }
         RerunSelector::Gap {
             canonical_gap_id,
             gap_ledger,
-        } => rerun_gap(&input.root, &config, &canonical_gap_id, &gap_ledger)?,
+        } => rerun_gap(&input.root, &config, &canonical_gap_id, &gap_ledger).map_err(&refuse)?,
     };
     if options.check_parity {
-        apply_full_pipeline_parity(&mut report, &input.root, &config)?;
+        apply_full_pipeline_parity(&mut report, &input.root, &config)
+            .map_err(|err| refuse(CoreError::from(err)))?;
     }
     if let Some(before) = options.before.as_deref() {
         apply_before(&mut report, before);
     }
     let rendered = if options.json {
-        serde_json::to_string_pretty(&report)
-            .map_err(|err| format!("serialize targeted rerun report failed: {err}"))?
+        serde_json::to_string_pretty(&report).map_err(|err| {
+            refuse(CoreError::from(format!(
+                "serialize targeted rerun report failed: {err}"
+            )))
+        })?
     } else {
         render_human(&report)
     };
     if let Some(out) = options.out {
         let out = resolve_output_path(&input.root, &out);
-        write_text_file(&out, &rendered)?;
+        write_text_file(&out, &rendered).map_err(|err| refuse(CoreError::from(err)))?;
         println!("Wrote {}", out.display());
     } else {
         println!("{rendered}");
@@ -453,7 +492,15 @@ fn parse_options(args: &[String]) -> Result<RerunOptions, String> {
             gap_ledger,
         },
         (None, Some(_), None) => {
-            return Err("rerun --gap requires --gap-ledger <path>".to_string());
+            let root = crate::agent::loop_commands::shell_arg(
+                &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+            );
+            return Err(format!(
+                "rerun --gap requires --gap-ledger <path>.\n\
+                 Rust: run `ripr check --root {root} --format repo-exposure-json` and save stdout as repo-exposure.json, then run `ripr reports gap-ledger --root {root} --repo-exposure repo-exposure.json --out gap-ledger.json`.\n\
+                 TypeScript: repeat the check that produced the gap with --json, save stdout as check.json, then run `ripr reports gap-ledger --root {root} --check-output check.json --out gap-ledger.json`.\n\
+                 Command forms: Bash. Keep the same root and source scope; the ledger must contain the selected canonical gap ID. Producing a ledger does not translate IDs absent from it; retry with `--gap-ledger gap-ledger.json`."
+            ));
         }
         (None, None, Some(_)) => {
             return Err("rerun --gap-ledger requires --gap".to_string());
@@ -557,7 +604,7 @@ fn rerun_gap(
     config: &crate::config::RiprConfig,
     canonical_gap_id: &str,
     gap_ledger: &Path,
-) -> Result<TargetedRerunReport, String> {
+) -> Result<TargetedRerunReport, crate::core_error::CoreError> {
     // The ledger is an explicit input artifact. Like other CLI inputs, a
     // relative path is resolved from the invocation directory, not from
     // `--root`; only `--out` is rooted under the selected workspace.
@@ -575,11 +622,22 @@ fn rerun_gap(
     // A named ledger that cannot be read or parsed is an input the command
     // could not use, like an unreadable `--changed-test`: exit 2, not a
     // `limited` report with exit 0 (#4727). A readable ledger that does not
-    // resolve the gap stays a named `limited` outcome below.
-    let contents = crate::bounded_input::read_to_string(&gap_ledger)
-        .map_err(|err| format!("read gap ledger {} failed: {err}", gap_ledger.display()))?;
-    let source = parse_gap_record_source_json(&contents)
-        .map_err(|err| format!("parse gap ledger {} failed: {err}", gap_ledger.display()))?;
+    // resolve the gap stays a named `limited` outcome below. The failure is
+    // typed `gap_ledger_unusable` so a `--json` refusal names the family
+    // instead of the honest fallback (#7331); the message stays the stderr
+    // diagnostic verbatim.
+    let contents = crate::bounded_input::read_to_string(&gap_ledger).map_err(|err| {
+        crate::core_error::CoreError::gap_ledger_unusable(format!(
+            "read gap ledger {} failed: {err}",
+            gap_ledger.display()
+        ))
+    })?;
+    let source = parse_gap_record_source_json(&contents).map_err(|err| {
+        crate::core_error::CoreError::gap_ledger_unusable(format!(
+            "parse gap ledger {} failed: {err}",
+            gap_ledger.display()
+        ))
+    })?;
     if let Some(ledger_root) = source
         .root
         .as_deref()
@@ -2501,11 +2559,14 @@ mod tests {
     }
 
     #[test]
-    fn rerun_gap_requires_explicit_ledger() {
-        assert_eq!(
-            parse_options(&args(&["--gap", "gap:example"])),
-            Err("rerun --gap requires --gap-ledger <path>".to_string())
-        );
+    fn rerun_gap_requires_explicit_ledger() -> Result<(), String> {
+        let Err(message) = parse_options(&args(&["--gap", "gap:example"])) else {
+            return Err("a gap without a ledger must refuse".to_string());
+        };
+        assert!(message.starts_with("rerun --gap requires --gap-ledger <path>"));
+        assert!(message.contains("--repo-exposure repo-exposure.json --out gap-ledger.json"));
+        assert!(message.contains("--check-output check.json --out gap-ledger.json"));
+        Ok(())
     }
 
     #[test]
@@ -3117,7 +3178,7 @@ mod tests {
         let garbage_result = rerun_gap(&root, &config, "gap:example", &garbage);
         let _ = std::fs::remove_dir_all(&root);
         match missing_result {
-            Err(err) if err.starts_with("read gap ledger") => {}
+            Err(err) if err.to_string().starts_with("read gap ledger") => {}
             Err(err) => return Err(format!("unexpected read error: {err}")),
             Ok(report) => {
                 return Err(format!(
@@ -3127,7 +3188,7 @@ mod tests {
             }
         }
         match garbage_result {
-            Err(err) if err.starts_with("parse gap ledger") => Ok(()),
+            Err(err) if err.to_string().starts_with("parse gap ledger") => Ok(()),
             Err(err) => Err(format!("unexpected parse error: {err}")),
             Ok(report) => Err(format!(
                 "unparsable ledger produced a report: state={}",

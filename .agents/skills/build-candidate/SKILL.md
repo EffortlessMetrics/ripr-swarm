@@ -52,6 +52,17 @@ Bind background commands to retained task/session handles, candidate identities 
 8. Simplify the candidate: remove scaffolding and dead branches, collapse duplicate decisions, and preserve one acceptance/rollback boundary. Do not mix unrelated dependency, documentation and product changes because they share a working tree.
 9. Challenge authority/provenance, failure and rollback paths, transaction boundaries, concurrency, oracle grip, runtime/schema/docs/output parity, platforms, packaging and user-facing claims. Use an independent source/oracle/reviewer when it adds detection value, not merely a different persona.
 10. Repair accepted findings in the same candidate. Commit coherent changes without another routine permission pause so verification can bind to a real Git object.
+    Before finalizing the candidate for publication or Draft -> Ready hosted
+    qualification, record its changelog disposition in a local draft of the new
+    PR body or update the existing PR body:
+    - Name the fragment under `changelog.d/` and compare it with the canonical
+      example in [changelog.d/README.md](../../../changelog.d/README.md): first-line
+      section marker, `- ` bullet and trailing issue/PR reference.
+    - If no fragment is needed, explain the exemption under
+      [CHANGELOG_POLICY.md](../../../docs/CHANGELOG_POLICY.md), checking behavior,
+      workflow and public-doc impact per [CONTRIBUTING.md](../../../CONTRIBUTING.md#pr-shape).
+      A deferred entry instead needs the release-inventory location and reason
+      required by [PR_AUTOMATION.md](../../../docs/PR_AUTOMATION.md#changelog-inputs).
 11. Run `check-fast` on the committed candidate and compare its selector report and ran/skipped categories with the independently resolved path set. Reconcile a changed basis or run base-aware gates directly. Unexpected zero, omitted categories or selector failure is `INSTRUMENT_FAILURE`, not pass.
 12. Run focused tests and relevant changed-surface checks before `precommit`. For targeted-rerun owner/call admission changes, run the affected retained CLI rerun tests and the `native_path_roots` integration suite, including supported imported and qualified free calls plus strict binding-refusal controls. `check-fast` policy/Clippy selection and library-only tests do not establish this public-path compatibility. Preserve legitimate fixture call identity instead of rewriting calls to evade the new gate. For process-launch API or test-harness command-builder changes, explicitly run `cargo xtask check-process-policy` before the aggregate and reconcile call sites with their existing allowance; Rust tests and Clippy do not validate that allowance. Keep proof proportional: full local runs are for named failures or explicit qualification, not automatic duplication of the entire hosted matrix before publishing.
 13. Hand the committed candidate to `review-pr`. Missing hosted evidence normally yields `REVIEW_INCOMPLETE`; enter `finish-pr` to publish and obtain that evidence, then return to exact published-head review before merge.

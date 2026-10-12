@@ -17,8 +17,9 @@ pub use load::{
     resolve_effective_base, working_tree_has_tracked_changes,
 };
 pub(crate) use load::{
-    load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
+    load_diff_core, load_diff_range_with_deadline_core, load_diff_with_effective_base_core,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis,
+    resolve_effective_base_core,
 };
 #[allow(
     unused_imports,

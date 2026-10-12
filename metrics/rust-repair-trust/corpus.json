@@ -258,9 +258,9 @@
       "source_ref": "PR #1580",
       "canonical_candidate_id": "EffortlessMetrics/ripr-swarm#1580",
       "reason": "static_limitation_no_repair_packet",
-      "evidence_ref": "metrics/rust-repair-trust/3074-post-2933-observations.json#ripr-swarm-1580",
-      "command": "ripr review-comments --root . --base 91a720f390cb96c2e6c52d08e4215f2cb30942a3 --head 2f71673f9c2da4532a1c1fb8e011dc6fd586ad2f --out target/ripr/3074-post-2933-ripr-swarm-1580.json",
-      "claim_boundary": "Post-#2933 FieldConstruction producer names field_value on changed LSP diagnostic construction seams; canonical gap_state remains static_limitation with null related_test and no repair packet. Observation is not an attempt."
+      "evidence_ref": "metrics/rust-repair-trust/1601-current-1580-observation.json",
+      "command": "ripr review-comments --root /workspace/1601-observed-consumer --base 91a720f390cb96c2e6c52d08e4215f2cb30942a3 --head 2f71673f9c2da4532a1c1fb8e011dc6fd586ad2f --out /workspace/1601-observed-consumer/target/ripr/1601-current-replay/comments.json",
+      "claim_boundary": "Same retained opportunity; current field facts are named but no complete route is admitted. Selected static scope refuses changed_test_owner_ambiguous for new. Static-limitation exclusion is a coarse route outcome, not a renewed missing-discriminator diagnosis. Old receipts remain history; zero eligible attempts."
     },
     {
       "exclusion_id": "perl-4022-analysis-timeout",
@@ -448,10 +448,10 @@
       "source_ref": "PR #1580",
       "canonical_candidate_id": "EffortlessMetrics/ripr-swarm#1580",
       "reason": "static_limitation_no_repair_packet",
-      "evidence_ref": "metrics/rust-repair-trust/3074-post-2933-observations.json#ripr-swarm-1580",
+      "evidence_ref": "metrics/rust-repair-trust/1601-current-1580-observation.json",
       "classification": "duplicate_observation",
       "duplicate_of": "ripr-1580-static-limitation",
-      "claim_boundary": "Identity-matched post-#2933 rerun; FieldConstruction names field_value and still yields no complete route or eligible attempt."
+      "claim_boundary": "Identity-matched current-binary replay retains both original field gaps with unknown card state and no offered target; exact static selector refuses ambiguous new. Detailed readiness remains unestablished. Historical post-2933 receipt remains retained. No attempt or denominator change."
     },
     {
       "observation_id": "post-2933-ub-772",

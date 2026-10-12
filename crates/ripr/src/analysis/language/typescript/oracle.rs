@@ -619,6 +619,9 @@ pub(crate) fn expect_assertion_from_expression(
     let error_payload = error_payload_from_assertion(matcher, async_modifier, outer_call, source);
     let (oracle_kind, oracle_strength) = if error_payload.is_some() {
         (OracleKind::ExactErrorVariant, OracleStrength::Strong)
+    } else if inline_snapshot_is_literal(matcher, outer_call) {
+        // RIPR-SPEC-0247 rule 3: the expected text is written in the test.
+        (OracleKind::Snapshot, OracleStrength::Strong)
     } else {
         oracle_for_matcher(matcher)
     };
@@ -1117,6 +1120,19 @@ pub(crate) fn module_assert_assertion_from_expression(
         oracle_kind = OracleKind::ExactErrorVariant;
         oracle_strength = OracleStrength::Strong;
     }
+    // RIPR-SPEC-0247 rule 2: loose `==` equality against a literal that
+    // coercion cannot reach pins the value as strict equality does.
+    let loose_equality = matches!(method, "equal" | "deepEqual")
+        && matches!(oracle_kind, OracleKind::RelationalCheck);
+    if loose_equality
+        && call
+            .arguments
+            .get(1)
+            .is_some_and(|expected| loose_equality_pins_literal(expected, method == "deepEqual"))
+    {
+        oracle_kind = OracleKind::ExactValue;
+        oracle_strength = OracleStrength::Strong;
+    }
     // Argument order is (actual, expected[, message]). Only equality and
     // relational methods carry an expected argument; a truthiness or error
     // assertion's second argument is a message or error matcher.
@@ -1497,9 +1513,15 @@ pub(crate) fn mock_payload_from_assertion(
 ) -> Option<TypeScriptMockPayload> {
     let target = safe_mock_target_text(expect_call.arguments.first()?, source)?;
     match matcher {
-        "toHaveBeenCalledWith" if matcher_call.arguments.len() == 1 => {
-            let expected =
-                safe_mock_expected_argument_text(matcher_call.arguments.first()?, source)?;
+        // Every argument must be a literal; the payload text joins them as
+        // written (RIPR-SPEC-0247 rule 1 reads two-argument calls too).
+        "toHaveBeenCalledWith" if !matcher_call.arguments.is_empty() => {
+            let expected = matcher_call
+                .arguments
+                .iter()
+                .map(|argument| safe_mock_expected_argument_text(argument, source))
+                .collect::<Option<Vec<_>>>()?
+                .join(", ");
             Some(TypeScriptMockPayload {
                 target,
                 expected,

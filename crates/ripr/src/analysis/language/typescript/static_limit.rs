@@ -768,7 +768,11 @@ pub(crate) fn named_limitations_for_oracle_candidates(
         }
         for assertion in &candidate.test.assertions {
             // Snapshot limitation: `toMatchSnapshot` / `toMatchInlineSnapshot`
-            if matches!(assertion.oracle_kind, OracleKind::Snapshot) && !saw_snapshot {
+            // A literal inline snapshot pins its value (RIPR-SPEC-0247 rule 3).
+            if matches!(assertion.oracle_kind, OracleKind::Snapshot)
+                && assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+                && !saw_snapshot
+            {
                 let sample = format!(
                     "{}:{}",
                     normalized_path(&candidate.test.file),

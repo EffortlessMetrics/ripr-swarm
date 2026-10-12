@@ -30,6 +30,10 @@
 
 mod returned_ledger;
 pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
+mod selected_inherent_call;
+pub(in crate::analysis) use selected_inherent_call::{
+    SelectedInherentCall, selected_inherent_calls,
+};
 
 use super::value_transfer::ExactInputs;
 use crate::analysis::facts::{CallFact, FunctionImplContext, FunctionSummary, RustIndex};

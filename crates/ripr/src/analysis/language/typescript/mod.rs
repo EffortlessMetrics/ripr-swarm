@@ -64,6 +64,8 @@ mod discovery;
 mod error_payload_guard;
 #[cfg(test)]
 mod line_index_tests;
+mod literal_matcher_guard;
+mod mock_payload_guard;
 mod module_entries;
 #[cfg(test)]
 mod new_declaration_tests;
@@ -105,6 +107,8 @@ pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use discovery::*;
 pub(crate) use error_payload_guard::*;
+pub(crate) use literal_matcher_guard::*;
+pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;

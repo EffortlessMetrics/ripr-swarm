@@ -187,20 +187,30 @@ pub(crate) fn bind_snapshot_card_producers(
             )
         })?;
         let candidate_seams = inventory.classified;
+        // #7292: the currentness probe used to run per bound seam inside the
+        // refresh, one `git status` child each; ce154a67c made the bindings
+        // actually match and turned that dead per-seam cost live on the
+        // refresh path (twenty sequential children for one mid-corpus
+        // refresh). The bindings now share one batched probe with the same
+        // per-seam outcome.
+        let mut bound_pairs: Vec<(&ClassifiedSeam, _)> = Vec::new();
         for entry in &candidate_seams {
-            let Some(item) = item_bound_by_seam(snapshot, entry, &candidate_seams) else {
-                continue;
-            };
-            let currentness = crate::app::repair_card_handoff::evidence_tree_currentness(
-                root, entry,
-            )
-            .map_err(|error| {
-                AttemptFailure::new(
-                    CODE_ANALYSIS_FAILED,
-                    format!("the evidence currentness probe failed during refresh: {error}"),
-                    "retry with ripr_refresh",
-                )
-            })?;
+            if let Some(item) = item_bound_by_seam(snapshot, entry, &candidate_seams) {
+                bound_pairs.push((entry, item));
+            }
+        }
+        let entry_refs: Vec<&ClassifiedSeam> =
+            bound_pairs.iter().map(|(entry, _)| *entry).collect();
+        let currentness =
+            crate::app::repair_card_handoff::evidence_tree_currentness_batch(root, &entry_refs)
+                .map_err(|error| {
+                    AttemptFailure::new(
+                        CODE_ANALYSIS_FAILED,
+                        format!("the evidence currentness probe failed during refresh: {error}"),
+                        "retry with ripr_refresh",
+                    )
+                })?;
+        for ((entry, item), currentness) in bound_pairs.into_iter().zip(currentness) {
             bindings.push(SeamCardBinding {
                 item_canonical_id: item.canonical_id.clone(),
                 seam: entry.clone(),

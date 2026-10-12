@@ -9019,6 +9019,8 @@ tests = [
   "crates/ripr/src/cli/rerun.rs::tests::unresolved_changed_test_selectors_are_named_limitations",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_requires_one_selector",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_gap_requires_explicit_ledger",
+  "crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs::rerun_missing_gap_ledger_recovery_executes_the_rust_producer",
+  "crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs::rerun_missing_gap_ledger_help_names_source_specific_capture_steps",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_cache_disclosure_names_reuse_and_fallbacks",
   "crates/ripr/src/cli/rerun.rs::tests::canonical_gap_selection_retains_explicit_seam_after_gap_identity_closes",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_parses_gap_selector_with_explicit_ledger",
@@ -10254,6 +10256,8 @@ name = "Bounded helper-call transfer"
 spec = "docs/specs/RIPR-SPEC-0159-bounded-helper-transfer.md"
 tests = [
   "crates/ripr/src/analysis/classify/helper_transfer/returned_ledger.rs::tests",
+  "crates/ripr/src/analysis/classify/helper_transfer/selected_inherent_call.rs::tests",
+  "crates/ripr/src/analysis/classifier/evidence.rs::tests::gather_retains_selected_call_identity_without_completing_ledger_path",
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests",
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::uniqueness_stop_names_the_ambiguous_entry_tests_call",
   "crates/ripr/src/analysis/classify/helper_transfer.rs::tests::uniqueness_stop_does_not_credit_qualified_sibling_of_the_hop",
@@ -10302,6 +10306,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/analysis/classify/helper_transfer/returned_ledger.rs",
+  "crates/ripr/src/analysis/classify/helper_transfer/selected_inherent_call.rs",
   "crates/ripr/src/analysis/classify/propagation_witness.rs",
   "crates/ripr/src/analysis/classify/helper_transfer.rs",
   "crates/ripr/src/analysis/classifier.rs",
@@ -13924,6 +13929,35 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0247"
+name = "TypeScript literal matcher strength"
+spec = "docs/specs/RIPR-SPEC-0247-typescript-literal-matcher-strength.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_the_parameters_own_mock_is_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_another_call_could_satisfy_is_not_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::mock_payload_on_another_target_is_not_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::loose_equality_with_a_coercion_safe_literal_reads_exact",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::inline_snapshot_with_literal_text_reads_strong",
+  "crates/ripr/src/analysis/language/typescript/tests/literal_matcher_tests.rs::chai_loose_equal_reads_like_legacy_node_assert",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/literal_matcher_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/oracle.rs",
+  "crates/ripr/src/analysis/language/typescript/static_limit.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0247-typescript-literal-matcher-strength.md",
+]
+metrics = [
+  "typescript_literal_matcher_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0243"
 name = "TypeScript oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
@@ -14148,6 +14182,24 @@ tests = [
   "crates/ripr/tests/cli_smoke.rs::check_json_bound_subject_config_timeout_names_timeout_identity",
   "crates/ripr/src/config/tests.rs::candidate_config_error_timeout_renders_the_timeout_diagnostic",
   "crates/ripr/src/analysis/diff/load.rs::core_error_for_git_root_probe_matches_the_legacy_messages",
+  "crates/ripr/tests/cli_smoke.rs::diff_json_unresolvable_base_emits_refusal_envelope",
+  "crates/ripr/tests/cli_smoke.rs::diff_json_outside_work_tree_emits_refusal_envelope",
+  "crates/ripr/tests/cli_smoke.rs::rerun_json_unreadable_gap_ledger_emits_refusal_envelope",
+  "crates/ripr/tests/cli_smoke.rs::context_json_missing_artifact_emits_refusal_envelope",
+  "crates/ripr/tests/cli_smoke.rs::agent_brief_json_unresolvable_base_emits_refusal_envelope",
+  "crates/ripr/tests/cli_smoke.rs::agent_packet_json_unknown_seam_id_emits_refusal_envelope",
+  "crates/ripr/tests/cli_smoke.rs::check_sarif_refusal_emits_a_schema_valid_run",
+  "crates/ripr/tests/cli_smoke.rs::check_github_refusal_emits_one_error_annotation",
+  "crates/ripr/tests/cli_smoke.rs::check_badge_json_refusal_emits_the_degraded_badge",
+  "crates/ripr/tests/cli_smoke.rs::check_repo_exposure_json_refusal_emits_the_refused_envelope",
+  "crates/ripr/tests/cli_smoke.rs::check_agent_seam_packets_json_refusal_emits_the_refused_envelope",
+  "crates/ripr/src/output/limited_check.rs::refusal_envelope_names_the_artifact_ledger_and_seam_identities",
+  "crates/ripr/src/output/limited_check.rs::sibling_refusal_envelope_omits_mode_and_base_when_unsupplied",
+  "crates/ripr/src/output/sarif.rs::refusal_sarif_is_a_schema_valid_run_with_the_typed_notification",
+  "crates/ripr/src/output/github.rs::refusal_renders_one_workflow_command_error_with_identity_and_route",
+  "crates/ripr/src/output/badge/tests.rs::refusal_badge_summary_applies_the_degraded_state_convention",
+  "crates/ripr/src/output/repo_exposure.rs::refusal_document_keeps_the_format_contract_with_zeroed_metrics",
+  "crates/ripr/src/output/agent_seam_packets.rs::refusal_document_keeps_the_packet_envelope_with_no_packets",
 ]
 fixtures = []
 code = [
@@ -14161,6 +14213,19 @@ code = [
   "crates/ripr/src/app.rs",
   "crates/ripr/src/app/check.rs",
   "crates/ripr/src/app/progress.rs",
+  "crates/ripr/src/cli/commands_context.rs",
+  "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/rerun.rs",
+  "crates/ripr/src/cli/commands/context.rs",
+  "crates/ripr/src/cli/commands/agent.rs",
+  "crates/ripr/src/cli/commands_agent_support.rs",
+  "crates/ripr/src/app/check_artifact.rs",
+  "crates/ripr/src/app/context.rs",
+  "crates/ripr/src/output/sarif.rs",
+  "crates/ripr/src/output/github.rs",
+  "crates/ripr/src/output/badge/summaries.rs",
+  "crates/ripr/src/output/repo_exposure.rs",
+  "crates/ripr/src/output/agent_seam_packets.rs",
 ]
 outputs = []
 metrics = [
