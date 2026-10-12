@@ -1,0 +1,32 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/owner_return_pin_out_of_line_test_module_shadow/input
+
+Summary: 1 probe(s), 0 exposed, 1 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+
+Start here:
+  State: a test gap to inspect or repair (top_gap)
+  Safe next action: inspect or repair the selected non-exposed gap; this is static advisory evidence only.
+  File: ./src/lib.rs:17
+  Static exposure: weak (weakly_exposed, warning, confidence 0.66)
+  Why weak: a related test reaches this change but does not observe the exact changed value
+  Canonical gap: gap:rust:src/lib.rs:impl Clone for Window::clone:field_construction:field_construction:start_self.start
+  Changed behavior: start: self.start
+  Missing discriminator (1 of 2): start: self.start
+  Related test: src/helpers/window_tests.rs:4 a_clone_equals_its_original (no assertion pins `start: self.start`)
+  Next step: Strengthen the related assertion so it discriminates the changed behavior.
+  Evidence: reach weak · infection yes · propagation yes · observation yes · discriminator weak
+    - reach weak: No test is seen calling clone; tests share only its file or a name token: a_clone_equals_its_original
+    - infection yes: Reachable tests can plausibly activate this changed behavior
+    - 5 more detail line(s) in --format human-full
+
+Next: drill into the top finding:
+  ripr explain --root <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/input --diff <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/diff.patch --mode fast probe:src_lib.rs:field_construction:721bb1ba
+  ripr context --root <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/input --diff <cwd>/fixtures/owner_return_pin_out_of_line_test_module_shadow/diff.patch --mode fast --at probe:src_lib.rs:field_construction:721bb1ba
+
+More:
+  Full evidence: rerun with --format human-full
+  Machine data: rerun with --format json

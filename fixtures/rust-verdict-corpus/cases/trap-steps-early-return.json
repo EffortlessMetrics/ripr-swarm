@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-steps-early-return",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-steps-early-return.diff",
+  "anchor": {
+    "file": "src/probes.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_after_always_taken_early_return",
+  "hard_case": "The test returns early whenever steps(2) is below 1000, so the exact-value assert after it never runs for any listed mutant. It is only partly vacuous: a value of 1000 or more would reach the assert. Without the guard ripr reads the same test exposed.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 8",
+        "mutated_line": "base * 8",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `7 * base` with `base * 8`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "base + 7",
+        "mutated_line": "base + 7",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `7 * base` with `base + 7`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "base * 6",
+        "mutated_line": "base * 6",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `7 * base` with `base * 6`, which changes the result, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "steps_is_fourteen returns when steps(2) < 1000, then asserts steps(2) == 14. Every listed value takes the early return. Adversarial shape (assertion after an early return); paired with trap-tally-reached-assert-control.",
+  "labeling_observation": {
+    "ripr_commit": "6487826",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

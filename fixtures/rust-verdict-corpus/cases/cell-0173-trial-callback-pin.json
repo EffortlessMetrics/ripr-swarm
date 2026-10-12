@@ -1,0 +1,52 @@
+{
+  "case_id": "cell-0173-trial-callback-pin",
+  "subject_id": "authored-spec-harness",
+  "diff": "cases/cell-0173-trial-callback-pin.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 7
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "harness_trial_bare_identifier_callback",
+  "hard_case": "The only test reaching shipping is a libtest-mimic Trial registered as Trial::test(\"shipping_is_four_per_kilo\", check_shipping); the exact assert lives in the named callback's body, not in the invocation.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --workspace",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "4 + weight",
+        "mutated_line": "4 + weight",
+        "outcome": "tests_failed",
+        "failing_test": "shipping_is_four_per_kilo",
+        "equivalence_review": "not equivalent: shipping(3) becomes 7"
+      },
+      {
+        "replacement": "4 * weight + 1",
+        "mutated_line": "4 * weight + 1",
+        "outcome": "tests_failed",
+        "failing_test": "shipping_is_four_per_kilo",
+        "equivalence_review": "not equivalent: shipping(3) becomes 13"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "check_shipping pins shipping(3) to 12 and the trial is handed to libtest_mimic::run, so both mutants fail it. Spec cells: RIPR-SPEC-0173 bare-identifier callback body evidence.",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

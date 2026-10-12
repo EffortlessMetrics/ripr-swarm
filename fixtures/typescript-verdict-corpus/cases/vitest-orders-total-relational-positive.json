@@ -1,0 +1,44 @@
+{
+  "case_id": "vitest-orders-total-relational-positive",
+  "subject_id": "authored-ts-vitest-orders",
+  "diff": "cases/vitest-orders-total-relational-positive.diff",
+  "anchor": {
+    "file": "src/total.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_expect_tobegreaterthan_zero",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "node 22.22.0; vitest 5.0.3; typescript 5.9; @stryker-mutator/core 10.0.0 (vitest runner)",
+    "mutants": [
+      {
+        "replacement": "const subtotal = unit / qty;",
+        "mutated_line": "const subtotal = unit / qty;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: orderTotal(2, 10, 5) becomes 10 instead of 25"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The only assertion is expect(orderTotal(2, 10, 5)).toBeGreaterThan(0); the arithmetic mutant gives 5 + 5 = 10, still positive, so it survives. ripr reports weakly_exposed with a relational_check/weak oracle, a correct gap verdict.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -185,7 +185,10 @@ pub fn fixture_git_ok_with_deadline(
 /// `fixture_git_ok` for state-changing invocations.
 // Shared test helper consumed by a different integration-test target; dead in
 // targets that only consume `fixture_git_ok` (see .ripr/allow-attributes.txt).
-#[allow(dead_code, reason = "consumed by the generated-workflow target only")]
+#[allow(
+    dead_code,
+    reason = "consumed by the generated-workflow and cli_smoke targets only"
+)]
 pub fn fixture_git_output(root: &Path, args: &[&str]) -> Result<String, String> {
     if fixture_subcommand(args) == Some("commit") {
         return Err("fixture_git_output does not support commit; use fixture_git_ok".to_string());

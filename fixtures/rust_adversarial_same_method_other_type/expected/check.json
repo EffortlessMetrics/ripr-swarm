@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:return_value:c861ec7a",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_some_self.remaining",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_some_self.remaining",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Iterator for WhileSome::size_hint",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "0_some_self.remaining"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.66,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:return_value:c861ec7a",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/rust_adversarial_same_method_other_type/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 22,
         "expression": "(0, Some(self.remaining))"
        },
@@ -153,6 +165,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:d114ce99",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_none",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Iterator for WhileSome::size_hint:return_value:return_value:0_none",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Iterator for WhileSome::size_hint",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "0_none"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.66,
@@ -160,7 +184,7 @@
         "id": "probe:src_lib.rs:return_value:d114ce99",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/rust_adversarial_same_method_other_type/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 22,
         "expression": "(0, None)"
        },

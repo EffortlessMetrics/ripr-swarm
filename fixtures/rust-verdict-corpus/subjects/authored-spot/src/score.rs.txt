@@ -1,0 +1,40 @@
+//! Scores reached only through a thin public wrapper, and a boundary on a
+//! local computed from the input.
+
+fn capped<T: PartialOrd + Copy>(value: T, cap: T) -> T {
+    if value > cap {
+        cap
+    } else {
+        value
+    }
+}
+
+pub fn capped_score(value: u32) -> u32 {
+    capped(value, 10)
+}
+
+pub fn initials(name: &str) -> u32 {
+    let letters = name.split_whitespace().count();
+    if letters == 0 {
+        return 100;
+    }
+    letters as u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scores_above_the_cap_are_capped() {
+        assert_eq!(capped_score(11), 10);
+        assert_eq!(capped_score(10), 10);
+        assert_eq!(capped_score(3), 3);
+    }
+
+    #[test]
+    fn initials_count_words_and_flag_blank_names() {
+        assert_eq!(initials(""), 100);
+        assert_eq!(initials("Ada Lovelace"), 2);
+    }
+}

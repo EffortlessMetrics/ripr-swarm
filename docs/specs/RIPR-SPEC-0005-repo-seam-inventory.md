@@ -43,6 +43,29 @@ facts built from existing test/oracle analysis.
 `activation_unknown`, `propagation_unknown`, `observation_unknown`,
 `discrimination_unknown`, `opaque`, `intentional`, `suppressed`).
 
+A `call_presence` seam asks whether tests notice that a call is gone. It is
+emitted only for a call whose value is discarded: a call statement, `let _ =`,
+`_ =` or a `_`-prefixed binding, a closure or async block body, the tail of a
+unit function, or `return f()` in a unit function. A same-module
+`type X = ();` alias used as a bare return path is unit too (#7101).
+Qualified paths (`other::Unit`, `Self::Output`), a further alias of that
+name, a function or impl/trait type parameter of the same name (including
+`r#Unit` vs `Unit`), associated types, nested functions, `#[cfg]` aliases
+(including trivia between `cfg` and `(` and a raw `r#cfg` path), a
+`cfg_attr` that introduces `cfg`, an unknown or proc-macro-like attribute
+on the alias, the function, or an enclosing impl/trait/module (including one
+introduced through `cfg_attr`), a competing same-name `use`,
+and aliases shadowed in a `const` or `static` block stay unresolved and
+read as a value. A same-named const generic, `#[cfg_attr(_, allow(..))]`,
+`#[doc]`, `#[expect(..)]`, `#[inline]`, and a one-prefix raw-ident spelling of a unit
+alias or return path do not refuse the alias.
+A call whose value feeds a consumer (a condition or scrutinee, a named binding,
+an operand, an argument, a receiver, a field or index base, an element, a
+`for` iterable, or a non-unit return through block tails, `if` branches and
+match arms) emits no `call_presence` seam: deleting it does not compile, so no
+mutant asks that question, and the consumer's predicate, return or error seam
+carries the behavior (#6677). Diff-scope `call_deletion` probes are unchanged.
+
 The seam inventory should be deterministic: two runs over the same source tree
 with the same analyzer version and configuration must produce the same seam IDs
 in the same order.
@@ -81,7 +104,13 @@ leading `./`).
 4. **Local coordinates**: byte offset or line/column pair of the seam origin
 within the file. Byte offset is preferred for stability across formatting
 changes; line/column may be used only if the syntax adapter already normalizes
-whitespace.
+whitespace. The byte offset is hashed as the offset the seam has in the
+file's CRLF→LF-normalized text (#7203): a `core.autocrlf=true` checkout and
+an LF checkout of the same commit must produce one seam ID, so a standalone
+CR shifts nothing while each CRLF pair before the seam shifts the hashed
+coordinate by one. The stored raw offset keeps rendering, span geometry and
+placement indexed to the actual file bytes; only the ID reads the normalized
+coordinate.
 5. **Hash**: a deterministic hash (e.g. FxHash) of the concatenation of the
 above fields, encoded as a fixed-length lowercase hex string.
 
@@ -242,6 +271,35 @@ proximity-related test with unknown owner activation must not receive a missing
 fact that would reclassify the seam as weakly gripped. Helper-transfer and
 unresolved callees remain named limitations, not ready repair routes.
 
+Diff-mode classification applies the same two identity rules, on test text
+with comments and strings masked. A field read on a receiver does not observe
+the constructed field when the nearest `let` of that receiver still in scope
+at the assertion sets the field in a struct literal to a value not read from
+the receiver (`let q = Quote { total: 99, ..q };`), or when an in-scope
+`q.total = value` follows the owner binding; the `field_value` missing fact
+then stays and the finding is not `exposed`. A value is fresh only when it
+mentions neither the receiver, a binding derived from it or from another
+owner call (by `let`, destructuring or plain assignment, transitively), nor the
+owner call. A struct update that leaves the
+field to its `..q` base, a value read back from the receiver (`total:
+q.total`, a copy taken through a derived binding, or shorthand), a `let` or
+assignment in a block that has closed, and an assertion text that occurs more
+than once keep the credit. A
+free-function owner whose name another indexed definition shares is not
+`direct_owner_call` when every call of the name in the test is bare and a
+`use` at the top level of the test body binds it, by the twin's full module
+path, to exactly one twin in another inline module of the test's own file
+(`use super::retail::*;` beside `wholesale::price_quote`); a named import beats
+a glob. The import path resolves against the test's enclosing inline modules:
+`self` and a bare path start at the test's module, each `super` steps out one,
+and `crate` is the file root only in `lib.rs` or `main.rs`. The twin must be
+the only same-name definition whose path ends in the resolved module path. A path-qualified call
+of the name, a braced or renamed import naming it, an attributed (`#[cfg(..)]`) or `pub` import, an import in a nested
+block or at module level, two globs,
+`use super::*`, a path that names no twin or also the owner (a re-export), and
+any same-name definition in another file (a file-backed module, another crate)
+keep the existing relation.
+
 ## Non-Goals
 
 This spec does not require:
@@ -381,6 +439,14 @@ retained attempts and receipt binding.
 Per-packet canonical/evidence commands remain outside this bounded claim.
 See `docs/OUTPUT_SCHEMA.md` for the additive fields and
 static evidence boundaries (#4000).
+
+## Later Amendment
+
+RIPR-SPEC-0236 (2026-10-04) owns the order in which `classify_seam` maps
+stage evidence to a grip class, and numbers the rules other specs cite
+(rule 1: reach `no` gives `ungripped`; rule 2: any `opaque` stage gives
+`opaque`). In that order only `weakly_gripped` needs established
+activation (`activate == yes`); `reachable_unrevealed` does not.
 
 ## Metrics
 

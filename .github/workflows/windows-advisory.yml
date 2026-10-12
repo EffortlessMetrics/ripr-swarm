@@ -310,13 +310,466 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@1.95
 
+      - name: Check selector storage boundaries without a product build
+        shell: pwsh
+        run: |
+          $storage_tests = @'
+          """Exercise the actual inline Actions consumer with synthetic files; never build RIPR."""
+          import ast
+          import errno
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          import sys
+          import tempfile
+          import unittest
+          from unittest.mock import patch
+
+          WORKFLOW = Path.cwd() / '.github/workflows/windows-advisory.yml'
+
+
+          def consumer():
+              text = WORKFLOW.read_text()
+              prefix, remainder = text.split("$consumer = @'\n", 1)
+              raw = remainder.split("          '@", 1)[0]
+              tree = ast.parse('\n'.join(line[10:] for line in raw.splitlines()))
+              ast.increment_lineno(tree, prefix.count('\n') + 1)
+              names = {'require', 'digest', 'remove_staged', 'stage_single_allocation',
+                       'finalize_evidence', 'record_failure', 'payload_allocation', 'remove_aliases',
+                       'packet', 'fixture_file', 'recovery_command', 'printed_recovery'}
+              nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name in names]
+              ns = dict(Path=Path, hashlib=hashlib, json=json, shutil=shutil, os=os, sys=sys, re=re)
+              exec(compile(ast.Module(nodes, []), str(WORKFLOW), 'exec'), ns)
+              return tree, ns
+
+
+          class EvidenceTests(unittest.TestCase):
+              def setUp(self):
+                  self.temp = tempfile.TemporaryDirectory(prefix='selector-evidence-')
+                  self.addCleanup(self.temp.cleanup)
+                  self.root = Path(self.temp.name)
+                  self.build = self.root / 'owned-build'
+                  self.build.mkdir()
+                  self.binary = self.build / 'ripr.exe'
+                  self.binary.write_bytes(b'compiler payload')
+                  self.stock = self.root / 'stock'
+                  self.stock.mkdir()
+                  self.staged = self.stock / 'ripr.exe'
+                  self.out = self.root / 'evidence'
+                  self.out.mkdir()
+                  self.ownership = {'staged': False, 'target': True}
+                  self.tree, self.ns = consumer()
+
+              def stage(self):
+                  if 'stage_single_allocation' in self.ns:
+                      with patch.object(shutil, 'which', return_value=None):
+                          return self.ns['stage_single_allocation'](self.binary, self.staged, self.build,
+                                                                     self.ns['digest'](self.binary), self.out, self.ownership)
+                  # Pre-repair: execute the real admission and copy statements from Actions.
+                  body = next(n for n in self.tree.body if isinstance(n, ast.Try)).body
+                  start = next(i for i, n in enumerate(body) if isinstance(n, ast.Assign)
+                               and any(isinstance(t, ast.Name) and t.id == 'staged' for t in n.targets))
+                  end = next(i for i in range(start, len(body)) if isinstance(body[i], ast.Assign)
+                             and any(isinstance(t, ast.Name) and t.id == 'resolved' for t in body[i].targets))
+                  ns = dict(self.ns, binary=self.binary, stock_bin=self.stock, out=self.out)
+                  with patch.object(shutil, 'which', return_value=None):
+                      exec(compile(ast.Module(body[start:end], []), str(WORKFLOW), 'exec'), ns)
+                  return {'charged_bytes': 2 * self.binary.stat().st_size}
+
+              def finalize(self, receipt, charge):
+                  if 'finalize_evidence' in self.ns:
+                      return self.ns['finalize_evidence'](receipt, self.out, None, charge)
+                  nodes = next(n for n in self.tree.body if isinstance(n, ast.Try)).finalbody
+                  start = next(i for i, n in enumerate(nodes) if isinstance(n, ast.Assign)
+                               and ast.unparse(n.targets[0]) == "receipt['python']")
+                  ns = dict(self.ns, receipt=receipt, out=self.out, binary=self.binary)
+                  exec(compile(ast.Module(nodes[start:-2], []), str(WORKFLOW), 'exec'), ns)
+                  return receipt
+
+              def listing(self, file='./src/lib.rs'):
+                  # Current report.rs/finding_location_text shape, not a native raw-stream claim.
+                  return {'findings': [{'id': 'repo-probe:fixture:predicate:actual', 'language': 'rust',
+                          'probe': {'id': 'repo-probe:fixture:predicate:actual', 'family': 'predicate',
+                                    'line': 2, 'file': file, 'expression': 'amount >= threshold'}}]}
+
+              def packet(self, listing, expected_id=None):
+                  return self.ns['packet'](json.dumps(listing).encode(), self.root,
+                                           self.root / 'src/lib.rs', expected_id)
+
+              def test_relative_listing_is_anchored_to_fixture_under_foreign_cwd(self):
+                  previous = Path.cwd()
+                  try:
+                      os.chdir(self.stock)
+                      self.assertEqual(self.packet(self.listing()), 'repo-probe:fixture:predicate:actual')
+                  finally:
+                      os.chdir(previous)
+
+              def test_listing_refuses_traversal_foreign_root_and_wrong_file(self):
+                  for file in ('../src/lib.rs', 'src/../src/lib.rs', str(self.stock / 'src/lib.rs'),
+                               str(self.root.parent / ('foreign-' + self.root.name) / 'src/lib.rs'),
+                               './src/other.rs', '', 'C:src/lib.rs', r'..\src\lib.rs'):
+                      with self.subTest(file=file), self.assertRaises(RuntimeError):
+                          self.packet(self.listing(file))
+
+              def test_listing_refuses_resolved_link_escape(self):
+                  # No Windows symlink privilege: model the filesystem's resolved link target.
+                  with tempfile.TemporaryDirectory(prefix='foreign-fixture-') as foreign:
+                      original = Path.resolve
+                      selected = self.root / 'src/lib.rs'
+                      def resolve(path, *args, **kwargs):
+                          return Path(foreign) / 'lib.rs' if path == selected else original(path, *args, **kwargs)
+                      with patch.object(Path, 'resolve', resolve), self.assertRaises(RuntimeError):
+                          self.packet(self.listing())
+
+              def test_listing_preserves_all_predicate_and_identity_requirements(self):
+                  for field, value in (('family', 'error_path'), ('line', 3),
+                                       ('expression', 'amount > threshold'), ('id', 'wrong')):
+                      listing = self.listing()
+                      listing['findings'][0]['probe'][field] = value
+                      with self.subTest(field=field), self.assertRaises(RuntimeError):
+                          self.packet(listing)
+                  listing = self.listing()
+                  listing['findings'][0]['language'] = 'python'
+                  with self.assertRaises(RuntimeError):
+                      self.packet(listing)
+                  with self.assertRaises(RuntimeError):
+                      self.packet(self.listing(), 'wrong')
+                  listing = self.listing()
+                  listing['findings'] *= 2
+                  with self.assertRaises(RuntimeError):
+                      self.packet(listing)
+
+              def test_windows_recovery_matches_published_slashes_and_keeps_literal(self):
+                  # Inert Windows-shaped sentinels: no real drive or directory is accessed.
+                  drive = 'Q' + ':'
+                  root = drive + r'\synthetic-selector-fixture literal'
+                  diff = root + r'\fixture change.diff'
+                  expected = f"ripr check --root '{drive}/synthetic-selector-fixture literal' --diff '{drive}/synthetic-selector-fixture literal/fixture change.diff' --json"
+                  self.assertEqual(self.ns['recovery_command'](root, diff, windows=True), expected)
+                  stderr = ('No finding. Retry `' + expected + '`.').encode()
+                  self.assertEqual(self.ns['printed_recovery'](stderr, root, diff, windows=True), expected)
+
+              def test_recovery_refuses_changed_scope_or_literal(self):
+                  command = self.ns['recovery_command'](self.root, self.out)
+                  for wrong in (self.ns['recovery_command'](self.stock, self.out),
+                                self.ns['recovery_command'](self.root, self.binary),
+                                command.replace(' --json', ''), command + ' --no-cache'):
+                      with self.subTest(command=wrong), self.assertRaises(RuntimeError):
+                          self.ns['printed_recovery'](('`' + wrong + '`').encode(), self.root, self.out)
+                  with self.assertRaises(RuntimeError):
+                      self.ns['printed_recovery'](('`' + command + '` `' + command + '`').encode(), self.root, self.out)
+
+              def test_cache_target_is_owned_before_restore_and_all_subset_builds(self):
+                  text = WORKFLOW.read_text()
+                  section = text[text.index('\n      - name: Own stable same-volume Cargo target before cache and subset builds\n'):]
+                  self.assertLess(section.index('$target_setup'), section.index('uses: Swatinem/rust-cache@v2'))
+                  self.assertLess(section.index('uses: Swatinem/rust-cache@v2'), section.index('cargo test -p ripr'))
+                  self.assertIn('"CARGO_TARGET_DIR=$($owner.target)" >> $env:GITHUB_ENV', section)
+                  self.assertIn('workspaces: ". -> target/selector-cargo-cache"', section)
+                  self.assertIn('cache-targets: false', section)
+                  expression = lambda value: '$' + '{{ ' + value + ' }}'
+                  self.assertIn('cache-directories: ' + expression('env.CARGO_TARGET_DIR'), section)
+                  self.assertIn('shared-key: ripr-windows-advisory-subset-1.95-' + expression('runner.os') + '-stock-volume-v1', section)
+                  self.assertIn('save-if: ' + expression("github.ref == 'refs/heads/main'"), section)
+                  self.assertIn('cache-bin: false', section)
+                  source = ast.unparse(self.tree)
+                  self.assertIn("target = Path(os.environ['CARGO_TARGET_DIR'])", source)
+                  self.assertNotIn('selector-build-', source)
+                  self.assertNotIn('rmtree(target)', source)
+                  self.assertIn('alias.is_junction() and alias.resolve() == target', source)
+
+              def test_actions_rendered_storage_source_is_python_and_precedes_product_builds(self):
+                  text = WORKFLOW.read_text()
+                  raw = text.split("$storage_tests = @'\n", 1)[1].split("\n          '@\n", 1)[0]
+                  source = '\n'.join(line[10:] for line in raw.splitlines())
+                  # Model Actions substitution before PowerShell/Python see this source.
+                  # Preserve the drive/backslash/Users escape shape using an invented fixture account.
+                  target = 'Q' + ':' + r'\Users\synthetic-selector-fixture\.cargo\bin\selector-subset-cache\target'
+                  values = {'env.CARGO_TARGET_DIR': target,
+                            'runner.os': 'Windows', "github.ref == 'refs/heads/main'": 'false'}
+                  rendered = re.sub(r'\$\{\{(.*?)\}\}', lambda m: values[m[1].strip()], source)
+                  compile(rendered, 'actions-rendered-storage-tests', 'exec')
+                  self.assertEqual(rendered, source, 'test source contains an Actions expression')
+                  self.assertLess(text.index('\n      - name: Check selector storage boundaries without a product build\n'),
+                                  text.index('\n      - name: Own stable same-volume Cargo target before cache and subset builds\n'))
+
+              def acquire(self):
+                  text = WORKFLOW.read_text().split("$target_setup = @'\n", 1)[1].split("\n          '@", 1)[0]
+                  tree = ast.parse('\n'.join(line[10:] for line in text.splitlines()))
+                  nodes = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == 'own_target']
+                  ns = dict(Path=Path, json=json)
+                  exec(compile(ast.Module(nodes, []), str(WORKFLOW), 'exec'), ns)
+                  return ns['own_target'](self.stock, self.root, 'a' * 40)
+
+              def test_stable_target_is_exclusively_owned_and_marker_outside_cached_graph(self):
+                  owner = self.acquire()
+                  self.assertEqual(Path(owner['target']), self.stock / 'selector-subset-cache/target')
+                  self.assertEqual(Path(owner['alias']), self.root / 'target/selector-cargo-cache')
+                  self.assertEqual(json.loads((Path(owner['target']).parent / 'owner.json').read_text()), owner)
+                  with self.assertRaises(FileExistsError):
+                      self.acquire()
+
+              def test_occupied_target_alias_is_preserved_before_acquisition(self):
+                  occupied = self.root / 'target/selector-cargo-cache'
+                  occupied.mkdir(parents=True)
+                  (occupied / 'sentinel').write_bytes(b'keep')
+                  with self.assertRaisesRegex(RuntimeError, 'occupied'):
+                      self.acquire()
+                  self.assertFalse((self.stock / 'selector-subset-cache').exists())
+                  self.assertEqual((occupied / 'sentinel').read_bytes(), b'keep')
+
+              def test_dependencies_survive_selected_alias_cleanup(self):
+                  dependency = self.build / 'libdependency.rlib'
+                  dependency.write_bytes(b'cached dependency')
+                  self.stage()
+                  self.assertEqual(dependency.read_bytes(), b'cached dependency')
+
+              def test_cache_dependencies_and_unrelated_harness_survive_alias_cleanup(self):
+                  dependency = self.build / 'deps/libdependency.rlib'
+                  dependency.parent.mkdir()
+                  dependency.write_bytes(b'cached dependency')
+                  harness = self.build / 'deps/ripr-test.exe'
+                  harness.write_bytes(b'unrelated test harness')
+                  alias = self.build / 'deps/ripr-selected.exe'
+                  os.link(self.binary, alias)
+                  self.stage()
+                  self.assertFalse(alias.exists())
+                  self.assertEqual(dependency.read_bytes(), b'cached dependency')
+                  self.assertEqual(harness.read_bytes(), b'unrelated test harness')
+                  self.assertEqual(self.ns['remove_aliases'](self.ownership)['state'], 'REMOVED')
+
+              def test_alias_cleanup_retry_preserves_graph_and_first_failure(self):
+                  alias = self.build / 'ripr-alias.exe'
+                  os.link(self.binary, alias)
+                  with patch.object(Path, 'unlink', side_effect=PermissionError('alias locked')):
+                      with self.assertRaises(PermissionError):
+                          self.stage()
+                  receipt = {'state': 'FAIL', 'error_type': 'Producer', 'error': 'first reason'}
+                  self.ns['record_failure'](receipt, 'ProducerCleanup', 'alias locked')
+                  self.assertEqual(self.ns['remove_aliases'](self.ownership)['state'], 'REMOVED')
+                  self.assertTrue(self.build.is_dir())
+                  self.assertEqual(receipt['primary_error'], 'first reason')
+                  self.ns['remove_staged'](self.staged, True)
+
+              def test_alias_identity_drift_refuses_unrelated_deletion(self):
+                  alias = self.build / 'ripr-alias.exe'
+                  os.link(self.binary, alias)
+                  with patch.object(Path, 'unlink', side_effect=PermissionError('alias locked')):
+                      with self.assertRaises(PermissionError):
+                          self.stage()
+                  alias.unlink()
+                  alias.write_bytes(b'replacement occupant')
+                  with self.assertRaisesRegex(RuntimeError, 'alias identity drift'):
+                      self.ns['remove_aliases'](self.ownership)
+                  self.assertEqual(alias.read_bytes(), b'replacement occupant')
+
+              def test_verified_run_arithmetic_and_old_admission_boundary(self):
+                  self.assertEqual(2 * 67278336, 134556672)
+                  self.assertEqual(134802028 - 128 * 1024**2, 584300)
+                  self.assertGreater(2 * 67278336, 128 * 1024**2)
+
+              def test_large_single_allocation_reaches_staging_without_copy(self):
+                  with self.binary.open('r+b') as f:
+                      f.truncate(67278336)
+                  alias = self.build / 'ripr-hash.exe'
+                  os.link(self.binary, alias)
+                  identity = self.binary.stat()
+                  with patch.object(shutil, 'copyfile', side_effect=AssertionError('copy forbidden')):
+                      result = self.stage()
+                  self.assertEqual(self.staged.stat().st_ino, identity.st_ino)
+                  self.assertEqual(self.staged.stat().st_dev, identity.st_dev)
+                  self.assertEqual(result['charged_bytes'], 67278336)
+                  self.assertFalse(self.binary.exists())
+                  self.assertTrue(self.build.is_dir())
+                  self.assertEqual(self.staged.stat().st_nlink, 1)
+                  receipt = self.finalize({'state': 'PASS'}, result['charged_bytes'])
+                  self.assertEqual(receipt['state'], 'PASS')
+                  self.assertLess(receipt['final_charged_bytes'], 128 * 1024**2)
+
+              def test_occupied_destination_survives_refusal(self):
+                  self.staged.write_bytes(b'pre-existing occupant')
+                  with self.assertRaisesRegex(RuntimeError, 'occupant'):
+                      self.stage()
+                  self.assertEqual(self.staged.read_bytes(), b'pre-existing occupant')
+                  self.assertTrue(self.binary.exists())
+
+              def test_partial_transfer_never_falls_back_to_copy(self):
+                  with (patch.object(os, 'rename', side_effect=OSError(errno.EXDEV, 'cross-volume')),
+                        patch.object(shutil, 'copyfile', side_effect=AssertionError('copy forbidden'))):
+                      with self.assertRaises(OSError):
+                          self.stage()
+                  self.assertFalse(self.staged.exists())
+                  self.assertTrue(self.binary.exists())
+
+              def test_real_cross_volume_device_is_refused_before_rename(self):
+                  original = Path.stat
+                  def topology(path, *args, **kwargs):
+                      info = original(path, *args, **kwargs)
+                      if path == self.stock:
+                          values = list(info)
+                          values[2] = info.st_dev + 1
+                          return os.stat_result(values)
+                      return info
+                  with (patch.object(Path, 'stat', topology),
+                        patch.object(os, 'rename', side_effect=AssertionError('must not rename'))):
+                      with self.assertRaisesRegex(RuntimeError, 'cross-volume'):
+                          self.stage()
+                  self.assertFalse(self.ownership['staged'])
+                  self.assertTrue(self.binary.exists())
+
+              def test_producer_digest_drift_is_refused_before_transfer(self):
+                  before = self.ns['digest'](self.binary)
+                  self.binary.write_bytes(b'changed producer bytes')
+                  with self.assertRaisesRegex(RuntimeError, 'digest drift'):
+                      self.ns['stage_single_allocation'](self.binary, self.staged, self.build,
+                                                         before, self.out, self.ownership)
+                  self.assertFalse(self.staged.exists())
+                  self.assertFalse(self.ownership['staged'])
+
+              def test_post_rename_digest_drift_still_owns_cleanup(self):
+                  expected = self.ns['digest'](self.binary)
+                  with patch.dict(self.ns, digest=lambda p: expected if p == self.binary else 'wrong'):
+                      with self.assertRaisesRegex(RuntimeError, 'drift'):
+                          self.stage()
+                  self.assertTrue(self.ownership['staged'])
+                  self.assertEqual(self.ns['remove_staged'](self.staged, True)['state'], 'REMOVED')
+
+              def test_outside_mutable_alias_is_refused(self):
+                  os.link(self.binary, self.root / 'outside.exe')
+                  with self.assertRaisesRegex(RuntimeError, 'unowned executable alias'):
+                      self.stage()
+                  self.assertFalse(self.staged.exists())
+
+              def test_separate_cargo_executable_allocation_is_refused(self):
+                  (self.build / 'ripr-hash.exe').write_bytes(self.binary.read_bytes())
+                  with self.assertRaisesRegex(RuntimeError, 'separate producer executable allocation'):
+                      self.stage()
+                  self.assertFalse(self.staged.exists())
+
+              def test_producer_cleanup_failure_keeps_staged_ownership(self):
+                  os.link(self.binary, self.build / 'ripr-alias.exe')
+                  with patch.object(Path, 'unlink', side_effect=PermissionError('producer locked')):
+                      with self.assertRaisesRegex(PermissionError, 'producer locked'):
+                          self.stage()
+                  self.assertTrue(self.ownership['staged'])
+                  self.assertTrue(self.ownership['target'])
+                  self.assertTrue(self.build.exists())
+                  self.assertEqual(self.ns['remove_staged'](self.staged, True)['state'], 'REMOVED')
+
+              def test_admission_at_cap_is_refused_without_transfer(self):
+                  with self.binary.open('r+b') as f:
+                      f.truncate(128 * 1024**2)
+                  with self.assertRaisesRegex(RuntimeError, 'budget'):
+                      self.stage()
+                  self.assertFalse(self.ownership['staged'])
+                  self.assertTrue(self.binary.exists())
+
+              def test_final_serialized_charge_is_exact_and_has_boundary(self):
+                  payload = 65536
+                  receipt = self.finalize({'state': 'PASS'}, payload)
+                  charge = payload + 16 + len(json.dumps(receipt, indent=2).encode()) + len(json.dumps(receipt).encode()) + 2
+                  self.assertEqual(receipt['final_charged_bytes'], charge)
+                  # A charge at the ceiling is allowed by finalization, one more byte refuses.
+                  target = 128 * 1024**2
+                  for _ in range(3):
+                      receipt = self.finalize({'state': 'PASS'}, payload)
+                      payload += target - receipt['final_charged_bytes']
+                  receipt = self.finalize({'state': 'PASS'}, payload)
+                  self.assertEqual(receipt['final_charged_bytes'], target)
+                  self.assertEqual(receipt['state'], 'PASS')
+                  self.assertEqual(self.finalize({'state': 'PASS'}, payload + 1)['error_type'], 'EvidenceBudget')
+
+              def test_cleanup_and_budget_failures_keep_first_reason(self):
+                  receipt = {'state': 'FAIL', 'error_type': 'Producer', 'error': 'first reason'}
+                  self.ns['record_failure'](receipt, 'StagingCleanup', 'locked')
+                  receipt = self.finalize(receipt, 128 * 1024**2)
+                  self.assertEqual((receipt['primary_error_type'], receipt['primary_error']), ('Producer', 'first reason'))
+                  self.assertEqual(receipt['error_type'], 'EvidenceBudget')
+
+              def test_cleanup_removes_owned_partial_copy(self):
+                  self.staged.write_bytes(b'partial')
+                  result = self.ns['remove_staged'](self.staged, True)
+                  self.assertEqual(result['state'], 'REMOVED')
+                  self.assertFalse(self.staged.exists())
+
+              def test_cleanup_failure_is_not_removed(self):
+                  self.staged.write_bytes(b'owned')
+                  with patch.object(Path, 'unlink', side_effect=PermissionError('locked')):
+                      with self.assertRaises(PermissionError):
+                          self.ns['remove_staged'](self.staged, True)
+                  self.assertTrue(self.staged.exists())
+
+              def test_final_budget_preserves_original_failure(self):
+                  with self.binary.open('r+b') as f:
+                      f.truncate(67278336)
+                  receipt = self.finalize({'state': 'FAIL', 'error_type': 'Producer', 'error': 'original failure'},
+                                          2 * 67278336)
+                  self.assertEqual(receipt['state'], 'FAIL')
+                  self.assertEqual(receipt['primary_error'], 'original failure')
+                  self.assertEqual(receipt['primary_error_type'], 'Producer')
+                  self.assertEqual(receipt['error_type'], 'EvidenceBudget')
+
+
+          if __name__ == '__main__':
+              unittest.main(verbosity=2)
+          '@
+          $storage_tests | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Own stable same-volume Cargo target before cache and subset builds
+        shell: pwsh
+        env:
+          SELECTOR_EXPECTED_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          $target_setup = @'
+          import json
+          import os
+          from pathlib import Path
+          import shutil
+
+          def own_target(stock_bin, root, head):
+              owned = stock_bin / "selector-subset-cache"
+              alias = root / "target" / "selector-cargo-cache"
+              if alias.exists() or alias.is_symlink() or getattr(alias, "is_junction", lambda: False)():
+                  raise RuntimeError("occupied cache target alias")
+              owned.mkdir()  # Atomic, exclusive acquisition; occupied roots are terminal.
+              target = owned / "target"
+              target.mkdir()
+              owner = {"head": head, "root": str(root), "target": str(target), "alias": str(alias)}
+              (owned / "owner.json").write_text(json.dumps(owner), encoding="utf-8")
+              alias.parent.mkdir(exist_ok=True)
+              return owner
+
+          root = Path.cwd().resolve()
+          cargo = shutil.which("cargo")
+          if not cargo:
+              raise RuntimeError("stock Cargo unavailable")
+          owner = own_target(Path(cargo).resolve().parent, root, os.environ["SELECTOR_EXPECTED_HEAD"])
+          print(json.dumps(owner))
+          '@
+          $owner = $target_setup | python -
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $owner = $owner | ConvertFrom-Json
+          New-Item -ItemType Junction -Path $owner.alias -Target $owner.target -ErrorAction Stop | Out-Null
+          "CARGO_TARGET_DIR=$($owner.target)" >> $env:GITHUB_ENV
+          "SELECTOR_TARGET_OWNER=$($owner.target | Split-Path)/owner.json" >> $env:GITHUB_ENV
+
       # Distinct cache key on purpose: this job and the full suite build
       # different target subsets, and GitHub cache keys are immutable, so one
       # shared key would let whichever job saves first on `main` starve the
       # other of its artifacts.
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ripr-windows-advisory-subset-1.95-${{ runner.os }}
+          # v2 joins target to workspace root; cross-drive absolute targets cannot
+          # be mapped directly. Prune through the junction, archive the real path
+          # once, and retain the checkout root for workspace crate classification.
+          shared-key: ripr-windows-advisory-subset-1.95-${{ runner.os }}-stock-volume-v1
+          workspaces: ". -> target/selector-cargo-cache"
+          cache-targets: false
+          cache-directories: ${{ env.CARGO_TARGET_DIR }}
           cache-bin: false
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
@@ -353,7 +806,8 @@ jobs:
           out.mkdir(parents=True, exist_ok=True)
           end = time.monotonic() + 720
           receipt = {"schema_version": 1, "state": "INCOMPLETE", "cases": [], "controls": []}
-          staged_by_consumer = False
+          ownership = {"staged": False, "target": False}
+          payload_charge, immutable_handle = 0, None
           k = c.WinDLL("kernel32", use_last_error=True)
 
           class Security(c.Structure):
@@ -405,6 +859,74 @@ jobs:
               require(not path.exists(), "owned staged executable remains")
               cleanup["state"] = "REMOVED"
               return cleanup
+
+          def record_failure(receipt, kind, message):
+              if receipt.get("error"):
+                  receipt.setdefault("primary_error", receipt["error"])
+                  receipt.setdefault("primary_error_type", receipt["error_type"])
+              receipt.update(state="FAIL", error_type=kind, error=message)
+
+          def payload_allocation(binary, target):
+              require(binary.is_relative_to(target) and not binary.is_symlink(), "compiler artifact escaped owned target")
+              info = binary.stat()
+              aliases = [p for p in target.rglob("*") if p.is_file() and p.samefile(binary)]
+              require(len(aliases) == info.st_nlink and all(not p.is_symlink() for p in aliases), "unowned executable alias")
+              expected = digest(binary)
+              require(all(p.samefile(binary) or p.stat().st_size != info.st_size or digest(p) != expected
+                          for p in target.rglob("ripr*.exe")), "separate producer executable allocation")
+              return {"charged_bytes": info.st_size, "device": info.st_dev, "file_id": info.st_ino,
+                      "producer_aliases": [str(p) for p in aliases], "admitted_payload_allocations": 1, "transfer_payload_allocations": 1,
+                      "accounting_scope": "selected artifact after producer exit through staging cleanup; compiler intermediates excluded"}
+
+          def remove_aliases(ownership):
+              allocation = ownership.get("allocation")
+              if allocation is None:
+                  return {"state": "NOT_CREATED"}
+              for raw in allocation["producer_aliases"]:
+                  path = Path(raw)
+                  if path.exists():
+                      require(not path.is_symlink() and (path.stat().st_dev, path.stat().st_ino) ==
+                              (allocation["device"], allocation["file_id"]), "producer alias identity drift")
+                      path.unlink()
+              require(all(not Path(p).exists() for p in allocation["producer_aliases"]), "producer aliases remain")
+              return {"state": "REMOVED"}
+
+          def stage_single_allocation(binary, staged, target, expected_digest, out, ownership):
+              require(not staged.exists() and not staged.is_symlink() and shutil.which("ripr") is None, "unexpected existing stock ripr occupant")
+              allocation = payload_allocation(binary, target)
+              require(binary.stat().st_dev == staged.parent.stat().st_dev, "cross-volume staging refused")
+              require(digest(binary) == expected_digest, "producer digest drift")
+              require(allocation["charged_bytes"] + sum(p.stat().st_size for p in out.glob("*") if p.is_file()) < 128 * 1024**2, "staging/evidence budget exceeded")
+              # Windows rename refuses an occupied destination. EXDEV/any failure is terminal;
+              # never use shutil.move, which silently copies across volumes.
+              ownership["allocation"] = allocation
+              os.rename(binary, staged)
+              ownership["staged"] = True
+              require((staged.stat().st_dev, staged.stat().st_ino) == (allocation["device"], allocation["file_id"]), "rename changed allocation identity")
+              # Retire only verified selected aliases. Dependencies and unrelated test
+              # harnesses remain available to the cache post-action.
+              remove_aliases(ownership)
+              require(staged.stat().st_nlink == 1 and digest(staged) == expected_digest, "staged identity/digest drift")
+              return allocation
+
+          def finalize_evidence(receipt, out, fixture, payload_charge):
+              receipt["python"] = sys.version
+              receipt["total_deadline_seconds"] = 720
+              receipt["evidence_bytes"] = sum(p.stat().st_size for p in out.glob("*") if p.is_file())
+              receipt["charged_binary_and_staging_bytes"] = payload_charge
+              base_bytes = receipt["evidence_bytes"] + payload_charge + 16
+              if fixture is not None and fixture.exists():
+                  base_bytes += sum(p.stat().st_size for p in fixture.rglob("*") if p.is_file())
+              receipt["final_charged_bytes"] = 0
+              while True:
+                  # Charge both the pretty receipt and its compact copy in the wrapper log.
+                  retained = base_bytes + len(json.dumps(receipt, indent=2).encode()) + len(json.dumps(receipt).encode()) + 2
+                  if retained > 128 * 1024**2 and receipt.get("error_type") != "EvidenceBudget":
+                      record_failure(receipt, "EvidenceBudget", "final evidence/staging budget exceeded")
+                      continue
+                  if receipt["final_charged_bytes"] == retained:
+                      return receipt
+                  receipt["final_charged_bytes"] = retained
 
           def run(label, argv, cwd, seconds=30, memory=512 * 1024**2, output_cap=2 * 1024**2, active=2):
               require(time.monotonic() < end, "consumer total deadline exceeded")
@@ -494,14 +1016,25 @@ jobs:
               require(actual_digest == expected_digest, "wrong executable digest")
               require(Path(actual_path).resolve() == Path(expected_path).resolve(), "wrong stock executable resolution")
 
-          def packet(raw, selected_file, expected_id=None):
+          def fixture_file(file, fixture_root):
+              require(isinstance(file, str) and file, "listing file is empty")
+              require(".." not in re.split(r"[\\/]", file), "listing file traverses the fixture")
+              path = Path(file)
+              require(not re.match(r"^[A-Za-z]:", file) or path.is_absolute(), "listing file has an unbound drive")
+              require(not path.anchor or path.is_absolute(), "listing file has an unbound root")
+              root = Path(fixture_root).resolve()
+              resolved = (path if path.is_absolute() else root / path).resolve()
+              require(resolved.is_relative_to(root), "listing file is outside the frozen fixture")
+              return resolved
+
+          def packet(raw, fixture_root, selected_file, expected_id=None):
               data = json.loads(raw)
               findings = data.get("findings")
               require(isinstance(findings, list) and findings, "listing has no findings")
-              selected_file = Path(selected_file).resolve()
+              selected_file = fixture_file(str(selected_file), fixture_root)
               selected = [f for f in findings if f.get("language") == "rust" and f.get("probe", {}).get("family") == "predicate"
-                          and f["probe"].get("line") == 2 and Path(f["probe"].get("file", "")).is_absolute()
-                          and Path(f["probe"]["file"]).resolve() == selected_file
+                          and f["probe"].get("line") == 2
+                          and fixture_file(f["probe"].get("file", ""), fixture_root) == selected_file
                           and f["probe"].get("expression") == "amount >= threshold"]
               require(len(selected) == 1, "listing does not identify the frozen fixture predicate")
               finding = selected[0]
@@ -509,6 +1042,21 @@ jobs:
               if expected_id is not None:
                   require(finding["id"] == expected_id, "listing selected another actual ID")
               return finding["id"]
+
+          def recovery_command(fixture, diff, windows=None):
+              # Frozen fixture paths contain spaces: shell_arg quotes them; Windows display uses slashes.
+              windows = os.name == "nt" if windows is None else windows
+              paths = [str(fixture), str(diff)]
+              if windows:
+                  paths = [p.removeprefix("\\\\?\\").replace("\\", "/") for p in paths]
+              return f"ripr check --root '{paths[0]}' --diff '{paths[1]}' --json"
+
+          def printed_recovery(stderr, fixture, diff, windows=None):
+              matches = re.findall(chr(96) + r"(ripr check [^\x60]+)" + chr(96), stderr.decode())
+              require(len(matches) == 1, "one printed recovery command required")
+              command = matches[0]
+              require(command == recovery_command(fixture, diff, windows), "printed command lost frozen root/diff/JSON scope")
+              return command
 
           def rejected(name, operation):
               before = len(receipt["cases"])
@@ -544,7 +1092,23 @@ jobs:
               status, stdout, _ = run("rustc-version", [rustc, "-Vv"], root)
               require(status == 0 and stdout.startswith(b"rustc 1.95.0 ") and "host: x86_64-pc-windows-msvc" in stdout.decode(), "Windows toolchain mismatch")
               receipt["rustc"] = stdout.decode()
-              status, stdout, _ = run("build", [cargo, "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--message-format=json"],
+              stock_bin = Path(cargo).resolve().parent
+              require(str(stock_bin).lower() in [p.rstrip("\\/").lower() for p in os.environ["PATH"].split(os.pathsep)], "Cargo bin is not a stock PATH slot")
+              staged = stock_bin / "ripr.exe"
+              require(not staged.exists() and not staged.is_symlink() and shutil.which("ripr") is None, "unexpected existing stock ripr occupant")
+              owner_path = Path(os.environ["SELECTOR_TARGET_OWNER"])
+              owner = json.loads(owner_path.read_text(encoding="utf-8"))
+              target = Path(os.environ["CARGO_TARGET_DIR"])
+              require(target == stock_bin / "selector-subset-cache" / "target" and target.is_dir()
+                      and not target.is_symlink() and not target.is_junction(), "unowned shared Cargo target")
+              require(owner_path == target.parent / "owner.json" and owner ==
+                      {"head": actual_head, "root": str(root), "target": str(target),
+                       "alias": str(root / "target" / "selector-cargo-cache")}, "shared target owner mismatch")
+              alias = Path(owner["alias"])
+              require(alias.is_junction() and alias.resolve() == target, "cache target mapping drift")
+              ownership["target"] = True
+              receipt["owned_producer_target"] = {"path": str(target), "state": "RETAINED_FOR_CACHE", "owner_sha256": digest(owner_path)}
+              status, stdout, _ = run("build", [cargo, "build", "-p", "ripr", "--bin", "ripr", "--locked", "-j", "2", "--target-dir", str(target), "--message-format=json"],
                                       root, seconds=600, memory=8 * 1024**3, output_cap=16 * 1024**2, active=0)
               require(status == 0, "exact-head CLI build failed")
               require(git_value("rev-parse", "HEAD") == actual_head and git_value("rev-parse", "HEAD^{tree}") == source_tree, "producer source moved")
@@ -558,20 +1122,29 @@ jobs:
               require(Path(artifact["manifest_path"]).resolve() == root / "crates" / "ripr" / "Cargo.toml", "wrong producer manifest")
               binary = Path(artifact["executable"]).resolve()
               binary_digest = digest(binary)
-              stock_bin = Path(shutil.which("cargo")).resolve().parent
-              require(str(stock_bin).lower() in [p.rstrip("\\/").lower() for p in os.environ["PATH"].split(os.pathsep)], "Cargo bin is not a stock PATH slot")
-              staged = stock_bin / "ripr.exe"
-              require(not staged.exists() and shutil.which("ripr") is None, "unexpected existing stock ripr occupant")
-              require(2 * binary.stat().st_size + sum(p.stat().st_size for p in out.glob("*") if p.is_file()) < 128 * 1024**2, "staging/evidence budget exceeded")
-              staged_by_consumer = True  # Exact path was absent; this run owns even a partial copy.
-              shutil.copyfile(binary, staged)
+              receipt["producer"] = {"artifact": artifact, "bytes": binary.stat().st_size, "sha256": binary_digest}
+              # Until real aliases are verified, retain the conservative two-payload charge.
+              payload_charge = 2 * binary.stat().st_size
+              allocation = payload_allocation(binary, target)
+              payload_charge = allocation["charged_bytes"]
+              receipt["payload_allocation"] = stage_single_allocation(binary, staged, target, binary_digest, out, ownership)
+              immutable_handle = k.CreateFileW(str(staged), 0x80000000, 1, None, 3, 0x80, None)
+              require(immutable_handle not in (None, c.c_void_p(-1).value), "immutable executable handle failed")
+              require((staged.stat().st_dev, staged.stat().st_ino) == (allocation["device"], allocation["file_id"]), "locked allocation identity changed")
+              require(staged.stat().st_nlink == 1 and digest(staged) == binary_digest, "locked executable drift")
+              try:
+                  with staged.open("r+b"):
+                      pass
+              except PermissionError:
+                  receipt["immutable_executable"] = {"write_open_refused": True, "share_mode": "read_only"}
+              else:
+                  raise RuntimeError("immutable executable permits a writer")
               resolved = shutil.which("ripr")
               require(resolved, "staged candidate does not resolve")
               rejected("wrong-digest-before-launch", lambda: admit(actual_head, expected_head, digest(resolved), "0" * 64, resolved, staged))
               rejected("stale-source-receipt-before-launch", lambda: admit(actual_head, "0" * 40, digest(resolved), binary_digest, resolved, staged))
               admit(actual_head, expected_head, digest(resolved), binary_digest, resolved, staged)
-              receipt["producer"] = {"artifact": artifact, "bytes": binary.stat().st_size, "sha256": binary_digest,
-                                     "stock_resolution": resolved, "staging_before_journey_admission": True}
+              receipt["producer"].update(stock_resolution=resolved, staging_before_journey_admission=True)
               fixture = Path(os.environ["RUNNER_TEMP"]) / ("selector literal " + os.environ["GITHUB_RUN_ID"] + "-" + os.environ["GITHUB_RUN_ATTEMPT"])
               require(not fixture.exists(), "fixture collision")
               (fixture / "src").mkdir(parents=True)
@@ -583,7 +1156,7 @@ jobs:
               diff = fixture / "fixture change.diff"
               diff.write_text("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn price(amount: i32, threshold: i32) -> i32 {\n-    if amount > threshold { amount - 100 } else { amount }\n+    if amount >= threshold { amount - 100 } else { amount }\n }\n")
               frozen_env = dict(os.environ)
-              frozen = {str(p): digest(p) for p in (fixture / "Cargo.toml", source, diff, staged)}
+              frozen = {str(p): digest(p) for p in (fixture / "Cargo.toml", source, diff, staged, owner_path)}
               shell_digest = digest(shell)
               status, shell_path, _ = run("shell-resolution", [shell, "-NoProfile", "-NonInteractive", "-Command", "(Get-Command ripr).Source"], foreign)
               require(status == 0 and Path(shell_path.decode().strip()).resolve() == staged.resolve(), "actual PowerShell resolution mismatch")
@@ -610,32 +1183,29 @@ jobs:
               check_args = ["check", "--root", str(fixture), "--diff", str(diff), "--json"]
               status, stdout, _ = invoke("initial-list", check_args)
               require(status == 0, "fixture listing failed")
-              actual_id = packet(stdout, source)
+              actual_id = packet(stdout, fixture, source)
               require(all(f.get("id") != "repo-probe:src_lib.rs:error_path:3bf8c64c" for f in json.loads(stdout)["findings"]), "opaque negative ID is present in fixture")
-              rejected("wrong-listing-identity", lambda: packet(stdout, source, "probe:wrong-control"))
+              rejected("wrong-listing-identity", lambda: packet(stdout, fixture, source, "probe:wrong-control"))
               for name, field, value in (("wrong-fixture-file-identity", "file", str(foreign / "src" / "lib.rs")),
                                          ("wrong-predicate-condition", "expression", "amount > threshold")):
                   wrong = json.loads(stdout)
                   for finding in wrong["findings"]:
                       if finding.get("id") == actual_id:
                           finding["probe"][field] = value
-                  rejected(name, lambda: packet(json.dumps(wrong).encode(), source, actual_id))
+                  rejected(name, lambda: packet(json.dumps(wrong).encode(), fixture, source, actual_id))
               commands = []
               for sibling, selector in (("explain", "src/lib.rs:abc"), ("context", ":::")):
                   args = [sibling, "--root", str(fixture), "--diff", str(diff)] + (["--at"] if sibling == "context" else []) + [selector]
                   status, stdout, stderr = invoke(sibling + "-malformed", args)
                   require(status == 2 and not stdout and b"file:line with a nonempty path" in stderr, "malformed miss contract changed")
-                  matches = re.findall(chr(96) + r"(ripr check [^\x60]+)" + chr(96), stderr.decode())
-                  require(len(matches) == 1, "one printed recovery command required")
-                  command = matches[0]
-                  require(command == f"ripr check --root '{fixture}' --diff '{diff}' --json", "printed command lost frozen root/diff/JSON scope")
+                  command = printed_recovery(stderr, fixture, diff)
                   commands.append(command)
                   (out / (sibling + "-literal-command.txt")).write_text(command, encoding="utf-8")
                   frozen_inputs()
                   status, stdout, _ = run(sibling + "-literal-replay", [shell, "-NoProfile", "-NonInteractive", "-Command", command], foreign)
                   frozen_inputs()
                   require(status == 0, "literal PowerShell recovery failed")
-                  require(packet(stdout, source, actual_id) == actual_id, "literal replay selected another fixture")
+                  require(packet(stdout, fixture, source, actual_id) == actual_id, "literal replay selected another fixture")
                   receipt["cases"][-1]["command_exactly_as_printed"] = command
                   status, stdout, _ = invoke(sibling + "-actual-id", [sibling, "--root", str(fixture), "--diff", str(diff)]
                                             + (["--at"] if sibling == "context" else []) + [actual_id])
@@ -652,34 +1222,24 @@ jobs:
               frozen_inputs()
               status, stdout, _ = run("literal-repeat", [shell, "-NoProfile", "-NonInteractive", "-Command", commands[0]], foreign)
               frozen_inputs()
-              require(status == 0 and packet(stdout, source, actual_id) == actual_id, "literal repeat changed selected fixture")
+              require(status == 0 and packet(stdout, fixture, source, actual_id) == actual_id, "literal repeat changed selected fixture")
               receipt.update(state="PASS", actual_listed_id=actual_id, literal_replays=3, siblings_retried=["explain", "context"])
           except Exception as error:
-              receipt.update(state="FAIL", error_type=type(error).__name__, error=str(error))
+              record_failure(receipt, type(error).__name__, str(error))
           finally:
               try:
-                  receipt["staging_cleanup"] = remove_staged(globals().get("staged"), staged_by_consumer)
+                  receipt["producer_cleanup"] = remove_aliases(ownership)
+              except Exception as cleanup_error:
+                  receipt["producer_cleanup"] = {"state": "FAILED", "error": str(cleanup_error)}
+                  record_failure(receipt, "ProducerCleanup", str(cleanup_error))
+              try:
+                  if immutable_handle not in (None, c.c_void_p(-1).value):
+                      require(k.CloseHandle(immutable_handle), "immutable handle close failed")
+                  receipt["staging_cleanup"] = remove_staged(globals().get("staged"), ownership["staged"])
               except Exception as cleanup_error:
                   receipt["staging_cleanup"] = {"state": "FAILED", "error": str(cleanup_error)}
-                  if receipt.get("error"):
-                      receipt["primary_error"] = receipt["error"]
-                  receipt.update(state="FAIL", error_type="StagingCleanup", error=str(cleanup_error))
-              receipt["python"] = sys.version
-              receipt["total_deadline_seconds"] = 720
-              receipt["evidence_bytes"] = sum(p.stat().st_size for p in out.glob("*") if p.is_file())
-              receipt["charged_binary_and_staging_bytes"] = 2 * binary.stat().st_size if "binary" in globals() and binary.exists() else 0
-              base_bytes = receipt["evidence_bytes"] + receipt["charged_binary_and_staging_bytes"] + 16
-              if "fixture" in globals() and fixture.exists():
-                  base_bytes += sum(p.stat().st_size for p in fixture.rglob("*") if p.is_file())
-              receipt["final_charged_bytes"] = 0
-              for _ in range(6):
-                  # Charge both the pretty receipt and its compact copy in the wrapper log.
-                  retained = base_bytes + len(json.dumps(receipt, indent=2).encode()) + len(json.dumps(receipt).encode()) + 2
-                  if retained > 128 * 1024**2:
-                      receipt.update(state="FAIL", error_type="EvidenceBudget", error="final evidence/staging budget exceeded")
-                  if receipt["final_charged_bytes"] == retained:
-                      break
-                  receipt["final_charged_bytes"] = retained
+                  record_failure(receipt, "StagingCleanup", str(cleanup_error))
+              finalize_evidence(receipt, out, globals().get("fixture"), payload_charge)
               (out / "receipt.json").write_bytes(json.dumps(receipt, indent=2).encode())
               print(json.dumps(receipt), flush=True)
           sys.exit(0 if receipt["state"] == "PASS" else 1)
@@ -756,12 +1316,19 @@ jobs:
           if status != (0 if receipt["state"] == "PASS" else 1):
               raise SystemExit("selector native status disagrees with retained receipt")
           cleanup = receipt.get("staging_cleanup", {}).get("state")
+          producer_cleanup = receipt.get("producer_cleanup", {}).get("state")
+          if producer_cleanup not in ("NOT_CREATED", "REMOVED") or (receipt["state"] == "PASS" and producer_cleanup != "REMOVED"):
+              raise SystemExit("selector selected producer alias cleanup missing or failed")
           if cleanup not in ("NOT_CREATED", "REMOVED") or (receipt["state"] == "PASS" and cleanup != "REMOVED"):
               raise SystemExit("selector staged executable cleanup missing or failed")
           if receipt["state"] == "FAIL":
               if not receipt.get("error"):
                   raise SystemExit("selector FAIL has no retained failure")
           else:
+              if receipt.get("owned_producer_target", {}).get("state") != "RETAINED_FOR_CACHE":
+                  raise SystemExit("selector PASS lacks retained shared dependency cache")
+              if receipt.get("payload_allocation", {}).get("admitted_payload_allocations") != 1 or not receipt.get("immutable_executable", {}).get("write_open_refused"):
+                  raise SystemExit("selector PASS lacks single immutable allocation")
               cases = {c["label"]: c for c in receipt.get("cases", [])}
               literal = ("explain-literal-replay", "context-literal-replay", "literal-repeat")
               retries = ("explain-actual-id", "context-actual-id")

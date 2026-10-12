@@ -1,12 +1,14 @@
 use crate::analysis::seam_cache::{
     CACHE_DIR_ENV, CACHE_LAYER_NAMES, CacheStatus, cache_base_dir_from_env, inspect_cache_dir,
+    inspect_cache_root,
 };
 use crate::cli::suggest::unknown_argument;
+use crate::output;
 use serde_json::json;
 use std::ffi::OsStr;
 use std::path::{Component, Path, PathBuf};
 
-const CACHE_STATUS_SCHEMA_VERSION: &str = "0.1";
+const CACHE_STATUS_SCHEMA_VERSION: &str = "0.2";
 
 const CACHE_USAGE: &str = "Inspect or clear the disposable analysis cache.\n\nUsage:\n  ripr cache status [--json]\n  ripr cache clear [--dry-run] [--force]";
 /// Help body for `ripr cache status`. Also the flag source for unknown-argument
@@ -20,6 +22,14 @@ otherwise target/ripr/cache under the Cargo workspace root).
   --json    Print machine-readable status JSON. Its `schema_version` is the
             version of this status report, not of the on-disk cache layers
             (those carry their own version in their directory names).
+
+`entry_count` and `total_size_bytes` count only the recognized ripr cache
+layer directories, the same set `ripr cache clear` removes; files anywhere
+else under the cache root — including a regular file wearing a layer name —
+are reported separately as unrecognized entries and are always preserved by
+clear. A cache path reached through a symlink or junction (leaf or ancestor)
+is resolved to the real directory (via_symlink/real_cache_dir), matching
+what `ripr check` reads and writes.
 
 The cache is disposable: deleting it only costs a slower next run. Use
 `ripr cache clear` to remove it.
@@ -105,22 +115,109 @@ fn cache_dir_for_current_dir(
     Ok(cache_dir_for_root(&workspace_root, env_value))
 }
 
-fn render_status(cache_dir: &Path, status: &CacheStatus, is_json: bool) -> Result<String, String> {
-    let cache_dir_str = cache_dir.display().to_string();
+/// Resolve a cache base that traverses a symlink or junction (as the leaf or
+/// through any ancestor component) to its real directory for the read-only
+/// status report (#5989, #6777 review). `ripr check` reads and writes the
+/// cache through such an alias, so status must inspect the directory the
+/// analysis actually uses instead of reporting `unavailable` for a cache in
+/// active use — and the alias disclosure must fire for an ancestor alias too,
+/// the layout where `cache clear` refuses with a symlinked-ancestor error.
+/// Returns the directory to inspect and, when any component of the configured
+/// path is a symlink and the path resolves, the real directory. A dangling
+/// alias has no target to inspect; the configured path itself is returned and
+/// the walk classifies it honestly.
+fn resolve_status_base(cache_dir: &Path) -> (PathBuf, Option<PathBuf>) {
+    let traverses_alias = cache_dir.ancestors().any(|component| {
+        std::fs::symlink_metadata(component)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+    });
+    if !traverses_alias {
+        return (cache_dir.to_path_buf(), None);
+    }
+    match std::fs::canonicalize(cache_dir) {
+        Ok(real) => (real.clone(), Some(real)),
+        Err(_) => (cache_dir.to_path_buf(), None),
+    }
+}
+
+/// Human `Cache dir:` header for `cache status` and `cache clear`. Routes
+/// through the shared CLI path renderer so a Windows drive-letter verbatim
+/// prefix is stripped the same way `ripr doctor` already shows this directory
+/// (#7326). JSON status keeps [`Path::display`].
+fn cache_dir_human_line(cache_dir: &Path) -> String {
+    cache_dir_human_line_for_host(cache_dir, cfg!(windows))
+}
+
+fn cache_dir_human_line_for_host(cache_dir: &Path, windows: bool) -> String {
+    format!(
+        "Cache dir: {}",
+        output::path::human_path_text(&cache_dir.to_string_lossy(), windows)
+    )
+}
+
+/// Human `Real dir:` alias line for `cache status`. Same host-parameterised
+/// renderer as [`cache_dir_human_line_for_host`]; JSON `real_cache_dir` keeps
+/// [`Path::display`] (#7343).
+fn real_dir_human_line_for_host(real_dir: &Path, windows: bool) -> String {
+    format!(
+        "Real dir: {} (inspected through the symlink/junction alias; \
+         ripr check reads and writes the cache through it, while \
+         `ripr cache clear` requires the real path)",
+        output::path::human_path_text(&real_dir.to_string_lossy(), windows)
+    )
+}
+
+fn render_status(
+    cache_dir: &Path,
+    real_dir: Option<&Path>,
+    status: &CacheStatus,
+    is_json: bool,
+) -> Result<String, String> {
+    render_status_for_host(cache_dir, real_dir, status, is_json, cfg!(windows))
+}
+
+fn render_status_for_host(
+    cache_dir: &Path,
+    real_dir: Option<&Path>,
+    status: &CacheStatus,
+    is_json: bool,
+    windows: bool,
+) -> Result<String, String> {
     if is_json {
+        // Machine identity keeps Path::display, including a Windows verbatim
+        // prefix; human Cache dir (#7326) and Real dir (#7343) use human_path.
+        let cache_dir_str = cache_dir.display().to_string();
         serde_json::to_string_pretty(&json!({
             "schema_version": CACHE_STATUS_SCHEMA_VERSION,
             "cache_dir": cache_dir_str,
+            "real_cache_dir": real_dir.map(Path::display).map(|display| display.to_string()),
+            "via_symlink": real_dir.is_some(),
             "status": status.state,
             "total_size_bytes": status.total_size_bytes,
-            "entry_count": status.entry_count
+            "entry_count": status.entry_count,
+            "foreign_entry_count": status.foreign_entry_count,
+            "foreign_total_size_bytes": status.foreign_total_size_bytes
         }))
         .map_err(|error| error.to_string())
     } else {
-        Ok(format!(
-            "Cache dir: {cache_dir_str}\nStatus: {}\nTotal size: {} bytes\nEntries: {}",
-            status.state, status.total_size_bytes, status.entry_count
-        ))
+        let mut lines = vec![
+            cache_dir_human_line_for_host(cache_dir, windows),
+            format!("Status: {}", status.state),
+            format!("Total size: {} bytes", status.total_size_bytes),
+            format!("Entries: {}", status.entry_count),
+        ];
+        if let Some(real) = real_dir {
+            lines.push(real_dir_human_line_for_host(real, windows));
+        }
+        if status.foreign_entry_count > 0 {
+            lines.push(format!(
+                "Unrecognized: {} file(s) ({} bytes) outside the recognized ripr cache layers; \
+                 `ripr cache clear` preserves them",
+                status.foreign_entry_count, status.foreign_total_size_bytes
+            ));
+        }
+        Ok(lines.join("\n"))
     }
 }
 
@@ -202,9 +299,23 @@ fn classify_cache_root(cache_dir: &Path) -> Result<CacheRoot, String> {
         ));
     }
     match std::fs::symlink_metadata(cache_dir) {
-        Ok(metadata) if metadata.file_type().is_symlink() => Err(format!(
-            "refusing to clear {display}: it is a symlink, not a cache directory"
-        )),
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            // #5989: analysis and status resolve this alias and use the cache
+            // behind it, so the refusal must name the real directory it
+            // protects instead of a bare "it is a symlink".
+            let resolved = std::fs::canonicalize(cache_dir)
+                .map(|real| {
+                    format!(
+                        "it is a symlink to {}; ripr check reads and writes the cache through \
+                         this alias, but clear requires the real directory path",
+                        real.display()
+                    )
+                })
+                .unwrap_or_else(|_| "it is a symlink, not a cache directory".to_string());
+            Err(format!(
+                "refusing to clear {display}: {resolved}; no files were removed"
+            ))
+        }
         Ok(metadata) if metadata.is_dir() => {
             reject_symlinked_ancestor(cache_dir)?;
             Ok(CacheRoot::Present)
@@ -336,17 +447,38 @@ fn verify_layer_before_delete(cache_dir: &Path, layer: &CacheLayerPlan) -> Resul
     }
 }
 
+/// Failure text for a cache-layer removal that the OS refused (#7388). The
+/// user meets this message exactly while recovering from an error, so the
+/// layer path renders through the shared human renderer — the same plain
+/// forward-slash spelling as the `Cache dir:` header in the same output —
+/// instead of the verbatim `\\?\` canonicalized form that pastes poorly into
+/// editors, other shells, and issue reports.
+fn layer_removal_failure_message(
+    layer_path: &Path,
+    error: &std::io::Error,
+    windows: bool,
+) -> String {
+    format!(
+        "failed to remove ripr cache layer {}: {error}; the cache root and unrelated siblings were preserved",
+        output::path::human_path_text(&layer_path.to_string_lossy(), windows)
+    )
+}
+
 fn remove_owned_layers(cache_dir: &Path, plan: &ClearPlan) -> Result<(), String> {
+    remove_owned_layers_for_host(cache_dir, plan, cfg!(windows))
+}
+
+fn remove_owned_layers_for_host(
+    cache_dir: &Path,
+    plan: &ClearPlan,
+    windows: bool,
+) -> Result<(), String> {
     for layer in &plan.layers {
         verify_layer_before_delete(cache_dir, layer)?;
     }
     for layer in &plan.layers {
-        std::fs::remove_dir_all(&layer.path).map_err(|error| {
-            format!(
-                "failed to remove ripr cache layer {}: {error}; the cache root and unrelated siblings were preserved",
-                layer.path.display()
-            )
-        })?;
+        std::fs::remove_dir_all(&layer.path)
+            .map_err(|error| layer_removal_failure_message(&layer.path, &error, windows))?;
     }
     Ok(())
 }
@@ -413,8 +545,12 @@ fn run_status(args: &[String]) -> Result<(), String> {
     let current_dir =
         std::env::current_dir().map_err(|error| format!("failed to get current dir: {error}"))?;
     let cache_dir = cache_dir_for_current_dir(&current_dir, std::env::var(CACHE_DIR_ENV))?;
-    let status = inspect_cache_dir(&cache_dir);
-    println!("{}", render_status(&cache_dir, &status, is_json)?);
+    let (inspect_dir, real_dir) = resolve_status_base(&cache_dir);
+    let status = inspect_cache_root(&inspect_dir);
+    println!(
+        "{}",
+        render_status(&cache_dir, real_dir.as_deref(), &status, is_json)?
+    );
     if !is_json {
         eprintln!("{CLEANUP_HINT}");
     }
@@ -440,7 +576,7 @@ fn run_clear(args: &[String]) -> Result<(), String> {
     let current_dir =
         std::env::current_dir().map_err(|error| format!("failed to get current dir: {error}"))?;
     let cache_dir = cache_dir_for_current_dir(&current_dir, std::env::var(CACHE_DIR_ENV))?;
-    println!("Cache dir: {}", cache_dir.display());
+    println!("{}", cache_dir_human_line(&cache_dir));
     println!("{}", clear_cache_dir(&cache_dir, options)?);
 
     Ok(())
@@ -513,6 +649,8 @@ mod tests {
             state: "not_found",
             total_size_bytes: 0,
             entry_count: 0,
+            foreign_entry_count: 0,
+            foreign_total_size_bytes: 0,
         };
         if status != expected {
             return Err(format!("expected {expected:?}, got {status:?}"));
@@ -526,15 +664,17 @@ mod tests {
             state: "partial",
             total_size_bytes: 12,
             entry_count: 2,
+            foreign_entry_count: 0,
+            foreign_total_size_bytes: 0,
         };
         let cache_dir = Path::new("target/ripr/cache");
-        let human = render_status(cache_dir, &status, false)?;
+        let human = render_status(cache_dir, None, &status, false)?;
         for expected in ["Status: partial", "Total size: 12 bytes", "Entries: 2"] {
             if !human.contains(expected) {
                 return Err(format!("human output omitted `{expected}`: {human}"));
             }
         }
-        let json = render_status(cache_dir, &status, true)?;
+        let json = render_status(cache_dir, None, &status, true)?;
         let value: serde_json::Value =
             serde_json::from_str(&json).map_err(|error| error.to_string())?;
         if value.get("status").and_then(serde_json::Value::as_str) != Some("partial")
@@ -559,6 +699,149 @@ mod tests {
         }
         if parse_clear_args(&["--forced".to_string()]).is_ok() {
             return Err("unknown cache clear argument was accepted".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7326: `cache status` / `cache clear` printed `Path::display()` of a
+    /// canonical Windows path, leaking the verbatim prefix that `ripr doctor`
+    /// already strips through `output::path::human_path`. JSON keeps the raw
+    /// spelling. `run_clear` prints the same `cache_dir_human_line` helper.
+    #[test]
+    fn render_status_human_cache_dir_strips_windows_verbatim_prefix() -> Result<(), String> {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shape is assembled from parts.
+        let drive = "F:";
+        let verbatim = format!(r"\\?\{drive}\code\myrepo\target\ripr\cache");
+        let cache_dir = Path::new(&verbatim);
+        let status = CacheStatus {
+            state: "ok",
+            total_size_bytes: 0,
+            entry_count: 0,
+            foreign_entry_count: 0,
+            foreign_total_size_bytes: 0,
+        };
+        let human = render_status_for_host(cache_dir, None, &status, false, true)?;
+        let expected = format!("Cache dir: {drive}/code/myrepo/target/ripr/cache");
+        let first = human.lines().next().unwrap_or("");
+        if first != expected {
+            return Err(format!(
+                "Windows human Cache dir leaked verbatim spelling: {human}"
+            ));
+        }
+        if first.contains(r"\\?\") {
+            return Err(format!(
+                "Windows human Cache dir still has verbatim prefix: {human}"
+            ));
+        }
+        let unix = render_status_for_host(cache_dir, None, &status, false, false)?;
+        let unix_first = unix.lines().next().unwrap_or("");
+        if unix_first != format!("Cache dir: {verbatim}") {
+            return Err(format!(
+                "Unix human Cache dir must keep verbatim text as a filename: {unix}"
+            ));
+        }
+        let json = render_status_for_host(cache_dir, None, &status, true, true)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        let machine = cache_dir.display().to_string();
+        if value.get("cache_dir").and_then(serde_json::Value::as_str) != Some(machine.as_str()) {
+            return Err(format!(
+                "JSON cache_dir must keep Path::display identity, got: {json}"
+            ));
+        }
+        let hosted = render_status(cache_dir, None, &status, false)?;
+        if hosted.lines().next() != Some(cache_dir_human_line(cache_dir).as_str()) {
+            return Err(format!(
+                "host render_status Cache dir must use human_path: {hosted}"
+            ));
+        }
+        if cache_dir_human_line_for_host(cache_dir, true) != expected {
+            return Err("cache clear header helper drifted from status renderer".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7343: the human `Real dir:` alias line still used `Path::display()`
+    /// after #7326 routed only `Cache dir:` through `human_path`. JSON
+    /// `real_cache_dir` keeps the raw spelling. Proved through
+    /// `render_status_for_host` so Windows stripping is covered without a
+    /// native Windows host.
+    #[test]
+    fn render_status_human_real_dir_strips_windows_verbatim_prefix() -> Result<(), String> {
+        let drive = "F:";
+        let alias = format!(r"{drive}\code\myrepo\target\ripr\cache-alias");
+        let verbatim = format!(r"\\?\{drive}\code\myrepo\target\ripr\cache");
+        let cache_dir = Path::new(&alias);
+        let real_dir = Path::new(&verbatim);
+        let status = CacheStatus {
+            state: "ok",
+            total_size_bytes: 0,
+            entry_count: 0,
+            foreign_entry_count: 0,
+            foreign_total_size_bytes: 0,
+        };
+        let none_human = render_status_for_host(cache_dir, None, &status, false, true)?;
+        if none_human.lines().any(|line| line.starts_with("Real dir:")) {
+            return Err(format!(
+                "Real dir line must appear only when real_dir is Some: {none_human}"
+            ));
+        }
+        let human = render_status_for_host(cache_dir, Some(real_dir), &status, false, true)?;
+        let expected_path = format!("{drive}/code/myrepo/target/ripr/cache");
+        let expected = format!(
+            "Real dir: {expected_path} (inspected through the symlink/junction alias; \
+             ripr check reads and writes the cache through it, while \
+             `ripr cache clear` requires the real path)"
+        );
+        let real_line = human
+            .lines()
+            .find(|line| line.starts_with("Real dir:"))
+            .unwrap_or("");
+        if real_line != expected {
+            return Err(format!(
+                "Windows human Real dir leaked verbatim spelling: {human}"
+            ));
+        }
+        if real_line.contains(r"\\?\") {
+            return Err(format!(
+                "Windows human Real dir still has verbatim prefix: {human}"
+            ));
+        }
+        let unix = render_status_for_host(cache_dir, Some(real_dir), &status, false, false)?;
+        let unix_real = unix
+            .lines()
+            .find(|line| line.starts_with("Real dir:"))
+            .unwrap_or("");
+        if !unix_real.starts_with(&format!("Real dir: {verbatim} ")) {
+            return Err(format!(
+                "Unix human Real dir must keep verbatim text as a filename: {unix}"
+            ));
+        }
+        let json = render_status_for_host(cache_dir, Some(real_dir), &status, true, true)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        let machine = real_dir.display().to_string();
+        if value
+            .get("real_cache_dir")
+            .and_then(serde_json::Value::as_str)
+            != Some(machine.as_str())
+        {
+            return Err(format!(
+                "JSON real_cache_dir must keep Path::display identity, got: {json}"
+            ));
+        }
+        if value
+            .get("via_symlink")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        {
+            return Err(format!(
+                "JSON via_symlink must stay true for an alias: {json}"
+            ));
+        }
+        if real_dir_human_line_for_host(real_dir, true) != expected {
+            return Err("real dir helper drifted from status renderer".to_string());
         }
         Ok(())
     }
@@ -851,6 +1134,8 @@ mod tests {
                     state,
                     total_size_bytes: 0,
                     entry_count: 0,
+                    foreign_entry_count: 0,
+                    foreign_total_size_bytes: 0,
                 },
             );
             if result.err().is_none_or(|error| {
@@ -860,6 +1145,433 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn status_counts_recognized_layers_and_discloses_foreign_entries_separately()
+    -> Result<(), String> {
+        // #5987: status used to count every file under the cache root, so a
+        // foreign note or stale-schema orphan made post-clear status report
+        // entries that `cache clear` refuses to remove. The owned set must be
+        // exactly clear's removal set; everything else is a separate
+        // disclosure.
+        let root = temp_dir("foreign-accounting");
+        let layer = root.join("repo-file-facts").join("1.18");
+        fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+        fs::write(layer.join("warm.json"), b"abcd").map_err(|error| error.to_string())?;
+        fs::write(root.join("agent-notes.txt"), b"abc").map_err(|error| error.to_string())?;
+        let unknown = root.join("unknown-layer");
+        fs::create_dir_all(&unknown).map_err(|error| error.to_string())?;
+        fs::write(unknown.join("junk.bin"), b"abcde").map_err(|error| error.to_string())?;
+
+        let status = inspect_cache_root(&root);
+        if status.state != "ok"
+            || status.entry_count != 1
+            || status.total_size_bytes != 4
+            || status.foreign_entry_count != 2
+            || status.foreign_total_size_bytes != 8
+        {
+            remove_base(&root)?;
+            return Err(format!("owned/foreign split drifted: {status:?}"));
+        }
+        // Executable old-behavior control: the retained per-layer inspector
+        // still attributes every regular file to its subject — exactly the
+        // counting status used to publish for a whole cache root (#5987).
+        let old_witness = inspect_cache_dir(&root);
+        if old_witness.entry_count != 3 || old_witness.total_size_bytes != 12 {
+            remove_base(&root)?;
+            return Err(format!("old counting control drifted: {old_witness:?}"));
+        }
+        // The owned side is exactly clear's removal plan.
+        let plan = build_clear_plan(&root)?;
+        if plan.entry_count != 1 || plan.total_size_bytes != 4 {
+            remove_base(&root)?;
+            return Err(format!("clear plan disagrees with owned status: {plan:?}"));
+        }
+
+        // Post-clear shape: the owned layer is gone, foreign files remain.
+        fs::remove_dir_all(root.join("repo-file-facts")).map_err(|error| error.to_string())?;
+        let after = inspect_cache_root(&root);
+        if after.entry_count != 0 || after.total_size_bytes != 0 {
+            remove_base(&root)?;
+            return Err(format!(
+                "post-clear owned counts did not reach zero: {after:?}"
+            ));
+        }
+        if after.foreign_entry_count != 2 || after.foreign_total_size_bytes != 8 {
+            remove_base(&root)?;
+            return Err(format!("post-clear foreign disclosure dropped: {after:?}"));
+        }
+        // Clear agrees there is nothing owned to remove and preserves the rest.
+        let foreign_note = root.join("agent-notes.txt");
+        let refused = clear_cache_dir(
+            &root,
+            ClearOptions {
+                dry_run: false,
+                force: true,
+            },
+        );
+        let preserved = foreign_note.is_file() && unknown.join("junk.bin").is_file();
+        remove_base(&root)?;
+        match refused {
+            Ok(message) => Err(format!(
+                "clear removed or accepted foreign-only root: {message}"
+            )),
+            Err(error) if !error.contains("no independently recognized") => {
+                Err(format!("unexpected foreign-only refusal: {error}"))
+            }
+            Err(_) if !preserved => Err("clear deleted foreign files".to_string()),
+            Err(_) => Ok(()),
+        }
+    }
+
+    #[test]
+    fn impostor_layer_file_counts_as_foreign_and_clear_refuses_it() -> Result<(), String> {
+        // #6777 review (devin #2 / codex P2): a regular file wearing a
+        // recognized layer name must not report as an owned entry — the clear
+        // planner accepts named layers only as directories and removes
+        // nothing in this state, so the file belongs on the preserved side.
+        let root = temp_dir("impostor-layer");
+        fs::create_dir_all(&root).map_err(|error| error.to_string())?;
+        fs::write(root.join("repo-file-facts"), b"abcd").map_err(|error| error.to_string())?;
+        let layer = root.join("repo-seam-facts");
+        fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+        fs::write(layer.join("entry.json"), b"{}").map_err(|error| error.to_string())?;
+
+        let status = inspect_cache_root(&root);
+        if status.entry_count != 1
+            || status.total_size_bytes != 2
+            || status.foreign_entry_count != 1
+            || status.foreign_total_size_bytes != 4
+        {
+            remove_base(&root)?;
+            return Err(format!("impostor file was not foreign: {status:?}"));
+        }
+        // Clear refuses the non-directory layer entirely and preserves both.
+        let refused = clear_cache_dir(
+            &root,
+            ClearOptions {
+                dry_run: false,
+                force: true,
+            },
+        );
+        let preserved =
+            root.join("repo-file-facts").is_file() && layer.join("entry.json").is_file();
+        remove_base(&root)?;
+        match refused {
+            Ok(message) => Err(format!("clear accepted an impostor layer file: {message}")),
+            Err(error) if !error.contains("not a directory") => {
+                Err(format!("unexpected impostor refusal: {error}"))
+            }
+            Err(_) if !preserved => Err("clear deleted files beside an impostor layer".to_string()),
+            Err(_) => Ok(()),
+        }
+    }
+
+    #[test]
+    fn status_render_discloses_foreign_and_alias_fields() -> Result<(), String> {
+        let status = CacheStatus {
+            state: "ok",
+            total_size_bytes: 4,
+            entry_count: 1,
+            foreign_entry_count: 2,
+            foreign_total_size_bytes: 8,
+        };
+        let cache_dir = Path::new("target/ripr/cache");
+        let human = render_status(cache_dir, None, &status, false)?;
+        if !human.contains("Unrecognized: 2 file(s) (8 bytes)") || !human.contains("preserves them")
+        {
+            return Err(format!(
+                "human output omitted the foreign disclosure: {human}"
+            ));
+        }
+        let owned_only = CacheStatus {
+            state: "ok",
+            total_size_bytes: 4,
+            entry_count: 1,
+            foreign_entry_count: 0,
+            foreign_total_size_bytes: 0,
+        };
+        let plain = render_status(cache_dir, None, &owned_only, false)?;
+        if plain.contains("Unrecognized") {
+            return Err(format!(
+                "zero foreign files must not add a disclosure: {plain}"
+            ));
+        }
+        let json = render_status(cache_dir, None, &status, true)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        if value
+            .get("foreign_entry_count")
+            .and_then(serde_json::Value::as_u64)
+            != Some(2)
+            || value
+                .get("foreign_total_size_bytes")
+                .and_then(serde_json::Value::as_u64)
+                != Some(8)
+            || value
+                .get("via_symlink")
+                .and_then(serde_json::Value::as_bool)
+                != Some(false)
+            || value.get("real_cache_dir").map(serde_json::Value::is_null) != Some(true)
+        {
+            return Err(format!("JSON status fields drifted: {json}"));
+        }
+        let alias_real = Path::new("resolved-cache-target");
+        let aliased = render_status(cache_dir, Some(alias_real), &owned_only, true)?;
+        let alias_value: serde_json::Value =
+            serde_json::from_str(&aliased).map_err(|error| error.to_string())?;
+        if alias_value
+            .get("via_symlink")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+            || alias_value
+                .get("real_cache_dir")
+                .and_then(serde_json::Value::as_str)
+                != Some("resolved-cache-target")
+        {
+            return Err(format!("alias disclosure drifted: {aliased}"));
+        }
+        let aliased_human = render_status(cache_dir, Some(alias_real), &owned_only, false)?;
+        if !aliased_human.contains("Real dir: resolved-cache-target") {
+            return Err(format!("human alias disclosure drifted: {aliased_human}"));
+        }
+        Ok(())
+    }
+
+    /// #7388: a failed layer removal used to interpolate `Path::display()` of
+    /// the canonicalized layer path, leaking the verbatim `\\?\` spelling on
+    /// the error path while the same command's `Cache dir:` header renders
+    /// the plain forward-slash form (#7326). The failure text now routes
+    /// through the shared human renderer on every host that produces
+    /// verbatim prefixes; Unix keeps the text unchanged.
+    #[test]
+    fn layer_removal_failure_message_strips_windows_verbatim_prefix() -> Result<(), String> {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shape is assembled from parts.
+        let drive = "F:";
+        let verbatim =
+            format!(r"\\?\{drive}\tmp\ripr-audit-scratch\target\ripr\cache\repo-file-facts");
+        let layer_path = Path::new(&verbatim);
+        let error = std::io::Error::from(std::io::ErrorKind::Other);
+        let windows = layer_removal_failure_message(layer_path, &error, true);
+        let expected_path =
+            format!("{drive}/tmp/ripr-audit-scratch/target/ripr/cache/repo-file-facts");
+        if !windows.contains(&format!(
+            "failed to remove ripr cache layer {expected_path}:"
+        )) {
+            return Err(format!(
+                "windows failure message leaked the verbatim spelling: {windows}"
+            ));
+        }
+        if windows.contains(r"\\?\") || windows.contains('\\') {
+            return Err(format!(
+                "windows failure message must use plain forward-slash spelling: {windows}"
+            ));
+        }
+        if !windows.contains("the cache root and unrelated siblings were preserved") {
+            return Err(format!(
+                "failure message dropped the preservation disclosure: {windows}"
+            ));
+        }
+        let unix = layer_removal_failure_message(layer_path, &error, false);
+        if !unix.contains(&format!("failed to remove ripr cache layer {verbatim}:")) {
+            return Err(format!(
+                "unix failure message must keep verbatim text as a filename: {unix}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Create a directory alias: a Windows junction (`mklink /J`, no
+    /// privilege required) or a Unix symlink. Returns `false` when aliases
+    /// are unavailable on this host so the caller can skip without a false
+    /// pass (same shape as the workspace-inventory alias pin).
+    fn create_filesystem_alias(target: &Path, link: &Path) -> Result<bool, String> {
+        #[cfg(windows)]
+        {
+            let outcome = std::process::Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .map_err(|error| error.to_string())?;
+            if outcome.status.success() {
+                Ok(true)
+            } else {
+                eprintln!(
+                    "skipping alias test: mklink /J unavailable: {}",
+                    String::from_utf8_lossy(&outcome.stderr)
+                );
+                Ok(false)
+            }
+        }
+        #[cfg(unix)]
+        {
+            match std::os::unix::fs::symlink(target, link) {
+                Ok(()) => Ok(true),
+                Err(error) => {
+                    eprintln!("skipping alias test: symlink unavailable: {error}");
+                    Ok(false)
+                }
+            }
+        }
+        #[cfg(not(any(windows, unix)))]
+        {
+            let _ = (target, link);
+            eprintln!("skipping alias test: no filesystem alias support");
+            Ok(false)
+        }
+    }
+
+    #[test]
+    fn cache_in_use_through_alias_reports_real_directory_and_clear_names_it() -> Result<(), String>
+    {
+        // #5989: through a junction/symlink RIPR_CACHE_DIR, check reads and
+        // writes the cache while status used to report unavailable with zero
+        // entries. Status must resolve the alias to the directory actually in
+        // use; clear keeps its deliberate fail-closed refusal but names the
+        // real path it protects.
+        let base = temp_dir("alias-status");
+        let real = base.join("real-cache");
+        let layer = real.join("repo-file-facts");
+        fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+        fs::write(layer.join("entry.json"), b"{}").map_err(|error| error.to_string())?;
+        let alias = base.join("cache-alias");
+        if !create_filesystem_alias(&real, &alias)? {
+            remove_base(&base)?;
+            return Ok(());
+        }
+
+        let (inspect_dir, real_dir) = resolve_status_base(&alias);
+        let status = inspect_cache_root(&inspect_dir);
+        let resolved_real = fs::canonicalize(&real).map_err(|error| error.to_string())?;
+        // Executable old-behavior control: the un-resolved inspection status
+        // used to publish is still the strict per-layer classifier — it keeps
+        // reporting the alias itself as unavailable (#5989).
+        let old_witness = inspect_cache_dir(&alias);
+        if old_witness.state != "unavailable" || old_witness.entry_count != 0 {
+            remove_base(&base)?;
+            return Err(format!("old unavailable control drifted: {old_witness:?}"));
+        }
+        if status.state != "ok" || status.entry_count != 1 || status.total_size_bytes != 2 {
+            remove_base(&base)?;
+            return Err(format!("alias status stayed dishonest: {status:?}"));
+        }
+        if real_dir.as_deref() != Some(resolved_real.as_path()) {
+            remove_base(&base)?;
+            return Err(format!(
+                "alias resolution did not name the real directory: {real_dir:?}"
+            ));
+        }
+        let rendered = render_status(&alias, real_dir.as_deref(), &status, true)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+        if value
+            .get("via_symlink")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        {
+            remove_base(&base)?;
+            return Err(format!("alias render omitted via_symlink: {rendered}"));
+        }
+
+        // Clear keeps refusing the alias, now naming the real directory.
+        let refused = clear_cache_dir(
+            &alias,
+            ClearOptions {
+                dry_run: false,
+                force: true,
+            },
+        );
+        let real_display = resolved_real.display().to_string();
+        match &refused {
+            Ok(message) => {
+                remove_base(&base)?;
+                return Err(format!("clear followed the alias: {message}"));
+            }
+            Err(error)
+                if !error.contains("symlink")
+                    || !error.contains(&real_display)
+                    || !error.contains("no files were removed") =>
+            {
+                remove_base(&base)?;
+                return Err(format!(
+                    "clear refusal did not name the real path {real_display}: {error}"
+                ));
+            }
+            Err(_) => {}
+        }
+        if !layer.join("entry.json").is_file() {
+            remove_base(&base)?;
+            return Err("clear deleted cache contents through the alias".to_string());
+        }
+
+        // The real path stays clearable, matching the disclosed route.
+        clear_cache_dir(
+            &resolved_real,
+            ClearOptions {
+                dry_run: false,
+                force: true,
+            },
+        )?;
+        let cleared = !layer.exists() && real.is_dir();
+        remove_base(&base)?;
+        if !cleared {
+            return Err("the disclosed real path was not clearable".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cache_below_an_alias_ancestor_discloses_the_resolution() -> Result<(), String> {
+        // #6777 review (devin #3): with RIPR_CACHE_DIR below a symlinked
+        // ANCESTOR, status counts the in-use cache either way, and the alias
+        // disclosure must still fire — this is exactly the layout where clear
+        // refuses with a symlinked-ancestor error naming the alias component.
+        let base = temp_dir("alias-ancestor");
+        let real_parent = base.join("real-parent");
+        let cache = real_parent.join("ripr-cache");
+        let layer = cache.join("repo-file-facts");
+        fs::create_dir_all(&layer).map_err(|error| error.to_string())?;
+        fs::write(layer.join("entry.json"), b"{}").map_err(|error| error.to_string())?;
+        let alias_parent = base.join("alias-parent");
+        if !create_filesystem_alias(&real_parent, &alias_parent)? {
+            remove_base(&base)?;
+            return Ok(());
+        }
+        let through_alias = alias_parent.join("ripr-cache");
+
+        let (inspect_dir, real_dir) = resolve_status_base(&through_alias);
+        let status = inspect_cache_root(&inspect_dir);
+        let resolved_real = fs::canonicalize(&cache).map_err(|error| error.to_string())?;
+        let safe = status.state == "ok"
+            && status.entry_count == 1
+            && real_dir.as_deref() == Some(resolved_real.as_path());
+        // Clear keeps refusing through the alias ancestor, naming the alias
+        // component; the disclosed real path stays clearable.
+        let refused = clear_cache_dir(
+            &through_alias,
+            ClearOptions {
+                dry_run: false,
+                force: true,
+            },
+        );
+        let preserved = layer.join("entry.json").is_file();
+        remove_base(&base)?;
+        if !safe {
+            return Err(format!(
+                "ancestor-alias status did not resolve to {resolved_real:?}: {status:?} / {real_dir:?}"
+            ));
+        }
+        match refused {
+            Ok(message) => Err(format!("clear followed the alias ancestor: {message}")),
+            Err(error) if !error.contains("symlink") => {
+                Err(format!("ancestor-alias refusal drifted: {error}"))
+            }
+            Err(_) if !preserved => Err("clear deleted through the alias ancestor".to_string()),
+            Err(_) => Ok(()),
+        }
     }
 
     #[cfg(unix)]

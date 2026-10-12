@@ -1,0 +1,12 @@
+diff --git a/src/cart.ts b/src/cart.ts
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -29,7 +29,7 @@ export function addLine(lines: Line[], line: Line): Line[] {
+ export function removeLine(lines: Line[], sku: string): Line[] {
+   const kept = lines.filter((line) => line.sku !== sku);
+   if (kept.length === lines.length) {
+-    throw new Error(`no line for ${sku}`);
++    throw new Error(`missing line ${sku}`);
+   }
+   return kept;
+ }

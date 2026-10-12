@@ -1,0 +1,52 @@
+{
+  "case_id": "mined-hex-table-tested-row",
+  "subject_id": "authored-mined-wire",
+  "diff": "cases/mined-hex-table-tested-row.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 56
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "static_lookup_table_row_asserted",
+  "hard_case": "The edit is a row of a static lookup table, not code. Mined from httparse's byte_map! tables (https://github.com/seanmonstar/httparse/blob/a0fa552e4e0fa9a5914a736ef3a556748fef709b/src/lib.rs#L78) and base64 alphabets.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "b'9', b'9',",
+        "mutated_line": "b'9', b'9',",
+        "outcome": "tests_failed",
+        "failing_test": "tests::hex_of_decimal_digits",
+        "equivalence_review": "not equivalent: nibble 8 renders as '9'"
+      },
+      {
+        "replacement": "b'8', b'8',",
+        "mutated_line": "b'8', b'8',",
+        "outcome": "tests_failed",
+        "failing_test": "tests::hex_of_decimal_digits",
+        "equivalence_review": "not equivalent: nibble 9 renders as '8'"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "hex_of_decimal_digits renders 0x89 and asserts \"0123456789\", so changing either entry in the 8/9 row fails it.",
+  "labeling_observation": {
+    "ripr_commit": "da6a44d",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

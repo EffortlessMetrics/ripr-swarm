@@ -1,0 +1,12 @@
+diff --git a/src/settings.rs b/src/settings.rs
+--- a/src/settings.rs
++++ b/src/settings.rs
+@@ -13,7 +13,7 @@
+ 
+ impl RetryBuilder {
+     pub fn new() -> Self {
+-        RetryBuilder { attempts: 3, delay_ms: 100 }
++        RetryBuilder { attempts: 4, delay_ms: 100 }
+     }
+ 
+     pub fn attempts(mut self, attempts: u32) -> Self {

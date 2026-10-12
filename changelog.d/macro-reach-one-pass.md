@@ -4,4 +4,5 @@
   pass over the index, and reads each test's and function's macro
   invocations from a table built once, instead of rescanning every indexed
   source for each owner and invoked macro name. Cold pilot on
-  rust-analyzer takes 14.3s instead of 22.5s, with byte-identical output.
+  rust-analyzer takes 14.3s instead of 22.5s, with byte-identical output
+  (#6339).

@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:566edf6b",
+      "canonical_gap_id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "discounted_total",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount==discount_threshold"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:566edf6b",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/boundary_named_constant/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 12,
         "expression": "amount >= DISCOUNT_THRESHOLD"
        },
@@ -165,6 +177,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:a6097ff7",
+      "canonical_gap_id": "gap:rust:src/lib.rs:bulk_rate:predicate_boundary:predicate:items==bulk_items",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:bulk_rate:predicate_boundary:predicate:items==bulk_items",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "bulk_rate",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "items==bulk_items"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -172,7 +196,7 @@
         "id": "probe:src_lib.rs:predicate:a6097ff7",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/boundary_named_constant/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 21,
         "expression": "items >= BULK_ITEMS"
        },
@@ -183,7 +207,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach bulk_rate: bulk_rate_boundary", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 90", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 90 (line 22)", "related test tests/pricing.rs:11 bulk_rate_boundary uses strong exact value oracle: assert_eq!(bulk_rate(3), 100);", "related test tests/pricing.rs:11 bulk_rate_boundary uses strong exact value oracle: assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90);", "source assertion argument value 100 at line 12", "source function argument value items = 3 at line 12", "source assertion argument value 90 at line 13", "source enum variant value parcels::BULK_ITEMS at line 13", "source function argument value items == BULK_ITEMS at line 13"],
+      "evidence_path": ["reach yes: Related tests appear to reach bulk_rate: bulk_rate_boundary", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 90", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 90 (line 22)", "related test tests/pricing.rs:11 bulk_rate_boundary uses strong exact value oracle: assert_eq!(bulk_rate(3), 100);", "related test tests/pricing.rs:11 bulk_rate_boundary uses strong exact value oracle: assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90);", "source assertion argument value 100 at line 12", "source function argument value items = 3 at line 12", "source assertion argument value 90 at line 13", "source constant value parcels::BULK_ITEMS at line 13", "source function argument value items == BULK_ITEMS at line 13"],
       "flow_sinks": [
         {"kind":"return_value","text":"90","line":22}
       ],
@@ -213,7 +237,7 @@
           {
             "line": 13,
             "value": "parcels::BULK_ITEMS",
-            "context": "enum_variant"
+            "context": "constant"
           },
           {
             "line": 13,
@@ -244,7 +268,7 @@
         {
           "line": 13,
           "value": "parcels::BULK_ITEMS",
-          "context": "enum_variant"
+          "context": "constant"
         },
         {
           "line": 13,
@@ -288,6 +312,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:70700926",
+      "canonical_gap_id": "gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:amount==free_shipping",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:shipping:predicate_boundary:predicate:amount==free_shipping",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "shipping",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount==free_shipping"
+
+      },
       "classification": "infection_unknown",
       "severity": "warning",
       "confidence": 0.66,
@@ -295,7 +331,7 @@
         "id": "probe:src_lib.rs:predicate:70700926",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/boundary_named_constant/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 30,
         "expression": "amount >= FREE_SHIPPING"
        },

@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 64843a2..5989cab 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -15,5 +15,5 @@ pub fn parse_qty(text: &str) -> Result<u32, std::num::ParseIntError> {
+ 
+ /// Reached only by a trial that is built but never handed to the harness.
+ pub fn handling(items: u32) -> u32 {
+-    items * 6
++    6 * items
+ }

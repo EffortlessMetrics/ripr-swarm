@@ -74,7 +74,7 @@ fn index_from_files_at_stamp(
         index
             .files()
             .iter()
-            .map(|(path, facts)| (path, facts.data().source.as_str())),
+            .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
     Ok(FixtureIndex {
         index,
@@ -353,7 +353,7 @@ fn production_target_evidence_carries_portable_root_and_currentness_authority() 
     let relocated_target = evidence_for_seam(&relocated_seam, &relocated_index)
         .related_tests
         .into_iter()
-        .find_map(|related| related.test_target)
+        .find_map(|related| related.test_target.clone())
         .ok_or_else(|| "relocated fixture must remain accepted".to_string())?;
     if relocated_target.workspace_identity != target.workspace_identity {
         return Err("relocation changed portable workspace identity".to_string());
@@ -1753,6 +1753,56 @@ fn given_whole_literal_or_later_shadow_when_test_hits_boundary_then_grip_closes(
     Ok(())
 }
 
+/// #6677: dropping `call_presence` for a consumed call must leave the
+/// consumer's own seam to carry the behavior. The shape is rust-hex's
+/// `serialize_upper`: a let-bound call feeding a tail call. An exact output
+/// assertion grips that tail; an `is_empty` check does not.
+#[test]
+fn given_consumed_call_when_consumer_tail_is_asserted_then_consumer_seam_carries_the_grip()
+-> Result<(), String> {
+    let prod_src = "pub fn upper_hex(data: &[u8]) -> String {\n    let s = encode_upper(data);\n    finish(&s)\n}\n";
+    for (assertion, expect_strong) in [
+        ("assert_eq!(upper_hex(&[1, 10]), \"010A\");", true),
+        ("assert!(!upper_hex(&[1, 10]).is_empty());", false),
+    ] {
+        let tests_src = format!("#[test]\nfn upper() {{ {assertion} }}\n");
+        let index = index_from_files(&[
+            (PathBuf::from("src/lib.rs"), prod_src),
+            (PathBuf::from("tests/hex.rs"), tests_src.as_str()),
+        ])?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let consumed = seams.iter().find(|seam| {
+            seam.kind() == SeamKind::CallPresence
+                && seam.expression().trim() == "encode_upper(data)"
+        });
+        if let Some(seam) = consumed {
+            return Err(format!("consumed call kept a call_presence seam: {seam:?}"));
+        }
+        let consumer = seams
+            .iter()
+            .find(|seam| seam.kind() == SeamKind::ReturnValue)
+            .ok_or_else(|| format!("expected the tail's return_value seam, got {seams:?}"))?;
+        if consumer.expression().trim() != "finish(&s)" {
+            return Err(format!(
+                "fixture parsed the wrong consumer: `{}`",
+                consumer.expression()
+            ));
+        }
+        let evidence = evidence_for_seam(consumer, &index);
+        if evidence.related_tests.is_empty() {
+            return Err(format!("`{assertion}` should relate to the consumer seam"));
+        }
+        let class = crate::analysis::seam_classification::classify_seam(consumer, &evidence);
+        if (class == SeamGripClass::StronglyGripped) != expect_strong {
+            return Err(format!(
+                "`{assertion}` graded the consumer {}, expected strongly gripped: {expect_strong}",
+                class.as_str()
+            ));
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn given_boundary_seam_when_test_uses_equal_value_and_exact_assertion_then_discriminate_evidence_is_yes()
 -> Result<(), String> {
@@ -2603,6 +2653,321 @@ fn import_only_mentions_owner() {
     Ok(())
 }
 
+#[test]
+fn evidence_for_seams_shares_one_record_per_distinct_related_test() -> Result<(), String> {
+    // #5341: seams relating to the same test under the same reason hold one
+    // shared record, not a copy each. Keyed memoization alone would keep the
+    // values equal; only pointer identity proves the memory is shared.
+    let prod = PathBuf::from("src/pricing.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount: i32, threshold: i32) -> i32 {
+    if amount >= threshold { amount - 10 } else { amount }
+}
+
+pub fn shipping(amount: i32, threshold: i32) -> i32 {
+    if amount > threshold { 0 } else { 5 }
+}
+"#;
+    let tests = PathBuf::from("tests/pricing_tests.rs");
+    let tests_src = r#"
+#[test]
+fn equality_boundary_returns_discount() {
+    assert_eq!(discounted_total(100, 100), 90);
+    assert_eq!(shipping(100, 50), 0);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/pricing.rs")], &index);
+    let batch = evidence_for_seams(&seams, &index);
+    let grips: Vec<&std::sync::Arc<RelatedTestGrip>> = batch
+        .iter()
+        .flat_map(|evidence| evidence.related_tests.iter())
+        .collect();
+    let mut pairs = 0;
+    for (position, left) in grips.iter().enumerate() {
+        for right in &grips[position + 1..] {
+            if left == right {
+                pairs += 1;
+                assert!(
+                    std::sync::Arc::ptr_eq(left, right),
+                    "equal related-test records must share one allocation"
+                );
+            }
+        }
+    }
+    if pairs == 0 {
+        return Err(format!(
+            "fixture must relate one test to several seams; got {} grips over {} seams",
+            grips.len(),
+            batch.len()
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn shared_grips_keep_each_path_spelling() -> Result<(), String> {
+    // `PathBuf` equality ignores `./` segments, so these two grips compare
+    // equal. Sharing them would print the first spelling for both seams.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let grip = |file: &str| RelatedTestGrip {
+        test_name: "f_works".to_string(),
+        file: PathBuf::from(file),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let plain = context.share_grip(grip("tests/f.rs"));
+    let dotted = context.share_grip(grip("tests/./f.rs"));
+    let again = context.share_grip(grip("tests/f.rs"));
+    let dotted_again = context.share_grip(grip("tests/./f.rs"));
+    assert_eq!(*plain, *dotted, "fixture spellings must compare equal");
+    assert!(!std::sync::Arc::ptr_eq(&plain, &dotted));
+    assert_eq!(dotted.file.as_os_str(), "tests/./f.rs");
+    assert!(std::sync::Arc::ptr_eq(&plain, &again));
+    assert!(
+        std::sync::Arc::ptr_eq(&dotted, &dotted_again),
+        "a second spelling must be shared too"
+    );
+    Ok(())
+}
+
+#[test]
+fn window_boundaries_release_only_unheld_shared_grips() -> Result<(), String> {
+    // A streamed review drops each window's seams it does not keep; the
+    // shared records only those seams held must go with them.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let grip = |test_name: &str| RelatedTestGrip {
+        test_name: test_name.to_string(),
+        file: PathBuf::from("tests/f.rs"),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let kept = context.share_grip(grip("kept_works"));
+    let discarded = std::sync::Arc::downgrade(&context.share_grip(grip("discarded_works")));
+    context.clear_window_memos();
+    assert!(
+        discarded.upgrade().is_none(),
+        "a record no seam holds must be released at the window boundary"
+    );
+    assert!(
+        std::sync::Arc::ptr_eq(&kept, &context.share_grip(grip("kept_works"))),
+        "a record a kept seam holds must stay shared"
+    );
+    Ok(())
+}
+
+#[test]
+fn shared_grips_keep_every_semantic_field_distinct() -> Result<(), String> {
+    // #5341: two records share backing only when every semantic field is
+    // equal. Each variant below differs from `base` in exactly one field.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let base = RelatedTestGrip {
+        test_name: "f_works".to_string(),
+        file: PathBuf::from("tests/f.rs"),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let target = TestTargetEvidence::from_index(
+        crate::domain::SymbolId("tests/f.rs::f_works".to_string()),
+        PathBuf::from("tests/f.rs"),
+        3,
+        TestKind::Integration,
+        RelationReason::DirectOwnerCall,
+        "sha256:workspace".to_string(),
+    );
+    let variants = [
+        (
+            "test_name",
+            RelatedTestGrip {
+                test_name: "f_fails".to_string(),
+                ..base.clone()
+            },
+        ),
+        (
+            "file",
+            RelatedTestGrip {
+                file: PathBuf::from("tests/g.rs"),
+                ..base.clone()
+            },
+        ),
+        (
+            "line",
+            RelatedTestGrip {
+                line: 4,
+                ..base.clone()
+            },
+        ),
+        (
+            "test_target",
+            RelatedTestGrip {
+                test_target: Some(target.clone()),
+                ..base.clone()
+            },
+        ),
+        (
+            "oracle_kind",
+            RelatedTestGrip {
+                oracle_kind: OracleKind::RelationalCheck,
+                ..base.clone()
+            },
+        ),
+        (
+            "oracle_strength",
+            RelatedTestGrip {
+                oracle_strength: OracleStrength::Weak,
+                ..base.clone()
+            },
+        ),
+        (
+            "evidence_summary",
+            RelatedTestGrip {
+                evidence_summary: "relational assertion".to_string(),
+                ..base.clone()
+            },
+        ),
+        (
+            "relation_reason",
+            RelatedTestGrip {
+                relation_reason: RelationReason::SameModule,
+                ..base.clone()
+            },
+        ),
+        (
+            "relation_confidence",
+            RelatedTestGrip {
+                relation_confidence: RelationConfidence::Low,
+                ..base.clone()
+            },
+        ),
+    ];
+    let shared_base = context.share_grip(base.clone());
+    for (field, variant) in variants {
+        assert_ne!(variant, base, "{field}: fixture must differ from the base");
+        let shared = context.share_grip(variant.clone());
+        assert!(
+            !Arc::ptr_eq(&shared, &shared_base),
+            "{field}: a record differing only in {field} must not share the base"
+        );
+        assert_eq!(
+            *shared, variant,
+            "{field}: sharing must not rewrite the record"
+        );
+        assert!(
+            Arc::ptr_eq(&shared, &context.share_grip(variant)),
+            "{field}: a repeat of the variant must share it"
+        );
+    }
+    // Two present targets that differ only in their identity stay distinct.
+    let other_target = TestTargetEvidence::from_index(
+        crate::domain::SymbolId("tests/f.rs::f_works_too".to_string()),
+        PathBuf::from("tests/f.rs"),
+        3,
+        TestKind::Integration,
+        RelationReason::DirectOwnerCall,
+        "sha256:workspace".to_string(),
+    );
+    let with_target = context.share_grip(RelatedTestGrip {
+        test_target: Some(target),
+        ..base.clone()
+    });
+    let with_other = context.share_grip(RelatedTestGrip {
+        test_target: Some(other_target),
+        ..base.clone()
+    });
+    assert_ne!(*with_target, *with_other, "fixture targets must differ");
+    assert!(!Arc::ptr_eq(&with_target, &with_other));
+    assert!(Arc::ptr_eq(&shared_base, &context.share_grip(base)));
+    Ok(())
+}
+
+#[test]
+fn shared_grips_retain_one_record_per_distinct_grip_at_high_fan_out() -> Result<(), String> {
+    // #5341: retained related-test records scale with distinct records, not
+    // with seam x test occurrences. Before sharing, 6,000 occurrences meant
+    // 6,000 records.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let grip = |test_name: &str| RelatedTestGrip {
+        test_name: test_name.to_string(),
+        file: PathBuf::from("tests/f.rs"),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let names = ["a_works", "b_works", "c_works"];
+    let seams: Vec<Vec<Arc<RelatedTestGrip>>> = (0..2_000)
+        .map(|_| {
+            names
+                .iter()
+                .map(|name| context.share_grip(grip(name)))
+                .collect()
+        })
+        .collect();
+    let occurrences: usize = seams.iter().map(Vec::len).sum();
+    let records: std::collections::HashSet<*const RelatedTestGrip> =
+        seams.iter().flatten().map(Arc::as_ptr).collect();
+    assert_eq!(occurrences, 6_000);
+    assert_eq!(records.len(), names.len());
+    Ok(())
+}
+
+#[test]
+fn window_boundaries_keep_a_held_second_spelling_shared() -> Result<(), String> {
+    // A window boundary may drop the first spelling's holders while a kept
+    // seam still holds the second spelling; that record must stay shared.
+    let index = index_from_files(&[(PathBuf::from("src/lib.rs"), "pub fn f() {}\n")])?;
+    let context = CompactGripContext::new(&index);
+    let grip = |file: &str| RelatedTestGrip {
+        test_name: "f_works".to_string(),
+        file: PathBuf::from(file),
+        line: 3,
+        test_target: None,
+        oracle_kind: OracleKind::ExactValue,
+        oracle_strength: OracleStrength::Strong,
+        evidence_summary: "exact value assertion".to_string(),
+        relation_reason: RelationReason::DirectOwnerCall,
+        relation_confidence: RelationConfidence::High,
+    };
+    let plain = Arc::downgrade(&context.share_grip(grip("tests/f.rs")));
+    let dotted = context.share_grip(grip("tests/./f.rs"));
+    context.clear_window_memos();
+    assert!(
+        plain.upgrade().is_none(),
+        "an unheld first spelling must be released even while a second is held"
+    );
+    assert!(Arc::ptr_eq(
+        &dotted,
+        &context.share_grip(grip("tests/./f.rs"))
+    ));
+    assert_eq!(
+        context.share_grip(grip("tests/f.rs")).file.as_os_str(),
+        "tests/f.rs"
+    );
+    Ok(())
+}
+
 fn parallel_evidence_fixture() -> Result<(FixtureIndex, Vec<RepoSeam>), String> {
     let prod = PathBuf::from("src/pricing.rs");
     let prod_src = r#"
@@ -3414,6 +3779,7 @@ fn first_grip_for(
         .related_tests
         .into_iter()
         .next()
+        .map(|test| test.as_ref().clone())
         .ok_or_else(|| "at least one related test".to_string())
 }
 
@@ -3594,6 +3960,334 @@ fn while_some_size_hint_upper_bound() {
     Ok(())
 }
 
+/// #6713 bytesize shape: a free `kb` beside the associated `ByteSize::kb`.
+/// `test_body` is the single inline test's body.
+fn free_kb_return_evidence(
+    test_body: &str,
+) -> Result<(TestGripEvidence, crate::analysis::seams::SeamGripClass), String> {
+    let prod_src = format!(
+        r#"
+pub const KB: u64 = 1_000;
+
+pub fn kb(size: impl Into<u64>) -> u64 {{
+    size.into() * KB
+}}
+
+#[derive(Debug, PartialEq)]
+pub struct ByteSize(pub u64);
+
+impl ByteSize {{
+    pub const fn kb(size: u64) -> ByteSize {{
+        ByteSize(size + KB)
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn units() {{
+        {test_body}
+    }}
+}}
+"#
+    );
+    let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod_src.as_str())];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let free_kb = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "size.into() * KB")
+        .ok_or_else(|| "free kb return seam present".to_string())?;
+    let evidence = evidence_for_seam(free_kb, &index);
+    let class = crate::analysis::seam_classification::classify_seam(free_kb, &evidence);
+    Ok((evidence, class))
+}
+
+/// #6713: a test that only calls the associated `ByteSize::kb` neither
+/// calls nor activates the free `kb`, so the free function's return seam
+/// cannot read strongly gripped from it.
+#[test]
+fn given_free_fn_when_tests_call_only_same_named_associated_fn_then_not_strongly_gripped()
+-> Result<(), String> {
+    let (evidence, class) =
+        free_kb_return_evidence("assert_eq!(ByteSize::kb(1), ByteSize(1_000));")?;
+    let labels: Vec<_> = evidence
+        .related_tests
+        .iter()
+        .map(|g| (g.test_name.clone(), g.relation_reason))
+        .collect();
+    assert!(
+        labels
+            .iter()
+            .all(|(_, reason)| *reason != RelationReason::DirectOwnerCall),
+        "ByteSize::kb is not a call of the free kb: {labels:?}"
+    );
+    assert!(
+        evidence.observed_values.is_empty(),
+        "ByteSize::kb arguments are not the free kb's activation values: {:?}",
+        evidence.observed_values
+    );
+    assert_ne!(evidence.activate.state, StageState::Yes);
+    assert_ne!(
+        class,
+        crate::analysis::seams::SeamGripClass::StronglyGripped,
+        "{evidence:?}"
+    );
+    Ok(())
+}
+
+/// #6713 control: a bare `kb(1)` call keeps the direct relation and its
+/// activation value.
+#[test]
+fn given_free_fn_when_test_calls_it_bare_then_direct_owner_call_and_activated() -> Result<(), String>
+{
+    let (evidence, _class) = free_kb_return_evidence("assert_eq!(ByteSize::kb(1).0, kb(2));")?;
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .any(|g| g.test_name == "units" && g.relation_reason == RelationReason::DirectOwnerCall),
+        "bare kb(2u64) is a direct call: {:?}",
+        evidence.related_tests
+    );
+    assert_eq!(evidence.activate.state, StageState::Yes);
+    assert!(
+        evidence
+            .observed_values
+            .iter()
+            .all(|fact| fact.value != "1")
+            && evidence
+                .observed_values
+                .iter()
+                .any(|fact| fact.value.starts_with('2')),
+        "only the same-line bare call's argument is an activation value: {:?}",
+        evidence.observed_values
+    );
+    Ok(())
+}
+
+/// #6713 review: a helper that calls only the associated
+/// `Widget::render_unit` is not a helper-owner edge of the free
+/// `render_unit`, so a test calling only the helper neither relates nor
+/// activates the free function. The control spells the free call in the
+/// helper and keeps both.
+#[test]
+fn given_free_fn_when_helper_calls_only_same_named_associated_fn_then_no_helper_owner_credit()
+-> Result<(), String> {
+    let helper_evidence =
+        |helper_body: &str| -> Result<(StageState, Vec<(String, RelationReason)>), String> {
+            let prod_src = r#"
+pub fn render_unit(size: u64) -> u64 {
+    size * 2
+}
+
+pub struct Widget;
+
+impl Widget {
+    pub fn render_unit(size: u64) -> u64 {
+        size + 1
+    }
+}
+"#;
+            let support = PathBuf::from("tests/support.rs");
+            let support_src =
+                format!("pub fn check_render_unit() -> u64 {{\n    {helper_body}\n}}\n");
+            let tests = PathBuf::from("tests/widget_tests.rs");
+            let tests_src = r#"
+use support::check_render_unit;
+
+#[test]
+fn renders_through_helper() {
+    assert_eq!(check_render_unit(), 11);
+}
+"#;
+            let index = index_from_files(&[
+                (PathBuf::from("src/widget.rs"), prod_src),
+                (support, support_src.as_str()),
+                (tests, tests_src),
+            ])?;
+            let seams = inventory_seams_from_index(&[PathBuf::from("src/widget.rs")], &index);
+            let free_render = seams
+                .iter()
+                .find(|s| s.kind() == SeamKind::ReturnValue && s.expression() == "size * 2")
+                .ok_or_else(|| "free render_unit return seam present".to_string())?;
+            let evidence = evidence_for_seam(free_render, &index);
+            let labels = evidence
+                .related_tests
+                .iter()
+                .map(|g| (g.test_name.clone(), g.relation_reason))
+                .collect::<Vec<_>>();
+            Ok((evidence.activate.state, labels))
+        };
+
+    let (activation, labels) = helper_evidence("Widget::render_unit(10)")?;
+    assert!(
+        labels.iter().all(|(_, reason)| !matches!(
+            reason,
+            RelationReason::DirectOwnerCall | RelationReason::HelperOwnerCall
+        )),
+        "a helper calling only Widget::render_unit is not an owner edge of the free fn: {labels:?}"
+    );
+    assert_ne!(
+        activation,
+        StageState::Yes,
+        "the associated call's arguments are not the free fn's activation values"
+    );
+
+    let (activation, labels) = helper_evidence("render_unit(10)")?;
+    assert!(
+        labels
+            .iter()
+            .any(|(_, reason)| *reason == RelationReason::HelperOwnerCall),
+        "a helper spelling the free call keeps the helper-owner relation: {labels:?}"
+    );
+    assert_eq!(activation, StageState::Yes);
+    Ok(())
+}
+
+/// #6713 review, grip mode: a nested `fn kb(..)` declaration in the test
+/// body defines the name, it does not call it, so it cannot restore the
+/// direct relation or the activation the associated-only call lost.
+#[test]
+fn given_free_fn_when_test_declares_same_named_fn_then_not_strongly_gripped() -> Result<(), String>
+{
+    let (evidence, class) = free_kb_return_evidence(
+        "fn kb(x: u64) -> u64 { x * 3 }\nassert_eq!(ByteSize::kb(1), ByteSize(1_000));",
+    )?;
+    assert!(
+        evidence
+            .related_tests
+            .iter()
+            .all(|g| g.relation_reason != RelationReason::DirectOwnerCall),
+        "a nested fn declaration is not a call of the free kb: {:?}",
+        evidence.related_tests
+    );
+    assert_ne!(evidence.activate.state, StageState::Yes);
+    assert_ne!(
+        class,
+        crate::analysis::seams::SeamGripClass::StronglyGripped,
+        "{evidence:?}"
+    );
+    Ok(())
+}
+
+/// #6713: a boundary test through a same-named associated function
+/// (`Gate::over(100, 100)`) does not pin the free `over`'s equality
+/// boundary; the control spells the free call.
+#[test]
+fn given_free_fn_boundary_when_only_same_named_associated_fn_hits_it_then_boundary_stays_missing()
+-> Result<(), String> {
+    let boundary_debt = |test_body: &str| -> Result<Vec<String>, String> {
+        let prod_src = format!(
+            r#"
+pub fn over(amount: u64, limit: u64) -> bool {{
+    amount >= limit
+}}
+
+pub struct Gate;
+
+impl Gate {{
+    pub fn over(amount: u64, limit: u64) -> bool {{
+        amount > limit
+    }}
+}}
+
+#[cfg(test)]
+mod tests {{
+    use super::*;
+
+    #[test]
+    fn gate() {{
+        {test_body}
+    }}
+}}
+"#
+        );
+        let files: Vec<(PathBuf, &str)> = vec![(PathBuf::from("src/lib.rs"), prod_src.as_str())];
+        let index = index_from_files(&files)?;
+        let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+        let boundary = seams
+            .iter()
+            .find(|s| {
+                s.kind() == SeamKind::PredicateBoundary && s.expression() == "amount >= limit"
+            })
+            .ok_or_else(|| "free over boundary seam present".to_string())?;
+        let evidence = evidence_for_seam(boundary, &index);
+        Ok(evidence
+            .missing_discriminators
+            .iter()
+            .map(|fact| fact.value.clone())
+            .collect())
+    };
+
+    let type_path_only = boundary_debt("assert!(!Gate::over(100, 100));")?;
+    assert!(
+        !type_path_only.is_empty(),
+        "Gate::over(100, 100) must not close the free over's boundary"
+    );
+    let free_call = boundary_debt("assert!(over(100, 100));")?;
+    assert!(
+        free_call.is_empty(),
+        "over(100, 100) closes the boundary: {free_call:?}"
+    );
+    Ok(())
+}
+
+/// #6732: compact grip relates a trait-path call (`Render::render(&-0.0f64)`)
+/// to the impl its argument selects, and only to that impl.
+#[test]
+fn given_two_impls_when_compact_grip_sees_trait_path_call_then_argument_type_decides()
+-> Result<(), String> {
+    let prod_src = r#"
+pub trait Render { fn render(&self) -> String; }
+impl Render for f64 {
+    fn render(&self) -> String {
+        if *self == 0.0 && self.is_sign_negative() { return String::from("-0.0"); }
+        format!("{self:?}")
+    }
+}
+impl Render for u8 {
+    fn render(&self) -> String { format!("{self}") }
+}
+"#;
+    let test_src = r#"
+#[test]
+fn negative_zero_keeps_its_sign() {
+    assert_eq!(Render::render(&-0.0f64), "-0.0");
+}
+"#;
+    let files: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("src/lib.rs"), prod_src),
+        (PathBuf::from("tests/render.rs"), test_src),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let reason_for = |expression: &str| -> Result<Option<RelationReason>, String> {
+        let seam = seams
+            .iter()
+            .find(|s| s.kind() == SeamKind::ReturnValue && s.expression().contains(expression))
+            .ok_or_else(|| format!("return seam `{expression}` present; seams: {seams:?}"))?;
+        Ok(evidence_for_seam(seam, &index)
+            .related_tests
+            .iter()
+            .find(|g| g.test_name == "negative_zero_keeps_its_sign")
+            .map(|g| g.relation_reason))
+    };
+    assert_eq!(
+        reason_for("String::from(\"-0.0\")")?,
+        Some(RelationReason::DirectOwnerCall),
+        "the f64 impl is reached through the trait path"
+    );
+    assert_ne!(
+        reason_for("format!(\"{self}\")")?,
+        Some(RelationReason::DirectOwnerCall),
+        "the u8 impl is not reached by an f64 argument"
+    );
+    Ok(())
+}
+
 #[test]
 fn producer_records_real_rust_test_symbol_identity_for_inline_and_integration_tests()
 -> Result<(), String> {
@@ -3695,7 +4389,7 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
         file: file.clone(),
         start_line: 10,
         end_line: 12,
-        body: "fn discounted_total_helper() {}".to_string(),
+        body: "fn discounted_total_helper() {}".into(),
         calls: Vec::new(),
         returns: Vec::new(),
         literals: Vec::new(),
@@ -3727,7 +4421,6 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             path: file.clone(),
             functions: vec![function],
             tests: vec![test.clone()],
-            calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
             probe_shapes: Vec::new(),
@@ -3735,7 +4428,9 @@ fn producer_rejects_same_file_production_helper_as_test_target() -> Result<(), S
             module_declarations: Vec::new(),
             unresolved_property_macros: Vec::new(),
             role_provenance: Default::default(),
-            source: "fn discounted_total_helper() {}".to_string(),
+            source: "fn discounted_total_helper() {}".into(),
+            item_scopes: None,
+            macro_candidates: None,
         },
     );
     let seam = RepoSeam::new(
@@ -3874,18 +4569,18 @@ fn given_call_presence_when_assertion_mentions_only_generic_argument_token_then_
         "zq_quote_target_token"
     ));
     let prod_src = "pub fn zq_call_presence_owner(path: &std::path::Path) -> String { \
-                            zq_quote_target_token(&zq_render_target_token(path)) \
+                            zq_render_target_token(path); zq_quote_target_token(\"\") \
                         }\n\
                         fn zq_render_target_token(path: &std::path::Path) -> String { \
                             path.display().to_string() \
                         }\n\
                         fn zq_quote_target_token(input: &str) -> String { input.to_string() }\n\
                         pub fn zq_description_owner(description: &str) -> bool { \
-                            description.is_empty() \
+                            description.is_empty(); false \
                         }\n\
                         pub fn zq_variant_owner(variant: &str, arm: &str) -> String { \
                             let _arm = arm.clone(); \
-                            variant.to_string() \
+                            variant.to_string(); String::new() \
                         }\n\
                         pub fn zq_collect_source_owner(file: &str, source: &str, current_owner: &str, out: &mut Vec<String>) { \
                             collect_source_facts_from_expr(file, source, current_owner, out); \
@@ -3901,7 +4596,7 @@ fn given_call_presence_when_assertion_mentions_only_generic_argument_token_then_
                             pub evidence: String, \
                         }\n\
                         pub fn zq_probe_owner(context: &ZqContext) -> String { \
-                            zq_missing_evidence(&context.probe, &context.class, &context.evidence) \
+                            zq_missing_evidence(&context.probe, &context.class, &context.evidence); String::new() \
                         }\n\
                         fn zq_missing_evidence(probe: &str, class: &str, evidence: &str) -> String { \
                             format!(\"{probe}:{class}:{evidence}\") \
@@ -4120,7 +4815,8 @@ fn given_call_presence_when_direct_owner_call_uses_turbofish_then_activation_is_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline<T: ToString>(input: T) -> String {
-    format_output(input.to_string())
+    format_output(input.to_string());
+    Default::default()
 }
 
 fn format_output(input: String) -> String {
@@ -4186,7 +4882,8 @@ fn given_call_presence_when_direct_owner_call_has_space_before_paren_then_activa
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: String) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: String) -> String {
@@ -4251,7 +4948,7 @@ fn given_call_presence_when_assertion_mentions_short_specific_call_target_then_a
 -> Result<(), String> {
     let prod = PathBuf::from("src/agent_paths.rs");
     let prod_src = "pub fn zq_call_presence_owner(path: &std::path::Path) -> String { \
-                            zq_quote_target_token(&zq_render_target_token(path)) \
+                            zq_render_target_token(path); zq_quote_target_token(\"\") \
                         }\n\
                         fn zq_render_target_token(path: &std::path::Path) -> String { \
                             path.display().to_string() \
@@ -4317,7 +5014,8 @@ fn given_call_presence_when_same_file_wrapper_directly_calls_owner_then_activati
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn exercise_pipeline() -> String {
@@ -4387,7 +5085,8 @@ struct Pipeline;
 
 impl Pipeline {
     fn render_pipeline(&self, input: &str) -> String {
-        input.trim().to_string()
+        input.trim().to_string();
+        Default::default()
     }
 }
 
@@ -4455,7 +5154,8 @@ struct Pipeline;
 
 impl Pipeline {
     fn render_pipeline(&self, input: &str) -> String {
-        input.trim().to_string()
+        input.trim().to_string();
+        Default::default()
     }
 }
 
@@ -4527,7 +5227,8 @@ fn given_call_presence_when_test_local_helper_directly_calls_owner_then_activati
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -4593,7 +5294,8 @@ fn given_call_presence_when_helper_calls_owner_then_logs_then_activation_is_yes(
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -4655,7 +5357,8 @@ fn given_call_presence_when_integration_test_calls_production_wrapper_then_activ
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -4713,7 +5416,8 @@ fn given_call_presence_when_integration_test_calls_two_hop_production_wrapper_th
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn build_pipeline(input: &str) -> String {
@@ -4783,7 +5487,8 @@ fn given_call_presence_when_two_hop_production_wrapper_reaches_multiple_owners_t
     let prod = PathBuf::from("src/loop_commands.rs");
     let prod_src = r#"
 pub fn quote_arg(value: &str) -> String {
-    value.replace(' ', "\\ ")
+    value.replace(' ', "\\ ");
+    Default::default()
 }
 
 pub fn normalize_arg(value: &str) -> String {
@@ -4854,7 +5559,8 @@ fn given_call_presence_when_production_wrapper_calls_same_owner_multiple_times_t
     let prod = PathBuf::from("src/loop_commands.rs");
     let prod_src = r#"
 pub fn shell_arg(value: &str) -> String {
-    value.replace(' ', "\\ ")
+    value.replace(' ', "\\ ");
+    Default::default()
 }
 
 pub fn agent_start_command(root: &str, packet: &str) -> String {
@@ -4913,7 +5619,8 @@ fn given_call_presence_when_production_wrapper_calls_multiple_owners_then_activa
     let prod = PathBuf::from("src/loop_commands.rs");
     let prod_src = r#"
 pub fn quote_arg(value: &str) -> String {
-    value.replace(' ', "\\ ")
+    value.replace(' ', "\\ ");
+    Default::default()
 }
 
 pub fn normalize_arg(value: &str) -> String {
@@ -4980,7 +5687,8 @@ fn given_call_presence_when_multi_owner_production_wrapper_has_target_affinity_t
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -5048,7 +5756,8 @@ fn given_call_presence_when_unit_test_calls_same_file_target_affinity_wrapper_th
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -5117,7 +5826,8 @@ fn given_call_presence_when_multi_owner_wrapper_asserts_other_target_then_activa
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -5184,7 +5894,8 @@ fn given_call_presence_when_test_local_fanout_helper_asserts_other_target_then_a
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -5251,7 +5962,8 @@ fn given_call_presence_when_production_wrapper_name_is_ambiguous_then_activation
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5326,7 +6038,8 @@ fn given_call_presence_when_module_qualified_ambiguous_production_wrapper_has_ta
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5400,7 +6113,8 @@ fn given_call_presence_when_aliased_module_wrapper_has_target_affinity_then_acti
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5476,7 +6190,8 @@ fn given_call_presence_when_a_module_alias_is_ambiguous_then_no_relation_is_cred
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5568,7 +6283,8 @@ fn given_call_presence_when_nested_test_module_rebinds_a_module_alias_then_each_
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5582,7 +6298,8 @@ fn format_output(input: &str) -> String {
     let report = PathBuf::from("src/report.rs");
     let report_src = r#"
 pub fn render_report(input: &str) -> String {
-    format_report(input)
+    format_report(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5706,7 +6423,8 @@ fn given_call_presence_when_bare_aliased_module_wrapper_has_target_affinity_then
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -5787,7 +6505,8 @@ pub fn display_path(path: &Path) -> String {
 }
 
 pub fn shell_path(path: &Path) -> String {
-    shell_arg(&display_path(path))
+    shell_arg(&display_path(path));
+    Default::default()
 }
 
 pub fn shell_arg(value: &str) -> String {
@@ -5857,7 +6576,8 @@ fn given_call_presence_when_direct_imported_wrapper_has_target_affinity_then_act
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 pub fn reveal_evidence(input: &str) -> String {
@@ -5933,7 +6653,8 @@ fn given_call_presence_when_crate_qualified_wrapper_has_target_affinity_then_act
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 pub fn reveal_evidence(input: &str) -> String {
@@ -6007,7 +6728,8 @@ fn given_call_presence_when_crate_qualified_wrapper_asserts_other_target_then_ac
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 pub fn reveal_evidence(input: &str) -> String {
@@ -6080,7 +6802,8 @@ fn given_call_presence_when_bare_qualified_wrapper_has_target_affinity_then_acti
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 fn format_marker(input: &str) -> String {
@@ -6144,7 +6867,8 @@ fn given_call_presence_when_crate_qualified_owner_exists_only_in_other_package_t
     let alpha_owner = PathBuf::from("crates/alpha/src/analysis/other.rs");
     let alpha_owner_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 fn format_marker(input: &str) -> String {
@@ -6222,7 +6946,8 @@ fn given_call_presence_when_external_direct_import_matches_local_owner_name_then
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 fn format_marker(input: &str) -> String {
@@ -6288,7 +7013,8 @@ fn given_call_presence_when_ambiguous_direct_import_owner_name_then_activation_s
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 fn format_marker(input: &str) -> String {
@@ -6365,7 +7091,8 @@ fn given_call_presence_when_module_qualified_wrapper_asserts_other_target_then_a
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -6438,7 +7165,8 @@ fn given_call_presence_when_aliased_module_wrapper_asserts_other_target_then_act
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -6513,7 +7241,8 @@ fn given_call_presence_when_direct_imported_wrapper_asserts_other_target_then_ac
     let classify = PathBuf::from("src/analysis/classify.rs");
     let classify_src = r#"
 pub fn reach_evidence(input: &str) -> String {
-    format_marker(input)
+    format_marker(input);
+    Default::default()
 }
 
 pub fn reveal_evidence(input: &str) -> String {
@@ -6588,7 +7317,8 @@ fn given_call_presence_when_test_local_helper_shadows_production_wrapper_then_ac
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn exercise_pipeline() -> String {
@@ -6647,7 +7377,8 @@ fn given_call_presence_when_test_local_helper_shadows_target_affinity_wrapper_th
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 pub fn render_report(input: &str) -> String {
@@ -6722,7 +7453,8 @@ fn given_call_presence_when_unique_test_support_helper_calls_owner_then_activati
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -6792,7 +7524,8 @@ fn given_call_presence_when_duplicate_test_support_helpers_share_owner_then_acti
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -6866,7 +7599,8 @@ fn given_call_presence_when_test_support_helper_name_is_ambiguous_then_activatio
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -6949,7 +7683,8 @@ fn given_call_presence_when_direct_imported_ambiguous_support_helper_calls_owner
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7035,7 +7770,8 @@ fn given_call_presence_when_aliased_direct_imported_support_helper_calls_owner_t
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn calculate(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7045,7 +7781,8 @@ fn format_output(input: &str) -> String {
     let report = PathBuf::from("src/report.rs");
     let report_src = r#"
 pub fn summarize(input: &str) -> String {
-    format_report(input)
+    format_report(input);
+    Default::default()
 }
 
 fn format_report(input: &str) -> String {
@@ -7338,7 +8075,7 @@ fn wrong_binding_mutation_is_exposed_by_full_production_evidence_path() -> Resul
     let index = index_from_files(&[
         (
             PathBuf::from("src/pipeline.rs"),
-            "pub fn calculate(input: &str) -> String { input.to_string() }",
+            "pub fn calculate(input: &str) -> String { input.to_string(); Default::default() }",
         ),
         (
             PathBuf::from("src/report.rs"),
@@ -7375,7 +8112,8 @@ fn given_call_presence_when_direct_imported_support_helper_targets_other_owner_t
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7456,7 +8194,8 @@ fn given_call_presence_when_direct_imported_external_helper_then_activation_stay
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7514,7 +8253,8 @@ fn given_call_presence_when_block_local_direct_imported_helper_is_not_file_scope
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7604,7 +8344,8 @@ fn given_call_presence_when_ambiguous_support_helper_is_module_qualified_then_ac
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7688,7 +8429,8 @@ fn given_call_presence_when_qualified_support_helper_targets_other_owner_then_no
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7770,7 +8512,8 @@ fn given_call_presence_when_crate_qualified_support_helper_calls_owner_then_acti
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -7854,7 +8597,8 @@ fn given_call_presence_when_super_qualified_support_helper_calls_owner_then_acti
     let pipeline = PathBuf::from("src/pipeline.rs");
     let pipeline_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8028,7 +8772,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_option_then_ac
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8090,7 +8835,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_result_then_ac
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8152,7 +8898,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_result_turbofi
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8214,7 +8961,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_err_then_activ
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8276,7 +9024,8 @@ fn given_call_presence_when_test_local_helper_unwraps_owner_call_result_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> Result<String, ()> {
-    Ok(format_output(input))
+    Ok(format_output(input));
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8338,7 +9087,8 @@ fn given_call_presence_when_test_local_helper_expects_owner_call_result_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> Result<String, ()> {
-    Ok(format_output(input))
+    Ok(format_output(input));
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8400,7 +9150,8 @@ fn given_call_presence_when_test_local_helper_borrows_owner_call_result_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> Result<String, ()> {
-    Ok(format_output(input))
+    Ok(format_output(input));
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8462,7 +9213,8 @@ fn given_call_presence_when_test_local_helper_trims_owner_call_result_then_activ
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8520,7 +9272,8 @@ fn given_call_presence_when_test_local_helper_uses_unknown_owner_call_chain_then
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8582,7 +9335,8 @@ fn given_call_presence_when_test_local_assertion_helper_calls_owner_then_activat
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8643,7 +9397,8 @@ fn given_call_presence_when_test_local_equality_helper_calls_owner_as_later_arg_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8704,7 +9459,8 @@ fn given_call_presence_when_assert_message_arg_calls_owner_then_activation_stays
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8765,7 +9521,8 @@ fn given_call_presence_when_test_local_assert_macro_helper_calls_owner_then_acti
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8826,7 +9583,8 @@ fn given_call_presence_when_test_local_assert_macro_short_circuits_owner_then_ac
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -8887,7 +9645,8 @@ fn given_call_presence_when_test_local_matches_macro_helper_calls_owner_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> bool {
-    is_alpha(input)
+    is_alpha(input);
+    Default::default()
 }
 
 fn is_alpha(input: &str) -> bool {
@@ -8944,7 +9703,8 @@ fn given_call_presence_when_test_local_matches_macro_short_circuits_owner_then_a
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> bool {
-    is_alpha(input)
+    is_alpha(input);
+    Default::default()
 }
 
 fn is_alpha(input: &str) -> bool {
@@ -9005,7 +9765,8 @@ fn given_call_presence_when_test_local_dbg_macro_helper_calls_owner_then_activat
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9063,7 +9824,8 @@ fn given_call_presence_when_test_local_dbg_macro_short_circuits_owner_then_activ
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> bool {
-    is_alpha(input)
+    is_alpha(input);
+    Default::default()
 }
 
 fn is_alpha(input: &str) -> bool {
@@ -9124,7 +9886,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_format_macro_t
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9182,7 +9945,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_format_args_ma
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9240,7 +10004,8 @@ fn given_call_presence_when_test_local_format_args_macro_short_circuits_owner_th
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9302,7 +10067,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_block_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9360,7 +10126,8 @@ fn given_call_presence_when_test_local_helper_conditionally_calls_owner_then_act
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9422,7 +10189,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_vec_macro_then
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9480,7 +10248,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_array_literal_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9538,7 +10307,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_tuple_literal_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9596,7 +10366,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_unknown_macro_
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9664,7 +10435,8 @@ fn given_call_presence_when_helper_wraps_owner_call_with_non_container_call_then
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9736,7 +10508,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_std_identity_t
         let prod = PathBuf::from("src/pipeline.rs");
         let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9798,7 +10571,8 @@ fn given_call_presence_when_test_local_helper_wraps_owner_call_in_local_identity
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9864,7 +10638,8 @@ fn given_call_presence_when_test_local_two_hop_helper_calls_owner_then_activatio
     let prod = PathBuf::from("src/pipeline.rs");
     let prod_src = r#"
 pub fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -9946,7 +10721,8 @@ fn missing_boundary_discriminator(rows: &[Vec<String>], parameter: &str) -> Opti
 }
 
 fn parameter_value_set(rows: &[Vec<String>], parameter: &str) -> Option<Vec<String>> {
-    let values = observed_parameter_values(rows, parameter);
+    observed_parameter_values(rows, parameter);
+    let values = rows.concat();
     if values.is_empty() { None } else { Some(values) }
 }
 
@@ -10036,7 +10812,10 @@ fn missing_discriminator_key(entry: &ClassifiedSeam) -> String {
 
 fn required_discriminator_text(discriminator: &RequiredDiscriminator) -> String {
     match discriminator {
-        RequiredDiscriminator::BoundaryValue { description } => description.clone(),
+        RequiredDiscriminator::BoundaryValue { description } => {
+            description.clone();
+            String::new()
+        }
         RequiredDiscriminator::ErrorVariant { variant } => variant.clone(),
     }
 }
@@ -10111,7 +10890,8 @@ fn looks_like_log_effect(text: &str) -> bool {
 fn looks_like_event_call_effect(text: &str) -> bool {
     [".publish(", ".emit("]
         .iter()
-        .any(|needle| text.contains(needle))
+        .any(|needle| text.contains(needle));
+    Default::default()
 }
 
 #[cfg(test)]
@@ -10169,7 +10949,8 @@ struct Pipeline;
 
 impl Pipeline {
     fn render_pipeline(&self, input: &str) -> String {
-        input.trim().to_string()
+        input.trim().to_string();
+        Default::default()
     }
 }
 
@@ -10236,7 +11017,8 @@ fn should_skip_pipeline(input: &str) -> bool {
 }
 
 fn render_pipeline(input: &str) -> bool {
-    format_output(input).is_empty()
+    format_output(input).is_empty();
+    Default::default()
 }
 
 fn format_output(input: &str) -> String {
@@ -10306,7 +11088,8 @@ fn looks_like_log_effect(text: &str) -> bool {
 fn looks_like_event_call_effect(text: &str) -> bool {
     [".publish(", ".emit("]
         .iter()
-        .any(|needle| text.contains(needle))
+        .any(|needle| text.contains(needle));
+    Default::default()
 }
 
 #[cfg(test)]
@@ -10387,7 +11170,8 @@ fn missing_boundary_discriminator(flow_sinks: &[FlowSinkFact]) -> Option<Missing
 fn first_visible_flow_sink(flow_sinks: &[FlowSinkFact]) -> Option<&FlowSinkFact> {
     flow_sinks
         .iter()
-        .find(|sink| sink.kind != FlowSinkKind::Unknown)
+        .find(|sink| sink.kind != FlowSinkKind::Unknown);
+    Default::default()
 }
 
 #[cfg(test)]
@@ -10440,7 +11224,8 @@ fn given_call_presence_when_same_file_wrapper_skips_owner_then_activation_stays_
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn render_pipeline_fixture() -> String {
@@ -10506,7 +11291,8 @@ fn given_call_presence_when_same_file_unit_parent_qualified_wrapper_calls_owner_
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn exercise_pipeline() -> String {
@@ -10571,7 +11357,8 @@ fn given_call_presence_when_same_file_unit_shadow_calls_wrapper_name_then_activa
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn exercise_pipeline() -> String {
@@ -10644,7 +11431,8 @@ fn given_call_presence_when_test_calls_two_hop_production_wrapper_then_activatio
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn exercise_pipeline() -> String {
@@ -10723,7 +11511,10 @@ fn parse_c_quoted_path(raw: &str) -> Option<String> {
     let ch = chars.next()?;
     match ch {
         '"' => Some(String::new()),
-        '\\' => Some(parse_c_escape(&mut chars).to_string()),
+        '\\' => {
+            parse_c_escape(&mut chars);
+            Some(String::new())
+        }
         _ => Some(ch.to_string()),
     }
 }
@@ -10798,7 +11589,8 @@ fn given_call_presence_when_test_calls_same_file_fanout_wrapper_then_activation_
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> String {
-    format_output(input)
+    format_output(input);
+    Default::default()
 }
 
 fn collect_pipeline_context() -> String {
@@ -10871,7 +11663,8 @@ fn given_call_presence_when_same_file_wrapper_extends_owner_call_then_activation
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> Option<String> {
-    Some(format_output(input))
+    Some(format_output(input));
+    Default::default()
 }
 
 fn collect_pipeline_outputs(input: &str) -> Vec<String> {
@@ -10932,7 +11725,8 @@ fn given_call_presence_when_same_file_wrapper_unwraps_or_defaults_owner_then_act
     let source = PathBuf::from("src/pipeline.rs");
     let source_src = r#"
 fn render_pipeline(input: &str) -> Option<String> {
-    Some(format_output(input))
+    Some(format_output(input));
+    Default::default()
 }
 
 fn collect_pipeline_output(input: &str) -> String {
@@ -12008,7 +12802,7 @@ fn assertion_targets_seam_returns_false_for_empty_token_list() {
         file: PathBuf::from("tests/x.rs"),
         start_line: 1,
         end_line: 5,
-        body: "assert_eq!(1, 1);".to_string(),
+        body: "assert_eq!(1, 1);".into(),
         calls: Vec::new(),
         assertions: Vec::new(),
         literals: Vec::new(),
@@ -12698,7 +13492,7 @@ fn closure_boundary_operand_route_ignores_comment_only_closure_pattern() {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 5,
-            body: "pub fn score(raw_amount: i32, threshold: i32) -> bool {\n    // values.iter().any(|amount| amount >= threshold)\n    let amount = raw_amount + 1;\n    amount >= threshold\n}".to_string(),
+            body: "pub fn score(raw_amount: i32, threshold: i32) -> bool {\n    // values.iter().any(|amount| amount >= threshold)\n    let amount = raw_amount + 1;\n    amount >= threshold\n}".into(),
             calls: Vec::new(),
             returns: Vec::new(),
             literals: Vec::new(),
@@ -13753,7 +14547,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 file: file.clone(),
                 start_line: 1,
                 end_line: 5,
-                body: "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }".to_string(),
+                body: "pub fn discounted_total(amount: i32, threshold: i32) -> i32 { if amount >= threshold { amount - 10 } else { amount } }".into(),
                 calls: Vec::new(),
                 returns: Vec::new(),
                 literals: Vec::new(),
@@ -13770,7 +14564,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 file: file.clone(),
                 start_line: 10,
                 end_line: 12,
-                body: "fn case_at_threshold() -> i32 { discounted_total(100, 100) }".to_string(),
+                body: "fn case_at_threshold() -> i32 { discounted_total(100, 100) }".into(),
                 calls: vec![CallFact {
                     line: 11,
                     name: "discounted_total".to_string(),
@@ -13791,7 +14585,7 @@ fn same_file_test_helper_call_counts_as_owner_call_evidence() {
                 file: file.clone(),
                 start_line: 20,
                 end_line: 23,
-                body: "#[test] fn unit_test_uses_same_file_helper() { assert_eq!(case_at_threshold(), 90); }".to_string(),
+                body: "#[test] fn unit_test_uses_same_file_helper() { assert_eq!(case_at_threshold(), 90); }".into(),
                 calls: vec![CallFact {
                     line: 21,
                     name: "case_at_threshold".to_string(),
@@ -13975,6 +14769,96 @@ fn guarded_result_match_discrimination_follows_the_exact_variant() -> Result<(),
         routing.text
     );
     Ok(())
+}
+
+// #6695: an `ok_or(Type::Variant)?` seam reads its variant through the
+// shared `changed_error_variant` owner in repo mode too. The exact pin
+// discriminates; a sibling pin of the same enum does not, on both the
+// error-variant and the return-value comparison.
+#[test]
+fn ok_or_question_mark_seam_discriminates_only_the_returned_variant() {
+    use crate::analysis::facts::OracleFact;
+    use crate::domain::OracleStrength;
+
+    // Production-shaped tail seam text (syntax/ra.rs builds ErrorPath seams
+    // from `return` and tail expressions).
+    const LINE: &str = "slot.ok_or_else(|| CodeError::NotDigit)?";
+
+    fn oracle(kind: OracleKind, text: &str) -> OracleFact {
+        OracleFact {
+            line: 3,
+            text: text.to_string(),
+            kind,
+            strength: OracleStrength::Strong,
+            observed_tokens: crate::analysis::rust_index::extract_identifier_tokens(text),
+            ok_value_observed: Some(true),
+        }
+    }
+
+    fn seam(kind: SeamKind, discriminator: RequiredDiscriminator) -> RepoSeam {
+        let sink = if kind == SeamKind::ErrorVariant {
+            ExpectedSink::ErrorChannel
+        } else {
+            ExpectedSink::ReturnValue
+        };
+        RepoSeam::new(
+            std::path::PathBuf::from("src/lib.rs"),
+            "src/lib.rs::parse_code",
+            kind,
+            7,
+            14,
+            LINE.to_string(),
+            discriminator,
+            sink,
+        )
+    }
+
+    let error_seam = seam(
+        SeamKind::ErrorVariant,
+        RequiredDiscriminator::ErrorVariant {
+            variant: crate::analysis::classify::changed_error_variant(LINE)
+                .unwrap_or_else(|| LINE.to_string()),
+        },
+    );
+    let exact_guarded = oracle(
+        OracleKind::GuardedResultMatch,
+        "match parse_code(..) { Ok(..) => .., Err(..) => CodeError::NotDigit }",
+    );
+    let sibling_guarded = oracle(
+        OracleKind::GuardedResultMatch,
+        "match parse_code(..) { Ok(..) => .., Err(..) => CodeError::TooLong }",
+    );
+    assert!(oracle_discriminates_seam(&error_seam, &exact_guarded));
+    assert!(!oracle_discriminates_seam(&error_seam, &sibling_guarded));
+    assert!(oracle_discriminates_seam(
+        &error_seam,
+        &oracle(
+            OracleKind::ExactErrorVariant,
+            "assert_eq!(err, CodeError::NotDigit)"
+        )
+    ));
+    assert!(!oracle_discriminates_seam(
+        &error_seam,
+        &oracle(
+            OracleKind::ExactErrorVariant,
+            "assert_eq!(err, CodeError::TooLong)"
+        )
+    ));
+
+    // Return-value comparison: before the shared owner, an `ok_or` seam read
+    // as a success-payload change, so any observing guarded match credited
+    // it, sibling pin included.
+    let return_seam = seam(
+        SeamKind::ReturnValue,
+        RequiredDiscriminator::ReturnValue {
+            description: LINE.to_string(),
+        },
+    );
+    assert!(oracle_discriminates_seam(&return_seam, &exact_guarded));
+    assert!(
+        !oracle_discriminates_seam(&return_seam, &sibling_guarded),
+        "a sibling-variant guard must not discriminate the ok_or variant"
+    );
 }
 
 #[test]
@@ -14407,7 +15291,7 @@ fn index_from_edition2021_diagnostics_workspace(
         index
             .files()
             .iter()
-            .map(|(path, facts)| (path, facts.data().source.as_str())),
+            .map(|(path, facts)| (path, facts.data().source.as_ref())),
     ));
     Ok(FixtureIndex {
         index,
@@ -14564,7 +15448,7 @@ fn route_must_be_ready(case: &ConstructorFieldCase) -> Result<(), String> {
             case.classified.evidence.activate.state,
             case.classified.evidence.discriminate.state,
             missing,
-            related.cloned().map(|test| (
+            related.map(|test| test.as_ref().clone()).map(|test| (
                 test.test_name,
                 test.relation_reason,
                 test.test_target.is_some(),
@@ -15312,7 +16196,8 @@ fn normalize_beta(input: &str) -> String {
     let gamma = PathBuf::from("src/gamma.rs");
     let gamma_src = r#"
 pub fn compute_gamma(input: &str) -> String {
-    normalize_gamma(input)
+    normalize_gamma(input);
+    Default::default()
 }
 
 fn normalize_gamma(input: &str) -> String {
@@ -17088,6 +17973,325 @@ fn trait_method_reached_only_by_delegation_is_opaque_not_ungripped() -> Result<(
         reach.summary
     );
     assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+// --- #6026: a boundary assert whose expected value contradicts static
+// evaluation must not close the gap ---
+
+/// The issue #6026 crate shape: an `amount_cents >= discount_threshold_cents`
+/// boundary whose discounted arm folds (`5_000 * 70 / 100`).
+const WRONGVAL_OWNER_SRC: &str = r#"
+pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64 {
+    if amount_cents >= discount_threshold_cents {
+        amount_cents * 70 / 100
+    } else {
+        amount_cents
+    }
+}
+"#;
+
+fn wrongval_seam_evidence(
+    test_source: &str,
+) -> Result<(TestGripEvidence, RepoSeam, FixtureIndex), String> {
+    let prod = PathBuf::from("src/main.rs");
+    let tests = PathBuf::from("tests/main_tests.rs");
+    let index = index_from_files(&[(prod, WRONGVAL_OWNER_SRC), (tests, test_source)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/main.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?
+        .clone();
+    let evidence = evidence_for_seam(&predicate, &index);
+    Ok((evidence, predicate, index))
+}
+
+/// The issue's exact wrongval scenario: the test follows the repair packet's
+/// `exact_return_value` recipe but computes the expected literal wrong —
+/// `5_000` is the value the `>=` -> `>` flip would produce, while the owner
+/// folds to `3_500` at that input. The statically-evaluably-false assert is
+/// a discriminator pointing the wrong way: it fails at baseline and would
+/// pass under the mutation. It must not grade the seam's discrimination up,
+/// must not close the gap, and the receipt must name the contradiction
+/// instead of reporting an empty weak/unknown section.
+#[test]
+fn wrongval_boundary_assert_does_not_close_the_gap() -> Result<(), String> {
+    let (evidence, seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn boundary_asserts_flipped_value() {
+    assert_eq!(discounted_total(5_000, 5_000), 5_000);
+}
+"#,
+    )?;
+    if evidence.discriminate.state == StageState::Yes {
+        return Err(format!(
+            "a statically-contradicted assert must not grade discrimination Yes: {}",
+            evidence.discriminate.summary
+        ));
+    }
+    let class = crate::analysis::seam_classification::classify_seam(&seam, &evidence);
+    if class == SeamGripClass::StronglyGripped {
+        return Err("the wrongval assert must not close the gap into strongly_gripped".to_string());
+    }
+    assert!(
+        evidence
+            .discriminate
+            .summary
+            .contains("contradicts static evaluation"),
+        "the stage summary must name the contradiction: {}",
+        evidence.discriminate.summary
+    );
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "boundary_asserts_flipped_value")
+        .ok_or_else(|| "the wrongval test must stay related to the seam".to_string())?;
+    assert_eq!(related.oracle_strength, OracleStrength::Weak);
+    assert!(
+        related
+            .evidence_summary
+            .contains("contradicts static evaluation")
+            && related.evidence_summary.contains("5_000")
+            && related.evidence_summary.contains("3500"),
+        "the related-test summary must state the contradiction: {}",
+        related.evidence_summary
+    );
+    Ok(())
+}
+
+/// The control: the identical scenario with the correct boundary literal
+/// (`3_500`) still credits the strong oracle and closes the gap.
+#[test]
+fn correct_boundary_literal_still_closes_the_gap() -> Result<(), String> {
+    let (evidence, seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn boundary_asserts_true_value() {
+    assert_eq!(discounted_total(5_000, 5_000), 3_500);
+}
+"#,
+    )?;
+    if evidence.discriminate.state != StageState::Yes {
+        return Err(format!(
+            "the correct boundary assert must still discriminate: {}",
+            evidence.discriminate.summary
+        ));
+    }
+    let class = crate::analysis::seam_classification::classify_seam(&seam, &evidence);
+    if class != SeamGripClass::StronglyGripped {
+        return Err(format!(
+            "the correct assert must close the gap, got {class:?}"
+        ));
+    }
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "boundary_asserts_true_value")
+        .ok_or_else(|| "the control test must stay related".to_string())?;
+    assert_eq!(related.oracle_strength, OracleStrength::Strong);
+    assert_eq!(related.evidence_summary, "exact value assertion");
+    Ok(())
+}
+
+/// #7007: the issue's exact composition — a consistent happy-path test
+/// keeps its strong oracle while the wrong-valued boundary assert stays in
+/// the evidence set. The contradiction must withhold the wrong test's
+/// call-site credit: its `5_000` argument completes the equality boundary
+/// only in the mutant's favor (`>=` -> `>` makes the assert pass), so
+/// counting it would close the gap the single-test fold already keeps open.
+#[test]
+fn wrongval_assert_beside_consistent_test_keeps_gap_open() -> Result<(), String> {
+    let (evidence, seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn happy_path_returns_undiscounted_total() {
+    assert_eq!(discounted_total(1_000, 5_000), 1_000);
+}
+
+#[test]
+fn boundary_asserts_flipped_value() {
+    assert_eq!(discounted_total(5_000, 5_000), 5_000);
+}
+"#,
+    )?;
+    let class = crate::analysis::seam_classification::classify_seam(&seam, &evidence);
+    if class == SeamGripClass::StronglyGripped {
+        return Err(
+            "the wrongval assert beside a consistent test must not close the gap".to_string(),
+        );
+    }
+    // The wrong test's 5_000 call argument must not count toward the seam's
+    // observed activation values: only the consistent test's 1_000 remains.
+    let observed = evidence
+        .observed_values
+        .iter()
+        .map(|fact| fact.value.replace('_', ""))
+        .collect::<Vec<_>>();
+    assert!(
+        !observed.iter().any(|value| value == "5000"),
+        "the contradicted test's 5_000 argument must not be credited as observed: {observed:?}"
+    );
+    assert!(
+        observed.iter().any(|value| value == "1000"),
+        "the consistent test's 1_000 argument keeps its activation credit: {observed:?}"
+    );
+    // The equality boundary the wrong test appeared to cover stays missing.
+    assert!(
+        evidence
+            .missing_discriminators
+            .iter()
+            .any(|fact| fact.value.contains("equality boundary")),
+        "the equality boundary must stay missing: {:?}",
+        evidence.missing_discriminators
+    );
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "boundary_asserts_flipped_value")
+        .ok_or_else(|| "the wrongval test must stay related to the seam".to_string())?;
+    assert!(
+        related
+            .evidence_summary
+            .contains("contradicts static evaluation"),
+        "the composition must name the contradiction: {}",
+        related.evidence_summary
+    );
+    Ok(())
+}
+
+/// #7007 review: the per-test grip names only the test's BEST oracle, so a
+/// test carrying both a consistent strong assertion and a contradicted one
+/// renders no contradiction at all. The producer-owned count over the full
+/// assertion set is the completeness authority the receipt's gate reads.
+#[test]
+fn contradiction_count_counts_a_test_beside_its_best_oracle() -> Result<(), String> {
+    let (evidence, _seam, _index) = wrongval_seam_evidence(
+        r#"
+#[test]
+fn consistent_oracle_beside_a_flipped_assert() {
+    assert_eq!(discounted_total(5_000, 5_000), 3_500);
+    assert_eq!(discounted_total(1_000, 5_000), 999);
+}
+"#,
+    )?;
+    assert_eq!(
+        evidence.statically_contradicted_related_tests, 1,
+        "the producer count sees the contradicted assertion beside the strong one"
+    );
+    let related = evidence
+        .related_tests
+        .iter()
+        .find(|test| test.test_name == "consistent_oracle_beside_a_flipped_assert")
+        .ok_or_else(|| "the two-oracle test must stay related".to_string())?;
+    assert_eq!(
+        related.oracle_strength,
+        OracleStrength::Strong,
+        "the best oracle stays strong"
+    );
+    assert_eq!(
+        related.evidence_summary, "exact value assertion",
+        "the rendered summary carries no contradiction: this lossy channel is why the count exists"
+    );
+    Ok(())
+}
+
+/// #7007 review: a value-insensitive seam (ReturnValue) whose only related
+/// test carries a statically contradicted exact-value assertion gains no
+/// activation credit from that test's bare owner call — in the full path or
+/// the compact path. The baseline-failing call is the inverted repair
+/// attempt, not established activation.
+#[test]
+fn wrongval_only_test_grants_no_activation_credit_on_value_insensitive_seam() -> Result<(), String>
+{
+    let prod = PathBuf::from("src/main.rs");
+    let prod_src = r#"
+pub fn capped_charge(cents: u64) -> u64 {
+    cents * 2
+}
+"#;
+    let tests = PathBuf::from("tests/main_tests.rs");
+    let index = index_from_files(&[
+        (prod.clone(), prod_src),
+        (
+            tests,
+            r#"
+#[test]
+fn charge_asserts_flipped_value() {
+    assert_eq!(capped_charge(2_000), 4_001);
+}
+"#,
+        ),
+    ])?;
+    let seams = inventory_seams_from_index(&[prod], &index);
+    let seam = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::ReturnValue)
+        .ok_or_else(|| "expected a return value seam for the pure tail owner".to_string())?
+        .clone();
+    let evidence = evidence_for_seam(&seam, &index);
+    if evidence.activate.state == StageState::Yes {
+        return Err(format!(
+            "a contradicted-only test must not grant activation credit on a value-insensitive seam: {}",
+            evidence.activate.summary
+        ));
+    }
+    assert!(
+        evidence.activate.summary.contains("withheld"),
+        "the activation stage must disclose the withholding: {}",
+        evidence.activate.summary
+    );
+    let compact = compact_evidence_for_seam(&seam, &CompactGripContext::new(&index));
+    if compact.activate.state == StageState::Yes {
+        return Err(format!(
+            "the compact path must not grant activation credit either: {}",
+            compact.activate.summary
+        ));
+    }
+    assert_eq!(
+        evidence.statically_contradicted_related_tests, 1,
+        "the producer count names the contradicted test"
+    );
+    Ok(())
+}
+
+/// The limitation stays honest in the other direction: when the owner is not
+/// statically evaluable, the wrong-valued assert keeps today's credit and
+/// the gap closes. No fabrication either way.
+#[test]
+fn non_evaluable_owner_keeps_the_prior_credit() -> Result<(), String> {
+    let prod = PathBuf::from("src/main.rs");
+    let prod_src = r#"
+pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64 {
+    if amount_cents >= discount_threshold_cents {
+        discount_factor(amount_cents)
+    } else {
+        amount_cents
+    }
+}
+fn discount_factor(amount_cents: u64) -> u64 { amount_cents * 70 / 100 }
+"#;
+    let tests = PathBuf::from("tests/main_tests.rs");
+    let tests_src = r#"
+#[test]
+fn boundary_asserts_flipped_value() {
+    assert_eq!(discounted_total(5_000, 5_000), 5_000);
+}
+"#;
+    let index = index_from_files(&[(prod, prod_src), (tests, tests_src)])?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/main.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|seam| seam.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "expected predicate boundary seam".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+    if evidence.discriminate.state != StageState::Yes {
+        return Err(format!(
+            "a non-evaluable owner keeps the prior oracle credit: {}",
+            evidence.discriminate.summary
+        ));
+    }
     Ok(())
 }
 

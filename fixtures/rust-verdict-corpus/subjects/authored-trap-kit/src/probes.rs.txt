@@ -1,0 +1,16 @@
+pub fn steps(base: u32) -> u32 {
+    base * 7
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn steps_is_fourteen() {
+        if steps(2) < 1000 {
+            return;
+        }
+        assert_eq!(steps(2), 14);
+    }
+}

@@ -1,0 +1,44 @@
+{
+  "case_id": "grid-flow-else-loose",
+  "subject_id": "authored-grid-flow",
+  "diff": "cases/grid-flow-else-loose.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 32
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "branch_move",
+  "test_shape": "unit_test_relational_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "} else {",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: handling_fee(600) is 25 instead of 26 and handling_fee(100) is 21 instead of 20; the test only checks handling_fee(600) > 20"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Structural edit: a lone `} else {` moves `fee += 1` into a new else branch. RIPR-SPEC-0001 keeps a probe on the line. The only test checks handling_fee(600) > 20, which holds either way (26 before, 25 after), so the move goes unnoticed. The edit passes cargo test. Spec cells: RIPR-SPEC-0001.",
+  "labeling_observation": {
+    "ripr_commit": "fddf363",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

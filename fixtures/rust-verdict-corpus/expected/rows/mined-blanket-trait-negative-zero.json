@@ -1,0 +1,22 @@
+{
+  "case_id": "mined-blanket-trait-negative-zero",
+  "subject_id": "authored-mined-codec",
+  "origin": "authored",
+  "anchor": "src/lib.rs:62",
+  "behavior_family": "return_value",
+  "test_shape": "trait_impl_reached_through_blanket_impl",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

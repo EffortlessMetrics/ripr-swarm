@@ -1,0 +1,52 @@
+{
+  "case_id": "tokens-inner-rate-macro-reach",
+  "subject_id": "authored-tokens",
+  "diff": "cases/tokens-inner-rate-macro-reach.diff",
+  "anchor": {
+    "file": "src/reach.rs",
+    "line": 38
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "production_macro_routes_to_owner",
+  "hard_case": "The test-to-owner path runs through a same-crate macro_rules! that ripr does not expand.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 4",
+        "mutated_line": "x * 4",
+        "outcome": "tests_failed",
+        "failing_test": "reach::tests::outer_triples",
+        "equivalence_review": "not equivalent: outer(4) becomes 16"
+      },
+      {
+        "replacement": "x + 3",
+        "mutated_line": "x + 3",
+        "outcome": "tests_failed",
+        "failing_test": "reach::tests::outer_triples",
+        "equivalence_review": "not equivalent: outer(4) becomes 7"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "outer reaches inner_rate only through call_inner!, and outer(4) is pinned to 12. Spec cells: RIPR-SPEC-0117.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

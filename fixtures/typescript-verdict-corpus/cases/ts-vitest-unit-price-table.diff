@@ -1,0 +1,12 @@
+diff --git a/src/cart.ts b/src/cart.ts
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -45,7 +45,7 @@ export function checkout(owner: string, lines: Line[], notifier: Notifier): numb
+ }
+ 
+ export async function fetchUnitPrice(sku: string): Promise<number> {
+-  const table: Record<string, number> = { apple: 120, pear: 95 };
++  const table: Record<string, number> = { apple: 120, pear: 99 };
+   return table[sku] ?? 0;
+ }
+ 

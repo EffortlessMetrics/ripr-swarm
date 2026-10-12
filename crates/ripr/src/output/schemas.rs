@@ -34,7 +34,7 @@ pub(crate) const AGENT_ARTIFACT_SCHEMAS: &[AgentArtifactSchema] = &[
         "repo_exposure",
         crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION,
         "output::repo_exposure",
-        "0.3: current full-repo exposure artifact shape.",
+        "0.4: current full-repo exposure artifact shape.",
     ),
     (
         "repo_exposure_summary",
@@ -125,7 +125,7 @@ mod tests {
     fn registry_matches_live_agent_artifact_versions() {
         let expected = [
             ("artifact_identity", "1", "agent::artifact"),
-            ("repo_exposure", "0.3", "output::repo_exposure"),
+            ("repo_exposure", "0.4", "output::repo_exposure"),
             ("repo_exposure_summary", "0.1", "output::repo_exposure"),
             (
                 "analysis_outcome_artifact",

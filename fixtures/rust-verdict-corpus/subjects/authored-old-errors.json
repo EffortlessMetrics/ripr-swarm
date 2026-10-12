@@ -1,0 +1,49 @@
+{
+  "subject_id": "authored-old-errors",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for older spec-defined cells",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "ccff8234d57d70489687d0bca240db57398655fd4a0e2371ff399161e8b10d42"
+    },
+    {
+      "path": "src/checks.rs",
+      "sha256": "51dcdfbead26b6bd7dc22d0304fd1bbc7250d3af2bc4a328c37b84c0b15f2452"
+    },
+    {
+      "path": "src/errors.rs",
+      "sha256": "5592c2b1ed6c98cdde143fd829b9dfd6eebbd0f103d1b49a2b7a3c7254f53998"
+    },
+    {
+      "path": "src/fees.rs",
+      "sha256": "c4671cbc0e4e135ea428e26aca32d7a5daf0759def7512f4ba94b3597244923f"
+    },
+    {
+      "path": "src/help.rs",
+      "sha256": "e31003cab6c6fb0fec13810f081bb611fb6b787f47f7dedc5159b0261ebc1204"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "7b55505732d726a2f03f861589d6b7b8dbacb2e953e4c7110af5ff160c38e06c"
+    },
+    {
+      "path": "src/macros.rs",
+      "sha256": "4b696effc3ef93e0ed41bc8df516d4e10572140d3d2de422fd8ef5d309f35778"
+    },
+    {
+      "path": "src/notify.rs",
+      "sha256": "d270ac976dbb621ac7ab307c1e9e82d654c316dc84185716a86cadc809fd75a6"
+    },
+    {
+      "path": "src/raw.rs",
+      "sha256": "10a2d962bbcc6a2858b361dd7bdf3007d60c4d0b101cd8124e3a6e7b8de8e48d"
+    },
+    {
+      "path": "src/settings.rs",
+      "sha256": "2c6e1177e40b46efa34b96a8d53e454c81a3aa8ab5e22453ce422dcf9c787515"
+    }
+  ]
+}

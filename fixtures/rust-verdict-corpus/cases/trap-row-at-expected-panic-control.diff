@@ -1,0 +1,13 @@
+diff --git a/src/grid_checked.rs b/src/grid_checked.rs
+index fe32c4b..33f9450 100644
+--- a/src/grid_checked.rs
++++ b/src/grid_checked.rs
+@@ -9,7 +9,7 @@ impl Board {
+     }
+ 
+     pub fn row_at(&self, index: usize) -> usize {
+-        if index >= 100 {
++        if index > 99 {
+             panic!("cell beyond the board");
+         }
+         index / self.cols

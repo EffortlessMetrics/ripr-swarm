@@ -8,7 +8,7 @@
 
 use super::probes::mask_rust_comments_and_strings;
 use crate::analysis::facts::{FunctionSummary, RustIndex};
-use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind};
+use crate::domain::{ExposureClass, Finding, Probe, StaticLimitKind, StopReason};
 
 /// Returns `true` when the owner function carries an FFI or language-binding
 /// attribute that indicates its surface may be exercised by an external-language
@@ -162,7 +162,8 @@ pub(super) fn cross_language_limit_kind(
 /// the other language, so it takes the limitation's own guidance instead.
 /// A `no_static_path` finding that already names a limitation keeps it: that
 /// limitation (a transitive or macro reach witness, for example) points at a
-/// Rust test the finding's evidence lines already describe.
+/// Rust test the finding's evidence lines already describe; so does any
+/// finding that carries a reach witness.
 pub(super) fn apply_cross_language_limit(finding: &mut Finding, probe: &Probe, index: &RustIndex) {
     let Some(limit) = cross_language_limit_kind(probe, index, &finding.class) else {
         return;
@@ -172,6 +173,16 @@ pub(super) fn apply_cross_language_limit(finding: &mut Finding, probe: &Probe, i
             return;
         }
         finding.recommended_next_step = Some(limit.describe().to_string());
+    }
+    // A proximity-only finding's reach witness (#7071) names a Rust test the
+    // evidence lines and next step already describe; keep that limit whole.
+    if finding.stop_reasons.iter().any(|reason| {
+        matches!(
+            reason,
+            StopReason::TransitiveReachUnresolved | StopReason::MacroReachUnresolved
+        )
+    }) {
+        return;
     }
     finding.static_limit_kind = Some(limit);
 }
@@ -659,7 +670,7 @@ mod tests {
             file: PathBuf::from(file),
             start_line: 1,
             end_line: 5,
-            body: format!("pub fn {name}(x: i32) -> i32 {{ x }}"),
+            body: format!("pub fn {name}(x: i32) -> i32 {{ x }}").into(),
             calls: vec![],
             returns: vec![],
             literals: vec![],
@@ -759,7 +770,7 @@ mod tests {
             file: PathBuf::from(file),
             start_line,
             end_line: start_line + body.lines().count(),
-            body: body.to_string(),
+            body: body.into(),
             calls: vec![CallFact {
                 line: start_line,
                 name: "inner".to_string(),

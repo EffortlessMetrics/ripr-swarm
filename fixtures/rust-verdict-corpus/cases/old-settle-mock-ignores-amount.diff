@@ -1,0 +1,12 @@
+diff --git a/src/notify.rs b/src/notify.rs
+--- a/src/notify.rs
++++ b/src/notify.rs
+@@ -6,7 +6,7 @@
+ 
+ /// Sends the order total with a one percent fee.
+ pub fn settle(sink: &mut dyn Sink, order: u32, amount: u64) {
+-    let fee = amount / 100;
++    let fee = amount / 50;
+     sink.send(order, amount + fee);
+ }
+ 
