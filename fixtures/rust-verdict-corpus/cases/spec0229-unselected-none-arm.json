@@ -1,0 +1,47 @@
+{
+  "case_id": "spec0229-unselected-none-arm",
+  "subject_id": "authored-spec0229-1",
+  "diff": "cases/spec0229-unselected-none-arm.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "match_arm",
+  "test_shape": "integration_test_input_selects_sibling_arm",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "None => 0,",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: reason(None) returns 0 instead of 1; the only test calls reason(Some(5)), which takes the Some(v) arm and still returns 6"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "tests/it.rs pins reason(Some(5)) to 6; Some(5) selects the Some(v) arm, so no test selects the changed None arm and the edit passes. Spec cells: RIPR-SPEC-0229 example 1. ripr reads weakly_exposed and names missing discriminator value None: no related test call selects arm `None =>`; observed `x` values: `Some(5)`, as the example requires.",
+  "labeling_observation": {
+    "ripr_commit": "dd5a66b5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0229#1"
+  ]
+}
