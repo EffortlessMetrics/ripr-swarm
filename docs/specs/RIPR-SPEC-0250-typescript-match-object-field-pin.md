@@ -129,9 +129,11 @@ documented decisions and proceed"). Recorded on #6654.
   strength, so a credited pin shows `low`.
 - Expression-bodied arrows (`=> ({ ... })`), a literal assigned and then
   returned, shorthand fields (`adult,`), values that open a nested `{` or
-  `[` literal, and nested listed objects keep the weak reading. A changed
-  line that continues its value on the next line is still read, since the
-  change stays inside the listed field.
+  `[` literal or continue onto the next line (`adult: age >= 18` then
+  `&& verified,`), and nested listed objects keep the weak reading.
+- An expected object holding a non-ASCII string (`{ name: "José", adult:
+  true }`) keeps the weak reading: the shared masker changes its byte
+  length, so its keys are not read.
 - A local bound once to the owner call is not checked for later field
   writes (`bo.adult = true`, `Object.assign(bo, ...)`, or a helper that
   mutates `bo`). The same gap applies to `toEqual` through the shared
