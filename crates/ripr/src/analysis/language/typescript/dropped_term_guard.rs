@@ -253,7 +253,13 @@ pub(crate) fn ts_parameter_is_stable(owner_source: &str, name: &str) -> bool {
 /// operator: `=`, a compound `op=`, or a logical `&&=` / `||=` / `??=`,
 /// however the right-hand side starts (`fee=-0` assigns).
 fn assigns_after(after: &str) -> bool {
-    let Some(equals) = after.find('=') else {
+    // An assignment operator is at most four characters (`>>>=`).
+    let Some(equals) = after
+        .char_indices()
+        .take(4)
+        .find(|(_, c)| *c == '=')
+        .map(|(i, _)| i)
+    else {
         return false;
     };
     let head = &after[..equals];

@@ -4228,9 +4228,9 @@ struct TsPostLadderContext<'a> {
 /// - RIPR-SPEC-0243 rule 8: an `exposed` result whose exposing test files all
 ///   mock a module the changed line calls reads `static_unknown`, because the
 ///   mock can replace the changed value before any assertion sees it.
-/// - RIPR-SPEC-0248 rule 1: an `exposed` result whose change only adds or
-///   drops one additive term reads `weakly_exposed` unless an observed
-///   owner call folds the term to a non-zero number.
+/// - RIPR-SPEC-0248 rule 1: an `exposed` value-seam result whose change
+///   only adds or drops one additive term reads `weakly_exposed` unless an
+///   observed owner call folds the term to a non-zero number.
 fn ts_apply_post_ladder_rules(
     verdict: &mut TsLadderVerdict,
     static_limit: &mut Option<TypeScriptStaticLimit>,
@@ -4274,6 +4274,15 @@ fn ts_apply_post_ladder_rules(
             verdict.missing = vec![callee.missing_summary(&context.owner.name)];
             return;
         }
+    }
+    // A value seam only: an error message, a mock payload or a state write
+    // is observed by matchers the fold cannot read, and demoting it would
+    // ask for a repair the test does not need.
+    if !matches!(
+        context.probe_shape.family,
+        ProbeFamily::ReturnValue | ProbeFamily::FieldConstruction | ProbeFamily::Predicate
+    ) {
+        return;
     }
     let Some(term) = context
         .old_line_text
@@ -4334,6 +4343,17 @@ pub(crate) fn ts_dropped_term_witness(
         .filter_map(|word| {
             let value = ts_owner_module_constant_value(word, owner, workspace_root)?;
             Some((word.to_string(), value.parse::<f64>().ok()?))
+        })
+        .collect();
+    // Stability depends only on the owner, so it is read once per parameter.
+    let stable: Vec<bool> = owner
+        .params
+        .iter()
+        .map(|name| {
+            owner
+                .source_text
+                .as_deref()
+                .is_some_and(|source| ts_parameter_is_stable(source, name))
         })
         .collect();
     let (mut zero, mut unknown) = (false, false);
@@ -4407,10 +4427,7 @@ pub(crate) fn ts_dropped_term_witness(
                         .and_then(|argument| numeric_literal_value(argument))
                         .and_then(|value| value.parse::<f64>().ok());
                     if let Some(value) = value
-                        && owner
-                            .source_text
-                            .as_deref()
-                            .is_some_and(|source| ts_parameter_is_stable(source, name))
+                        && stable.get(index).copied().unwrap_or(false)
                     {
                         bindings.push((name.clone(), value));
                     }

@@ -67,7 +67,9 @@ can move the value the test compares.
 ## Behavior
 
 **Rule 1. A change that only adds or drops one additive term needs a
-tested input where the term is not zero.** When the changed line and its
+tested input where the term is not zero.** On a value seam (a
+`return_value`, `field_construction` or `predicate` probe), when the
+changed line and its
 removed counterpart differ by exactly one span, and that span is one
 additive term (`a + t` against `a`, `a - t` against `a`, or `t + a`
 against `a`, in either direction), an `exposed` ladder result keeps its
@@ -138,6 +140,11 @@ documented decisions and proceed"). Recorded on #6654.
    neutral edit; reading them as gaps would judge equivalence, which ripr
    does not claim.
 
+Error, side-effect, call-deletion and match-arm seams are outside the
+rule: their matchers (`toThrow`, `toHaveBeenCalledWith`, state reads) are
+ones the fold cannot read, and demoting them would ask for a repair the
+test may not need.
+
 ### Known limits
 
 - A non-zero fold is necessary, not sufficient. The fold does not ask
@@ -201,11 +208,14 @@ documented decisions and proceed"). Recorded on #6654.
 9. `return a + b * c` against `return a * c`, `return x - a + b` against
    `return x - b`, `total += fee` against `total`, and `return +x`
    against `return`: the rule does not apply.
+10. `throw new RangeError("limit " + max)` against
+    `throw new RangeError("limit ")` with `toThrow("limit ")`: the rule
+    does not apply (error seam); the ladder's `exposed` stands.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs`
-  pins examples 2 to 9, and example 1's message through the analogous
+  pins examples 2 to 10, and example 1's message through the analogous
   `shipping(subtotal)` call term.
 - `fixtures/typescript-verdict-corpus` pins example 1 itself:
   `ts-nodetest-quote-shipping-term` reads `gap`.

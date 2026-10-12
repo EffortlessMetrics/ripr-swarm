@@ -309,3 +309,56 @@ fn dropped_term_does_not_bind_a_rebound_parameter() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Rule 1 reads value seams only: an error message the test pins with
+/// `toThrow` keeps its ladder reading.
+#[test]
+fn dropped_term_leaves_an_error_seam_alone() -> Result<(), String> {
+    let root = ts_unique_tempdir("dropped-term-error-seam")?;
+    ts_write_file(
+        &root.join("src/limit.ts"),
+        "export function check(max: number): void {\n  throw new RangeError(\"limit \");\n}\n",
+    )?;
+    let test = "import { check } from \"../src/limit\";\ntest(\"limit\", () => {\n  expect(() => check(0)).toThrow(\"limit \");\n});\n";
+    ts_write_file(&root.join("tests/limit.test.ts"), test)?;
+    let changed = ChangedFile {
+        path: PathBuf::from("src/limit.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            text: "  throw new RangeError(\"limit \");".to_string(),
+            new_side_line: 2,
+        }],
+        removed_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            text: "  throw new RangeError(\"limit \" + max);".to_string(),
+            new_side_line: 2,
+        }],
+    };
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let finding = result?
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == 2)
+        .ok_or("expected a finding on the changed line")?;
+    assert_eq!(finding.probe.family, ProbeFamily::ErrorPath);
+    assert!(
+        !finding
+            .missing
+            .iter()
+            .any(|line| line.contains("only adds or drops the additive term")),
+        "{:?}",
+        finding.missing
+    );
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+    Ok(())
+}

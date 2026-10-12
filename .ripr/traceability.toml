@@ -13925,6 +13925,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::parameter_is_stable_only_when_the_body_never_rebinds_it",
   "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_keeps_credit_only_with_a_non_zero_tested_input",
   "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_does_not_bind_a_rebound_parameter",
+  "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_leaves_an_error_seam_alone",
 ]
 fixtures = [
   "fixtures/typescript-verdict-corpus",
