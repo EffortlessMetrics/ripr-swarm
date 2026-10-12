@@ -1,0 +1,22 @@
+{
+  "case_id": "checkout-announce-stdout-sink",
+  "subject_id": "authored-checkout",
+  "origin": "authored",
+  "anchor": "src/rates.rs:32",
+  "behavior_family": "side_effect",
+  "test_shape": "stdout_macro_sink",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

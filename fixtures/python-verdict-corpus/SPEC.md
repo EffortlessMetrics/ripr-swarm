@@ -1,7 +1,7 @@
 # Fixture Corpus: python-verdict-corpus
 
-Spec: RIPR-SPEC-0238 (per-language corpora), with cases drawn from
-RIPR-SPEC-0028 and the RIPR-SPEC-0233 acceptance examples.
+Spec: RIPR-SPEC-0245 (per-language corpora), with cases drawn from
+RIPR-SPEC-0028 and the RIPR-SPEC-0238 acceptance examples.
 
 ## Given
 
@@ -11,7 +11,7 @@ this repository's license, one per test library or library feature:
 - `authored-py-pytest-pricing`: pytest asserts, `parametrize`, `raises`,
   `capsys`, `isinstance`, `!=`, a package re-export and an owner no test references.
 - `authored-py-pytest-spec0233`: at least one case per runnable
-  RIPR-SPEC-0233 acceptance example, one owner per case; examples 22 and 24
+  RIPR-SPEC-0238 acceptance example, one owner per case; examples 22 and 24
   have two. Examples 9, 10 and the `lambda: 0` half of 33 are left out: 9
   has no realistic owner, 10 needs numpy, and `sorted(x, key=lambda: 0)`
   raises at runtime. Alternate forms within an example are not all covered:
@@ -37,24 +37,33 @@ Python 3.11.15, pytest 9.1.1 and Hypothesis 6.168.3.
 `cargo xtask verdict-corpus check --language python` applies each edit to a
 run-owned copy, runs `ripr check --json` (Python is enabled by project-marker
 detection; no subject carries a `ripr.toml`), and projects the anchored
-findings to one verdict.
+findings to one verdict. The required gate's `verdict-corpus check-all`
+checks this corpus with every other.
 
 ## Then
 
 Each case scores as ideal, abstained, false actionable, false exposed, or
-false silent, and the report must equal `expected/report.json` and
-`expected/report.md`. Where RIPR-SPEC-0233 names a verdict that differs from
-today's ("today X"), the case keeps today's verdict in its labeling
-observation and its reasoning names the spec's.
+false silent, and every row must equal its file under `expected/rows/`.
+Where RIPR-SPEC-0238 names a verdict that differs from today's ("today X"),
+the case keeps today's verdict in its labeling observation and its reasoning
+names the spec's.
 
 ## Must Not
 
 - Run mutation testing, pytest, Hypothesis, or network access.
 - Treat the rates as a population estimate for Python code.
 
+## Case names
+
+The Python oracle and reach rules were drafted as RIPR-SPEC-0233 and merged
+as RIPR-SPEC-0238 (#6590) with the same example numbers. The case ids keep
+the `py-spec0233-exNN-` prefix and the subject keeps its
+`authored-py-pytest-spec0233` name, because RIPR-SPEC-0238 cites
+`py-spec0233-ex21-exc-value` by id and the subject sources are pinned by
+digest. Example 34, added at merge, has no case yet.
+
 ## Refreshing
 
-When a ripr change moves a verdict, `check` fails and names the first
-differing line. Re-run the case's mutants against the stored subject before
-re-blessing with
-`cargo xtask verdict-corpus report --language python --out fixtures/python-verdict-corpus/expected`.
+When a ripr change moves a verdict, `check` fails and names each moved row.
+Re-run the case's mutants against the stored subject before re-blessing with
+`cargo xtask verdict-corpus bless --language python`.

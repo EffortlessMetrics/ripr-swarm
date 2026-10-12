@@ -33,9 +33,11 @@
 //! a `#[path]` module; a package outside the workspace root whose target
 //! path points into it; and case-insensitive path matching. Each would need
 //! a file-level edge no Rust source in the workspace spells.
-//! Roots are over-collected on purpose (every autodiscovered and declared
-//! target, whatever `autobins`/`autotests` say): an extra root can only
-//! reach more files, which keeps a verdict of "unreached" conservative.
+//! Roots are over-collected on purpose (every declared target, and every
+//! autodiscovered one except the tests, benches and examples a manifest's
+//! `autotests`/`autobenches`/`autoexamples = false` turns off, #6965): an
+//! extra root can only reach more files, which keeps a verdict of
+//! "unreached" conservative.
 //!
 //! The pass runs only over the files the caller names (the changed files
 //! for the diff loop, the finding anchors for the LSP partition), so both
@@ -44,6 +46,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+
+use rayon::prelude::*;
 
 use super::cargo_targets::{
     collect_explicit_paths, declared_targets_from_manifest, lexical, nearest_manifest_dir,
@@ -58,6 +62,17 @@ const MAX_WALK_FILES: usize = 20_000;
 
 /// Queue length up to which the walk picks the entry nearest its target.
 const DIRECTED_QUEUE_LIMIT: usize = 512;
+
+/// Unscanned files one read-ahead round reads and scans on the rayon
+/// workers. A round costs about one parse of wall time; the files it scans
+/// that the walk never expands are the only waste.
+const READ_AHEAD_FILES: usize = 16;
+
+/// Reads ahead the walk may hold without having expanded them. Every
+/// other parse is an expansion, so a walk parses at most
+/// `MAX_WALK_FILES + MAX_PENDING_READ_AHEAD` files however many siblings it
+/// queues and never reaches.
+const MAX_PENDING_READ_AHEAD: usize = 512;
 
 /// How a reached file anchors its own default `mod name;` children.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -111,6 +126,13 @@ struct PackageWalk {
     production_root_read: bool,
     /// Parsed module-tree scans, so the evidence phase re-parses nothing.
     scans: BTreeMap<PathBuf, Option<RustModuleTreeScan>>,
+    /// Reads of queued files scanned ahead of the walk. A file moves into
+    /// `scans` only when the walk expands it, exactly where a sequential
+    /// read would have happened, so the walk limit and completeness see
+    /// the same sequence either way.
+    read_ahead: BTreeMap<PathBuf, ModuleRead>,
+    /// `MAX_PENDING_READ_AHEAD`, lowered by tests.
+    pending_read_ahead_limit: usize,
     /// False once any edge could not be resolved.
     complete: bool,
     /// Out-of-line `mod` declarations with an unresolved `#[path]` that the
@@ -385,14 +407,22 @@ fn list_workspace(workspace_root: &Path) -> Option<WorkspaceListing> {
     let mut pending = vec![lexical(&normalize(workspace_root))];
     let mut visited_entries = 0usize;
     while let Some(dir) = pending.pop() {
-        for entry in std::fs::read_dir(&dir).ok()? {
+        // A workspace root given as the current directory normalizes to the
+        // empty path, which `read_dir` refuses; entries are still joined
+        // onto `dir` so listed paths keep the spelling the walks use.
+        let read_from = if dir.as_os_str().is_empty() {
+            Path::new(".")
+        } else {
+            dir.as_path()
+        };
+        for entry in std::fs::read_dir(read_from).ok()? {
             crate::analysis::cancellation::checkpoint().ok()?;
             visited_entries += 1;
             if visited_entries > MAX_ESCAPING_SCAN_ENTRIES {
                 return None;
             }
             let entry = entry.ok()?;
-            let path = entry.path();
+            let path = dir.join(entry.file_name());
             let file_type = entry.file_type().ok()?;
             if file_type.is_symlink() {
                 // A dangling link aliases nothing.
@@ -647,12 +677,51 @@ fn evidence_roots(
     roots.extend(declared.benches);
     roots.extend(declared.build_script);
     collect_explicit_paths(manifest.get("example"), package_dir, &mut roots);
-    for dir in ["tests", "benches", "examples"] {
-        roots.extend(autodiscovered(&package_dir.join(dir)));
+    // `autotests = false` (and its bench and example twins) turns Cargo's
+    // discovery off: only declared targets build, and a declaration without
+    // `path` still defaults to `<dir>/<name>.rs` or `<dir>/<name>/main.rs`
+    // (#6965).
+    let package = manifest.get("package");
+    for (dir, auto_key, section) in [
+        ("tests", "autotests", "test"),
+        ("benches", "autobenches", "bench"),
+        ("examples", "autoexamples", "example"),
+    ] {
+        let dir = package_dir.join(dir);
+        let discovers = package
+            .and_then(|package| package.get(auto_key))
+            .and_then(toml::Value::as_bool)
+            != Some(false);
+        if discovers {
+            roots.extend(autodiscovered(&dir));
+        } else {
+            roots.extend(named_default_roots(manifest.get(section), &dir));
+        }
     }
     roots
         .into_iter()
         .map(|root| lexical(&normalize(&root)))
+        .collect()
+}
+
+/// The default paths of declared targets that name no `path`:
+/// `<dir>/<name>.rs` and `<dir>/<name>/main.rs`.
+fn named_default_roots(target_entries: Option<&toml::Value>, dir: &Path) -> Vec<PathBuf> {
+    let Some(entries) = target_entries.and_then(toml::Value::as_array) else {
+        return Vec::new();
+    };
+    entries
+        .iter()
+        .filter(|entry| entry.get("path").is_none())
+        .filter_map(|entry| entry.get("name").and_then(toml::Value::as_str))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .flat_map(|name| {
+            [
+                dir.join(format!("{name}.rs")),
+                dir.join(name).join("main.rs"),
+            ]
+        })
         .collect()
 }
 
@@ -693,6 +762,8 @@ impl PackageWalk {
             production_roots,
             production_root_read: false,
             scans: BTreeMap::new(),
+            read_ahead: BTreeMap::new(),
+            pending_read_ahead_limit: MAX_PENDING_READ_AHEAD,
             complete: true,
             unresolved_paths: Vec::new(),
             follow_unresolved_paths: false,
@@ -714,6 +785,8 @@ impl PackageWalk {
             production_roots: BTreeSet::new(),
             production_root_read: false,
             scans: BTreeMap::new(),
+            read_ahead: BTreeMap::new(),
+            pending_read_ahead_limit: MAX_PENDING_READ_AHEAD,
             complete: true,
             unresolved_paths: Vec::new(),
             follow_unresolved_paths: false,
@@ -773,6 +846,75 @@ impl PackageWalk {
         }
     }
 
+    /// Reads and scans `file` together with the unscanned queue entries the
+    /// walk would expand next, on the rayon workers. Parsing is most of a
+    /// walk's cost (about a millisecond a file), and the walk expands one
+    /// file at a time.
+    fn scan_ahead(&mut self, workspace_root: &Path, target: &Path, file: &Path) {
+        // `file` is expanded next; the others wait in `read_ahead`, which
+        // stays within its pending limit. A full cache reads `file` alone
+        // without visiting the queue.
+        let room = self
+            .pending_read_ahead_limit
+            .saturating_sub(self.read_ahead.len());
+        let others = (READ_AHEAD_FILES - 1).min(room);
+        let unscanned = |queued: &&PathBuf| {
+            queued.as_path() != file
+                && !self.scans.contains_key(*queued)
+                && !self.read_ahead.contains_key(*queued)
+        };
+        // The same order `step` picks in: nearest the target first, or the
+        // stack top past the directed bound. Past the bound the queue can be
+        // long, so only the entries the batch takes are visited.
+        let pending = if others == 0 {
+            Vec::new()
+        } else if self.queue.len() <= DIRECTED_QUEUE_LIMIT {
+            // Reversed so the stable sort breaks ties the way `step`'s
+            // `max_by_key` does: the later queue entry first.
+            let mut nearest = self
+                .queue
+                .iter()
+                .rev()
+                .map(|(queued, _)| queued)
+                .filter(unscanned)
+                .collect::<Vec<_>>();
+            nearest.sort_by_key(|queued| std::cmp::Reverse(shared_prefix_len(queued, target)));
+            nearest
+        } else {
+            let mut stack_top = Vec::new();
+            for queued in self.queue.iter().rev().map(|(queued, _)| queued) {
+                if stack_top.len() >= others {
+                    break;
+                }
+                if unscanned(&queued) && !stack_top.contains(&queued) {
+                    stack_top.push(queued);
+                }
+            }
+            stack_top
+        };
+        let mut batch = vec![file.to_path_buf()];
+        for queued in pending {
+            if batch.len() > others {
+                break;
+            }
+            if !batch.contains(queued) {
+                batch.push(queued.clone());
+            }
+        }
+        // Workers do not inherit this thread's committed-source overlay, and
+        // a committed-history diff must walk `HEAD` content.
+        let overlay = crate::analysis::committed_source::current_overlay();
+        let reads = batch
+            .par_iter()
+            .map(|path| {
+                crate::analysis::committed_source::with_overlay(overlay.clone(), || {
+                    read_module(workspace_root, path)
+                })
+            })
+            .collect::<Vec<_>>();
+        self.read_ahead.extend(batch.into_iter().zip(reads));
+    }
+
     /// Whether a completed walk proves every unreached file unreachable. A
     /// package with no readable library or binary root is not a tree this
     /// walk can judge (a partial checkout, a manifest ahead of its sources).
@@ -820,10 +962,17 @@ impl PackageWalk {
                 self.evidence_roots = None;
                 return false;
             }
-            let scan = match read_source(workspace_root, &file) {
-                SourceRead::Text(source) => Some(rust_module_tree_scan(&source)),
-                SourceRead::Absent => None,
-                SourceRead::Unreadable => {
+            if !self.read_ahead.contains_key(&file) {
+                self.scan_ahead(workspace_root, target, &file);
+            }
+            let read = self
+                .read_ahead
+                .remove(&file)
+                .unwrap_or_else(|| read_module(workspace_root, &file));
+            let scan = match read {
+                ModuleRead::Scanned(scan) => Some(scan),
+                ModuleRead::Absent => None,
+                ModuleRead::Unreadable => {
                     self.complete = false;
                     None
                 }
@@ -936,11 +1085,48 @@ impl PackageWalk {
 }
 
 /// Number of leading path components two paths share.
+///
+/// The directed walk calls this for every queued entry on every step, so
+/// plain `/`-separated paths compare bytes instead of parsing components;
+/// any other spelling takes the component comparison it equals.
 fn shared_prefix_len(left: &Path, right: &Path) -> usize {
-    left.components()
-        .zip(right.components())
-        .take_while(|(left, right)| left == right)
-        .count()
+    match (plain_path_bytes(left), plain_path_bytes(right)) {
+        (Some(left), Some(right)) => shared_plain_prefix_len(left, right),
+        _ => left
+            .components()
+            .zip(right.components())
+            .take_while(|(left, right)| left == right)
+            .count(),
+    }
+}
+
+/// The bytes of a path whose components are exactly its `/`-separated
+/// segments: relative, non-empty segments, no `.` segment, no other
+/// separator and no drive prefix. `None` for any path `components()` would
+/// normalize or split differently.
+fn plain_path_bytes(path: &Path) -> Option<&[u8]> {
+    let bytes = path.to_str()?.as_bytes();
+    let plain = !bytes.is_empty()
+        && !bytes.contains(&b'\\')
+        && !bytes.contains(&b':')
+        && bytes
+            .split(|byte| *byte == b'/')
+            .all(|segment| !segment.is_empty() && segment != b".");
+    plain.then_some(bytes)
+}
+
+fn shared_plain_prefix_len(left: &[u8], right: &[u8]) -> usize {
+    let mut shared = 0;
+    for (left, right) in left
+        .split(|byte| *byte == b'/')
+        .zip(right.split(|byte| *byte == b'/'))
+    {
+        if left != right {
+            break;
+        }
+        shared += 1;
+    }
+    shared
 }
 
 /// The directories a file's default `mod name;` children resolve under.
@@ -962,6 +1148,22 @@ enum SourceRead {
     Text(String),
     Absent,
     Unreadable,
+}
+
+/// One module file's read, scanned when it held text.
+#[derive(Debug)]
+enum ModuleRead {
+    Scanned(RustModuleTreeScan),
+    Absent,
+    Unreadable,
+}
+
+fn read_module(workspace_root: &Path, file: &Path) -> ModuleRead {
+    match read_source(workspace_root, file) {
+        SourceRead::Text(source) => ModuleRead::Scanned(rust_module_tree_scan(&source)),
+        SourceRead::Absent => ModuleRead::Absent,
+        SourceRead::Unreadable => ModuleRead::Unreadable,
+    }
 }
 
 /// Reads a module file through the same committed-source view the analysis
@@ -998,6 +1200,66 @@ fn read_source(workspace_root: &Path, file: &Path) -> SourceRead {
 mod tests {
     use super::*;
 
+    #[test]
+    fn shared_prefix_len_matches_the_component_comparison() {
+        let paths = [
+            "crates/a/src/lib.rs",
+            "crates/a/src/lib/mod.rs",
+            "crates/a/src/libx.rs",
+            "crates/ab/src/lib.rs",
+            "crates/a",
+            "crates/a/",
+            "./crates/a/src/lib.rs",
+            "crates/./a/src/lib.rs",
+            "crates//a/src/lib.rs",
+            "/abs/crates/a/src/lib.rs",
+            "src/lib.rs",
+            "src",
+            "",
+        ];
+        for left in paths {
+            for right in paths {
+                let (left, right) = (Path::new(left), Path::new(right));
+                let expected = left
+                    .components()
+                    .zip(right.components())
+                    .take_while(|(left, right)| left == right)
+                    .count();
+                assert_eq!(
+                    shared_prefix_len(left, right),
+                    expected,
+                    "{left:?} vs {right:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn workspace_listing_reads_a_root_given_as_the_current_directory() -> Result<(), String> {
+        // #6965: `ripr check` from the workspace directory passes an empty
+        // root. The listing must still read it, with entries spelled
+        // relative to it, or no orphan verdict can ever be proved.
+        // `cargo test` runs in the package directory; the lock keeps a
+        // test that changes it from racing this read.
+        let _cwd = crate::testing::cwd_lock::hold_cwd();
+        let listing = list_workspace(Path::new(""))
+            .ok_or_else(|| "the current directory must be listed".to_string())?;
+        assert!(
+            listing
+                .rust_files
+                .iter()
+                .any(|file| file == Path::new("src/lib.rs")),
+            "entries keep the root-relative spelling"
+        );
+        assert!(
+            listing
+                .manifest_dirs
+                .iter()
+                .any(|dir| dir.as_os_str().is_empty())
+        );
+        Ok(())
+    }
+
     fn fixture(name: &str, files: &[(&str, &str)]) -> Result<PathBuf, String> {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -1021,6 +1283,82 @@ mod tests {
     }
 
     const MANIFEST: &str = "[package]\nname='tree'\nversion='0.1.0'\nedition='2021'\n";
+
+    #[test]
+    fn read_ahead_holds_at_most_its_pending_limit() -> Result<(), String> {
+        let mut files = vec![("Cargo.toml".to_owned(), MANIFEST.to_owned())];
+        let mut lib = String::new();
+        for index in 0..12 {
+            lib.push_str(&format!("mod m{index:02};\n"));
+            files.push((format!("src/m{index:02}.rs"), String::new()));
+        }
+        files.push(("src/lib.rs".to_owned(), lib));
+        let files = files
+            .iter()
+            .map(|(path, text)| (path.as_str(), text.as_str()))
+            .collect::<Vec<_>>();
+        let root = fixture("read-ahead-limit", &files)?;
+        let package = lexical(&normalize(&root));
+        let path = |relative: &str| lexical(&normalize(&root.join(relative)));
+        let mut unbounded = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert!(unbounded.find(&root, &[path("src/m00.rs")]).is_some());
+        assert!(
+            unbounded.read_ahead.len() > 2,
+            "fixture control: the default limit reads more than two siblings ahead"
+        );
+        let mut bounded = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        bounded.pending_read_ahead_limit = 2;
+        assert!(bounded.find(&root, &[path("src/m00.rs")]).is_some());
+        assert!(
+            bounded.read_ahead.len() <= 2,
+            "{}",
+            bounded.read_ahead.len()
+        );
+        assert_eq!(bounded.find(&root, &[path("src/missing.rs")]), None);
+        assert!(bounded.read_ahead.is_empty());
+        // The bound changes what is read early, not what the walk expands.
+        assert_eq!(unbounded.find(&root, &[path("src/missing.rs")]), None);
+        assert_eq!(
+            bounded.scans.keys().collect::<Vec<_>>(),
+            unbounded.scans.keys().collect::<Vec<_>>()
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn read_ahead_leaves_completeness_to_the_files_the_walk_expands() -> Result<(), String> {
+        // `zz.rs` is not UTF-8, so expanding it makes the walk incomplete.
+        // Reading it ahead must not: the walk finds `a.rs` first.
+        let root = fixture(
+            "read-ahead",
+            &[
+                ("Cargo.toml", MANIFEST),
+                ("src/lib.rs", "mod a;\nmod zz;\n"),
+                ("src/a.rs", ""),
+            ],
+        )?;
+        std::fs::write(root.join("src/zz.rs"), [0xff_u8, 0xfe])
+            .map_err(|error| error.to_string())?;
+        let package = lexical(&normalize(&root));
+        let path = |relative: &str| lexical(&normalize(&root.join(relative)));
+        let mut walk = PackageWalk::new(&root, &package).ok_or("fixture has no package")?;
+        assert_eq!(
+            walk.find(&root, &[path("src/a.rs")]),
+            Some(Origin::Production)
+        );
+        assert!(
+            walk.read_ahead.contains_key(&path("src/zz.rs")),
+            "fixture control: the unreadable sibling was read ahead"
+        );
+        assert!(!walk.scans.contains_key(&path("src/zz.rs")));
+        assert!(walk.complete, "a file read ahead but never expanded");
+        // Exhausting the walk expands `zz.rs`, and only then does it count.
+        assert_eq!(walk.find(&root, &[path("src/missing.rs")]), None);
+        assert!(walk.scans.contains_key(&path("src/zz.rs")));
+        assert!(!walk.complete);
+        assert!(!walk.proves_unreached());
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
 
     #[test]
     fn walk_follows_mod_rs_bin_roots_and_evidence_roots() -> Result<(), String> {
@@ -1495,6 +1833,42 @@ mod tests {
         assert!(
             committed.module_graph_orphans.is_empty(),
             "the `HEAD` manifest compiles `src/old.rs`: {:?}",
+            committed.module_graph_orphans
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn read_ahead_scans_module_files_under_the_overlay() -> Result<(), String> {
+        // Module files are read ahead on the rayon workers, which must see
+        // the committed-source overlay the calling thread installed. On disk
+        // the lib root declares nothing; at `HEAD` it declares `mod old;`.
+        let root = fixture(
+            "dirty-module",
+            &[
+                ("Cargo.toml", MANIFEST),
+                ("src/lib.rs", ""),
+                ("src/old.rs", ""),
+            ],
+        )?;
+        let worktree = evidence_for(&root, &["src/old.rs"]);
+        assert!(
+            worktree
+                .module_graph_orphans
+                .contains(Path::new("src/old.rs")),
+            "fixture control: the working-tree root leaves `src/old.rs` unreached"
+        );
+        let overlay = crate::analysis::committed_source::CommittedSourceOverlay::from_entries(
+            &root,
+            [("src/lib.rs", Some(b"mod old;\n".as_slice()))],
+        );
+        let committed = crate::analysis::committed_source::with_overlay(
+            Some(std::sync::Arc::new(overlay)),
+            || evidence_for(&root, &["src/old.rs"]),
+        );
+        assert!(
+            committed.module_graph_orphans.is_empty(),
+            "the `HEAD` root declares `src/old.rs`: {:?}",
             committed.module_graph_orphans
         );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())

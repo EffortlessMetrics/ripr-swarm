@@ -1,0 +1,22 @@
+{
+  "case_id": "trap-tax-reference-helper",
+  "subject_id": "authored-trap-kit",
+  "origin": "authored",
+  "anchor": "src/billing.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "self_computed_expected_via_test_helper",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

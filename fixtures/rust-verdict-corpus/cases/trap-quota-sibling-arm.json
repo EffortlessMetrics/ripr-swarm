@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-quota-sibling-arm",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-quota-sibling-arm.diff",
+  "anchor": {
+    "file": "src/modes.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "sibling_arm_shared_enum_qualifier",
+  "hard_case": "The test pins the Premium arm; the edit is in the Basic arm. The only shared token is the `Tier::` qualifier.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "6",
+        "mutated_line": "Tier::Basic => 6,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `2 + 3` with `6`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "0",
+        "mutated_line": "Tier::Basic => 0,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `2 + 3` with `0`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "1",
+        "mutated_line": "Tier::Basic => 1,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `2 + 3` with `1`, which changes the result, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "premium_quota asserts quota(Tier::Premium) == 50, which never selects the Basic arm. Spec cell: RIPR-SPEC-0094 (shared `Enum::` qualifier only); minimal pair with trap-pause-asserted-arm-control.",
+  "labeling_observation": {
+    "ripr_commit": "6487826",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

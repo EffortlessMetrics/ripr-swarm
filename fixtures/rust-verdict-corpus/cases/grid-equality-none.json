@@ -1,0 +1,58 @@
+{
+  "case_id": "grid-equality-none",
+  "subject_id": "authored-grid-equality",
+  "diff": "cases/grid-equality-none.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_equality",
+  "test_shape": "smoke_call_no_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "443 != port",
+        "mutated_line": "443 != port",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: is_default_port(443) becomes false"
+      },
+      {
+        "replacement": "true",
+        "mutated_line": "true",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: is_default_port(8080) becomes true"
+      },
+      {
+        "replacement": "false",
+        "mutated_line": "false",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: is_default_port(443) becomes false"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: equality (`==` operands swapped; mutants flip to `!=` or replace the body with a constant bool) x smoke_call_no_assert. The test calls the function and asserts nothing; 0 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0186, RIPR-SPEC-0001, RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

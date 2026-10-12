@@ -1,0 +1,22 @@
+{
+  "case_id": "mined-multi-line-struct-literal-field",
+  "subject_id": "authored-mined-codec",
+  "origin": "authored",
+  "anchor": "src/lib.rs:32",
+  "behavior_family": "field_construction",
+  "test_shape": "multi_line_struct_literal_accessor_assert",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

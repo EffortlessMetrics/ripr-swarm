@@ -28,7 +28,8 @@ this guide.
 Rust 1.95 is needed to build ripr, not by the repository you analyze: ripr's
 static analysis does not run your compiler, so a repository pinned to an older
 toolchain can still be analyzed. Your own tests still run with that repository's toolchain.
-`ripr doctor --profile source-build` checks what building ripr needs.
+`ripr doctor --profile source-build` checks what building ripr needs and names
+an install route if cargo or rustc is missing. It does not recommend `ripr check`.
 
 The latest GitHub release is [0.10.0](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0).
 This guide describes **0.11 development**, including `--worktree`, bounded
@@ -47,9 +48,12 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 ```
 
 From a `ripr-swarm` checkout, `cargo install --path crates/ripr` does the same.
-Either route compiles from source, which took about 11 minutes on one cold Linux
-container in October 2026; a prebuilt 0.11 archive exists only after 0.11.0 is
-published.
+Either route compiles from source. A `cargo build --release` in the workspace took
+about 12 minutes on a cold 4-core Linux container in October 2026. A local build
+of the packaged crate, which is what `cargo install ripr --locked` should compile
+once 0.11.0 is published, took about 4.6 minutes on the same container because it
+drops the workspace's LTO profile (an estimate, not a crates.io install). A
+prebuilt 0.11 archive exists only after 0.11.0 is published.
 
 With [cargo-binstall](https://github.com/cargo-bins/cargo-binstall) installed,
 `cargo binstall ripr` uses the prebuilt 0.11.0 release archive when that asset is
@@ -152,7 +156,7 @@ for local builds and explicit server paths.
 
 If nothing appears, run `ripr: Show Status`, then `ripr: Show Output` to inspect
 setup or analysis errors. Save files before refreshing: the editor analyzes the
-saved workspace, not unsaved buffers, by default.
+saved workspace only; unsaved buffer content is never analyzed.
 
 See [the editor repair walkthrough](EDITOR_FIRST_RUN_TO_FIRST_RECEIPT.md) for
 verification and receipt steps. For Remote-SSH, containers, or WSL, install the
@@ -193,7 +197,11 @@ ripr pilot --root .
 
 Before starting a repair, make sure `target/` is in a committed `.gitignore`
 (see below). When pilot recommends a repair, run the exact
-`ripr agent repair ... --phase before` command it prints. That command carries pilot's seam ID, which names a code
+`ripr agent repair ... --phase before` command it prints. That printed command
+is the advanced spelling of the ordinary start `ripr repair <seam-id>`; both
+begin the same before/edit/after attempt, and the ordinary start additionally
+prints the compact repair card for the seam. The printed command carries pilot's seam ID,
+which names a code
 location across the repository. The `probe:...` IDs printed by `ripr check`
 name findings in one diff and are not accepted here.
 
@@ -214,7 +222,9 @@ that was already gitignored when the before phase ran; a `.gitignore` change
 made mid-attempt is itself refused. Redirect ripr output under `target/ripr/` or
 outside the repository.
 
-Then run the exact `--attempt ... --phase after` command printed before the edit.
+Then run the exact `--attempt ... --phase after` command printed before the edit
+(the ordinary spelling is `ripr continue`, which selects the attempt when the
+choice is unambiguous).
 It records the after snapshot and a receipt of static evidence movement.
 Keep the test execution result separately: a static improvement is not proof
 that a test ran or that a mutant was caught.
@@ -225,8 +235,10 @@ means stop and inspect the guidance, not guess a repair command.
 To resume an interrupted attempt:
 
 ```bash
-ripr agent status --root .
+ripr status --root .
 ```
+
+(`ripr agent status --root .` is the advanced spelling of the same report.)
 
 Use the reported continuation or recovery step. The full phase and identity
 reference is [Repair attempt identity](REPAIR_ATTEMPT.md).
@@ -261,7 +273,7 @@ PR-facing packet. It does not run analysis or repair the code. See
 | Configuration is rejected. | Run `ripr config validate` and fix the named setting. Configuration is optional, but an invalid file is not ignored. |
 | Editor diagnostics are missing or stale. | Check `ripr: Show Status`, save the file, and use the extension's refresh action. |
 | The editor cannot start its server. | Check [Server provisioning](SERVER_PROVISIONING.md), especially the version and remote host. |
-| An attempt cannot continue. | Run `ripr agent status --root .` and follow [repair recovery](REPAIR_ATTEMPT.md). |
+| An attempt cannot continue. | Run `ripr status --root .` and follow [repair recovery](REPAIR_ATTEMPT.md). |
 | Analysis is partial or limited. | Read the limitation and suggested retry. Missing evidence is not a successful empty result. |
 
 Still stuck, or ripr gave a wrong or confusing answer? Open a [first run report](https://github.com/EffortlessMetrics/ripr/issues/new?template=first_run_report.yml) or a [wrong finding report](https://github.com/EffortlessMetrics/ripr/issues/new?template=wrong_verdict.yml) with your `ripr --version`.

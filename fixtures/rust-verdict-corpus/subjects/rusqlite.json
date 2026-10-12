@@ -1,0 +1,26 @@
+{
+  "subject_id": "rusqlite",
+  "upstream": "https://github.com/rusqlite/rusqlite",
+  "commit": "08dd1f1e65eb1262edbc72760ccaa9281add0034",
+  "version_label": "master@08dd1f1e",
+  "license": "MIT",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "a6d291ae3f9759f08cb85f736dc81727d2844f309e7bf72fd274c5292f38c9a2"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "c10c1f27337546471e5f7e4e97fdd398b35b9d4e126115dcd22de8d8e65abf6f"
+    },
+    {
+      "path": "src/inner_connection.rs",
+      "sha256": "dbe6cb6561ffcd7a35bd4210648cfdadc0e500829b46363bf34ddec311b99e42"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "6d1fb08709c1134713541a1fa87c29d2ab3732dfee5ef97fc8f176016a338790"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+{
+  "case_id": "shop-cart-add-other-collection-observed",
+  "subject_id": "authored-shop",
+  "origin": "authored",
+  "anchor": "pricing/src/lib.rs:62",
+  "behavior_family": "side_effect",
+  "test_shape": "other_collection_asserted",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1,0 +1,59 @@
+{
+  "case_id": "jest-mined-tobeinstanceof",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-mined-tobeinstanceof.diff",
+  "anchor": {
+    "file": "src/errors.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "jest_tobeinstanceof_branch",
+  "hard_case": "toBeInstanceOf is a built-in matcher ripr reads as unknown (mined pattern 8)",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "status codes map to error classes",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "status codes map to error classes",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      },
+      {
+        "replacement": "if (404 !== status) {",
+        "mutated_line": "if (404 !== status) {",
+        "outcome": "tests_failed",
+        "failing_test": "status codes map to error classes",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "toBeInstanceOf pins NotFound for 404 and Forbidden for 403, so every mutant of the comparison fails. ripr reports weakly_exposed on the anchor, a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

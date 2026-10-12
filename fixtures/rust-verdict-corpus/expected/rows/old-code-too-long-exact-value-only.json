@@ -1,0 +1,22 @@
+{
+  "case_id": "old-code-too-long-exact-value-only",
+  "subject_id": "authored-old-errors",
+  "origin": "authored",
+  "anchor": "src/errors.rs:28",
+  "behavior_family": "error_variant",
+  "test_shape": "error_seam_only_exact_value_and_is_err",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

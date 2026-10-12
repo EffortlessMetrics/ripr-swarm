@@ -1,0 +1,12 @@
+diff --git a/src/quantity.ts b/src/quantity.ts
+index 0000000..1111111 100644
+--- a/src/quantity.ts
++++ b/src/quantity.ts
+@@ -1,6 +1,6 @@
+ export function checkQuantity(qty: number): number {
+   if (qty <= 0) {
+-    throw new Error("quantity must be positive");
++    throw new Error("quantity must be " + "positive");
+   }
+   return qty;
+ }

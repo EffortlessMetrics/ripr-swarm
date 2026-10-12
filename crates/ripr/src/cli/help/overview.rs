@@ -37,9 +37,9 @@ What are you trying to do?
   Guided repo adoption  ripr pilot --root .
   Understand a finding  ripr explain <finding-id>
                         ripr context --at <finding-id>
-  Repair one named gap  ripr agent repair --seam-id ID --phase before
+  Repair one named gap  ripr repair [<item>]
                         # edit one focused test
-                        ripr agent repair --attempt ID --phase after
+                        ripr continue
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Work in an editor     ripr lsp --stdio
   Adopt advisory CI     ripr init --ci github
@@ -77,7 +77,7 @@ Task map:
   Diagnose setup        ripr doctor
   Inspect one change    ripr check
   Guided repo adoption  ripr pilot --root .
-  Repair one named gap  ripr agent repair --seam-id ID --phase before|after|verify
+  Repair one named gap  ripr repair [<item>] | ripr continue | ripr status
   Compose PR evidence   ripr first-pr --root . --base BASE --head HEAD
   Adopt advisory CI     ripr init --ci github
 
@@ -99,21 +99,26 @@ Analysis:
   ripr evidence-health [--root PATH] [--out PATH] [--out-md PATH] [--mutation-calibration PATH]
   ripr calibrate cargo-mutants --mutants-json PATH --repo-exposure-json PATH [--format md|json] [--out PATH]
 
+Repair:
+  ripr repair [<item>] [--root PATH]
+  ripr continue [--attempt ID] [--root PATH]
+  ripr status [--attempt ID] [--root PATH] [--json]
+
 Editor & Agent:
   ripr lsp [--stdio]
   ripr mcp [--stdio] [--root PATH]
-  ripr agent repair --root . --seam-id ID --phase before
-  ripr agent repair --root . (--attempt ID | --seam-id ID) --phase after
-  ripr agent repair --root . --attempt ID --phase verify --verify-authorized --verify-authority ID
+  ripr agent repair --root . --seam-id ID --phase before   [advanced]
+  ripr agent repair --root . (--attempt ID | --seam-id ID) --phase after   [advanced]
+  ripr agent repair --root . --attempt ID --phase verify --verify-authorized --verify-authority ID   [advanced]
   ripr agent start --root . --seam-id ID [--out target/ripr/workflow]   [advanced]
   ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json   [advanced]
   ripr agent packet --root . (--seam-id ID | --gap-ledger PATH --gap-id ID) --json   [advanced]
   ripr agent card --root . --seam-id ID [--json]   [advanced]
-  ripr agent stub --root . (--seam-id ID | --at FILE:LINE) [--write] [--json]   [advanced]
+  ripr agent stub --root . (--seam-id ID | --at FILE:LINE [--kind FAMILY]) [--write] [--json]   [advanced]
   ripr agent verify --root . --before before.json --after after.json --json   [advanced]
   ripr agent verify-execute --root . --packet packet.json --result-json result.json --authorize --json   [advanced]
   ripr agent receipt --root . --verify-json agent-verify.json --seam-id ID --json   [advanced]
-  ripr agent status --root . [--json]
+  ripr agent status --root . [--json]   [advanced]
   ripr agent review-summary --root . [--json]   [advanced]
   ripr swarm queue [--root .] [--gap-ledger target/ripr/reports/gap-decision-ledger.json] [--language python] [--top 10]
   ripr swarm ingest [--root .] --result target/ripr/workflow/agent-result.json
@@ -130,7 +135,9 @@ PR & Review:
   ripr impacted-evidence [--pr-evidence <path>] [--label <label>] [--labels <csv>] [--check]
   ripr annotations [--comments <path>] [--out <path>] [--check]
   ripr pr-ledger record --pr-number 123 --base SHA --head SHA [--gate target/ripr/reports/gate-decision.json] [--baseline-delta target/ripr/reports/baseline-debt-delta.json] [--zero-status target/ripr/reports/ripr-zero-status.json] [--out target/ripr/reports/pr-evidence-ledger.json] [--out-jsonl .ripr/pr-evidence-ledger.jsonl]
+  ripr pr-comments existing [--root .] [--raw target/ripr/review/existing-comments.raw.json|-] [--out target/ripr/review/existing-comments.json]
   ripr pr-comments plan --pr-guidance target/ripr/review/comments.json [--existing-comments target/ripr/review/existing-comments.json] [--mode off|plan|inline] [--out target/ripr/review/comment-publish-plan.json]
+  ripr pr-comments requests --pull-request N --head-sha SHA [--root .] [--plan target/ripr/review/comment-publish-plan.json] [--out-dir target/ripr/review/publish]
   ripr pr-review front-panel (--pr-guidance target/ripr/review/comments.json|--first-action target/ripr/reports/first-useful-action.json|--assistant-proof target/ripr/reports/test-oracle-assistant-proof.json|--assistant-health target/ripr/reports/assistant-loop-health.json|--ledger target/ripr/reports/pr-evidence-ledger.json) [--out target/ripr/reports/pr-review-front-panel.json]
   ripr coverage-grip frontier (--ledger target/ripr/reports/pr-evidence-ledger.json|--baseline-delta target/ripr/reports/baseline-debt-delta.json|--zero-status target/ripr/reports/ripr-zero-status.json) [--coverage target/ripr/reports/coverage-summary.json] [--out target/ripr/reports/coverage-grip-frontier.json]
   ripr assistant-loop proof --pr-guidance target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-brief.json --before target/ripr/pilot/repo-exposure.json --after target/ripr/pilot/after.repo-exposure.json --receipt target/ripr/reports/agent-receipt.json [--out target/ripr/reports/test-oracle-assistant-proof.json]
@@ -172,7 +179,7 @@ What it does:
 Quick start (one command per group):
   ripr doctor                                             # setup
   ripr check                                              # ordinary first value
-  ripr agent repair --seam-id ID --phase before           # repair
+  ripr repair [<item>] --root .                           # repair
   ripr first-pr --root . --base BASE --head HEAD          # PR evidence
   ripr init --ci github                                   # advisory CI
   # Replace BASE with your PR base ref.
@@ -181,7 +188,7 @@ Quick start (one command per group):
 Start-here path:
   - `ripr doctor` checks whether the local workspace and config can produce evidence.
   - `ripr check` is the ordinary first-value analysis; `ripr pilot` is the guided repo-adoption workflow.
-  - `ripr agent repair` owns the before/edit/after repair transaction; `ripr agent card` is the compact default handoff for one seam, and the lower-level brief, packet, verify, and receipt commands remain available for control and debugging.
+  - `ripr repair`, `ripr continue`, and `ripr status` are the ordinary repair transaction; `ripr agent repair` and `ripr agent status` stay as the advanced spellings, `ripr agent card` is the compact default handoff for one seam, and the lower-level brief, packet, verify, and receipt commands remain available for control and debugging.
   - `ripr first-pr` and `ripr start-here` compose `target/ripr/reports/start-here.{json,md}` from existing artifacts; they do not run analysis or repair a gap.
   - Safe next action means repair one named gap, regenerate a missing or malformed artifact, or stop on no-action.
   - Missing artifact, stale evidence, wrong root, malformed artifact, and no actionable gap are explicit recovery states.

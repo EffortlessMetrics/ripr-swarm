@@ -15,15 +15,19 @@ use crate::analysis::SeamLimitInfo;
 use crate::analysis::SeamLimitSource;
 use crate::analysis::TypeScriptRepoReadiness;
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
+use crate::analysis::resource_cost::trace_latency_phase;
 use crate::analysis::seams::SeamGripClass;
 use crate::output::evidence_record::{evidence_record_for, evidence_record_json_value};
 use crate::output::json::escape as json_escape;
+use crate::output::json::escape_into as json_escape_into;
 use crate::output::markdown::{code_span, inline_prose_literal, table_cell_text};
 use crate::output::path::display_path;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 /// Guidance disclosure emitted when a predominantly TypeScript/JavaScript
 /// workspace is scanned in repo-exposure mode and contributes zero seams.
@@ -150,7 +154,7 @@ fn bounded_generated_path_listing(paths: &[PathBuf]) -> String {
     }
 }
 
-pub(crate) const REPO_EXPOSURE_SCHEMA_VERSION: &str = "0.3";
+pub(crate) const REPO_EXPOSURE_SCHEMA_VERSION: &str = "0.4";
 pub(crate) const REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION: &str = "0.1";
 
 /// Cap on related-tests rendered per seam in the JSON output. The
@@ -161,6 +165,70 @@ pub(crate) const REPO_EXPOSURE_SUMMARY_SCHEMA_VERSION: &str = "0.1";
 /// review-sized; tightening the heuristic itself is a future PR.
 const MAX_RELATED_TESTS_PER_SEAM_JSON: usize = 8;
 const MAX_TOP_FILES_SUMMARY_JSON: usize = 25;
+
+/// The producer that actually limited this artifact's seam population.
+/// Default/configured describes the value's source, not the cap's identity.
+#[derive(Clone, Copy)]
+pub(crate) enum RepoExposureLimit<'a> {
+    Inventory(&'a SeamLimitInfo),
+    PilotBudget(&'a SeamLimitInfo),
+}
+
+impl<'a> RepoExposureLimit<'a> {
+    pub(crate) fn info(self) -> &'a SeamLimitInfo {
+        match self {
+            Self::Inventory(info) | Self::PilotBudget(info) => info,
+        }
+    }
+
+    pub(crate) fn category(self) -> &'static str {
+        match self {
+            Self::Inventory(_) => "repo_seam_limit_applied",
+            Self::PilotBudget(_) => "pilot_seam_budget_applied",
+        }
+    }
+
+    pub(crate) fn control(self) -> &'static str {
+        match self {
+            Self::Inventory(_) => "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+            Self::PilotBudget(_) => "RIPR_PILOT_SEAM_BUDGET",
+        }
+    }
+
+    pub(crate) fn repair_route(self) -> &'static str {
+        match (self, &self.info().source) {
+            (Self::Inventory(_), SeamLimitSource::Default) => {
+                "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+            }
+            (Self::Inventory(_), SeamLimitSource::Configured) => {
+                "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
+            }
+            (Self::PilotBudget(_), SeamLimitSource::Default) => {
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget."
+            }
+            (Self::PilotBudget(_), SeamLimitSource::Configured) => {
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts."
+            }
+        }
+    }
+
+    fn markdown_repair_route(self) -> &'static str {
+        match (self, &self.info().source) {
+            (Self::Inventory(_), SeamLimitSource::Default) => {
+                "set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
+            }
+            (Self::Inventory(_), SeamLimitSource::Configured) => {
+                "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
+            }
+            (Self::PilotBudget(_), SeamLimitSource::Default) => {
+                "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget"
+            }
+            (Self::PilotBudget(_), SeamLimitSource::Configured) => {
+                "set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts"
+            }
+        }
+    }
+}
 
 /// Render the repo exposure JSON.
 #[cfg(test)]
@@ -179,9 +247,26 @@ pub(crate) fn render_repo_exposure_json(
     )
 }
 
+#[cfg(test)]
 pub(crate) fn render_repo_exposure_json_with_generated_skip(
     classified: &[ClassifiedSeam],
     limit_info: Option<&SeamLimitInfo>,
+    ts_guidance: Option<&TsFullRepoGuidance>,
+    python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
+) -> String {
+    render_repo_exposure_json_with_limit(
+        classified,
+        limit_info.map(RepoExposureLimit::Inventory),
+        ts_guidance,
+        python_guidance,
+        generated_skip,
+    )
+}
+
+pub(crate) fn render_repo_exposure_json_with_limit(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<RepoExposureLimit<'_>>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
@@ -211,9 +296,9 @@ pub(crate) fn render_repo_exposure_json_with_generated_skip(
 /// each seam carries its evidence record. CLI callers use this writer path so
 /// the JSON schema stays unchanged while memory pressure scales with one seam
 /// record rather than the full artifact.
-pub(crate) fn write_repo_exposure_json<W: io::Write>(
+fn write_repo_exposure_json<W: io::Write>(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     ts_guidance: Option<&TsFullRepoGuidance>,
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
@@ -248,15 +333,34 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
 ) -> Result<(), String> {
     let placeholder = repo_exposure_artifact_metadata(context, CONTENT_SHA256_PLACEHOLDER)?;
     let seams = SeamJsons::new(classified, PRERENDERED_SEAM_JSON_BUDGET_BYTES);
-    let source_subject = repo_exposure_source_subject(&seams, &context.root);
+    let source_subject_started = Instant::now();
+    let mut source_subject = repo_exposure_source_subject(&seams, &context.root);
+    if let Some(key) = &context.corpus_key {
+        let subject = source_subject
+            .get_or_insert_with(|| serde_json::json!({"digest_algorithm": "sha256", "files": []}));
+        subject["corpus"] = crate::output::gap_source_subject::captured_rust_corpus_subject(key);
+    }
+    trace_latency_phase(
+        "serialize_source_subject",
+        "ok",
+        source_subject_started.elapsed(),
+    );
     let mut hasher = Sha256Writer::new();
     let disclosures = RepoExposureJsonDisclosures {
         ts_guidance,
         python_guidance,
         generated_skip,
     };
+    // The hash pass streams the document through `Sha256Writer`, which
+    // hashes each chunk without buffering it, so no destination I/O
+    // happens here. The write pass below renders the document a second
+    // time into `out`, so `serialize_write_pass` minus
+    // `serialize_hash_pass` mixes destination I/O with the hash cost and
+    // second-render cache effects: it bounds I/O, it does not isolate it
+    // (#6898).
+    let hash_started = Instant::now();
     write_repo_exposure_json_document(
-        limit_info,
+        limit_info.map(RepoExposureLimit::Inventory),
         disclosures,
         Some(&placeholder),
         source_subject.as_ref(),
@@ -264,18 +368,22 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
         &mut hasher,
     )
     .map_err(|err| format!("hash repo exposure JSON failed: {err}"))?;
+    trace_latency_phase("serialize_hash_pass", "ok", hash_started.elapsed());
     let content_sha256 = hasher.finish();
     let mut metadata = placeholder;
     metadata["content_sha256"] = serde_json::Value::String(content_sha256);
+    let write_started = Instant::now();
     write_repo_exposure_json_document(
-        limit_info,
+        limit_info.map(RepoExposureLimit::Inventory),
         disclosures,
         Some(&metadata),
         source_subject.as_ref(),
         &seams,
         out,
     )
-    .map_err(|err| format!("write repo exposure JSON failed: {err}"))
+    .map_err(|err| format!("write repo exposure JSON failed: {err}"))?;
+    trace_latency_phase("serialize_write_pass", "ok", write_started.elapsed());
+    Ok(())
 }
 
 /// Render a producer-owned repo-exposure artifact for non-streaming library
@@ -322,11 +430,14 @@ struct SeamJsons<'a> {
 
 impl<'a> SeamJsons<'a> {
     fn new(classified: &'a [ClassifiedSeam], budget_bytes: usize) -> Self {
+        let gaps_started = Instant::now();
         let canonical_gaps = canonical_gap_identities(classified);
+        trace_latency_phase("serialize_gap_identities", "ok", gaps_started.elapsed());
         let mut prefix = Vec::new();
         let mut total = 0usize;
         // A zero budget (the plain streaming writer) keeps nothing, so it
         // renders no entry just to discard it.
+        let prerender_started = Instant::now();
         for entry in classified.iter().take_while(|_| budget_bytes > 0) {
             let seam_json = render_seam_json(entry, &canonical_gaps);
             total = total.saturating_add(seam_json.len());
@@ -335,6 +446,11 @@ impl<'a> SeamJsons<'a> {
             }
             prefix.push(seam_json);
         }
+        trace_latency_phase(
+            "serialize_seam_prerender",
+            "ok",
+            prerender_started.elapsed(),
+        );
         Self {
             classified,
             canonical_gaps,
@@ -358,7 +474,10 @@ fn render_seam_json(
     entry: &ClassifiedSeam,
     canonical_gaps: &BTreeMap<crate::analysis::seams::SeamId, CanonicalGapIdentity>,
 ) -> String {
-    let mut seam_json = String::new();
+    // A rendered seam averages ~12KB on the reference workload; 8KB costs
+    // at most one regrowth while never over-reserving into the kept prefix
+    // (#6898).
+    let mut seam_json = String::with_capacity(8 * 1024);
     push_classified_json(&mut seam_json, entry, canonical_gaps.get(entry.seam.id()));
     seam_json
 }
@@ -399,7 +518,7 @@ struct RepoExposureJsonDisclosures<'a> {
 }
 
 fn write_repo_exposure_json_document<W: io::Write>(
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     disclosures: RepoExposureJsonDisclosures<'_>,
     artifact: Option<&serde_json::Value>,
     source_subject: Option<&serde_json::Value>,
@@ -455,21 +574,15 @@ fn write_repo_exposure_json_document<W: io::Write>(
     if has_limitations {
         writeln!(out, "  \"limitations\": [")?;
         let mut first = true;
-        if let Some(info) = limit_info {
-            let repair_route = match info.source {
-                SeamLimitSource::Default => {
-                    "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-                }
-                SeamLimitSource::Configured => {
-                    "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-                }
-            };
+        if let Some(limit) = limit_info {
+            let info = limit.info();
+            let repair_route = limit.repair_route();
             writeln!(out, "    {{")?;
-            writeln!(out, "      \"category\": \"repo_seam_limit_applied\",")?;
+            writeln!(out, "      \"category\": \"{}\",", limit.category())?;
             writeln!(out, "      \"seams_analyzed\": {},", info.analyzed)?;
             writeln!(out, "      \"seams_total\": {},", info.total)?;
             writeln!(out, "      \"limit_source\": \"{}\",", info.source.as_str())?;
-            writeln!(out, "      \"control\": \"RIPR_REPO_EXPOSURE_SEAM_LIMIT\",")?;
+            writeln!(out, "      \"control\": \"{}\",", limit.control())?;
             writeln!(
                 out,
                 "      \"repair_route\": \"{}\"",
@@ -660,6 +773,29 @@ fn write_repo_exposure_json_document<W: io::Write>(
     out.flush()
 }
 
+/// Render a repo-exposure refusal document (#7332) for a run that never
+/// analyzed. Keeps the format's own conventions: `scope: "repo"`, a
+/// `run_status`/`limitations[]` pair (here `refused` with the typed refusal
+/// identity as the limitation category), zeroed `metrics`, and an empty
+/// `seams` array — parseable as `repo-exposure-json`, never zero bytes.
+pub(crate) fn render_refusal_json(notice: &crate::core_error::RefusalNotice) -> String {
+    let mut metrics = String::from("  \"metrics\": {\n");
+    metrics.push_str("    \"seams_total\": 0,\n");
+    metrics.push_str("    \"headline_eligible\": 0");
+    for class in SeamGripClass::ALL {
+        metrics.push_str(&format!(",\n    \"{}\": 0", class.as_str()));
+    }
+    metrics.push_str("\n  },\n");
+    format!(
+        "{{\n  \"schema_version\": \"{}\",\n  \"scope\": \"repo\",\n  \"run_status\": \"refused\",\n  \"limitations\": [\n    {{\n      \"category\": \"{}\",\n      \"repair_route\": \"{}\",\n      \"message\": \"{}\"\n    }}\n  ],\n{}  \"seams\": []\n}}\n",
+        REPO_EXPOSURE_SCHEMA_VERSION,
+        notice.identity,
+        notice.repair_route,
+        json_escape(&notice.message),
+        metrics,
+    )
+}
+
 /// Render a bounded repo exposure summary JSON.
 ///
 /// Unlike `repo-exposure-json`, this shape deliberately omits per-seam
@@ -845,62 +981,69 @@ fn push_classified_json(
 ) {
     let seam = &entry.seam;
     let evidence = &entry.evidence;
+    // #6898: this hot loop renders every seam up to four times per
+    // snapshot (prerender, source subject, hash pass, write pass), so it
+    // writes fields straight into `out` instead of `format!` temporaries.
+    // The emitted bytes are unchanged; only the intermediate allocations
+    // are gone.
     out.push_str("    {\n");
-    out.push_str(&format!(
-        "      \"seam_id\": \"{}\",\n",
-        json_escape(seam.id().as_str())
-    ));
-    out.push_str(&format!("      \"kind\": \"{}\",\n", seam.kind().as_str()));
-    out.push_str(&format!(
-        "      \"file\": \"{}\",\n",
-        json_escape(&display_path(seam.file()))
-    ));
-    out.push_str(&format!("      \"line\": {},\n", seam.display_line()));
-    out.push_str(&format!(
-        "      \"owner\": \"{}\",\n",
-        json_escape(seam.owner())
-    ));
-    out.push_str(&format!(
-        "      \"expression\": \"{}\",\n",
-        json_escape(seam.expression())
-    ));
-    out.push_str(&format!(
-        "      \"grip_class\": \"{}\",\n",
-        entry.class.as_str()
-    ));
-    out.push_str(&format!(
-        "      \"headline_eligible\": {},\n",
+    let _ = write!(out, "      \"seam_id\": \"");
+    json_escape_into(out, seam.id().as_str());
+    out.push_str("\",\n");
+    let _ = writeln!(out, "      \"kind\": \"{}\",", seam.kind().as_str());
+    let _ = write!(out, "      \"file\": \"");
+    json_escape_into(out, &display_path(seam.file()));
+    out.push_str("\",\n");
+    let _ = writeln!(out, "      \"line\": {},", seam.display_line());
+    if let Some(span) = seam.span() {
+        let _ = writeln!(out, "      \"column\": {},", span.start_column);
+        let _ = writeln!(out, "      \"end_line\": {},", span.end_line);
+        let _ = writeln!(out, "      \"end_column\": {},", span.end_column);
+    }
+    let _ = write!(out, "      \"owner\": \"");
+    json_escape_into(out, seam.owner());
+    out.push_str("\",\n");
+    let _ = write!(out, "      \"expression\": \"");
+    json_escape_into(out, seam.expression());
+    out.push_str("\",\n");
+    let _ = writeln!(out, "      \"grip_class\": \"{}\",", entry.class.as_str());
+    let _ = writeln!(
+        out,
+        "      \"headline_eligible\": {},",
         entry.class.is_headline_eligible()
-    ));
+    );
 
     out.push_str("      \"evidence\": {\n");
-    out.push_str(&format!(
-        "        \"reach\": \"{}\",\n",
+    let _ = writeln!(
+        out,
+        "        \"reach\": \"{}\",",
         evidence.reach.state.as_str()
-    ));
-    out.push_str(&format!(
-        "        \"activate\": \"{}\",\n",
+    );
+    let _ = writeln!(
+        out,
+        "        \"activate\": \"{}\",",
         evidence.activate.state.as_str()
-    ));
-    out.push_str(&format!(
-        "        \"propagate\": \"{}\",\n",
+    );
+    let _ = writeln!(
+        out,
+        "        \"propagate\": \"{}\",",
         evidence.propagate.state.as_str()
-    ));
-    out.push_str(&format!(
-        "        \"observe\": \"{}\",\n",
+    );
+    let _ = writeln!(
+        out,
+        "        \"observe\": \"{}\",",
         evidence.observe.state.as_str()
-    ));
-    out.push_str(&format!(
-        "        \"discriminate\": \"{}\"\n",
+    );
+    let _ = writeln!(
+        out,
+        "        \"discriminate\": \"{}\"",
         evidence.discriminate.state.as_str()
-    ));
+    );
     out.push_str("      },\n");
 
     let related_total = evidence.related_tests.len();
     let related_rendered = related_total.min(MAX_RELATED_TESTS_PER_SEAM_JSON);
-    out.push_str(&format!(
-        "      \"related_tests_total\": {related_total},\n"
-    ));
+    let _ = writeln!(out, "      \"related_tests_total\": {related_total},");
     out.push_str("      \"related_tests\": [");
     if related_rendered > 0 {
         out.push('\n');
@@ -911,35 +1054,32 @@ fn push_classified_json(
             .enumerate()
         {
             out.push_str("        {");
-            out.push_str(&format!(
-                "\"name\": \"{}\", ",
-                json_escape(grip.test_name.as_str())
-            ));
-            out.push_str(&format!(
-                "\"file\": \"{}\", ",
-                json_escape(&display_path(&grip.file))
-            ));
-            out.push_str(&format!("\"line\": {}, ", grip.line));
-            out.push_str(&format!(
-                "\"oracle_kind\": \"{}\", ",
-                grip.oracle_kind.as_str()
-            ));
-            out.push_str(&format!(
+            let _ = write!(out, "\"name\": \"");
+            json_escape_into(out, grip.test_name.as_str());
+            out.push_str("\", ");
+            let _ = write!(out, "\"file\": \"");
+            json_escape_into(out, &display_path(&grip.file));
+            out.push_str("\", ");
+            let _ = write!(out, "\"line\": {}, ", grip.line);
+            let _ = write!(out, "\"oracle_kind\": \"{}\", ", grip.oracle_kind.as_str());
+            let _ = write!(
+                out,
                 "\"oracle_strength\": \"{}\", ",
                 grip.oracle_strength.as_str()
-            ));
-            out.push_str(&format!(
-                "\"evidence_summary\": \"{}\", ",
-                json_escape(grip.evidence_summary.as_str())
-            ));
-            out.push_str(&format!(
+            );
+            let _ = write!(out, "\"evidence_summary\": \"");
+            json_escape_into(out, grip.evidence_summary.as_str());
+            out.push_str("\", ");
+            let _ = write!(
+                out,
                 "\"relation_reason\": \"{}\", ",
                 grip.relation_reason.as_str()
-            ));
-            out.push_str(&format!(
+            );
+            let _ = write!(
+                out,
                 "\"relation_confidence\": \"{}\"",
                 grip.relation_confidence.as_str()
-            ));
+            );
             out.push('}');
             if idx + 1 != related_rendered {
                 out.push(',');
@@ -952,7 +1092,9 @@ fn push_classified_json(
 
     out.push_str("      \"observed_values\": [");
     for (idx, value) in evidence.observed_values.iter().enumerate() {
-        out.push_str(&format!("\"{}\"", json_escape(value.value.as_str())));
+        out.push('"');
+        json_escape_into(out, value.value.as_str());
+        out.push('"');
         if idx + 1 != evidence.observed_values.len() {
             out.push_str(", ");
         }
@@ -963,11 +1105,11 @@ fn push_classified_json(
     if !evidence.missing_discriminators.is_empty() {
         out.push('\n');
         for (idx, missing) in evidence.missing_discriminators.iter().enumerate() {
-            out.push_str(&format!(
-                "        {{\"value\": \"{}\", \"reason\": \"{}\"}}",
-                json_escape(missing.value.as_str()),
-                json_escape(missing.reason.as_str())
-            ));
+            let _ = write!(out, "        {{\"value\": \"");
+            json_escape_into(out, missing.value.as_str());
+            let _ = write!(out, "\", \"reason\": \"");
+            json_escape_into(out, missing.reason.as_str());
+            out.push_str("\"}");
             if idx + 1 != evidence.missing_discriminators.len() {
                 out.push(',');
             }
@@ -1016,6 +1158,22 @@ pub(crate) fn render_repo_exposure_md_with_generated_skip(
     python_guidance: Option<&PythonRepoExposureGuidance>,
     generated_skip: Option<&GeneratedRustSkip>,
 ) -> String {
+    render_repo_exposure_md_with_limit(
+        classified,
+        limit_info.map(RepoExposureLimit::Inventory),
+        ts_guidance,
+        python_guidance,
+        generated_skip,
+    )
+}
+
+pub(crate) fn render_repo_exposure_md_with_limit(
+    classified: &[ClassifiedSeam],
+    limit_info: Option<RepoExposureLimit<'_>>,
+    ts_guidance: Option<&TsFullRepoGuidance>,
+    python_guidance: Option<&PythonRepoExposureGuidance>,
+    generated_skip: Option<&GeneratedRustSkip>,
+) -> String {
     let metrics = ExposureMetrics::from(classified);
     let mut out = String::new();
     out.push_str("# ripr repo exposure report\n\n");
@@ -1047,15 +1205,9 @@ pub(crate) fn render_repo_exposure_md_with_generated_skip(
     if has_limitations {
         out.push_str("\n## Limitations\n\n");
         // Seam-limit disclosure: emit only when a real cap fired.
-        if let Some(info) = limit_info {
-            let control = match info.source {
-                SeamLimitSource::Default => {
-                    "set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
-                }
-                SeamLimitSource::Configured => {
-                    "remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)"
-                }
-            };
+        if let Some(limit) = limit_info {
+            let info = limit.info();
+            let control = limit.markdown_repair_route();
             out.push_str(&format!(
                 "> Partial scan: analyzed {} of {} seams (seam_limit_applied; {}).\n\n",
                 info.analyzed, info.total, control,
@@ -1319,6 +1471,49 @@ mod tests {
     };
     use crate::output::markdown::{code_span, inline_prose_literal};
 
+    #[test]
+    fn refusal_document_keeps_the_format_contract_with_zeroed_metrics() -> Result<(), String> {
+        // #7332: a refused repo-exposure run parses as repo-exposure-json —
+        // the format's own run_status/limitations pair, zeroed metrics for
+        // every grip class, and an empty seams array, never zero bytes.
+        let notice =
+            crate::core_error::CoreError::seam_id_unknown("agent packet seam_id s was not found")
+                .refusal_notice();
+        let rendered = render_refusal_json(&notice);
+        let value: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
+        for (pointer, expected) in [
+            ("/schema_version", REPO_EXPOSURE_SCHEMA_VERSION),
+            ("/scope", "repo"),
+            ("/run_status", "refused"),
+            ("/limitations/0/category", "seam_id_unknown"),
+            ("/limitations/0/repair_route", "analysis/seam-inventory"),
+        ] {
+            let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+            if actual != Some(expected) {
+                return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+            }
+        }
+        if value["limitations"][0]["message"] != serde_json::Value::String(notice.message.clone()) {
+            return Err(format!("limitation must echo the diagnostic: {value}"));
+        }
+        if value["seams"].as_array().map(Vec::len) != Some(0) {
+            return Err(format!("seams must be empty: {value}"));
+        }
+        let metrics = value
+            .pointer("/metrics")
+            .ok_or("metrics object must be present")?;
+        for class in SeamGripClass::ALL {
+            if metrics[class.as_str()] != 0 {
+                return Err(format!("metric {} must be zeroed: {value}", class.as_str()));
+            }
+        }
+        if metrics["seams_total"] != 0 || metrics["headline_eligible"] != 0 {
+            return Err(format!("totals must be zeroed: {value}"));
+        }
+        Ok(())
+    }
+
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")
     }
@@ -1424,7 +1619,7 @@ mod tests {
         );
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: std::path::PathBuf::from("tests/pricing_tests.rs"),
                 line: 5,
@@ -1441,7 +1636,7 @@ mod tests {
                 relation_reason:
                     crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
                 relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
-            }],
+            })],
             reach: stage(StageState::Yes),
             activate: stage(StageState::Yes),
             propagate: stage(StageState::Yes),
@@ -1459,6 +1654,7 @@ mod tests {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         };
         ClassifiedSeam {
             seam,
@@ -1471,7 +1667,7 @@ mod tests {
     fn json_carries_schema_version_scope_and_metrics() {
         let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None, None);
         for needle in [
-            "\"schema_version\": \"0.3\"",
+            "\"schema_version\": \"0.4\"",
             "\"scope\": \"repo\"",
             "\"run_status\": \"complete\"",
             "\"seams_total\": 1",
@@ -1484,6 +1680,34 @@ mod tests {
         assert!(
             !json.contains("\"limitations\""),
             "limitations must be absent on complete run:\n{json}"
+        );
+    }
+
+    #[test]
+    fn json_carries_span_coordinates_when_seam_has_span() {
+        use crate::analysis::seams::SeamSpan;
+        let mut entry = weakly_gripped_classified();
+        entry.seam = entry.seam.with_span(SeamSpan {
+            start_line: 42,
+            start_column: 9,
+            end_line: 42,
+            end_column: 38,
+        });
+        let json = render_repo_exposure_json(&[entry], None, None, None);
+        for needle in ["\"column\": 9", "\"end_line\": 42", "\"end_column\": 38"] {
+            assert!(json.contains(needle), "missing {needle:?} in json:\n{json}");
+        }
+    }
+
+    #[test]
+    fn json_omits_span_coordinates_when_seam_lacks_span() {
+        // The seam header must go straight from "line" to "owner" when no
+        // span geometry exists. (Nested projections such as evidence_record
+        // carry their own end_line keys; this asserts the seam object shape.)
+        let json = render_repo_exposure_json(&[weakly_gripped_classified()], None, None, None);
+        assert!(
+            json.contains("\"line\": 42,\n      \"owner\""),
+            "seam header grew span fields without geometry in json:\n{json}"
         );
     }
 
@@ -1534,6 +1758,103 @@ mod tests {
             json.contains("\"control\": \"RIPR_REPO_EXPOSURE_SEAM_LIMIT\""),
             "control missing in:\n{json}"
         );
+    }
+
+    #[test]
+    fn pilot_limit_disclosure_names_the_applied_cap() -> Result<(), String> {
+        let classified = [weakly_gripped_classified()];
+        for (source, source_name, route, markdown_line) in [
+            (
+                SeamLimitSource::Default,
+                "default",
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget.",
+                "> Partial scan: analyzed 1 of 3 seams (seam_limit_applied; set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget).",
+            ),
+            (
+                SeamLimitSource::Configured,
+                "configured",
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
+                "> Partial scan: analyzed 1 of 3 seams (seam_limit_applied; set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts).",
+            ),
+        ] {
+            let info = SeamLimitInfo {
+                analyzed: 1,
+                total: 3,
+                source,
+            };
+            let limit = Some(RepoExposureLimit::PilotBudget(&info));
+            let json = render_repo_exposure_json_with_limit(&classified, limit, None, None, None);
+            let artifact: Value = serde_json::from_str(&json)
+                .map_err(|err| format!("parse pilot disclosure failed: {err}\n{json}"))?;
+            assert_eq!(artifact["run_status"], "seam_limit_applied");
+            assert_eq!(artifact["seams"].as_array().map(Vec::len), Some(1));
+            assert_eq!(
+                artifact["limitations"],
+                json!([{
+                    "category": "pilot_seam_budget_applied",
+                    "seams_analyzed": 1,
+                    "seams_total": 3,
+                    "limit_source": source_name,
+                    "control": "RIPR_PILOT_SEAM_BUDGET",
+                    "repair_route": route,
+                }])
+            );
+            let md = render_repo_exposure_md_with_limit(&classified, limit, None, None, None);
+            assert_eq!(
+                md.lines().find(|line| line.starts_with("> Partial scan:")),
+                Some(markdown_line)
+            );
+        }
+        let json = render_repo_exposure_json_with_limit(&classified, None, None, None, None);
+        let artifact: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("parse uncapped disclosure failed: {err}\n{json}"))?;
+        assert_eq!(artifact["run_status"], "complete");
+        assert_eq!(artifact["seams"].as_array().map(Vec::len), Some(1));
+        assert!(artifact.get("limitations").is_none());
+        let md = render_repo_exposure_md_with_limit(&classified, None, None, None, None);
+        assert!(!md.contains("> Partial scan:"));
+        Ok(())
+    }
+
+    #[test]
+    fn inventory_limit_routes_remain_unchanged() -> Result<(), String> {
+        let classified = [weakly_gripped_classified()];
+        for (source, route, markdown_line) in [
+            (
+                SeamLimitSource::Default,
+                "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`).",
+                "> Partial scan: analyzed 1 of 3 seams (seam_limit_applied; set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)).",
+            ),
+            (
+                SeamLimitSource::Configured,
+                "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`).",
+                "> Partial scan: analyzed 1 of 3 seams (seam_limit_applied; remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)).",
+            ),
+        ] {
+            let info = SeamLimitInfo {
+                analyzed: 1,
+                total: 3,
+                source,
+            };
+            let json = render_repo_exposure_json(&classified, Some(&info), None, None);
+            let artifact: Value = serde_json::from_str(&json)
+                .map_err(|err| format!("parse inventory disclosure failed: {err}\n{json}"))?;
+            assert_eq!(
+                artifact["limitations"][0]["category"],
+                "repo_seam_limit_applied"
+            );
+            assert_eq!(
+                artifact["limitations"][0]["control"],
+                "RIPR_REPO_EXPOSURE_SEAM_LIMIT"
+            );
+            assert_eq!(artifact["limitations"][0]["repair_route"], route);
+            let md = render_repo_exposure_md(&classified, Some(&info), None, None);
+            assert_eq!(
+                md.lines().find(|line| line.starts_with("> Partial scan:")),
+                Some(markdown_line)
+            );
+        }
+        Ok(())
     }
 
     #[test]
@@ -2167,9 +2488,9 @@ mod tests {
             7,
             SeamGripClass::WeaklyGripped,
         );
-        classified.evidence.related_tests[0].file =
+        std::sync::Arc::make_mut(&mut classified.evidence.related_tests[0]).file =
             std::path::PathBuf::from(r"crates\faultline-app\tests\integration.rs");
-        classified.evidence.related_tests[0].test_target = Some(
+        std::sync::Arc::make_mut(&mut classified.evidence.related_tests[0]).test_target = Some(
             crate::analysis::test_grip_evidence::TestTargetEvidence::fixture(
                 "below_threshold_has_no_discount",
                 std::path::Path::new(r"crates\faultline-app\tests\integration.rs"),
@@ -2205,7 +2526,7 @@ mod tests {
     #[test]
     fn given_repo_exposure_related_tests_when_helper_owner_call_then_additive_reason_is_emitted() {
         let mut classified = weakly_gripped_classified();
-        classified.evidence.related_tests[0].relation_reason =
+        std::sync::Arc::make_mut(&mut classified.evidence.related_tests[0]).relation_reason =
             crate::analysis::test_grip_evidence::RelationReason::HelperOwnerCall;
 
         let json = render_repo_exposure_json(&[classified.clone()], None, None, None);

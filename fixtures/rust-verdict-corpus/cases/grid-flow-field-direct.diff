@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index f0ab98d..386c4f5 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,7 +9,7 @@ pub struct Manifest {
+ pub const CURRENT: u32 = 7;
+ 
+ pub fn is_stale(manifest: &Manifest) -> bool {
+-    manifest.version < CURRENT
++    CURRENT > manifest.version
+ }
+ 
+ pub fn needs_upgrade(manifest: &Manifest) -> bool {

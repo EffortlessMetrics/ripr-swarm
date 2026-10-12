@@ -15,14 +15,17 @@ pub(crate) use path_dependencies::{
     PathDependencyAdjacency, PathDependencyGraphStatus, reverse_dependent_scope_expansion,
 };
 pub(crate) use source_role::{
-    SourceRole, SourceRoleContext, classify_with, is_test_surface_path, seeds_diff_probes,
+    DiffOnlySource, SourceRole, SourceRoleContext, classify_with, diff_only_source,
+    is_test_surface_path, may_be_diff_only_source, seeds_diff_probes,
 };
 
 pub(crate) use classify::{normalize_path, package_root};
+pub(crate) use discover::UnlinkedPythonTests;
 pub use discover::discover_rust_files;
 pub(crate) use discover::{
     changed_source_files_absent_from_worktree, discover_preview_language_files,
-    discover_unanalyzed_source_files, limitations_for_absent_changed_files,
+    discover_python_test_files, discover_unanalyzed_source_files,
+    limitations_for_absent_changed_files, worktree_contains_regular_source_file,
 };
 pub(crate) use select::{
     select_rust_files_for_mode_with_dependent_packages, with_module_context_files,

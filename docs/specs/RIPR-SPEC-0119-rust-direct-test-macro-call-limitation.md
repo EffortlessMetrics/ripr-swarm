@@ -20,7 +20,8 @@ Support-tier impact:
 
 - No tier change. This spec adds one additive `static_limit_kind` value,
   `rust_macro_wrapped_test_call_unresolved`.
-- Classification stays `no_static_path`. The value names a limitation, not a
+- Classification stays `no_static_path`, or `weakly_exposed` when every related
+  test is proximity-only (#7071, RIPR-SPEC-0117). The value names a limitation, not a
   reach claim, oracle claim, repair packet, or macro expansion proof.
 - No `schema_version` bump is required because `static_limit_kind` is already
   additive optional finding metadata.

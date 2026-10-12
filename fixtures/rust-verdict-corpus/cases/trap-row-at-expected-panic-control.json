@@ -1,0 +1,59 @@
+{
+  "case_id": "trap-row-at-expected-panic-control",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-row-at-expected-panic-control.diff",
+  "anchor": {
+    "file": "src/grid_checked.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "should_panic_expected_message",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "index >= 101",
+        "mutated_line": "if index >= 101 {",
+        "outcome": "tests_failed",
+        "failing_test": "grid_checked::tests::board_refuses_cell_one_hundred",
+        "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index >= 101`, which changes whether index 100 panics"
+      },
+      {
+        "replacement": "index < 100",
+        "mutated_line": "if index < 100 {",
+        "outcome": "tests_failed",
+        "failing_test": "grid_checked::tests::board_refuses_cell_one_hundred",
+        "equivalence_review": "not equivalent: replaces the guard `index > 99` with `index < 100`, which changes whether index 100 panics"
+      },
+      {
+        "replacement": "false",
+        "mutated_line": "if false {",
+        "outcome": "tests_failed",
+        "failing_test": "grid_checked::tests::board_refuses_cell_one_hundred",
+        "equivalence_review": "not equivalent: replaces the guard `index > 99` with `false`, which changes whether index 100 panics"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Negative control for trap-row-of-unrelated-panic: Board::new(4) succeeds and #[should_panic(expected = \"cell beyond the board\")] requires row_at's own panic, so each mutant that stops the panic fails the test.",
+  "labeling_observation": {
+    "ripr_commit": "6487826",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

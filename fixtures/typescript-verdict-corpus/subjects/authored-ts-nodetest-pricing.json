@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-ts-nodetest-pricing",
+  "origin": "authored",
+  "version_label": "authored@127309619",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "09cd38ea9ef4f83dbc98ee0c5772ac4a658d94728f7d4444705fd075188d88c0"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/pricing.ts",
+      "sha256": "02ee38335fbee71d6670a807fc365e98b43a5ec36b8c66e8503ea1681ec2302a"
+    },
+    {
+      "path": "test/pricing.test.ts",
+      "sha256": "5dcb8eb1f75c795bd15ef7beaadd9b1071066a6bfaac53d8d6ef7fd4c704e744"
+    },
+    {
+      "path": "test/silver.test.ts",
+      "sha256": "c2abf730cc3457aa06636379b6b2db791ca2ebe8a387dad207540a709494c3c8"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "1b36a03124c1cac5d5da52c58d09fd7e5cf22d03d4a2cf0699ce2dbe88cb419c"
+    }
+  ]
+}

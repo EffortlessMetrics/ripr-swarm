@@ -1,0 +1,30 @@
+//! A typed error checked through a match arm.
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum PayError {
+    Insufficient,
+    Limit,
+}
+
+pub fn withdraw(balance: i64, amount: i64) -> Result<i64, PayError> {
+    if amount > 500 {
+        return Err(PayError::Limit);
+    }
+    if amount > balance {
+        return Err(PayError::Insufficient);
+    }
+    Ok(balance - amount)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_large_withdrawal_hits_the_limit() {
+        match withdraw(10_000, 600) {
+            Ok(left) => panic!("withdrew past the limit, {left} left"),
+            Err(e) => assert!(matches!(e, PayError::Limit)),
+        }
+    }
+}

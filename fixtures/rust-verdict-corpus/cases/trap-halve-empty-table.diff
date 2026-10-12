@@ -1,0 +1,11 @@
+diff --git a/src/tables.rs b/src/tables.rs
+index d785e8e..95e9f57 100644
+--- a/src/tables.rs
++++ b/src/tables.rs
+@@ -1,5 +1,5 @@
+ pub fn halve(value: u32) -> u32 {
+-    value / 2
++    value >> 1
+ }
+ 
+ #[cfg(test)]

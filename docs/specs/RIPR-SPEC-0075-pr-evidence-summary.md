@@ -158,8 +158,8 @@ Schema version `0.1`. Stable field order.
     "why_not_actionable": "Seam inventory was capped; not all seams were analyzed in this run."
   },
   "local_reproduction_commands": [
-    "ripr check --base origin/main",
-    "ripr first-pr --root . --base origin/main --head HEAD",
+    "ripr check --root /work/repo --base origin/main",
+    "ripr first-pr --root /work/repo --base origin/main --head HEAD",
     "cargo test -p ripr error_path"
   ]
 }
@@ -217,6 +217,12 @@ none. The Markdown panel keeps the two apart under `## Limitations` and
 | `top_limitation` | object or absent | first entry in `limitations[]` | Omitted when limitations are empty or `"not_available"`. |
 | `local_reproduction_commands` | string[] | start-here repair_command (first, when present) + diff-report base/head + start-here verify_command | Always present; at least two commands. |
 
+The two commands RIPR builds name the repository `ripr pr-summary` read as an
+absolute `--root`, like the repair and verify commands carried from
+start-here, so the list analyzes one repository wherever it is pasted (#4000).
+The library `build_pr_evidence_summary` has no selected root and keeps the
+portable `ripr check` / `--root .` form.
+
 For the two commands RIPR builds, the selected `base` and `head` values
 remain one literal Bash argument each, quoted when needed. The diff-report
 base takes precedence over the start-here input base. Without a base, the
@@ -229,6 +235,7 @@ summary neither parses nor validates their shell syntax.
 - Unit tests in `crates/ripr/src/app/pr_summary/json.rs`:
   - `generated_reproduction_commands_preserve_hostile_refs_in_bash` (Unix Bash argv control)
   - `generated_reproduction_commands_keep_base_authority_and_carried_commands`
+  - `root_bound_reproduction_commands_name_the_selected_repository`
   - `missing_all_artifacts_yields_unknown_run_status`
   - `present_top_gap_populates_top_repair`
   - `start_here_repair_command_is_carried_into_top_repair`

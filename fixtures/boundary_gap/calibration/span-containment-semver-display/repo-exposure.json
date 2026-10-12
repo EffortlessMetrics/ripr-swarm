@@ -1,0 +1,16 @@
+{
+  "schema_version": "0.4",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "8828427428828b64",
+      "kind": "call_presence",
+      "file": "src/display.rs",
+      "line": 20,
+      "column": 19,
+      "end_line": 20,
+      "end_column": 37,
+      "grip_class": "ungripped"
+    }
+  ]
+}

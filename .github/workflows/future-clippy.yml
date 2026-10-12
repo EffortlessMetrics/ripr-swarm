@@ -16,10 +16,10 @@ concurrency:
 
 # Advisory future-Clippy scan.
 #
-# Runs the Rust 1.95 toolchain over the workspace with the deferred lint
-# trajectory turned on. Every finding is **advisory** — the lane never
-# fails. The point is to track readiness for the planned flips recorded
-# in `policy/clippy-lints.toml`.
+# Runs the pinned Rust 1.95.0 toolchain over the workspace with the deferred
+# lint trajectory turned on. Selected lint findings remain advisory warnings;
+# missing or failed instrumentation fails this advisory job. The point is to
+# track readiness for the planned flips recorded in `policy/clippy-lints.toml`.
 #
 # Triggers:
 #   - push to main: tracks main-line readiness over time.
@@ -47,25 +47,55 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - uses: dtolnay/rust-toolchain@1.95
+      - uses: dtolnay/rust-toolchain@1.95.0
         with:
           components: clippy
 
       - uses: Swatinem/rust-cache@v2
         with:
-          shared-key: ripr-future-clippy-1.95-${{ runner.os }}
+          shared-key: ripr-future-clippy-1.95.0-${{ runner.os }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Run future Clippy (advisory)
-        run: mkdir -p target && cargo +1.95 clippy --workspace --all-targets -- -W clippy::same_length_and_capacity -W clippy::manual_ilog2 -W clippy::needless_type_cast -W clippy::decimal_bitwise_operands -W clippy::disallowed_fields -W clippy::manual_checked_ops -W clippy::manual_take -W clippy::manual_pop_if -W clippy::duration_suboptimal_units -W clippy::unnecessary_trailing_comma 2>&1 | tee target/future-clippy.log || true
+        id: scan
+        shell: bash
+        run: |
+          mkdir -p target
+          rm -f target/future-clippy.log target/future-clippy-status.txt
+          printf 'source_sha=%s\nrun_id=%s\nrun_attempt=%s\ntoolchain=1.95.0\n' "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" > target/future-clippy-status.txt
+          set +e
+          cargo +1.95.0 clippy --workspace --all-targets --message-format=json-render-diagnostics -- -W clippy::same_length_and_capacity -W clippy::manual_ilog2 -W clippy::needless_type_cast -W clippy::decimal_bitwise_operands -W clippy::disallowed_fields -W clippy::manual_checked_ops -W clippy::manual_take -W clippy::manual_pop_if -W clippy::duration_suboptimal_units -W clippy::unnecessary_trailing_comma 2>&1 | tee target/future-clippy.log
+          pipeline_status=("${PIPESTATUS[@]}")
+          set -e
+          printf 'cargo_exit=%s\ntee_exit=%s\n' "${pipeline_status[0]}" "${pipeline_status[1]}" >> target/future-clippy-status.txt
+          if (( pipeline_status[0] != 0 || pipeline_status[1] != 0 )); then
+            echo "::error::Future Clippy instrumentation failed; see the retained native statuses and log."
+            exit 1
+          fi
+          if ! grep -q '^{"reason":"compiler-artifact"' target/future-clippy.log || ! grep '^{"reason":' target/future-clippy.log | tail -n 1 | grep -Fxq '{"reason":"build-finished","success":true}'; then
+            echo "::error::Future Clippy returned without current Cargo artifact and completion evidence."
+            exit 1
+          fi
+          printf 'scan_completed=true\n' >> target/future-clippy-status.txt
 
       - name: Write step summary
-        run: printf "## Future Clippy (advisory)\n\nFindings (if any) are warnings against the deferred lint trajectory recorded in policy/clippy-lints.toml. The lane never fails.\n" >> "$GITHUB_STEP_SUMMARY"
+        if: always()
+        env:
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+        run: |
+          printf '## Future Clippy (advisory)\n\nSelected lint findings remain warnings. Failed instrumentation fails this job. Scan completion does not establish that every planned lint is supported or has a configured subject.\n\nStep outcome: `%s`\n\n' "$SCAN_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f target/future-clippy-status.txt ]] && grep -Fxq "source_sha=$GITHUB_SHA" target/future-clippy-status.txt && grep -Fxq "run_id=$GITHUB_RUN_ID" target/future-clippy-status.txt && grep -Fxq "run_attempt=$GITHUB_RUN_ATTEMPT" target/future-clippy-status.txt; then
+            { printf '```text\n'; cat target/future-clippy-status.txt; printf '```\n'; } >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf 'Scan evidence unavailable; scan was not completed.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload future-clippy log
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: ripr-future-clippy
-          path: target/future-clippy.log
-          if-no-files-found: ignore
+          path: |
+            target/future-clippy.log
+            target/future-clippy-status.txt
+          if-no-files-found: error

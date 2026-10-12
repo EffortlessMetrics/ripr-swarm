@@ -46,6 +46,7 @@
     ],
     "file": "src/lib.rs",
     "grip_class": null,
+    "guidance_note": null,
     "line": 2,
     "seam_id": "67fc764ba37d77bd",
     "seam_kind": "predicate_boundary"
