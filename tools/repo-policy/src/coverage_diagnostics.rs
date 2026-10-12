@@ -194,16 +194,34 @@ fn tool_result(
     descendants_terminated: bool,
 ) -> Value {
     json!({"exit": status, "stdout": display_bytes(stdout), "stderr": display_bytes(stderr),
-        "stdout_utf8_valid": is_valid_utf8(stdout), "stderr_utf8_valid": is_valid_utf8(stderr),
+        "stdout_retained_prefix_utf8_valid": is_valid_utf8(stdout), "stderr_retained_prefix_utf8_valid": is_valid_utf8(stderr),
         "stdout_hex": hex(stdout), "stderr_hex": hex(stderr), "truncated": truncated,
         "timed_out": timed_out, "descendants_terminated": descendants_terminated})
+}
+
+// Decode only the bounded prefix retained by drain; display text is never a
+// machine path source. The unread suffix has no UTF-8 validity claim.
+fn retained_text(value: &Value, stream: &str) -> Result<String> {
+    let encoded = field(value, &format!("{stream}_hex"));
+    if encoded.len() > STREAM_BYTES * 2 || !encoded.len().is_multiple_of(2) {
+        return Err("invalid retained stream encoding".to_owned());
+    }
+    let bytes = encoded
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let pair = std::str::from_utf8(pair).map_err(|error| error.to_string())?;
+            u8::from_str_radix(pair, 16).map_err(|error| error.to_string())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    String::from_utf8(bytes).map_err(|error| error.to_string())
 }
 
 fn invoke(run: &impl Fn(&[String]) -> Result<Value>, args: &[&str]) -> Value {
     let args = args.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
     run(&args).unwrap_or_else(|e| {
         json!({"exit": null, "stdout": "", "stderr": e,
-        "stdout_utf8_valid": true, "stderr_utf8_valid": true})
+        "stdout_retained_prefix_utf8_valid": true, "stderr_retained_prefix_utf8_valid": true})
     })
 }
 
@@ -665,7 +683,7 @@ fn capture(
         .lines()
         .find_map(|line| line.strip_prefix("host: "));
     let mut replay = json!({"exit": null, "stdout": "", "stderr": "validated profile snapshot or matching LLVM tool unavailable",
-        "stdout_utf8_valid": true, "stderr_utf8_valid": true});
+        "stdout_retained_prefix_utf8_valid": true, "stderr_retained_prefix_utf8_valid": true});
     if let Some(snapshot) = replay_snapshot.as_ref()
         && version["exit"] == 0
         && sysroot["exit"] == 0
@@ -707,15 +725,17 @@ fn capture(
         profile_list_source_recheck(listing, original_list_bytes.as_deref());
     let mut candidates: Vec<(usize, &'static str)> = Vec::new();
     let mut unclassified_profile_warnings = 0usize;
-    if replay.get("stderr_utf8_valid").and_then(Value::as_bool) == Some(false) {
-        report["profile_warning_parse_refusal"] =
-            json!("replay stderr contains invalid UTF-8; exact warning path matching refused");
+    let exact_stderr = retained_text(&replay, "stderr");
+    if exact_stderr.is_err() {
+        report["profile_warning_parse_refusal"] = json!(
+            "retained replay stderr prefix is not valid UTF-8; exact warning path matching refused"
+        );
         unclassified_profile_warnings = field(&replay, "stderr")
             .lines()
             .filter(|line| line.starts_with("warning: "))
             .count();
     } else {
-        for line in field(&replay, "stderr").lines() {
+        for line in exact_stderr.as_deref().unwrap_or_default().split('\n') {
             if !line.starts_with("warning: ") {
                 continue;
             }
@@ -967,68 +987,90 @@ mod tests {
         );
         Ok(())
     }
+    // Linux owns the actual LLVM proof; unsupported OSes compile the explicit
+    // adapter refusal control instead. Missing Linux prerequisites are failures.
     #[cfg(target_os = "linux")]
-    #[test]
-    fn real_llvm_malformed_profile_under_unicode_root_is_retained() -> Result<()> {
-        let sysroot = invoke(&tool, &["rustc", "--print", "sysroot"]);
+    fn required_llvm_tool(run: &impl Fn(&[String]) -> Result<Value>) -> Result<PathBuf> {
+        let sysroot = invoke(run, &["rustc", "--print", "sysroot"]);
         if sysroot["exit"] != 0 {
-            eprintln!("skip actual LLVM replay: rustc sysroot lookup failed");
-            return Ok(());
+            return Err("required LLVM proof: rustc sysroot discovery failed".to_owned());
         }
-        let host = invoke(&tool, &["rustc", "-vV"]);
-        if host["exit"] != 0 {
-            eprintln!("skip actual LLVM replay: rustc host lookup failed");
-            return Ok(());
+        let version = invoke(run, &["rustc", "-vV"]);
+        if version["exit"] != 0 {
+            return Err("required LLVM proof: rustc host discovery failed".to_owned());
         }
-        let host = field(&host, "stdout")
+        let host = field(&version, "stdout")
             .lines()
             .find_map(|line| line.strip_prefix("host: "))
-            .ok_or("rustc host triple missing")?;
-        let profdata = Path::new(field(&sysroot, "stdout").trim())
+            .ok_or("required LLVM proof: rustc host triple missing")?;
+        let path = Path::new(field(&sysroot, "stdout").trim())
             .join("lib/rustlib")
             .join(host)
             .join("bin/llvm-profdata");
-        if !profdata.is_file() {
-            eprintln!("skip actual LLVM replay: llvm-tools-preview is unavailable");
-            return Ok(());
+        let path_text = path
+            .to_str()
+            .ok_or("required LLVM proof: non-UTF-8 tool path")?;
+        if invoke(run, &[path_text, "--version"])["exit"] != 0 {
+            return Err("required LLVM proof: matching llvm-profdata unavailable".to_owned());
         }
+        Ok(path)
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn required_llvm_discovery_failure_is_an_error() {
+        for failing_command in ["sysroot", "-vV", "--version"] {
+            let result = required_llvm_tool(&|args| {
+                if args.iter().any(|arg| arg == failing_command) {
+                    return Err("forced discovery failure".to_owned());
+                }
+                runner(args, None)
+            });
+            assert!(matches!(result, Err(error) if error.starts_with("required LLVM proof:")));
+        }
+    }
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn real_llvm_malformed_profile_under_unicode_root_is_retained() -> Result<()> {
+        required_llvm_tool(&tool)?;
+        for root_name in ["zoë", "zoë\u{0085}"] {
+            let t = temp()?;
+            let root = t.0.join(root_name);
+            let profiles = root.join("profiles");
+            fs::create_dir_all(&profiles).map_err(|error| error.to_string())?;
+            let profile = profiles.join("worker-123456_0.profraw");
+            let malformed = vec![0; 512];
+            fs::write(&profile, &malformed).map_err(|error| error.to_string())?;
+            let listing = profiles.join("ripr-swarm-profraw-list");
+            fs::write(&listing, format!("{}\n", profile.display()))
+                .map_err(|error| error.to_string())?;
+            let output = root.join("coverage-diagnostics");
 
-        let t = temp()?;
-        let root = t.0.join("zoë");
-        let profiles = root.join("profiles");
-        fs::create_dir_all(&profiles).map_err(|error| error.to_string())?;
-        let profile = profiles.join("worker-123456_0.profraw");
-        let malformed = vec![0; 512];
-        fs::write(&profile, &malformed).map_err(|error| error.to_string())?;
-        let listing = profiles.join("ripr-swarm-profraw-list");
-        fs::write(&listing, format!("{}\n", profile.display()))
-            .map_err(|error| error.to_string())?;
-        let output = root.join("coverage-diagnostics");
+            let report = capture(&profiles, &listing, &output, tool)?;
 
-        let report = capture(&profiles, &listing, &output, tool)?;
-
-        assert_ne!(report["merge_replay"]["exit"], 0);
-        assert!(
-            report["merge_replay"]["stderr_utf8_valid"]
-                .as_bool()
-                .unwrap_or(false)
-        );
-        assert_eq!(report["profile_list_source_recheck"]["status"], "unchanged");
-        assert_eq!(report["captured"].as_array().map(Vec::len), Some(1));
-        assert_eq!(
-            report["captured"][0]["error_family"],
-            "unrecognized_instrumentation_profile_encoding_format"
-        );
-        assert_eq!(report["captured"][0]["retained_bytes"], 512);
-        assert_eq!(
-            fs::read(output.join("profile-00.prefix.profraw")).map_err(|error| error.to_string())?,
-            malformed
-        );
-        assert_eq!(
-            fs::read(profile).map_err(|error| error.to_string())?,
-            malformed
-        );
-        assert!(output.join("manifest.json").is_file());
+            assert_eq!(report["merge_replay"]["exit"], 1);
+            assert!(
+                report["merge_replay"]["stderr_retained_prefix_utf8_valid"]
+                    .as_bool()
+                    .unwrap_or(false)
+            );
+            assert_eq!(report["profile_list_source_recheck"]["status"], "unchanged");
+            assert_eq!(report["captured"].as_array().map(Vec::len), Some(1));
+            assert_eq!(
+                report["captured"][0]["error_family"],
+                "unrecognized_instrumentation_profile_encoding_format"
+            );
+            assert_eq!(report["captured"][0]["retained_bytes"], 512);
+            assert_eq!(
+                fs::read(output.join("profile-00.prefix.profraw"))
+                    .map_err(|error| error.to_string())?,
+                malformed
+            );
+            assert_eq!(
+                fs::read(profile).map_err(|error| error.to_string())?,
+                malformed
+            );
+            assert!(output.join("manifest.json").is_file());
+        }
         Ok(())
     }
     #[test]
@@ -1036,8 +1078,8 @@ mod tests {
         let text = "warning: profile at zoë";
         let result = tool_result(Some(1), text.as_bytes(), &[0xff], false, false, false);
         assert_eq!(result["stdout"], text);
-        assert_eq!(result["stdout_utf8_valid"], true);
-        assert_eq!(result["stderr_utf8_valid"], false);
+        assert_eq!(result["stdout_retained_prefix_utf8_valid"], true);
+        assert_eq!(result["stderr_retained_prefix_utf8_valid"], false);
         assert_eq!(result["stderr_hex"], "ff");
 
         let t = temp()?;
@@ -1071,9 +1113,46 @@ mod tests {
         assert_eq!(report["captured"].as_array().map(Vec::len), Some(0));
         assert_eq!(
             report["profile_warning_parse_refusal"],
-            "replay stderr contains invalid UTF-8; exact warning path matching refused"
+            "retained replay stderr prefix is not valid UTF-8; exact warning path matching refused"
         );
         assert!(field(&report["merge_replay"], "stderr_hex").contains("ff"));
+        Ok(())
+    }
+    #[test]
+    fn invalid_byte_after_retained_stderr_prefix_does_not_refuse_complete_warning() -> Result<()> {
+        let t = temp()?;
+        let (dir, file, list) = seed(&t.0, b"malformed profile bytes")?;
+        let out = t.0.join("evidence");
+        let report = capture(&dir, &list, &out, |args| {
+            let result = runner(args, Some(&file))?;
+            if !args.iter().any(|arg| arg == "merge") {
+                return Ok(result);
+            }
+            let mut bytes = retained_text(&result, "stderr")?.into_bytes();
+            assert!(bytes.len() < STREAM_BYTES);
+            bytes.resize(STREAM_BYTES, b' ');
+            bytes.push(0xff);
+            let (prefix, truncated) = drain(std::io::Cursor::new(bytes))?;
+            assert_eq!(prefix.len(), STREAM_BYTES);
+            assert!(truncated);
+            Ok(tool_result(Some(1), b"", &prefix, truncated, false, false))
+        })?;
+        assert_eq!(
+            report["merge_replay"]["stderr_retained_prefix_utf8_valid"],
+            true
+        );
+        assert_eq!(report["merge_replay"]["truncated"], true);
+        assert_eq!(
+            field(&report["merge_replay"], "stderr_hex").len(),
+            STREAM_BYTES * 2
+        );
+        assert_eq!(report["unclassified_profile_warnings"], 0);
+        assert_eq!(report["captured"].as_array().map(Vec::len), Some(1));
+        assert_eq!(report["original_coverage_outcome"], "failure");
+        assert_eq!(
+            fs::read(out.join("profile-00.prefix.profraw")).map_err(|e| e.to_string())?,
+            b"malformed profile bytes"
+        );
         Ok(())
     }
     #[test]

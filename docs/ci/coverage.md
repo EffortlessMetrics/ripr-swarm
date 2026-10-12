@@ -50,7 +50,11 @@ Expected artifacts after a coverage run:
   failures before profile merging. This bounded
   artifact records profile-list inventory, validated replay status, limited
   malformed-profile prefixes, and tool diagnostics; it does not change the
-  failed coverage result.
+  failed coverage result. Tool-stream UTF-8 validity flags describe only the
+  retained bounded prefix; bytes beyond that prefix are discarded. Exact
+  retained bytes drive warning-path matching, while display text is sanitized.
+  The required Linux LLVM replay test fails if Rust or matching LLVM discovery
+  fails; unsupported platforms exercise the adapter refusal control.
 
 Codecov upload requires the `CODECOV_TOKEN` secret and runs only for trusted
 pushes, manual dispatches, and same-repo pull requests. Fork pull requests still
