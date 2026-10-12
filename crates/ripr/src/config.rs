@@ -536,6 +536,14 @@ impl RiprConfig {
         if let Some(reports) = raw.reports
             && let Some(max) = reports.max_related_tests
         {
+            // #7353: zero silently empties `related_tests` in every context
+            // packet; fail closed like the neighboring keys instead of
+            // accepting a value whose only effect is invisible evidence
+            // loss. The explicit `--max-related-tests 0` render cap keeps
+            // its own deliberate per-invocation contract (#4318).
+            if max == 0 {
+                return Err("reports.max_related_tests must be at least 1; remove the key for the default (5)".to_string().into());
+            }
             config.reports.max_related_tests = max;
         }
         if let Some(suppressions) = raw.suppressions
@@ -566,6 +574,13 @@ impl RiprConfig {
             };
         }
         if let Some(perl) = raw.perl {
+            // #7353: zero used to be silently coerced back to the default
+            // by the accessor, so a user meaning "no timeout" got an
+            // undocumented 30 s limit; fail closed at parse like the other
+            // keys.
+            if perl.timeout_ms == Some(0) {
+                return Err("perl.timeout_ms must be at least 1 millisecond; remove the key for the default (30000)".to_string().into());
+            }
             config.perl = PerlConfig {
                 producer: perl.producer,
                 executable: perl.executable.map(PathBuf::from),

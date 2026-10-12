@@ -251,10 +251,11 @@ mod tests {
         );
     }
 
-    /// #4318 review: zero is a valid render cap (the packet renders zero
-    /// related tests, matching `reports.max_related_tests = 0`), so it must
-    /// pass parsing and fail later — here on the missing root — never with
-    /// the numeric-shape message.
+    /// #4318 review: zero is a valid explicit per-invocation render cap (the
+    /// packet renders zero related tests), so it must pass parsing and fail
+    /// later — here on the missing root — never with the numeric-shape
+    /// message. The config key is the opposite contract: a zero
+    /// `reports.max_related_tests` now fails closed at config parse (#7353).
     #[test]
     fn context_accepts_zero_max_related_tests_at_parse_time() {
         let result = context(&args(&[
