@@ -172,20 +172,17 @@ fn module_rebinds(masked_module: &str, name: &str) -> bool {
 ///   exports;
 /// - a `.constructor` or `.prototype` member, a `prototype` name, a
 ///   `constructor` name other than a class-member header (destructuring
-///   `{ constructor: O }` reaches `Object`), or a computed member access
-///   (`x[key]`; an empty `string[]` type is fine);
+///   `{ constructor: O }` reaches `Object`), or any bracket with something
+///   inside (`x[key]`, `x?.[key]`, `{ [key]: v } = o`, `[1, 2]`; an empty
+///   `string[]` type or `[]` literal is fine);
 /// - a backslash in code, since `\u0046orbidden` is `Forbidden`;
 /// - a hook, prototype or constructor name spelled in string text.
 fn module_escapes_name_scan(raw_module: &str, masked_module: &str) -> bool {
-    let computed_access = masked_module.match_indices('[').any(|(at, _)| {
-        let before = masked_module[..at].trim_end();
-        let after = masked_module[at + 1..].trim_start();
-        before
-            .chars()
-            .next_back()
-            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | ')' | ']'))
-            && !after.starts_with(']')
-    });
+    // Any bracket with something inside: a computed key can be built from
+    // strings in any position (`x[k]`, `x?.[k]`, `{ [k]: v } = o`).
+    let computed_access = masked_module
+        .match_indices('[')
+        .any(|(at, _)| !masked_module[at + 1..].trim_start().starts_with(']'));
     let namespace_import = identifier_offsets(masked_module, "import")
         .into_iter()
         .any(|at| {

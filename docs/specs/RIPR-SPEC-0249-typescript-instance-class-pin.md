@@ -139,8 +139,11 @@ ladder and in its related-test row, when all of these hold:
   - a namespace or dynamic import (`import * as`, `import(`);
   - a `.constructor` or `.prototype` member, a `prototype` name, a
     `constructor` name other than a class-member header `constructor(`
-    (destructuring `{ constructor: O } = {}` reaches `Object`), or a
-    computed member access (`x[key]`; an empty `T[]` type is fine);
+    (destructuring `{ constructor: O } = {}` reaches `Object`), or any
+    bracket with something inside, since a computed key built from strings
+    (`x[k]`, `x?.[k]`, `{ [k]: v } = o`) can name either; an empty `T[]`
+    type or `[]` literal is fine, and array literals and destructuring
+    with elements fail;
   - a backslash in code, since an escaped identifier (`\u0046orbidden`)
     names the same binding;
   - `hasInstance`, `setPrototypeOf`, `__proto__` or a quoted

@@ -37,7 +37,7 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
         OWNER, &built, CHANGED, "NotFound"
     ));
     // An empty `[]` type is not a computed access.
-    let typed = format!("{ERRORS}export const codes: number[] = [404, 403];\n");
+    let typed = format!("{ERRORS}export const codes: number[] = [];\n");
     assert!(ts_owner_branches_split_class(
         OWNER, &typed, CHANGED, "NotFound"
     ));
@@ -263,6 +263,12 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
                     "class NotFound extends Error {\n  install() {\n    const { constructor: K } = this;\n    dp(K, gp(O), {});\n  }\n}",
                 )
             ),
+            "NotFound",
+        ),
+        (
+            "a computed destructuring key reaches Object",
+            OWNER.to_string(),
+            format!("const {{ [\"constr\" + \"uctor\"]: O }} = {{}};\n{ERRORS}"),
             "NotFound",
         ),
         (
