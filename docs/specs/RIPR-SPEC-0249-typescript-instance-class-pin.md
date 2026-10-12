@@ -144,17 +144,26 @@ ladder and in its related-test row, when all of these hold:
     assignment (`++` and `--` included), local declaration or call
     through a parameter.
 
-  An import is `import "x";` or `import <clause> from "x";` with a clause
-  of names, braces, commas and `*`, and a return type holds only names,
-  spaces, `|`, `&`, `<`, `>` and `,` on the function's own line. The text has no backslash, template
-  literal or `/` outside a comment, and the plain lexer that reads it must
-  agree with the shared masker the other scans use (the masker reads a
-  quote after a word as JSX text, which could hide code from them).
-  A top-level statement or variable, a type alias, an interface, a
-  decorator, a method, `this` or a field fails. The earlier token checks
-  (no `hasInstance`, `setPrototypeOf` or `__proto__` text, no
-  `Object`, `Reflect`, `Symbol`, global objects or computed access) stay
-  as a second line.
+  An import is `import "x";` or `import <clause> from "x";` with a
+  clause of names, braces and commas; a namespace `import * as` or a
+  dynamic `import(...)` fails, since either reaches the module's own
+  exports. A return type holds only names, spaces, `|`, `&`, `<`, `>`
+  and `,` on the function's own line. The text has no backslash,
+  template literal or `/` outside a comment, and the plain lexer that
+  reads it must agree with the shared masker the other scans use (the
+  masker reads a quote after a word as JSX text, which could hide code
+  from them). A top-level statement or variable, a type alias, an
+  interface, a decorator, a method, `this` or a field fails.
+
+  The earlier token checks stay as a second line:
+  - no `hasInstance`, `setPrototypeOf`, `__proto__` or quoted
+    `constructor` text, string text included;
+  - no `declare`, `static`, `prototype`, `eval`, `Function`, `Object`,
+    `Reflect`, `Symbol`, `Proxy`, `globalThis`, `window`, `global` or
+    `self`;
+  - no `.constructor` or `.prototype` member, and no `constructor` name
+    other than a class-member header `constructor(`;
+  - no `@`, no backslash in code, and no bracket with something inside.
 
 The module scan reads every `class Name` declaration; a module with any
 generic (`class A<T>`), anonymous (`export default class {`) or repeated
