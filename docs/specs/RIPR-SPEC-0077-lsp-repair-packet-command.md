@@ -100,6 +100,33 @@ authentication or execution authority. Cargo test display commands retain their
 existing workspace working-directory context; foreign-CWD execution is not
 established by provenance admission.
 
+### Python ledger admission
+
+The shared passive and command-time validator preserves producer-issued Python
+identities containing literal comparison operators. `<` and `>` are data only
+inside the existing balanced inert single-quoted form; double quotes,
+backslashes or typographic quotes refuse that allowance. Substitution retains
+the same rule. In the command body, semicolons, ampersands, pipes, backticks, NUL
+and line breaks remain refused even inside quotes. Redirect destinations retain
+the existing `shell_arg` token and workspace-path contract. This is a bounded
+display policy, not a shell parser
+or permission to execute a command.
+
+Safety and portable-root binding share the producer's one top-level ` > `
+stdout split. Quoted operators in identities or destinations are data. The
+redirect still requires one final `shell_arg` token under the selected root's
+`target/ripr/`; active operators, append/stderr/joined/multiple redirects, extra
+tail arguments and escaping paths refuse.
+
+Exactly the ledger producer's operational `python_preview` and
+`python_repair_card_unavailable` markers join the existing closed analyzer-kind
+set. Recognition preserves actionability gates: a genuine repair card can retain
+its bounded preview action, while an unavailable card stays `StaticLimitation`
+with its detail, no commands and no agent packet. Unknown kinds and malformed
+source provenance still refuse the whole artifact. Python corpus currentness
+remains explicitly unavailable under the existing preview/mixed contract;
+admission does not authenticate a producer or qualify an editor.
+
 ## Non-Goals
 
 - Does not run mutants, execute tests, or modify any file.
