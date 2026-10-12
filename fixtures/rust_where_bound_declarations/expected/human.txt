@@ -17,7 +17,10 @@ Start here:
   Changed behavior: T: Into<u8> + Copy,
   Analyzer limit: No strong discriminator was detected
   Related test: src/lib.rs:19 observes_packet
-  Next step: Escalate to real mutation testing or deep static analysis for this probe.
+  Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
+    gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and
+    changed implementations with a focused `cargo test` run. Static classification may remain
+    unknown.
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     - reach yes: Related tests appear to reach packet: observes_packet
     - infection unknown: Changed syntax is not mapped to a high-confidence probe family

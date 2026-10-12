@@ -521,6 +521,7 @@ mod tests {
             &probe(ProbeFamily::ReturnValue, "return Err(CalcError::TooLarge);"),
             &ExposureClass::WeaklyExposed,
             false,
+            &[],
         );
         assert_eq!(
             error_construction.as_deref(),

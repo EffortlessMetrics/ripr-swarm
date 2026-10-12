@@ -17,7 +17,11 @@ Start here:
   Changed behavior: println!("amount is {}", amount * 9);
   Analyzer limit: No clear propagation path from changed behavior to an observable sink
   Related test: tests/report_tests.rs:4 report_does_not_panic (has no assertion)
-  Next step: Escalate to real mutation testing or deep static analysis for this probe.
+  Next step: Trace the changed value to the output or effect an existing test observes, and inspect
+    its exact assertion. Inspect the macro invocation and the output or effect it produces; ripr
+    does not expand the macro. Add or strengthen a test only if this inspection finds a gap. Compare
+    the original and changed implementations with a focused `cargo test` run. Static classification
+    may remain unknown.
   Evidence: reach yes · infection yes · propagation unknown · observation no · discriminator no
     - reach yes: Related tests appear to reach report: report_does_not_panic
     - infection yes: Reachable tests can plausibly activate this changed behavior
