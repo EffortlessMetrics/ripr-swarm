@@ -3665,7 +3665,7 @@ mod tests {
 
     #[test]
     fn command_root_accepts_quoted_workspace_path() {
-        let workspace = root();
+        let workspace = root().join("quoted workspace");
         let command = format!(
             "ripr agent verify --root \"{}\" --json",
             workspace.display()

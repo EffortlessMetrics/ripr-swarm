@@ -1695,7 +1695,7 @@ fn cache_component_outcome(rejections: &[GapArtifactRejection]) -> ComponentOutc
 
 /// Recovery route for a gap artifact whose `source_subject` stamp no longer
 /// matches, or cannot be matched to, the workspace files (#4544).
-const SOURCE_SUBJECT_RECOVERY: &str = "regenerate gap artifacts from fresh current analysis: ripr check --format repo-exposure-json then ripr reports gap-ledger (gap-decision-ledger.json), or cargo xtask lane1-evidence-audit (actionable-gaps.json)";
+pub(super) const SOURCE_SUBJECT_RECOVERY: &str = "regenerate from fresh analysis in the selected workspace: capture ripr check --format repo-exposure-json as target/ripr/reports/repo-exposure.json, then ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json; or cargo xtask lane1-evidence-audit for actionable-gaps.json";
 
 /// Read, validate, and parse the gap decision ledger once per refresh so the
 /// typed component outcome and the diagnostic projection share a single
@@ -1704,7 +1704,7 @@ const SOURCE_SUBJECT_RECOVERY: &str = "regenerate gap artifacts from fresh curre
 /// a normal state and records no outcome.
 /// Recovery route for a ledger whose `source_subject` stamp no longer
 /// matches, or cannot be matched to, the workspace files (#4544).
-const SOURCE_SUBJECT_LEDGER_RECOVERY: &str = "regenerate the gap decision ledger from fresh current analysis: ripr check --format repo-exposure-json then ripr reports gap-ledger";
+const SOURCE_SUBJECT_LEDGER_RECOVERY: &str = "regenerate from fresh analysis in the selected workspace: capture ripr check --format repo-exposure-json as target/ripr/reports/repo-exposure.json, then ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json";
 
 fn load_gap_ledger_records(
     root: &Path,

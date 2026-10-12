@@ -8128,15 +8128,15 @@ fn workspace_status_rejection_repair(
         ),
         GapArtifactRejection::StaleSubject(_) => (
             "regenerate_gap_artifacts",
-            "gap artifacts describe other source file contents; regenerate them with ripr reports gap-ledger or cargo xtask lane1-evidence-audit",
+            super::diagnostics::SOURCE_SUBJECT_RECOVERY,
         ),
         GapArtifactRejection::StaleCorpus => (
             "regenerate_gap_artifacts",
-            "the analyzed Rust source/test corpus changed; regenerate from fresh ripr check --format repo-exposure-json analysis with ripr reports gap-ledger or cargo xtask lane1-evidence-audit",
+            super::diagnostics::SOURCE_SUBJECT_RECOVERY,
         ),
         GapArtifactRejection::UnverifiableSubject(_) => (
             "regenerate_gap_artifacts",
-            "gap artifacts carry no usable source_subject provenance; regenerate from fresh ripr check --format repo-exposure-json analysis with ripr reports gap-ledger or cargo xtask lane1-evidence-audit",
+            super::diagnostics::SOURCE_SUBJECT_RECOVERY,
         ),
         GapArtifactRejection::WrongRoot(_) => (
             "verify_workspace_root",
@@ -8271,6 +8271,9 @@ fn collect_gap_record_context_packet(
             return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
         }
     };
+    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
+        return Some(sentinel);
+    }
     let records = match parse_gap_records_json_for_root(&contents, Some(root)) {
         Ok(records) => records,
         Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
@@ -8278,9 +8281,6 @@ fn collect_gap_record_context_packet(
     let record = records
         .iter()
         .find(|record| gap_record_matches(record, gap_id))?;
-    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
-        return Some(sentinel);
-    }
     let rendered = render_agent_gap_record_packet_json(&display_path(&ledger_path), record).ok()?;
     serde_json::from_str(&rendered).ok()
 }
@@ -8302,7 +8302,7 @@ fn ledger_source_subject_sentinel(
         &artifact,
         super::gap_artifacts::GapArtifactKind::GapDecisionLedger,
         "gap-decision-ledger.json",
-        "ripr reports gap-ledger",
+        "ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json",
     )
 }
 
@@ -8315,19 +8315,33 @@ fn source_subject_sentinel(
     regenerate: &str,
 ) -> Option<LSPAny> {
     use super::gap_artifacts::GapArtifactRejection;
-    match super::gap_artifacts::validate_source_subject(artifact, kind, root, repo_config) {
-        Ok(_) => None,
+    let context = super::gap_artifacts::GapArtifactValidationContext {
+        root,
+        enabled_languages: repo_config.languages().enabled(),
+        repo_config,
+    };
+    let recovery = format!(
+        "regenerate from fresh analysis in the selected workspace: capture ripr check --format repo-exposure-json as target/ripr/reports/repo-exposure.json then {regenerate}"
+    );
+    match super::gap_artifacts::validate_gap_artifact(artifact, &context) {
+        Ok(validated) if validated.kind == kind => None,
+        Ok(_) => Some(repair_packet_sentinel(&format!(
+            "unsupported_kind: expected {artifact_name}"
+        ))),
         Err(GapArtifactRejection::StaleSubject(path)) => Some(repair_packet_sentinel(&format!(
-            "stale_subject: {path} changed since {artifact_name} was written; regenerate it for the current source with {regenerate}"
+            "stale_subject: {path} changed since {artifact_name} was written; {recovery}"
         ))),
         Err(GapArtifactRejection::StaleCorpus) => Some(repair_packet_sentinel(&format!(
-            "stale_corpus: the analyzed Rust source/test corpus changed since {artifact_name} was written; regenerate it from fresh analysis with ripr check --format repo-exposure-json then {regenerate}"
+            "stale_corpus: the analyzed Rust source/test corpus changed since {artifact_name} was written; {recovery}"
         ))),
         Err(GapArtifactRejection::UnverifiableSubject(reason)) => {
             Some(repair_packet_sentinel(&format!(
-                "unverifiable_subject: {reason}: {artifact_name} cannot be matched to the current analyzed source inputs; regenerate it from fresh analysis with ripr check --format repo-exposure-json then {regenerate}"
+                "unverifiable_subject: {reason}: {artifact_name} cannot be matched to the current analyzed source inputs; {recovery}"
             )))
         }
+        Err(GapArtifactRejection::WrongRoot(_)) => Some(repair_packet_sentinel(&format!(
+            "wrong_root: {artifact_name} belongs to another workspace; select its producer workspace or regenerate it for the selected workspace"
+        ))),
         Err(other) => Some(repair_packet_sentinel(other.as_str())),
     }
 }
@@ -8755,6 +8769,16 @@ fn collect_repair_packet_from_actionable_gaps(
         Ok(report) => report,
         Err(_) => return Some(repair_packet_sentinel(MALFORMED_ACTIONABLE_GAPS_REASON)),
     };
+    if let Some(sentinel) = source_subject_sentinel(
+        root,
+        repo_config,
+        &report,
+        super::gap_artifacts::GapArtifactKind::ActionableGaps,
+        "actionable-gaps.json",
+        "cargo xtask lane1-evidence-audit",
+    ) {
+        return Some(sentinel);
+    }
     let packets = report.get("packets").and_then(|v| v.as_array())?;
     // A requested gap must match exactly. Answering an unknown id with the
     // first packet handed out another gap's repair instructions; `None` lets
@@ -8787,17 +8811,6 @@ fn collect_repair_packet_from_actionable_gaps(
             "gap is not actionable in actionable-gaps.json",
         ));
     }
-    if let Some(sentinel) = source_subject_sentinel(
-        root,
-        repo_config,
-        &report,
-        super::gap_artifacts::GapArtifactKind::ActionableGaps,
-        "actionable-gaps.json",
-        "cargo xtask lane1-evidence-audit",
-    ) {
-        return Some(sentinel);
-    }
-
     validate_and_render_actionable_gap_packet(root, packet)
 }
 
@@ -8950,6 +8963,9 @@ fn collect_repair_packet_from_ledger(
             return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
         }
     };
+    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
+        return Some(sentinel);
+    }
     let records = match parse_gap_records_json_for_root(&contents, Some(root)) {
         Ok(records) => records,
         Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
@@ -8961,10 +8977,6 @@ fn collect_repair_packet_from_ledger(
     } else {
         records.iter().find(|r| r.gap_state == "actionable")?
     };
-    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
-        return Some(sentinel);
-    }
-
     // Use the existing validator for completeness gate.
     if let Err(reason) = validate_agent_gap_record_packet(record) {
         return Some(serde_json::json!({

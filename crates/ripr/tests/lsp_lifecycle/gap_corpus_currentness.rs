@@ -1121,24 +1121,27 @@ fn real_preview_and_mixed_scope_ledgers(root: &Path) -> ProofResult<(Value, Valu
             )
         },
     )?;
-    // The original >= preview stimulus emitted a quoted canonical gap ID
-    // containing >, which the existing command validator rejects even in a
-    // quoted data argument. Use the genuine == producer instead; do not strip
-    // receipt fields, rename canonical identities, or weaken command safety.
+    // The genuine == preview producer retains the exact nonempty Python
+    // identity as a StaticLimitation: it has no concrete missing
+    // discriminator/repair card, so no verify or receipt command is emitted.
+    // Preserve that native disposition. Do not strip command fields, rename
+    // canonical identities, or invent a preview action to qualify its scope.
     require(
-        python_records.iter().all(|record| {
-            let id = record["canonical_gap_id"].as_str().unwrap_or_default();
-            record["receipt_command"].as_str().is_some_and(|command| {
-                id.ends_with("predicate:amount==threshold")
-                    && command.contains("ripr receipt write --gap")
-                    && command.contains(id)
-                    && !command.contains('<')
-                    && !command.contains('>')
-            })
-        }),
+        python_records.len() == 1
+            && python_records[0]["canonical_gap_id"]
+                == "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount==threshold"
+            && python_records[0]["kind"] == "StaticLimitation"
+            && python_records[0]["gap_state"] == "static_limitation"
+            && python_records[0]["repairability"] == "analyzer_limitation"
+            && python_records[0]["static_limit_kind"] == "python_repair_card_unavailable"
+            && python_records[0]["verification_commands"] == json!([])
+            && python_records[0]["receipt_command"].is_null()
+            && python_ledger["summary"]["records_total"] == 1
+            && python_ledger["summary"]["repairable_total"] == 0
+            && python_ledger["summary"]["static_limitation_total"] == 1,
         || {
             format!(
-                "the genuine Python producer must retain its complete equality receipt route: {python_ledger}"
+                "the genuine Python producer must retain its native nonempty static-limitation disposition: {python_ledger}"
             )
         },
     )?;
@@ -1505,4 +1508,562 @@ fn unknown_corpus_language_precedes_known_preview_in_both_record_orders() -> Pro
     }
     install(root, &mixed)?;
     assert_preview_corpus_unavailable(&framed_status(root)?)
+}
+
+fn assert_all_captured_named_bytes(root: &Path, ledger: &Value) -> ProofResult {
+    let files = ledger["source_subject"]["files"]
+        .as_array()
+        .ok_or("genuine producer omitted named-file provenance")?;
+    require(!files.is_empty(), || {
+        "named-byte control cannot be vacuous".into()
+    })?;
+    for file in files {
+        let path = file["path"].as_str().ok_or("named subject has no path")?;
+        require(
+            Path::new(path)
+                .components()
+                .all(|component| matches!(component, std::path::Component::Normal(_))),
+            || format!("captured named subject must be a confined relative path: {path}"),
+        )?;
+        let bytes = std::fs::read(root.join(path)).map_err(|error| error.to_string())?;
+        require(
+            file["digest"] == format!("sha256:{:x}", Sha256::digest(&bytes)),
+            || format!("old named subject changed: {file}"),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn passive_nonempty_no_action_rust_ledger_still_requires_current_corpus() -> ProofResult {
+    let fixture = CorpusFixture::new("corpus-no-action-stale")?;
+    let root = fixture.root();
+    CorpusMutation::AddEqualityTest.apply(root)?;
+    let captured = capture(root)?;
+    let old = derive(root, &captured, "already-observed")?;
+    require(
+        captured["seams"][0]["grip_class"] == "strongly_gripped"
+            && old["summary"]["records_total"] == 1
+            && old["summary"]["no_action_total"] == 1
+            && old["summary"]["repairable_total"] == 0
+            && old["records"][0]["canonical_gap_id"] == GAP
+            && old["records"][0]["gap_state"] == "already_observed"
+            && old["records"][0]["language"] == "rust",
+        || {
+            format!(
+                "no-action stimulus must be a real nonempty already-observed Rust record: {captured}; {old}"
+            )
+        },
+    )?;
+    assert_all_captured_named_bytes(root, &old)?;
+    install(root, &old)?;
+    let current = framed_status(root)?;
+    assert_current_no_action(&current)?;
+    assert_rust_corpus_currentness_row(&current)?;
+    let old_head = head(root)?;
+    let old_bytes = std::fs::read(root.join("target/ripr/reports/gap-decision-ledger.json"))
+        .map_err(|error| error.to_string())?;
+    CorpusMutation::EditUnclaimedTest.apply(root)?;
+    require(head(root)? == old_head, || {
+        "no-action corpus edit changed HEAD".into()
+    })?;
+    assert_all_captured_named_bytes(root, &old)?;
+    require(
+        std::fs::read(root.join("target/ripr/reports/gap-decision-ledger.json"))
+            .map_err(|error| error.to_string())?
+            == old_bytes,
+        || "no-action stimulus edited the old ledger".into(),
+    )?;
+    assert_corpus_refused(&framed_status(root)?, "stale_corpus", None)?;
+    let fresh_capture = capture(root)?;
+    let fresh = derive(root, &fresh_capture, "regenerated-no-action")?;
+    require(
+        fresh["records"][0]["canonical_gap_id"] == GAP
+            && fresh["records"][0]["gap_state"] == "already_observed"
+            && fresh["summary"]["records_total"] == 1
+            && fresh["summary"]["no_action_total"] == 1
+            && fresh["source_subject"]["corpus"]["files_content_hash"]
+                != old["source_subject"]["corpus"]["files_content_hash"],
+        || {
+            format!(
+                "real recovery must keep the no-action subject and recapture changed content authority: {fresh}"
+            )
+        },
+    )?;
+    install(root, &fresh)?;
+    let recovered = framed_status(root)?;
+    assert_current_no_action(&recovered)?;
+    assert_rust_corpus_currentness_row(&recovered)
+}
+
+fn refreshed_command_session(root: &Path) -> ProofResult<LspSession> {
+    let selected = consumer_root(root)?;
+    let uri = compat_file_uri(&selected)?;
+    let mut session = LspSession::spawn()?;
+    let initialized = session.request(
+        "initialize",
+        json!({
+            "processId": null,
+            "rootUri": uri,
+            "initializationOptions": {
+                "baseRef": "HEAD", "checkMode": "instant", "diagnosticProfile": "full"
+            },
+            "capabilities": {}
+        }),
+    )?;
+    expect_result(&initialized, "initialize")?;
+    session.notify("initialized", Some(json!({})))?;
+    let refresh = session.request_with_timeout(
+        "workspace/executeCommand",
+        json!({"command": "ripr.refresh", "arguments": []}),
+        ANALYSIS_TIMEOUT,
+    )?;
+    require(expect_result(&refresh, "ripr.refresh")?.is_null(), || {
+        format!("explicit refresh response must be null: {refresh}")
+    })?;
+    Ok(session)
+}
+
+fn scoped_gap_command(session: &mut LspSession, command: &str) -> ProofResult<Value> {
+    let response = session.request_with_timeout(
+        "workspace/executeCommand",
+        json!({"command": command, "arguments": [{"gap_id": GAP}]}),
+        ANALYSIS_TIMEOUT,
+    )?;
+    Ok(expect_result(&response, command)?.clone())
+}
+
+#[test]
+fn gap_commands_recheck_rust_corpus_without_a_refresh_or_document_notification() -> ProofResult {
+    let fixture = CorpusFixture::new("corpus-command-time")?;
+    let root = fixture.root();
+    let captured = capture(root)?;
+    let old = derive(root, &captured, "original")?;
+    assert_capture_is_actionable(&captured, &old)?;
+    install(root, &old)?;
+    let mut session = refreshed_command_session(root)?;
+    let outcome: ProofResult = (|| {
+        let initial = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+        assert_current_action(&initial)?;
+        require(
+            initial["analysis_status"]["state"] == "succeeded"
+                && initial["analysis_status"]["reason"] == "explicit_refresh",
+            || format!("command proof requires a completed genuine refresh: {initial}"),
+        )?;
+        let context = scoped_gap_command(&mut session, "ripr.collectContext")?;
+        let packets = context["packets"].as_array().ok_or_else(|| {
+            format!(
+                "initial context must render the real nonempty selected ledger packet: {context}"
+            )
+        })?;
+        require(
+            packets.len() == 1
+                && context["source"] == "gap_decision_ledger"
+                && packets[0]["canonical_gap_id"] == GAP
+                && packets[0]["gap_state"] == "actionable"
+                && packets[0]["verification_commands"]
+                    .as_array()
+                    .is_some_and(|commands| !commands.is_empty()),
+            || {
+                format!(
+                    "initial context must contain the exact actionable producer subject: {context}"
+                )
+            },
+        )?;
+        let repair = scoped_gap_command(&mut session, "ripr.collectRepairPacket")?;
+        require(
+            repair["kind"] == "repair_packet"
+                && repair["canonical_gap_id"] == GAP
+                && repair["verify_command"]
+                    .as_str()
+                    .is_some_and(|command| !command.is_empty())
+                && repair["receipt_command"]
+                    .as_str()
+                    .is_some_and(|command| !command.is_empty()),
+            || format!("initial repair command must return its real useful route: {repair}"),
+        )?;
+        let old_head = head(root)?;
+        CorpusMutation::EditUnclaimedTest.apply(root)?;
+        require(head(root)? == old_head, || {
+            "command-time edit changed HEAD".into()
+        })?;
+        assert_original_named_bytes(root, &old)?;
+        // No didChange, didSave, watched-file notification, or refresh occurs.
+        // Each explicit packet read must inspect the saved corpus itself.
+        for command in ["ripr.collectContext", "ripr.collectRepairPacket"] {
+            let refused = scoped_gap_command(&mut session, command)?;
+            require(
+                refused["kind"] == "repair_packet"
+                    && refused["status"] == "not_actionable_or_incomplete"
+                    && refused["reason"].as_str().is_some_and(|reason| {
+                        reason.starts_with("stale_corpus:")
+                            && reason.contains("ripr check --format repo-exposure-json")
+                            && reason.contains("ripr reports gap-ledger")
+                    })
+                    && refused.get("packets").is_none()
+                    && refused.get("verify_command").is_none()
+                    && refused.get("receipt_command").is_none(),
+                || {
+                    format!(
+                        "{command} must refuse current repair authority after same-HEAD corpus drift: {refused}"
+                    )
+                },
+            )?;
+        }
+        let retained = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+        require(
+            retained["analysis_status"]["snapshot_id"] == initial["analysis_status"]["snapshot_id"]
+                && retained["analysis_status"]["current_input_identity"]
+                    == initial["analysis_status"]["current_input_identity"]
+                && retained["analysis_status"]["reason"] == "explicit_refresh",
+            || {
+                format!(
+                    "the command refusal must be independent of another analysis refresh: {initial}; {retained}"
+                )
+            },
+        )?;
+        Ok(())
+    })();
+    let closed = shutdown_exit_and_wait(&mut session);
+    outcome?;
+    closed
+}
+
+#[test]
+fn ledger_derivation_requires_an_absolute_captured_producer_frame_for_corpus_transfer()
+-> ProofResult {
+    let fixture = CorpusFixture::new("corpus-input-frame")?;
+    let root = fixture.root();
+    let captured = capture(root)?;
+    let producer_root = captured
+        .pointer("/artifact/repository/root")
+        .and_then(Value::as_str)
+        .ok_or("real capture omitted producer root frame")?;
+    require(
+        captured.get("root").is_none()
+            && Path::new(producer_root).is_absolute()
+            && std::fs::canonicalize(producer_root).map_err(|error| error.to_string())?
+                == std::fs::canonicalize(root).map_err(|error| error.to_string())?,
+        || format!("fixture must begin with the actual canonical producer frame: {captured}"),
+    )?;
+    let current = derive(root, &captured, "absolute-frame")?;
+    assert_capture_is_actionable(&captured, &current)?;
+    require(
+        current["source_subject"]["corpus"] == captured["source_subject"]["corpus"],
+        || "same-frame writer did not copy the actual captured aggregate".into(),
+    )?;
+    install(root, &current)?;
+    assert_current_action(&framed_status(root)?)?;
+    for (label, frame) in [
+        ("missing-frame", None),
+        ("relative-frame", Some(json!("."))),
+        ("non-string-frame", Some(json!(7))),
+    ] {
+        let mut unbound = captured.clone();
+        let repository = unbound["artifact"]["repository"]
+            .as_object_mut()
+            .ok_or("capture has no repository object")?;
+        match frame {
+            None => {
+                repository.remove("root");
+            }
+            Some(frame) => {
+                repository.insert("root".into(), frame);
+            }
+        }
+        require(
+            unbound["seams"] == captured["seams"]
+                && unbound["source_subject"] == captured["source_subject"],
+            || "frame control must retain all genuine records and captured digests".into(),
+        )?;
+        let derived = derive(root, &unbound, label)?;
+        require(
+            derived["records"] == current["records"]
+                && derived["source_subject"]["files"] == current["source_subject"]["files"]
+                && derived["source_subject"]["corpus"]
+                    == json!({
+                        "unavailable": "input_source_subject_corpus_root_missing"
+                    }),
+            || {
+                format!(
+                    "unbound input frame must not borrow the writer's current root/corpus authority: {unbound}; {derived}"
+                )
+            },
+        )?;
+        install(root, &derived)?;
+        assert_corpus_refused(
+            &framed_status(root)?,
+            "unverifiable_subject",
+            Some("source_subject_corpus_root_missing"),
+        )?;
+    }
+    install(root, &current)?;
+    assert_current_action(&framed_status(root)?)
+}
+
+#[test]
+fn foreign_root_ledger_derivation_cannot_rebase_captured_named_subjects_or_mint_corpus()
+-> ProofResult {
+    let a = CorpusFixture::new("corpus-derive-source-a")?;
+    let b = CorpusFixture::new("corpus-derive-foreign-b")?;
+    let captured_a = capture(a.root())?;
+    let captured_b = capture(b.root())?;
+    let current_b = derive(b.root(), &captured_b, "own-b")?;
+    assert_capture_is_actionable(&captured_b, &current_b)?;
+    require(
+        captured_a["source_subject"] == captured_b["source_subject"],
+        || {
+            "foreign root control must have genuinely equal source bytes and content receipts"
+                .into()
+        },
+    )?;
+    for path in ["src/lib.rs", "tests/pricing.rs", "tests/corpus_control.rs"] {
+        require(
+            std::fs::read(a.root().join(path)).map_err(|error| error.to_string())?
+                == std::fs::read(b.root().join(path)).map_err(|error| error.to_string())?,
+            || format!("byte-identical foreign control differs at {path}"),
+        )?;
+    }
+    install(b.root(), &current_b)?;
+    assert_current_action(&framed_status(b.root())?)?;
+    let foreign = derive(b.root(), &captured_a, "foreign-a")?;
+    require(
+        foreign["records"][0]["canonical_gap_id"] == GAP
+            && foreign["records"][0]["seam_id"] == SEAM
+            && foreign["records"]
+                .as_array()
+                .is_some_and(|records| records.len() == 1)
+            && foreign["source_subject"].is_null()
+            && foreign["source_subject_unavailable"] == "input_source_subject_incomplete",
+        || {
+            format!(
+                "distinct producer frame cannot rebase nonempty named subjects into sibling B, even with equal bytes: {foreign}"
+            )
+        },
+    )?;
+    install(b.root(), &foreign)?;
+    assert_corpus_refused(
+        &framed_status(b.root())?,
+        "unverifiable_subject",
+        Some("source_subject_missing"),
+    )?;
+    install(b.root(), &current_b)?;
+    assert_current_action(&framed_status(b.root())?)
+}
+
+fn assert_current_gap_command_packets(session: &mut LspSession) -> ProofResult {
+    let context = scoped_gap_command(session, "ripr.collectContext")?;
+    let packets = context["packets"].as_array().ok_or_else(|| {
+        format!(
+            "current context must contain its genuine nonempty selected ledger packet: {context}"
+        )
+    })?;
+    require(
+        context["source"] == "gap_decision_ledger"
+            && packets.len() == 1
+            && packets[0]["canonical_gap_id"] == GAP
+            && packets[0]["gap_state"] == "actionable"
+            && packets[0]["verification_commands"]
+                .as_array()
+                .is_some_and(|commands| !commands.is_empty()),
+        || format!("current context must select the exact real producer gap: {context}"),
+    )?;
+    let repair = scoped_gap_command(session, "ripr.collectRepairPacket")?;
+    require(
+        repair["kind"] == "repair_packet"
+            && repair["canonical_gap_id"] == GAP
+            && repair["verify_command"]
+                .as_str()
+                .is_some_and(|command| !command.is_empty())
+            && repair["receipt_command"]
+                .as_str()
+                .is_some_and(|command| !command.is_empty()),
+        || format!("current repair command must preserve a meaningful complete route: {repair}"),
+    )
+}
+
+fn assert_command_snapshot_retained(initial: &Value, retained: &Value) -> ProofResult {
+    let before = &initial["analysis_status"];
+    let after = &retained["analysis_status"];
+    require(
+        before["state"] == "succeeded"
+            && before["reason"] == "explicit_refresh"
+            && before["snapshot_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+            && before["current_input_identity"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+            && after["state"] == "succeeded"
+            && after["reason"] == "explicit_refresh"
+            && after["snapshot_id"] == before["snapshot_id"]
+            && after["current_input_identity"] == before["current_input_identity"],
+        || {
+            format!(
+                "packet admission must recheck its artifact independently of another workspace refresh: {initial}; {retained}"
+            )
+        },
+    )
+}
+
+#[test]
+fn gap_commands_refuse_a_copied_foreign_ledger_after_a_healthy_byte_identical_workspace_refresh()
+-> ProofResult {
+    let a = CorpusFixture::new("corpus-command-source-a")?;
+    let b = CorpusFixture::new("corpus-command-selected-b")?;
+    require(
+        std::fs::canonicalize(a.root()).map_err(|error| error.to_string())?
+            != std::fs::canonicalize(b.root()).map_err(|error| error.to_string())?,
+        || "foreign-root command control requires two physically distinct roots".into(),
+    )?;
+    for path in [
+        "Cargo.toml",
+        "src/lib.rs",
+        "tests/pricing.rs",
+        "tests/corpus_control.rs",
+    ] {
+        require(
+            std::fs::read(a.root().join(path)).map_err(|error| error.to_string())?
+                == std::fs::read(b.root().join(path)).map_err(|error| error.to_string())?,
+            || {
+                format!(
+                    "foreign-root control must have genuinely identical producer bytes at {path}"
+                )
+            },
+        )?;
+    }
+    let captured_a = capture(a.root())?;
+    let ledger_a = derive(a.root(), &captured_a, "producer-a")?;
+    assert_capture_is_actionable(&captured_a, &ledger_a)?;
+    install(a.root(), &ledger_a)?;
+    assert_current_action(&framed_status(a.root())?)?;
+    let captured_b = capture(b.root())?;
+    let ledger_b = derive(b.root(), &captured_b, "producer-b")?;
+    assert_capture_is_actionable(&captured_b, &ledger_b)?;
+    require(
+        ledger_a["source_subject"] == ledger_b["source_subject"]
+            && ledger_a["root"] != ledger_b["root"],
+        || {
+            format!(
+                "named and corpus receipts must be equal while real native producer roots differ: {ledger_a}; {ledger_b}"
+            )
+        },
+    )?;
+    install(b.root(), &ledger_b)?;
+    let mut session = refreshed_command_session(b.root())?;
+    let outcome: ProofResult = (|| {
+        let initial = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+        assert_current_action(&initial)?;
+        assert_current_gap_command_packets(&mut session)?;
+        let old_head = head(b.root())?;
+        let source = a
+            .root()
+            .join("target/ripr/reports/gap-decision-ledger.json");
+        let destination = b
+            .root()
+            .join("target/ripr/reports/gap-decision-ledger.json");
+        let original_bytes = std::fs::read(&source).map_err(|error| error.to_string())?;
+        // Copy the real A artifact only after B has a healthy, nonempty
+        // committed snapshot. No JSON provenance, records, or stamps change.
+        std::fs::copy(&source, &destination).map_err(|error| error.to_string())?;
+        require(
+            std::fs::read(&destination).map_err(|error| error.to_string())? == original_bytes
+                && std::fs::read(&source).map_err(|error| error.to_string())? == original_bytes
+                && head(b.root())? == old_head,
+            || {
+                "foreign artifact transfer must copy A byte-for-byte without changing either producer or B's HEAD".into()
+            },
+        )?;
+        assert_original_named_bytes(b.root(), &ledger_a)?;
+        // No notification or refresh occurs. Equal current content hashes
+        // cannot establish that A's ledger belongs to the selected B root.
+        for command in ["ripr.collectContext", "ripr.collectRepairPacket"] {
+            let refused = scoped_gap_command(&mut session, command)?;
+            require(
+                refused["kind"] == "repair_packet"
+                    && refused["status"] == "not_actionable_or_incomplete"
+                    && refused["reason"].as_str().is_some_and(|reason| {
+                        reason.starts_with("wrong_root:")
+                            && reason.contains("workspace")
+                            && reason.contains("regenerate")
+                    })
+                    && refused.get("packets").is_none()
+                    && refused.get("verify_command").is_none()
+                    && refused.get("receipt_command").is_none(),
+                || {
+                    format!(
+                        "{command} must refuse foreign root authority before exposing a current packet: {refused}"
+                    )
+                },
+            )?;
+        }
+        let retained = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+        assert_command_snapshot_retained(&initial, &retained)?;
+        // The original real B artifact remains a useful recovery control,
+        // admitted on command read without restarting or refreshing B.
+        install(b.root(), &ledger_b)?;
+        assert_current_gap_command_packets(&mut session)?;
+        let recovered = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+        assert_command_snapshot_retained(&initial, &recovered)
+    })();
+    let closed = shutdown_exit_and_wait(&mut session);
+    outcome?;
+    closed
+}
+
+#[cfg(unix)]
+#[test]
+fn gap_commands_admit_the_real_canonical_ledger_from_a_same_physical_alias_after_refresh()
+-> ProofResult {
+    let a = CorpusFixture::new("corpus-command-alias-source")?;
+    let alias_owner = unique_compat_fixture_root("corpus-command-alias-selection")?;
+    let alias = alias_owner.path.join("selected-workspace");
+    std::os::unix::fs::symlink(a.root(), &alias).map_err(|error| error.to_string())?;
+    require(
+        alias.as_os_str() != a.root().as_os_str()
+            && std::fs::canonicalize(&alias).map_err(|error| error.to_string())?
+                == std::fs::canonicalize(a.root()).map_err(|error| error.to_string())?,
+        || {
+            "alias command control must select a different spelling of the same physical root"
+                .into()
+        },
+    )?;
+    let captured = capture(a.root())?;
+    let ledger = derive(a.root(), &captured, "physical-producer")?;
+    assert_capture_is_actionable(&captured, &ledger)?;
+    install(a.root(), &ledger)?;
+    let original_bytes = std::fs::read(
+        a.root()
+            .join("target/ripr/reports/gap-decision-ledger.json"),
+    )
+    .map_err(|error| error.to_string())?;
+    let mut session = refreshed_command_session(&alias)?;
+    let outcome: ProofResult = (|| {
+        let initial = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+        assert_current_action(&initial)?;
+        assert_current_gap_command_packets(&mut session)?;
+        // Reinstall the same real canonical producer bytes through the
+        // selected alias after refresh. Same-physical-root admission must
+        // survive the full command-time artifact validator as well.
+        std::fs::write(
+            alias.join("target/ripr/reports/gap-decision-ledger.json"),
+            &original_bytes,
+        )
+        .map_err(|error| error.to_string())?;
+        require(
+            std::fs::read(
+                a.root()
+                    .join("target/ripr/reports/gap-decision-ledger.json"),
+            )
+            .map_err(|error| error.to_string())?
+                == original_bytes,
+            || "alias transfer must retain the real producer artifact byte-for-byte".into(),
+        )?;
+        assert_current_gap_command_packets(&mut session)?;
+        let retained = execute_compat_command(&mut session, "ripr.collectWorkspaceStatus")?;
+        assert_command_snapshot_retained(&initial, &retained)
+    })();
+    let closed = shutdown_exit_and_wait(&mut session);
+    outcome?;
+    closed
 }

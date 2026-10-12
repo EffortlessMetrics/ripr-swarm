@@ -6200,6 +6200,15 @@ id = "RIPR-SPEC-0076"
 name = "LSP diagnostics severity policy"
 spec = "docs/specs/RIPR-SPEC-0076-lsp-diagnostics-policy.md"
 tests = [
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::gap_commands_refuse_a_copied_foreign_ledger_after_a_healthy_byte_identical_workspace_refresh",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::gap_commands_admit_the_real_canonical_ledger_from_a_same_physical_alias_after_refresh",
+  "xtask/src/tests/rust_corpus_projection.rs::genuine_rust_producer_and_xtask_projector_preserve_explicit_raw_language_and_current_corpus",
+  "xtask/src/tests/rust_corpus_projection.rs::genuine_completed_no_action_corpus_produces_an_empty_queue_without_invented_language",
+  "xtask/src/tests/rust_corpus_projection.rs::genuine_workspace_corpus_cannot_be_rebased_into_a_member_corpus_with_legal_named_subjects",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_nonempty_no_action_rust_ledger_still_requires_current_corpus",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::gap_commands_recheck_rust_corpus_without_a_refresh_or_document_notification",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::ledger_derivation_requires_an_absolute_captured_producer_frame_for_corpus_transfer",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::foreign_root_ledger_derivation_cannot_rebase_captured_named_subjects_or_mint_corpus",
   "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_accepts_empty_commit_and_identical_input_branch",
   "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_accepts_same_head_dirty_non_corpus_input",
   "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_rejects_added_test_at_same_head_and_recovers",
