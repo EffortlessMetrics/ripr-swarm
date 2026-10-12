@@ -127,19 +127,29 @@ fn bound_exception_comparison(
         return None;
     };
     let name = expr_full_name(call.func.as_ref())?;
-    let field = if name.ends_with(".assertRaises") || name.ends_with(".assertRaisesRegex") {
-        "exception"
-    } else {
-        "value"
+    let field = match name.as_str() {
+        "self.assertRaises" | "self.assertRaisesRegex" => "exception",
+        "pytest.raises" | "raises" => "value",
+        _ => return None,
     };
     for stmt in after {
-        if let Some((left, right)) = equality_operands(stmt)
-            && !same_tokens(source, left, right)
-            && (reads_raised_error(left, bound, field) || reads_raised_error(right, bound, field))
-        {
-            return Some(text_for_range(source, stmt.range()).trim().to_string());
+        if let Some((left, right)) = equality_operands(stmt) {
+            // One operand reads the error; the other must not, or the
+            // comparison can hold for any message (`str(e.value) ==
+            // str(e.value.args[0])`), as a tautology does (rule 1).
+            let pinned = |read: &Expr, other: &Expr| {
+                reads_raised_error(read, bound, field) && !mentions_name(source, other, bound)
+            };
+            if !same_tokens(source, left, right) && (pinned(left, right) || pinned(right, left)) {
+                // The failure message observes nothing (rule 4).
+                return Some(format!(
+                    "assert {} == {}",
+                    text_for_range(source, left.range()).trim(),
+                    text_for_range(source, right.range()).trim()
+                ));
+            }
         }
-        if statement_touches_name(stmt, bound) {
+        if statement_touches_name(stmt, bound, source) {
             return None;
         }
     }
@@ -204,20 +214,76 @@ fn reads_raised_error(expr: &Expr, bound: &str, field: &str) -> bool {
 }
 
 /// Whether a statement assigns `name`, or an attribute or subscript reached
-/// through it, or calls a method on it or on such an attribute.
-fn statement_touches_name(stmt: &Stmt, name: &str) -> bool {
-    let rooted = |expr: &Expr| expr_root_name(expr) == Some(name);
+/// through it (directly or inside a tuple, list or starred target, or by a
+/// walrus), or calls a method on it or on such an attribute, or passes it to
+/// a call (`setattr(exc.value, ...)`).
+fn statement_touches_name(stmt: &Stmt, name: &str, source: &SourceText<'_>) -> bool {
+    if text_for_range(source, stmt.range()).contains(":=") {
+        return true;
+    }
+    let rooted = |expr: &Expr| target_rooted_at(expr, name);
     match stmt {
         Stmt::Assign(assign) => assign.targets.iter().any(rooted),
         Stmt::AugAssign(assign) => rooted(&assign.target),
         Stmt::AnnAssign(assign) => rooted(&assign.target),
         Stmt::Delete(delete) => delete.targets.iter().any(rooted),
-        Stmt::Expr(expr_stmt) => matches!(expr_stmt.value.as_ref(), Expr::Call(call)
-            if matches!(call.func.as_ref(), Expr::Attribute(attribute) if rooted(&attribute.value))),
+        Stmt::Expr(expr_stmt) => calls_into(expr_stmt.value.as_ref(), name, true),
+        Stmt::Assert(assert_stmt) => calls_into(assert_stmt.test.as_ref(), name, false),
+        Stmt::Pass(_) => false,
         // A nested block may rebind the name in a way the scan does not follow.
-        Stmt::Assert(_) | Stmt::Pass(_) => false,
         _ => true,
     }
+}
+
+fn target_rooted_at(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::Tuple(tuple) => tuple.elts.iter().any(|elt| target_rooted_at(elt, name)),
+        Expr::List(list) => list.elts.iter().any(|elt| target_rooted_at(elt, name)),
+        Expr::Starred(starred) => target_rooted_at(starred.value.as_ref(), name),
+        _ => expr_root_name(expr) == Some(name),
+    }
+}
+
+/// Whether `expr` holds a method call on `name` (or on an attribute reached
+/// through it), or, with `arguments`, any call passed such a value. Reads
+/// through the expression shapes an `assert` usually holds; anything else
+/// counts as touching, which only withholds credit.
+fn calls_into(expr: &Expr, name: &str, arguments: bool) -> bool {
+    let recurse = |expr: &Expr| calls_into(expr, name, arguments);
+    match expr {
+        Expr::Call(call) => {
+            matches!(call.func.as_ref(), Expr::Attribute(attribute)
+                if expr_root_name(attribute.value.as_ref()) == Some(name))
+                || (arguments
+                    && call
+                        .args
+                        .iter()
+                        .chain(call.keywords.iter().map(|keyword| &keyword.value))
+                        .any(|argument| expr_root_name(argument) == Some(name)))
+                || recurse(call.func.as_ref())
+                || call.args.iter().any(recurse)
+                || call.keywords.iter().any(|keyword| recurse(&keyword.value))
+        }
+        Expr::Compare(compare) => {
+            recurse(compare.left.as_ref()) || compare.comparators.iter().any(recurse)
+        }
+        Expr::BoolOp(bool_op) => bool_op.values.iter().any(recurse),
+        Expr::UnaryOp(unary) => recurse(unary.operand.as_ref()),
+        Expr::BinOp(bin_op) => recurse(bin_op.left.as_ref()) || recurse(bin_op.right.as_ref()),
+        Expr::Attribute(attribute) => recurse(attribute.value.as_ref()),
+        Expr::Subscript(subscript) => {
+            recurse(subscript.value.as_ref()) || recurse(subscript.slice.as_ref())
+        }
+        Expr::Tuple(tuple) => tuple.elts.iter().any(recurse),
+        Expr::List(list) => list.elts.iter().any(recurse),
+        Expr::Name(_) | Expr::Constant(_) => false,
+        _ => true,
+    }
+}
+
+/// Whether `expr`'s text names `name` as a whole identifier.
+fn mentions_name(source: &str, expr: &Expr, name: &str) -> bool {
+    super::mentions_python_name(&text_for_range(source, expr.range()), name)
 }
 
 fn expr_root_name(expr: &Expr) -> Option<&str> {
@@ -534,7 +600,13 @@ fn oracle_for_call(
                     .or_else(|| keyword_value(call, keyword))
                     .is_some_and(|value| !is_none_literal(value))
             };
-            if explicit(2, "places") || explicit(4, "delta") {
+            // A spread (`*rest`, `**tolerance`) may carry `places` or `delta`.
+            let spread = call
+                .args
+                .iter()
+                .any(|argument| matches!(argument, Expr::Starred(_)))
+                || call.keywords.iter().any(|keyword| keyword.arg.is_none());
+            if spread || explicit(2, "places") || explicit(4, "delta") {
                 Some((
                     OracleKind::RelationalCheck,
                     OracleStrength::Weak,
@@ -579,8 +651,7 @@ fn oracle_for_call(
         "raises" if name == "pytest.raises" || name == "raises" => {
             // Rule 13: in the callable form pytest passes `match=` to the
             // callable instead of checking the message.
-            let pattern = keyword_value(call, "match")
-                .filter(|_| exception_assertion_callable(call).is_none());
+            let pattern = keyword_value(call, "match").filter(|_| call.args.len() < 2);
             if pattern.is_some_and(|pattern| !is_trivial_message_pattern(pattern, source)) {
                 Some((
                     OracleKind::ExactErrorVariant,

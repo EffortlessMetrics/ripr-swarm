@@ -29,8 +29,9 @@ use super::boundary::{
     PythonOwnerCallValues, literal_value, static_operand, strong_owner_call_values,
     unrebound_constants,
 };
+use super::module_constants::{body_bound_names, mentions_identifier};
 use super::no_behavior::split_top_level_args;
-use super::related_tests::PythonRelatedCandidate;
+use super::related_tests::{PythonRelatedCandidate, python_text_hides_code};
 use super::source_utils::text_for_range;
 use super::{PythonOwner, PythonParameter};
 use crate::domain::{OwnerKind, ValueContext, ValueFact};
@@ -47,9 +48,67 @@ pub(super) struct PythonGuardedReturn {
     else_value: String,
 }
 
+/// What a function owner's body lets rule 20 read.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(super) struct PythonTermFacts {
+    /// As a callee: its one guarded return, when the function is undecorated
+    /// and synchronous (a decorator or `async def` changes what a call returns).
+    guarded_return: Option<PythonGuardedReturn>,
+    /// As a caller: the parameters that hold their call-site value on every
+    /// line of the body. Empty when the body has a nested scope, a lambda, a
+    /// comprehension or a walrus, or binds names the walk cannot enumerate.
+    stable_parameters: Vec<String>,
+    /// As a caller: the names its body binds, so a callee name it shadows is
+    /// not read as the module function.
+    bound_names: Option<Vec<String>>,
+}
+
+/// The rule 20 facts of a function owner.
+pub(super) fn term_facts(
+    source: &str,
+    body: &[Stmt],
+    parameters: &[PythonParameter],
+    owner_text: &str,
+    wrapped: bool,
+) -> PythonTermFacts {
+    let bound_names = body_bound_names(body);
+    let opaque_scope = ["lambda", "for", "async", "await", ":="]
+        .into_iter()
+        .any(|keyword| code_mentions(owner_text, keyword));
+    let stable_parameters = match (&bound_names, opaque_scope) {
+        (Some(bound), false) => parameters
+            .iter()
+            .map(|parameter| parameter.name.clone())
+            .filter(|name| !bound.contains(name))
+            .collect(),
+        _ => Vec::new(),
+    };
+    PythonTermFacts {
+        guarded_return: (!wrapped)
+            .then(|| guarded_return(source, body, parameters))
+            .flatten(),
+        stable_parameters,
+        bound_names,
+    }
+}
+
+/// Whether `text` holds `token` as code, not in a string, docstring or
+/// comment; a word token must stand as a whole identifier.
+fn code_mentions(text: &str, token: &str) -> bool {
+    let is_word = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let word = token.chars().all(is_word);
+    text.match_indices(token).any(|(start, _)| {
+        let end = start + token.len();
+        let whole = !word
+            || (!text[..start].chars().next_back().is_some_and(is_word)
+                && !text[end..].chars().next().is_some_and(is_word));
+        whole && !python_text_hides_code(text, start)
+    })
+}
+
 /// The guarded-return shape of a function body, when it has exactly that
 /// shape (a leading docstring is allowed).
-pub(super) fn guarded_return(
+fn guarded_return(
     source: &str,
     body: &[Stmt],
     parameters: &[PythonParameter],
@@ -151,6 +210,12 @@ fn changed_call_term<'a>(old_line: &'a str, new_line: &'a str) -> Option<CallTer
         (true, false) => (new_line, new_middle),
         _ => return None,
     };
+    // A term inside a string or a comment is not live code, and a term in a
+    // `def` header sits in a default value, read in the enclosing scope.
+    let sign = prefix + (middle.len() - middle.trim_start().len());
+    if python_text_hides_code(longer, sign) || longer.trim_start().starts_with("def ") {
+        return None;
+    }
     let before = longer.get(..prefix)?.trim_end();
     let after = longer.get(prefix + middle.len()..)?.trim_start();
     let last_word = before
@@ -174,9 +239,17 @@ fn changed_call_term<'a>(old_line: &'a str, new_line: &'a str) -> Option<CallTer
                 | "else"
                 | "lambda"
                 | "await"
+                | "raise"
+                | "assert"
+                | "del"
+                | "except"
         );
-    let rest_intact = after.is_empty()
-        || after.starts_with(['#', ')', ']', '}', ',', '+'])
+    // At the end of the line the expression must end too: an open bracket or
+    // a `\` continuation can carry a `* 2` on the next line.
+    let line_ends_expression =
+        bracket_depth(longer) == Some(0) && !longer.trim_end().ends_with('\\');
+    let rest_intact = ((after.is_empty() || after.starts_with('#')) && line_ends_expression)
+        || after.starts_with([')', ']', '}', ',', '+'])
         || (after.starts_with('-') && !after.starts_with("->"));
     if !operand_ends || !rest_intact {
         return None;
@@ -213,6 +286,31 @@ fn changed_call_term<'a>(old_line: &'a str, new_line: &'a str) -> Option<CallTer
     })
 }
 
+/// The bracket depth at the end of a line, outside string literals and a
+/// trailing comment, or None when it closes more than it opens or ends
+/// inside a string.
+fn bracket_depth(line: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    for ch in line.chars() {
+        match quote {
+            Some(_) if escaped => escaped = false,
+            Some(_) if ch == '\\' => escaped = true,
+            Some(open) if ch == open => quote = None,
+            Some(_) => {}
+            None => match ch {
+                '#' => break,
+                '"' | '\'' => quote = Some(ch),
+                '(' | '[' | '{' => depth += 1,
+                ')' | ']' | '}' => depth = depth.checked_sub(1)?,
+                _ => {}
+            },
+        }
+    }
+    quote.is_none().then_some(depth)
+}
+
 /// Evidence that no strong related call activates the changed term.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct PythonTermEvidence {
@@ -237,13 +335,32 @@ pub(super) fn python_inactive_term_evidence(
         return None;
     }
     let term = changed_call_term(old_line, new_line)?;
-    let callee = owners.iter().find(|candidate| {
+    // The callee is the file's one definition of that name, the owner does
+    // not rebind the name, and no related test may replace it.
+    let mut definitions = owners.iter().filter(|candidate| {
         candidate.file == owner.file
-            && candidate.owner_kind == Some(OwnerKind::Function)
             && candidate.name == term.callee
             && candidate.qualified_name == term.callee
-    })?;
-    let guard = callee.guarded_return.as_ref()?;
+    });
+    let callee = definitions.next()?;
+    if definitions.next().is_some()
+        || callee.owner_kind != Some(OwnerKind::Function)
+        || owner
+            .parameters
+            .iter()
+            .any(|parameter| parameter.name == term.callee)
+        || owner
+            .term_facts
+            .bound_names
+            .as_ref()
+            .is_none_or(|bound| bound.iter().any(|name| name == term.callee))
+        || related_candidates
+            .iter()
+            .any(|candidate| test_may_replace(candidate.test, term.callee))
+    {
+        return None;
+    }
+    let guard = callee.term_facts.guarded_return.as_ref()?;
     let position = callee
         .parameters
         .iter()
@@ -263,15 +380,22 @@ pub(super) fn python_inactive_term_evidence(
     let operand = static_operand(&guard.operand, &callee_constants)?;
     let then_value = static_operand(&guard.then_value, &callee_constants)?;
     let else_value = static_operand(&guard.else_value, &callee_constants)?;
-    let rows = strong_owner_call_values(owner, related_candidates, focus);
+    let rows = strong_owner_call_values(owner, related_candidates, focus)?;
     if rows.is_empty() {
         return None;
     }
     let mut observed_values = Vec::new();
+    let mut branches = std::collections::BTreeSet::new();
     for row in &rows {
-        let value = argument_value(argument, row, &owner_constants)?;
+        let value = argument_value(
+            argument,
+            row,
+            &owner.term_facts.stable_parameters,
+            &owner_constants,
+        )?;
         let taken = compare(&value, guard.operator, &operand)?;
         let result = if taken { &then_value } else { &else_value };
+        branches.insert(taken);
         if !is_zero(result) {
             return None;
         }
@@ -284,37 +408,64 @@ pub(super) fn python_inactive_term_evidence(
     }
     observed_values.sort_by(|a, b| a.line.cmp(&b.line).then(a.value.cmp(&b.value)));
     observed_values.dedup();
-    let mut values: Vec<&str> = observed_values
+    let values: Vec<&str> = observed_values
         .iter()
         .map(|fact| fact.value.as_str())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
         .collect();
-    values.dedup();
+    let condition = format!("{} {} {}", guard.parameter, guard.operator, guard.operand);
+    let branch = branches
+        .iter()
+        .map(|taken| {
+            if *taken {
+                format!("returns {} when `{condition}`", guard.then_value)
+            } else {
+                format!("returns {} when not `{condition}`", guard.else_value)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" and ");
     Some(PythonTermEvidence {
         discriminator: format!("{} != 0", term.text),
         reason: format!(
-            "every strong related test call gives the changed term `{}` the value 0 ({}; `{}` returns {} when `{} {} {}`), so the asserted result is the same with or without it",
+            "static evidence gives the changed term `{}` the value 0 in every strong related test call ({}; `{}` {branch}), so those calls read the same asserted result with or without it",
             term.text,
             values.join(", "),
             callee.name,
-            guard.then_value,
-            guard.parameter,
-            guard.operator,
-            guard.operand,
         ),
         observed_values,
     })
 }
 
 /// The literal a call argument takes in one owner call: a literal, an owner
-/// parameter the call binds, or an unrebound owner-module constant.
+/// parameter the call binds and the body never rebinds, or an unrebound
+/// owner-module constant.
 fn argument_value(
     argument: &str,
     row: &PythonOwnerCallValues,
+    stable_parameters: &[String],
     constants: &[super::module_constants::PythonModuleConstant],
 ) -> Option<String> {
-    literal_value(argument)
-        .or_else(|| row.values.get(argument).cloned())
-        .or_else(|| static_operand(argument, constants))
+    if stable_parameters.iter().any(|name| name == argument) {
+        return row.values.get(argument).cloned();
+    }
+    literal_value(argument).or_else(|| static_operand(argument, constants))
+}
+
+/// Whether a related test may replace the callee at runtime: it patches,
+/// `setattr`s or assigns an attribute of that name, or its file writes a
+/// dynamic namespace.
+fn test_may_replace(test: &super::PythonTest, callee: &str) -> bool {
+    test.constant_rebinding.assigns_attribute(callee)
+        || test
+            .decorators
+            .iter()
+            .any(|decorator| decorator.contains("patch"))
+        || (mentions_identifier(&test.body_text, callee)
+            && ["patch", "setattr", "monkeypatch"]
+                .into_iter()
+                .any(|writer| mentions_identifier(&test.body_text, writer)))
 }
 
 fn integer(value: &str) -> Option<i128> {
@@ -334,11 +485,9 @@ fn compare(left: &str, operator: &str, right: &str) -> Option<bool> {
     })
 }
 
+/// Integer zero only: adding `0.0` to an integer changes its type.
 fn is_zero(value: &str) -> bool {
     integer(value) == Some(0)
-        || value
-            .parse::<f64>()
-            .is_ok_and(|value| value == 0.0 && !value.is_sign_negative())
 }
 
 #[cfg(test)]
@@ -385,5 +534,46 @@ mod tests {
             changed_call_term("    return x + f(y)(z)", "    return x"),
             None
         );
+        // The next line may hold a higher-precedence operator.
+        assert_eq!(
+            changed_call_term("    return (x + f(y)", "    return (x"),
+            None
+        );
+        assert_eq!(
+            changed_call_term("    return x + f(y) \\", "    return x \\"),
+            None
+        );
+        // Inside a string or a comment the term is not code.
+        assert_eq!(
+            changed_call_term("    return \"x + f(y), ok\"", "    return \"x, ok\""),
+            None
+        );
+        assert_eq!(
+            changed_call_term("    return x  # x + f(y)", "    return x  # x"),
+            None
+        );
+        // A default value is read in the enclosing scope.
+        assert_eq!(
+            changed_call_term("def g(x, y=B + f(x)):", "def g(x, y=B):"),
+            None
+        );
+        assert_eq!(changed_call_term("    raise -f(y)", "    raise "), None);
+    }
+
+    #[test]
+    fn a_keyword_in_a_docstring_or_comment_is_not_code() {
+        let text = "def quote(s):\n    \"\"\"Total for an order.\"\"\"\n    # lambda for later\n    return s\n";
+        assert!(!code_mentions(text, "for"));
+        assert!(!code_mentions(text, "lambda"));
+        assert!(code_mentions("    return [s for s in x]\n", "for"));
+        assert!(code_mentions("    return (y := s)\n", ":="));
+        assert!(!code_mentions("    return before\n", "for"));
+    }
+
+    #[test]
+    fn integer_zero_only() {
+        assert!(is_zero("0"));
+        assert!(!is_zero("0.0"));
+        assert!(!is_zero("499"));
     }
 }

@@ -557,7 +557,7 @@ fn walrus_target_names(text: &str) -> std::collections::HashSet<&str> {
 }
 
 /// Whether `text` holds `identifier` as a whole word.
-fn mentions_identifier(text: &str, identifier: &str) -> bool {
+pub(super) fn mentions_identifier(text: &str, identifier: &str) -> bool {
     identifier_offsets(text, identifier).next().is_some()
 }
 

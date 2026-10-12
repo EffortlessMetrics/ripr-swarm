@@ -30,7 +30,7 @@ Linked issues:
 
 Linked PRs:
 
-- None yet
+- #6750 (rules 15 to 19)
 
 Support-tier impact:
 
@@ -194,13 +194,15 @@ never changes kind or strength.
 
 This table is the existing behavior and is normative, with rules 1 to 3,
 12, 14 and 15 below as the only changes (rule 15 changes row 5 for `and`).
-Rule 13 changes relations, not the table. Rule 17 reads a mock assertion
+Rule 13 changes relations and, for pytest's callable form, reads `match=`
+as `broad_error`. Rule 17 reads a mock assertion
 as strong for one credit branch only; its table row is unchanged.
 
 ### Oracle admission rules
 
 1. **Duplicative or mixed equality is not exact.** An `==` comparison,
-   or an `assertEqual` or `assertDictEqual` call, whose two compared
+   or an `assertEqual`, `assertDictEqual` or (rule 12)
+   `self.assertAlmostEqual` call, whose two compared
    operands are the same token sequence, ignoring whitespace outside
    string literals, assigns `relational_check` / weak. It cannot
    discriminate a change to the code both sides run. This mirrors
@@ -443,7 +445,8 @@ the rule; ripr still reports only what the static shape shows.
     fails for any change of at least `1e-7` in the observed value. That
     holds only for the default tolerance: with an explicit `places=` or
     `delta=` (by keyword, or positionally as the third argument for
-    `places` or the fifth for `delta`; the fourth is `msg`), the call is
+    `places` or the fifth for `delta`; the fourth is `msg`), or with a
+    `*` or `**` spread that may carry either, the call is
     `relational_check` / weak, because static evidence cannot tell whether the band excludes
     the pre-change value. The corpus evidence covers the default form
     only. A change smaller than the tolerance is not discriminated, and
@@ -464,21 +467,29 @@ the rule; ripr still reports only what the static shape shows.
     (rule 7 applies), and the assertion keeps its table row, with one
     exception: in the callable form, pytest passes keyword arguments,
     `match=` included, to the callable rather than checking the message,
-    so `pytest.raises(E, f, ..., match=...)` is `broad_error` / weak. A lambda or
-    any other expression in that position is not read.
+    so `pytest.raises(E, f, ..., match=...)` is `broad_error` / weak, whatever
+    the callable is. A lambda or any other expression in that position is
+    not read as a relation. The call the callable form makes binds its
+    literal arguments for the boundary rule and rule 20 like a written
+    call: `assertRaisesRegex(KeyError, 'big', check, 20)` places `n` at 20.
 14. **A bound exception compared by value pins the error.** A `with` item
     `pytest.raises(...) as N` (or bare `raises`), or
-    `self.assertRaises(...) as N` or `self.assertRaisesRegex(...) as N`,
-    is recorded `exact_error_variant` / strong when a statement after the
+    `self.assertRaises(...) as N` or `self.assertRaisesRegex(...) as N`
+    (no other receiver), is recorded `exact_error_variant` / strong when a statement after the
     `with` statement, in the same test body, asserts `==` (an `assert`
-    chain with `==`, or `assertEqual`) between two operands, one of which
+    with one `==`, or `assertEqual`) between two operands, one of which
     is a value-preserving read of the exception: `N.value` (pytest) or
     `N.exception` (unittest), alone, as `str(...)` or `repr(...)` of it,
-    or as its `.args` or a literal index of `.args`. A coarser read such
+    or as its `.args` or a literal index of `.args`, and whose other operand
+    does not name `N` (`str(N.value) == repr(N.value)` holds for any
+    message). A coarser read such
     as `len(str(N.value))` or `type(N.value)` does not promote. No
     statement in between may assign `N`, or an attribute or subscript
-    reached through it (`N.value.args = ('blank',)`), or call a method
-    on `N` or on such an attribute. A comparison inside the `with` body
+    reached through it (`N.value.args = ('blank',)`), alone or in a tuple,
+    list or starred target or by a walrus, or call a method on `N` or on
+    such an attribute, or pass either to a call
+    (`setattr(N.value, ...)`); a compound statement in between also ends
+    the search. The joined comparison text omits its failure message. A comparison inside the `with` body
     does not count: it runs only when nothing is raised. Rule 1 applies
     to that comparison first: a tautology does not promote. The value
     assertion keeps its own table row. The promoted item, its `with`
@@ -577,16 +588,27 @@ mutant calibrates the rule; ripr reports only the static shape.
     of the owner's file whose body, after an optional docstring, is
     exactly `if P OP V: return A` then `return B`, where `P` is a
     parameter, `OP` one comparison, and `V`, `A` and `B` are literals or
-    module constants RIPR-SPEC-0028's boundary rule resolves. The term's
-    argument for `P` must resolve in each strong owner call the boundary
-    rule reads: a literal, an owner parameter that call binds to a
-    literal, or such a constant. When every such call resolves and every
-    one evaluates the term to `0`, the finding is `weakly_exposed` and
-    names `f(args) != 0` as the missing discriminator, with the observed
-    argument values. Any unresolved call, any nonzero value, or no
-    analyzable call leaves the verdict to the other rules. The rule
-    evaluates integers only, reads one call deep, and does not run for a
-    method owner.
+    module constants RIPR-SPEC-0028's boundary rule resolves. `f` must be
+    the file's only definition of that name, undecorated and not `async`;
+    the owner must not bind the name or take it as a parameter; and no
+    related test may patch, `setattr` or assign an attribute of that name.
+    The term may not sit in a string, a comment or a `def` header, and at
+    the end of a line the line's brackets must balance with no `\`
+    continuation. The term's argument for `P` must resolve in each strong
+    owner call the boundary rule reads: a literal, such a constant, or an
+    owner parameter that call binds to a literal and that the owner body
+    never rebinds (a body with a `for`, a comprehension, a lambda, a
+    walrus, a nested scope or `async` code has no such parameter). Every
+    strong related test must contribute such a call: a strong test whose
+    owner call binds nothing (`*args`, a comment inside the arguments) or
+    that has no recognized owner call leaves the rule unresolved. When
+    every call resolves and every one evaluates the term to integer `0`,
+    the finding is `weakly_exposed` and names `f(args) != 0` as the
+    missing discriminator, with the observed argument values. Any
+    unresolved call, any nonzero value (a float `0.0` changes an integer's
+    type, so it is nonzero here), or no analyzable call leaves the verdict
+    to the other rules. The rule reads one call deep and does not run for
+    a method owner.
 
 ### Verdict ladder
 
@@ -708,7 +730,7 @@ rejected alternative. Any can be reversed later without touching the rest.
     call deep with the boundary rule's own literal bindings. The corpus
     case `py-pytest-quote-shipping-term` removes `+ shipping_fee(...)`
     and its only test orders above the free-shipping threshold, so the
-    mutant survives while every gate credited `exposed`. Rejected: record
+    test passes on the mutant while every gate credited `exposed`. Rejected: record
     the case as a known limit, because the false `exposed` hides a real
     gap and the shape (a fee, discount or surcharge that is zero above a
     threshold) is common in pricing code. Rejected: general
@@ -1018,11 +1040,18 @@ and the test is `tests/test_subject.py`, which imports each owner from
   explicit-tolerance, non-`self` receiver and `assertNotAlmostEqual`
   negatives; the `assertRaises` callable, a trivial regex and another
   function as the callable; the message-only change of example 21, whose
-  comparison holds the old message, so it credits through the body call
-  rather than a `KeyError` token; and the reassigned-`exc`, attribute
-  assignment, inside-the-body, length-read and tautology negatives.
+  comparison holds the old message; the `cm.exception`, `repr(...)` and
+  `assertRaisesRegex ... as cm` forms; and the reassigned-`exc`, tuple
+  target, walrus, `setattr`, attribute assignment, wrong-field,
+  inside-the-body, length-read, `is not None`, both-operands-read and
+  tautology negatives. The callable form's boundary binding has an
+  activated and an unactivated pin. Rule 20 pins cover a rebound
+  parameter, an unbindable strong call, a patched and a redefined
+  callee, a subtracted term whose zero comes from the fallback branch,
+  and the discriminator and observed values of example 40.
   `term_activation.rs` unit tests pin the term reader, including the
-  precedence, unary-sign and changed-argument negatives.
+  precedence, open-bracket, continuation, string, comment, default
+  value, unary-sign and changed-argument negatives, and integer zero.
 - Corpus: `py-spec0233-ex08-almost-equal`,
   `py-spec0233-ex20-raises-regex` and `py-spec0233-ex21-exc-value`
   (#6597) score credited under rules 12 to 14,

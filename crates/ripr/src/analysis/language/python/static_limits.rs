@@ -733,7 +733,7 @@ mod tests {
             module_constants: Vec::new(),
             same_class_callees: Vec::new(),
             class_path: String::new(),
-            guarded_return: None,
+            term_facts: Default::default(),
         }
     }
 

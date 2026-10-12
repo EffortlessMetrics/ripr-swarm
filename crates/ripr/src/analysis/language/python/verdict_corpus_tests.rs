@@ -860,13 +860,14 @@ fn the_callable_of_an_exception_assertion_is_called() -> Result<(), String> {
             "{body}"
         );
     }
-    // pytest passes `match=` to the callable in this form.
-    assert_ne!(
-        message_class(
-            "def test_parse():\n    pytest.raises(KeyError, parse, \"\", match=\"empty\")\n"
-        )?,
-        ExposureClass::Exposed
-    );
+    // pytest passes `match=` to the callable in this form, whatever the
+    // callable is.
+    for body in [
+        "def test_parse():\n    pytest.raises(KeyError, parse, \"\", match=\"empty\")\n",
+        "def test_parse():\n    pytest.raises(KeyError, lambda: parse(\"\"), match=\"empty\")\n",
+    ] {
+        assert_ne!(message_class(body)?, ExposureClass::Exposed, "{body}");
+    }
     Ok(())
 }
 
@@ -877,6 +878,7 @@ fn a_bound_exception_compared_by_value_pins_the_error() -> Result<(), String> {
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert str(exc.value) == \"'empty'\"\n",
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert exc.value.args[0] == \"blank\"\n",
         "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaisesRegex(KeyError, \"e\") as cm:\n            parse(\"\")\n        self.assertEqual(repr(cm.exception), \"KeyError('empty')\")\n",
     ] {
         assert_eq!(message_class(body)?, ExposureClass::Exposed, "{body}");
     }
@@ -889,6 +891,15 @@ fn a_bound_exception_compared_by_value_pins_the_error() -> Result<(), String> {
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    exc = None\n    assert str(exc.value) == \"'empty'\"\n",
         // An attribute reached through the exception is assigned.
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    exc.value.args = (\"empty\",)\n    assert str(exc.value) == \"'empty'\"\n",
+        // A tuple target, a walrus or a method call rebinds or mutates it.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    exc, expected = other_error, \"'empty'\"\n    assert str(exc.value) == expected\n",
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    print(exc := other_error)\n    assert str(exc.value) == \"'empty'\"\n",
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    setattr(exc.value, \"args\", (\"empty\",))\n    assert str(exc.value) == \"'empty'\"\n",
+        // The other operand reads the error too, so the comparison can hold
+        // for any message.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert str(exc.value) == repr(exc.value)\n",
+        // unittest's field is `exception`, and the receiver must be `self`.
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.value), \"'empty'\")\n",
         // `is not None` is not a value comparison.
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert exc.value is not None\n",
         // A tautology does not promote.
@@ -950,6 +961,158 @@ fn a_removed_term_that_every_asserted_input_makes_zero_is_not_discriminated() ->
             "def test_quote():\n    assert quote(50)[\"total_cents\"] == 50\n"
         )?,
         ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+const BIG: &str = "def check(n):\n    if n > 10:\n        raise KeyError(\"big\")\n    return n\n";
+const BIG_OLD: &str = "    if n >= 10:";
+
+#[test]
+fn the_callable_form_binds_its_arguments_for_the_boundary_rule() -> Result<(), String> {
+    // Rule 13 calls `check(20)`: both predicates raise there, so the changed
+    // boundary is not activated, as in the `with` form.
+    let class = |call: &str| {
+        classify(
+            BIG,
+            2,
+            BIG_OLD,
+            &test_module(
+                "import unittest\n\nfrom src.shop import check",
+                &format!(
+                    "class CheckTest(unittest.TestCase):\n    def test_check(self):\n        {call}\n"
+                ),
+            ),
+        )
+    };
+    assert_eq!(
+        class("self.assertRaisesRegex(KeyError, \"big\", check, 20)")?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        class("self.assertRaisesRegex(KeyError, \"big\", check, 10)")?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+/// The `QUOTE` module with `quote`'s body replaced.
+fn quote_module(quote_body: &str) -> String {
+    let head = QUOTE.split("def quote").next().unwrap_or_default();
+    format!("{head}def quote(subtotal_cents):\n{quote_body}")
+}
+
+fn quote_module_class(
+    module: &str,
+    line: usize,
+    old: &str,
+    body: &str,
+) -> Result<ExposureClass, String> {
+    classify(
+        module,
+        line,
+        old,
+        &test_module("import pytest\n\nfrom src.shop import quote", body),
+    )
+}
+
+#[test]
+fn a_removed_term_reads_only_stable_inputs_and_the_one_callee() -> Result<(), String> {
+    let free = "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 2000\n";
+    // The owner rebinds its parameter before the term, so the call-site
+    // value is not the term's argument.
+    let rebound = quote_module(
+        "    subtotal_cents = subtotal_cents - 4000\n    return {\"total_cents\": subtotal_cents}\n",
+    );
+    assert_eq!(
+        quote_module_class(&rebound, 17, QUOTE_OLD_SHIPPING, free)?,
+        ExposureClass::Exposed
+    );
+    // A strong call the reader cannot bind leaves the inputs unresolved.
+    let plain = quote_module("    return {\"total_cents\": subtotal_cents}\n");
+    assert_eq!(
+        quote_module_class(
+            &plain,
+            16,
+            QUOTE_OLD_SHIPPING,
+            "def test_free():\n    assert quote(6000)[\"total_cents\"] == 6000\n\n\ndef test_paid():\n    assert quote(\n        100,  # below the threshold\n    )[\"total_cents\"] == 599\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A test that patches the callee may give it any value.
+    assert_eq!(
+        quote_module_class(
+            &plain,
+            16,
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    shop.shipping_fee = fixed_fee\n    assert quote(6000)[\"total_cents\"] == 6499\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A second definition of the callee is the one Python binds.
+    let redefined = format!(
+        "{}\n\ndef shipping_fee(subtotal_cents):\n    return 499\n",
+        plain.trim_end()
+    );
+    assert_eq!(
+        quote_module_class(
+            &redefined,
+            16,
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A subtracted term whose zero comes from the fallback branch.
+    let inverted = "FREE_SHIPPING_CENTS = 5000\n\n\ndef rebate(subtotal_cents):\n    if subtotal_cents >= FREE_SHIPPING_CENTS:\n        return 250\n    return 0\n\n\ndef quote(subtotal_cents):\n    return {\"total_cents\": subtotal_cents}\n";
+    assert_eq!(
+        quote_module_class(
+            inverted,
+            11,
+            "    return {\"total_cents\": subtotal_cents - rebate(subtotal_cents)}",
+            "def test_quote():\n    assert quote(100)[\"total_cents\"] == 100\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+#[test]
+fn an_inactive_term_names_the_missing_discriminator_and_its_inputs() -> Result<(), String> {
+    let owners = extract_owners(Path::new(OWNER_FILE), QUOTE);
+    let tests = extract_tests(
+        Path::new(TEST_FILE),
+        &test_module(
+            "from src.shop import quote",
+            "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 6000\n",
+        ),
+    );
+    let finding = classify_change_with_old(
+        Path::new(OWNER_FILE),
+        16,
+        "    return {\"total_cents\": subtotal_cents}",
+        Some(QUOTE_OLD_SHIPPING),
+        &owners,
+        &tests,
+    )
+    .ok_or("changed line should classify")?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    let missing = &finding.activation.missing_discriminators;
+    assert_eq!(
+        missing
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["shipping_fee(subtotal_cents) != 0"]
+    );
+    assert_eq!(
+        finding
+            .activation
+            .observed_values
+            .iter()
+            .map(|fact| fact.value.as_str())
+            .collect::<Vec<_>>(),
+        ["subtotal_cents = 6000"]
     );
     Ok(())
 }

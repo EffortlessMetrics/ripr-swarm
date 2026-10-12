@@ -212,10 +212,10 @@ struct PythonOwner {
     /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
     /// owners. `qualified_name` keeps only the innermost class.
     class_path: String,
-    /// The body of a function owner that is one guarded return of literals
-    /// (`if x >= LIMIT: return 0` then `return 499`). Used only to evaluate a
-    /// removed call term one call deep (`term_activation.rs`, #6733).
-    guarded_return: Option<term_activation::PythonGuardedReturn>,
+    /// What a function owner's body lets RIPR-SPEC-0238 rule 20 read: its
+    /// guarded-return shape as a callee, and whether its parameters hold
+    /// their call-site values as a caller (`term_activation.rs`, #6733).
+    term_facts: term_activation::PythonTermFacts,
 }
 
 /// One declared parameter of a Python function owner.

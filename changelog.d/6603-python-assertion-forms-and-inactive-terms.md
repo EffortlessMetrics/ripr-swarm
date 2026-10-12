@@ -1,8 +1,10 @@
 <!-- section: Fixed -->
 - Python findings now credit `self.assertAlmostEqual` at its default
-  tolerance, the callable form of `assertRaisesRegex`, and a
-  `pytest.raises(...) as exc` block whose raised error is compared with
-  `==` afterwards (`str(exc.value) == "'empty'"`). A fluent
+  tolerance, the callable form of `assertRaisesRegex` (the callable forms
+  of `assertRaises` and `pytest.raises` now relate the test as a call), and a
+  `pytest.raises(...) as exc` or `self.assertRaises(...) as cm` block whose
+  raised error is compared with `==` afterwards
+  (`str(exc.value) == "'empty'"`). A fluent
   `assert_that(...).is_equal_to(...)` chain now reads as an opaque custom
   helper (`static_unknown`) instead of a gap. Each of these tests fails on
   its corpus mutant, so the earlier `weakly_exposed` was a false actionable
