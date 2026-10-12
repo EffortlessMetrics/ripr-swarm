@@ -2119,7 +2119,7 @@ fn repair_after_cage_recovery_lines(
         return lines;
     }
     lines.push(format!(
-        "to recover: {uncommit}undo the refused changes, check for a git-invisible line-ending flip (`core.autocrlf` can rewrite CRLF sequences on checkout or `git stash pop` while `git status` stays clean; a pure flip is not counted as an edit, but one beside a real change hides it from `git stash`), set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+        "to recover: {uncommit}undo the refused changes, check for a git-invisible line-ending flip (`core.autocrlf` can rewrite CRLF sequences on checkout or `git stash pop` while `git status` stays clean; a pure flip on a path Git normalizes (`core.autocrlf` or a `text` attribute) is not counted as an edit, but one beside a real change hides it from `git stash`), set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
     ));
     lines
 }

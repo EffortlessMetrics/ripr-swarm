@@ -973,6 +973,35 @@ fn eol_only_line_ending_flip(old: &RepositoryPathState, new: &RepositoryPathStat
             == new_normalized.as_deref().unwrap_or(new_digest.as_str())
 }
 
+/// Whether Git itself would EOL-normalize `path` in `root`'s repository: the
+/// `text` attribute decides when set or unset (`-text`), and `core.autocrlf`
+/// decides when the attribute is unspecified (#7377 review). The EOL-only
+/// skip in [`delta_from_repository_states`] is only sound for paths Git
+/// rewrites: for every other path a byte flip stays visible to `git status`
+/// and must keep naming an author in the delta. A probe failure fails
+/// closed — the change stays in the delta.
+fn git_applies_eol_normalization(root: &Path, path: &str) -> bool {
+    // `git check-attr` prints `<path>: text: set|unset|unspecified`; taking
+    // the segment after the final colon keeps a colon in the path from
+    // spoofing the attribute value.
+    let Ok(attrs) = git_text(root, &["check-attr", "text", "--", path]) else {
+        return false;
+    };
+    match attrs.rsplit(':').next().map(str::trim).unwrap_or_default() {
+        "set" => true,
+        "unset" => false,
+        _ => {
+            let Ok(autocrlf) = git_text(root, &["config", "--get", "core.autocrlf"]) else {
+                return false;
+            };
+            !matches!(
+                autocrlf.to_ascii_lowercase().as_str(),
+                "" | "false" | "no" | "off" | "0"
+            )
+        }
+    }
+}
+
 /// `committed` is the tree diff from the baseline head to the after head
 /// when that movement is admitted (empty when HEAD did not move), and `None`
 /// when HEAD movement makes the delta incomparable.
@@ -998,13 +1027,19 @@ fn delta_from_repository_states(
         // A git-invisible line-ending flip (#7377): with `core.autocrlf` a
         // mid-loop checkout or stash pop can rewrite a tracked file's CRLF
         // sequences while `git status` stays clean, so the byte change names
-        // no author. Equal normalized digests prove no content moved;
-        // counting the flip as an edit would terminally refuse a production
-        // file the agent never touched, and the narrated recovery (`git
-        // stash`, undo) cannot address a change Git itself cannot see. A
-        // real edit survives normalization and still enters the delta.
+        // no author. Equal normalized digests prove no content moved — but
+        // only a path Git itself would normalize can be invisible that way,
+        // so the skip is gated on `git check-attr text`/`core.autocrlf`:
+        // where Git would not rewrite the path, a deliberate flip is
+        // git-visible and must keep naming an author, and a probe failure
+        // fails closed the same way. Counting a git-invisible flip as an
+        // edit would terminally refuse a production file the agent never
+        // touched, and the narrated recovery (`git stash`, undo) cannot
+        // address a change Git itself cannot see. A real edit survives
+        // normalization and still enters the delta.
         if let (Some(old), Some(new)) = (old, new)
             && eol_only_line_ending_flip(old, new)
+            && git_applies_eol_normalization(&before.root, &path)
         {
             continue;
         }
@@ -2144,10 +2179,14 @@ mod tests {
     /// CRLF-normalized digests for the changed-path decision, so flipping a
     /// forbidden production file's endings LF->CRLF beside a real test edit
     /// must not enter the delta or refuse the file (#7377), while a real
-    /// content change to the same file still does.
+    /// content change to the same file still does. The skip is only sound
+    /// because Git itself rewrites the path here (`core.autocrlf true`): the
+    /// fixture shares `autocrlf false`, so this test opts its repository in
+    /// before the baseline captures.
     #[test]
     fn eol_only_flip_of_a_forbidden_file_is_not_an_edit() -> Result<(), String> {
         let fixture = git_fixture("eol-flip")?;
+        git_ok(&fixture.root, &["config", "core.autocrlf", "true"])?;
         let policy = policy()?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
         // The focused test edit the attempt exists for.
@@ -2197,6 +2236,45 @@ mod tests {
         {
             return Err(format!(
                 "a real edit must still refuse as a forbidden path: {verdict:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Control for the EOL skip gate: when Git would NOT normalize the path
+    /// (`core.autocrlf false` and no `text` attribute, the shared fixture's
+    /// spelling), a deliberate LF->CRLF flip of a forbidden file stays
+    /// visible to `git status` and must keep naming an author: it enters the
+    /// delta and refuses as a forbidden path instead of being silently
+    /// skipped (#7377 review).
+    #[test]
+    fn eol_flip_without_git_normalization_remains_an_edit() -> Result<(), String> {
+        let fixture = git_fixture("eol-flip-visible")?;
+        let policy = policy()?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::write(
+            fixture.root.join("src/pricing.rs"),
+            "pub fn price() {}\r\n",
+        )
+        .map_err(|err| format!("rewrite CRLF production file: {err}"))?;
+        let (delta, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+        if !delta
+            .changes
+            .iter()
+            .any(|change| change.path.as_path() == std::path::Path::new("src/pricing.rs"))
+        {
+            return Err(format!(
+                "a git-visible EOL flip left the delta: {delta:?}"
+            ));
+        }
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !verdict
+                .violations
+                .iter()
+                .any(|violation| violation.kind == EditCageViolationKind::ForbiddenPath)
+        {
+            return Err(format!(
+                "a git-visible EOL flip must refuse as a forbidden path: {verdict:?}"
             ));
         }
         Ok(())
