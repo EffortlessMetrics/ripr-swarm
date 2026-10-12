@@ -17763,7 +17763,12 @@ rendered report to a file. Repo-local automation can still write
 `<path>` may point directly at a JSON file or at a cargo-mutants output
 directory. When given a directory, the command reads and combines
 `outcomes.json` and `mutants.json` when both are present, preserving runtime
-outcomes and generated mutant locations for matching.
+outcomes and generated mutant locations for matching. Syntactically valid JSON
+that yields zero mutant records (`[]`, `{}`, a non-mutant array, or an empty
+`outcomes`/`mutants` list) is a fail-closed error, not an empty successful
+calibration. The unmatched-section sentence "All imported runtime mutants
+matched a static seam." is reserved for imports that actually contained
+mutant records.
 
 This is an advisory runtime calibration report, not a static finding surface.
 Runtime outcome labels come from the supplied mutation output and are kept under
