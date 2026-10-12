@@ -408,3 +408,43 @@ fn a_generator_with_a_second_same_named_definition_names_no_limit() -> Result<()
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
 }
+
+/// Weak classification can coexist with a confirmed discriminator when an
+/// infection or propagation stage is weak. Do not replace that discriminator
+/// with a macro limit. These are gate-boundary states, not runtime evidence.
+#[test]
+fn mixed_macro_limit_preserves_confirmed_discrimination_and_examined_misses() -> Result<(), String>
+{
+    let fixture = Fixture::new(
+        "mixed-guard",
+        &format!(
+            "{MACRO_ROUTED}    #[test]\n    fn rate_is_positive() {{ assert!(inner_rate(2) > 0); }}\n}}\n"
+        ),
+    )?;
+    let mut finding = fixture.rate_finding()?;
+    finding.static_limit_kind = None;
+    assert!(super::needs_mixed_macro_reach_limit(&finding));
+    let before = finding.clone();
+    for state in [StageState::Weak, StageState::No] {
+        let mut confirmed = before.clone();
+        confirmed.ripr.reveal.discriminate.state = StageState::Yes;
+        confirmed.ripr.infect.state = state;
+        assert!(!super::needs_mixed_macro_reach_limit(&confirmed));
+        confirmed.ripr.infect.state = StageState::Yes;
+        confirmed.ripr.propagate.state = state;
+        assert!(!super::needs_mixed_macro_reach_limit(&confirmed));
+    }
+    let mut miss = before.clone();
+    let mut direct_count = 0;
+    for test in &mut miss.related_tests {
+        if test.relation_reason == Some(RelationReason::DirectOwnerCall) {
+            direct_count += 1;
+            test.miss = Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+        }
+    }
+    assert_eq!(direct_count, 1);
+    assert!(!super::needs_mixed_macro_reach_limit(&miss));
+    finding.static_limit_kind = Some(StaticLimitKind::RustAssertionContextUnresolved);
+    assert!(!super::needs_mixed_macro_reach_limit(&finding));
+    Ok(())
+}

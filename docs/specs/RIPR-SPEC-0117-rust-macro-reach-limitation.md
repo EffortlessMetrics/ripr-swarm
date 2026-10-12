@@ -10,6 +10,7 @@ Linked issues:
 
 - [#1292](https://github.com/EffortlessMetrics/ripr-swarm/issues/1292)
 - [#7071](https://github.com/EffortlessMetrics/ripr-swarm/issues/7071) (proximity-only weak reach)
+- [#7542](https://github.com/EffortlessMetrics/ripr-swarm/issues/7542) (weak direct test beside a macro witness)
 
 Linked PRs:
 
@@ -21,7 +22,7 @@ Support-tier impact:
   adds one additive `static_limit_kind` value, `rust_macro_reach_unresolved`,
   and one additive `stop_reasons` value, `macro_reach_unresolved`.
 - Classification stays `no_static_path` (or `weakly_exposed` on the
-  proximity-only path below). This is a named limitation, not a
+  proximity-only or mixed weak-direct path below). This is a named limitation, not a
   coverage claim, test relation, repair packet, release-readiness claim, or
   macro-expansion engine.
 - No `schema_version` bump is required because `static_limit_kind` and
@@ -57,9 +58,9 @@ no_static_path + static_limit_kind: rust_macro_reach_unresolved
 
 After direct related-test classification returns `no_static_path` with no
 related tests (or `weakly_exposed` with only proximity relations; see
-"Proximity-only weak reach" below), and after the RIPR-SPEC-0114 bounded transitive witness check
-does not find a lexical path, the Rust adapter may emit the macro-reach
-limitation when all of these are true:
+"Proximity-only weak reach" below), the Rust adapter checks the RIPR-SPEC-0114
+bounded transitive witness first. If it finds no lexical path, it may emit the
+macro-reach limitation when all of these are true:
 
 1. A test calls a non-owner Rust entry symbol, or directly invokes a macro.
 2. A bounded BFS from that entry symbol reaches a production function that
@@ -68,6 +69,10 @@ limitation when all of these are true:
    indexed source.
 4. That macro definition lexically mentions the changed owner name as an
    identifier.
+
+The mixed weak-direct route below reuses these macro-witness conditions with
+its own eligibility. It searches only macros and does not require the lexical
+transitive search to fail.
 
 ### When found
 
@@ -157,14 +162,43 @@ searched as for `no_static_path`, without the over-limit disclosure. The class
 stays `weakly_exposed`. The recommended next step names the witnessing test and
 entry symbol and says the limitation does not establish a missing test; the
 gap's missing-discriminator lines are dropped, and human output offers no
-test-writing route. A finding with any related test
-that calls the owner keeps reach established and gets no limit. The
-subprocess-binary and property-macro limits stay `no_static_path`-only.
+test-writing route. Direct reach remains established when a test calls the
+owner; the separate mixed weak-direct rule below can still name an independent
+unresolved macro path. The subprocess-binary and property-macro limits stay
+`no_static_path`-only.
+
+### Weak direct test beside a macro witness (#7542)
+
+A weak direct oracle must not erase a possible test path behind a macro. The
+adapter searches the existing macro witness when all of these hold:
+
+- Classification is `weakly_exposed` and no producer has already named a limit.
+- Reach is `yes`, but discrimination is not `yes`.
+- An admitted related-test oracle row has `direct_owner_call`; an examined
+  `assertion_not_observing` miss is evidence only and does not admit this rule.
+
+This route searches only the macro witness. It does not broaden the
+transitive-first proximity rule to ordinary lexical helper paths. Diff-scope
+index narrowing widens for the same predicate, so a withheld dependent test
+can supply the candidate macro witness. Repo analysis uses the shared rule.
+
+If the witness exists, retain every RIPR stage, classification and related-test
+row. Name the existing macro limit and concrete witness; add no reach or oracle
+credit. Use the existing limitation next step, clear unsupported missing gap
+advice and missing discriminators, and withhold canonical repair/verify/receipt
+routes through the existing typed-limit policy. The macro scan does not establish
+that the witness has a stronger assertion or observes this change; it only names
+the unresolved path to inspect.
+
+A confirmed discriminator remains outside this rule even if weak infection or
+propagation leaves the overall class `weakly_exposed`. Weak direct tests without
+a valid macro witness keep their previous result. Unrelated, absent, ambiguous
+or uninvoked macros supply no witness.
 
 ### Fail-closed boundaries
 
 - Never change classification from `no_static_path`, or from `weakly_exposed`
-  for a proximity-only finding.
+  for a proximity-only or mixed weak-direct finding.
 - Never add the witness to `related_tests`.
 - Never claim the test reaches, covers, tests, or exercises the changed owner.
 - Only same-repo `macro_rules!` definitions are considered.
@@ -225,7 +259,7 @@ an assertion inside that helper is refused like any untrusted macro.
 
 | Field | Value when fires | Value when not fires |
 |---|---|---|
-| `classification` | unchanged (`no_static_path`, or `weakly_exposed` on the proximity-only path) | unchanged |
+| `classification` | unchanged (`no_static_path`, or `weakly_exposed` on the proximity-only or mixed weak-direct path) | unchanged |
 | `static_limit_kind` | `rust_macro_reach_unresolved` | omitted / unchanged |
 | `stop_reasons` | includes `macro_reach_unresolved` | unchanged |
 | `related_tests` | unchanged (witness is not added) | unchanged |
@@ -259,8 +293,13 @@ an assertion inside that helper is refused like any untrusted macro.
    owner's file and calls `outer()`, which invokes `call_inner!`. Result:
    `weakly_exposed` plus `static_limit_kind: rust_macro_reach_unresolved` and a
    next step naming the witnessing test.
-6. **A test also calls the owner**: same shape plus a test calling `inner()`
-   directly. Reach is established, so the finding keeps its gap and no limit.
+6. **A weak test also calls the owner** (#7542): same macro shape plus
+   `assert!(inner(2) > 0)`, while the opaque `outer_triples` route asserts
+   `outer(4) == 12`. Reach stays `yes` and classification stays `weakly_exposed`,
+   but the finding names `rust_macro_reach_unresolved` and `outer_triples`.
+   It does not advise writing an assertion before that route is inspected.
+   A direct confirmed discriminator gets no new limit, including when another
+   weak stage leaves its overall class `weakly_exposed`.
 
 ## Required Evidence
 
@@ -286,7 +325,7 @@ an assertion inside that helper is refused like any untrusted macro.
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_reach_limitation_detail_names_edges_route_and_non_claim`
 - `crates/ripr/src/output/human.rs::tests::human_output_surfaces_static_limitation_detail`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_macro_names_the_macro_limit`
-- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_test_calling_the_owner_keeps_the_gap_despite_a_macro_witness`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_weak_direct_test_preserves_the_unresolved_macro_witness`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_without_a_witness_keeps_the_gap`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::proximity_only_reach_through_a_helper_names_the_transitive_limit`
 - `crates/ripr/src/analysis/syntax/local_test_macros.rs::tests::expands_each_invocation_with_its_arguments_and_lines`
@@ -297,6 +336,14 @@ an assertion inside that helper is refused like any untrusted macro.
 - `crates/ripr/tests/macro_generated_tests.rs::refused_shapes_and_uninvoked_generators_add_no_test`
 - `crates/ripr/tests/macro_generated_tests.rs::a_deferred_assertion_in_a_generated_test_is_refused_like_a_hand_written_one`
 - `fixtures/rust_macro_reach_limitation/expected/check.json`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::mixed_macro_limit_preserves_confirmed_discrimination_and_examined_misses`
+- `crates/ripr/src/analysis/language/rust/mod.rs::tests::mixed_macro_witness_survives_dependent_scope_narrowing`
+- `crates/ripr/tests/mixed_macro_reach.rs::weak_direct_oracle_preserves_the_macro_witness_in_ready_and_draft`
+- `crates/ripr/tests/mixed_macro_reach.rs::strong_direct_oracle_remains_credited_beside_the_macro`
+- `crates/ripr/tests/mixed_macro_reach.rs::weak_direct_without_a_test_macro_route_keeps_the_gap`
+- `crates/ripr/tests/mixed_macro_reach.rs::unrelated_macro_with_weak_direct_keeps_the_gap`
+- `crates/ripr/tests/mixed_macro_reach.rs::lexical_transitive_route_with_weak_direct_keeps_the_gap`
+- `fixtures/rust_mixed_direct_macro_reach/expected/check.json`
 - `cargo xtask check-evidence-promotion-honesty`
 
 ## Implementation Mapping
