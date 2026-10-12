@@ -4274,4 +4274,57 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn quoted_python_comparison_identity_preserves_payload_binding_and_one_redirect() {
+        let root = &TEST_ROOT;
+        let identity = "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold";
+        let portable = format!("ripr receipt write --root . --gap '{identity}' --status not_run");
+        assert!(command_payload_is_safe(root, &portable));
+        let bound = bind_portable_command(root, &portable);
+        assert!(bound.as_ref().is_some_and(|command| {
+            command.contains(&format!("--gap '{identity}'"))
+                && !command.contains("--root .")
+                && editor_command_is_safe(root, command)
+        }));
+        let redirected = format!(
+            "{portable} > '{}'",
+            root.join("target/ripr/receipt.json").display()
+        );
+        assert!(command_payload_is_safe(root, &redirected));
+        assert!(bind_portable_command(root, &redirected).is_some());
+        // Retain the existing narrowly inert single-quote substitution rule.
+        assert!(command_payload_is_safe(
+            root,
+            "ripr receipt write --gap 'gap:len(x):$(literal)' --status not_run"
+        ));
+    }
+
+    #[test]
+    fn comparison_identity_does_not_relax_active_shell_or_ambiguous_quote_payloads() {
+        let root = &TEST_ROOT;
+        for command in [
+            "ripr receipt write --gap gap:amount>=threshold",
+            "ripr receipt write --gap gap:amount<threshold",
+            "ripr receipt write --gap 'gap:amount>=threshold",
+            "ripr receipt write --gap \"gap:amount>=threshold\"",
+            "ripr receipt write --gap 'gap:amount>=threshold’'",
+            "ripr receipt write --gap 'gap:amount>=threshold'\\\"",
+            "ripr receipt write --gap \"$(echo injected)\"",
+            "ripr receipt write --gap `echo injected`",
+            "ripr agent verify --root ../outside --json",
+            "ripr agent verify --root . --json; echo injected",
+            "ripr agent verify --root . --json < outside",
+            "ripr agent verify --root . --json >> target/ripr/verify.json",
+            "ripr agent verify --root . --json>target/ripr/verify.json",
+            "ripr agent verify --root . --json > ../outside.json",
+        ] {
+            assert!(
+                !command_payload_is_safe(root, command),
+                "active/ambiguous input must remain refused: {command:?}"
+            );
+        }
+        assert!(!known_static_limit_kind("runtime_magic"));
+        assert!(!known_static_limit_kind("python_arbitrary_new_limit"));
+    }
 }
