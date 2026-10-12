@@ -4,7 +4,9 @@ use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 const ENTRIES: usize = 8192;
 const ROWS: usize = 512;
@@ -16,6 +18,9 @@ const PREFIX_BYTES: usize = 65536;
 const STREAM_BYTES: usize = 16384;
 const ARTIFACT_BYTES: usize = 1048576;
 const ARTIFACT_FILES: usize = 16;
+const MANIFEST_RESERVE: usize = 448 * 1024;
+const REPLAY_PROFILE_LIMIT: usize = 8192;
+const TOOL_KILL_GRACE: Duration = Duration::from_secs(1);
 
 type Result<T> = std::result::Result<T, String>;
 
@@ -36,27 +41,156 @@ fn drain(mut pipe: impl Read) -> Result<(Vec<u8>, bool)> {
 }
 
 fn tool(args: &[String]) -> Result<Value> {
-    // GNU timeout owns the group and force-kills it after its grace period.
-    // Fixed local tool argv only; no shell, network or environment inspection.
-    let mut child = Command::new("timeout")
-        .args(["--kill-after=1s", "30s"])
-        .args(args)
+    tool_with_deadline(args, Duration::from_secs(30))
+}
+
+fn kill_group(pgid: u32) -> Result<bool> {
+    let group = format!("-{pgid}");
+    Command::new("kill")
+        .args(["-KILL", "--", group.as_str()])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .map_err(|error| error.to_string())
+}
+
+fn tool_with_deadline(args: &[String], deadline_after: Duration) -> Result<Value> {
+    let (program, arguments) = args.split_first().ok_or("empty tool argv")?;
+    let mut command = Command::new(program);
+    command
+        .args(arguments)
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|e| e.to_string())?;
+        .stderr(Stdio::piped());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command.spawn().map_err(|e| e.to_string())?;
+    let pgid = child.id();
     let stdout = child.stdout.take().ok_or("stdout unavailable")?;
     let stderr = child.stderr.take().ok_or("stderr unavailable")?;
-    let out = std::thread::spawn(move || drain(stdout));
-    let err = std::thread::spawn(move || drain(stderr));
-    let status = child.wait().map_err(|e| e.to_string())?;
-    let (stdout, out_cut) = out.join().map_err(|_panic| "stdout drain failed")??;
-    let (stderr, err_cut) = err.join().map_err(|_panic| "stderr drain failed")??;
-    Ok(
-        json!({"exit": status.code(), "stdout": String::from_utf8_lossy(&stdout),
-        "stderr": String::from_utf8_lossy(&stderr), "truncated": out_cut || err_cut,
-        "timed_out": status.code() == Some(124)}),
-    )
+    let (tx, rx) = mpsc::channel();
+    let out_tx = tx.clone();
+    let out_thread = std::thread::spawn(move || {
+        let _ = out_tx.send((true, drain(stdout)));
+    });
+    let err_thread = std::thread::spawn(move || {
+        let _ = tx.send((false, drain(stderr)));
+    });
+    let deadline = Instant::now() + deadline_after;
+    let mut kill_deadline = None;
+    let mut status: Option<ExitStatus> = None;
+    let mut stdout = None;
+    let mut stderr = None;
+    let mut timed_out = false;
+    let mut group_killed = false;
+    let mut cleanup_error = None;
+
+    while status.is_none() || stdout.is_none() || stderr.is_none() {
+        if status.is_none() {
+            status = match child.try_wait() {
+                Ok(status) => status,
+                Err(error) => {
+                    let _ = kill_group(pgid);
+                    return Err(error.to_string());
+                }
+            };
+            if status.is_some() && kill_deadline.is_none() {
+                match kill_group(pgid) {
+                    Ok(killed) => group_killed = killed,
+                    Err(error) => cleanup_error = Some(error),
+                }
+                kill_deadline = Some(Instant::now() + TOOL_KILL_GRACE);
+            }
+        }
+        while let Ok((is_stdout, result)) = rx.try_recv() {
+            if is_stdout {
+                stdout = Some(result);
+            } else {
+                stderr = Some(result);
+            }
+        }
+        let now = Instant::now();
+        if now >= deadline && !timed_out {
+            timed_out = true;
+            match kill_group(pgid) {
+                Ok(killed) => group_killed |= killed,
+                Err(error) => cleanup_error = Some(error),
+            }
+            kill_deadline = Some(now + TOOL_KILL_GRACE);
+        }
+        if kill_deadline.is_some_and(|grace| now >= grace)
+            && (status.is_none() || stdout.is_none() || stderr.is_none())
+        {
+            if status.is_none() {
+                let _ = child.kill();
+                status = child.try_wait().ok().flatten();
+            }
+            break;
+        }
+        if status.is_some() && stdout.is_some() && stderr.is_some() {
+            break;
+        }
+        let wake_at = kill_deadline.unwrap_or(deadline);
+        let wait = wake_at
+            .saturating_duration_since(now)
+            .min(Duration::from_millis(10));
+        if let Ok((is_stdout, result)) = rx.recv_timeout(wait) {
+            if is_stdout {
+                stdout = Some(result);
+            } else {
+                stderr = Some(result);
+            }
+        }
+    }
+
+    // If a process escaped its group, detach its drain thread rather than
+    // allowing inherited pipes to extend the advertised deadline.
+    if stdout.is_some() {
+        let _ = out_thread.join();
+    }
+    if stderr.is_some() {
+        let _ = err_thread.join();
+    }
+    let stdout = stdout.unwrap_or_else(|| Ok((Vec::new(), true)))?;
+    let stderr = stderr.unwrap_or_else(|| Ok((Vec::new(), true)))?;
+    let mut result = tool_result(
+        status.and_then(|status| status.code()),
+        &stdout.0,
+        &stderr.0,
+        stdout.1 || stderr.1,
+        timed_out,
+        group_killed,
+    );
+    result["cleanup_error"] = json!(cleanup_error);
+    Ok(result)
+}
+
+fn display_bytes(bytes: &[u8]) -> String {
+    bytes
+        .iter()
+        .map(|byte| match byte {
+            b'\n' | b'\r' | b'\t' | 0x20..=0x7e => char::from(*byte),
+            _ => '?',
+        })
+        .collect()
+}
+
+fn tool_result(
+    status: Option<i32>,
+    stdout: &[u8],
+    stderr: &[u8],
+    truncated: bool,
+    timed_out: bool,
+    descendants_terminated: bool,
+) -> Value {
+    json!({"exit": status, "stdout": display_bytes(stdout), "stderr": display_bytes(stderr),
+        "stdout_hex": hex(stdout), "stderr_hex": hex(stderr), "truncated": truncated,
+        "timed_out": timed_out, "descendants_terminated": descendants_terminated})
 }
 
 fn invoke(run: &impl Fn(&[String]) -> Result<Value>, args: &[&str]) -> Value {
@@ -110,7 +244,8 @@ struct Budget {
 }
 impl Budget {
     fn write(&mut self, name: &str, bytes: &[u8]) -> Result<()> {
-        if self.files >= ARTIFACT_FILES || self.bytes + bytes.len() > ARTIFACT_BYTES {
+        let data_limit = ARTIFACT_BYTES - MANIFEST_RESERVE;
+        if self.files >= ARTIFACT_FILES - 1 || self.bytes + bytes.len() > data_limit {
             return Err("diagnostic artifact budget exceeded".into());
         }
         let mut file = OpenOptions::new()
@@ -118,21 +253,256 @@ impl Budget {
             .create_new(true)
             .open(self.root.join(name))
             .map_err(|e| e.to_string())?;
-        file.write_all(bytes).map_err(|e| e.to_string())?;
+        // Reserve the full attempted write so a partial I/O failure cannot
+        // make a later artifact exceed either aggregate budget.
         self.bytes += bytes.len();
         self.files += 1;
+        file.write_all(bytes).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    fn write_manifest(&mut self, bytes: &[u8]) -> Result<()> {
+        if bytes.len() > MANIFEST_RESERVE
+            || self.files >= ARTIFACT_FILES
+            || self.bytes + bytes.len() > ARTIFACT_BYTES
+        {
+            return Err("reserved diagnostic manifest budget exceeded".into());
+        }
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(self.root.join("manifest.json"))
+            .map_err(|error| error.to_string())?;
+        self.bytes += bytes.len();
+        self.files += 1;
+        file.write_all(bytes).map_err(|error| error.to_string())?;
         Ok(())
     }
 }
 
-fn safe_input(path: &Path, profiles: &Path) -> bool {
+fn owned_profile_path(path: &Path, profiles: &Path) -> bool {
     path.extension().is_some_and(|s| s == "profraw")
         && path.parent().and_then(|p| p.canonicalize().ok()) == profiles.canonicalize().ok()
-        && fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FileIdentity {
+    device: u64,
+    inode: u64,
+    bytes: u64,
+    modified_seconds: i64,
+    modified_nanoseconds: i64,
+}
+
+fn file_identity(metadata: &fs::Metadata) -> FileIdentity {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        FileIdentity {
+            device: metadata.dev(),
+            inode: metadata.ino(),
+            bytes: metadata.len(),
+            modified_seconds: metadata.mtime(),
+            modified_nanoseconds: metadata.mtime_nsec(),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let modified = metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok());
+        FileIdentity {
+            device: 0,
+            inode: 0,
+            bytes: metadata.len(),
+            modified_seconds: modified.map_or(0, |time| time.as_secs() as i64),
+            modified_nanoseconds: modified.map_or(0, |time| time.subsec_nanos() as i64),
+        }
+    }
+}
+
+struct ValidatedInput {
+    source: PathBuf,
+    identity: FileIdentity,
+}
+
+struct ReplayEntry {
+    source: PathBuf,
+    pinned: PathBuf,
+    identity: FileIdentity,
+}
+
+struct ReplaySnapshot {
+    root: PathBuf,
+    listing: PathBuf,
+    entries: Vec<ReplayEntry>,
+    listing_sha256: String,
+}
+
+impl Drop for ReplaySnapshot {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+fn validate_profile_list(bytes: &[u8], profiles: &Path) -> Result<Vec<ValidatedInput>> {
+    if bytes.len() > LIST_BYTES {
+        return Err("profile list exceeds byte limit".into());
+    }
+    let text = std::str::from_utf8(bytes).map_err(|_error| "profile list is not UTF-8")?;
+    if text.lines().count() > LIST_ENTRIES {
+        return Err("profile list exceeds entry limit".into());
+    }
+    let mut inputs = Vec::new();
+    for line in text.lines() {
+        let source = PathBuf::from(line);
+        if !owned_profile_path(&source, profiles) {
+            return Err("profile list contains an outside or non-profile path".into());
+        }
+        let metadata = fs::symlink_metadata(&source).map_err(|error| error.to_string())?;
+        if !metadata.is_file() {
+            return Err("profile list contains a non-regular input".into());
+        }
+        inputs.push(ValidatedInput {
+            source,
+            identity: file_identity(&metadata),
+        });
+    }
+    Ok(inputs)
+}
+
+fn prepare_replay_snapshot(
+    inputs: Vec<ValidatedInput>,
+    output_parent: &Path,
+) -> Result<ReplaySnapshot> {
+    if inputs.len() > REPLAY_PROFILE_LIMIT {
+        return Err("profile list exceeds replay identity limit".into());
+    }
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let root = output_parent.join(format!(".coverage-replay-{}-{nonce}", std::process::id()));
+    fs::create_dir(&root).map_err(|error| error.to_string())?;
+    let root = fs::canonicalize(root).map_err(|error| error.to_string())?;
+    let listing = root.join("validated-profraw-list");
+    let mut snapshot = ReplaySnapshot {
+        root: root.clone(),
+        listing: listing.clone(),
+        entries: Vec::with_capacity(inputs.len()),
+        listing_sha256: String::new(),
+    };
+    let mut listing_bytes = Vec::new();
+    for (index, input) in inputs.into_iter().enumerate() {
+        let before = fs::symlink_metadata(&input.source).map_err(|error| error.to_string())?;
+        if !before.is_file() || file_identity(&before) != input.identity {
+            return Err("profile identity changed after list validation".into());
+        }
+        let pinned = root.join(format!("input-{index:05}.profraw"));
+        fs::hard_link(&input.source, &pinned).map_err(|error| error.to_string())?;
+        let linked = fs::symlink_metadata(&pinned).map_err(|error| error.to_string())?;
+        if !linked.is_file() || file_identity(&linked) != input.identity {
+            return Err("could not pin validated profile identity".into());
+        }
+        listing_bytes.extend_from_slice(pinned.to_string_lossy().as_bytes());
+        listing_bytes.push(b'\n');
+        snapshot.entries.push(ReplayEntry {
+            source: input.source,
+            pinned,
+            identity: input.identity,
+        });
+    }
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&listing)
+        .map_err(|error| error.to_string())?;
+    file.write_all(&listing_bytes)
+        .map_err(|error| error.to_string())?;
+    drop(file);
+    let mut permissions = fs::metadata(&listing)
+        .map_err(|error| error.to_string())?
+        .permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&listing, permissions).map_err(|error| error.to_string())?;
+    snapshot.listing_sha256 = format!("{:x}", Sha256::digest(&listing_bytes));
+    Ok(snapshot)
+}
+
+fn replay_inputs_stable(snapshot: &ReplaySnapshot) -> bool {
+    snapshot.entries.iter().all(|entry| {
+        fs::symlink_metadata(&entry.pinned)
+            .is_ok_and(|metadata| metadata.is_file() && file_identity(&metadata) == entry.identity)
+    })
+}
+
+fn replay_sources_stable(snapshot: &ReplaySnapshot) -> bool {
+    snapshot.entries.iter().all(|entry| {
+        fs::symlink_metadata(&entry.source)
+            .is_ok_and(|metadata| metadata.is_file() && file_identity(&metadata) == entry.identity)
+    })
+}
+
+fn candidate_record(
+    budget: &mut Budget,
+    read_path: &Path,
+    source_name: &str,
+    error_family: &str,
+    index: usize,
+) -> Value {
+    let name = source_name.chars().take(240).collect::<String>();
+    let attempt = (|| -> Result<Value> {
+        let info = fs::symlink_metadata(read_path).map_err(|e| e.to_string())?;
+        if !info.is_file() {
+            return Err("profile input is not a regular file".into());
+        }
+        let data = read_prefix(read_path, PREFIX_BYTES)?;
+        let artifact = format!("profile-{index:02}.prefix.profraw");
+        budget.write(&artifact, &data)?;
+        let mut parts = name.trim_end_matches(".profraw").rsplitn(3, '-');
+        let module = parts.next();
+        let pid = parts.next().and_then(|p| p.parse::<u64>().ok());
+        Ok(json!({"name": name, "artifact": artifact,
+            "original_bytes": info.len(), "retained_bytes": data.len(), "complete": data.len() as u64 == info.len(),
+            "prefix_sha256": format!("{:x}", Sha256::digest(&data)), "first_256_hex": hex(&data[..data.len().min(256)]),
+            "pid_hint": pid, "module_hint": module, "error_family": error_family}))
+    })();
+    attempt.unwrap_or_else(
+        |error| json!({"name": name, "error": short_error(error), "error_family": error_family}),
+    )
 }
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn profile_warning(line: &str) -> Option<(PathBuf, &'static str)> {
+    let warning = line.strip_prefix("warning: ")?;
+    [
+        (
+            ": invalid instrumentation profile data",
+            "invalid_instrumentation_profile_data",
+        ),
+        (
+            ": malformed instrumentation profile data",
+            "malformed_instrumentation_profile_data",
+        ),
+        (
+            ": unrecognized instrumentation profile encoding format",
+            "unrecognized_instrumentation_profile_encoding_format",
+        ),
+    ]
+    .into_iter()
+    .find_map(|(marker, family)| {
+        warning
+            .find(marker)
+            .map(|index| (PathBuf::from(&warning[..index]), family))
+    })
+}
+
+fn short_error(error: impl AsRef<str>) -> String {
+    error.as_ref().chars().take(240).collect()
 }
 
 fn capture(
@@ -154,12 +524,25 @@ fn capture(
         "producer": "unresolved; filename PID/module are hints, not executable attribution",
         "limits": {"directory_entries": ENTRIES, "inventory_rows": ROWS,
             "inventory_json_bytes": INVENTORY_BYTES, "profile_list_bytes": LIST_BYTES,
-            "profile_list_entries": LIST_ENTRIES, "malformed_prefixes": PROFILES,
+            "profile_list_entries": LIST_ENTRIES, "replay_profile_entries": REPLAY_PROFILE_LIMIT,
+            "malformed_prefixes": PROFILES,
             "profile_bytes_each": PREFIX_BYTES, "tool_bytes_each_stream": STREAM_BYTES,
-            "tool_deadline_seconds": 30, "artifact_bytes": ARTIFACT_BYTES, "artifact_files": ARTIFACT_FILES},
-        "inventory_truncated": false, "captured": []});
+            "tool_deadline_seconds": 30, "tool_kill_grace_seconds": TOOL_KILL_GRACE.as_secs(),
+            "artifact_bytes": ARTIFACT_BYTES, "artifact_files": ARTIFACT_FILES,
+            "manifest_reserve_bytes": MANIFEST_RESERVE},
+        "inventory_truncated": false, "inventory_errors": 0, "inventory_error_samples": [],
+        "profile_list_replay_safe": false,
+        "captured": []});
     let mut rows = Vec::new();
     let mut row_bytes = 0;
+    let mut inventory_errors = 0usize;
+    let mut inventory_error_samples = Vec::new();
+    let mut inventory_error = |error: String| {
+        inventory_errors += 1;
+        if inventory_error_samples.len() < 8 {
+            inventory_error_samples.push(short_error(error));
+        }
+    };
     match fs::read_dir(profiles) {
         Ok(entries) => {
             for (index, entry) in entries.enumerate() {
@@ -167,19 +550,32 @@ fn capture(
                     report["inventory_truncated"] = json!(true);
                     break;
                 }
-                let entry = entry.map_err(|e| e.to_string())?;
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        inventory_error(error.to_string());
+                        continue;
+                    }
+                };
                 let path = entry.path();
                 if path.extension().is_none_or(|s| s != "profraw") {
                     continue;
                 }
-                let info = fs::symlink_metadata(&path).map_err(|e| e.to_string())?;
+                let info = match fs::symlink_metadata(&path) {
+                    Ok(info) => info,
+                    Err(error) => {
+                        inventory_error(error.to_string());
+                        continue;
+                    }
+                };
                 if !info.is_file() {
                     continue;
                 }
                 let row = json!({"name": entry.file_name().to_string_lossy().chars().take(240).collect::<String>(),
                 "bytes": info.len()});
                 let size = serde_json::to_vec(&row).map_err(|e| e.to_string())?.len();
-                if rows.len() >= ROWS || row_bytes + size > INVENTORY_BYTES {
+                let serialized_array_size = row_bytes + size + rows.len() + 2;
+                if rows.len() >= ROWS || serialized_array_size > INVENTORY_BYTES {
                     report["inventory_truncated"] = json!(true);
                     continue;
                 }
@@ -189,7 +585,53 @@ fn capture(
         }
         Err(error) => report["profiles_unavailable"] = json!(error.to_string()),
     }
+    report["inventory_errors"] = json!(inventory_errors);
+    report["inventory_error_samples"] = json!(inventory_error_samples);
     report["inventory"] = json!(rows);
+    report["inventory_json_bytes"] = json!(
+        serde_json::to_vec(&report["inventory"])
+            .map_err(|error| error.to_string())?
+            .len()
+    );
+    let mut replay_snapshot = None;
+    let mut original_list_bytes = None;
+    match read_prefix(listing, LIST_BYTES + 1) {
+        Err(error) => report["profile_list_error"] = json!(short_error(error)),
+        Ok(bytes) => {
+            report["profile_list_bytes"] = json!(bytes.len());
+            if bytes.len() > LIST_BYTES {
+                report["profile_list_error"] = json!("profile list exceeds byte limit");
+            } else if listing
+                .parent()
+                .and_then(|parent| parent.canonicalize().ok())
+                != profiles.canonicalize().ok()
+            {
+                report["profile_list_error"] =
+                    json!("profile list is outside the profile directory");
+            } else {
+                match validate_profile_list(&bytes, profiles).and_then(|inputs| {
+                    prepare_replay_snapshot(inputs, output.parent().unwrap_or(output))
+                }) {
+                    Ok(snapshot) => {
+                        report["profile_list_replay_safe"] = json!(true);
+                        report["profile_list_sha256"] =
+                            json!(format!("{:x}", Sha256::digest(&bytes)));
+                        report["profile_list_snapshot_sha256"] =
+                            json!(snapshot.listing_sha256.clone());
+                        let prefix = &bytes[..bytes.len().min(PREFIX_BYTES)];
+                        if let Err(error) = budget.write("profile-list-prefix.txt", prefix) {
+                            report["profile_list_prefix_error"] = json!(short_error(error));
+                        }
+                        original_list_bytes = Some(bytes);
+                        replay_snapshot = Some(snapshot);
+                    }
+                    Err(error) => {
+                        report["profile_list_error"] = json!(short_error(error));
+                    }
+                }
+            }
+        }
+    }
     let version = invoke(&run, &["rustc", "-vV"]);
     let sysroot = invoke(&run, &["rustc", "--print", "sysroot"]);
     report["rustc"] = version.clone();
@@ -199,23 +641,11 @@ fn capture(
         (commit["exit"] == 0 && sha.len() == 40 && sha.bytes().all(|c| c.is_ascii_hexdigit()))
             .then_some(sha)
     );
-    let contents = read_prefix(listing, LIST_BYTES + 1);
-    let safe_list = contents.as_ref().is_ok_and(|bytes| {
-        bytes.len() <= LIST_BYTES
-            && listing.parent().and_then(|p| p.canonicalize().ok()) == profiles.canonicalize().ok()
-            && std::str::from_utf8(bytes).is_ok_and(|text| {
-                text.lines().count() <= LIST_ENTRIES
-                    && text
-                        .lines()
-                        .all(|line| safe_input(Path::new(line), profiles))
-            })
-    });
-    report["profile_list_replay_safe"] = json!(safe_list);
     let host = field(&version, "stdout")
         .lines()
         .find_map(|line| line.strip_prefix("host: "));
-    let mut replay = json!({"exit": null, "stdout": "", "stderr": "safe profile list or matching LLVM tool unavailable"});
-    if safe_list
+    let mut replay = json!({"exit": null, "stdout": "", "stderr": "validated profile snapshot or matching LLVM tool unavailable"});
+    if let Some(snapshot) = replay_snapshot.as_ref()
         && version["exit"] == 0
         && sysroot["exit"] == 0
         && let Some(host) = host.filter(|h| {
@@ -227,68 +657,137 @@ fn capture(
             .join("lib/rustlib")
             .join(host)
             .join("bin/llvm-profdata");
-        let tool = tool.to_str().ok_or("LLVM tool path is not UTF-8")?;
-        report["llvm_profdata"] = invoke(&run, &[tool, "--version"]);
-        let data = contents.map_err(|e| e.to_string())?;
-        report["profile_list_bytes"] = json!(data.len());
-        budget.write(
-            "profile-list-prefix.txt",
-            &data[..data.len().min(PREFIX_BYTES)],
-        )?;
-        // Original full list, no filtering. Discard only the new diagnostic
-        // OUTPUT; original profiles/profdata/LCOV and failed step are untouched.
-        replay = invoke(
-            &run,
-            &[
-                tool,
-                "merge",
-                "-sparse",
-                "-f",
-                listing.to_str().ok_or("profile list path is not UTF-8")?,
-                "-o",
-                "/dev/null",
-            ],
-        );
-    }
-    let mut candidates = Vec::new();
-    for line in field(&replay, "stderr").lines() {
-        if let Some(path) = line.strip_prefix("warning: ").and_then(|line| {
-            line.split_once(": invalid instrumentation profile data")
-                .map(|(path, _)| PathBuf::from(path))
-        }) && safe_input(&path, profiles)
-            && !candidates.contains(&path)
-        {
-            candidates.push(path);
+        if let (Some(tool), Some(replay_list)) = (tool.to_str(), snapshot.listing.to_str()) {
+            report["llvm_profdata"] = invoke(&run, &[tool, "--version"]);
+            // The snapshot list names hard links to the exact validated profile
+            // identities. Later changes to the caller's list or profile paths
+            // cannot redirect LLVM to another file.
+            replay = invoke(
+                &run,
+                &[
+                    tool,
+                    "merge",
+                    "-sparse",
+                    "-f",
+                    replay_list,
+                    "-o",
+                    "/dev/null",
+                ],
+            );
+        } else {
+            report["profile_list_error"] = json!("snapshot or LLVM tool path is not UTF-8");
         }
     }
+    report["profile_inputs_identity_stable"] =
+        json!(replay_snapshot.as_ref().is_some_and(replay_inputs_stable));
+    report["profile_source_paths_stable"] =
+        json!(replay_snapshot.as_ref().is_some_and(replay_sources_stable));
+    report["profile_list_source_changed"] =
+        json!(original_list_bytes.as_ref().is_some_and(|before| {
+            read_prefix(listing, LIST_BYTES + 1).is_ok_and(|after| after != *before)
+        }));
+    let mut candidates: Vec<(usize, &'static str)> = Vec::new();
+    let mut unclassified_profile_warnings = 0usize;
+    for line in field(&replay, "stderr").lines() {
+        if !line.starts_with("warning: ") {
+            continue;
+        }
+        let Some((path, family)) = profile_warning(line) else {
+            unclassified_profile_warnings += 1;
+            continue;
+        };
+        let Some(snapshot) = replay_snapshot.as_ref() else {
+            unclassified_profile_warnings += 1;
+            continue;
+        };
+        let Some(index) = snapshot
+            .entries
+            .iter()
+            .position(|entry| entry.pinned == path)
+        else {
+            unclassified_profile_warnings += 1;
+            continue;
+        };
+        if !candidates.iter().any(|(candidate, _)| *candidate == index) {
+            candidates.push((index, family));
+        }
+    }
+    report["unclassified_profile_warnings"] = json!(unclassified_profile_warnings);
     report["failed_profile_capture_truncated"] = json!(candidates.len() > PROFILES);
     let mut captured = Vec::new();
-    for (index, path) in candidates.iter().take(PROFILES).enumerate() {
-        let info = fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-        let data = read_prefix(path, PREFIX_BYTES)?;
-        let name = format!("profile-{index:02}.prefix.profraw");
-        budget.write(&name, &data)?;
-        let original = path
-            .file_name()
-            .ok_or("profile filename")?
-            .to_string_lossy();
-        let mut parts = original.trim_end_matches(".profraw").rsplitn(3, '-');
-        let module = parts.next();
-        let pid = parts.next().and_then(|p| p.parse::<u64>().ok());
-        captured.push(json!({"name": original.chars().take(240).collect::<String>(), "artifact": name,
-            "original_bytes": info.len(), "retained_bytes": data.len(), "complete": data.len() as u64 == info.len(),
-            "prefix_sha256": format!("{:x}", Sha256::digest(&data)), "first_256_hex": hex(&data[..data.len().min(256)]),
-            "pid_hint": pid, "module_hint": module}));
+    if let Some(snapshot) = replay_snapshot.as_ref() {
+        for (index, (entry_index, family)) in candidates.iter().take(PROFILES).enumerate() {
+            if let Some(entry) = snapshot.entries.get(*entry_index) {
+                let name = entry
+                    .source
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "<unknown profile>".into());
+                captured.push(candidate_record(
+                    &mut budget,
+                    &entry.pinned,
+                    &name,
+                    family,
+                    index,
+                ));
+            }
+        }
+        for entry in &snapshot.entries {
+            let pinned = entry.pinned.to_string_lossy();
+            let original = entry
+                .source
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "<unknown profile>".into());
+            let stderr = field(&replay, "stderr").replace(pinned.as_ref(), &original);
+            replay["stderr"] = json!(stderr);
+        }
+    }
+    if candidates.is_empty() {
+        report["profile_capture_note"] = json!(
+            "No supported malformed-profile diagnostic identified a validated replay input; no profile bytes were retained."
+        );
     }
     report["captured"] = json!(captured);
-    report["merge_replay"] = replay;
+    report["merge_replay"] = replay.clone();
     report["merge_replay_scope"] =
         json!("diagnostic only; original failed coverage step remains failed");
     report["artifact_bytes_before_manifest"] = json!(budget.bytes);
-    budget.write(
-        "manifest.json",
-        &serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?,
-    )?;
+    let initial_manifest_bytes = serde_json::to_vec_pretty(&report)
+        .map_err(|e| e.to_string())?
+        .len();
+    report["manifest_bytes"] = json!(initial_manifest_bytes);
+    report["artifact_bytes_total"] = json!(budget.bytes + initial_manifest_bytes);
+    for _ in 0..3 {
+        let next_len = serde_json::to_vec_pretty(&report)
+            .map_err(|e| e.to_string())?
+            .len();
+        report["manifest_bytes"] = json!(next_len);
+        report["artifact_bytes_total"] = json!(budget.bytes + next_len);
+    }
+    let mut manifest = serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?;
+    if manifest.len() > MANIFEST_RESERVE {
+        report["manifest_truncated"] = json!(true);
+        report["inventory"] = json!([]);
+        report["inventory_error_samples"] = json!([]);
+        report["rustc"] = json!({"exit": version["exit"], "truncated": version["truncated"]});
+        report["merge_replay"] = json!({"exit": replay["exit"], "timed_out": replay["timed_out"],
+            "truncated": replay["truncated"], "stderr": "manifest exceeded reserved space; full tool streams omitted"});
+        for candidate in report["captured"].as_array_mut().into_iter().flatten() {
+            if candidate.get("error").is_none() {
+                candidate["first_256_hex"] = json!("");
+                candidate["prefix_sha256"] = json!("");
+            }
+        }
+        manifest = serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?;
+    }
+    for _ in 0..2 {
+        report["manifest_bytes"] = json!(manifest.len());
+        report["artifact_bytes_total"] = json!(budget.bytes + manifest.len());
+        manifest = serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?;
+    }
+    budget.write_manifest(&manifest)?;
+    drop(replay_snapshot);
     Ok(report)
 }
 
@@ -343,9 +842,20 @@ mod tests {
         };
         if args.iter().any(|s| s == "merge") {
             assert_eq!(args.last().map(String::as_str), Some("/dev/null"));
+            let listing = args
+                .windows(2)
+                .find(|pair| pair[0] == "-f")
+                .map(|pair| PathBuf::from(&pair[1]))
+                .ok_or("merge list missing")?;
+            let pinned = fs::read_to_string(listing)
+                .map_err(|error| error.to_string())?
+                .lines()
+                .next()
+                .map(PathBuf::from)
+                .ok_or("merge list empty")?;
             return Ok(
                 json!({"exit": if bad.is_some() { 1 } else { 0 }, "stdout": "", "stderr":
-                bad.map(|p| format!("warning: {}: invalid instrumentation profile data (file header is corrupt)\nerror: no profile can be merged\n", p.display())).unwrap_or_default()}),
+                bad.map(|_| format!("warning: {}: invalid instrumentation profile data (file header is corrupt)\nerror: no profile can be merged\n", pinned.display())).unwrap_or_default()}),
             );
         }
         Ok(json!({"exit": 0, "stdout": stdout, "stderr": ""}))
@@ -390,7 +900,147 @@ mod tests {
             );
             assert_eq!(fs::read(&file).map_err(|e| e.to_string())?, data);
             assert_eq!(report["captured"][0]["pid_hint"], 123);
+            assert_eq!(
+                report["captured"][0]["error_family"],
+                "invalid_instrumentation_profile_data"
+            );
         }
+        Ok(())
+    }
+    #[test]
+    fn replay_uses_the_validated_list_and_pinned_profile_after_source_swap() -> Result<()> {
+        let t = temp()?;
+        let (dir, source, list) = seed(&t.0, b"allowed original profile")?;
+        let outside = t.0.join("outside.profraw");
+        fs::write(&outside, b"outside secret profile").map_err(|error| error.to_string())?;
+        let saved = dir.join("original.saved");
+        let out = t.0.join("evidence");
+        let swapped = std::cell::Cell::new(false);
+        let report = capture(&dir, &list, &out, |args| {
+            if args.last().is_some_and(|arg| arg == "--version") {
+                fs::write(&list, format!("{}\n", outside.display()))
+                    .map_err(|error| error.to_string())?;
+                fs::rename(&source, &saved).map_err(|error| error.to_string())?;
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(&outside, &source).map_err(|error| error.to_string())?;
+                swapped.set(true);
+            }
+            if args.iter().any(|arg| arg == "merge") {
+                let replay_list = args
+                    .windows(2)
+                    .find(|pair| pair[0] == "-f")
+                    .map(|pair| PathBuf::from(&pair[1]))
+                    .ok_or("replay list missing")?;
+                let snapshot =
+                    fs::read_to_string(replay_list).map_err(|error| error.to_string())?;
+                assert!(!snapshot.contains(outside.to_string_lossy().as_ref()));
+                assert!(snapshot.contains(".coverage-replay-"));
+            }
+            runner(args, Some(&source))
+        })?;
+        assert!(swapped.get());
+        assert_eq!(report["profile_list_replay_safe"], true);
+        assert_eq!(report["profile_list_source_changed"], true);
+        assert_eq!(report["profile_source_paths_stable"], false);
+        assert_eq!(report["profile_inputs_identity_stable"], true);
+        assert_eq!(report["captured"][0]["complete"], true);
+        assert_eq!(
+            fs::read(out.join("profile-00.prefix.profraw")).map_err(|e| e.to_string())?,
+            b"allowed original profile"
+        );
+        assert_eq!(
+            fs::read(&outside).map_err(|e| e.to_string())?,
+            b"outside secret profile"
+        );
+        Ok(())
+    }
+    #[test]
+    fn unavailable_warned_candidates_are_explicit_and_manifest_survives() -> Result<()> {
+        let t = temp()?;
+        let (dir, first, list) = seed(&t.0, b"first profile")?;
+        let second = dir.join("workspace-124-456_0.profraw");
+        fs::write(&second, b"second profile").map_err(|e| e.to_string())?;
+        fs::write(
+            &list,
+            format!("{}\n{}\n", first.display(), second.display()),
+        )
+        .map_err(|e| e.to_string())?;
+        let out = t.0.join("evidence");
+        let report = capture(&dir, &list, &out, |args| {
+            if args.iter().any(|arg| arg == "merge") {
+                let snapshot_list = args
+                    .windows(2)
+                    .find(|pair| pair[0] == "-f")
+                    .map(|pair| PathBuf::from(&pair[1]))
+                    .ok_or("snapshot list missing")?;
+                let pinned = fs::read_to_string(snapshot_list)
+                    .map_err(|error| error.to_string())?
+                    .lines()
+                    .map(PathBuf::from)
+                    .collect::<Vec<_>>();
+                fs::remove_file(&pinned[0]).map_err(|error| error.to_string())?;
+                fs::remove_file(&pinned[1]).map_err(|error| error.to_string())?;
+                fs::create_dir(&pinned[1]).map_err(|error| error.to_string())?;
+                return Ok(json!({"exit": 1, "stdout": "", "stderr": format!(
+                    "warning: {}: invalid instrumentation profile data\nwarning: {}: invalid instrumentation profile data\nerror: no profile can be merged\n",
+                    pinned[0].display(), pinned[1].display())}));
+            }
+            runner(args, None)
+        })?;
+        assert_eq!(report["merge_replay"]["exit"], 1);
+        assert!(field(&report["captured"][0], "error").contains("No such file"));
+        assert_eq!(
+            report["captured"][1]["error"],
+            "profile input is not a regular file"
+        );
+        assert_eq!(report["profile_inputs_identity_stable"], false);
+        assert_eq!(report["profile_source_paths_stable"], true);
+        assert_eq!(
+            fs::read(first).map_err(|error| error.to_string())?,
+            b"first profile"
+        );
+        assert_eq!(
+            fs::read(second).map_err(|error| error.to_string())?,
+            b"second profile"
+        );
+        assert!(out.join("manifest.json").is_file());
+        Ok(())
+    }
+    #[test]
+    fn candidate_budget_error_is_a_row_and_later_candidates_continue() -> Result<()> {
+        let t = temp()?;
+        let (dir, file, _) = seed(&t.0, b"profile")?;
+        let missing = dir.join("missing-456-789_0.profraw");
+        let mut budget = Budget {
+            root: t.0.join("evidence"),
+            bytes: ARTIFACT_BYTES,
+            files: 0,
+        };
+        fs::create_dir(&budget.root).map_err(|e| e.to_string())?;
+        let unavailable = candidate_record(
+            &mut budget,
+            &missing,
+            "missing-456-789_0.profraw",
+            "invalid_instrumentation_profile_data",
+            0,
+        );
+        let over_budget = candidate_record(
+            &mut budget,
+            &file,
+            "workspace-123-456_0.profraw",
+            "invalid_instrumentation_profile_data",
+            1,
+        );
+        assert!(field(&unavailable, "error").contains("No such file"));
+        assert_eq!(over_budget["error"], "diagnostic artifact budget exceeded");
+        assert_eq!(budget.bytes, ARTIFACT_BYTES);
+        assert_eq!(budget.files, 0);
+        assert_eq!(
+            fs::read_dir(&budget.root)
+                .map_err(|e| e.to_string())?
+                .count(),
+            0
+        );
         Ok(())
     }
     #[test]
@@ -416,6 +1066,9 @@ mod tests {
         let out = t.0.join("evidence");
         let report = capture(&dir, &list, &out, |a| runner(a, Some(&file)))?;
         assert_eq!(report["inventory_truncated"], true);
+        assert!(
+            report["inventory_json_bytes"].as_u64().unwrap_or(u64::MAX) <= INVENTORY_BYTES as u64
+        );
         assert_eq!(report["captured"][0]["complete"], false);
         assert_eq!(report["captured"][0]["retained_bytes"], PREFIX_BYTES);
         let sizes = fs::read_dir(out)
@@ -425,6 +1078,126 @@ mod tests {
             .map_err(|e| e.to_string())?;
         assert!(sizes.len() <= ARTIFACT_FILES);
         assert!(sizes.iter().sum::<u64>() <= ARTIFACT_BYTES as u64);
+        assert!(
+            report["artifact_bytes_total"].as_u64().unwrap_or(u64::MAX) <= ARTIFACT_BYTES as u64
+        );
+        assert!(report["manifest_bytes"].as_u64().unwrap_or(u64::MAX) <= MANIFEST_RESERVE as u64);
+        Ok(())
+    }
+    #[test]
+    fn inventory_json_limit_includes_array_punctuation() -> Result<()> {
+        let t = temp()?;
+        let (dir, _, list) = seed(&t.0, b"x")?;
+        for index in 0..ROWS {
+            let name = format!("item-{index:04}-{}.profraw", "x".repeat(190));
+            fs::write(dir.join(name), b"x").map_err(|error| error.to_string())?;
+        }
+        let report = capture(&dir, &list, &t.0.join("evidence"), |args| {
+            runner(args, None)
+        })?;
+        let inventory_bytes = serde_json::to_vec(&report["inventory"])
+            .map_err(|error| error.to_string())?
+            .len();
+        assert!(inventory_bytes <= INVENTORY_BYTES);
+        assert_eq!(report["inventory_json_bytes"], inventory_bytes);
+        assert_eq!(report["inventory_truncated"], true);
+        Ok(())
+    }
+    #[test]
+    fn maximum_profile_and_control_stream_capture_keeps_reserved_manifest() -> Result<()> {
+        let t = temp()?;
+        let dir = t.0.join("profiles");
+        fs::create_dir(&dir).map_err(|error| error.to_string())?;
+        let mut profiles = Vec::new();
+        for index in 0..PROFILES {
+            let path = dir.join(format!("worker-{index:03}-123456_0.profraw"));
+            fs::write(&path, vec![0x01; PREFIX_BYTES]).map_err(|error| error.to_string())?;
+            profiles.push(path);
+        }
+        let list = dir.join("ripr-swarm-profraw-list");
+        fs::write(
+            &list,
+            profiles
+                .iter()
+                .map(|path| format!("{}\n", path.display()))
+                .collect::<String>(),
+        )
+        .map_err(|error| error.to_string())?;
+        let control = vec![0x01; STREAM_BYTES];
+        let out = t.0.join("evidence");
+        let report = capture(&dir, &list, &out, |args| {
+            if args == ["rustc", "-vV"] {
+                let mut stdout = b"rustc test\nhost: x86_64-unknown-linux-gnu\n".to_vec();
+                stdout.extend_from_slice(&control[..STREAM_BYTES - stdout.len()]);
+                return Ok(tool_result(Some(0), &stdout, &control, false, false, false));
+            }
+            if args == ["rustc", "--print", "sysroot"] {
+                return Ok(tool_result(
+                    Some(0),
+                    b"/test/sysroot\n",
+                    &control,
+                    false,
+                    false,
+                    false,
+                ));
+            }
+            if args == ["git", "rev-parse", "HEAD"] {
+                return Ok(tool_result(
+                    Some(0),
+                    b"0000000000000000000000000000000000000000\n",
+                    &control,
+                    false,
+                    false,
+                    false,
+                ));
+            }
+            if args.last().is_some_and(|arg| arg == "--version") {
+                let mut stdout = b"LLVM test\n".to_vec();
+                stdout.extend_from_slice(&control[..STREAM_BYTES - stdout.len()]);
+                return Ok(tool_result(Some(0), &stdout, &control, false, false, false));
+            }
+            let snapshot_list = args
+                .windows(2)
+                .find(|pair| pair[0] == "-f")
+                .map(|pair| PathBuf::from(&pair[1]))
+                .ok_or("merge snapshot list missing")?;
+            let names = fs::read_to_string(snapshot_list).map_err(|error| error.to_string())?;
+            let mut stderr = Vec::new();
+            for (index, path) in names.lines().enumerate() {
+                let family = match index % 3 {
+                    0 => "invalid instrumentation profile data (file header is corrupt)",
+                    1 => "malformed instrumentation profile data: binary id length is 0",
+                    _ => "unrecognized instrumentation profile encoding format",
+                };
+                stderr.extend_from_slice(format!("warning: {path}: {family}\n").as_bytes());
+            }
+            stderr.extend_from_slice(b"error: no profile can be merged\n");
+            stderr.resize(STREAM_BYTES, 0x01);
+            Ok(tool_result(Some(1), &control, &stderr, false, false, false))
+        })?;
+        assert_eq!(report["original_coverage_outcome"], "failure");
+        assert_eq!(report["merge_replay"]["exit"], 1);
+        assert_eq!(report["captured"].as_array().map(Vec::len), Some(PROFILES));
+        assert!(
+            report["captured"]
+                .as_array()
+                .is_some_and(|rows| rows.iter().all(|row| row["complete"] == true))
+        );
+        assert!(report["manifest_bytes"].as_u64().unwrap_or(u64::MAX) <= MANIFEST_RESERVE as u64);
+        assert!(
+            report["artifact_bytes_total"].as_u64().unwrap_or(u64::MAX) <= ARTIFACT_BYTES as u64
+        );
+        let manifest = fs::read(out.join("manifest.json")).map_err(|error| error.to_string())?;
+        assert_eq!(
+            manifest.len() as u64,
+            report["manifest_bytes"].as_u64().unwrap_or(0)
+        );
+        assert!(
+            fs::read_dir(out)
+                .map_err(|error| error.to_string())?
+                .count()
+                <= ARTIFACT_FILES
+        );
         Ok(())
     }
     #[test]
@@ -468,6 +1241,78 @@ mod tests {
             assert_eq!(report["truncated"], true);
             assert_eq!(field(&report, "stdout").len(), STREAM_BYTES);
             assert_eq!(field(&report, "stderr").len(), STREAM_BYTES);
+            assert_eq!(field(&report, "stdout_hex").len(), STREAM_BYTES * 2);
+            assert_eq!(field(&report, "stderr_hex").len(), STREAM_BYTES * 2);
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn process_is_running(pid: u32) -> Result<bool> {
+        let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => stat,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error.to_string()),
+        };
+        let state = stat
+            .rsplit_once(')')
+            .and_then(|(_, tail)| tail.split_whitespace().next())
+            .ok_or("process state unavailable")?;
+        Ok(!matches!(state, "Z" | "X"))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn assert_process_stopped(pid: u32) -> Result<()> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while process_is_running(pid)? {
+            if Instant::now() >= deadline {
+                return Err(format!("owned descendant {pid} remained live"));
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn owned_deadline_and_early_parent_exit_reap_process_group_descendants() -> Result<()> {
+        #[cfg(target_os = "linux")]
+        for (parent_sleep, redirect, expect_timeout) in [
+            (false, false, false),
+            (false, true, false),
+            (true, false, true),
+        ] {
+            let t = temp()?;
+            let marker = t.0.join("descendant.pid");
+            let redirect_statement = if redirect {
+                ", stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL"
+            } else {
+                ""
+            };
+            let parent_statement = if parent_sleep { "; time.sleep(60)" } else { "" };
+            let script = [
+                "import subprocess,sys,time; p=subprocess.",
+                "Popen(['sleep','60']",
+                redirect_statement,
+                "); open(sys.argv[1],'w').write(str(p.pid))",
+                parent_statement,
+            ]
+            .concat();
+            let args = vec![
+                "python3".to_string(),
+                "-c".to_string(),
+                script,
+                marker.to_string_lossy().into_owned(),
+            ];
+            let started = Instant::now();
+            let report = tool_with_deadline(&args, Duration::from_millis(250))?;
+            assert!(started.elapsed() < Duration::from_secs(3));
+            assert_eq!(report["timed_out"], expect_timeout);
+            assert_eq!(report["descendants_terminated"], true);
+            let pid = fs::read_to_string(marker)
+                .map_err(|error| error.to_string())?
+                .parse::<u32>()
+                .map_err(|error| error.to_string())?;
+            assert_process_stopped(pid)?;
         }
         Ok(())
     }
