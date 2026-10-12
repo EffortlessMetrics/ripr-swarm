@@ -8994,6 +8994,8 @@ spec = "docs/specs/RIPR-SPEC-0123-targeted-rerun.md"
 tests = [
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_multiline_constructor",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_parameter_inputs_preserved",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_terminal_type_arguments",
+  "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_trailing_comments",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_parameter_offsets",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_rows_preserve_offsets",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::changed_test_inventory_exact_occurrence_opaque_and_mixed_refusals",

@@ -305,8 +305,21 @@ fn collect_operands(
         return false;
     };
     const PREFIX: &str = "fn occurrence(){let _ = (";
-    let tokens = tokens.trim_end().strip_suffix(',').unwrap_or(tokens);
-    let wrapped = format!("{PREFIX}{tokens},);}}");
+    // Preserve source bytes, including trailing comments. Only a top-level
+    // comma terminates the operand list; nested token trees remain operands.
+    let trailing_comma = tree
+        .syntax()
+        .children_with_tokens()
+        .filter(|element| {
+            !element.kind().is_trivia()
+                && element.text_range().start() > range.start()
+                && element.text_range().end() < range.end()
+        })
+        .last()
+        .is_some_and(|element| element.as_token().is_some_and(|token| token.text() == ","));
+    let comma = if trailing_comma { "" } else { "," };
+    // A final line comment must not consume the synthetic closing delimiter.
+    let wrapped = format!("{PREFIX}{tokens}\n{comma});}}");
     let Some(parse) = parse_clean_source_file(&wrapped) else {
         return false;
     };
@@ -377,9 +390,13 @@ fn collect(
                 continue;
             };
             let spelling = name.text().to_string();
-            let generic = path
-                .segments()
-                .any(|segment| segment.generic_arg_list().is_some());
+            // Terminal type arguments instantiate the already-bound callable.
+            // Generic qualifiers still require authority this selector lacks.
+            let generic = path.qualifier().is_some_and(|prefix| {
+                prefix
+                    .segments()
+                    .any(|segment| segment.generic_arg_list().is_some())
+            });
             let raw_or_anchored = path.segments().any(|segment| {
                 segment.type_anchor().is_some()
                     || segment
@@ -406,8 +423,6 @@ fn collect(
                         .join("::"),
                     generic,
                 }
-            } else if generic {
-                TargetedCallShape::Unsupported
             } else {
                 TargetedCallShape::Bare
             };

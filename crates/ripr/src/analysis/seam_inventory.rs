@@ -8515,6 +8515,325 @@ fn selected({input}) {{ {body} }}
     }
 
     #[test]
+    fn changed_test_inventory_exact_occurrence_terminal_type_arguments() -> Result<(), String> {
+        let free = "pub fn owner<T>(x: i32) -> i32 { if x > 0 { x } else { 0 } }";
+        let inherent = "pub struct Alpha; impl Alpha { pub fn new<T>(x: i32) -> i32 { if x > 0 { x } else { 0 } } }";
+        let qualifier = "pub struct Alpha<T>(std::marker::PhantomData<T>); impl<T> Alpha<T> { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }";
+        for (label, declaration, setup, body, expected) in [
+            (
+                "bare",
+                free,
+                "",
+                "assert_eq!(owner::<u8>(1), 1);",
+                Some("src/lib.rs::owner"),
+            ),
+            (
+                "qualified",
+                free,
+                "",
+                "assert_eq!(crate::owner::<u8>(1), 1);",
+                Some("src/lib.rs::owner"),
+            ),
+            (
+                "multiline",
+                free,
+                "",
+                "assert_eq!(crate::\nowner::<u8>(1), 1);",
+                Some("src/lib.rs::owner"),
+            ),
+            (
+                "body",
+                free,
+                "",
+                "crate::owner::<u8>(1);",
+                Some("src/lib.rs::owner"),
+            ),
+            (
+                "inherent",
+                inherent,
+                "",
+                "assert_eq!(Alpha::new::<u8>(1), 1);",
+                Some("src/lib.rs::impl Alpha::new"),
+            ),
+            (
+                "generic-qualifier",
+                qualifier,
+                "",
+                "assert_eq!(Alpha::<u8>::new(1), 1);",
+                None,
+            ),
+            (
+                "mixed",
+                free,
+                "",
+                "crate::owner::<u8>(1); foreign::owner::<u8>(2);",
+                None,
+            ),
+            (
+                "reverse",
+                free,
+                "",
+                "foreign::owner::<u8>(2); crate::owner::<u8>(1);",
+                None,
+            ),
+            (
+                "raw",
+                free,
+                "",
+                "assert_eq!(crate::r#owner::<u8>(1), 1);",
+                None,
+            ),
+            ("receiver", inherent, "", "Alpha.new::<u8>(1);", None),
+            (
+                "opaque",
+                free,
+                "macro_rules! assert_eq { ($($t:tt)*) => { core::hint::black_box(()); }; }",
+                "assert_eq!(crate::owner::<u8>(1), 1);",
+                None,
+            ),
+        ] {
+            let root = make_tempdir(&format!("targeted-terminal-args-{label}"))?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!("{declaration}\n{setup}\n#[test] fn selected() {{ {body} }}\n"),
+            )?;
+            let file = root.join("src/lib.rs");
+            let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+            assert!(
+                !index
+                    .files()
+                    .get(&file)
+                    .ok_or("missing source")?
+                    .used_lexical_fallback,
+                "{label}"
+            );
+            assert_eq!(index.tests().len(), 1, "{label}");
+            let target = if declaration == free { "owner" } else { "new" };
+            assert!(
+                index.tests()[0]
+                    .calls
+                    .iter()
+                    .any(|call| call.name == target),
+                "{label}: target call must be captured"
+            );
+            assert!(
+                index
+                    .functions()
+                    .iter()
+                    .any(|function| function.name == target
+                        && !function.source_role.is_evidence_role()),
+                "{label}: production target must be indexed"
+            );
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            if let Some(owner) = expected {
+                let inventory = result.map_err(|error| format!("{label}: {error:?}"))?;
+                assert_eq!(inventory.selected_test_count, 1, "{label}");
+                assert!(!inventory.classified.is_empty(), "{label}");
+                assert!(
+                    inventory
+                        .classified
+                        .iter()
+                        .all(|entry| entry.seam.owner() == owner),
+                    "{label}"
+                );
+                let source = &index.files().get(&file).ok_or("missing source")?.source;
+                let occurrences = super::super::classify::TargetedCallSyntax::new(&index)
+                    .occurrences(&index.tests()[0], true, |_, _| true);
+                assert!(!occurrences.is_empty(), "{label}");
+                for call in occurrences {
+                    assert_eq!(
+                        &source[call.range.clone().ok_or("unmapped terminal call")?],
+                        call.text,
+                        "{label}"
+                    );
+                    assert!(call.text.contains("::<u8>"), "{label}: {call:?}");
+                }
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(TargetedTestInventoryError::Selector {
+                            kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                            selected_test_count: 1,
+                            ..
+                        })
+                    ),
+                    "{label}: {result:?}"
+                );
+            }
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_trailing_comments() -> Result<(), String> {
+        for (label, input, body, expected) in [
+            (
+                "block",
+                "",
+                "assert_eq!(crate::owner(1), 1, /* π */);",
+                true,
+            ),
+            ("line", "", "assert_eq!(crate::owner(1), 1, // π\n);", true),
+            ("single", "", "assert!(crate::owner(1) > 0, /* π */);", true),
+            (
+                "no-comma",
+                "",
+                "assert_eq!(crate::owner(1), 1 /* , */);",
+                true,
+            ),
+            (
+                "nested",
+                "",
+                "assert_eq!(crate::owner(1), { let _ = (1,); 1 } /* , */);",
+                true,
+            ),
+            (
+                "nested-comma",
+                "",
+                "assert_eq!(crate::owner(1), (1), /* π */);",
+                true,
+            ),
+            (
+                "values-block",
+                "#[values(crate::owner(1), /* π */)] x: i32",
+                "assert_eq!(x, 1);",
+                true,
+            ),
+            (
+                "values-line",
+                "#[values(crate::owner(1), // π\n)] x: i32",
+                "assert_eq!(x, 1);",
+                true,
+            ),
+            (
+                "mixed",
+                "",
+                "assert_eq!(crate::owner(1), 1, /* π */); foreign::owner(2);",
+                false,
+            ),
+            (
+                "reverse",
+                "",
+                "foreign::owner(2); assert_eq!(crate::owner(1), 1, /* π */);",
+                false,
+            ),
+            (
+                "diagnostic",
+                "",
+                "assert_eq!(crate::owner(1), 1, \"{}\", crate::owner(2), /* π */);",
+                false,
+            ),
+            (
+                "values-opaque",
+                "#[values(opaque!(crate::owner(1)), /* π */)] x: i32",
+                "assert_eq!(x, 1);",
+                false,
+            ),
+        ] {
+            let root = make_tempdir(&format!("targeted-trailing-comments-{label}"))?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dev-dependencies]\nrstest = { version = \"=0.27.0\", default-features = false }\n",
+            )?;
+            let attribute = if input.is_empty() {
+                "#[test]"
+            } else {
+                "#[rstest]"
+            };
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    "pub fn owner(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }}\n#[cfg(test)] use rstest::rstest;\n#[cfg(test)] {attribute}\nfn selected({input}) {{ {body} }}\n"
+                ),
+            )?;
+            let file = root.join("src/lib.rs");
+            let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+            assert!(
+                !index
+                    .files()
+                    .get(&file)
+                    .ok_or("missing source")?
+                    .used_lexical_fallback,
+                "{label}"
+            );
+            assert_eq!(index.tests().len(), 1, "{label}");
+            assert!(
+                index.tests()[0]
+                    .calls
+                    .iter()
+                    .any(|call| call.name == "owner"),
+                "{label}: target call must be captured"
+            );
+            assert!(
+                index
+                    .functions()
+                    .iter()
+                    .any(|function| function.name == "owner"
+                        && !function.source_role.is_evidence_role()),
+                "{label}: production target must be indexed"
+            );
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            if expected {
+                let inventory = result.map_err(|error| format!("{label}: {error:?}"))?;
+                assert_eq!(inventory.selected_test_count, 1, "{label}");
+                assert!(!inventory.classified.is_empty(), "{label}");
+                assert!(
+                    inventory
+                        .classified
+                        .iter()
+                        .all(|entry| entry.seam.owner() == "src/lib.rs::owner"),
+                    "{label}"
+                );
+                let source = &index.files().get(&file).ok_or("missing source")?.source;
+                let occurrences = super::super::classify::TargetedCallSyntax::new(&index)
+                    .occurrences(&index.tests()[0], true, |_, _| true);
+                let owners = occurrences
+                    .iter()
+                    .filter(|call| call.name == "owner")
+                    .collect::<Vec<_>>();
+                assert_eq!(owners.len(), 1, "{label}: {occurrences:?}");
+                let call = owners[0];
+                assert_eq!(
+                    &source[call.range.clone().ok_or("unmapped commented operand")?],
+                    "crate::owner(1)",
+                    "{label}"
+                );
+                assert_eq!(call.text, "crate::owner(1)", "{label}");
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(TargetedTestInventoryError::Selector {
+                            kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                            selected_test_count: 1,
+                            ..
+                        })
+                    ),
+                    "{label}: {result:?}"
+                );
+            }
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn changed_test_inventory_exact_occurrence_parameter_offsets() -> Result<(), String> {
         let root = make_tempdir("targeted-parameter-offsets")?;
         write_file(

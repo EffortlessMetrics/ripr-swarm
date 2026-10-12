@@ -100,7 +100,11 @@ including byte-mapped expression operands of unambiguously bound `assert!`,
 attribute expressions documented by RIPR-SPEC-0115. Parameter inputs use the
 same existing owner-binding checks; this preserves capture behavior without
 proving arbitrary proc-macro harness execution. Supported local/free call qualifiers retain their
-identity across lines. Same-line occurrences cannot lend each other authority;
+identity across lines. Terminal function type arguments preserve that existing
+callable binding; generic qualifiers retain their unsupported authority boundary.
+Operand mapping preserves original bytes, including comments after a trailing
+comma; synthetic delimiters cannot be swallowed by a final line comment.
+Same-line occurrences cannot lend each other authority;
 opaque macros, diagnostic formatting operands and unmodeled captures cannot
 authorize a workspace owner. Parsing is cached only within one immutable index
 run. A parsed method occurrence supplies no receiver type proof: receiver,
