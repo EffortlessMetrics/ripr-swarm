@@ -1601,9 +1601,10 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
         corpus.cases.len()
     );
     // Every RIPR-SPEC-0238 acceptance example but 10 keeps a case citing
-    // it; the ledger leaves 10 visible as uncovered rather than waived. Examples 1 to 34 have `py-spec0233-exNN-` cases (the
-    // prefix of the spec's draft number, RIPR-SPEC-0233); 35 to 39 were
-    // written from the library cases that cite them.
+    // it; the ledger leaves 10 visible as uncovered rather than waived.
+    // Examples 1 to 34 have `py-spec0233-exNN-` cases (the prefix of the
+    // spec's draft number, RIPR-SPEC-0233); 35 to 39 were written from the
+    // library cases that cite them.
     let spec = coverage
         .by_spec
         .iter()
