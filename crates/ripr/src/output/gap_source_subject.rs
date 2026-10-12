@@ -45,6 +45,19 @@ pub(crate) enum SourceSubjectCheck {
     Unverifiable(&'static str),
 }
 
+/// Compare selected and persisted roots through their existing filesystem
+/// identity. Failed canonicalizations never establish a match. Shared by
+/// targeted rerun and editor artifact admission, including aliased roots.
+pub(crate) fn same_root(root: &Path, artifact_root: &Path) -> bool {
+    match (
+        std::fs::canonicalize(root),
+        std::fs::canonicalize(artifact_root),
+    ) {
+        (Ok(root), Ok(artifact_root)) => root == artifact_root,
+        _ => false,
+    }
+}
+
 /// `sha256:<hex>` of one workspace file, `Ok(None)` when it does not exist.
 pub(crate) fn source_file_digest(root: &Path, relative: &str) -> Result<Option<String>, String> {
     match std::fs::read(root.join(relative)) {

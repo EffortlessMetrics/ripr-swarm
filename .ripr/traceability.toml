@@ -9014,6 +9014,8 @@ tests = [
   "crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs::rerun_missing_gap_ledger_help_names_source_specific_capture_steps",
   "crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs::rerun_default_gap_ledger_binds_producer_root_before_scope_recomputation",
   "crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs::rerun_gap_ledger_preserves_literal_percent_root_and_refuses_encoded_sibling",
+  "crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs::lsp_real_gap_ledger_admits_symlink_selected_root_and_refuses_foreign_checkout",
+  "crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs::lsp_real_gap_ledger_admits_native_root_beside_canonical_prefix_and_refuses_foreign_checkout",
   "crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs::rerun_absolute_root_ledger_keeps_edited_source_and_unstamped_legacy_recomputation",
   "crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs::rerun_legacy_unbound_roots_require_current_complete_source_subject",
   "crates/ripr/src/cli/rerun.rs::tests::rerun_cache_disclosure_names_reuse_and_fallbacks",

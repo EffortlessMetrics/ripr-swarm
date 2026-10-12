@@ -110,6 +110,12 @@ absolute-root ledger retains recomputation after source/test edits, including
 unstamped legacy records. This root-binding contract adds no HEAD/base revision
 staleness policy.
 
+Editor gap-artifact admission shares the same existing canonical-directory
+comparison for absolute roots, so a symlink-selected workspace or Windows
+native spelling can consume its physical canonical ledger root. Existing
+relative-root compatibility, command/path safety and complete source-subject
+validation remain required.
+
 `--before` is an explicit prior rerun, repo-exposure, or compatible receipt
 artifact. When it is absent, the result is `current_state_only` and may not
 claim improved, closed, unchanged, or regressed movement. The command must not

@@ -17,7 +17,7 @@ use crate::cli::suggest::unknown_argument;
 use crate::core_error::CoreError;
 use crate::domain::{CommandExecutionMode, CommandSpec, CommandSpecDigest};
 use crate::output::gap_decision_ledger::{GapRecord, parse_gap_record_source_json};
-use crate::output::gap_source_subject::{self, SourceSubjectCheck};
+use crate::output::gap_source_subject::{self, SourceSubjectCheck, same_root};
 use crate::output::outcome::{TargetedRerunStaticSeam, targeted_rerun_movement_from_json};
 #[cfg(feature = "lang-typescript")]
 use crate::output::typescript_packet_projection::typescript_canonical_gap_id;
@@ -1295,16 +1295,6 @@ fn display_scope(scope: &GapRerunScope) -> String {
     match scope.owner.as_deref() {
         Some(owner) => format!("{}::{owner}", display_path(&scope.file)),
         None => display_path(&scope.file),
-    }
-}
-
-fn same_root(root: &Path, ledger_root: &Path) -> bool {
-    match (
-        std::fs::canonicalize(root),
-        std::fs::canonicalize(ledger_root),
-    ) {
-        (Ok(root), Ok(ledger_root)) => root == ledger_root,
-        _ => false,
     }
 }
 

@@ -17395,6 +17395,10 @@ label in its own working directory (#7382). It keeps the native path spelling,
 including literal `%`, and refuses a non-UTF-8 canonical root before writing
 either ledger output. Source-subject digests remain copied
 from the analysis input; resolving the root does not mint fresh provenance.
+LSP artifact admission shares targeted rerun's canonical-directory equality for
+absolute roots, retaining symlink/native-path aliases of the selected workspace.
+Its legacy relative-root, path, command and source-subject validators remain in
+force; a distinct checkout with identical content is still a wrong root.
 
 `ripr reports gap-ledger --records <path>` renders a read-only advisory ledger
 from explicit `GapRecord` input. The input may be a `records` array,
