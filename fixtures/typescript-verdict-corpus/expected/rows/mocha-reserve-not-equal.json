@@ -1,0 +1,22 @@
+{
+  "case_id": "mocha-reserve-not-equal",
+  "subject_id": "authored-ts-mocha-ledger",
+  "origin": "authored",
+  "anchor": "src/reserve.ts:2",
+  "behavior_family": "return_value",
+  "test_shape": "mocha_chai_expect_to_not_equal_only",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

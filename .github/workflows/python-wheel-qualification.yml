@@ -21,6 +21,7 @@ on:
       - "policy/workflow_allowlist.txt"
       - "rust-toolchain.toml"
       - "xtask/**"
+      - "tools/repo-policy/**"
 
 # This workflow builds and consumes local artifacts only. It cannot publish,
 # mint an OIDC token, create a release, mutate a tag, or write repository data.
@@ -41,8 +42,62 @@ env:
   PACKAGING_VERSION: "26.3"
 
 jobs:
-  build-wheel:
+  applicability:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) }}
+    name: workflow policy and wheel applicability
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    outputs:
+      qualify: ${{ steps.select.outputs.qualify }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ env.CANDIDATE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.95.0
+      # Ledger validation executes even when only an unrelated record changed.
+      - name: Validate workflow policy independently
+        run: cargo policy check-workflows
+      - name: Select wheel applicability from immutable event history
+        id: select
+        if: ${{ always() && !cancelled() }}
+        env:
+          EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
+          checkout_head="$(git rev-parse HEAD)"
+          test "${checkout_head}" = "${CANDIDATE_SHA,,}"
+          dispatcher="$(git hash-object --no-filters -- tools/repo-policy/src/main.rs)"
+          [[ "${dispatcher}" =~ ^[0-9a-f]{40}$ ]]
+          # Source-identical pre-#7411 dispatcher; absence only retains qualification.
+          if test "${dispatcher}" = 248dd1bded04f3c650bbd31d03e7107dfeb5cc5a; then
+            echo "Wheel qualification retained: recognized legacy policy dispatcher without applicability command." >&2
+            printf 'qualify=true\n' >> "${GITHUB_OUTPUT}"
+          else
+            selection="$(mktemp)"
+            trap 'rm -f "${selection}"' EXIT
+            cargo policy python-wheel-applicability "${GITHUB_EVENT_NAME}" "${EVENT_BASE_SHA}" "${CANDIDATE_SHA}" > "${selection}"
+            IFS= read -r decision < "${selection}"
+            case "${decision}" in
+              qualify=true|qualify=false) ;;
+              *) echo "Invalid wheel applicability output." >&2; exit 1 ;;
+            esac
+            if ! cmp -s "${selection}" <(printf '%s\n' "${decision}"); then
+              echo "Invalid or partial wheel applicability output." >&2
+              exit 1
+            fi
+            cat "${selection}" >> "${GITHUB_OUTPUT}"
+          fi
+
+  build-wheel:
+    needs: applicability
+    # Only an explicit successful skip proof can avoid qualification.
+    if: ${{ always() && !cancelled() && !(github.event_name == 'workflow_dispatch' && inputs.mcp_evidence_pair) && (needs.applicability.result != 'success' || needs.applicability.outputs.qualify != 'false') }}
     name: build and inspect Linux x64 wheel
     runs-on: ubuntu-22.04
     outputs:
@@ -392,6 +447,8 @@ jobs:
           retention-days: 7
 
   consume:
+    # A successful fallback build is consumable even after failed applicability.
+    if: ${{ always() && !cancelled() && needs.build-wheel.result == 'success' }}
     name: clean ${{ matrix.client }} install and useful Python journey
     needs: build-wheel
     runs-on: ubuntu-22.04

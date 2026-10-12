@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..2057a6e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -176,7 +176,7 @@ fn validate(x: i32) -> Result<i32, HalfError> {
+ 
+ /// Changed `Ok(..)` exit; the test only takes the `?` exit.
+ pub fn checked_half(x: i32) -> Result<i32, HalfError> {
+-    Ok(validate(x)? >> 1)
++    Ok(validate(x)? / 2)
+ }
+ 
+ /// Same shape; the test takes the `Ok(..)` exit.

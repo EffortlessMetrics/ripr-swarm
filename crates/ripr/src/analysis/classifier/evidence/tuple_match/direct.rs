@@ -109,7 +109,7 @@ pub(super) fn discrimination(
 /// Resolve the producer's absolute changed-file coordinate only through the
 /// index's workspace-root authority. Relative owner identity, current source
 /// bytes, package identity, and canonical filesystem identity must all agree.
-fn same_current_file(
+pub(in crate::analysis::classifier::evidence) fn same_current_file(
     context: &ProbeContext<'_>,
     owner_file: &Path,
     probe_file: &Path,
@@ -221,7 +221,7 @@ fn conventional_package_root(owner_file: &Path) -> Option<PathBuf> {
     Some(root)
 }
 
-fn parsed(source: &str) -> Option<ast::SourceFile> {
+pub(in crate::analysis::classifier::evidence) fn parsed(source: &str) -> Option<ast::SourceFile> {
     parse_clean_source_file(source).map(|parse| parse.tree())
 }
 

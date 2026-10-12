@@ -1,0 +1,44 @@
+{
+  "case_id": "jest-spec0234-ex25",
+  "subject_id": "authored-ts-jest-relations",
+  "diff": "cases/jest-spec0234-ex25.diff",
+  "anchor": {
+    "file": "src/priceSelfMocked.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_automock_owner_module_tobe",
+  "hard_case": "the test automocks the owner's own module, so the real function never runs",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: behavior_change edit (the spec's diff); changes the returned/passed value for amount > 100"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test `jest.mock(\"../src/priceSelfMocked\")` automocks the owner's module, so `priceSelfMocked(150)` returns undefined and the edit is never executed; the test passes. Adapted from the spec: the stored assertion is `toBe(undefined)` instead of `toBe(130)` because the automocked call can never return a number (a green suite is required); a probe with `toBe(140)` gives ripr the same verdict. ripr reports `weakly_exposed`, `mocked_module`, oracle `unknown`, related only by test name; the named mocked_module limit projects to limited, an abstention. (matches spec: weakly_exposed, mocked_module). Spec cells: RIPR-SPEC-0243 example 25",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

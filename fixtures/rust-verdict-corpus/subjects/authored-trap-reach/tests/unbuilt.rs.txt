@@ -1,0 +1,6 @@
+use trapreach::charges::charge;
+
+#[test]
+fn charge_is_twenty_six() {
+    assert_eq!(charge(2), 26);
+}

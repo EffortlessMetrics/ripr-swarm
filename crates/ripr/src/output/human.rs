@@ -1,18 +1,21 @@
-use crate::app::{CheckOutput, FindingDrillIn, FindingNavigation};
+use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn, FindingNavigation};
 use crate::config::RiprConfig;
 use crate::domain::Finding;
 pub(crate) use crate::terminal_text::terminal_safe;
 use std::collections::BTreeSet;
+use std::path::Path;
 
-/// RIPR-SPEC-0112 disclosure. Committed-history diffs (an explicit `--base`
-/// or the resolved default base) read every source and test file as committed
-/// at `HEAD`, so uncommitted edits and new files count neither in the diff nor
-/// as test evidence. `--worktree` (RIPR-SPEC-0116) is the remedy for the
+/// RIPR-SPEC-0112 disclosure. A committed-history diff (forced with
+/// `--committed`; a dirty tree is otherwise read as a working tree by default,
+/// RIPR-SPEC-0116) reads every source and test file as committed at `HEAD`,
+/// so uncommitted edits and new files count neither in the diff nor as test
+/// evidence. Dropping `--committed`, or `--worktree`, is the remedy for the
 /// tracked subset — the wording matches `check --help`, which documents
-/// "staged and unstaged tracked edits" (#5258).
+/// "staged and unstaged tracked edits" (#5258). Committing works too, but
+/// staging alone does not change a committed-history diff.
 const UNANALYZED_WORKING_TREE_NOTE: &str = "\nNote: uncommitted source and test changes were not analyzed; \
-`ripr check` reads each file as committed at HEAD; add `--worktree` to include staged and \
-unstaged tracked edits (for example `ripr check --worktree`).\n";
+this run read each file as committed at HEAD; drop `--committed` (or pass `--worktree`) to \
+include staged and unstaged tracked edits (for example `ripr check --worktree`).\n";
 
 /// #5258: untracked files are invisible to the committed diff AND to
 /// `--worktree` (it diffs tracked edits only), so the note must name the
@@ -28,25 +31,34 @@ fn unanalyzed_working_tree_note(output: &CheckOutput) -> String {
     if untracked.is_empty() {
         return UNANALYZED_WORKING_TREE_NOTE.to_string();
     }
-    const NAMED_PATHS: usize = 3;
-    let named = untracked
-        .iter()
-        .take(NAMED_PATHS)
-        .map(|path| escape_terminal_display(path))
-        .collect::<Vec<_>>();
-    let more = untracked.len().saturating_sub(NAMED_PATHS);
-    let listing = if more > 0 {
-        format!("{} and {more} more", named.join(", "))
-    } else {
-        named.join(", ")
-    };
+    let listing = crate::output::analyzed_revisions::name_paths(untracked, escape_terminal_display);
     format!(
-        "\nNote: uncommitted source and test changes were not analyzed; `ripr check` reads each \
+        "\nNote: uncommitted source and test changes were not analyzed; this run read each \
          file as committed at HEAD, and `--worktree` adds staged and unstaged tracked edits only. \
          Untracked files ({listing}) are invisible to both; stage them first (`git add <paths>`, \
          or `git add -N <paths>` intent-to-add makes a new file visible to `--worktree`) and \
          rerun `ripr check --worktree`, or pass `--diff PATH`.\n"
     )
+}
+
+/// The working-tree disclosure for this run, if any: the RIPR-SPEC-0112
+/// note on a committed-history run with unanalyzed edits, or, on a
+/// working-tree read (RIPR-SPEC-0116), the untracked-files note naming the
+/// routed files the working-tree diff does not contain. The second never
+/// offers `--worktree`, which is already in effect.
+fn render_working_tree_disclosure(out: &mut String, output: &CheckOutput) {
+    if output.unanalyzed_working_tree {
+        out.push_str(&unanalyzed_working_tree_note(output));
+        return;
+    }
+    if crate::output::analyzed_revisions::is_working_tree_read(output)
+        && let Some(message) = crate::output::analyzed_revisions::working_tree_untracked_message(
+            &output.untracked_working_tree_source_paths,
+            escape_terminal_display,
+        )
+    {
+        out.push_str(&format!("\nNote: {message}\n"));
+    }
 }
 
 /// Render the bounded triage report in the default human-readable CLI format.
@@ -59,9 +71,40 @@ pub(crate) fn render_with_config(output: &CheckOutput, config: &RiprConfig) -> S
     render_bounded_with_config(output, config)
 }
 
+/// The one finding the default human render selects as its top gap, so the
+/// check pipeline can decide that finding's stub route before rendering
+/// (#5471) without a second selection rule.
+pub(crate) fn selected_triage_finding<'a>(
+    output: &'a CheckOutput,
+    config: &RiprConfig,
+) -> Option<&'a Finding> {
+    triage::select_human_triage(output, config).selected
+}
+
+/// Project the check producer's canonical next action for a navigation-aware
+/// render. `None` when the producer cannot bind a subject; JSON callers omit
+/// the member rather than inventing a committed-source default or executable
+/// route (#7258).
+pub(crate) fn canonical_next_action_for_check(
+    output: &CheckOutput,
+    config: &RiprConfig,
+    drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
+) -> Option<crate::domain::CanonicalNextActionV1> {
+    let triage = triage::select_human_triage(output, config);
+    triage::canonical_next_action_for_triage(&triage, output, drill_in, provenance).ok()
+}
+
 pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConfig) -> String {
     let drill_in = FindingDrillIn::Commands(FindingNavigation::legacy());
-    render_bounded_with_config_and_navigation(output, config, Some(&drill_in))
+    // Library callers declare no provenance; the adapter falls back to the
+    // committed-history derivation from `output.base`.
+    render_bounded_with_config_and_navigation(
+        output,
+        config,
+        Some(&drill_in),
+        CheckDiffProvenance::CommittedHistory,
+    )
 }
 
 /// #4012: the no-scope note must describe what was actually analyzed. When
@@ -69,6 +112,17 @@ pub(crate) fn render_bounded_with_config(output: &CheckOutput, config: &RiprConf
 /// range), name the compared base instead of claiming no scope was
 /// provided; only a run with no established base keeps the legacy note.
 fn render_no_scope_note(output: &CheckOutput) -> String {
+    // RIPR-SPEC-0116: a working-tree read diffs the merge base of the base
+    // and HEAD against the working tree, not `<base>...HEAD`.
+    if let Some(base) = output.base.as_deref()
+        && crate::output::analyzed_revisions::is_working_tree_read(output)
+    {
+        return format!(
+            "\nNote: the working tree has no changed tracked files against `{base}` (diff from \
+             the merge base of `{base}` and HEAD to the working tree), so there was nothing to \
+             analyze. An empty result here means no tracked behavior changed against it.\n",
+        );
+    }
     if let Some(base) = output.base.as_deref() {
         format!(
             "\nNote: `{base}...HEAD` contains no changed files, so there was nothing to analyze. \
@@ -87,6 +141,7 @@ pub(crate) fn render_bounded_with_config_and_navigation(
     output: &CheckOutput,
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
+    provenance: CheckDiffProvenance,
 ) -> String {
     let mut out = render_header_summary(output);
     render_analysis_outcome_disclosure(&mut out, output);
@@ -97,25 +152,21 @@ pub(crate) fn render_bounded_with_config_and_navigation(
         out.push_str("No diff-derived static exposure probes found.\n");
         if output.no_scope_provided {
             let triage = triage::select_human_triage(output, config);
-            triage::render_human_triage(&mut out, &triage, output, config, drill_in);
+            triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
         }
         if output.no_scope_provided && !output.unanalyzed_working_tree {
             out.push_str(&render_no_scope_note(output));
         }
-        if output.unanalyzed_working_tree {
-            out.push_str(&unanalyzed_working_tree_note(output));
-        }
+        render_working_tree_disclosure(&mut out, output);
         render_preview_language_advisories(&mut out, output);
         render_language_runs(&mut out, output);
         return out;
     }
 
     let triage = triage::select_human_triage(output, config);
-    triage::render_human_triage(&mut out, &triage, output, config, drill_in);
+    triage::render_human_triage(&mut out, &triage, output, config, drill_in, provenance);
     render_all_no_path_disclosure(&mut out, output);
-    if output.unanalyzed_working_tree {
-        out.push_str(&unanalyzed_working_tree_note(output));
-    }
+    render_working_tree_disclosure(&mut out, output);
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);
     out
@@ -159,9 +210,7 @@ pub(crate) fn render_full_with_config_and_navigation(
         // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
         // changes were NOT analyzed. An empty result here does NOT mean those changes
         // are covered — they were excluded from the committed-history diff.
-        if output.unanalyzed_working_tree {
-            out.push_str(&unanalyzed_working_tree_note(output));
-        }
+        render_working_tree_disclosure(&mut out, output);
         render_preview_language_advisories(&mut out, output);
         render_language_runs(&mut out, output);
         return out;
@@ -183,7 +232,12 @@ pub(crate) fn render_full_with_config_and_navigation(
             continue;
         }
         findings_rendered += 1;
-        out.push_str(&render_finding_with_config(finding, config));
+        out.push_str(&render_finding_with_config(
+            finding,
+            config,
+            &output.root,
+            JsonPointerWording::CheckFlag,
+        ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
             for command in [
@@ -211,21 +265,50 @@ pub(crate) fn render_full_with_config_and_navigation(
     // RIPR-SPEC-0112: disclose when a committed-history diff left uncommitted working-tree
     // changes were NOT analyzed. Fires whether or not the committed diff had findings —
     // those uncommitted edits are still unanalyzed regardless.
-    if output.unanalyzed_working_tree {
-        out.push_str(&unanalyzed_working_tree_note(output));
-    }
+    render_working_tree_disclosure(&mut out, output);
     render_preview_language_advisories(&mut out, output);
     render_language_runs(&mut out, output);
     out
 }
 
+/// Name the analyzed base and head (RIPR-SPEC-0116 amendment): a live
+/// repository diff names its base ref and commit and whether it ended at
+/// `HEAD` or at the working tree; a candidate-tree subject names its two
+/// trees. A diff read from a file or stdin carries no revisions ripr could
+/// verify, so its header is unchanged.
+fn render_analyzed_revisions(out: &mut String, output: &CheckOutput) {
+    use crate::output::analyzed_revisions::{base_label, head_label};
+    if let Some(revisions) = output.analyzed_revisions.as_ref() {
+        out.push_str(&format!(
+            "base: {}\nhead: {}\n",
+            base_label(revisions),
+            head_label(revisions)
+        ));
+        return;
+    }
+    if let Some(subject) = output
+        .analysis_outcome
+        .as_ref()
+        .and_then(|outcome| outcome.identity.git_candidate_subject.as_ref())
+    {
+        let short = |id: &str| id.get(..7).unwrap_or(id).to_string();
+        out.push_str(&format!(
+            "base: tree {}\nhead: candidate tree {}\n",
+            short(&subject.base_tree),
+            short(&subject.candidate_tree)
+        ));
+    }
+}
+
 fn render_header_summary(output: &CheckOutput) -> String {
     let mut out = String::new();
     out.push_str(&format!(
-        "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n\n",
+        "ripr static RIPR exposure analysis\nmode: {}\nroot: {}\n",
         output.mode.as_str(),
         output.root.display()
     ));
+    render_analyzed_revisions(&mut out, output);
+    out.push('\n');
     // #4322: the only per-run denominator line a human sees must match the
     // finding vocabulary. All seven classes render with their canonical
     // `ExposureClass::as_str()` tokens (no `weak`/`unrevealed` abbreviations,
@@ -387,7 +470,7 @@ fn render_suppression_policy_block(out: &mut String, output: &CheckOutput) {
         {
             out.push_str(&format!(
                 "  - {}:{} {} (selector: {})\n",
-                finding.probe.location.file.display(),
+                crate::analysis::finding_location_text(&output.root, &finding.probe.location.file),
                 finding.probe.location.line,
                 finding.class.as_str(),
                 entry.selector
@@ -526,7 +609,7 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
     {
         return;
     }
-    let related_tests_total = output
+    let retained_related_tests = output
         .findings
         .iter()
         .flat_map(|finding| finding.related_tests.iter())
@@ -539,15 +622,46 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
         })
         .collect::<BTreeSet<_>>()
         .len();
+    // Each finding's "Related test (1 of N matched rows)" line counts matched
+    // related-test rows before bounded packing (#5146, #6807), and one test
+    // can contribute many rows. When packing hid rows, the retained distinct
+    // tests are a floor and the row total is reported as rows, not as tests.
+    // Across findings the packed-away rows cannot be deduplicated, so the
+    // largest per-finding total is itself a floor.
+    let packed_related_tests = output
+        .findings
+        .iter()
+        .map(Finding::related_tests_total)
+        .max()
+        .unwrap_or(0);
+    let any_packed = output
+        .findings
+        .iter()
+        .any(|finding| finding.related_tests_total() > finding.related_tests.len());
+    let related_tests_count = if !any_packed {
+        format!("{retained_related_tests} statically linked related test(s)")
+    } else {
+        let rows = if output.findings.len() == 1 {
+            packed_related_tests.to_string()
+        } else {
+            format!(
+                "at least {}",
+                packed_related_tests.max(retained_related_tests)
+            )
+        };
+        format!(
+            "at least {retained_related_tests} statically linked related test(s) across {rows} matched related-test row(s)"
+        )
+    };
     let scope_summary = if s.changed_rust_files > 0 {
         format!(
-            "Scope analyzed: {} changed Rust file(s), {} changed expression(s), and {} statically linked related test(s).",
-            s.changed_rust_files, all_no_path_count, related_tests_total
+            "Scope analyzed: {} changed Rust file(s), {} changed expression(s), and {}.",
+            s.changed_rust_files, all_no_path_count, related_tests_count
         )
     } else {
         format!(
-            "Scope analyzed: {} changed expression(s) and {} statically linked related test(s).",
-            all_no_path_count, related_tests_total
+            "Scope analyzed: {} changed expression(s) and {}.",
+            all_no_path_count, related_tests_count
         )
     };
     // Language bindings are tested from the other language, so when every
@@ -771,7 +885,12 @@ fn capitalize_first(s: &str) -> String {
 
 /// Render one finding section for the human-readable CLI output.
 pub fn render_finding(finding: &Finding) -> String {
-    terminal_safe(render_finding_with_config(finding, &RiprConfig::default()))
+    terminal_safe(render_finding_with_config(
+        finding,
+        &RiprConfig::default(),
+        Path::new("."),
+        JsonPointerWording::CheckFlag,
+    ))
 }
 
 /// Render one finding with the bounded context follow-up for the selected
@@ -780,8 +899,15 @@ pub(crate) fn render_finding_with_context_command(
     finding: &Finding,
     config: &RiprConfig,
     context_command: &str,
+    root: &Path,
 ) -> String {
-    let mut out = render_finding_with_config(finding, config);
+    // #7476: explain reuses check's evidence window, but rejects the
+    // `--format` flag that window names. The pointer wording is selected while
+    // the evidence lines are built (`ExplainNamesCheck`), so it names check as
+    // prose without rewriting anything else in the rendered finding — quoted
+    // source fragments keep their exact bytes.
+    let mut out =
+        render_finding_with_config(finding, config, root, JsonPointerWording::ExplainNamesCheck);
     out.push_str(&explain::render_verdict_explanation(finding));
     out.push_str(&format!("\nNext: {context_command}\n"));
     push_powershell_variant(&mut out, "", context_command);
@@ -803,6 +929,7 @@ mod explain;
 mod sections;
 mod triage;
 
+pub(crate) use evidence_lines::JsonPointerWording;
 pub(crate) use sections::render_finding_with_config;
 
 #[cfg(test)]
@@ -811,13 +938,14 @@ mod tests {
     use crate::analysis::PreviewLanguageAdvisory;
     use crate::app::{CheckOutput, Mode};
     use crate::domain::{
-        ActivationEvidence, Confidence, DeltaKind, ExposureClass, Finding, FindingCanonicalGap,
-        FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId, LanguageStatus,
-        MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, OracleKind, OracleStrength,
-        Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence, SourceLocation,
-        StageEvidence, StageState, Summary, SymbolId, ValueContext, ValueFact,
+        ActivationEvidence, CALLEE_ONLY_REACH_PREFIX, Confidence, DeltaKind, ExposureClass,
+        Finding, FindingCanonicalGap, FlowSinkFact, FlowSinkKind, LanguageFileCount, LanguageId,
+        LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX, MissingDiscriminatorFact, OracleKind,
+        OracleStrength, Probe, ProbeFamily, ProbeId, RelatedTest, RevealEvidence, RiprEvidence,
+        SourceLocation, StageEvidence, StageState, StopReason, Summary, SymbolId, ValueContext,
+        ValueFact,
     };
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn terminal_safe_escapes_controls_and_bidi_but_keeps_lines_and_tabs() {
@@ -862,6 +990,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -894,6 +1023,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            analyzed_revisions: None,
             untracked_working_tree_source_paths: vec![
                 "src/new.rs".to_string(),
                 "tests/new.rs".to_string(),
@@ -921,7 +1051,8 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            !rendered.contains("add `--worktree` to include staged and unstaged tracked edits"),
+            !rendered
+                .contains("(or pass `--worktree`) to include staged and unstaged tracked edits"),
             "the tracked-only remedy must not stand in for the staging repair: {rendered}"
         );
     }
@@ -944,6 +1075,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            analyzed_revisions: None,
             untracked_working_tree_source_paths: vec!["src/\u{1b}[31mevil.rs".to_string()],
             unlinked_python_tests: None,
             suppression: None,
@@ -980,6 +1112,7 @@ mod tests {
             language_runs: Vec::new(),
             no_scope_provided: false,
             unanalyzed_working_tree: true,
+            analyzed_revisions: None,
             untracked_working_tree_source_paths: Vec::new(),
             unlinked_python_tests: None,
             suppression: None,
@@ -991,7 +1124,7 @@ mod tests {
 
         assert!(
             rendered
-                .contains("add `--worktree` to include staged and unstaged tracked edits (for example `ripr check --worktree`)"),
+                .contains("drop `--committed` (or pass `--worktree`) to include staged and unstaged tracked edits (for example `ripr check --worktree`)"),
             "{rendered}"
         );
         assert!(!rendered.contains("Untracked files"), "{rendered}");
@@ -1027,6 +1160,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1083,6 +1217,7 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1128,6 +1263,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1199,6 +1335,7 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            analyzed_revisions: None,
         })
     }
 
@@ -1276,6 +1413,7 @@ mod tests {
             suppression: None,
             analysis_outcome: Some(outcome),
             partial_scope: None,
+            analyzed_revisions: None,
         })
     }
 
@@ -1342,6 +1480,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1422,6 +1561,7 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                analyzed_revisions: None,
             };
             let rendered = render(&output);
             assert!(
@@ -1467,6 +1607,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -1512,6 +1653,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2038,6 +2180,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2083,6 +2226,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2135,6 +2279,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2187,6 +2332,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2217,6 +2363,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2225,6 +2372,129 @@ mod tests {
         assert!(rendered.contains("State: nothing in scope (missing_scope)"));
         assert!(rendered.contains("provide an analysis scope"));
         assert!(rendered.contains("No diff-derived static exposure probes found."));
+    }
+
+    fn empty_live_output(no_scope_provided: bool) -> CheckOutput {
+        CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.1".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: Some("main".to_string()),
+            summary: Summary::default(),
+            findings: vec![],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: Some(crate::analysis::AnalyzedRevisions {
+                base_ref: "main".to_string(),
+                base_commit: Some("1a2b3c4d5e6f".to_string()),
+                merge_base_commit: None,
+                head_commit: Some("1a2b3c4d5e6f".to_string()),
+                working_tree: true,
+            }),
+        }
+    }
+
+    /// RIPR-SPEC-0116: an empty working-tree read names the
+    /// merge-base-to-working-tree diff, not `main...HEAD`, never offers
+    /// `--worktree` (already in effect), and names untracked routed files the
+    /// working-tree diff cannot contain. A committed-history read keeps the
+    /// `main...HEAD` wording, so the oracle discriminates the branch.
+    #[test]
+    fn empty_working_tree_read_describes_the_working_tree_and_names_untracked_files() {
+        let mut output = empty_live_output(true);
+        output.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+        let rendered = render(&output);
+        assert!(
+            rendered.contains("head: working tree (uncommitted changes on HEAD 1a2b3c4)\n"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Note: the working tree has no changed tracked files against `main` (diff from the merge base of `main` and HEAD to the working tree), so there was nothing to analyze."
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Safe next action: the working tree has no changed tracked files against `main`; make a change, or `git add -N <path>` a new file, and re-run."
+            ),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "Note: Untracked files (src/new.rs) are not in the working-tree diff, which covers tracked files only"
+            ),
+            "{rendered}"
+        );
+        assert!(!rendered.contains("main...HEAD"), "{rendered}");
+        assert!(!rendered.contains("`--worktree`"), "{rendered}");
+
+        let mut committed = empty_live_output(true);
+        if let Some(revisions) = committed.analyzed_revisions.as_mut() {
+            revisions.working_tree = false;
+        }
+        committed.untracked_working_tree_source_paths = vec!["src/new.rs".to_string()];
+        let committed_rendered = render(&committed);
+        assert!(
+            committed_rendered.contains("`main...HEAD` contains no changed files"),
+            "{committed_rendered}"
+        );
+        assert!(
+            committed_rendered.contains("add `--worktree` to include uncommitted tracked edits"),
+            "{committed_rendered}"
+        );
+        assert!(
+            !committed_rendered.contains("not in the working-tree diff"),
+            "{committed_rendered}"
+        );
+    }
+
+    /// A candidate-tree subject has no live revisions; the header names its
+    /// two trees from the outcome identity.
+    #[test]
+    fn candidate_tree_header_names_base_and_candidate_trees() -> Result<(), String> {
+        use crate::analysis_outcome::{
+            AnalysisIdentity, AnalysisOutcome, AnalysisOutcomeCounts, AnalysisOutcomeKind,
+            GitCandidateSubjectIdentity,
+        };
+        let mut output = empty_live_output(false);
+        output.base = None;
+        output.analyzed_revisions = None;
+        output.analysis_outcome = Some(AnalysisOutcome::new(
+            AnalysisOutcomeKind::CompleteNoFindings,
+            AnalysisIdentity {
+                git_candidate_subject: Some(GitCandidateSubjectIdentity {
+                    subject_kind: "tree_to_tree".to_string(),
+                    base_tree: "aaaaaaa1111111".to_string(),
+                    candidate_tree: "bbbbbbb2222222".to_string(),
+                    diff_identity: "sha256:00".to_string(),
+                }),
+                ..AnalysisIdentity::default()
+            },
+            AnalysisOutcomeCounts {
+                changed_file_count: 1,
+                changed_line_count: 1,
+                candidate_line_count: 1,
+                probe_count: 1,
+                finding_count: 0,
+            },
+            Vec::new(),
+        )?);
+        let rendered = render(&output);
+        assert!(
+            rendered.contains("root: repo\nbase: tree aaaaaaa\nhead: candidate tree bbbbbbb\n"),
+            "{rendered}"
+        );
+        Ok(())
     }
 
     #[test]
@@ -2259,6 +2529,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2283,6 +2554,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -2295,6 +2567,40 @@ mod tests {
             !digest.contains("Missing discriminator:"),
             "exposed digest must not claim a missing discriminator; got:\n{digest}"
         );
+    }
+
+    // #7071: a proximity-only weak finding whose reach witness ripr could
+    // not trace renders its limit as an analyzer limit with no test route.
+    #[test]
+    fn untraced_reach_weak_finding_renders_an_analyzer_limit() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.stop_reasons = vec![crate::domain::StopReason::MacroReachUnresolved];
+        finding.static_limit_kind = Some(crate::domain::StaticLimitKind::RustMacroReachUnresolved);
+        finding.missing = vec![
+            crate::domain::StaticLimitKind::RustMacroReachUnresolved
+                .describe()
+                .to_string(),
+        ];
+        finding.activation.missing_discriminators = Vec::new();
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(
+            digest.contains("  Analyzer limit: A test may reach"),
+            "{digest}"
+        );
+        assert!(!digest.contains("Missing discriminator"), "{digest}");
+        // The same class without the reach stop reason keeps the gap label.
+        finding.stop_reasons.clear();
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(digest.contains("  Missing discriminator:"), "{digest}");
     }
 
     // #3317 follow-up (RIPR-SPEC-0162): the why-hint must not assert the
@@ -2317,6 +2623,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
         if !digest.contains(
             "Why unknown: the path from the changed behavior to an observable sink is not statically clear",
@@ -2348,6 +2655,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
         if !digest
             .contains("  Missing discriminator (1 of 2): No strong discriminator was detected")
@@ -2358,6 +2666,50 @@ mod tests {
             ));
         }
         Ok(())
+    }
+
+    // #7003: a seam-wrapped finding whose related tests are all
+    // `SeamCalleeCall` reports reach weak — and the digest hint must agree
+    // with that reach line instead of claiming a reaching test.
+    #[test]
+    fn digest_hint_for_callee_only_finding_names_no_reaching_test() {
+        let mut finding = sample_finding();
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.ripr = RiprEvidence {
+            reach: stage(
+                StageState::Weak,
+                Confidence::Low,
+                &format!("{CALLEE_ONLY_REACH_PREFIX}: observes_callee_outcome"),
+            ),
+            infect: stage(StageState::Yes, Confidence::High, "boundary input present"),
+            propagate: stage(StageState::Weak, Confidence::Medium, "boxed error channel"),
+            reveal: RevealEvidence {
+                observe: stage(StageState::Yes, Confidence::High, "observed"),
+                discriminate: stage(
+                    StageState::Weak,
+                    Confidence::Low,
+                    "variant identity unconfirmed",
+                ),
+            },
+        };
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+
+        assert!(
+            digest.contains("  Why weak: no test is seen calling this change"),
+            "callee-only digest must carry the no-calling-test hint; got:\n{digest}"
+        );
+        assert!(
+            !digest
+                .lines()
+                .any(|line| line.trim_start().starts_with("Why ")
+                    && line.contains("reaches this change")),
+            "no rendered hint may claim a reaching test for a callee-only finding; got:\n{digest}"
+        );
     }
 
     #[test]
@@ -2375,6 +2727,7 @@ mod tests {
             let digest = super::sections::render_finding_digest_with_config(
                 &finding,
                 &crate::config::RiprConfig::default(),
+                Path::new("."),
             );
 
             assert!(
@@ -2405,6 +2758,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -2428,6 +2782,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -2447,6 +2802,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(digest.contains("  Language: python\n"), "digest:\n{digest}");
@@ -2465,6 +2821,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(!digest.contains("  Language:"), "digest:\n{digest}");
@@ -2731,6 +3088,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -2831,6 +3189,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -2877,6 +3236,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered =
@@ -2917,6 +3277,7 @@ mod tests {
             &finding,
             &config,
             "ripr context --root 'it'\\''s repo' --at probe:x",
+            Path::new("."),
         );
         assert!(
             apostrophe.contains(
@@ -2928,6 +3289,7 @@ mod tests {
             &finding,
             &config,
             "ripr context --root 'Steven’s repo' --at probe:x",
+            Path::new("."),
         );
         assert!(
             typographic
@@ -2938,6 +3300,7 @@ mod tests {
             &finding,
             &config,
             "ripr context --root 'café repo' --at probe:x",
+            Path::new("."),
         );
         assert!(!plain.contains("(PowerShell)"), "{plain}");
     }
@@ -2976,6 +3339,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered =
@@ -2995,6 +3359,16 @@ mod tests {
 
     /// The drill-in commands for a `--worktree` check, built by the same
     /// owner `ripr check` uses, so the renderer tests see the real argv.
+    /// The drill-in binds `--root` to the resolved repository (#3948), so the
+    /// rendered text carries the renderer directory. These tests pin the scope
+    /// flags, not the machine path: project the bound root back to `repo`.
+    fn unbound_repo_root(rendered: String) -> String {
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root("repo"),
+        );
+        rendered.replace(&bound, "repo")
+    }
+
     fn worktree_drill_in() -> crate::app::FindingDrillIn {
         let input = crate::app::CheckInput {
             root: PathBuf::from("repo"),
@@ -3036,13 +3410,15 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
-        let rendered = super::render_bounded_with_config_and_navigation(
+        let rendered = unbound_repo_root(super::render_bounded_with_config_and_navigation(
             &output,
             &crate::config::RiprConfig::default(),
             Some(&worktree_drill_in()),
-        );
+            crate::app::CheckDiffProvenance::Worktree,
+        ));
 
         assert!(
             rendered.contains(&format!(
@@ -3089,13 +3465,14 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
-        let rendered = super::render_full_with_config_and_navigation(
+        let rendered = unbound_repo_root(super::render_full_with_config_and_navigation(
             &output,
             &crate::config::RiprConfig::default(),
             Some(&worktree_drill_in()),
-        );
+        ));
 
         for id in ["first", "second"] {
             assert!(
@@ -3161,12 +3538,13 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
-        super::render_full_with_config_and_navigation(
+        unbound_repo_root(super::render_full_with_config_and_navigation(
             &output,
             &crate::config::RiprConfig::default(),
             Some(drill_in),
-        )
+        ))
     }
 
     /// #4924 review: when policy suppresses every finding, no block prints,
@@ -3270,6 +3648,7 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -3318,6 +3697,7 @@ mod tests {
             }),
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -3354,6 +3734,7 @@ mod tests {
                 line_budget: 100,
                 budget_disclosures: vec!["clamped budget disclosure".to_string()],
                 selected_files: vec!["src/a.rs".to_string()],
+                unselected_files: vec!["src/b.rs".to_string()],
                 selected_changed_lines: 60,
                 uninspected_files_lower_bound: 3,
                 uninspected_changed_lines_lower_bound: 180,
@@ -3361,6 +3742,7 @@ mod tests {
                 next_file_changed_lines: Some(60),
                 partition_identity: "c".repeat(64),
             }),
+            analyzed_revisions: None,
         };
 
         for rendered in [
@@ -3440,6 +3822,7 @@ mod tests {
                 line_budget: 40,
                 budget_disclosures: Vec::new(),
                 selected_files: vec!["src/a.rs".to_string()],
+                unselected_files: vec!["src/b.rs".to_string()],
                 selected_changed_lines,
                 uninspected_files_lower_bound: uninspected_files,
                 uninspected_changed_lines_lower_bound: uninspected_lines,
@@ -3447,6 +3830,7 @@ mod tests {
                 next_file_changed_lines,
                 partition_identity: "c".repeat(64),
             }),
+            analyzed_revisions: None,
         }
     }
 
@@ -3547,6 +3931,7 @@ mod tests {
                 line_budget: 100,
                 budget_disclosures: Vec::new(),
                 selected_files: vec!["src/evil\u{1b}[2K.rs".to_string()],
+                unselected_files: vec!["src/beyond.rs".to_string()],
                 selected_changed_lines: 1,
                 uninspected_files_lower_bound: 1,
                 uninspected_changed_lines_lower_bound: 1,
@@ -3554,6 +3939,7 @@ mod tests {
                 next_file_changed_lines: Some(60),
                 partition_identity: "c".repeat(64),
             }),
+            analyzed_revisions: None,
         };
 
         let rendered =
@@ -3697,6 +4083,155 @@ mod tests {
         );
     }
 
+    /// #7476: `ripr explain` prints the same evidence window as check, but it
+    /// does not accept `--format`. The explain footnote must name check's JSON
+    /// format instead of a flag that `ripr explain --format json` rejects.
+    /// Check's own renderer keeps the flag, because that command accepts it.
+    #[test]
+    fn explain_evidence_window_names_check_json_not_an_explain_flag() {
+        let mut finding = sample_finding();
+        for index in 1..9 {
+            finding.related_tests.push(RelatedTest {
+                name: format!("test_extra_{index}"),
+                file: PathBuf::from("tests/sample.rs"),
+                line: 100 + index,
+                oracle: None,
+                oracle_kind: OracleKind::SmokeOnly,
+                oracle_strength: OracleStrength::Weak,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+            });
+        }
+        for index in 0..13 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 200 + index,
+                text: format!("sample({index})"),
+                value: format!("arg{index} = {index}"),
+                context: ValueContext::FunctionArgument,
+            });
+        }
+
+        let explained = super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            explained.contains(
+                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+            ),
+            "{explained}"
+        );
+        assert!(
+            explained.contains(
+                "related tests (showing 5 of 9; more via ripr check, using its JSON format)"
+            ),
+            "{explained}"
+        );
+        assert!(
+            !explained.contains("--format json"),
+            "explain must not print a format flag it rejects:\n{explained}"
+        );
+
+        let checked = super::render_finding(&finding);
+        assert!(
+            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            "{checked}"
+        );
+        assert!(
+            checked.contains("related tests (showing 5 of 9; more in --format json)"),
+            "{checked}"
+        );
+
+        for index in 0..28 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 400 + index,
+                text: format!("extra({index})"),
+                value: format!("extra{index} = {index}"),
+                context: ValueContext::AssertionArgument,
+            });
+        }
+        let over_cap = super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            over_cap.contains(
+                "source values (showing 8 of 42; ripr check, using its JSON format, keeps a ranked 32)"
+            ),
+            "{over_cap}"
+        );
+        assert!(!over_cap.contains("--format"), "{over_cap}");
+    }
+
+    /// #7476 review: the explain pointer rewrite used to run over the whole
+    /// rendered finding, so quoted source or a judged assertion that itself
+    /// contained a pointer phrase was silently changed and explain no longer
+    /// showed the analyzed code. The wording is now selected while the
+    /// evidence lines are built, so explain preserves those bytes verbatim
+    /// and only the window pointers carry the check-prose form.
+    #[test]
+    fn explain_preserves_source_and_oracle_containing_pointer_phrases() {
+        let mut finding = sample_finding();
+        finding.probe.before =
+            Some("assert_eq!(list(), \"full list in --format json\")".to_string());
+        finding.probe.after =
+            Some("assert_eq!(list(), \"--format json keeps a ranked 32\")".to_string());
+        if let Some(test) = finding.related_tests.first_mut() {
+            test.oracle = Some("assert_eq!(line, \"; more in --format json\")".to_string());
+        }
+        for index in 0..13 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 200 + index,
+                text: format!("sample({index})"),
+                value: format!("arg{index} = {index}"),
+                context: ValueContext::FunctionArgument,
+            });
+        }
+
+        let explained = super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            explained.contains("before: assert_eq!(list(), \"full list in --format json\")"),
+            "explain changed the quoted source:\n{explained}"
+        );
+        assert!(
+            explained.contains("after:  assert_eq!(list(), \"--format json keeps a ranked 32\")"),
+            "explain changed the quoted source:\n{explained}"
+        );
+        assert!(
+            explained.contains("assert_eq!(line, \"; more in --format json\")"),
+            "explain changed the judged assertion:\n{explained}"
+        );
+        // Only the window pointer carries the explain wording.
+        assert!(
+            explained.contains(
+                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+            ),
+            "{explained}"
+        );
+
+        // Check's own renderer keeps both the flag pointer and the verbatim
+        // source, pinning the distinction between the two surfaces.
+        let checked = super::render_finding(&finding);
+        assert!(
+            checked.contains("before: assert_eq!(list(), \"full list in --format json\")"),
+            "{checked}"
+        );
+        assert!(
+            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            "{checked}"
+        );
+    }
+
     /// #4320: the digest shows only the first related test; the line must
     /// carry the total so the reader knows how much reaching-test evidence
     /// exists. A single related test keeps the unmarked form.
@@ -3718,10 +4253,13 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
-            digest.contains("  Related test (1 of 2): tests/sample.rs:22 test_handles_disabled\n"),
+            digest.contains(
+                "  Related test (1 of 2 matched rows): tests/sample.rs:22 test_handles_disabled\n",
+            ),
             "expected the digest related-test total; got:\n{digest}"
         );
 
@@ -3729,12 +4267,50 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &single,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
         assert!(
             digest.contains("  Related test: tests/sample.rs:22 test_handles_disabled\n"),
             "a single related test keeps the unmarked form; got:\n{digest}"
         );
         assert!(!digest.contains("Related test (1 of"), "{digest}");
+    }
+
+    /// #6807: `related_tests_total()` is matched related-test rows (one
+    /// assertion, plus examined-miss rows), not distinct tests. A packed
+    /// finding with 81 rows and 8 listed tests must not read as 81 tests.
+    #[test]
+    fn digest_related_test_line_names_matched_rows_not_tests() {
+        let mut finding = sample_finding();
+        finding.related_tests = (0..8)
+            .map(|index| RelatedTest {
+                name: format!("test_{index}"),
+                file: PathBuf::from("tests/sample.rs"),
+                line: 10 + index,
+                oracle: Some("assert_eq!(actual, expected)".to_string()),
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+            })
+            .collect();
+        finding.related_tests_matched_total = Some(81);
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+
+        assert!(
+            digest.contains("  Related test (1 of 81 matched rows): tests/sample.rs:10 test_0\n"),
+            "the digest must name matched rows, not tests; got:\n{digest}"
+        );
+        assert!(
+            !digest.contains("Related test (1 of 81):"),
+            "bare '1 of 81' still reads as 81 tests; got:\n{digest}"
+        );
     }
 
     /// #4320: the digest missing-discriminator line discloses its window into
@@ -3757,6 +4333,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -4205,6 +4782,47 @@ mod tests {
         );
     }
 
+    fn uniqueness_unknown_finding() -> Finding {
+        let mut finding = unknown_finding();
+        finding.class = ExposureClass::StaticUnknown;
+        finding.ripr.reach = StageEvidence::new(
+            StageState::Unknown,
+            Confidence::Low,
+            "ripr cannot tell which `parse` a test calls because that name is not unique in the workspace",
+        );
+        finding.stop_reasons = vec![StopReason::HelperIdentityUnresolved];
+        finding.missing = vec![
+            "helper chain abstains: `parse` is not a unique function in the workspace".to_string(),
+        ];
+        finding
+    }
+
+    #[test]
+    fn uniqueness_unknown_human_names_identity_not_probe_shape() {
+        let finding = uniqueness_unknown_finding();
+        let output = render_finding(&finding);
+        assert!(output.contains("reach unknown:"), "{output}");
+        assert!(!output.contains("reach no:"), "{output}");
+        assert!(!output.contains("No static test path"), "{output}");
+        assert!(output.contains("helper_identity_unresolved"), "{output}");
+        assert!(
+            output.contains("which workspace function") && output.contains("not unique"),
+            "{output}"
+        );
+        assert!(
+            !output.contains("no probe shape") && !output.contains("probe shape"),
+            "{output}"
+        );
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+        assert!(digest.contains("Evidence: reach unknown"), "{digest}");
+        assert!(!digest.contains("Evidence: reach no"), "{digest}");
+    }
+
     /// #4323 review: guidance just under the budget must count the label, so
     /// the rendered line never runs past 180 characters.
     #[test]
@@ -4220,6 +4838,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -4241,6 +4860,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
         // The field is its first line plus the four-space continuation lines.
         let mut lines = digest
@@ -4285,6 +4905,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -4325,6 +4946,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
 
         assert!(
@@ -4342,6 +4964,7 @@ mod tests {
         let digest = super::sections::render_finding_digest_with_config(
             &finding,
             &crate::config::RiprConfig::default(),
+            Path::new("."),
         );
         assert!(
             digest.contains("· discriminator not established\n"),
@@ -4543,6 +5166,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -4702,6 +5326,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4746,6 +5371,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4794,6 +5420,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4835,6 +5462,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4874,6 +5502,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -4961,6 +5590,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5051,6 +5681,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5103,6 +5734,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5141,6 +5773,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5180,6 +5813,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5223,6 +5857,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5271,6 +5906,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -5375,6 +6011,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
         let flat = |output: &CheckOutput| {
             render(output)
@@ -5438,6 +6075,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5489,6 +6127,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5496,6 +6135,97 @@ mod tests {
         assert!(
             rendered.contains("analyzed: 2 changed expression(s) and 1 statically linked related"),
             "expected related-test count disclosure; got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn all_no_path_disclosure_counts_related_tests_before_packing() {
+        // The finding line reads "Related test (1 of 81 matched rows)" from
+        // the matched row total; the scope note must neither report only the
+        // 8 retained rows nor call 81 related-test rows 81 tests (one test
+        // can own many).
+        let related = |line: usize| RelatedTest {
+            name: format!("test_{line}"),
+            file: PathBuf::from("tests/sample.rs"),
+            line,
+            oracle: None,
+            oracle_kind: OracleKind::Unknown,
+            oracle_strength: OracleStrength::None,
+            relation_reason: None,
+            relation_confidence: None,
+            miss: None,
+        };
+        let packed = |lines: std::ops::Range<usize>, total: usize| {
+            let mut finding = unknown_finding();
+            finding.related_tests = lines.map(related).collect();
+            finding.related_tests_matched_total = Some(total);
+            finding
+        };
+        let output = |findings: Vec<Finding>| CheckOutput {
+            harness_projections: Vec::new(),
+            unlinked_python_tests: None,
+            untracked_working_tree_source_paths: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: findings.len(),
+                findings: findings.len(),
+                static_unknown: findings.len(),
+                ..Summary::default()
+            },
+            findings,
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        };
+
+        // The note wraps at the terminal width; compare its words.
+        let flat = |text: String| text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let one = flat(render(&output(vec![packed(0..8, 81)])));
+        assert!(
+            one.contains(
+                "analyzed: 1 changed expression(s) and at least 8 statically linked related test(s) across 81 matched related-test row(s)."
+            ),
+            "a single packed finding reports its matched total; got:\n{one}"
+        );
+
+        let two = flat(render(&output(vec![
+            packed(0..8, 81),
+            packed(100..108, 20),
+        ])));
+        assert!(
+            two.contains(
+                "and at least 16 statically linked related test(s) across at least 81 matched related-test row(s)."
+            ),
+            "packed totals across findings are a floor; got:\n{two}"
+        );
+
+        // Three findings retain 24 distinct rows while one hid 2 more: the
+        // 24 rows are a floor, not an exact count.
+        let floor = flat(render(&output(vec![
+            packed(0..8, 10),
+            packed(100..108, 8),
+            packed(200..208, 8),
+        ])));
+        assert!(
+            floor.contains(
+                "and at least 24 statically linked related test(s) across at least 24 matched related-test row(s)."
+            ),
+            "retained rows are a floor once any finding is packed; got:\n{floor}"
+        );
+
+        let unpacked = flat(render(&output(vec![packed(0..8, 8), packed(100..108, 8)])));
+        assert!(
+            unpacked.contains("and 16 statically linked related test(s)."),
+            "without packing the retained rows are exact; got:\n{unpacked}"
         );
     }
 
@@ -5546,6 +6276,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5553,6 +6284,51 @@ mod tests {
         assert!(
             !rendered.contains("ripr found no static test path for any"),
             "must not claim no-static-path when a finding reaches; got:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_keeps_all_no_path_disclosure_for_callee_only_reach() {
+        // #7003: a callee-only finding reports reach weak — no test reaches
+        // the owner — so it must not suppress the all-no-path note the way
+        // a `reach: yes` finding does.
+        let mut finding = unknown_finding();
+        finding.ripr.reach = stage(
+            StageState::Weak,
+            Confidence::Low,
+            &format!("{CALLEE_ONLY_REACH_PREFIX}: observes_callee_outcome"),
+        );
+        let output = CheckOutput {
+            harness_projections: Vec::new(),
+            schema_version: "0.2".to_string(),
+            tool: "ripr".to_string(),
+            mode: Mode::Draft,
+            root: PathBuf::from("repo"),
+            base: None,
+            summary: Summary {
+                probes: 1,
+                findings: 1,
+                static_unknown: 1,
+                ..Summary::default()
+            },
+            findings: vec![finding],
+            preview_language_advisories: Vec::new(),
+            language_runs: Vec::new(),
+            no_scope_provided: false,
+            unanalyzed_working_tree: false,
+            untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
+            suppression: None,
+            analysis_outcome: None,
+            partial_scope: None,
+            analyzed_revisions: None,
+        };
+
+        let rendered = render(&output);
+
+        assert!(
+            rendered.contains("ripr found no static test path for any"),
+            "a callee-only (reach weak) finding must not suppress the all-no-path note; got:\n{rendered}"
         );
     }
 
@@ -5584,6 +6360,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5619,6 +6396,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5651,6 +6429,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5688,6 +6467,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5724,6 +6504,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5771,6 +6552,7 @@ mod tests {
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         };
 
         let rendered = render(&output);
@@ -5835,6 +6617,7 @@ mod tests {
                 suppression: None,
                 analysis_outcome: None,
                 partial_scope: None,
+                analyzed_revisions: None,
             })
         };
 
@@ -5886,5 +6669,44 @@ mod tests {
                 "TypeScript-only note must not render `{forbidden}`:\n{typescript_not_enabled}"
             );
         }
+    }
+
+    /// #5510: the human digest names the first related test with the shared
+    /// sentence when that row owns a miss, and with no reason when the first
+    /// row is the packet-backed finding's advisory row.
+    #[cfg(feature = "lang-perl")]
+    #[test]
+    fn perl_packet_backed_digest_reason_follows_the_named_row() -> Result<(), String> {
+        use crate::output::related_test_miss::related_test_miss_reason;
+        let finding = crate::analysis::perl_direct_and_advisory_finding()?;
+        let [direct, advisory] = finding.related_tests.as_slice() else {
+            return Err(format!("expected two rows: {:?}", finding.related_tests));
+        };
+        let why = related_test_miss_reason(direct, &finding.activation.missing_discriminators)
+            .ok_or("the direct row should have a reason")?;
+        assert_eq!(
+            related_test_miss_reason(advisory, &finding.activation.missing_discriminators),
+            None
+        );
+        let config = crate::config::RiprConfig::default();
+        let digest =
+            super::sections::render_finding_digest_with_config(&finding, &config, Path::new("."));
+        assert!(
+            digest.contains(&format!(" {} ({why})\n", direct.name)),
+            "{digest}"
+        );
+        let mut advisory_first = finding.clone();
+        advisory_first.related_tests.reverse();
+        let digest = super::sections::render_finding_digest_with_config(
+            &advisory_first,
+            &config,
+            Path::new("."),
+        );
+        assert!(
+            digest.contains(&format!(" {}\n", advisory.name)),
+            "{digest}"
+        );
+        assert!(!digest.contains(&why), "{digest}");
+        Ok(())
     }
 }

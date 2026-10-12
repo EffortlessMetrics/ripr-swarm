@@ -1,0 +1,9 @@
+diff --git a/src/fee.ts b/src/fee.ts
+index 0000000..1111111 100644
+--- a/src/fee.ts
++++ b/src/fee.ts
+@@ -1,3 +1,3 @@
+ export function fee(cents: number): number {
+-  return 30 + cents * 3;
++  return cents * 3 + 30;
+ }

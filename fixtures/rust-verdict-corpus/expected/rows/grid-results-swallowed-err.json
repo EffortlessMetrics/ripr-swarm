@@ -1,0 +1,22 @@
+{
+  "case_id": "grid-results-swallowed-err",
+  "subject_id": "authored-grid-results",
+  "origin": "authored",
+  "anchor": "src/lib.rs:25",
+  "behavior_family": "error_path",
+  "test_shape": "swallowed_err_arm_match",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

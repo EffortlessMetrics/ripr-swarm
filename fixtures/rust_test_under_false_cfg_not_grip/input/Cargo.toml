@@ -1,0 +1,8 @@
+[package]
+name = "rust_test_under_false_cfg_not_grip_fixture"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "rust_test_under_false_cfg_not_grip_fixture"
+path = "src/lib.rs"

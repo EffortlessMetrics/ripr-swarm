@@ -1,0 +1,9 @@
+diff --git a/src/charges.rs b/src/charges.rs
+index 6437684..ea02a34 100644
+--- a/src/charges.rs
++++ b/src/charges.rs
+@@ -1,3 +1,3 @@
+ pub fn charge(base: u32) -> u32 {
+-    base * 13
++    13 * base
+ }

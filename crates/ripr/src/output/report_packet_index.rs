@@ -1,4 +1,6 @@
 use super::assistant_loop_health::ASSISTANT_PROOF_COMMAND;
+use super::markdown::code_span;
+use crate::agent::loop_commands::{bound_root, bound_root_path, root_path_display, shell_arg};
 use serde::Serialize;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
@@ -156,7 +158,7 @@ struct ArtifactSpec {
     authority: bool,
     description: &'static str,
     default_status: &'static str,
-    next_command: Option<&'static str>,
+    next_command: Option<String>,
 }
 
 pub(crate) fn build_report_packet_index_report(
@@ -399,14 +401,16 @@ pub(crate) fn render_report_packet_index_markdown(report: &ReportPacketIndexRepo
 fn push_next_command(out: &mut String, id: &str, next_command: &str) {
     match id {
         "assistant_proof" => out.push_str(&format!(
-            "  - next, after the repair's after phase writes the agent receipt: `{next_command}`\n"
+            "  - next, after the repair's after phase writes the agent receipt: {}\n",
+            code_span(next_command)
         )),
-        _ => out.push_str(&format!("  - next: `{next_command}`\n")),
+        _ => out.push_str(&format!("  - next: {}\n", code_span(next_command))),
     }
 }
 
 fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
     let reports = &input.reports_dir;
+    let at_root = |template: &str| Some(command_at_root(template, input));
     let review = &input.review_dir;
     vec![
         ArtifactSpec {
@@ -420,7 +424,7 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             authority: false,
             description: "Canonical first-screen repair packet.",
             default_status: "available",
-            next_command: Some(
+            next_command: at_root(
                 "ripr first-pr --root . --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet target/ripr/workflow/agent-packet.json --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports",
             ),
         },
@@ -435,7 +439,7 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             authority: false,
             description: "First-screen PR review story.",
             default_status: "available",
-            next_command: Some(
+            next_command: at_root(
                 "ripr pr-review front-panel --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/pr-review-front-panel.json --out-md target/ripr/reports/pr-review-front-panel.md",
             ),
         },
@@ -476,7 +480,7 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             authority: false,
             description: "Joined repair proof packet.",
             default_status: "available",
-            next_command: Some(ASSISTANT_PROOF_COMMAND),
+            next_command: at_root(ASSISTANT_PROOF_COMMAND),
         },
         ArtifactSpec {
             id: "assistant_loop_health",
@@ -489,7 +493,7 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             authority: false,
             description: "Repair loop health over assistant proof inputs.",
             default_status: "available",
-            next_command: Some(
+            next_command: at_root(
                 "ripr assistant-loop health --proof target/ripr/reports/test-oracle-assistant-proof.json --out target/ripr/reports/assistant-loop-health.json --out-md target/ripr/reports/assistant-loop-health.md",
             ),
         },
@@ -625,7 +629,7 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             default_status: "available",
             // The repair after phase writes the receipt; agent status names the
             // attempt's next command, or the route to start one.
-            next_command: Some("ripr agent status --root ."),
+            next_command: at_root("ripr agent status --root ."),
         },
         ArtifactSpec {
             id: "pr_summary",
@@ -684,6 +688,63 @@ fn artifact_specs(input: &ReportPacketIndexInput) -> Vec<ArtifactSpec> {
             next_command: None,
         },
     ]
+}
+
+/// Point a regeneration template at the root and artifact directories this
+/// index was built for (#4000). Each `target/...` path in a template is
+/// rebased onto the matching input directory (`--reports-dir`,
+/// `--review-dir`, ...), so an explicit directory is named instead of the
+/// default one. With the default `--root .` and relative directories the
+/// command stays portable, and the default packet's templates come back
+/// byte-identical. Otherwise the `--root .` placeholder becomes the resolved
+/// repository and every artifact path is absolute: `ripr first-pr` resolves
+/// its inputs and `--out-dir` against `--root`, so a relative path would read
+/// and write under the indexed root, not where the index looks.
+fn command_at_root(template: &str, input: &ReportPacketIndexInput) -> String {
+    let bind = input.root != ".";
+    let mut previous = "";
+    template
+        .split(' ')
+        .map(|token| {
+            let rewritten = if bind && previous == "--root" && token == "." {
+                shell_arg(&bound_root(&input.root))
+            } else if let Some(path) = indexed_artifact_path(token, input) {
+                if bind || path.is_absolute() {
+                    shell_arg(&root_path_display(&bound_root_path(&path)))
+                } else {
+                    shell_arg(&root_path_display(&path))
+                }
+            } else {
+                token.to_string()
+            };
+            previous = token;
+            rewritten
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// The input directory a template's default `target/...` path stands for,
+/// joined with the rest of the path; `None` for any other token.
+fn indexed_artifact_path(token: &str, input: &ReportPacketIndexInput) -> Option<PathBuf> {
+    [
+        ("target/ripr/reports", &input.reports_dir),
+        ("target/ripr/review", &input.review_dir),
+        ("target/ripr/receipts", &input.receipts_dir),
+        ("target/ripr/workflow", &input.workflow_dir),
+        ("target/ripr/agent", &input.agent_dir),
+        ("target/ripr/pilot", &input.pilot_dir),
+        ("target/ci", &input.ci_dir),
+    ]
+    .into_iter()
+    .find_map(|(prefix, dir)| {
+        let rest = token.strip_prefix(prefix)?;
+        if rest.is_empty() {
+            Some(dir.clone())
+        } else {
+            rest.strip_prefix('/').map(|rest| dir.join(rest))
+        }
+    })
 }
 
 fn artifact_available(spec: &ArtifactSpec) -> bool {
@@ -773,7 +834,7 @@ fn entry_from_spec(spec: &ArtifactSpec, available: bool, status: String) -> Inde
         next_command: if available {
             None
         } else {
-            spec.next_command.map(str::to_string)
+            spec.next_command.clone()
         },
     }
 }
@@ -828,7 +889,7 @@ fn push_missing(
             path: display_path(&spec.path),
             required: spec.required,
             reason: reason.to_string(),
-            next_command: spec.next_command.map(str::to_string),
+            next_command: spec.next_command.clone(),
         });
     }
 }
@@ -1328,7 +1389,7 @@ mod tests {
             authority: false,
             description: "desc",
             default_status: "pass",
-            next_command: Some("cargo xtask check-pr"),
+            next_command: Some("cargo xtask check-pr".to_string()),
         };
         assert_eq!(status_for_spec(&spec), "pass");
         Ok(())
@@ -1688,7 +1749,7 @@ mod tests {
             authority: false,
             description: "desc",
             default_status: "available",
-            next_command: Some("ripr agent receipt --out agent-receipt.json"),
+            next_command: Some("ripr agent receipt --out agent-receipt.json".to_string()),
         };
         let entry = entry_from_spec(&spec, true, "available".to_string());
         assert_eq!(entry.next_command, None);
@@ -1710,7 +1771,7 @@ mod tests {
             authority: false,
             description: "desc",
             default_status: "available",
-            next_command: Some("ripr agent receipt --out agent-receipt.json"),
+            next_command: Some("ripr agent receipt --out agent-receipt.json".to_string()),
         };
         let entry = entry_from_spec(&spec, false, "missing".to_string());
         let Some(cmd) = &entry.next_command else {
@@ -1719,6 +1780,142 @@ mod tests {
         assert_eq!(cmd, "ripr agent receipt --out agent-receipt.json");
         assert!(!entry.available);
         Ok(())
+    }
+
+    /// #4000: an index built for `--root "my repo"` named the repository in
+    /// its `root` field but printed `--root .` in every regeneration command,
+    /// so a pasted command analyzed the current directory instead.
+    #[test]
+    fn regeneration_commands_name_the_indexed_root() -> Result<(), String> {
+        let root = temp_root("named-root")?;
+        write(&root.join("target/ripr/review/comments.md"), "content\n")?;
+        let mut input = input_for_root(&root);
+        input.root = "my repo".to_string();
+        let review_dir = input.review_dir.clone();
+        let report = build_report_packet_index_report(input);
+        let commands = report
+            .missing_expected
+            .iter()
+            .filter_map(|missing| missing.next_command.clone())
+            .collect::<Vec<_>>();
+        let repo = format!("--root {}", shell_arg(&bound_root("my repo")));
+        let guidance = shell_arg(&root_path_display(&bound_root_path(
+            &review_dir.join("comments.json"),
+        )));
+        for prefix in ["ripr pr-review front-panel ", "ripr assistant-loop proof "] {
+            let Some(command) = commands.iter().find(|command| command.starts_with(prefix)) else {
+                return Err(format!("no `{prefix}` regeneration command: {commands:?}"));
+            };
+            assert!(
+                command.starts_with(&format!("{prefix}{repo} ")),
+                "must regenerate at the indexed root: {command}"
+            );
+            // The artifact paths name the directories the index read,
+            // whatever `--root` they are resolved against.
+            assert!(
+                command.contains(&format!("--pr-guidance {guidance} ")),
+                "artifact paths must name the indexed directory: {command}"
+            );
+            assert!(
+                !command.contains("--root .") && !command.contains(" target/"),
+                "no relative root or artifact path may remain: {command}"
+            );
+        }
+        Ok(())
+    }
+
+    /// #4000: a bound root may hold a backtick, which `shell_arg` keeps
+    /// inside its quotes. The Markdown line must still carry the whole
+    /// command in one code span, or copying it drops part of the root.
+    #[test]
+    fn markdown_next_command_keeps_a_backtick_root_in_one_code_span() -> Result<(), String> {
+        let root = temp_root("backtick-root")?;
+        write(&root.join("target/ripr/review/comments.md"), "content\n")?;
+        let mut input = input_for_root(&root);
+        input.root = "my`repo".to_string();
+        let report = build_report_packet_index_report(input);
+        let markdown = render_report_packet_index_markdown(&report);
+        let mut checked = 0;
+        for missing in &report.missing_expected {
+            let Some(command) = &missing.next_command else {
+                continue;
+            };
+            assert!(
+                command.contains('`'),
+                "root must reach the command: {command}"
+            );
+            let Some(span) = markdown.lines().find_map(|line| {
+                let (_, span) = line.split_once(": ")?;
+                (crate::output::markdown::code_span_content(span).as_deref() == Some(command))
+                    .then_some(span)
+            }) else {
+                return Err(format!(
+                    "no line holds `{command}` as one code span:\n{markdown}"
+                ));
+            };
+            assert!(
+                span.starts_with("``"),
+                "fence must outrun the root's backtick: {span}"
+            );
+            checked += 1;
+        }
+        assert!(checked > 0, "fixture must yield regeneration commands");
+        Ok(())
+    }
+
+    /// #4000: `ripr first-pr` resolves its inputs and `--out-dir` against
+    /// `--root`, and an explicit `--reports-dir` must be named, not the
+    /// default `target/ripr/reports`.
+    #[test]
+    fn regeneration_commands_follow_the_indexed_directories() {
+        let template = "ripr first-pr --root . --gap-ledger target/ripr/reports/g.json --out-dir target/ripr/reports";
+        let defaults = ReportPacketIndexInput {
+            root: ".".to_string(),
+            generated_at: String::new(),
+            reports_dir: PathBuf::from("target/ripr/reports"),
+            review_dir: PathBuf::from("target/ripr/review"),
+            receipts_dir: PathBuf::from("target/ripr/receipts"),
+            workflow_dir: PathBuf::from("target/ripr/workflow"),
+            agent_dir: PathBuf::from("target/ripr/agent"),
+            pilot_dir: PathBuf::from("target/ripr/pilot"),
+            ci_dir: PathBuf::from("target/ci"),
+        };
+        // The default packet keeps its portable templates byte-identical.
+        assert_eq!(command_at_root(template, &defaults), template);
+        assert_eq!(
+            command_at_root("ripr agent status --root .", &defaults),
+            "ripr agent status --root ."
+        );
+
+        let sub = ReportPacketIndexInput {
+            root: "sub".to_string(),
+            ..defaults.clone()
+        };
+        let out_dir = root_path_display(&bound_root_path(Path::new("target/ripr/reports")));
+        assert!(Path::new(&out_dir).is_absolute(), "{out_dir}");
+        let bound = command_at_root(template, &sub);
+        assert!(
+            bound.starts_with(&format!(
+                "ripr first-pr --root {} ",
+                shell_arg(&bound_root("sub"))
+            )) && bound.ends_with(&format!("--out-dir {}", shell_arg(&out_dir))),
+            "{bound}"
+        );
+
+        let explicit = ReportPacketIndexInput {
+            reports_dir: PathBuf::from("/packet/reports"),
+            ..defaults.clone()
+        };
+        assert_eq!(
+            command_at_root(template, &explicit),
+            "ripr first-pr --root . --gap-ledger /packet/reports/g.json --out-dir /packet/reports"
+        );
+        // A `--root` that merely starts with `.` is not the placeholder, and a
+        // path that only shares a prefix is not an artifact directory.
+        assert_eq!(
+            command_at_root("ripr x --root ./sub --out target/ripr/reportsx", &sub),
+            "ripr x --root ./sub --out target/ripr/reportsx"
+        );
     }
 
     // ── missing_expected_surfaces: various combos ────────────────────────────
@@ -1742,7 +1939,10 @@ mod tests {
             &root.join("target/ripr/reports/first-useful-action.md"),
             "content\n",
         )?;
-        let report = build_report_packet_index_report(input_for_root(&root));
+        let input = input_for_root(&root);
+        // The command names the directories this index read (#4000).
+        let proof_command = command_at_root(ASSISTANT_PROOF_COMMAND, &input);
+        let report = build_report_packet_index_report(input);
         let has_assistant_proof_missing = report
             .missing_expected
             .iter()
@@ -1757,7 +1957,7 @@ mod tests {
         // and says it waits on the repair's receipt.
         let markdown = render_report_packet_index_markdown(&report);
         let labelled = format!(
-            "  - next, after the repair's after phase writes the agent receipt: `{ASSISTANT_PROOF_COMMAND}`\n"
+            "  - next, after the repair's after phase writes the agent receipt: `{proof_command}`\n"
         );
         assert_eq!(markdown.matches(labelled.as_str()).count(), 2, "{markdown}");
         assert!(

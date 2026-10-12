@@ -97,11 +97,48 @@ jobs:
       - name: Detect Rust surface change
         id: surface
         env:
+          EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          changed=crates/; [ -z "$BASE_SHA" ] || changed="$(git diff --name-only "$BASE_SHA"...HEAD 2>/dev/null || echo crates/)"
-          if grep -qE '^(crates/|fixtures/|Cargo\.(toml|lock)$|rust-toolchain|\.cargo/)' <<< "$changed"; then rust=true; else rust=false; fi
-          echo "rust=$rust" | tee -a "$GITHUB_OUTPUT"
+          rust=true reason=not_pull_request
+          classify() {
+            [ "$EVENT_NAME" = "pull_request" ] || return 0
+            reason=missing_identity
+            [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ] || return 0
+            reason=invalid_identity
+            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || return 0
+            # Classify only the event's PR contribution; keep the integration checkout for tests.
+            reason=unavailable_history
+            if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || return 0
+            fi
+            [ "$(git rev-parse --is-shallow-repository)" = "false" ] || return 0
+            [ "$(git cat-file -t "$BASE_SHA" 2>/dev/null)" = "commit" ] && [ "$(git cat-file -t "$HEAD_SHA" 2>/dev/null)" = "commit" ] || return 0
+            reason=unavailable_merge_base
+            merge_bases="$(git merge-base --all "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)" || return 0
+            [ -n "$merge_bases" ] || return 0
+            reason=ambiguous_merge_base
+            [[ "$merge_bases" != *$'\n'* ]] || return 0
+            reason=temporary_file_failed
+            changed="$(mktemp)" || return 0
+            trap 'rm -f "$changed"' EXIT
+            reason=diff_failed
+            # NUL records preserve filenames; no rename collapsing hides a removed Rust path.
+            git diff --no-renames --name-only -z "$BASE_SHA"..."$HEAD_SHA" > "$changed" 2>/dev/null || return 0
+            reason=empty_diff
+            [ -s "$changed" ] || return 0
+            reason=rust_surface
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                crates/*|fixtures/*|Cargo.toml|Cargo.lock|rust-toolchain*|.cargo/*) return 0 ;;
+              esac
+            done < "$changed"
+            rust=false reason=no_rust_surface
+          }
+          classify
+          echo "rust=$rust" >> "$GITHUB_OUTPUT"
+          { echo "### Rust-Only Surface Detection"; echo ""; echo "- rust: \`$rust\`"; echo "- reason: \`$reason\`"; } >> "$GITHUB_STEP_SUMMARY"
       - uses: dtolnay/rust-toolchain@1.95.0
         if: steps.surface.outputs.rust == 'true'
       - uses: Swatinem/rust-cache@v2

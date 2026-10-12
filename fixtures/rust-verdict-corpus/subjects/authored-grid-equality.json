@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-grid-equality",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for the mutation-operator x test-style grid",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "e4efd24935ce8235edf0fd5c5dfdf7e841917dde2e731f3a4a55364dd7c4b670"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "2dd2ec90d15b2b744eeccb03f714dfbd3a4f83dd290c5c1c7ffb181c32bee1f6"
+    }
+  ]
+}

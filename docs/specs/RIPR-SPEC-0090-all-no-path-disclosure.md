@@ -21,6 +21,7 @@ Linked plan:
 Linked issues:
 
 - #1185 — Human output is opaque when every finding is no-path/unknown
+- #6807 — per-finding digest `Related test (1 of N)` counted matched rows as tests
 
 Linked PRs:
 
@@ -110,6 +111,22 @@ Where N is the total no-path/unknown count
 M is `summary.changed_rust_files` when non-zero, and T is the count of unique
 related tests by file, name, and line across all findings.
 
+When bounded packing dropped related-test rows from any finding, the retained
+unique count is a lower bound and each finding's packed row count counts
+matched related-test rows, not tests. The scope then reads "at least T statically
+linked related test(s) across R matched related-test row(s)", where R is the
+packed row count for a single finding and "at least" the larger of the packed
+row count and T across several findings, so the note never presents a row
+count as a test count.
+
+The per-finding digest line uses the same unit: `Related test (1 of N matched
+rows)` (#6807). `N` is `related_tests_total()` (matched rows before packing).
+That count is the post-dedup related-test row total already stored as
+`related_tests_matched_total`: admitted assertion rows plus examined-miss
+rows. `RelatedTest::is_unmatched` flags an examined miss inside that unit; it
+is not a second denominator. A distinct-test count of packed-away rows is not
+on the finding and is not invented from the packed window. JSON is unchanged.
+
 If `summary.changed_rust_files` is zero, the scope sentence omits the changed
 Rust file count rather than fabricating a file count:
 
@@ -137,7 +154,10 @@ bump. The JSON `check.json` shape is unchanged.
 ## Non-Goals
 
 - Disclosure in JSON, SARIF, GitHub, badge, or repo-exposure output formats.
-- Changing the per-finding output for no-path/unknown findings.
+- Rewriting the per-finding no-path/unknown body (classification, weakness,
+  next-step, or evidence). Naming the existing digest related-test denominator
+  as matched rows is in scope (#6807); that is a unit label, not a new
+  per-finding section.
 - Runtime mutation testing, coverage measurement, or correctness claims.
 - Aggregating findings into a single entry or removing per-finding detail.
 
@@ -214,6 +234,7 @@ fails the analysis rather than yielding a partial count.
 - `crates/ripr/src/output/human.rs::tests::render_all_no_path_disclosure_uses_finding_count_not_probe_count`
 - `crates/ripr/src/output/human.rs::tests::render_all_no_path_disclosure_uses_conservative_static_language`
 - `crates/ripr/src/output/human.rs::tests::render_all_no_path_disclosure_counts_linked_related_tests`
+- `crates/ripr/src/output/human.rs::tests::digest_related_test_line_names_matched_rows_not_tests`
 - `fixtures/all_no_path_disclosure` (golden fixture)
 
 ## Implementation Mapping
@@ -221,6 +242,8 @@ fails the analysis rather than yielding a partial count.
 - `crates/ripr/src/output/human.rs` — new function
   `render_all_no_path_disclosure(out, output)`, called in `render_with_config`
   after the findings loop and before `render_preview_language_advisories`.
+- `crates/ripr/src/output/human/sections.rs` — digest related-test line names
+  matched rows (`Related test (1 of N matched rows)`, #6807).
 
 ## CI Proof
 

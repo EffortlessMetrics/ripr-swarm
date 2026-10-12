@@ -1,0 +1,45 @@
+{
+  "case_id": "ts-vitest-checkout-notify",
+  "subject_id": "authored-ts-vitest-cart",
+  "diff": "cases/ts-vitest-checkout-notify.diff",
+  "anchor": {
+    "file": "src/cart.ts",
+    "line": 43
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "call_argument",
+  "test_shape": "vitest_to_have_been_called_with",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 3.2.7, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "notifier.send(owner, `charged ${total} cents`);",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/cart.test.ts > cart > tells the owner what was charged",
+        "equivalence_review": "not equivalent: the owner is told \"charged 360 cents\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "toHaveBeenCalledWith(\"ann\", \"charged 360\") is the side-effect/call oracle RIPR-SPEC-0027 names, and the new message fails it. ripr reports weakly_exposed, a false actionable verdict.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

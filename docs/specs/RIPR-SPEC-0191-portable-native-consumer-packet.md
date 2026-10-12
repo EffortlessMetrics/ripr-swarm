@@ -104,7 +104,8 @@ A packet directory contains `manifest.json`, the native payload
   from a foreign cwd with a PATH decoy and Cargo off PATH, producing a
   nonempty findings list and `schema_version` `0.2`. That subject stays
   valid under `--features lang-rust` only. A second native journey runs
-  `--operation pilot` and classifies `pilot-summary.json`.
+  `--operation pilot` and classifies `pilot-summary.json`, whose
+  `schema_version` is the pilot summary's own (`0.3`, #5497).
 - Host coverage: the native packet target and Python runtime/classifier
   controls are Unix-only. Windows retains the real common packet-digest and
   source controls. The canonical non-Rust ledger declares the native selector

@@ -46,9 +46,10 @@ file occurrence under a closed rule set:
   creates or removes executable `TestFact`s — that stays behind the
   #3499/#3532 executable-test authority.
 - **Edges.** The pass follows two edge kinds: out-of-line module
-  declarations (`mod name;`, with exact string-literal `#[path]` targets
-  resolved relative to the physically declaring file, and default targets
-  resolved through the declaring file's module directory) and repository-local
+  declarations (`mod name;`, with exact string-literal `#[path]` or
+  `#[r#path]` targets resolved relative to the physically declaring file, and
+  default targets resolved through the declaring file's module directory) and
+  repository-local
   file-level `include!` invocations. The cfg-test requirement of a module
   declaration or an `include!` invocation itself composes with the parent
   context: a `#[cfg(test)]` gate makes the child's content test-only
@@ -118,7 +119,8 @@ file occurrence under a closed rule set:
 
 - Unit tests pin: the out-of-line `#[cfg(test)]` grant and its provenance
   chain, production controls, transitive chains, exact/conditional/dynamic
-  `#[path]` handling, ambiguous parents, context conflicts, the warm per-file
+  `#[path]` handling (including the `#[r#path]` spelling matching a plain
+  `#[path]` control), ambiguous parents, context conflicts, the warm per-file
   cache, cfg-gated and conflicting `include!` invocations, fragment-relative
   `#[path]` anchors, crate-root identity (custom roots, autodiscovered
   targets, sibling memoization), cycle and non-ASCII controls, and the
@@ -155,6 +157,10 @@ file occurrence under a closed rule set:
   `nested/renamed/child.rs`. Likewise, `include!("fragments/body.rs")` with
   `mod child;` inside the fragment selects `fragments/child.rs`, not the
   outer including unit's `child.rs`.
+- `#[cfg(test)] #[r#path = "support/raw.rs"] mod raw;` composes the same
+  `CfgTestModule` role and parent chain as `#[cfg(test)] #[path =
+  "support/plain.rs"] mod plain;`. Default-layout decoys (`src/raw.rs`,
+  `src/plain.rs`) stay production.
 - `#[cfg_attr(é, path = "alternate.rs")] mod imp;` with `src/imp.rs` indexed:
   the unreadable condition fails closed to a typed unknown, so the
   default-layout file is not resolved as the module child.

@@ -1,0 +1,12 @@
+diff --git a/src/priceEx06.ts b/src/priceEx06.ts
+index 0000000..1111111 100644
+--- a/src/priceEx06.ts
++++ b/src/priceEx06.ts
+@@ -1,6 +1,6 @@
+ export function priceEx06(amount: number): number {
+   if (amount > 100) {
+-    return amount - 10;
++    return amount - 20;
+   }
+   return amount;
+ }

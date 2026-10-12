@@ -29,16 +29,16 @@ ledger and enforcement authority. Today `policy_state = "advisory-ledger"` and
 
 ## LEM estimation
 
-Target behavior: LEM is estimated statically by the PR Plan workflow from the
+Target behavior: LEM is estimated statically by a future numeric planner from the
 risk-pack / lane mapping in:
 
 - `policy/ci-risk-packs.toml` — changed-path → risk-pack mapping
 - `policy/ci-lane-whitelist.toml` — risk-pack → lane mapping with base LEM
 - `policy/ci-budget.toml` — budget band thresholds and enforcement policy
 
-Current behavior: the PR Plan workflow is structural advisory only. It writes
-the changed-file list and ledger-presence summary, but it does not yet emit a
-numeric LEM forecast or `target/ci/ci-plan.json`; see
+Current behavior: the automatic PR Plan placeholder is retired under #4987.
+The optional local changed-file / ledger-presence diagnostic has no numeric
+LEM forecast. `cargo xtask ci plan` and `target/ci/ci-plan.json` remain planned; see
 [`pr-plan.md`](pr-plan.md) and [`current-state.md`](current-state.md).
 
 Once `ci-actuals.json` data exists, the planner reads observed lane history and

@@ -1,0 +1,51 @@
+{
+  "case_id": "mocha-reserve-not-equal",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-reserve-not-equal.diff",
+  "anchor": {
+    "file": "src/reserve.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "mocha_chai_expect_to_not_equal_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; @stryker-mutator/core 10.0.0 (command runner over `npx mocha`; @stryker-mutator/mocha-runner cannot load mocha 12)",
+    "mutants": [
+      {
+        "replacement": "return -100 - balance;",
+        "mutated_line": "return -100 - balance;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: reserve(500) is -600"
+      },
+      {
+        "replacement": "return +100 + balance;",
+        "mutated_line": "return +100 + balance;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: reserve(500) is 600"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`balance - 100` is rewritten to `-100 + balance`. The only assertion is `expect(reserve(500)).to.not.equal(500)`, which both mutants (-600, 600) still satisfy, so none fail. ripr reports `weakly_exposed` with the related test as relational_check/weak, consistent with the gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

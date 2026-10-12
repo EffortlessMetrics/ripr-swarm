@@ -1,0 +1,22 @@
+pub fn score(x: u32) -> u32 {
+    x * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    macro_rules! ensure {
+        ($cond:expr) => {
+            if !$cond {
+                return Err(String::from("ensure failed"));
+            }
+        };
+    }
+
+    #[test]
+    fn score_is_not_zero() -> Result<(), String> {
+        ensure!(score(2) != 0);
+        Ok(())
+    }
+}

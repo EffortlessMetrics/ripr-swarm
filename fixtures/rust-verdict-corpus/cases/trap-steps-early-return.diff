@@ -1,0 +1,11 @@
+diff --git a/src/probes.rs b/src/probes.rs
+index 5e66e8c..457b298 100644
+--- a/src/probes.rs
++++ b/src/probes.rs
+@@ -1,5 +1,5 @@
+ pub fn steps(base: u32) -> u32 {
+-    base * 7
++    7 * base
+ }
+ 
+ #[cfg(test)]

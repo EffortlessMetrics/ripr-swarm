@@ -1,0 +1,58 @@
+{
+  "case_id": "strsim-jaro-winkler-threshold-shift",
+  "subject_id": "strsim",
+  "diff": "cases/strsim-jaro-winkler-threshold-shift.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 195
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "unit_test_assert_float_tolerance",
+  "hard_case": "the spot-check's reported miss on this line (`>` to `>=`) is an equivalent mutant: strsim's f64 Jaro never equals exactly 0.7 for strings up to 70 characters, so this case replaces it with threshold shifts that do change behavior.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.97.0 (2d8144b78 2026-07-07), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "0.75 < sim",
+        "mutated_line": "if 0.75 < sim {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::jaro_winkler_length_of_one",
+        "equivalence_review": "not equivalent: pairs with jaro in (0.7, 0.75] lose the prefix bonus, e.g. Dinsdale/D."
+      },
+      {
+        "replacement": "0.65 < sim",
+        "mutated_line": "if 0.65 < sim {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: jaro(\"abcd\", \"abxy\") = 0.667 gains the prefix bonus (0.667 becomes 0.733)."
+      },
+      {
+        "replacement": "0.7 > sim",
+        "mutated_line": "if 0.7 > sim {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::jaro_winkler_diff_no_transposition",
+        "equivalence_review": "not equivalent: the prefix bonus applies only to dissimilar pairs; observed failing tests: tests::jaro_winkler_diff_no_transposition, tests::jaro_winkler_diff_short, tests::jaro_winkler_diff_with_transposition (+6 more)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The tests pin jaro_winkler values above 0.7 (Dinsdale/D catches the raised threshold) but none in (0.65, 0.7], so lowering the threshold goes unseen. ripr's weakly_exposed gap is ideal.",
+  "labeling_observation": {
+    "ripr_commit": "7a6d4b7a5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
