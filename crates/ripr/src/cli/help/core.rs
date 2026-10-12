@@ -438,7 +438,9 @@ decision.
 
 Checks:
   - root directory exists
-  - Cargo.toml is present at the selected root (when Rust is in scope)
+  - Cargo.toml is present at the selected root, an ancestor Cargo project
+    bounded by git, or a nested Cargo.toml in this tree (when Rust is in
+    scope)
   - ripr.toml load status and effective defaults are visible
   - git is available; cargo and rustc availability is disclosed when Rust is
     in scope. Missing tools or an older workspace rustc are advisory for

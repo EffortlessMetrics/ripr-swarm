@@ -3,6 +3,22 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-12: Doctor `cargo_toml` is not `resolve_project_root` (#7466)
+
+`ripr check`'s `resolve_project_root` walks *up* and can return a git top
+level or a JS/Python workspace marker that is not a `Cargo.toml`. Sharing it
+as the doctor `cargo_toml` existence test would leave `rust/Cargo.toml` under
+a polyglot git root failing, and could pass a pnpm/uv root that has no Cargo
+manifest. Doctor keeps the selected-root `exists()` check, then a cargo-only
+ancestor walk bounded by `.git`, then a breadth-first nested walk (depth 8,
+512 directories) that skips `target/`, `.git`, `node_modules`, `.direnv`,
+`.venv`, `vendor`, `fixtures/`, and `.ripr/`, and that skips every symlink
+fail-closed. Do not rebind doctor's `--root` to the nested workspace (that
+is which `ripr.toml` applies). Empty roots and Rust sources with no
+manifest must still fail.
+A TypeScript marker at the git root can still skip `cargo_toml` before the
+locator runs (`detect_languages` is shallow); that is a separate claim.
+
 ## 2026-10-12: An evidence window pointer is a command of the surface that prints it (#7476)
 
 Check's human evidence window may say `--format json`, because `ripr check`

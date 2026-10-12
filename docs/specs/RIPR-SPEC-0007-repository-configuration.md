@@ -214,6 +214,15 @@ status.
 Given a selected root with its own rustup toolchain selection,
 when doctor probes cargo or rustc,
 then the probe runs in the selected root rather than the caller's directory.
+
+Given a git root whose Cargo workspace lives in a subdirectory (for example
+`rust/Cargo.toml` with `[workspace]` and no Cargo.toml at the git top level),
+when ripr doctor runs from that git root,
+then the cargo_toml check passes and names the nested manifest (Cargo.toml
+found at rust/Cargo.toml via workspace root rust/);
+and a root with Rust sources but no Cargo.toml, or an empty root under the
+Rust-only default, still fails cargo_toml;
+and doctor's selected --root is not rebound to the nested workspace.
 ```
 
 ## Test Mapping
@@ -248,6 +257,18 @@ Current tests:
 - `crates/ripr/src/output/doctor.rs::tests::rust_root_with_missing_cargo_discloses_verification_limitation`
 - `crates/ripr/src/output/doctor.rs::tests::source_build_missing_toolchain_names_install_fix_and_keeps_other_failures`
 - `crates/ripr/src/output/doctor.rs::tests::doctor_wait_failure_stays_off_the_source_build_install_route`
+- `crates/ripr/src/output/doctor.rs::tests::nested_workspace_under_git_root_passes_cargo_toml`
+- `crates/ripr/src/output/doctor.rs::tests::nested_package_under_git_root_passes_cargo_toml`
+- `crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_target_does_not_pass`
+- `crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_venv_does_not_pass`
+- `crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_fixtures_does_not_pass`
+- `crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_ripr_dir_does_not_pass`
+- `crates/ripr/src/output/doctor.rs::tests::sibling_nested_workspaces_pass_naming_one`
+- `crates/ripr/src/output/doctor.rs::tests::ancestor_workspace_from_member_src_passes_cargo_toml`
+- `crates/ripr/src/output/doctor.rs::tests::ancestor_package_from_src_passes_cargo_toml`
+- `crates/ripr/src/output/doctor.rs::tests::cargo_toml_walk_does_not_cross_the_git_top_level`
+- `crates/ripr/src/output/doctor.rs::tests::nested_cargo_toml_walk_does_not_follow_directory_symlinks`
+- `crates/ripr/tests/cli_smoke.rs::doctor_git_root_with_nested_workspace_passes_cargo_toml`
 - `crates/ripr/src/output/doctor.rs::tests::doctor_cargo_probe_uses_selected_root`
 - `crates/ripr/src/output/doctor.rs::tests::a_missing_root_skips_root_bound_probes_instead_of_blaming_the_tools`
 - `crates/ripr/src/output/doctor.rs::tests::a_file_root_is_not_reported_as_missing`
@@ -289,7 +310,9 @@ Current implementation:
 - `crates/ripr/src/cli/commands.rs` loads repo config for `check`, `explain`,
   and `context`, and reports config status through `doctor`.
 - `crates/ripr/src/output/doctor.rs` projects missing cargo/rustc as analysis
-  advisories or source-build failures with an install route.
+  advisories or source-build failures with an install route. The `cargo_toml`
+  check locates a selected-root, git-bounded ancestor, or nested Cargo.toml
+  without rebinding doctor's `--root`.
 - `crates/ripr/src/cli/commands/doctor.rs` prints start-here / first-command
   guidance for the analysis profile only.
 - `crates/ripr/src/app.rs` provides config-aware orchestration for CLI and LSP
