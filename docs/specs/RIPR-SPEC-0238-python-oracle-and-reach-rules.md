@@ -535,6 +535,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     - `self.a = ...` or an augmented assignment in a method owner:
       `L.a`, where `L` is a local bound to the owner's class whose
       method the test calls (rule 9's bound receiver).
+    On every channel the assertion must start on or after the line of
+    the test's first owner call: a read above it sees the state before
+    the changed effect could run, on both sides of the change. An
+    assertion with no known source line does not credit here.
     Rule 6 still applies on the error path.
 18. **A self-computed expected value does not credit.** Following
     RIPR-SPEC-0035, an assertion does not credit when every compared
