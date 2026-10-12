@@ -383,9 +383,9 @@ then refreshes the summary. `pr-summary`, `pr-triage-report`, `gh-pr-status`,
 operational evidence; advisory reports do not independently block merge. `worktree doctor` reports local
 hygiene, not an instruction to chase main. See `docs/PR_AUTOMATION.md`.
 
-Large-repo scans are build-heavy. Prefer `repo-badge-json`, generated receipts,
+Large-repo scans are build-heavy. Prefer `ripr check --format repo-badge-json`, generated receipts,
 an explicit gap ledger or `repo-exposure-summary-report` for ordinary counts,
-badges and packet queues. Full `repo-exposure-json` is for intentional refresh,
+badges and packet queues. Full `ripr check --format repo-exposure-json` is for intentional refresh,
 not ordinary interactive routing. Run at most one no-ledger full scan at a time;
 only intentional refreshes set `RIPR_COMPACT_REPO_SEAM_CACHE_MAX_SEAMS`. Remove
 ad-hoc large JSON after inspection without deleting retained evidence.
