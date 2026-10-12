@@ -101,6 +101,10 @@ pub enum AgentCardRefusalKind {
     IdentityUnnameable,
     /// The card builder, route gate, or budget refused to mint the card.
     BudgetOverflow,
+    /// The seam candidate inventory was truncated by the repo seam limit, so
+    /// most-specific sibling selection (#7179) cannot be trusted: a nested
+    /// same-kind sibling may be missing from the candidates.
+    IncompleteInventory,
 }
 
 impl AgentCardRefusalKind {
@@ -113,6 +117,7 @@ impl AgentCardRefusalKind {
             Self::WitnessUnavailable => "witness_unavailable",
             Self::IdentityUnnameable => "identity_unnameable",
             Self::BudgetOverflow => "budget_overflow",
+            Self::IncompleteInventory => "incomplete_inventory",
         }
     }
 }

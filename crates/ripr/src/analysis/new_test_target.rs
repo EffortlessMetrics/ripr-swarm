@@ -39,6 +39,12 @@ pub(crate) struct NewTestTargetAdmission {
     pub(crate) region: Option<InlineTestRegionAuthority>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) blocker: Option<NewTestProposalBlocker>,
+    /// The owner file's one governed inline cfg-test module region, admitted
+    /// by the InlineUnit law whichever target the ranking selects (#5210). A
+    /// repair whose recommended target is that same production file may be
+    /// routed into this module; the edit cage re-captures and enforces it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) owner_inline_region: Option<InlineTestRegionAuthority>,
 }
 
 impl NewTestTargetAdmission {
@@ -158,22 +164,25 @@ pub(crate) fn admit_new_test_target(
     layouts: &InlineUnitLayoutMemo,
 ) -> NewTestTargetAdmission {
     let integration = integration::admit_new_integration_test_for_owner(seam, index, owner_fn);
-    if integration.proposal.is_some() {
-        return integration;
-    }
     let inline = admit_new_inline_unit_test_with(seam, index, owner_fn, layouts);
-    if inline.proposal.is_some() {
-        return inline;
-    }
-    match integration.blocker {
-        Some(
-            NewTestProposalBlocker::AutotestsDisabled
-            | NewTestProposalBlocker::MissingIntegrationLayout
-            | NewTestProposalBlocker::LibraryTargetUnresolved
-            | NewTestProposalBlocker::FileCollision,
-        ) => integration,
-        _ => inline,
-    }
+    let owner_inline_region = inline.region.clone();
+    let mut selected = if integration.proposal.is_some() {
+        integration
+    } else if inline.proposal.is_some() {
+        inline
+    } else {
+        match integration.blocker {
+            Some(
+                NewTestProposalBlocker::AutotestsDisabled
+                | NewTestProposalBlocker::MissingIntegrationLayout
+                | NewTestProposalBlocker::LibraryTargetUnresolved
+                | NewTestProposalBlocker::FileCollision,
+            ) => integration,
+            _ => inline,
+        }
+    };
+    selected.owner_inline_region = owner_inline_region;
+    selected
 }
 
 /// Admit one InlineUnit proposal from indexed source-role and parser-backed
@@ -202,11 +211,13 @@ fn admit_new_inline_unit_test_with(
             proposal: Some(proposal),
             region: Some(region),
             blocker: None,
+            owner_inline_region: None,
         },
         Err(blocker) => NewTestTargetAdmission {
             proposal: None,
             region: None,
             blocker: Some(blocker),
+            owner_inline_region: None,
         },
     }
 }

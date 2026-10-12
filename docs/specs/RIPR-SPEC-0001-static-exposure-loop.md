@@ -37,6 +37,25 @@ never reads as "no behavioral candidates" (#4216 row 5).
 
 ## Required Evidence
 
+Parser-confirmed Rust where clauses and generic type/lifetime bounds without
+expression or macro descendants are compile-time syntax, not runtime field
+construction (#7251). Declaration-only changed lines retain `static_unknown`
+probes. An inline bound may use its enclosing struct, impl or type-alias item
+as declaration authority only when the whole changed line is contained by that
+item and the item has no expression or macro descendants. Const expressions
+and macro types retain existing fallback evidence.
+Real expressions on a shared line
+keep their existing parser-owned runtime probes. Comments, strings and macro
+token trees cannot establish declaration authority. Removed bounds require
+old-side parser context and local source roles reconstructed from the diff.
+Candidate line coincidences cannot exclude old production bounds or admit old
+test bounds. External module/include exclusion retains resolved candidate-index
+composition authority. Test attributes use the shared normalizer and active
+harness registrations; external parent edges, configuration and Cargo manifests
+are not reconstructed.
+Unavailable or malformed source retains existing uncertainty rather than
+borrowing a candidate line.
+
 Each finding should carry:
 
 - changed behavior
@@ -88,6 +107,10 @@ For a predicate probe, `exposed` also requires one test that both feeds a
 boundary input to the owner and holds a discriminating oracle on that call's
 result; otherwise the finding is at most `weakly_exposed` and names
 `same_test_pairing_missing` (#4828).
+For a field-construction probe whose every exact pin sits beside a pin of a
+sibling field, bound to one operand of the changed initializer, at the same
+value, the finding is at most `weakly_exposed` and names
+`field_pinned_equal_to_operand` (#7077, RIPR-SPEC-0197 rule 7).
 
 An unguarded whole wildcard pattern (`assert!(matches!(value, _))` or
 `assert_matches!(value, _)`) accepts every value. Its oracle is

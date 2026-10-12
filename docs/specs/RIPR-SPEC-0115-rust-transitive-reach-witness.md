@@ -86,8 +86,9 @@ them.
 
 A candidate is **corroborated** when its entry symbol names a production function that calls toward
 the owner and that function is either a free function, or an associated function the test calls on
-a receiver resolved to its `impl` self type (a constructor, type annotation, UFCS `Type::method` or
-struct literal; a binding's type is its annotation or initializer head, so `Cache::new(Site::default())`
+a receiver resolved to its `impl` self type (a constructor, type annotation, UFCS `Type::method`,
+struct literal, or a suffixed numeric literal such as `1.5f64` or `(-0.0f64)` for a primitive self type,
+while unsuffixed literals fail closed; a binding's type is its annotation or initializer head, so `Cache::new(Site::default())`
 binds a `Cache`; only associated calls named `new`, `default`, `from`, `new_*`, `from_*` or `with_*`, or an enum tuple
 variant, count as an initializer head; a bracketed receiver such as `(site).build()`, `Site::new().build()`
 or `Site { .. }.build()` is resolved from that whole expression, while method chains, calls of other

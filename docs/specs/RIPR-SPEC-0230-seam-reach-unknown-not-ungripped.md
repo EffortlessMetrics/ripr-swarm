@@ -165,6 +165,20 @@ stay `ungripped`. humantime moves 8 of 8 (trait dispatch).
   test-reached closure and the shared witness-to-`static_limit_kind` mapping
 - `crates/ripr/src/analysis/seam_cache.rs`: cache generations
 
+## Later Amendment
+
+RIPR-SPEC-0236 (2026-10-04, proposed) numbers the RIPR-SPEC-0005 rules
+this spec cites and proposes completing reach for a seam with no related
+test: when the owner function does not resolve, reach would be `opaque`
+with "(owner unresolved)", not `no` as today. Its rule R3 names the `static_limit_kind` each transitive and
+macro witness carries, rule R4 keys the witness cache by owner file and
+name, and a typed source tag, not the summary text, sets the
+evidence-record category `opaque_static_evidence`.
+
+RIPR-SPEC-0237 (2026-10-04) ranks an `opaque` seam after every gap class
+and every unknown class (rank 4). Its LSP severity is set by
+`[severity.seams].opaque` (default information), as RIPR-SPEC-0236 records.
+
 ## Metrics
 
 - `ungripped` seams whose reach rests on an unresolved path: 0 by

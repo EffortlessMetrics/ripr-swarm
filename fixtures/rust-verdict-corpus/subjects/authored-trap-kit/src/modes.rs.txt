@@ -1,0 +1,22 @@
+#[derive(Clone, Copy)]
+pub enum Tier {
+    Basic,
+    Premium,
+}
+
+pub fn quota(tier: Tier) -> u32 {
+    match tier {
+        Tier::Basic => 5,
+        Tier::Premium => 50,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn premium_quota() {
+        assert_eq!(quota(Tier::Premium), 50);
+    }
+}

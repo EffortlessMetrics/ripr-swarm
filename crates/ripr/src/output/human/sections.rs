@@ -1,7 +1,7 @@
 use crate::config::RiprConfig;
 use crate::domain::{
-    ExposureClass, Finding, LanguageId, LanguageStatus, MISSING_DISCRIMINATOR_VALUE_PREFIX,
-    RiprEvidence, StageState,
+    CALLEE_ONLY_REACH_PREFIX, ExposureClass, Finding, LanguageId, LanguageStatus,
+    MISSING_DISCRIMINATOR_VALUE_PREFIX, RiprEvidence, StageState,
 };
 use crate::output::agent_seam_packets::{
     allowed_edit_surface_for_gap_route, gap_record_packet_do_not_do,
@@ -21,7 +21,7 @@ use crate::output::typescript_preview_card::{
 };
 use std::path::Path;
 
-use super::evidence_lines::{evidence_path_lines, weakness_lines};
+use super::evidence_lines::{JsonPointerWording, evidence_path_lines, weakness_lines};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
 
 pub(crate) fn render_finding_digest_with_config(
@@ -88,12 +88,15 @@ pub(crate) fn render_finding_digest_with_config(
         // discriminator a test could supply. Label it as the limitation it
         // is when no real discriminator is missing; keep the
         // discriminator label whenever one exists.
+        // #7071: a weak finding whose reach witness ripr could not trace
+        // carries the limit's prose here, not a discriminator.
         let label = if finding.class == ExposureClass::Exposed {
             "Discriminator (observed, advisory)"
-        } else if matches!(
+        } else if (matches!(
             finding.class,
             ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown
-        ) && finding.activation.missing_discriminators.is_empty()
+        ) || untraced_reach_weak_finding(finding))
+            && finding.activation.missing_discriminators.is_empty()
         {
             "Analyzer limit"
         } else {
@@ -121,12 +124,15 @@ pub(crate) fn render_finding_digest_with_config(
         out.push_str(&format!("  {label}: {}\n", one_line(missing)));
     }
     if let Some(test) = finding.related_tests.first() {
-        // #4320: the digest shows only the first related test; carry the total
-        // so the reader knows how much reaching-test evidence exists (the
-        // evidence window in the full form discloses the same bound).
+        // #4320: the digest shows only the first related-test row; carry the
+        // total so the reader knows how much reaching-test evidence exists
+        // (the evidence window in the full form discloses the same bound).
+        // #6807: that total is matched related-test rows (one assertion, plus
+        // examined-miss rows), not distinct tests. Name the unit so a packed
+        // finding with 81 rows cannot read as 81 tests.
         let related_tests_total = finding.related_tests_total();
         let label = if related_tests_total > 1 {
-            format!("Related test (1 of {related_tests_total})")
+            format!("Related test (1 of {related_tests_total} matched rows)")
         } else {
             "Related test".to_string()
         };
@@ -170,7 +176,9 @@ pub(crate) fn render_finding_digest_with_config(
             out.push('\n');
         }
     }
-    let evidence = evidence_path_lines(finding);
+    // The digest prints only the first two evidence lines, so either wording
+    // renders the same text here; the check flag keeps the historical form.
+    let evidence = evidence_path_lines(finding, JsonPointerWording::CheckFlag);
     if !evidence.is_empty() {
         // #4324: evidence ordering is pipeline-ordered (reach, infection,
         // propagation, observation, discriminator), so the positional 2-line
@@ -217,6 +225,20 @@ fn compact_discriminator_token(finding: &Finding) -> &'static str {
     } else {
         "missing"
     }
+}
+
+/// A `weakly_exposed` finding whose only reach is proximity and whose
+/// transitive or macro reach witness ripr could not trace (#7071): it names
+/// a limit, so it claims no missing test.
+pub(super) fn untraced_reach_weak_finding(finding: &Finding) -> bool {
+    finding.class == ExposureClass::WeaklyExposed
+        && finding.stop_reasons.iter().any(|reason| {
+            matches!(
+                reason,
+                crate::domain::StopReason::TransitiveReachUnresolved
+                    | crate::domain::StopReason::MacroReachUnresolved
+            )
+        })
 }
 
 /// Collapse a possibly-multi-line value to one bounded display line.
@@ -319,6 +341,7 @@ pub(crate) fn render_finding_with_config(
     finding: &Finding,
     config: &RiprConfig,
     root: &Path,
+    wording: JsonPointerWording,
 ) -> String {
     let mut out = String::new();
     let severity = config.severity().for_exposure(&finding.class).as_str();
@@ -400,7 +423,7 @@ pub(crate) fn render_finding_with_config(
     ));
 
     out.push_str("\nEvidence\n");
-    for line in evidence_path_lines(finding) {
+    for line in evidence_path_lines(finding, wording) {
         if is_wrappable_advisory_prose(&line) {
             out.push_str(&wrap_human_prose(&line, "  - ", "    "));
         } else {
@@ -442,7 +465,8 @@ pub(crate) fn render_finding_with_config(
         ));
     }
 
-    // RIPR-SPEC-0115/0117: when a Rust no_static_path limitation named a
+    // RIPR-SPEC-0115/0117: when a Rust reach limitation (on a no_static_path
+    // finding, or a proximity-only weakly_exposed one, #7071) named a
     // witnessing test, surface it in human output as a concrete "Where to look"
     // pointer. The witness prose lives in `evidence` (the limitation channel);
     // we recognize it by the shared prefix so JSON evidence and human output
@@ -1045,6 +1069,11 @@ struct RepairPlacement<'a> {
 /// (#4379 rewalk W4): "partially complete — see full form" told a reader
 /// nothing they could act on from the digest.
 fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
+    // #7003: callee-only reach evidence disclaims owner invocation in its own
+    // summary, so no branch below may claim a reaching test for it.
+    if is_callee_only_reach(&ripr.reach) {
+        return NO_CALLING_TEST_HINT;
+    }
     let incomplete = |stage: &crate::domain::StageEvidence| stage.state != StageState::Yes;
     // An Unknown stage is not established, so its hint says so rather than
     // stating the gap as fact (#4411 review).
@@ -1067,11 +1096,30 @@ fn partial_path_hint(ripr: &RiprEvidence) -> &'static str {
     }
 }
 
+/// Hint for a callee-only finding (#7003): its reach evidence disclaims
+/// owner invocation, so the hint must not claim a reaching test. It agrees
+/// with the reach line printed beneath it (F5-10) the way the
+/// `NoStaticPath` hints do.
+const NO_CALLING_TEST_HINT: &str = "no test is seen calling this change";
+
+/// Whether the reach stage is callee-only evidence: every related test
+/// exercises the seam's converted callee and none invokes the changed
+/// owner. The summary prefix is the single-source marker shared with the
+/// producer (`analysis::classify::reach`).
+fn is_callee_only_reach(reach: &crate::domain::StageEvidence) -> bool {
+    reach.summary.starts_with(CALLEE_ONLY_REACH_PREFIX)
+}
+
 fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<String> {
     let reveal = &ripr.reveal;
+    // #7003: "reaches this change" is a reach claim — a callee-only finding
+    // has no test seen calling the owner, so every claim site below falls
+    // back to the no-calling-test hint for it (mirror of the #6796
+    // propagation guard for `InfectionUnknown`).
+    let callee_only = is_callee_only_reach(&ripr.reach);
     match class {
         ExposureClass::WeaklyExposed => {
-            if reveal.discriminate.state == StageState::Weak {
+            if reveal.discriminate.state == StageState::Weak && !callee_only {
                 // #4381: the shared missing-discriminator sentence lives in
                 // output::gap_vocabulary; quote the constant, never re-type it.
                 Some(crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE.to_string())
@@ -1085,11 +1133,13 @@ fn classification_hint(class: &ExposureClass, ripr: &RiprEvidence) -> Option<Str
                     "a related test asserts here, but ripr could not establish that the assertion runs and is the standard `assert_eq!`"
                         .to_string(),
                 )
-            } else if reveal.observe.state == StageState::No {
+            } else if reveal.observe.state == StageState::No && !callee_only {
                 Some(
                     "a related test reaches this change, but no assertion observes the changed behavior"
                         .to_string(),
                 )
+            } else if reveal.observe.state == StageState::No {
+                Some(NO_CALLING_TEST_HINT.to_string())
             } else {
                 Some(partial_path_hint(ripr).to_string())
             }
@@ -1153,7 +1203,8 @@ fn should_render_language_metadata(finding: &Finding) -> bool {
 mod classification_hint_tests {
     use super::classification_hint;
     use crate::domain::{
-        Confidence, ExposureClass, RevealEvidence, RiprEvidence, StageEvidence, StageState,
+        CALLEE_ONLY_REACH_PREFIX, Confidence, ExposureClass, RevealEvidence, RiprEvidence,
+        StageEvidence, StageState,
     };
 
     fn ripr(reach: StageState, observe: StageState) -> RiprEvidence {
@@ -1167,6 +1218,14 @@ mod classification_hint_tests {
                 discriminate: stage(StageState::No),
             },
         }
+    }
+
+    fn callee_only_reach() -> StageEvidence {
+        StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            format!("{CALLEE_ONLY_REACH_PREFIX}: observes_callee_outcome"),
+        )
     }
 
     #[test]
@@ -1280,6 +1339,53 @@ mod classification_hint_tests {
             Some(
                 "a related test reaches this change, but static evidence cannot tell whether any test input tells the old and new behavior apart"
             )
+        );
+    }
+
+    // #7003: a callee-only finding has no test seen calling the owner, so
+    // no hint may claim "reaches this change" for it — not the
+    // missing-discriminator sentence, not the partial-path hint, not the
+    // unrevealed hint.
+    #[test]
+    fn callee_only_hint_never_claims_a_reaching_test() {
+        let mut evidence = ripr(StageState::Weak, StageState::Yes);
+        evidence.reach = callee_only_reach();
+        evidence.reveal.discriminate = StageEvidence::new(StageState::Weak, Confidence::Low, "x");
+        let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
+        assert_eq!(hint.as_deref(), Some("no test is seen calling this change"));
+
+        evidence.reveal.discriminate = StageEvidence::new(StageState::Yes, Confidence::High, "x");
+        evidence.infect = StageEvidence::new(StageState::Weak, Confidence::Medium, "x");
+        let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
+        assert_eq!(hint.as_deref(), Some("no test is seen calling this change"));
+
+        let mut unrevealed = ripr(StageState::Weak, StageState::No);
+        unrevealed.reach = callee_only_reach();
+        let hint = classification_hint(&ExposureClass::ReachableUnrevealed, &unrevealed);
+        assert_eq!(hint.as_deref(), Some("no test is seen calling this change"));
+
+        unrevealed.reveal.observe = StageEvidence::new(StageState::Weak, Confidence::Low, "x");
+        let hint = classification_hint(&ExposureClass::ReachableUnrevealed, &unrevealed);
+        assert_eq!(hint.as_deref(), Some("no test is seen calling this change"));
+    }
+
+    // #7003 negative: the no-calling-test fallback is scoped to callee-only
+    // reach evidence. Any other weak reach keeps its established hint,
+    // quoted from the shared constant (#4381): the
+    // `shared_sentence_is_quoted_not_retyped` audit forbids re-typing it.
+    #[test]
+    fn non_callee_weak_reach_keeps_the_established_hint() {
+        let mut evidence = ripr(StageState::Weak, StageState::Yes);
+        evidence.reach = StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            "No test is seen calling discounted_total; tests share only its file or a name token: neighbour",
+        );
+        evidence.reveal.discriminate = StageEvidence::new(StageState::Weak, Confidence::Low, "x");
+        let hint = classification_hint(&ExposureClass::WeaklyExposed, &evidence);
+        assert_eq!(
+            hint.as_deref(),
+            Some(crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE)
         );
     }
 }

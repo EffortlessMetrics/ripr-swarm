@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-score-tautology",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-score-tautology.diff",
+  "anchor": {
+    "file": "src/scaling.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "tautological_assert_eq_same_binding",
+  "hard_case": "assert_eq!(got, got) compares the owner's result with itself.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "hits * 3 - 1",
+        "mutated_line": "hits * 3 - 1",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `1 + hits * 3` with `hits * 3 - 1`, which changes the result, but the assertion's expected side is computed by the same code and changes with it"
+      },
+      {
+        "replacement": "hits * 4 + 1",
+        "mutated_line": "hits * 4 + 1",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `1 + hits * 3` with `hits * 4 + 1`, which changes the result, but the assertion's expected side is computed by the same code and changes with it"
+      },
+      {
+        "replacement": "hits + 3 + 1",
+        "mutated_line": "hits + 3 + 1",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `1 + hits * 3` with `hits + 3 + 1`, which changes the result, but the assertion's expected side is computed by the same code and changes with it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "score_is_stable binds got = score(4) and asserts got == got, which holds for every value of score. Adversarial shape (tautological assertion). It also guards the owner-result binding rule (RIPR-SPEC-0005): today any let-bound result reads weak, so a fix there must still refuse this shape.",
+  "labeling_observation": {
+    "ripr_commit": "6487826",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

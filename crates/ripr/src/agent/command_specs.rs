@@ -199,6 +199,40 @@ pub(crate) fn agent_inspection_command_spec(
     )
 }
 
+/// Typed task-first repair-start route for one bound seam (#6305). The
+/// `ripr repair` producer offers this spec only when it binds exactly one
+/// eligible subject. Argv stays portable (`--root .`, #3999) while the
+/// display binds the selected root for copy/paste, like the inspection
+/// route above.
+pub(crate) fn repair_start_command_spec(root: &str, seam_id: &str) -> CommandSpec {
+    let display = format!(
+        "ripr repair {} --root {}",
+        shell_arg(seam_id),
+        shell_arg(&root_display(root))
+    );
+    let mut spec = command_spec(
+        "ripr:repair:start",
+        CommandRole::RepairStart,
+        CommandExecutionMode::Direct,
+        vec![
+            "repair".to_string(),
+            seam_id.to_string(),
+            "--root".to_string(),
+            PORTABLE_ROOT.to_string(),
+        ],
+        vec![
+            "target/ripr/workflow".to_string(),
+            crate::app::repair_attempt::REPAIR_ATTEMPT_DIRECTORY.to_string(),
+        ],
+        display,
+    );
+    // The start prints human summaries, not a JSON document: the façade has
+    // no `--json` flag, and the packet/card artifacts stay in their files.
+    spec.expected_result_parser = ExpectedResultParser::DeclaredText;
+    spec.cost_class = CommandCostClass::FullRepoAnalysis;
+    spec
+}
+
 /// The artifact-input flags `pr-review front-panel` accepts. FIX (round-2
 /// review): mirrors `parse_pr_review_front_panel_options` — the panel
 /// requires at least one of these, so a display without any input flag is
@@ -843,6 +877,7 @@ fn command_spec(
             CommandRole::Regeneration => CommandAuthorityBoundary::RegenerationRouteOnly,
             CommandRole::Inspection => CommandAuthorityBoundary::InspectionRouteOnly,
             CommandRole::TargetedRerun => CommandAuthorityBoundary::TargetedRerunRouteOnly,
+            CommandRole::RepairStart => CommandAuthorityBoundary::RepairStartRouteOnly,
         },
     }
 }
@@ -915,6 +950,33 @@ fn ensure_role(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A unique scratch directory removed on drop, so a failed assertion or
+    /// an early `?` does not leave it behind (#7005).
+    struct ScratchDir {
+        path: std::path::PathBuf,
+    }
+
+    impl ScratchDir {
+        fn new(label: &str) -> Result<Self, String> {
+            let nonce = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|err| err.to_string())?
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("{label}-{}-{nonce}", std::process::id()));
+            Ok(Self { path })
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for ScratchDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
     use crate::agent::loop_commands::{
         WORKFLOW_AFTER_SNAPSHOT_ARTIFACT, WORKFLOW_AGENT_RECEIPT_ARTIFACT,
         WORKFLOW_AGENT_VERIFY_ARTIFACT, WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT,
@@ -1104,14 +1166,8 @@ mod tests {
     {
         use crate::agent::loop_commands::{agent_verify_command, bound_root, shell_arg};
         use crate::domain::CommandSpecDigest;
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|err| err.to_string())?
-            .as_nanos();
-        let base = std::env::temp_dir().join(format!(
-            "ripr-relocated-identity-{}-{nonce}",
-            std::process::id()
-        ));
+        let scratch = ScratchDir::new("ripr-relocated-identity")?;
+        let base = scratch.path().to_path_buf();
         let root_a = base.join("checkout a");
         let root_b = base.join("checkout b's");
         let render = |root: &Path| -> Result<(String, String), String> {
@@ -1125,7 +1181,7 @@ mod tests {
             );
             Ok((bound, display))
         };
-        let outcome = (|| {
+        (|| {
             let (bound_a, display_a) = render(&root_a)?;
             let (bound_b, display_b) = render(&root_b)?;
             let spec_a = agent_command_spec_from_display(&display_a, &root_a)
@@ -1174,9 +1230,7 @@ mod tests {
                 ));
             }
             Ok(())
-        })();
-        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
-        outcome
+        })()
     }
 
     /// #3231: inside single quotes a backslash is literal, so a
@@ -1615,20 +1669,13 @@ mod tests {
     #[test]
     fn backslash_root_display_recovers_its_typed_route() -> Result<(), String> {
         use crate::agent::loop_commands::{bound_root, check_repo_exposure_command};
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|err| err.to_string())?
-            .as_nanos();
-        let base = std::env::temp_dir().join(format!(
-            "ripr-backslash-recovery-{}-{nonce}",
-            std::process::id()
-        ));
+        let scratch = ScratchDir::new("ripr-backslash-recovery")?;
+        let base = scratch.path().to_path_buf();
         let root = base.join("team\\repo");
         std::fs::create_dir_all(&root).map_err(|err| err.to_string())?;
         let bound = bound_root(&root.to_string_lossy());
         let display = check_repo_exposure_command(&bound, "instant", "target/ripr/out.json");
         let spec = super::report_regeneration_command_spec_from_display(&display, &root);
-        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
         let spec =
             spec.ok_or_else(|| format!("backslash-root display did not recover: {display}"))?;
         if spec.expected_writes != ["target/ripr/out.json"]
@@ -1646,14 +1693,8 @@ mod tests {
     #[test]
     fn symlink_parent_root_display_recovers_its_typed_route() -> Result<(), String> {
         use crate::agent::loop_commands::{bound_root, check_repo_exposure_command};
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_err(|err| err.to_string())?
-            .as_nanos();
-        let base = std::env::temp_dir().join(format!(
-            "ripr-symlink-recovery-{}-{nonce}",
-            std::process::id()
-        ));
+        let scratch = ScratchDir::new("ripr-symlink-recovery")?;
+        let base = scratch.path().to_path_buf();
         std::fs::create_dir_all(base.join("outside/child")).map_err(|err| err.to_string())?;
         std::fs::create_dir_all(base.join("outside/repo")).map_err(|err| err.to_string())?;
         std::fs::create_dir_all(base.join("work")).map_err(|err| err.to_string())?;
@@ -1663,7 +1704,6 @@ mod tests {
         let bound = bound_root(&root.to_string_lossy());
         let display = check_repo_exposure_command(&bound, "instant", "target/ripr/out.json");
         let spec = super::report_regeneration_command_spec_from_display(&display, &root);
-        std::fs::remove_dir_all(&base).map_err(|err| err.to_string())?;
         if !bound.ends_with("/work/link/../repo") {
             return Err(format!("bound root lost the symlink's `..`: {bound}"));
         }

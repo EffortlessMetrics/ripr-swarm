@@ -25,22 +25,22 @@ use super::seam_cache::CLASSIFIED_SEAM_CACHE_STORE_LIMIT;
 use super::seam_cache::RepoSeamCountCache;
 use super::seam_cache::{
     CacheLoad, CachedSeamLimitInfo, CorpusFingerprintLookup, FileFactCacheStats,
-    RepoCorpusFingerprintCache, RepoSeamCacheKey, RepoSeamFactCache, WorkspaceKeyContext,
-    WorkspaceState, classified_seam_cache_store_limit, compact_classified_seam_cache_store_limit,
-    corpus_fingerprint,
+    FilesContentHashBuilder, RepoCorpusFingerprintCache, RepoSeamCacheKey, RepoSeamFactCache,
+    WorkspaceKeyContext, classified_seam_cache_store_limit,
+    compact_classified_seam_cache_store_limit, corpus_fingerprint,
 };
 #[cfg(test)]
 use super::seam_classification::SeamGripClassCounts;
 use super::seam_classification::{self, ClassifiedSeam};
 use super::seams::{
-    ExpectedSink, RepoSeam, RequiredDiscriminator, SeamKind, build_line_starts,
-    byte_span_to_lines_with_starts,
+    CrlfPairPositions, ExpectedSink, OwnerCallShape, RepoSeam, RequiredDiscriminator, SeamKind,
+    build_line_starts, byte_span_to_lines_with_starts,
 };
 use super::test_grip_evidence;
 use super::workspace;
 use crate::analysis::cancellation;
 use crate::config::RiprConfig;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
@@ -164,6 +164,10 @@ pub(crate) fn inventory_classified_seams_at(root: &Path) -> Result<Vec<Classifie
 #[derive(Clone, Debug)]
 pub(crate) struct ClassifiedSeamsReport {
     pub(crate) classified: Vec<ClassifiedSeam>,
+    /// The key that admitted or produced this full Rust inventory. Keeping
+    /// its consumed corpus identity avoids a later renderer hashing new
+    /// workspace bytes for old classifications. Synthetic reports have none.
+    pub(crate) corpus_key: Option<RepoSeamCacheKey>,
     pub(crate) limit_info: Option<SeamLimitInfo>,
     pub(crate) skipped_generated: Vec<PathBuf>,
     pub(crate) naming_only_skips: Vec<PathBuf>,
@@ -234,6 +238,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
                 // a warm hit still discloses files added after the cache write.
                 return Ok(ClassifiedSeamsReport {
                     classified: cached,
+                    corpus_key: Some(key),
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
                     skipped_generated,
                     naming_only_skips,
@@ -290,6 +295,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
             // its SeamLimitInfo in the envelope; a complete run stored None.
             return Ok(ClassifiedSeamsReport {
                 classified: cached,
+                corpus_key: Some(key),
                 limit_info: cached_limit_info.map(SeamLimitInfo::from),
                 skipped_generated,
                 naming_only_skips,
@@ -355,6 +361,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
+        corpus_key: Some(key),
         limit_info,
         skipped_generated,
         naming_only_skips,
@@ -706,11 +713,7 @@ fn inventory_compact_classified_seams_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
-        &state.workspace_root,
-        &state.files,
-        harness_registrations(config),
-    )?;
+    let mut cached = state.build_index(config)?;
     cancellation::checkpoint()?;
     trace_latency_phase(
         "file_fact_cache",
@@ -752,11 +755,7 @@ fn inventory_classified_seams_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
-        &state.workspace_root,
-        &state.files,
-        harness_registrations(config),
-    )?;
+    let mut cached = state.build_index(config)?;
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
@@ -768,10 +767,40 @@ fn inventory_classified_seams_from_state_with_config(
     let lexical_fallback_files = rust_index::lexical_fallback_files(&cached.index);
     trace_latency_phase("apply_oracle_policy", "ok", policy_started.elapsed());
     let seams_started = Instant::now();
-    let mut seams = inventory_seams_from_index(&production_files, &cached.index);
+    // Resolve the cap before construction (issue #4997) so inventory
+    // retains at most K seam objects instead of materializing the full
+    // vector and truncating after. An invalid limit errors here, before
+    // inventory work, rather than after; every other behavior is unchanged.
+    let limit_and_source = repo_exposure_seam_limit()?;
+    let limit = limit_and_source.as_ref().map(|(limit, _)| *limit);
+    let bounded = inventory_seams_from_index_bounded(&production_files, &cached.index, limit)?;
     cancellation::checkpoint()?;
-    trace_latency_phase("inventory_seams", "ok", seams_started.elapsed());
-    let limit_info = apply_repo_exposure_seam_limit(&mut seams)?;
+    // The retained-object peak is production-observable here (issue #4997):
+    // the retained prefix stays within K while the trace reports the peak
+    // retained count. It excludes the single in-flight candidate that
+    // `push` owns while it decides membership.
+    trace_latency_phase(
+        "inventory_seams",
+        &format!("ok peak_retained_seams={}", bounded.peak_retained),
+        seams_started.elapsed(),
+    );
+    let seams = bounded.seams;
+    let limit_info = limit_and_source.and_then(|(limit, source)| {
+        if bounded.total_unique <= limit {
+            None
+        } else {
+            trace_latency_phase(
+                "repo_exposure_seam_limit",
+                &format!("limit_{}_of_{}", seams.len(), bounded.total_unique),
+                Duration::ZERO,
+            );
+            Some(SeamLimitInfo {
+                analyzed: seams.len(),
+                total: bounded.total_unique,
+                source,
+            })
+        }
+    });
     let evidence_started = Instant::now();
     trace_latency_phase(
         "evidence_for_seams",
@@ -897,11 +926,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
     let workspace_cache_key = state.cache_key();
     let changed_test_key = inventory_scope_key(changed_test);
     let changed_test = normalized_inventory_path(changed_test);
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
-        &state.workspace_root,
-        &state.files,
-        harness_registrations(config),
-    )?;
+    let mut cached = state.build_index(config)?;
     rust_index::apply_oracle_policy(&mut cached.index, config.oracles());
     let selector_limitation =
         |kind, message, selected_test_count| TargetedTestInventoryError::Selector {
@@ -954,16 +979,167 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         ));
     }
 
-    let candidate_functions = cached
-        .index
-        .functions()
-        .iter()
-        .filter(|function| {
-            !function.source_role.is_evidence_role() && direct_call_names.contains(&function.name)
-        })
-        .collect::<Vec<_>>();
+    let syntax = super::classify::OwnerPinSyntax::default();
+    let mut candidate_functions = BTreeMap::new();
+    let unresolved = |name: &str| {
+        selector_limitation(
+            CHANGED_TEST_OWNER_UNRESOLVED,
+            format!(
+                "targeted rerun changed test `{changed_test}` did not resolve direct production call identity `{name}`"
+            ),
+            selected_tests.len(),
+        )
+    };
+    for test in &selected_tests {
+        let masked_body = crate::analysis::extract::mask_comments_and_strings(&test.body);
+        for call in test.calls.iter().filter(|call| call.name != test.name) {
+            use super::classify::TargetedCallShape;
+            use crate::analysis::facts::FunctionImplContext;
+            let functions = cached
+                .index
+                .functions()
+                .iter()
+                .filter(|function| {
+                    !function.source_role.is_evidence_role() && function.name == call.name
+                })
+                .collect::<Vec<_>>();
+            if super::classify::targeted_name_is_alias(&cached.index, &call.name) {
+                return Err(unresolved(&call.name));
+            }
+            // A line-only fact cannot resolve a qualifier continued from a
+            // previous line, including through masked comments/blank lines.
+            let continued_path = call
+                .line
+                .checked_sub(test.start_line)
+                .is_some_and(|offset| {
+                    masked_body
+                        .split_inclusive('\n')
+                        .take(offset)
+                        .collect::<String>()
+                        .trim_end()
+                        .ends_with("::")
+                        || {
+                            let preceding = masked_body
+                                .split_inclusive('\n')
+                                .take(offset)
+                                .collect::<String>();
+                            preceding.trim_end().ends_with('.')
+                                && !preceding.trim_end().ends_with("..")
+                        }
+                });
+            let shapes = if continued_path {
+                BTreeSet::from([TargetedCallShape::Unsupported])
+            } else {
+                super::classify::targeted_call_shapes(&call.text, &call.name)
+            };
+            for shape in shapes {
+                if matches!(shape, TargetedCallShape::Bare)
+                    && functions
+                        .iter()
+                        .filter(|function| {
+                            matches!(function.impl_context, FunctionImplContext::Free)
+                        })
+                        .count()
+                        > 1
+                {
+                    return Err(selector_limitation(
+                        CHANGED_TEST_OWNER_AMBIGUOUS,
+                        format!(
+                            "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
+                            call.name
+                        ),
+                        selected_tests.len(),
+                    ));
+                }
+                let mut matching = Vec::new();
+                for function in &functions {
+                    match (&shape, &function.impl_context) {
+                        (TargetedCallShape::Bare, FunctionImplContext::Free) => {
+                            if !super::classify::targeted_free_call_reaches_owner(
+                                test,
+                                function,
+                                None,
+                                &cached.index,
+                                &syntax,
+                            ) {
+                                return Err(unresolved(&call.name));
+                            }
+                            matching.push(*function);
+                        }
+                        (
+                            TargetedCallShape::Path { prefix, generic },
+                            FunctionImplContext::Impl { self_type },
+                        ) => {
+                            let type_name = prefix.rsplit("::").next().unwrap_or(prefix);
+                            if super::classify::targeted_type_name_is_unresolved(
+                                test,
+                                &cached.index,
+                                type_name,
+                            ) {
+                                return Err(unresolved(&call.name));
+                            }
+                            if type_name != self_type {
+                                // Parser-established different self types cannot own
+                                // this call (e.g. BTreeMap::new versus Alpha::new).
+                                continue;
+                            }
+                            if *generic
+                                || !syntax.targeted_inherent_call_is_local(
+                                    test,
+                                    function,
+                                    prefix,
+                                    &cached.index,
+                                )
+                            {
+                                return Err(unresolved(&call.name));
+                            }
+                            matching.push(*function);
+                        }
+                        (
+                            TargetedCallShape::Path { prefix, generic },
+                            FunctionImplContext::Free,
+                        ) => {
+                            if super::classify::call_text_may_call_free_function(
+                                &call.text, &call.name,
+                            ) {
+                                if *generic
+                                    || !super::classify::targeted_free_call_reaches_owner(
+                                        test,
+                                        function,
+                                        Some(prefix),
+                                        &cached.index,
+                                        &syntax,
+                                    )
+                                {
+                                    return Err(unresolved(&call.name));
+                                }
+                                matching.push(*function);
+                            }
+                        }
+                        (TargetedCallShape::Unsupported, _) | (_, FunctionImplContext::Unknown) => {
+                            return Err(unresolved(&call.name));
+                        }
+                        (TargetedCallShape::Bare, FunctionImplContext::Impl { .. }) => {}
+                    }
+                }
+                if matching.len() > 1 {
+                    return Err(selector_limitation(
+                        CHANGED_TEST_OWNER_AMBIGUOUS,
+                        format!(
+                            "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
+                            call.name
+                        ),
+                        selected_tests.len(),
+                    ));
+                }
+                for function in matching {
+                    candidate_functions.insert(function.id.0.replace('\\', "/"), function);
+                }
+            }
+        }
+    }
     let matched_call_names = candidate_functions
-        .iter()
+        .values()
         .map(|function| function.name.clone())
         .collect::<BTreeSet<_>>();
     if matched_call_names.is_empty() {
@@ -975,33 +1151,15 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
             selected_tests.len(),
         ));
     }
-    for call_name in &matched_call_names {
-        let matching_owners = candidate_functions
-            .iter()
-            .filter(|function| function.name == *call_name)
-            .count();
-        if matching_owners > 1 {
-            return Err(selector_limitation(
-                CHANGED_TEST_OWNER_AMBIGUOUS,
-                format!(
-                    "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{call_name}`"
-                ),
-                selected_tests.len(),
-            ));
-        }
-    }
     let production_files = candidate_functions
-        .into_iter()
+        .values()
         .map(|function| function.file.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect::<Vec<_>>();
     let seams = inventory_seams_from_index(&production_files, &cached.index)
         .into_iter()
-        .filter(|seam| {
-            seam.owner()
-                .rsplit("::")
-                .next()
-                .is_some_and(|name| matched_call_names.contains(name))
-        })
+        .filter(|seam| candidate_functions.contains_key(seam.owner()))
         .collect::<Vec<_>>();
     let evidence = test_grip_evidence::evidence_for_seams(&seams, &cached.index);
     let classified =
@@ -1590,12 +1748,8 @@ fn inventory_diff_scoped_classified_seams_inner(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
-        &state.workspace_root,
-        &state.files,
-        harness_registrations(config),
-    )?;
-    // The index and cache key own their data; release the raw corpus before evidence.
+    let mut cached = state.build_index(config)?;
+    // The index and cache key own their data; the state is not needed past here.
     drop(state);
     trace_latency_phase(
         "file_fact_cache",
@@ -1919,13 +2073,10 @@ fn parse_seam_limit(env_name: &str, value: &str) -> Result<Option<usize>, String
     }
 }
 
-pub(crate) fn apply_repo_exposure_seam_limit(
-    seams: &mut Vec<RepoSeam>,
-) -> Result<Option<SeamLimitInfo>, String> {
-    Ok(repo_exposure_seam_limit()?
-        .and_then(|(limit, source)| apply_repo_exposure_seam_limit_inner(seams, limit, source)))
-}
-
+/// Legacy truncate-after-materialization helper (issue #4997): production
+/// now bounds during construction, so this survives only as the oracle the
+/// truncation-format unit tests pin.
+#[cfg(test)]
 fn apply_repo_exposure_seam_limit_inner(
     seams: &mut Vec<RepoSeam>,
     limit: usize,
@@ -2038,11 +2189,7 @@ fn inventory_seam_grip_class_counts_from_state_with_config(
         ),
         Duration::ZERO,
     );
-    let mut cached = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
-        &state.workspace_root,
-        &state.files,
-        harness_registrations(config),
-    )?;
+    let mut cached = state.build_index(config)?;
     trace_latency_phase(
         "file_fact_cache",
         &cached.file_fact_cache.status_label(),
@@ -2086,12 +2233,11 @@ fn production_files_from_state_with_role(
     let context = production_role_context(
         &state.workspace_root,
         config,
-        state.files.iter().map(|(path, _)| path.as_path()),
+        state.files.iter().map(PathBuf::as_path),
     );
     state
         .files
         .iter()
-        .map(|(path, _)| path)
         .filter(|path| workspace::classify_with(path, &context).seeds_production_findings())
         .cloned()
         .collect()
@@ -2118,9 +2264,9 @@ where
 }
 
 /// Collect the per-file content + intent + suppressions inputs the
-/// cache key derives from. The repo exposure cold path reuses these
-/// bytes when building cached file facts so file discovery and file
-/// reads are not repeated after a classified-seam cache miss.
+/// cache key derives from. The repo exposure cold path reuses the
+/// discovered paths when building cached file facts; that build reads the
+/// files again and is refused if they changed (`OwnedWorkspaceState::build_index`).
 ///
 /// Hashes the **same analyzable Rust file set fed to `build_index`** —
 /// production seam sources *and* test evidence sources, after the generated
@@ -2137,29 +2283,38 @@ fn collect_workspace_state(
     collect_workspace_state_from_files(root, config, rust_files)
 }
 
-/// Read the contents of a pre-discovered corpus file list. Callers that
-/// already ran discovery for the corpus fingerprint scan (issue #2108)
-/// pass the list through so the directory walk is not repeated.
+/// Collect the workspace state for a pre-discovered corpus file list.
+/// Callers that already ran discovery for the corpus fingerprint scan
+/// (issue #2108) pass the list through so the directory walk is not
+/// repeated.
+///
+/// Streaming form (issue #4996): each file is read once to fold its
+/// content identity into the aggregate corpus hash, then its bytes are
+/// released immediately. The state retains sorted paths plus the final
+/// `files_content_hash` — never the raw corpus — so peak live source
+/// bytes stay bounded by the largest single file while the hash remains
+/// byte-identical to [`super::seam_cache::files_content_hash`].
 fn collect_workspace_state_from_files(
     root: &Path,
     config: &RiprConfig,
     rust_files: Vec<PathBuf>,
 ) -> Result<OwnedWorkspaceState, String> {
-    let mut files: Vec<(PathBuf, Vec<u8>)> = Vec::with_capacity(rust_files.len());
-    for path in rust_files {
+    let mut sorted_files = rust_files;
+    sorted_files.sort();
+    let mut builder = FilesContentHashBuilder::new();
+    for path in &sorted_files {
         cancellation::checkpoint()?;
-        let bytes = std::fs::read(root.join(&path))
+        let bytes = std::fs::read(root.join(path))
             .map_err(|err| format!("read {} failed: {err}", path.display()))?;
-        files.push((path, bytes));
+        builder.push(path, &bytes);
+        // `bytes` drops here, before the next file is read.
     }
     #[cfg(test)]
-    let source_lifetime =
-        source_lifetime_probe::constructed(root, files.iter().map(|(_, bytes)| bytes.len()).sum());
+    between_passes::run(root);
     Ok(OwnedWorkspaceState {
-        #[cfg(test)]
-        _source_lifetime: source_lifetime,
         workspace_root: root.to_path_buf(),
-        files,
+        files: sorted_files,
+        files_content_hash: builder.finish(),
         config_text: config.source_text().map(str::to_string),
         test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
         suppressions_text: read_optional(&root.join(config.suppressions().path())),
@@ -2240,8 +2395,7 @@ fn store_corpus_fingerprint_mapping(
     let Some(fingerprint) = pre_read_fingerprint else {
         return;
     };
-    let paths: Vec<PathBuf> = state.files.iter().map(|(path, _)| path.clone()).collect();
-    let post_read = corpus_fingerprint(&state.workspace_root, &paths);
+    let post_read = corpus_fingerprint(&state.workspace_root, &state.files);
     if post_read.as_deref() != Some(fingerprint.as_str()) {
         // The corpus changed while it was being read; the signature no
         // longer describes the hashed bytes, so storing would be dishonest.
@@ -2260,21 +2414,63 @@ fn read_optional(path: &Path) -> Option<String> {
     std::fs::read_to_string(path).ok()
 }
 
-/// Owned form of `WorkspaceState` so the inventory function can return
-/// it across the cache call boundary. `WorkspaceState` borrows; this
-/// converts to it on demand.
+/// Owned workspace state for the inventory pipeline (issue #4996).
+///
+/// Holds sorted corpus paths plus the aggregate `files_content_hash` —
+/// never the raw source bytes. The hash is folded incrementally at
+/// collect time and stays byte-identical to
+/// [`super::seam_cache::files_content_hash`], so cache keys keep their
+/// exact meaning while peak live source bytes stay bounded. The
+/// `files: Vec<PathBuf>` type (no `Vec<u8>` anywhere) is the
+/// compile-time bound: reintroducing a retained corpus breaks the
+/// `workspace_state_holds_no_source_bytes` test build.
 struct OwnedWorkspaceState {
     workspace_root: PathBuf,
-    files: Vec<(PathBuf, Vec<u8>)>,
+    files: Vec<PathBuf>,
+    files_content_hash: String,
     config_text: Option<String>,
     test_intent_text: Option<String>,
     suppressions_text: Option<String>,
-    #[cfg(test)]
-    _source_lifetime: source_lifetime_probe::Lease,
 }
 
+/// Test-only hook between the hashing read in
+/// [`collect_workspace_state_from_files`] and the streaming index read, so
+/// a test can change the workspace exactly where a concurrent edit would.
 #[cfg(test)]
-mod source_lifetime_probe {
+mod between_passes {
+    use std::cell::RefCell;
+    use std::path::{Path, PathBuf};
+
+    type Hook = (PathBuf, Box<dyn FnMut()>);
+    thread_local! {
+        static HOOK: RefCell<Option<Hook>> = const { RefCell::new(None) };
+    }
+
+    /// Run `hook` once after the next hashing read of `root` on this thread.
+    pub(super) fn install(root: &Path, hook: impl FnMut() + 'static) {
+        HOOK.with(|slot| *slot.borrow_mut() = Some((root.into(), Box::new(hook))));
+    }
+
+    pub(super) fn run(root: &Path) {
+        let hook = HOOK.with(|slot| {
+            let mut slot = slot.borrow_mut();
+            if slot.as_ref().is_some_and(|(path, _)| path == root) {
+                slot.take()
+            } else {
+                None
+            }
+        });
+        if let Some((_, mut hook)) = hook {
+            hook();
+        }
+    }
+}
+
+/// Test-only raw-source lifetime instrument (#5132). Streamed file-fact
+/// batches charge the bytes they hold until they drop, so the review path
+/// can prove no raw source is live at evidence construction.
+#[cfg(test)]
+pub(in crate::analysis) mod source_lifetime_probe {
     use std::{
         cell::RefCell,
         path::{Path, PathBuf},
@@ -2308,8 +2504,8 @@ mod source_lifetime_probe {
             });
         }
     }
-    pub(super) struct Lease(Option<(Arc<Mutex<Counts>>, usize)>);
-    pub(super) fn constructed(root: &Path, bytes: usize) -> Lease {
+    pub(in crate::analysis) struct Lease(Option<(Arc<Mutex<Counts>>, usize)>);
+    pub(in crate::analysis) fn constructed(root: &Path, bytes: usize) -> Lease {
         OBSERVER.with(|slot| {
             let slot = slot.borrow();
             let Some((_, counts)) = slot.as_ref().filter(|(path, _)| path == root) else {
@@ -2350,17 +2546,39 @@ mod source_lifetime_probe {
 }
 
 impl OwnedWorkspaceState {
+    /// Build the file-fact index for this state's corpus. The build reads
+    /// each file again, so it is refused when those bytes are not the ones
+    /// this state hashed: the caller's cache key would otherwise name
+    /// facts from a different workspace (#4996). Nothing is stored or
+    /// returned as complete from a refused build.
+    fn build_index(&self, config: &RiprConfig) -> Result<super::facts::CachedRustIndex, String> {
+        // The fold is in input order, and `files_content_hash` folds sorted
+        // paths, so the two compare only for sorted input.
+        debug_assert!(self.files.windows(2).all(|pair| pair[0] <= pair[1]));
+        let cached = rust_index::build_index_from_paths_with_cache_and_test_harnesses(
+            &self.workspace_root,
+            &self.files,
+            harness_registrations(config),
+        )?;
+        if cached.files_content_hash != self.files_content_hash {
+            return Err(format!(
+                "workspace Rust sources under {} changed during analysis; retry the run",
+                self.workspace_root.display()
+            ));
+        }
+        Ok(cached)
+    }
+
     fn cache_key(&self) -> super::seam_cache::RepoSeamCacheKey {
         let cfg_features = std::env::var("RIPR_CFG_FEATURES").ok();
-        WorkspaceState {
+        WorkspaceKeyContext {
             workspace_root: &self.workspace_root,
-            files: &self.files,
             cfg_features: cfg_features.as_deref(),
             config_text: self.config_text.as_deref(),
             test_intent_text: self.test_intent_text.as_deref(),
             suppressions_text: self.suppressions_text.as_deref(),
         }
-        .cache_key()
+        .cache_key(self.files_content_hash.clone())
     }
 }
 
@@ -2379,6 +2597,31 @@ pub(crate) fn inventory_seams_from_index(
     if let Some(disclosure) = rust_index::module_composition_disclosure(index) {
         eprintln!("{disclosure}");
     }
+    seams_from_index_files(production_files, index)
+}
+
+/// The seams of one Rust file from a parse of that file alone, with no
+/// workspace index, test evidence, or classification (#5471). The seam
+/// fields (file, owner, kind, offset, expression) come from the file's own
+/// facts, so they and the seam ids match the workspace inventory's. A file
+/// that does not seed production findings has no seams here, as in the
+/// workspace inventory.
+pub(crate) fn file_seams_without_evidence_at_with_config(
+    root: &Path,
+    config: &RiprConfig,
+    file: &Path,
+) -> Result<Vec<RepoSeam>, String> {
+    let context = production_role_context(root, config, std::iter::once(file));
+    if !workspace::classify_with(file, &context).seeds_production_findings() {
+        return Ok(Vec::new());
+    }
+    let files = [file.to_path_buf()];
+    let index =
+        rust_index::build_index_with_test_harnesses(root, &files, harness_registrations(config))?;
+    Ok(seams_from_index_files(&files, &index))
+}
+
+fn seams_from_index_files(production_files: &[PathBuf], index: &RustIndex) -> Vec<RepoSeam> {
     let mut seams: Vec<RepoSeam> = Vec::new();
 
     // Iterate `production_files` in caller-given order, but the final
@@ -2394,14 +2637,20 @@ pub(crate) fn inventory_seams_from_index(
         // One line index per file: span derivation reuses it for every shape
         // instead of rescanning the source per seam.
         let line_starts = build_line_starts(&facts.source);
+        let crlf_pairs = CrlfPairPositions::build(&facts.source);
         let twins = rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
         for (shape, twin) in facts.probe_shapes.iter().zip(twins) {
             if twin {
                 continue;
             }
-            let Some(seam) =
-                build_seam_from_shape(path, shape, &owners, &facts.source, &line_starts)
-            else {
+            let Some(seam) = build_seam_from_shape(
+                path,
+                shape,
+                &owners,
+                &facts.source,
+                &line_starts,
+                &crlf_pairs,
+            ) else {
                 continue;
             };
             seams.push(seam);
@@ -2435,14 +2684,188 @@ pub(crate) fn inventory_seams_from_index(
     seams
 }
 
+/// Canonical sort identity shared by the legacy full sort and the bounded
+/// collector (issue #4997): file, byte offset, kind as displayed, owner.
+/// Derived field order matches the legacy comparator exactly, so a bounded
+/// prefix equals the legacy sorted prefix.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+struct SeamSortKey {
+    file: PathBuf,
+    byte_offset: usize,
+    kind: String,
+    owner: String,
+}
+
+impl SeamSortKey {
+    fn of(seam: &RepoSeam) -> Self {
+        Self {
+            file: seam.file().to_path_buf(),
+            byte_offset: seam.byte_offset(),
+            kind: seam.kind().as_str().to_string(),
+            owner: seam.owner().to_string(),
+        }
+    }
+}
+
+/// Bounded top-K seam collector (issue #4997). Retains at most K live
+/// seam objects: duplicates never consume a slot and never inflate the
+/// unique total, and a later-discovered seam that sorts before the retained
+/// frontier displaces it. `total_unique` counts deduplicated seams exactly
+/// like the legacy post-dedup length, and `peak_retained` records the
+/// maximum live retained objects so tests pin the bound.
+///
+/// Exact totals with eviction fundamentally require remembering evicted
+/// identities: a dropped seam seen again must still count as seen, so the
+/// collector keeps one compact dedup key per unique seam (path, offset,
+/// kind, owner strings only — no expression or discriminator payloads).
+/// That key set scales with the unique count while live seam objects stay
+/// within K; the high-cardinality instrument pins the live-object side.
+struct BoundedSeamCollector {
+    retained: BTreeMap<SeamSortKey, RepoSeam>,
+    seen: HashSet<SeamSortKey>,
+    total_unique: usize,
+    limit: Option<usize>,
+    peak_retained: usize,
+}
+
+impl BoundedSeamCollector {
+    fn new(limit: Option<usize>) -> Self {
+        Self {
+            retained: BTreeMap::new(),
+            seen: HashSet::new(),
+            total_unique: 0,
+            limit,
+            peak_retained: 0,
+        }
+    }
+
+    fn push(&mut self, seam: RepoSeam) {
+        let key = SeamSortKey::of(&seam);
+        if !self.seen.insert(key.clone()) {
+            return;
+        }
+        self.total_unique += 1;
+        match self.limit {
+            None => {
+                self.retained.insert(key, seam);
+            }
+            Some(cap) => {
+                if self.retained.len() < cap {
+                    self.retained.insert(key, seam);
+                } else if let Some((frontier, _)) = self.retained.last_key_value() {
+                    // Strictly-before-frontier displaces; equal keys are
+                    // duplicates and were already skipped above.
+                    if key < *frontier {
+                        self.retained.pop_last();
+                        self.retained.insert(key, seam);
+                    }
+                }
+            }
+        }
+        self.peak_retained = self.peak_retained.max(self.retained.len());
+    }
+
+    fn finish(self) -> BoundedSeamInventory {
+        BoundedSeamInventory {
+            seams: self.retained.into_values().collect(),
+            total_unique: self.total_unique,
+            peak_retained: self.peak_retained,
+        }
+    }
+}
+
+/// Bounded inventory result: the retained canonical prefix, the exact
+/// deduplicated total (for limit disclosure), and the peak live retained
+/// objects observed while building.
+pub(crate) struct BoundedSeamInventory {
+    pub(crate) seams: Vec<RepoSeam>,
+    pub(crate) total_unique: usize,
+    pub(crate) peak_retained: usize,
+}
+
+/// Bounded twin of [`inventory_seams_from_index`] (issue #4997): visits
+/// every probe shape in the same order with the same index-level
+/// disclosures and the same seam construction, but retains at most K seam
+/// objects instead of materializing the full vector before truncation.
+/// With `limit: None` the retained set equals the legacy output exactly.
+pub(crate) fn inventory_seams_from_index_bounded(
+    production_files: &[PathBuf],
+    index: &RustIndex,
+    limit: Option<usize>,
+) -> Result<BoundedSeamInventory, String> {
+    if let Some(disclosure) = rust_index::lexical_fallback_disclosure(index) {
+        eprintln!("{disclosure}");
+    }
+    if let Some(disclosure) = rust_index::include_resolution_disclosure(index) {
+        eprintln!("{disclosure}");
+    }
+    if let Some(disclosure) = rust_index::module_composition_disclosure(index) {
+        eprintln!("{disclosure}");
+    }
+    let mut collector = BoundedSeamCollector::new(limit);
+    for file in production_files {
+        cancellation::checkpoint()?;
+        let Some(facts) = index.files().get(file) else {
+            continue;
+        };
+        if facts.probe_shapes.is_empty() {
+            continue;
+        }
+        let lookup = rust_index::FileOwnerLookup::new(facts.functions.iter());
+        // One line index per file: span derivation reuses it for every shape
+        // instead of rescanning the source per seam.
+        let line_starts = build_line_starts(&facts.source);
+        let crlf_pairs = CrlfPairPositions::build(&facts.source);
+        let twins = rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
+        for (shape, twin) in facts.probe_shapes.iter().zip(twins) {
+            if twin {
+                continue;
+            }
+            if let Some(seam) = build_seam_from_shape(
+                file,
+                shape,
+                &lookup,
+                &facts.source,
+                &line_starts,
+                &crlf_pairs,
+            ) {
+                collector.push(seam);
+            }
+        }
+    }
+    Ok(collector.finish())
+}
+
+/// Test-only entry that feeds pre-built seams through the bounded
+/// collector core, mirroring `apply_repo_exposure_seam_limit_for_test`.
+#[cfg(test)]
+fn bounded_seams_from_shapes_for_test(
+    seams: Vec<RepoSeam>,
+    limit: Option<usize>,
+) -> Result<BoundedSeamInventory, String> {
+    let mut collector = BoundedSeamCollector::new(limit);
+    for seam in seams {
+        collector.push(seam);
+    }
+    Ok(collector.finish())
+}
+
 fn build_seam_from_shape(
     path: &Path,
     shape: &ProbeShapeFact,
     owners: &rust_index::FileOwnerLookup<'_>,
     source: &str,
     line_starts: &[usize],
+    crlf_pairs: &CrlfPairPositions,
 ) -> Option<RepoSeam> {
     let kind = seam_kind_from_probe_shape(shape.kind)?;
+    // A call whose value feeds a consumer cannot be deleted without breaking
+    // the build, so no mutant asks whether tests notice it is gone. The
+    // consumer's predicate, return or error seam carries that behavior
+    // (#6677). Diff-scope `call_deletion` probes are unchanged.
+    if kind == SeamKind::CallPresence && shape.value_consumed {
+        return None;
+    }
     let owner_fact = owners.owner(shape.start_line)?;
     // Skip shapes whose owner is itself a test function (e.g.,
     // `#[test] fn ...` inside an in-file `#[cfg(test)] mod tests`).
@@ -2458,7 +2881,11 @@ fn build_seam_from_shape(
     let expression = shape.text.clone();
     let required_discriminator = required_discriminator_for(kind, &expression);
     let expected_sink = expected_sink_for(kind);
-    let seam = RepoSeam::new(
+    let owner_call = OwnerCallShape::from_function(owner_fact);
+    // The ID hashes the line-ending-normalized logical offset (#7203): a
+    // CRLF working tree and an LF checkout of the same commit must produce
+    // one seam ID. The stored offset stays raw for rendering and spans.
+    let seam = RepoSeam::new_in_source(
         path,
         owner,
         kind,
@@ -2467,7 +2894,9 @@ fn build_seam_from_shape(
         expression,
         required_discriminator,
         expected_sink,
-    );
+        crlf_pairs,
+    )
+    .with_owner_call(owner_call);
     // Span geometry is additional precision: when derivation fails (stale or
     // mismatched source), the seam keeps line-only behavior rather than
     // carrying wrong coordinates. Match-arm shapes are line-only by policy:
@@ -2487,6 +2916,27 @@ fn build_seam_from_shape(
         Some(span) => Some(seam.with_span(span)),
         None => Some(seam),
     }
+}
+
+/// The seam kind a `ripr check` finding's probe family names (#5471). Probe
+/// families and probe shapes share one vocabulary (`predicate`,
+/// `return_value`, `error_path`, `match_arm`, ...), so this is the shape
+/// mapping; every family a stub route prints maps to exactly one kind.
+/// `None` for `static_unknown` and unknown names.
+pub(crate) fn seam_kind_for_probe_family(family: &str) -> Option<SeamKind> {
+    [
+        ProbeShapeKind::Predicate,
+        ProbeShapeKind::ReturnValue,
+        ProbeShapeKind::ErrorPath,
+        ProbeShapeKind::CallDeletion,
+        ProbeShapeKind::FieldConstruction,
+        ProbeShapeKind::SideEffect,
+        ProbeShapeKind::MatchArm,
+        ProbeShapeKind::UnsafeBoundary,
+    ]
+    .into_iter()
+    .find(|kind| kind.as_str() == family)
+    .and_then(seam_kind_from_probe_shape)
 }
 
 fn seam_kind_from_probe_shape(kind: ProbeShapeKind) -> Option<SeamKind> {
@@ -2686,6 +3136,156 @@ marker = "libtest_mimic::Trial"
             index.extend_functions(functions);
         }
         Ok(index)
+    }
+
+    /// #7203: the production inventory's seam IDs must not move when the
+    /// identical committed tree is checked out with CRLF working-tree
+    /// line endings instead of LF.
+    #[test]
+    fn inventory_seam_ids_are_stable_across_crlf_and_lf_line_endings() -> Result<(), String> {
+        // #7203: the same committed tree checked out with a CRLF working
+        // tree (`core.autocrlf=true`) must yield the same seam IDs as the
+        // LF spelling. `ripr outcome` joins snapshots by seam ID, so a
+        // byte-spelling shift reported a real test improvement as
+        // new+removed instead of closed (RIPR-SPEC-0005 § Stable Seam ID
+        // Rules: IDs must be stable across runs of the same logical code).
+        let lf = concat!(
+            "pub fn discounted_total(amount_cents: i64, discount_threshold_cents: i64) -> i64 {\n",
+            "    if amount_cents >= discount_threshold_cents {\n",
+            "        amount_cents - discount_threshold_cents\n",
+            "    } else {\n",
+            "        amount_cents\n",
+            "    }\n",
+            "}\n",
+        );
+        let crlf = lf.replace('\n', "\r\n");
+        let path = PathBuf::from("src/main.rs");
+        let lf_seams = inventory_seams_from_index(
+            std::slice::from_ref(&path),
+            &index_from_files(&[(path.clone(), lf)])?,
+        );
+        let crlf_seams = inventory_seams_from_index(
+            std::slice::from_ref(&path),
+            &index_from_files(&[(path.clone(), crlf.as_str())])?,
+        );
+        // The fixture must actually carry seams on both sides before the
+        // identity comparison can mean anything.
+        if lf_seams.is_empty() || crlf_seams.is_empty() {
+            return Err(format!(
+                "expected seams in both spellings, got lf={} crlf={}",
+                lf_seams.len(),
+                crlf_seams.len()
+            ));
+        }
+        if lf_seams.len() != crlf_seams.len() {
+            return Err(format!(
+                "line-ending spelling must not change the seam set: lf={} crlf={}",
+                lf_seams.len(),
+                crlf_seams.len()
+            ));
+        }
+        for (lf_seam, crlf_seam) in lf_seams.iter().zip(crlf_seams.iter()) {
+            if lf_seam.owner() != crlf_seam.owner()
+                || lf_seam.kind() != crlf_seam.kind()
+                || lf_seam.expression() != crlf_seam.expression()
+            {
+                return Err(format!(
+                    "spellings must pair the same logical seam: {:?} vs {:?}",
+                    (lf_seam.owner(), lf_seam.kind(), lf_seam.expression()),
+                    (crlf_seam.owner(), crlf_seam.kind(), crlf_seam.expression()),
+                ));
+            }
+            // Control that the fixture exercises the bug: the raw byte
+            // offsets genuinely shift with the spelling (the predicate sits
+            // behind line 1's terminator).
+            if lf_seam.byte_offset() >= crlf_seam.byte_offset() {
+                return Err(format!(
+                    "expected the CRLF spelling to shift the raw offset: lf={} crlf={}",
+                    lf_seam.byte_offset(),
+                    crlf_seam.byte_offset()
+                ));
+            }
+            if lf_seam.id() != crlf_seam.id() {
+                return Err(format!(
+                    "identical logical seam changed ID with line-ending spelling: \
+                     lf {} ({}) at byte {} vs crlf {} ({}) at byte {}",
+                    lf_seam.id().as_str(),
+                    lf_seam.owner(),
+                    lf_seam.byte_offset(),
+                    crlf_seam.id().as_str(),
+                    crlf_seam.owner(),
+                    crlf_seam.byte_offset(),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #5357: the production inventory reads the owner's parser facts into
+    /// the seam's call shape. Before the fix every seam rendered
+    /// `name(..)`, so a `&self` method was suggested as a free call.
+    #[test]
+    fn inventory_seams_carry_owner_call_shape_from_parser_facts() -> Result<(), String> {
+        let source = concat!(
+            "pub fn clamp_units(units: u64) -> u64 { if units > 10 { 10 } else { units } }\n",
+            "pub struct ByteSize(pub u64);\n",
+            "impl ByteSize {\n",
+            "    pub fn as_whole_units(&self, unit: u64) -> u64 { if unit == 0 { 0 } else { self.0 / unit } }\n",
+            "    pub fn from_kib(kib: u64) -> u64 { if kib > 4 { kib * 1024 } else { 0 } }\n",
+            "    pub fn outer(&self) -> bool {\n",
+            "        fn local(n: u64) -> bool { n > 3 }\n",
+            "        local(self.0)\n",
+            "    }\n",
+            "}\n",
+            "pub trait Units {\n",
+            "    fn units(&self) -> u64 { if self.raw() > 1 { 1 } else { 0 } }\n",
+            "    fn raw(&self) -> u64;\n",
+            "}\n",
+            "impl Units for ByteSize { fn raw(&self) -> u64 { if self.0 > 7 { 7 } else { self.0 } } }\n",
+            "impl<T: Copy> Units for &T { fn raw(&self) -> u64 { if 2 > 1 { 2 } else { 3 } } }\n",
+        );
+        let path = PathBuf::from("src/lib.rs");
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let shape_of = |owner_suffix: &str, expression: &str| {
+            seams
+                .iter()
+                .find(|seam| {
+                    seam.owner().ends_with(owner_suffix) && seam.expression().contains(expression)
+                })
+                .map(|seam| seam.owner_call().clone())
+        };
+        let method = |self_type: &str| {
+            Some(OwnerCallShape::Method {
+                self_type: self_type.to_string(),
+            })
+        };
+        assert_eq!(
+            shape_of("::clamp_units", "units > 10"),
+            Some(OwnerCallShape::Free)
+        );
+        assert_eq!(
+            shape_of("::as_whole_units", "unit == 0"),
+            method("ByteSize")
+        );
+        assert_eq!(
+            shape_of("::from_kib", "kib > 4"),
+            Some(OwnerCallShape::Associated {
+                self_type: "ByteSize".to_string()
+            })
+        );
+        // A function-local `fn` is not nameable from a test.
+        assert_eq!(shape_of("::local", "n > 3"), Some(OwnerCallShape::Unknown));
+        // A trait default method has no concrete receiver type.
+        assert_eq!(
+            shape_of("::units", "self.raw() > 1"),
+            Some(OwnerCallShape::Unknown)
+        );
+        // A trait impl for a named type is called with method syntax.
+        assert_eq!(shape_of("::raw", "self.0 > 7"), method("ByteSize"));
+        // A blanket impl's self type is not a plain named path.
+        assert_eq!(shape_of("::raw", "2 > 1"), Some(OwnerCallShape::Unknown));
+        Ok(())
     }
 
     /// Seam id, class and the full evidence payload, so a stage that
@@ -3443,6 +4043,445 @@ fn notify() {}
     }
 
     #[test]
+    fn seam_inventory_keeps_call_presence_only_for_calls_whose_value_is_discarded()
+    -> Result<(), String> {
+        // #6677: deleting a call whose value feeds a consumer does not
+        // compile, so no mutant asks whether tests notice the call is gone.
+        let path = PathBuf::from("src/code.rs");
+        let source = r#"
+pub fn parse_code(s: &str, log: &mut Vec<u32>) -> Result<u32, CodeError> {
+    if s.len() < 4 {
+        return Err(short_error());
+    }
+    let d = digit(s).ok_or(CodeError::NotDigit)?;
+    let total = scale(d) + offset();
+    for c in chars(s) {
+        log.push(c);
+    }
+    notify(d);
+    validate(d)?;
+    let _ = announce(d);
+    let _guard = lock(d);
+    let label = match kind(d) {
+        0 => zero_label(),
+        _ => other_label(),
+    };
+    let run = || refresh(d);
+    while ready() {
+        tick();
+    }
+    sink(label, run);
+    Ok(finish(total))
+}
+
+pub fn tail_discarded(x: u32) {
+    record(x)
+}
+
+pub fn early_unit_return(x: u32) {
+    if x == 0 {
+        return reset(x);
+    }
+    _ = drop_me(x);
+}
+
+pub fn spaced_unit(x: u32) -> ( ) {
+    spaced(x)
+}
+
+pub fn future_tail(x: u32) -> impl Future<Output = ()> {
+    async move { work(x).await }
+}
+
+pub fn checked(x: u32) -> Result<(), CodeError> {
+    commit(x)
+}
+
+pub fn loop_value(x: u32) -> u32 {
+    let found = loop {
+        break search(x);
+    };
+    let tagged = 'outer: {
+        for step in 0..x {
+            if step > 2 {
+                break 'outer probe(step);
+            }
+        }
+        0
+    };
+    loop {
+        break flush(x);
+    }
+    while x > 0 {
+        break;
+    }
+    found + tagged
+}
+
+pub fn positions(x: u32, v: &[u32]) -> u32 {
+    let a = pair(x).0;
+    let b = v[slot(x)];
+    let c = [elem(x), 1];
+    let t = (tup(x), 2);
+    let p = Point { y: field_init(x) };
+    let r = 0..bound(x);
+    let n = !flag(x);
+    let w = &borrowed(x);
+    let k = (wrapped(x)) as u64;
+    let m = if let Some(z) = maybe(x) { z } else { 0 };
+    match x {
+        _ if guard(x) => 1,
+        _ => 0,
+    }
+}
+"#;
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let call_presence = seams
+            .iter()
+            .filter(|seam| seam.kind() == SeamKind::CallPresence)
+            .map(|seam| seam.expression().to_string())
+            .collect::<Vec<_>>();
+        let mut expected = vec![
+            "announce(d)".to_string(),
+            "drop_me(x)".to_string(),
+            "flush(x)".to_string(),
+            "lock(d)".to_string(),
+            "reset(x)".to_string(),
+            "spaced(x)".to_string(),
+            "work(x)".to_string(),
+            "log.push(c)".to_string(),
+            "notify(d)".to_string(),
+            "record(x)".to_string(),
+            "refresh(d)".to_string(),
+            "sink(label, run)".to_string(),
+            "tick()".to_string(),
+            "validate(d)".to_string(),
+        ];
+        let mut observed = call_presence.clone();
+        observed.sort();
+        expected.sort();
+        assert_eq!(observed, expected, "call_presence seams: {call_presence:?}");
+
+        // The consumer seams stay, and the diff-scope `call_deletion` shapes
+        // are still emitted for every call, consumed or not.
+        let kinds = seams.iter().map(|seam| seam.kind()).collect::<Vec<_>>();
+        assert!(kinds.contains(&SeamKind::PredicateBoundary), "{kinds:?}");
+        assert!(kinds.contains(&SeamKind::ReturnValue), "{kinds:?}");
+        let facts = RaRustSyntaxAdapter.summarize_file(&path, source)?;
+        let consumed = facts
+            .probe_shapes
+            .iter()
+            .filter(|shape| shape.kind == ProbeShapeKind::CallDeletion && shape.value_consumed)
+            .map(|shape| shape.text.as_str())
+            .collect::<Vec<_>>();
+        for call in [
+            "s.len()",
+            "short_error()",
+            "digit(s)",
+            "digit(s).ok_or(CodeError::NotDigit)",
+            "scale(d)",
+            "offset()",
+            "chars(s)",
+            "kind(d)",
+            "zero_label()",
+            "other_label()",
+            "ready()",
+            "finish(total)",
+            "Ok(finish(total))",
+            "commit(x)",
+            "search(x)",
+            "probe(step)",
+            "pair(x)",
+            "slot(x)",
+            "elem(x)",
+            "tup(x)",
+            "field_init(x)",
+            "bound(x)",
+            "flag(x)",
+            "borrowed(x)",
+            "wrapped(x)",
+            "maybe(x)",
+            "guard(x)",
+        ] {
+            assert!(
+                consumed.contains(&call),
+                "{call} should read consumed: {consumed:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn seam_inventory_keeps_call_presence_for_a_same_module_unit_type_alias() -> Result<(), String>
+    {
+        // #7101: a same-module `type X = ();` return is unit, so the tail
+        // call keeps `call_presence`. A non-unit alias, a qualified path,
+        // a chained alias, `Self::Output`, cfg-gated aliases, competing
+        // same-name imports, and const/static block shadows stay consumed.
+        let path = PathBuf::from("src/alias.rs");
+        let source = r#"
+type Unit = ();
+type Spaced = ( );
+type Value = u32;
+type Nested = Unit;
+
+pub fn unit_alias_tail() -> Unit {
+    notify()
+}
+
+pub fn spaced_alias_tail() -> Spaced {
+    spaced_notify()
+}
+
+pub fn early_unit_alias(x: u32) -> Unit {
+    if x == 0 {
+        return reset();
+    }
+    work()
+}
+
+pub fn non_unit_alias_tail() -> Value {
+    produce()
+}
+
+pub fn qualified_alias_tail() -> self::Unit {
+    crate_notify()
+}
+
+pub fn chained_alias_tail() -> Nested {
+    chained_notify()
+}
+
+mod other {
+    type Unit = ();
+    pub fn inner_unit_tail() -> Unit {
+        inner_notify()
+    }
+}
+
+pub fn other_module_alias() -> other::Unit {
+    other_notify()
+}
+
+struct Holder;
+trait Make {
+    type Output;
+    fn assoc_unit() -> Self::Output;
+}
+impl Make for Holder {
+    type Output = ();
+    fn assoc_unit() -> Self::Output {
+        impl_notify()
+    }
+}
+
+pub fn outer_with_shadow() {
+    type Unit = u32;
+    fn inner_shadow() -> Unit {
+        nested_shadow_notify()
+    }
+    let _ = inner_shadow();
+}
+
+pub fn outer_nested_unit() {
+    fn inner_unit() -> Unit {
+        nested_unit_notify()
+    }
+    inner_unit()
+}
+
+pub fn generic_shadow<Unit>() -> Unit {
+    generic_notify()
+}
+
+struct GenericHolder<Unit>(Unit);
+impl<Unit> GenericHolder<Unit> {
+    fn method_generic() -> Unit {
+        method_generic_notify()
+    }
+}
+
+#[doc = "unconditional"]
+type Allowed = ();
+pub fn allowed_alias_tail() -> Allowed {
+    allowed_notify()
+}
+
+#[cfg_attr(test, allow(dead_code))]
+type CfgAttrAllowed = ();
+pub fn cfg_attr_allow_tail() -> CfgAttrAllowed {
+    cfg_attr_allow_notify()
+}
+
+#[cfg_attr(windows, cfg(test))]
+type NestedCfg = ();
+pub fn nested_cfg_tail() -> NestedCfg {
+    nested_cfg_notify()
+}
+
+pub fn const_generic_unit<const Unit: usize>() -> Unit {
+    const_generic_notify()
+}
+
+type r#RawUnit = ();
+pub fn raw_alias_tail() -> RawUnit {
+    raw_alias_notify()
+}
+
+pub fn raw_return_tail() -> r#Unit {
+    raw_return_notify()
+}
+
+pub fn raw_generic_shadow<r#Unit>() -> Unit {
+    raw_generic_notify()
+}
+
+#[expect(non_camel_case_types)]
+type unit = ();
+pub fn expect_alias_tail() -> unit {
+    expect_notify()
+}
+
+#[cfg_attr(test, expect(non_camel_case_types))]
+type cfg_attr_expect = ();
+pub fn cfg_attr_expect_tail() -> cfg_attr_expect {
+    cfg_attr_expect_notify()
+}
+
+#[rewrite_unit]
+type Rewritten = ();
+pub fn rewritten_alias_tail() -> Rewritten {
+    rewritten_notify()
+}
+
+#[cfg_attr(test, rewrite_unit)]
+type CfgAttrRewritten = ();
+pub fn cfg_attr_rewritten_tail() -> CfgAttrRewritten {
+    cfg_attr_rewritten_notify()
+}
+
+#[rewrite_fn]
+pub fn rewritten_fn_tail() -> Unit {
+    rewritten_fn_notify()
+}
+
+#[cfg_attr(test, rewrite_fn)]
+pub fn cfg_attr_rewritten_fn_tail() -> Unit {
+    cfg_attr_rewritten_fn_notify()
+}
+
+#[inline]
+pub fn inline_alias_tail() -> Unit {
+    inline_notify()
+}
+
+#[rewrite_impl]
+impl Holder {
+    fn rewritten_impl_method() -> Unit {
+        rewritten_impl_notify()
+    }
+}
+
+#[rewrite_mod]
+mod rewritten {
+    type Unit = ();
+    pub fn rewritten_mod_tail() -> Unit {
+        rewritten_mod_notify()
+    }
+}
+
+#[cfg_attr(test, doc = "note, cfg(test)")]
+type DocComma = ();
+pub fn doc_comma_tail() -> DocComma {
+    doc_comma_notify()
+}
+
+#[cfg_attr /* keep */ (test, allow(dead_code))]
+type CommentedAllow = ();
+pub fn commented_cfg_attr_allow_tail() -> CommentedAllow {
+    commented_cfg_attr_allow_notify()
+}
+
+#[cfg /* off */ (windows)]
+type CommentedCfg = ();
+pub fn commented_cfg_tail() -> CommentedCfg {
+    commented_cfg_notify()
+}
+
+#[r#cfg(windows)]
+type RawCfg = ();
+pub fn raw_cfg_tail() -> RawCfg {
+    raw_cfg_notify()
+}
+
+#[cfg_attr /* off */ (windows, cfg(test))]
+type CommentedNestedCfg = ();
+pub fn commented_nested_cfg_tail() -> CommentedNestedCfg {
+    commented_nested_cfg_notify()
+}
+
+#[cfg(windows)]
+type CfgUnit = ();
+mod cfg_other {
+    pub type CfgUnit = u32;
+}
+#[cfg(not(windows))]
+use cfg_other::CfgUnit;
+pub fn cfg_alias_tail() -> CfgUnit {
+    cfg_notify()
+}
+
+const _: () = {
+    type Unit = u32;
+    fn inner_const() -> Unit {
+        const_shadow_notify()
+    }
+};
+
+static SHADOW: () = {
+    type Unit = u32;
+    fn inner_static() -> Unit {
+        static_shadow_notify()
+    }
+};
+"#;
+        let index = index_from_files(&[(path.clone(), source)])?;
+        let seams = inventory_seams_from_index(std::slice::from_ref(&path), &index);
+        let mut call_presence = seams
+            .iter()
+            .filter(|seam| seam.kind() == SeamKind::CallPresence)
+            .map(|seam| seam.expression().to_string())
+            .collect::<Vec<_>>();
+        call_presence.sort();
+        let mut expected = vec![
+            "notify()".to_string(),
+            "spaced_notify()".to_string(),
+            "reset()".to_string(),
+            "work()".to_string(),
+            "inner_notify()".to_string(),
+            "inner_shadow()".to_string(),
+            "inner_unit()".to_string(),
+            "allowed_notify()".to_string(),
+            "cfg_attr_allow_notify()".to_string(),
+            "const_generic_notify()".to_string(),
+            "raw_alias_notify()".to_string(),
+            "raw_return_notify()".to_string(),
+            "commented_cfg_attr_allow_notify()".to_string(),
+            "doc_comma_notify()".to_string(),
+            "expect_notify()".to_string(),
+            "cfg_attr_expect_notify()".to_string(),
+            "inline_notify()".to_string(),
+        ];
+        expected.sort();
+        assert_eq!(
+            call_presence, expected,
+            "call_presence seams: {call_presence:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn seam_inventory_skips_inline_test_functions_inside_production_files() -> Result<(), String> {
         let path = PathBuf::from("src/lib.rs");
         let source = r#"
@@ -3689,6 +4728,350 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         Ok(out)
     }
 
+    // ---- streaming workspace state (issue #4996) ----------------------
+    //
+    // Production inventory folds content identity incrementally and builds
+    // file facts from bounded on-demand reads. These tests pin the
+    // streaming path to the legacy retain-everything oracle on the same
+    // fixture: identical hash, identical cache key, identical index, and
+    // identical seam identities/order.
+
+    fn streaming_probe_fixture(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>, String> {
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn check(value: i32) -> bool { value > 0 }\n",
+        )?;
+        write_file(
+            &root.join("src/other.rs"),
+            "pub fn other(flag: bool) -> i32 { if flag { 1 } else { 0 } }\n",
+        )?;
+        write_file(
+            &root.join("tests/basic.rs"),
+            "#[test]\nfn basic() {\n    assert!(crate::check(1));\n}\n",
+        )?;
+        // Enough production files to cross the 64-file parse-batch
+        // boundary, so the streaming path must drain several chunks. Each
+        // carries ~10 KiB of comment so the corpus (~2 MiB) is much larger
+        // than one batch, which the live-byte bound below relies on.
+        let padding = "x".repeat(10 * 1024);
+        for i in 0..200 {
+            write_file(
+                &root.join(format!("src/gen_{i:03}.rs")),
+                &format!("/*{padding}*/\npub fn gen_{i}(value: i32) -> bool {{ value > {i} }}\n"),
+            )?;
+        }
+        // Raw non-UTF-8 bytes in a comment: a stream that lossily
+        // normalized its reads would lose this file's disclosure and its
+        // raw-content cache key, which the whole-index comparison catches.
+        std::fs::write(
+            root.join("src/latin1.rs"),
+            b"// caf\xe9 \xff\xfe\npub fn latin(value: i32) -> bool { value < 0 }\n",
+        )
+        .map_err(|err| format!("write latin1 fixture: {err}"))?;
+        // Legacy oracle load in reverse discovery order: the hash must not
+        // depend on enumeration order.
+        let discovered = workspace::discover_rust_files(root)?;
+        let mut reversed = discovered;
+        reversed.reverse();
+        let mut loaded = Vec::with_capacity(reversed.len());
+        for rel in reversed {
+            let bytes = std::fs::read(root.join(&rel))
+                .map_err(|err| format!("read oracle {}: {err}", rel.display()))?;
+            loaded.push((rel, bytes));
+        }
+        Ok(loaded)
+    }
+
+    #[test]
+    fn streaming_collect_matches_legacy_hash_key_and_order() -> Result<(), String> {
+        let root = make_tempdir("stream-collect-oracle")?;
+        let loaded = streaming_probe_fixture(&root)?;
+        let config = RiprConfig::default();
+
+        let legacy_hash = super::super::seam_cache::files_content_hash(&loaded);
+        let state = collect_workspace_state(&root, &config)?;
+        // Compile-time bound (issue #4996 acceptance): the state retains
+        // sorted paths only — reintroducing a `Vec<u8>` corpus breaks
+        // this build.
+        let _: &Vec<PathBuf> = &state.files;
+        if state.files_content_hash != legacy_hash {
+            return Err(format!(
+                "streaming hash {} must equal legacy hash {legacy_hash}",
+                state.files_content_hash
+            ));
+        }
+        if state.files.windows(2).any(|pair| pair[0] > pair[1]) {
+            return Err("streaming state must retain paths in sorted order".into());
+        }
+
+        // Reverse-order input must fold to the same paths and hash.
+        let reversed_paths: Vec<PathBuf> =
+            loaded.iter().map(|(path, _)| path.clone()).rev().collect();
+        let restated = collect_workspace_state_from_files(&root, &config, reversed_paths)?;
+        if restated.files != state.files || restated.files_content_hash != legacy_hash {
+            return Err("collect must be independent of input enumeration order".into());
+        }
+
+        // The streaming key must equal the legacy snapshot key field for
+        // field, so warm cache entries stay authoritative across the cutover.
+        let cfg_features = std::env::var("RIPR_CFG_FEATURES").ok();
+        let legacy_key = super::super::seam_cache::WorkspaceState {
+            workspace_root: &root,
+            files: &loaded,
+            cfg_features: cfg_features.as_deref(),
+            config_text: config.source_text(),
+            test_intent_text: None,
+            suppressions_text: None,
+        }
+        .cache_key();
+        if state.cache_key() != legacy_key {
+            return Err("streaming cache key must equal the legacy snapshot key".into());
+        }
+
+        // A changed byte must change the aggregate identity.
+        write_file(
+            &root.join("src/lib.rs"),
+            "pub fn check(value: i32) -> bool { value >= 0 }\n",
+        )?;
+        let changed = collect_workspace_state(&root, &config)?;
+        if changed.files_content_hash == legacy_hash {
+            return Err("changed source bytes must change files_content_hash".into());
+        }
+        if changed.cache_key() == legacy_key {
+            return Err("changed source bytes must invalidate the workspace cache key".into());
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn streaming_index_build_matches_loaded_oracle() -> Result<(), String> {
+        let root = make_tempdir("stream-index-oracle")?;
+        let loaded = streaming_probe_fixture(&root)?;
+        let paths: Vec<PathBuf> = loaded.iter().map(|(path, _)| path.clone()).collect();
+
+        // Streaming first, so it runs cold (misses, parses, stores); the
+        // legacy oracle then runs warm against the same file-fact entries.
+        let streamed =
+            rust_index::build_index_from_paths_with_cache_and_test_harnesses(&root, &paths, &[])?;
+        if streamed.file_fact_cache.misses != paths.len() || streamed.file_fact_cache.hits != 0 {
+            return Err(format!(
+                "streaming cold build must miss every file, got {} misses {} hits over {} files",
+                streamed.file_fact_cache.misses,
+                streamed.file_fact_cache.hits,
+                paths.len()
+            ));
+        }
+        let legacy = rust_index::build_index_from_loaded_files_with_cache_and_test_harnesses(
+            &root,
+            &loaded,
+            &[],
+        )?;
+        if legacy.file_fact_cache.hits != paths.len() {
+            return Err(format!(
+                "legacy build after streaming must hit every file fact, got {} hits over {} files",
+                legacy.file_fact_cache.hits,
+                paths.len()
+            ));
+        }
+        let latin1 = PathBuf::from("src/latin1.rs");
+        if !legacy.index.non_utf8_sources.contains(&latin1) {
+            return Err("probe fixture must contain a non-UTF-8 source".into());
+        }
+        // Whole-index equality, not counts: the serialized index carries
+        // every file fact, include, authority, package name and non-UTF-8
+        // disclosure.
+        let streamed_json =
+            serde_json::to_string(&streamed.index).map_err(|err| err.to_string())?;
+        let legacy_json = serde_json::to_string(&legacy.index).map_err(|err| err.to_string())?;
+        if streamed_json != legacy_json {
+            return Err(format!(
+                "streaming index must match legacy oracle: {} vs {} files, {} vs {} functions",
+                streamed.index.files().len(),
+                legacy.index.files().len(),
+                streamed.index.functions().len(),
+                legacy.index.functions().len(),
+            ));
+        }
+
+        let config = RiprConfig::default();
+        let state = collect_workspace_state(&root, &config)?;
+        let production = production_files_from_state_with_role(&state, &config);
+        if production.is_empty() {
+            return Err("probe fixture must yield production files".into());
+        }
+        let streamed_seams = inventory_seams_from_index(&production, &streamed.index);
+        let legacy_seams = inventory_seams_from_index(&production, &legacy.index);
+        if streamed_seams != legacy_seams {
+            return Err("streaming seam identities and order must match the legacy oracle".into());
+        }
+        if streamed_seams.is_empty() {
+            return Err("probe fixture must yield at least one seam".into());
+        }
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn streaming_index_build_holds_at_most_one_batch_of_raw_source() -> Result<(), String> {
+        let root = make_tempdir("stream-live-bytes")?;
+        let loaded = streaming_probe_fixture(&root)?;
+        let paths: Vec<PathBuf> = loaded.iter().map(|(path, _)| path.clone()).collect();
+        let corpus_bytes: usize = loaded.iter().map(|(_, bytes)| bytes.len()).sum();
+        let largest_file = loaded
+            .iter()
+            .map(|(_, bytes)| bytes.len())
+            .max()
+            .unwrap_or_default();
+        let (streamed, high_water) = crate::analysis::facts::streamed_source_bytes::observe(|| {
+            rust_index::build_index_from_paths_with_cache_and_test_harnesses(&root, &paths, &[])
+        });
+        let streamed = streamed?;
+        let _ = std::fs::remove_dir_all(&root);
+        if streamed.index.files().len() != paths.len() {
+            return Err("streaming build must index every fixture file".into());
+        }
+        // The instrument saw the reads, and no more than one batch
+        // (64 of ~204 similar files) was live at once.
+        if high_water < largest_file {
+            return Err(format!(
+                "live-byte probe saw {high_water} bytes, less than one {largest_file}-byte file"
+            ));
+        }
+        if high_water * 2 > corpus_bytes {
+            return Err(format!(
+                "streaming build held {high_water} of {corpus_bytes} corpus bytes at once"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Drive one inventory entry point that builds from collected state.
+    fn run_inventory_path(path: &str, root: &Path, config: &RiprConfig) -> Result<(), String> {
+        match path {
+            "full" => inventory_classified_seams_report_at_with_config(root, config).map(drop),
+            "compact" => inventory_compact_classified_seams_at_with_config(root, config).map(drop),
+            "counts" => inventory_seam_grip_class_counts_at_with_config(root, config).map(drop),
+            "review" => inventory_diff_scoped_classified_seams_at_with_config(
+                root,
+                config,
+                &[PathBuf::from("src/lib.rs")],
+                &["check".into()],
+            )
+            .map(drop),
+            "rerun" => inventory_changed_test_classified_seams_at_with_config_node(
+                root,
+                config,
+                Path::new("tests/basic.rs"),
+                None,
+            )
+            .map(drop)
+            .map_err(String::from),
+            other => Err(format!("unknown inventory path {other}")),
+        }
+    }
+
+    /// Whether that entry point's own cache holds an entry under `key`.
+    fn stored_inventory_entry(path: &str, root: &Path, key: &RepoSeamCacheKey) -> bool {
+        match path {
+            "full" => matches!(
+                RepoSeamFactCache::at(root).load_classified_seams_with_fallback(key),
+                CacheLoad::Hit(_)
+            ),
+            "compact" => matches!(
+                RepoSeamFactCache::at_compact_classified(root)
+                    .load_classified_seams_with_fallback(key),
+                CacheLoad::Hit(_)
+            ),
+            "counts" => matches!(
+                RepoSeamCountCache::at(root).load_counts(key),
+                CacheLoad::Hit(_)
+            ),
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn a_source_edited_between_hash_and_index_reads_is_refused_and_never_cached()
+    -> Result<(), String> {
+        const ORIGINAL: &str = "pub fn check(value: i32) -> bool { value > 0 }\n";
+        const EDITED: &str = "pub fn check(value: i32) -> bool { value >= 10 }\n";
+        let config = RiprConfig::default();
+        for path in ["full", "compact", "counts", "review", "rerun"] {
+            let root = make_tempdir(&format!("stream-moved-{path}"))?;
+            let lib = root.join("src/lib.rs");
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(&lib, ORIGINAL)?;
+            write_file(
+                &root.join("tests/basic.rs"),
+                "#[test]\nfn basic() {\n    assert!(demo::check(1));\n}\n",
+            )?;
+            let original_key = collect_workspace_state(&root, &config)?.cache_key();
+
+            let edit = lib.clone();
+            between_passes::install(&root, move || {
+                let _ = std::fs::write(&edit, EDITED);
+            });
+            let refused = run_inventory_path(path, &root, &config);
+            if std::fs::read_to_string(&lib).map_err(|err| err.to_string())? != EDITED {
+                return Err(format!("{path}: the between-passes edit must have run"));
+            }
+            let edited_key = collect_workspace_state(&root, &config)?.cache_key();
+            if edited_key == original_key {
+                return Err(format!("{path}: the edit must change the workspace key"));
+            }
+            match refused {
+                Err(message) if message.contains("changed during analysis") => {}
+                other => {
+                    return Err(format!(
+                        "{path}: a moved source must be refused, got {other:?}"
+                    ));
+                }
+            }
+            for key in [&original_key, &edited_key] {
+                if stored_inventory_entry(path, &root, key) {
+                    return Err(format!("{path}: a refused build must store no entry"));
+                }
+            }
+
+            // Control: the same workspace, unmoved, completes and stores.
+            run_inventory_path(path, &root, &config)?;
+            if matches!(path, "full" | "compact" | "counts")
+                && !stored_inventory_entry(path, &root, &edited_key)
+            {
+                return Err(format!("{path}: an unmoved build must store its entry"));
+            }
+            let _ = std::fs::remove_dir_all(&root);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn streaming_collect_fails_closed_on_unreadable_file() -> Result<(), String> {
+        let root = make_tempdir("stream-collect-missing")?;
+        let config = RiprConfig::default();
+        match collect_workspace_state_from_files(
+            &root,
+            &config,
+            vec![PathBuf::from("src/missing.rs")],
+        ) {
+            Ok(_) => Err("collect must fail closed for an unreadable file".into()),
+            Err(err) => {
+                if err.contains("read ") && err.contains("missing.rs") {
+                    let _ = std::fs::remove_dir_all(&root);
+                    Ok(())
+                } else {
+                    Err(format!("unexpected collect error shape: {err}"))
+                }
+            }
+        }
+    }
+
     #[test]
     fn cache_store_status_label_is_trace_safe() {
         let skip_reason = format!(
@@ -3889,6 +5272,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     end_byte: 26,
                     kind: ProbeShapeKind::UnsafeBoundary,
                     text: "owner_body".into(),
+                    value_consumed: false,
                 }],
                 ..FileFacts::default()
             },
@@ -3942,6 +5326,7 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     end_byte: 126,
                     kind: ProbeShapeKind::Predicate,
                     text: "x >= 0".into(),
+                    value_consumed: false,
                 }],
                 ..FileFacts::default()
             },
@@ -6013,6 +7398,335 @@ marker = "libtest_mimic::Trial"
         Ok(())
     }
 
+    // ---- bounded seam inventory (issue #4997) ------------------------
+    //
+    // The finite-limit production path must retain at most K seam objects
+    // plus a small dedup bound while reporting the exact unique total, and
+    // its retained prefix must equal the legacy full-materialization
+    // oracle. These tests pin the bounded constructor to that oracle.
+
+    fn synthetic_seam(
+        file: &str,
+        owner: &str,
+        kind: &str,
+        offset: usize,
+    ) -> Result<RepoSeam, String> {
+        Ok(RepoSeam::new(
+            file,
+            owner,
+            SeamKind::from_str(kind).ok_or_else(|| format!("unknown kind {kind}"))?,
+            offset,
+            1,
+            "synthetic()",
+            RequiredDiscriminator::BoundaryValue {
+                description: "synthetic".to_string(),
+            },
+            ExpectedSink::SideEffect,
+        ))
+    }
+
+    fn bounded_probe_sources() -> Vec<(PathBuf, &'static str)> {
+        vec![
+            (
+                PathBuf::from("src/z_last.rs"),
+                "pub fn zeta(x: i32) -> bool { x > 0 }\n",
+            ),
+            (
+                PathBuf::from("src/m_mid.rs"),
+                "pub fn mu_a(x: i32) -> bool { x > 1 }\npub fn mu_b(x: i32) -> bool { x < 1 }\n",
+            ),
+            (
+                PathBuf::from("src/a_first.rs"),
+                "pub fn alpha(x: i32) -> bool { x > 2 }\n",
+            ),
+        ]
+    }
+
+    fn legacy_oracle(
+        files: &[(PathBuf, &str)],
+        order: &[usize],
+    ) -> Result<(crate::analysis::rust_index::RustIndex, Vec<RepoSeam>), String> {
+        let index = index_from_files(files)?;
+        let paths: Vec<PathBuf> = order.iter().map(|&i| files[i].0.clone()).collect();
+        let seams = inventory_seams_from_index(&paths, &index);
+        Ok((index, seams))
+    }
+
+    /// Fixed-seed shuffle (LCG): deterministic without new dependencies.
+    fn shuffled_order(len: usize, mut seed: u64) -> Vec<usize> {
+        let mut order: Vec<usize> = (0..len).collect();
+        for i in (1..len).rev() {
+            seed = seed
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            order.swap(i, (seed >> 33) as usize % (i + 1));
+        }
+        order
+    }
+
+    #[test]
+    fn bounded_matches_legacy_across_limits_and_orders() -> Result<(), String> {
+        let files = bounded_probe_sources();
+        let orders = vec![
+            (0..files.len()).collect::<Vec<_>>(),
+            (0..files.len()).rev().collect::<Vec<_>>(),
+            shuffled_order(files.len(), 0x4997),
+        ];
+        for order in &orders {
+            let (index, legacy) = legacy_oracle(&files, order)?;
+            let total = legacy.len();
+            if total == 0 {
+                return Err("probe fixture must yield seams".to_string());
+            }
+            let limits: Vec<Option<usize>> = vec![
+                None,
+                Some(total + 100),
+                Some(total),
+                Some(total - 1),
+                Some(1),
+                Some(0),
+            ];
+            for limit in limits {
+                let paths: Vec<PathBuf> = order.iter().map(|&i| files[i].0.clone()).collect();
+                let bounded = inventory_seams_from_index_bounded(&paths, &index, limit)?;
+                let expected: Vec<RepoSeam> = match limit {
+                    None => legacy.clone(),
+                    Some(k) => legacy.iter().take(k).cloned().collect(),
+                };
+                if bounded.seams != expected {
+                    return Err(format!(
+                        "order {order:?} limit {limit:?}: retained prefix must equal legacy oracle"
+                    ));
+                }
+                if bounded.total_unique != total {
+                    return Err(format!(
+                        "order {order:?} limit {limit:?}: total_unique {} must equal legacy {total}",
+                        bounded.total_unique
+                    ));
+                }
+                if let Some(k) = limit
+                    && bounded.peak_retained > k
+                {
+                    return Err(format!(
+                        "order {order:?} limit {k}: peak_retained {} exceeds K",
+                        bounded.peak_retained
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_first_seam_discovered_last() -> Result<(), String> {
+        // Canonical-first seam lives in src/a_first.rs, discovered last in
+        // this order; K=1 must still retain exactly the legacy head.
+        let files = bounded_probe_sources();
+        let order = vec![0, 1, 2];
+        let (index, legacy) = legacy_oracle(&files, &order)?;
+        if legacy.is_empty() {
+            return Err("probe fixture must yield seams".to_string());
+        }
+        if legacy[0].file() != PathBuf::from("src/a_first.rs").as_path() {
+            return Err("fixture must sort src/a_first.rs first".to_string());
+        }
+        let paths: Vec<PathBuf> = order.iter().map(|&i| files[i].0.clone()).collect();
+        let bounded = inventory_seams_from_index_bounded(&paths, &index, Some(1))?;
+        if bounded.seams != legacy[..1] {
+            return Err("K=1 must retain exactly the legacy head seam".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_matches_legacy_on_error_path_twins() -> Result<(), String> {
+        // The bounded walker must drop the same error-path twin shapes the
+        // legacy walker drops; a bounded copy without the twin filter would
+        // retain seams the legacy oracle never emits.
+        let files = vec![(
+            PathBuf::from("src/err.rs"),
+            "pub fn load(flag: bool) -> Result<i32, String> {\n    if flag {\n        return Err(String::from(\"bad\"));\n    }\n    Ok(0)\n}\n",
+        )];
+        let index = index_from_files(&files)?;
+        let facts = index
+            .files()
+            .get(&files[0].0)
+            .ok_or("fixture file missing from index")?;
+        let twins =
+            crate::analysis::rust_index::error_path_twins(&facts.probe_shapes, &facts.source);
+        if !twins.contains(&true) {
+            return Err("fixture must yield at least one error-path twin".to_string());
+        }
+        let (_, legacy) = legacy_oracle(&files, &[0])?;
+        for limit in [None, Some(legacy.len()), Some(1)] {
+            let bounded = inventory_seams_from_index_bounded(&[files[0].0.clone()], &index, limit)?;
+            let expected: Vec<RepoSeam> = match limit {
+                None => legacy.clone(),
+                Some(k) => legacy.iter().take(k).cloned().collect(),
+            };
+            if bounded.seams != expected {
+                return Err(format!("limit {limit:?}: bounded must equal legacy oracle"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_duplicate_shapes_do_not_consume_slots() -> Result<(), String> {
+        // Same identity pushed twice must neither consume a second slot
+        // nor inflate the total; a pre-dedup counter would report 8/6 here
+        // instead of the correct 5/5 with 3 retained under K=3.
+        let mut shapes = Vec::new();
+        for (owner, offset) in [
+            ("dup::a", 10),
+            ("dup::b", 20),
+            ("dup::c", 30),
+            ("dup::d", 40),
+            ("dup::e", 50),
+        ] {
+            shapes.push(synthetic_seam(
+                "src/dup.rs",
+                owner,
+                "predicate_boundary",
+                offset,
+            )?);
+        }
+        shapes.push(synthetic_seam(
+            "src/dup.rs",
+            "dup::b",
+            "predicate_boundary",
+            20,
+        )?);
+        shapes.push(synthetic_seam(
+            "src/dup.rs",
+            "dup::d",
+            "predicate_boundary",
+            40,
+        )?);
+        shapes.push(synthetic_seam(
+            "src/dup.rs",
+            "dup::a",
+            "predicate_boundary",
+            10,
+        )?);
+        let bounded = bounded_seams_from_shapes_for_test(shapes, Some(3))?;
+        if bounded.seams.len() != 3 {
+            return Err(format!(
+                "K=3 must retain 3 unique seams, got {}",
+                bounded.seams.len()
+            ));
+        }
+        if bounded.total_unique != 5 {
+            return Err(format!(
+                "total_unique must be 5 deduplicated seams, got {}",
+                bounded.total_unique
+            ));
+        }
+        let owners: Vec<&str> = bounded.seams.iter().map(|seam| seam.owner()).collect();
+        if owners != ["dup::a", "dup::b", "dup::c"] {
+            return Err(format!("retained prefix must be [a, b, c], got {owners:?}"));
+        }
+        if bounded.peak_retained > 3 {
+            return Err(format!(
+                "peak_retained {} exceeds K=3",
+                bounded.peak_retained
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_peak_stays_capped_on_high_cardinality() -> Result<(), String> {
+        // 200 generated files cross several would-be batch windows; K=5
+        // must report a peak of at most 5 while matching the legacy head.
+        let files: Vec<(PathBuf, String)> = (0..200)
+            .map(|i| {
+                (
+                    PathBuf::from(format!("src/gen_{i:03}.rs")),
+                    format!("pub fn gen_{i}(x: i32) -> bool {{ x > {i} }}\n"),
+                )
+            })
+            .collect();
+        let borrowed: Vec<(PathBuf, &str)> = files
+            .iter()
+            .map(|(path, source)| (path.clone(), source.as_str()))
+            .collect();
+        let index = index_from_files(&borrowed)?;
+        let paths: Vec<PathBuf> = borrowed.iter().map(|(path, _)| path.clone()).collect();
+        let legacy = inventory_seams_from_index(&paths, &index);
+        if legacy.len() < 100 {
+            return Err(format!(
+                "high-cardinality fixture must yield many seams, got {}",
+                legacy.len()
+            ));
+        }
+        let bounded = inventory_seams_from_index_bounded(&paths, &index, Some(5))?;
+        if bounded.seams != legacy[..5] {
+            return Err("K=5 must retain exactly the legacy head".to_string());
+        }
+        if bounded.total_unique != legacy.len() {
+            return Err("total_unique must equal the legacy unique count".to_string());
+        }
+        if bounded.peak_retained > 5 {
+            return Err(format!(
+                "peak_retained {} exceeds K=5 over {} unique seams",
+                bounded.peak_retained,
+                legacy.len()
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_unlimited_equals_legacy_exactly() -> Result<(), String> {
+        let files = bounded_probe_sources();
+        let (index, legacy) = legacy_oracle(&files, &[0, 1, 2])?;
+        let bounded = inventory_seams_from_index_bounded(
+            &files
+                .iter()
+                .map(|(path, _)| path.clone())
+                .collect::<Vec<_>>(),
+            &index,
+            None,
+        )?;
+        if bounded.seams != legacy {
+            return Err(
+                "unlimited bounded inventory must equal the legacy vec exactly".to_string(),
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn bounded_cancellation_fails_closed() -> Result<(), String> {
+        use crate::analysis::cancellation::{
+            AnalysisAbortKind, AnalysisCancellationToken, with_token,
+        };
+        let files = bounded_probe_sources();
+        let (index, _) = legacy_oracle(&files, &[0, 1, 2])?;
+        let paths: Vec<PathBuf> = files.iter().map(|(path, _)| path.clone()).collect();
+        // Control: uncancelled token walks fine.
+        let calm = AnalysisCancellationToken::new();
+        let ok = with_token(&calm, || {
+            inventory_seams_from_index_bounded(&paths, &index, Some(1))
+        });
+        if ok.is_err() {
+            return Err("uncancelled walk must succeed".to_string());
+        }
+        // Pre-cancelled token must fail closed before publishing anything.
+        let fired = AnalysisCancellationToken::new();
+        if !fired.cancel(AnalysisAbortKind::Cancelled) {
+            return Err("test token must accept cancellation".to_string());
+        }
+        let refused = with_token(&fired, || {
+            inventory_seams_from_index_bounded(&paths, &index, Some(1))
+        });
+        if refused.is_ok() {
+            return Err("cancelled walk must fail closed, not publish a prefix".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn apply_repo_exposure_seam_limit_above_cap_returns_some_with_configured_source()
     -> Result<(), String> {
@@ -6159,6 +7873,7 @@ pub fn check_b(x: i32) -> bool { x < 0 }
                     discriminate: stage(StageState::Unknown),
                     observed_values: Vec::new(),
                     missing_discriminators: Vec::new(),
+                    statically_contradicted_related_tests: 0,
                     new_test_target: None,
                 },
                 class: SeamGripClass::Ungripped,
@@ -6243,6 +7958,7 @@ pub fn check_b(x: i32) -> bool { x < 0 }
                     discriminate: stage(StageState::Unknown),
                     observed_values: Vec::new(),
                     missing_discriminators: Vec::new(),
+                    statically_contradicted_related_tests: 0,
                     new_test_target: None,
                 },
                 class: SeamGripClass::Ungripped,
@@ -6263,6 +7979,10 @@ pub fn check_b(x: i32) -> bool { x < 0 }
     fn changed_test_inventory_recomputes_only_directly_called_owner_seams() -> Result<(), String> {
         let root = make_tempdir("targeted-test-owner-selection")?;
         write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"pricing_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
             &root.join("src/lib.rs"),
             r#"
 pub fn discounted_total(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }
@@ -6272,6 +7992,7 @@ pub fn unrelated_total(amount: i32) -> i32 { if amount >= 50 { amount - 5 } else
         write_file(
             &root.join("tests/pricing.rs"),
             r#"
+use pricing_fixture::{discounted_total};
 #[test]
 fn discounted_total_case() {
     assert_eq!(discounted_total(100), 90);
@@ -6331,6 +8052,10 @@ fn discounted_total_case() {
     fn changed_test_inventory_selects_one_test_node_within_a_file() -> Result<(), String> {
         let root = make_tempdir("targeted-test-node-selection")?;
         write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"pricing_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
             &root.join("src/lib.rs"),
             r#"
 pub fn discounted_total(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }
@@ -6340,6 +8065,7 @@ pub fn surcharge_total(amount: i32) -> i32 { if amount >= 50 { amount + 5 } else
         write_file(
             &root.join("tests/pricing.rs"),
             r#"
+use pricing_fixture::{discounted_total, surcharge_total};
 #[test]
 fn discounted_total_case() { assert_eq!(discounted_total(100), 90); }
 #[test]
@@ -6441,6 +8167,512 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
             }
             Ok(_) => Err("ambiguous direct owner must fail closed".to_string()),
         }
+    }
+
+    #[test]
+    fn changed_test_inventory_excludes_foreign_constructor_collision() -> Result<(), String> {
+        let root = make_tempdir("targeted-foreign-constructor")?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub struct Plan { pub published_payload_bytes: usize, pub suppressed_payload_bytes: usize }
+pub fn diagnostic_refresh_plan() -> Plan {
+    Plan { published_payload_bytes: 1, suppressed_payload_bytes: 0 }
+}
+pub struct Alpha;
+impl Alpha { pub fn new() -> Self { Self } }
+pub struct Beta;
+impl Beta { pub fn new() -> Self { Self } }
+use std::collections::BTreeMap;
+#[test] fn selected() {
+    let previous = BTreeMap::<usize, usize>::new();
+    let plan = diagnostic_refresh_plan();
+    assert!(plan.published_payload_bytes > 0);
+    assert!(previous.is_empty());
+}
+"#,
+        )?;
+        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lib.rs"),
+            Some("selected"),
+        )?;
+        let owners = inventory
+            .classified
+            .iter()
+            .map(|entry| entry.seam.owner())
+            .collect::<BTreeSet<_>>();
+        if inventory.selected_test_count != 1
+            || inventory.direct_call_names != ["diagnostic_refresh_plan"]
+            || owners != BTreeSet::from(["src/lib.rs::diagnostic_refresh_plan"])
+            || !inventory
+                .classified
+                .iter()
+                .any(|entry| entry.seam.expression().contains("published_payload_bytes"))
+            || !inventory
+                .classified
+                .iter()
+                .any(|entry| entry.seam.expression().contains("suppressed_payload_bytes"))
+        {
+            return Err(format!(
+                "foreign constructor changed exact owner selection: {owners:?}"
+            ));
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    fn composed_grouped_import_fixture(callable_static: bool) -> Result<PathBuf, String> {
+        let root = make_tempdir("targeted-composed-grouped-import")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"selected_binding\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(&root.join("src/lib.rs"), "mod lsp;\n")?;
+        write_file(
+            &root.join("src/lsp.rs"),
+            "mod diagnostics;\n#[cfg(test)]\nmod tests;\n#[cfg(test)]\nmod support;\n",
+        )?;
+        write_file(
+            &root.join("src/lsp/diagnostics.rs"),
+            r#"
+pub struct Plan { pub published_payload_bytes: usize, pub suppressed_payload_bytes: usize }
+pub fn diagnostic_refresh_plan() -> Plan {
+    Plan { published_payload_bytes: 1, suppressed_payload_bytes: 0 }
+}
+"#,
+        )?;
+        write_file(
+            &root.join("src/lsp/support.rs"),
+            "pub static diagnostic_refresh_plan: fn() -> super::diagnostics::Plan = || super::diagnostics::Plan { published_payload_bytes: 9, suppressed_payload_bytes: 9 };\n",
+        )?;
+        let module = if callable_static {
+            "support"
+        } else {
+            "diagnostics"
+        };
+        write_file(
+            &root.join("src/lsp/tests.rs"),
+            &format!(
+                r#"
+use super::{module}::{{diagnostic_refresh_plan}};
+#[test] fn selected() {{
+    let plan = diagnostic_refresh_plan();
+    assert!(plan.published_payload_bytes > 0);
+}}
+"#
+            ),
+        )?;
+        let files = [
+            "src/lib.rs",
+            "src/lsp.rs",
+            "src/lsp/diagnostics.rs",
+            "src/lsp/tests.rs",
+            "src/lsp/support.rs",
+        ]
+        .map(|path| root.join(path));
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        assert!(
+            index
+                .functions()
+                .iter()
+                .any(|function| function.name == "diagnostic_refresh_plan"
+                    && !function.source_role.is_evidence_role())
+        );
+        assert!(
+            index
+                .tests()
+                .iter()
+                .any(|test| test.name == "selected" && test.file == root.join("src/lsp/tests.rs"))
+        );
+        assert!(
+            index
+                .files()
+                .get(&root.join("src/lsp/tests.rs"))
+                .is_some_and(|facts| !facts.used_lexical_fallback)
+        );
+        Ok(root)
+    }
+
+    #[test]
+    fn changed_test_inventory_composed_grouped_import_reaches_exact_owner() -> Result<(), String> {
+        let root = composed_grouped_import_fixture(false)?;
+        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lsp/tests.rs"),
+            Some("selected"),
+        )?;
+        assert_eq!(inventory.selected_test_count, 1);
+        assert_eq!(inventory.direct_call_names, ["diagnostic_refresh_plan"]);
+        assert!(!inventory.classified.is_empty());
+        assert!(
+            inventory.classified.iter().all(
+                |entry| entry.seam.owner() == "src/lsp/diagnostics.rs::diagnostic_refresh_plan"
+            )
+        );
+        for field in ["published_payload_bytes", "suppressed_payload_bytes"] {
+            assert!(
+                inventory
+                    .classified
+                    .iter()
+                    .any(|entry| entry.seam.expression().contains(field)),
+                "missing {field}"
+            );
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_composed_callable_static_refuses_owner() -> Result<(), String> {
+        let root = composed_grouped_import_fixture(true)?;
+        let result = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lsp/tests.rs"),
+            Some("selected"),
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        assert!(
+            matches!(
+                result,
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                })
+            ),
+            "callable static must select no production seams: {result:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_keeps_distinct_qualified_constructor_owners() -> Result<(), String> {
+        let root = make_tempdir("targeted-qualified-constructors")?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub struct Alpha;
+impl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
+pub struct Beta;
+impl Beta { pub fn new(x: i32) -> i32 { if x > 5 { x } else { 5 } } }
+#[test] fn selected() {
+    assert_eq!(crate::Alpha::new(1), 1);
+    assert_eq!(crate::Beta::new(6), 6);
+}
+"#,
+        )?;
+        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lib.rs"),
+            Some("selected"),
+        )?;
+        let owners = inventory
+            .classified
+            .iter()
+            .map(|entry| entry.seam.owner())
+            .collect::<BTreeSet<_>>();
+        if owners != BTreeSet::from(["src/lib.rs::impl Alpha::new", "src/lib.rs::impl Beta::new"])
+            || inventory.direct_call_names != ["new"]
+        {
+            return Err(format!(
+                "qualified constructors lost owner identity: {owners:?}"
+            ));
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_refuses_unresolved_call_identity() -> Result<(), String> {
+        for (label, setup, call) in [
+            ("receiver", "", "unknown.new(1)"),
+            ("foreign-path", "", "foreign::Alpha::new(1)"),
+            ("alias", "type Alias = Alpha;", "Alias::new(1)"),
+            ("rename", "use foreign::Beta as Alpha;", "Alpha::new(1)"),
+            ("foreign-free", "", "foreign::owner(1)"),
+            ("foreign-import", "use foreign::owner;", "owner(1)"),
+            ("mixed", "", "{ owner(1); unknown.new(1) }"),
+            (
+                "same-line",
+                "",
+                "{ crate::Alpha::new(1); foreign::Alpha::new(2) }",
+            ),
+            ("generic", "", "Alpha::<u8>::new(1)"),
+            (
+                "spaced-foreign",
+                "",
+                "{ owner(1); foreign :: Alpha :: new(1) }",
+            ),
+            ("raw-foreign", "", "{ owner(1); foreign::r#Alpha::new(1) }"),
+            ("raw-free", "", "foreign::r#owner(1)"),
+            ("mixed-raw-free", "", "{ owner(1); foreign::r#owner(2) }"),
+            ("receiver-newline", "", "{ owner(1); unknown.\n owner(1) }"),
+            ("generic-parameter", "", "{ owner(1); T::new(1) }"),
+            (
+                "free-alias",
+                "use owner as renamed;",
+                "{ owner(1); renamed(1) }",
+            ),
+            (
+                "multiline-foreign",
+                "",
+                "{ owner(1); foreign::\n Alpha::new(1) }",
+            ),
+        ] {
+            let root = make_tempdir(&format!("targeted-unresolved-{label}"))?;
+            let parameters = if label == "generic-parameter" {
+                "<T>"
+            } else {
+                ""
+            };
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    r#"
+pub struct Alpha;
+impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}
+pub fn owner(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }}
+{setup}
+#[test] fn selected{parameters}() {{ assert_eq!({call}, 1); }}
+"#
+                ),
+            )?;
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            match result {
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                }) => {}
+                other => {
+                    return Err(format!(
+                        "{label} must retain a named unresolved limitation: {other:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_refuses_competing_bare_bindings() -> Result<(), String> {
+        let body =
+            "let _ = std::collections::BTreeMap::<usize, usize>::new(); assert_eq!(owner(1), 1);";
+        let mut controls = [
+            "use crate::support::owner;",
+            "use self::support::{owner};",
+            "use crate::support::*;",
+            "use crate::{support::*};",
+            "use crate::support::r#owner;",
+            "use crate::support::{r#owner};",
+            "use crate::support::owner as r#owner;",
+        ]
+        .into_iter()
+        .map(|import| {
+            (
+                import.to_string(),
+                format!(
+                    "#[cfg(test)]\nmod support {{\n    pub fn owner(x: i32) -> i32 {{ x }}\n}}\n#[test] fn selected() {{ {import} {body} }}"
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+        controls.push((
+            "lexical-support".into(),
+            format!("#[cfg(test)]\nmod support {{\n    pub fn owner(x: i32) -> i32 {{ x }}\n    #[test] fn selected() {{ {body} }}\n}}"),
+        ));
+        controls.push((
+            "module-value".into(),
+            format!("#[cfg(test)]\nmod tests {{\n    const owner: fn(i32) -> i32 = |x| x;\n    #[test] fn selected() {{ {body} }}\n}}"),
+        ));
+        for (label, tests) in controls {
+            let root = make_tempdir("targeted-competing-bare-binding")?;
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    r#"
+pub fn owner(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }}
+pub struct Alpha;
+impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}
+pub struct Beta;
+impl Beta {{ pub fn new(x: i32) -> i32 {{ if x > 1 {{ x }} else {{ 1 }} }} }}
+{tests}
+"#
+                ),
+            )?;
+            if label != "module-value" {
+                let index = crate::analysis::facts::build_index(&root, &[root.join("src/lib.rs")])?;
+                assert!(
+                    index.functions().iter().any(|function| {
+                        function.name == "owner" && function.source_role.is_evidence_role()
+                    }),
+                    "{label}: fixture must contain the competing evidence-only helper"
+                );
+            }
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            match result {
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                }) => {}
+                other => {
+                    return Err(format!(
+                        "{label} must refuse competing bare binding: {other:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_preserves_exact_constructor_owner() -> Result<(), String> {
+        let root = make_tempdir("targeted-exact-constructor")?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub struct lower;
+impl lower { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
+pub struct Beta;
+impl Beta { pub fn new(x: i32) -> i32 { if x > 5 { x } else { 5 } } }
+#[test] fn selected() { assert_eq!(crate::lower::new(1), 1); }
+"#,
+        )?;
+        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lib.rs"),
+            Some("selected"),
+        )?;
+        let owners = inventory
+            .classified
+            .iter()
+            .map(|entry| entry.seam.owner())
+            .collect::<BTreeSet<_>>();
+        if owners != BTreeSet::from(["src/lib.rs::impl lower::new"]) {
+            return Err(format!(
+                "same-name sibling leaked into selected owner seams: {owners:?}"
+            ));
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_refuses_shadowed_and_nested_constructor_paths() -> Result<(), String>
+    {
+        for import in [
+            "use crate::support::Alpha;",
+            "use self::support::{Alpha};",
+            "use crate::support::*;",
+            "use crate::{support::*};",
+            "use crate::support::r#Alpha;",
+            "use crate::support::{r#Alpha};",
+            "use crate::support::Alpha as r#Alpha;",
+            "use crate::support::Alpha::{self};",
+        ] {
+            let root = make_tempdir("targeted-import-shadowed-constructor")?;
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    r#"
+pub struct Alpha;
+impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}
+#[cfg(test)] mod support {{
+    pub struct Alpha;
+    impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 1 {{ x }} else {{ 1 }} }} }}
+}}
+#[test] fn selected() {{ {import} assert_eq!(Alpha::new(1), 1); }}
+#[test] fn explicit() {{ {import} assert_eq!(crate::Alpha::new(1), 1); }}
+"#
+                ),
+            )?;
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            let explicit = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("explicit"),
+            )?;
+            let explicit_owners = explicit
+                .classified
+                .iter()
+                .map(|entry| entry.seam.owner())
+                .collect::<BTreeSet<_>>();
+            if explicit.selected_test_count != 1
+                || explicit_owners != BTreeSet::from(["src/lib.rs::impl Alpha::new"])
+            {
+                return Err(format!(
+                    "{import} changed explicit root owner: {explicit_owners:?}"
+                ));
+            }
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            match result {
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                }) => {}
+                other => return Err(format!("{import} must refuse shadowed owner: {other:?}")),
+            }
+        }
+        for call in ["Alpha::new(1)", "crate::first::Alpha::new(1)"] {
+            let root = make_tempdir("targeted-shadowed-constructor")?;
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    r#"
+pub struct Alpha;
+impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}
+mod first {{ pub struct Alpha; impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 1 {{ x }} else {{ 1 }} }} }} }}
+#[cfg(test)] mod tests {{
+    struct Alpha;
+    impl Alpha {{ fn new(x: i32) -> i32 {{ x }} }}
+    #[test] fn selected() {{ assert_eq!({call}, 1); }}
+}}
+"#
+                ),
+            )?;
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            match result {
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                }) => {}
+                other => {
+                    return Err(format!(
+                        "shadowed/nested path must stay unresolved: {other:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     const GENERATED_SKIP_PREDICATE: &str = concat!(

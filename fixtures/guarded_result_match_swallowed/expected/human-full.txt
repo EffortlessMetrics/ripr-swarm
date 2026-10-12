@@ -11,7 +11,7 @@ WARNING ./src/lib.rs:9
   id: probe:src_lib.rs:error_path:94d13aee
 
 Changed
-  before: return Err(ParseError::UnexpectedEof);
+  before: return Err(ParseError::UnexpectedEof)
   after:  return Err(ParseError::InvalidData)
 
 Probe
@@ -54,7 +54,7 @@ WARNING ./src/lib.rs:9
   id: probe:src_lib.rs:return_value:1f4cb0e7
 
 Changed
-  before: return Err(ParseError::UnexpectedEof);
+  before: return Err(ParseError::UnexpectedEof)
   after:  return Err(ParseError::InvalidData)
 
 Probe

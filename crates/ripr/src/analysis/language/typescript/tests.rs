@@ -3721,8 +3721,17 @@ fn extract_tests_recognizes_test_each_table_calls() {
     );
     assert_eq!(tests.len(), 1);
     assert_eq!(tests[0].name, "discounts %#");
-    assert_eq!(tests[0].assertions.len(), 1);
-    assert_eq!(tests[0].assertions[0].matcher, "toBe");
+    // An inline literal table reads one concrete assertion per row.
+    assert_eq!(tests[0].assertions.len(), 2);
+    assert!(tests[0].assertions.iter().all(|a| a.matcher == "toBe"));
+    assert_eq!(
+        tests[0]
+            .assertions
+            .iter()
+            .map(|a| a.expected_value_or_variant.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("90"), Some("140")]
+    );
     assert!(tests[0].body_text.contains("applyDiscount("));
 }
 
@@ -3758,6 +3767,7 @@ fn extract_tests_records_safe_mock_payload_shapes() {
     expect(sink.record).toHaveBeenCalledWith("ready");
     expect(sink.record).toHaveBeenCalledWith({ status: "ok" });
     expect(sink.record).toHaveBeenCalledTimes(1);
+    expect(sink.record).toHaveBeenCalledWith("ready", 2);
 });
 "#,
     );
@@ -3778,6 +3788,7 @@ fn extract_tests_records_safe_mock_payload_shapes() {
             Some("expect(sink.record).toHaveBeenCalledWith(\"ready\")".to_string()),
             Some("expect(sink.record).toHaveBeenCalledWith({ status: \"ok\" })".to_string()),
             Some("expect(sink.record).toHaveBeenCalledTimes(1)".to_string()),
+            Some("expect(sink.record).toHaveBeenCalledWith(\"ready\", 2)".to_string()),
         ]
     );
 }
@@ -3790,7 +3801,7 @@ fn extract_tests_keeps_ambiguous_mock_payload_shapes_unbounded() {
     expect(sink.record).toHaveBeenCalledWith(status);
     expect(sink.record).toHaveBeenCalledWith({ status });
     expect(sink.record).toHaveBeenCalledWith(...args);
-    expect(sink.record).toHaveBeenCalledWith("ready", "extra");
+    expect(sink.record).toHaveBeenCalledWith("ready", status);
     expect(sink[method]).toHaveBeenCalledWith("ready");
     expect(getSink()).toHaveBeenCalledTimes(1);
 });
@@ -10869,6 +10880,125 @@ fn delta5_verify_command_absent_from_missing_list_when_runner_resolved() -> Resu
     Ok(())
 }
 
+/// #6826 discriminating contrast: the ONLY framework evidence in the
+/// workspace is `"test": "node test/pricing.test.mjs"` — the zero-dependency
+/// node:test shape whose script carries neither the `node --test` nor the
+/// `node:test` marker. The old substring marker set failed detection closed
+/// (unresolved framework/runner, no verify command); the broadened detector
+/// must resolve `node_test` from the manifest so the finding carries
+/// `typescript_verify_command` and `verify_command` leaves
+/// `missing_actionability_fields`, with the unresolved limitations gone.
+#[test]
+fn node_direct_file_script_resolves_framework_hint_and_verify_command() -> Result<(), String> {
+    let root = ts_unique_tempdir("node-direct-script")?;
+
+    // Zero dependencies, no lockfile: the direct-invocation script is the
+    // sole package.json evidence.
+    ts_write_file(
+        &root.join("package.json"),
+        r#"{"name":"pricing","scripts":{"test":"node test/pricing.test.mjs"}}"#,
+    )?;
+
+    ts_write_file(
+        &root.join("src/pricing.ts"),
+        "export function applyDiscount(amount: number, threshold: number): number {\n  if (amount >= threshold) {\n    return amount - 10;\n  }\n  return amount;\n}\n",
+    )?;
+
+    ts_write_file(
+        &root.join("test/pricing.test.mjs"),
+        "import { test } from 'node:test';\nimport assert from 'node:assert';\nimport { applyDiscount } from '../src/pricing.ts';\ntest('applies discount above threshold', () => {\n  assert.equal(applyDiscount(100, 50), 90);\n});\n",
+    )?;
+
+    let adapter = TypeScriptAdapter;
+    let options = AnalysisOptions {
+        root: root.clone(),
+        base: None,
+        diff_file: None,
+        mode: crate::analysis::AnalysisMode::Draft,
+        include_unchanged_tests: false,
+        resolve_tsconfig_paths: false,
+        perl_facts_path: None,
+        perl_producer_failure: None,
+        git_timeout: None,
+        git_candidate: None,
+        production_like_targets: Default::default(),
+        test_harnesses: Vec::new(),
+        resolved_subject_identity: None,
+        open_rust_index_paths: Default::default(),
+    };
+    let policy = OraclePolicy::default();
+    let changed_files = vec![ChangedFile {
+        path: PathBuf::from("src/pricing.ts"),
+        added_lines: vec![crate::analysis::diff::ChangedLine {
+            line: 2,
+            new_side_line: 2,
+            text: "  if (amount >= threshold) {".to_string(),
+        }],
+        removed_lines: Vec::new(),
+    }];
+
+    let result = adapter.analyze_diff(&options, &policy, &changed_files);
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+
+    if result.findings.is_empty() {
+        return Err(format!(
+            "expected at least one finding; got none (changed_files={})",
+            result.changed_files
+        ));
+    }
+    let evidence = &result.findings[0].evidence;
+
+    // Framework detection resolves from the direct-invocation script.
+    if !evidence
+        .iter()
+        .any(|ev| ev == "typescript_framework_hint: node_test")
+    {
+        return Err(format!(
+            "expected typescript_framework_hint: node_test from the direct node script; evidence={evidence:?}"
+        ));
+    }
+
+    // The blocking unresolved-hint limitations must be gone.
+    for limitation in [
+        "typescript_package_limitation: typescript_framework_hint_unresolved",
+        "typescript_package_limitation: typescript_runner_hint_unresolved",
+        "typescript_package_limitation: typescript_test_runner_unresolved",
+    ] {
+        if evidence.iter().any(|ev| ev == limitation) {
+            return Err(format!(
+                "detection resolved node_test but the blocking limitation {limitation} is still emitted; evidence={evidence:?}"
+            ));
+        }
+    }
+
+    // The verify command is derived from the framework mapping.
+    let verify = evidence
+        .iter()
+        .find(|ev| ev.starts_with("typescript_verify_command:"))
+        .ok_or_else(|| {
+            format!("expected a typescript_verify_command evidence line; evidence={evidence:?}")
+        })?;
+    if !verify.contains("node --test test/pricing.test.mjs") {
+        return Err(format!(
+            "expected the node --test verify command targeting the direct script's file, got: {verify:?}"
+        ));
+    }
+
+    // The emitted command must not be listed as missing two lines over.
+    if let Some(line) = evidence
+        .iter()
+        .find(|ev| ev.starts_with("missing_actionability_fields:"))
+        && line.contains("verify_command")
+    {
+        return Err(format!(
+            "missing_actionability_fields still lists verify_command while typescript_verify_command is present (self-contradiction): {line:?}"
+        ));
+    }
+
+    Ok(())
+}
+
 /// Control 2 (cockpit delta #5, issue #1245 — fail-closed):
 /// When the test runner is NOT resolved (no package.json, no framework), the
 /// emitted evidence MUST NOT carry `typescript_verify_command` and MUST still
@@ -15618,12 +15748,21 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
 
 mod commonjs_export_tests;
 mod directory_specifier_tests;
+mod dropped_term_tests;
+mod error_payload_tests;
+mod instance_class_tests;
+mod literal_matcher_tests;
 mod loop_declared_tests;
+mod match_object_tests;
 mod mock_form_tests;
+mod mocked_callee_tests;
 mod module_entry_tests;
+mod nested_callback_tests;
 mod out_dir_specifier_tests;
 mod reexport_chain_tests;
 mod scope_receiver_tests;
+mod spec0243_owner_tests;
+mod table_case_tests;
 
 /// #4769: an unresolved import of a workspace package by name is a package
 /// manifest question. The limitation names that manifest instead of telling

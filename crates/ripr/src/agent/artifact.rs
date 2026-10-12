@@ -32,6 +32,8 @@ pub(crate) const CONTENT_COMMITMENT_CANONICALIZATION: &str = "raw_json_placehold
 pub(crate) const CONTENT_SHA256_PLACEHOLDER: &str =
     "sha256:0000000000000000000000000000000000000000000000000000000000000000";
 
+pub(crate) const VERIFY_GIT_PROVENANCE_REQUIREMENT: &str = "agent verify requires Git/revision provenance: snapshots must come from a Git repository with a concrete HEAD and available worktree status.";
+
 /// `analysis.format` / `analysis.command` token of the repo-exposure identity
 /// envelope. The repo-exposure producer command is part of the validated
 /// identity contract (`validate_repo_exposure_artifact`).
@@ -49,9 +51,20 @@ pub(crate) struct RepoExposureArtifactContext {
     pub(crate) mode: String,
     pub(crate) base_revision: Option<String>,
     pub(crate) input_identity: String,
+    /// Full Rust inventory provenance supplied by that analysis, never
+    /// computed by artifact serialization or inferred from these seams.
+    pub(crate) corpus_key: Option<crate::analysis::seam_cache::RepoSeamCacheKey>,
 }
 
 impl RepoExposureArtifactContext {
+    pub(crate) fn with_rust_corpus_key(
+        mut self,
+        key: Option<&crate::analysis::seam_cache::RepoSeamCacheKey>,
+    ) -> Self {
+        self.corpus_key = key.cloned();
+        self
+    }
+
     /// Build the portable semantic input identity for one repo-exposure run.
     ///
     /// The canonical string covers exactly the inputs that affect analysis
@@ -134,6 +147,7 @@ impl RepoExposureArtifactContext {
             mode,
             base_revision,
             input_identity,
+            corpus_key: None,
         })
     }
 }
@@ -245,21 +259,8 @@ fn analysis_artifact_metadata(
     content_sha256: &str,
 ) -> Result<Value, String> {
     let root = canonical_root(&context.root)?;
-    let head = git_output(&root, &["rev-parse", "HEAD"])
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| is_full_sha(value))
-        .unwrap_or_else(|| "unavailable".to_string());
-    let status = git_output(&root, &["status", "--porcelain", "--untracked-files=no"])
-        .ok()
-        .map(|value| {
-            if value.trim().is_empty() {
-                "clean"
-            } else {
-                "dirty"
-            }
-        })
-        .unwrap_or("unavailable");
+    let head = current_git_head(&root).unwrap_or_else(|_| "unavailable".to_string());
+    let status = current_git_worktree_status(&root).unwrap_or("unavailable");
     Ok(json!({
         "kind": artifact_kind,
         "schema_version": ARTIFACT_IDENTITY_SCHEMA_VERSION,
@@ -361,7 +362,10 @@ pub(crate) fn validate_repo_exposure_artifact(
         || identity.analysis.input_identity.trim().is_empty()
         || identity.analysis.command != "ripr check --format repo-exposure-json"
         || identity.analysis.profile != identity.analysis.mode
-        || !matches!(identity.analysis.worktree.as_str(), "clean" | "dirty")
+        || !matches!(
+            identity.analysis.worktree.as_str(),
+            "clean" | "dirty" | "unavailable"
+        )
     {
         return Err(format!(
             "agent verify {label} artifact has invalid or unknown producer identity"
@@ -414,7 +418,7 @@ pub(crate) fn validate_repo_exposure_artifact(
             expected_root.display()
         ));
     }
-    if !is_full_sha(&identity.repository.head) {
+    if identity.repository.head != "unavailable" && !is_full_sha(&identity.repository.head) {
         return Err(format!(
             "agent verify {label} artifact has invalid repository HEAD `{}`",
             identity.repository.head
@@ -443,6 +447,16 @@ pub(crate) fn validate_repo_exposure_artifact(
         return Err(format!(
             "agent verify {label} artifact content commitment mismatch: declared {}, recomputed {}",
             identity.content_sha256, recomputed
+        ));
+    }
+
+    // `unavailable` is an honest producer limitation, not an unknown producer.
+    // Diagnose it only after root, snapshot and content admission checks, and
+    // always refuse it before currentness or movement can be calculated.
+    if identity.repository.head == "unavailable" || identity.analysis.worktree == "unavailable" {
+        return Err(format!(
+            "agent verify {label} artifact has unavailable Git/revision provenance (repository.head={}, analysis.worktree={}); {VERIFY_GIT_PROVENANCE_REQUIREMENT} Regenerate both snapshots from the existing Git checkout. Patch analysis and agent brief remain supported without verification provenance.",
+            identity.repository.head, identity.analysis.worktree,
         ));
     }
 
@@ -726,8 +740,26 @@ fn canonical_root(root: &Path) -> Result<PathBuf, String> {
     })
 }
 
-fn display_root(root: &Path) -> String {
-    crate::agent::loop_commands::root_path_display(root)
+/// Render the artifact repository root for the portable document (#7370).
+/// `canonical_root` produces the verbatim `\\?\` device spelling on Windows,
+/// and `repository.root` was the one machine-consumed field embedding it, so
+/// cross-artifact joins, prefix checks, dashboard logs, and a human opening
+/// the JSON all met a spelling no other ripr surface uses. The field now
+/// renders through the shared human path owner: the plain drive-letter form
+/// with stable separators. No consumer depends on the prefixed form — `agent
+/// verify` re-canonicalizes the declared root, and the repo-seams artifact
+/// check compares against this same renderer — so identity moves with the
+/// renderer instead of breaking. Other verbatim forms (`\\?\UNC\..`,
+/// `\\?\Volume{..}`) render exactly as given, like every other
+/// `human_path` consumer.
+pub(crate) fn display_root(root: &Path) -> String {
+    display_root_for_host(root, cfg!(windows))
+}
+
+/// [`display_root`] with the host made explicit so both answers are testable
+/// anywhere (#4378 pattern).
+fn display_root_for_host(root: &Path, windows: bool) -> String {
+    crate::output::path::human_path_text(&root.to_string_lossy(), windows)
 }
 
 pub(crate) fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
@@ -777,6 +809,17 @@ pub(crate) fn current_git_head(root: &Path) -> Result<String, String> {
         ));
     }
     Ok(head.to_string())
+}
+
+/// The artifact producer's bounded worktree probe, shared with limitation
+/// disclosure. A successful HEAD read alone does not establish this status.
+pub(crate) fn current_git_worktree_status(root: &Path) -> Result<&'static str, String> {
+    let status = git_output(root, &["status", "--porcelain", "--untracked-files=no"])?;
+    Ok(if status.trim().is_empty() {
+        "clean"
+    } else {
+        "dirty"
+    })
 }
 
 /// A HEAD read that also detects an A-B-A swap between two reads (#5930).
@@ -2195,13 +2238,21 @@ mod tests {
                     document["artifact"]["analysis"]["profile"] = json!("release");
                 }),
                 ("analysis worktree state is unknown", |document| {
-                    document["artifact"]["analysis"]["worktree"] = json!("unavailable");
+                    document["artifact"]["analysis"]["worktree"] = json!("unknown");
                 }),
             ];
             for (case, mutate) in cases {
                 let mutated = validate_mutated_identity(&root, &document, mutate)?;
                 expect_identity_rejection(case, mutated, "invalid or unknown producer identity")?;
             }
+            let unavailable = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["analysis"]["worktree"] = json!("unavailable");
+            })?;
+            expect_identity_rejection(
+                "unavailable worktree provenance",
+                unavailable,
+                "Git/revision provenance",
+            )?;
             Ok(())
         })();
         let cleanup =
@@ -3235,6 +3286,36 @@ mod tests {
         result?;
         cleanup?;
         Ok(())
+    }
+
+    /// #7370: `artifact.repository.root` embedded the verbatim `\\?\` device
+    /// spelling that `Path::canonicalize` produces on Windows — the one
+    /// machine-consumed field using a spelling no other ripr surface uses.
+    /// The rendered root strips the prefix (plain drive-letter form, stable
+    /// separators) on Windows and keeps the native spelling elsewhere;
+    /// `agent verify` re-canonicalizes the declared root and the repo-seams
+    /// check compares against this same renderer, so no consumer depends on
+    /// the prefixed form.
+    #[test]
+    fn artifact_repository_root_renders_without_windows_verbatim_prefix() {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shapes are assembled from parts.
+        let drive = "F:";
+        let verbatim = format!(r"\\?\{drive}\tmp\ripr-audit-scratch");
+        let root = Path::new(&verbatim);
+        let windows = display_root_for_host(root, true);
+        assert_eq!(windows, format!("{drive}/tmp/ripr-audit-scratch"));
+        assert!(!windows.contains("/?/"), "{windows}");
+        assert!(!windows.contains('\\'), "{windows}");
+        let unix = display_root_for_host(root, false);
+        assert_eq!(unix, verbatim);
+        // A plain spelling is already portable and passes through unchanged
+        // apart from separator stabilization.
+        let plain = format!(r"{drive}\tmp\ripr-audit-scratch");
+        assert_eq!(
+            display_root_for_host(Path::new(&plain), true),
+            format!("{drive}/tmp/ripr-audit-scratch")
+        );
     }
 
     /// (#2823 test 6, removal-experiment oracle) Reintroducing the absolute

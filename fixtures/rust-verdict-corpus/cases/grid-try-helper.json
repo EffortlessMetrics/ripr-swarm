@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "error_propagation_question_mark",
   "test_shape": "helper_wrapped_assert",
-  "hard_case": "The assert_eq! inside a local check_* helper is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: not in the test's own body; #6482).",
+  "hard_case": "The helper's assert_eq! is admitted (RIPR-SPEC-0197 rule 7, #6482), but no assertion pins an exact error variant for the changed `?`, as in grid-try-exact.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

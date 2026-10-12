@@ -394,6 +394,7 @@ pub fn repo_seam_inventory_input(input: CheckInput) -> CheckOutput {
             // No analysis ran, so no loader chose a base (#3940).
             effective_base: None,
             uncommitted_source_paths: Vec::new(),
+            analyzed_revisions: None,
             untracked_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),
@@ -1035,6 +1036,7 @@ mod tests {
             partial_scope: None,
             effective_base,
             uncommitted_source_paths: Vec::new(),
+            analyzed_revisions: None,
             untracked_source_paths: Vec::new(),
             rust_diagnostic_origins: Default::default(),
             rust_consumed_sources: Default::default(),

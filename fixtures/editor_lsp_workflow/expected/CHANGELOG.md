@@ -434,3 +434,15 @@ Command:
 Updated:
 - `expected/lsp-code-actions.json`
 - `expected/lsp-hover.md`
+
+## Pending — editor_lsp_workflow (17)
+
+Reason:
+RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+
+Command:
+`cargo xtask goldens bless editor_lsp_workflow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -10,6 +10,7 @@ Linked issues:
 
 - #1168
 - #6695 (`ok_or(Variant)?` propagation, Part C)
+- #6904 (ReturnExpr enclosure: skip closure / async / nested-fn returns)
 
 Linked PRs:
 
@@ -190,6 +191,15 @@ variant, exactly as for `return Err(Type::Variant)`:
   `guarded_result_oracle_matches_seam_variant` compares a return-value
   seam's guarded pins against it, so a sibling pin does not discriminate
   those seams either.
+- Repo and diff `ErrorPath` shapes from `ReturnExpr`
+  (`syntax/ra.rs` `extract_parser_probe_shapes`) skip a `return` whose
+  nearest enclosing fn-like ancestor inside the owner body is a closure,
+  nested `fn`, or `async` block (#6904). Those returns leave that body,
+  not the owner. The same ancestor filter already skips those enclosures
+  for `direct_calls`. `ReturnValue` shapes are unchanged. A
+  `return Err(V)` inside a closure may still leave an `Err(V)` CallExpr
+  shape; `#6914` twins already drop the `return` wrapper in inventory.
+  That CallExpr path is not this claim.
 - Part B's sibling gate covers every assertion kind, not only
   `ExactErrorVariant`: an assertion that spells the changed error's enum
   only through sibling variant paths (an `exact_value`
@@ -330,6 +340,9 @@ Tests in `crates/ripr/src/analysis/extract/oracles/` and
 | `question_mark_error_variant_refuses_every_other_shape` | Part C fail-closed shapes |
 | `question_mark_ok_or_in_the_owner_body_is_a_complete_error_witness` | Part C propagation |
 | `question_mark_ok_or_inside_a_closure_or_async_block_is_not_owner_propagation` | Part C enclosure negatives |
+| `return_error_path_shapes_skip_closure_and_async_block` | Part C ReturnExpr enclosure (#6904) |
+| `repo_inventory_skips_return_ok_or_inside_closure_or_async` | Part C repo ReturnExpr enclosure |
+| `diff_skips_return_error_path_inside_closure_or_async` | Part C diff ReturnExpr enclosure |
 | `ffi_boundary_is_an_identifier_word_not_a_substring` | Part C opaque-path fix |
 | `exact_error_variant_reads_turbofish_and_qualified_constructors` | Part B turbofish binding |
 
@@ -379,6 +392,7 @@ Evidence
 | `enum_variant_values`, `exact_error_variant` re-exported | `crates/ripr/src/analysis/classify/mod.rs` |
 | Part C `question_mark_error_variant` | `crates/ripr/src/analysis/classify/text/error_variant.rs` |
 | Part C owner-enclosure gate and error sink | `crates/ripr/src/analysis/classify/flow.rs` |
+| Part C ReturnExpr enclosure for ErrorPath shapes (#6904) | `crates/ripr/src/analysis/syntax/ra.rs` |
 | Part C established witness edge, FFI word check | `crates/ripr/src/analysis/classify/propagation_witness.rs` |
 | Spec registration | `policy/doc-artifacts.toml`, `docs/specs/README.md` |
 | Traceability | `.ripr/traceability.toml` |

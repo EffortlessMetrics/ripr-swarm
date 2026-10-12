@@ -207,7 +207,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach bulk_rate: bulk_rate_boundary", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 90", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 90 (line 22)", "related test tests/pricing.rs:11 bulk_rate_boundary uses strong exact value oracle: assert_eq!(bulk_rate(3), 100);", "related test tests/pricing.rs:11 bulk_rate_boundary uses strong exact value oracle: assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90);", "source assertion argument value 100 at line 12", "source function argument value items = 3 at line 12", "source assertion argument value 90 at line 13", "source enum variant value parcels::BULK_ITEMS at line 13", "source function argument value items == BULK_ITEMS at line 13"],
+      "evidence_path": ["reach yes: Related tests appear to reach bulk_rate: bulk_rate_boundary", "infection yes: Detected related test input at the changed boundary", "propagation yes: Changed behavior appears to influence returned value: 90", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator yes: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: 90 (line 22)", "related test tests/pricing.rs:11 bulk_rate_boundary uses strong exact value oracle: assert_eq!(bulk_rate(3), 100);", "related test tests/pricing.rs:11 bulk_rate_boundary uses strong exact value oracle: assert_eq!(bulk_rate(parcels::BULK_ITEMS), 90);", "source assertion argument value 100 at line 12", "source function argument value items = 3 at line 12", "source assertion argument value 90 at line 13", "source constant value parcels::BULK_ITEMS at line 13", "source function argument value items == BULK_ITEMS at line 13"],
       "flow_sinks": [
         {"kind":"return_value","text":"90","line":22}
       ],
@@ -237,7 +237,7 @@
           {
             "line": 13,
             "value": "parcels::BULK_ITEMS",
-            "context": "enum_variant"
+            "context": "constant"
           },
           {
             "line": 13,
@@ -268,7 +268,7 @@
         {
           "line": 13,
           "value": "parcels::BULK_ITEMS",
-          "context": "enum_variant"
+          "context": "constant"
         },
         {
           "line": 13,

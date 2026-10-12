@@ -1,0 +1,13 @@
+diff --git a/src/modes.rs b/src/modes.rs
+index 2986dff..45c04bc 100644
+--- a/src/modes.rs
++++ b/src/modes.rs
+@@ -6,7 +6,7 @@ pub enum Tier {
+ 
+ pub fn quota(tier: Tier) -> u32 {
+     match tier {
+-        Tier::Basic => 5,
++        Tier::Basic => 2 + 3,
+         Tier::Premium => 50,
+     }
+ }

@@ -16,6 +16,58 @@ use super::{
 };
 use crate::tests::{temp_dir, with_temp_cwd, write};
 
+#[test]
+fn repo_policy_package_is_enforced_and_proposed() -> Result<(), String> {
+    with_temp_cwd("repo-policy-panic-roots", |root| -> Result<(), String> {
+        let paths = [
+            "tools/repo-policy/build.rs",
+            "tools/repo-policy/source_identity.rs",
+            "tools/repo-policy/src/lib.rs",
+            "tools/repo-policy/tests/frontdoor.rs",
+        ];
+        std::fs::create_dir_all(root.join("policy")).map_err(|e| e.to_string())?;
+        let policy = root.join("policy/no-panic-allowlist.toml");
+        std::fs::write(&policy, "schema_version = \"0.3\"\n").map_err(|e| e.to_string())?;
+        for path in paths {
+            let path = root.join(path);
+            let parent = path.parent().ok_or("fixture path has no parent")?;
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            std::fs::write(path, "fn policy_control() {}\n").map_err(|e| e.to_string())?;
+        }
+        super::check_no_panic_family_impl()?;
+        let mut allowlist = String::from("schema_version = \"0.3\"\n");
+        for (index, path) in paths.into_iter().enumerate() {
+            std::fs::write(
+                root.join(path),
+                concat!("fn policy_control() { pan", "ic!(\"control\"); }\n"),
+            )
+            .map_err(|e| e.to_string())?;
+            assert!(
+                super::check_no_panic_family_impl().is_err(),
+                "helper panic omitted: {path}"
+            );
+            let report =
+                std::fs::read_to_string(root.join("target/ripr/reports/no-panic-family.md"))
+                    .map_err(|e| e.to_string())?;
+            assert!(report.contains(path), "missing helper path: {report}");
+            let callee = concat!("pan", "ic!");
+            // This fixture exercises package coverage; dedicated tests exercise expiry.
+            allowlist.push_str(&format!("\n[[allow]]\nid = \"helper-control-{index}\"\npath = \"{path}\"\nfamily = \"panic_macro\"\nclassification = \"test_only\"\nowner = \"core/policy\"\nexplanation = \"Deliberate scanner fixture\"\nexpires = \"9999-12-31\"\n[allow.selector]\nkind = \"macro_call\"\ncontainer = \"policy_control\"\ncallee = \"{callee}\"\n"));
+        }
+        std::fs::write(policy, allowlist).map_err(|e| e.to_string())?;
+        super::check_no_panic_family_impl()?;
+        super::propose_no_panic_allowlist_impl()?;
+        let proposals = std::fs::read_to_string(
+            root.join("target/ripr/reports/no-panic-allowlist-proposals.toml"),
+        )
+        .map_err(|e| e.to_string())?;
+        for path in paths {
+            assert!(proposals.contains(path), "helper proposal omitted: {path}");
+        }
+        Ok(())
+    })
+}
+
 fn semantic_panic_finding(
     line: usize,
     container: &str,

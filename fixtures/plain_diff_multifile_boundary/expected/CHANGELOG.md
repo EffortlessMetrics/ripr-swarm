@@ -340,3 +340,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — plain_diff_multifile_boundary (14)
+
+Reason:
+RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+
+Command:
+`cargo xtask goldens bless plain_diff_multifile_boundary --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

@@ -27,7 +27,7 @@ Next: drill into the top finding:
   ripr explain --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bound-exact-original --diff fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bound-exact-original/diff.patch --mode fast probe:src_lib.rs:return_value:519eff0d
   ripr context --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bound-exact-original --diff fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bound-exact-original/diff.patch --mode fast --at probe:src_lib.rs:return_value:519eff0d
 Write a test for it:
-  ripr agent stub --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bound-exact-original --at src/lib.rs:2
+  ripr agent stub --root fixtures/evidence-promotion-honesty-corpus/discarded-matcher-subjects/bound-exact-original --at src/lib.rs:2 --kind return_value
 
 More:
   Full evidence: rerun with --format human-full

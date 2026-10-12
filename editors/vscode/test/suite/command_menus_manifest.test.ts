@@ -126,7 +126,14 @@ suite('Command Menus Manifest', () => {
       'expected default keybindings for the two highest-signal commands'
     );
     for (const entry of keybindings) {
-      assert.strictEqual(entry.when, 'editorTextFocus', `${entry.command} keybinding must scope to editorTextFocus`);
+      // The cursor-scoped copy command inspects the active selection, so its
+      // keybinding must carry the same ripr-language guard as its
+      // editor/context entry; the workspace-scoped commands intentionally
+      // stay language-agnostic (#7344).
+      const expectedWhen = entry.command === 'ripr.copyRepairPacketAtCursor'
+        ? RIPR_MENU_WHEN
+        : 'editorTextFocus';
+      assert.strictEqual(entry.when, expectedWhen, `${entry.command} keybinding when-clause`);
     }
   });
 

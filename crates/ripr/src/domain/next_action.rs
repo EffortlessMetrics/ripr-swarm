@@ -66,6 +66,11 @@ pub enum NextActionProducer {
     RepairAttemptStatus,
     Doctor,
     PilotDelegation,
+    /// The task-first `ripr repair` start decision (#6305): it enumerates
+    /// repair-eligible seams through the existing inventory and eligibility
+    /// authorities and offers the before-phase command only for a single
+    /// bound subject.
+    RepairStart,
 }
 
 impl NextActionProducer {
@@ -76,6 +81,7 @@ impl NextActionProducer {
             Self::RepairAttemptStatus => "repair_attempt_status",
             Self::Doctor => "doctor",
             Self::PilotDelegation => "pilot_delegation",
+            Self::RepairStart => "repair_start",
         }
     }
 }
@@ -301,6 +307,14 @@ pub enum NextActionStop {
     },
     CheckTriage {
         case: NextActionCheckCase,
+        /// Followable inspect or restart route for this triage case. The
+        /// check producer copies `NextActionInput::detail_route` here so a
+        /// JSON consumer can replay the printed command without assembling
+        /// `--root` / mode flags from the finding id. Empty when there is
+        /// no inspect target (for example missing scope) or a fixture
+        /// constructs the stop without a route.
+        #[serde(default)]
+        detail_route: String,
     },
     DoctorRecovery {
         check_name: String,
@@ -977,7 +991,10 @@ pub(crate) fn select_canonical_next_action(
         return stopped(
             input,
             class,
-            NextActionStop::CheckTriage { case },
+            NextActionStop::CheckTriage {
+                case,
+                detail_route: input.detail_route.clone(),
+            },
             transition,
             Vec::new(),
         );
@@ -2166,8 +2183,17 @@ mod tests {
                 case.as_str()
             );
             match action.stop() {
-                Some(NextActionStop::CheckTriage { case: bound }) => {
+                Some(NextActionStop::CheckTriage {
+                    case: bound,
+                    detail_route,
+                }) => {
                     assert_eq!(*bound, case);
+                    assert_eq!(
+                        detail_route,
+                        &input.detail_route,
+                        "check case {} must carry its inspect route",
+                        case.as_str()
+                    );
                 }
                 other => {
                     return Err(format!(
@@ -2526,6 +2552,7 @@ mod tests {
             },
             NextActionStop::CheckTriage {
                 case: NextActionCheckCase::TopGap,
+                detail_route: "ripr explain finding:top".to_string(),
             },
             NextActionStop::DoctorRecovery {
                 check_name: "c".to_string(),
@@ -2562,6 +2589,118 @@ mod tests {
         let back: CanonicalNextActionV1 = serde_json::from_value(rendered)
             .map_err(|error| format!("action deserializes: {error}"))?;
         assert_eq!(back, action);
+        Ok(())
+    }
+
+    fn repair_start_input<'a>(
+        item_id: &str,
+        candidates: Vec<String>,
+        offered: Option<&'a CommandSpec>,
+    ) -> NextActionInput<'a> {
+        NextActionInput {
+            producer: NextActionProducer::RepairStart,
+            root: "/repo".to_string(),
+            diff_source: NextActionDiffSource::WorkingTree {
+                head: Some("head1".to_string()),
+            },
+            item_id: item_id.to_string(),
+            check_item: None,
+            card_item: None,
+            item_candidates: candidates,
+            attempts: Vec::new(),
+            currentness: fresh_currentness(),
+            offered_command: offered,
+            route_admitted: true,
+            route_refusal: None,
+            missing_input: None,
+            platform: Some(CommandPlatform::Linux),
+            limitation: None,
+            limitation_route: None,
+            detail_route: "ripr pilot --root .".to_string(),
+            transition_from: "one_eligible_seam".to_string(),
+            transition_to: offered.map(|_| "repair_started".to_string()),
+            restart_route: "ripr repair --root .".to_string(),
+            check_case: None,
+            doctor_recovery: None,
+            pilot_delegation: None,
+            alternatives: Vec::new(),
+            limitations: Vec::new(),
+        }
+    }
+
+    /// #6305: the repair-start producer offers the before-phase command
+    /// only for one bound subject with fresh heads; the selector runs it.
+    #[test]
+    fn repair_start_single_admitted_candidate_runs() -> Result<(), String> {
+        let spec = crate::agent::command_specs::repair_start_command_spec(".", "seam:demo");
+        spec.validate()
+            .map_err(|error| format!("repair-start spec validates: {error:?}"))?;
+        let input = repair_start_input("seam:demo", Vec::new(), Some(&spec));
+        let action = select_canonical_next_action(&input)
+            .map_err(|error| format!("single candidate runs: {error}"))?;
+        if action.action_class() != NextActionClass::RunCommand {
+            return Err(format!(
+                "single candidate must run, got {}",
+                action.action_class().as_str()
+            ));
+        }
+        assert!(action.is_executable());
+        let command = action
+            .command()
+            .ok_or_else(|| "run action carries no command".to_string())?;
+        if command.command_id != "ripr:repair:start" {
+            return Err(format!("unexpected command id {}", command.command_id));
+        }
+        if action.producer() != NextActionProducer::RepairStart {
+            return Err("producer must survive the decision".to_string());
+        }
+        Ok(())
+    }
+
+    /// #6305: the repair-start producer never selects implicitly —
+    /// several candidates choose. (Zero candidates never reach the
+    /// selector: with no suitable subject the anti-invention law leaves
+    /// nothing to bind, so the producer owns the honest outcome.)
+    #[test]
+    fn repair_start_several_candidates_choose() -> Result<(), String> {
+        let several = repair_start_input(
+            "",
+            vec!["seam:one".to_string(), "seam:two".to_string()],
+            None,
+        );
+        let action = select_canonical_next_action(&several)
+            .map_err(|error| format!("several candidates decide: {error}"))?;
+        if action.action_class() != NextActionClass::ChooseItem
+            || stop_kind(&action) != "select_item"
+        {
+            return Err(format!(
+                "several candidates must choose, got {}",
+                action.action_class().as_str()
+            ));
+        }
+        assert!(!action.is_executable());
+        Ok(())
+    }
+
+    /// #6305: an unreadable HEAD unbinds currentness, so one candidate
+    /// cannot execute until the evidence is recomputed.
+    #[test]
+    fn repair_start_unreadable_head_cannot_execute() -> Result<(), String> {
+        let spec = crate::agent::command_specs::repair_start_command_spec(".", "seam:demo");
+        let mut input = repair_start_input("seam:demo", Vec::new(), Some(&spec));
+        input.currentness.head_expected = None;
+        input.currentness.head_observed = None;
+        let action = select_canonical_next_action(&input)
+            .map_err(|error| format!("unbound heads decide: {error}"))?;
+        if action.action_class() != NextActionClass::RetryCurrentSubject
+            || stop_kind(&action) != "refresh_currentness"
+        {
+            return Err(format!(
+                "unbound heads must retry currentness, got {}",
+                action.action_class().as_str()
+            ));
+        }
+        assert!(!action.is_executable());
         Ok(())
     }
 

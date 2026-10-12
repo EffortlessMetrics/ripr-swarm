@@ -802,6 +802,14 @@ Implementation PRs:
 - `cargo xtask check-fixture-contracts` when fixtures/goldens change;
 - `cargo xtask check-pr` before claiming a branch is review-ready.
 
+## Later Amendment
+
+RIPR-SPEC-0235 (2026-10-04) defines how RIPR classifies packet relations,
+oracles, boundaries and limitations, which oracle kinds may count as
+strong, what the displayed oracle and relation may show, and when
+repair-shaped output is withheld. It is the "RIPR decides" rule set that
+the Relations section refers to.
+
 ## Metrics
 
 The packet contract alone does not move support tier. Later metrics must report:

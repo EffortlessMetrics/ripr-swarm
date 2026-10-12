@@ -45,6 +45,8 @@ pub(crate) mod release;
 mod release_control;
 mod release_denominator;
 mod release_negative;
+#[cfg(all(test, unix))]
+pub(crate) use release_negative::capture_with_owned_root_for_test;
 mod release_scope;
 pub(crate) mod release_server;
 mod repair_card_usability;
@@ -194,7 +196,10 @@ pub(crate) use test_oracles::{test_efficiency_report, test_oracle_report};
 pub(crate) use test_oracles::{
     test_oracle_report_impl_for_roots, test_oracle_report_json, test_oracle_report_markdown,
 };
-pub(crate) use verdict_corpus::verdict_corpus;
+pub(crate) use verdict_corpus::{
+    expected_report as verdict_corpus_expected_report,
+    render_report_json as render_verdict_corpus_report, verdict_corpus,
+};
 
 fn ensure_parent_dir(path: &std::path::Path, label: &str) -> Result<(), String> {
     let Some(parent) = path.parent() else {

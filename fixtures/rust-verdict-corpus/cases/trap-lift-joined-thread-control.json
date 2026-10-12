@@ -1,0 +1,59 @@
+{
+  "case_id": "trap-lift-joined-thread-control",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-lift-joined-thread-control.diff",
+  "anchor": {
+    "file": "src/lifts.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_in_joined_thread",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 20",
+        "mutated_line": "base * 20",
+        "outcome": "tests_failed",
+        "failing_test": "lifts::tests::lift_runs_in_a_worker",
+        "equivalence_review": "not equivalent: replaces `19 * base` with `base * 20`, which changes the result"
+      },
+      {
+        "replacement": "base + 19",
+        "mutated_line": "base + 19",
+        "outcome": "tests_failed",
+        "failing_test": "lifts::tests::lift_runs_in_a_worker",
+        "equivalence_review": "not equivalent: replaces `19 * base` with `base + 19`, which changes the result"
+      },
+      {
+        "replacement": "base * 18",
+        "mutated_line": "base * 18",
+        "outcome": "tests_failed",
+        "failing_test": "lifts::tests::lift_runs_in_a_worker",
+        "equivalence_review": "not equivalent: replaces `19 * base` with `base * 18`, which changes the result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Negative control for trap-boost-detached-thread: the same spawned assert, joined with `.join().unwrap()`, so the worker's panic fails lift_runs_in_a_worker for each mutant. ripr's weakly_exposed comes from the `.unwrap()`, not the assert (#6966).",
+  "labeling_observation": {
+    "ripr_commit": "fce75e1",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

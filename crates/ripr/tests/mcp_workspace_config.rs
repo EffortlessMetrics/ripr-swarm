@@ -547,3 +547,102 @@ fn unreadable_ripr_toml_fails_the_refresh_closed_with_config_invalid() -> Result
 
     Ok(())
 }
+
+/// #6021: the paging inputs are part of the wire contract. A client pages
+/// `ripr_list_gaps` with `offset`/`limit`, the document discloses the
+/// window (`page.returned`/`has_more`/`next_offset`), and an offset past
+/// the selection is an empty disclosed page — never an unknown-argument
+/// rejection and never an approved listing dying `result_too_large` on the
+/// wire.
+#[test]
+fn list_gaps_pages_over_the_wire_with_offset_and_limit() -> Result<(), String> {
+    let root = write_rust_workspace()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = Session::spawn(&root)?;
+    initialize_session(&mut session)?;
+
+    let refresh = session.call(
+        "tools/call",
+        json!({ "name": "ripr_refresh", "arguments": {} }),
+    )?;
+    let refresh = structured_tool_result(&refresh, "ripr_refresh")?;
+    if refresh
+        .pointer("/snapshot/finding_count")
+        .and_then(Value::as_u64)
+        != Some(1)
+    {
+        return Err(format!(
+            "the rust twin must score exactly one finding: {refresh}"
+        ));
+    }
+
+    // An explicit one-item window is accepted and echoed.
+    let paged = session.call(
+        "tools/call",
+        json!({
+            "name": "ripr_list_gaps",
+            "arguments": { "offset": 0, "limit": 1 }
+        }),
+    )?;
+    let paged = structured_tool_result(&paged, "ripr_list_gaps")?;
+    if paged.pointer("/selected").and_then(Value::as_u64) != Some(1) {
+        return Err(format!("the selection must hold the one finding: {paged}"));
+    }
+    let items = paged
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("paged list lost its items: {paged}"))?;
+    if items.len() != 1 {
+        return Err(format!("limit=1 must return exactly one summary: {paged}"));
+    }
+    if paged.pointer("/page/limit").and_then(Value::as_u64) != Some(1)
+        || paged.pointer("/page/offset").and_then(Value::as_u64) != Some(0)
+        || paged.pointer("/page/returned").and_then(Value::as_u64) != Some(1)
+        || paged.pointer("/page/has_more").and_then(Value::as_bool) != Some(false)
+        || paged.pointer("/page/next_offset") != Some(&Value::Null)
+    {
+        return Err(format!("the page window must be disclosed: {paged}"));
+    }
+
+    // The default call ships the whole (fitting) selection and closes its
+    // own window.
+    let full = session.call(
+        "tools/call",
+        json!({ "name": "ripr_list_gaps", "arguments": {} }),
+    )?;
+    let full = structured_tool_result(&full, "ripr_list_gaps")?;
+    let full_items = full
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("default list lost its items: {full}"))?;
+    if full_items.len() != 1
+        || full.pointer("/page/has_more").and_then(Value::as_bool) != Some(false)
+    {
+        return Err(format!("a fitting selection must ship whole: {full}"));
+    }
+    if full_items[0] != items[0] {
+        return Err(format!(
+            "paged and default listings must agree on identity: {paged} vs {full}"
+        ));
+    }
+
+    // An offset past the selection is an empty final page, not an error.
+    let beyond = session.call(
+        "tools/call",
+        json!({ "name": "ripr_list_gaps", "arguments": { "offset": 5 } }),
+    )?;
+    let beyond = structured_tool_result(&beyond, "ripr_list_gaps")?;
+    if beyond
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .map(|items| !items.is_empty())
+        != Some(false)
+        || beyond.pointer("/page/returned").and_then(Value::as_u64) != Some(0)
+        || beyond.pointer("/page/has_more").and_then(Value::as_bool) != Some(false)
+    {
+        return Err(format!(
+            "an offset past the selection must be an empty disclosed page: {beyond}"
+        ));
+    }
+    Ok(())
+}

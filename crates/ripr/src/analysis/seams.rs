@@ -17,9 +17,13 @@ use std::path::{Path, PathBuf};
 
 /// Stable seam identifier.
 ///
-/// Deterministic across runs and across input file walk reorderings.
+/// Deterministic across runs and across input file walk reorderings — and
+/// across line-ending spellings of the same logical file (#7203): the local
+/// coordinate is the byte offset the seam has in the file's CRLF→LF
+/// normalized text, so a `core.autocrlf=true` checkout and an LF checkout
+/// of one commit produce one ID.
 /// Format: 16 lowercase hex chars, the FNV-1a 64-bit hash of the canonical
-/// fields (file, owner, kind, byte offset).
+/// fields (file, owner, kind, normalized byte offset).
 #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub(crate) struct SeamId(String);
 
@@ -294,6 +298,24 @@ pub(crate) struct SeamSpan {
     pub(crate) end_column: usize,
 }
 
+impl SeamSpan {
+    pub(crate) fn start_point(&self) -> (usize, usize) {
+        (self.start_line, self.start_column)
+    }
+
+    pub(crate) fn end_point(&self) -> (usize, usize) {
+        (self.end_line, self.end_column)
+    }
+
+    /// Whether this span strictly encloses another span: this span covers the
+    /// other span, and the two spans are not identical (#7179).
+    pub(crate) fn strictly_encloses(&self, other: &SeamSpan) -> bool {
+        self != other
+            && self.start_point() <= other.start_point()
+            && other.end_point() <= self.end_point()
+    }
+}
+
 /// Line-start byte offsets for `source`, so callers deriving many spans
 /// from one file pay the scan once instead of once per shape.
 pub(crate) fn build_line_starts(source: &str) -> Vec<usize> {
@@ -373,11 +395,86 @@ pub(crate) struct RepoSeam {
     required_discriminator: RequiredDiscriminator,
     expected_sink: ExpectedSink,
     span: Option<SeamSpan>,
+    /// How a test calls the owner (#5357). Presentation only: not part of
+    /// the seam ID. A seam deserialized from a cache entry written before
+    /// the field existed reads `Unknown`, which renders no call.
+    #[serde(default)]
+    owner_call: OwnerCallShape,
+}
+
+/// How a test can call a seam's owner function, read from the parser's item
+/// facts (#5357). Suggested assertions name the owner through this, so a
+/// method is never presented as a free-function call.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum OwnerCallShape {
+    /// Not established: lexical fallback, a cache entry older than the fact,
+    /// a trait default method, a function-local `fn`, or an impl whose self
+    /// type is not a plain named path. Renders no call syntax.
+    #[default]
+    Unknown,
+    /// A module-level `fn`: `name(args)`.
+    Free,
+    /// An impl method with a `self` receiver: `<receiver>.name(args)`.
+    Method { self_type: String },
+    /// An impl associated function without `self`: `Type::name(args)`.
+    Associated { self_type: String },
+}
+
+impl OwnerCallShape {
+    /// Derive the call shape from the owner's parser facts. Every path that
+    /// is not positively established stays `Unknown`.
+    pub(crate) fn from_function(function: &crate::analysis::facts::FunctionFact) -> Self {
+        use crate::analysis::facts::{FunctionContainer, FunctionImplContext};
+        match (&function.item.container, &function.impl_context) {
+            (FunctionContainer::Free, FunctionImplContext::Free) => Self::Free,
+            (
+                FunctionContainer::Inherent { .. } | FunctionContainer::TraitImpl { .. },
+                FunctionImplContext::Impl { self_type },
+            ) if !self_type.trim().is_empty() => {
+                let self_type = self_type.clone();
+                if function.item.has_self_param {
+                    Self::Method { self_type }
+                } else {
+                    Self::Associated { self_type }
+                }
+            }
+            _ => Self::Unknown,
+        }
+    }
+
+    /// Render a call of `name` with `arguments` placed between the
+    /// parentheses. `Unknown` renders a placeholder comment naming the owner
+    /// instead of a call that may not compile; an `arguments` placeholder
+    /// comment is folded into it.
+    pub(crate) fn call(&self, name: &str, arguments: &str) -> String {
+        match self {
+            Self::Free => format!("{name}({arguments})"),
+            Self::Method { self_type } => {
+                format!("/* {self_type} value */.{name}({arguments})")
+            }
+            Self::Associated { self_type } => format!("{self_type}::{name}({arguments})"),
+            Self::Unknown => {
+                let inner = arguments
+                    .trim()
+                    .strip_prefix("/*")
+                    .and_then(|rest| rest.strip_suffix("*/"))
+                    .unwrap_or(arguments)
+                    .trim();
+                format!("/* call {name} (receiver or path not established) with {inner} */")
+            }
+        }
+    }
 }
 
 impl RepoSeam {
-    /// Construct a seam, computing a deterministic ID from the canonical
-    /// fields per RIPR-SPEC-0005 § "Stable Seam ID Rules".
+    /// Construct a synthetic or already-normalized seam: the ID hashes the
+    /// byte offset exactly as given.
+    ///
+    /// A producer that measured `byte_offset` against a real file's raw text
+    /// must use [`RepoSeam::new_in_source`] instead, so line-ending spelling
+    /// cannot move the ID (#7203). This constructor stays for test fixtures
+    /// and synthetic profiles whose offsets carry no file spelling.
     ///
     /// `expression` is the source-code text at the seam origin and is
     /// surfaced verbatim in human/JSON output. It is *not* part of the
@@ -400,9 +497,90 @@ impl RepoSeam {
         required_discriminator: RequiredDiscriminator,
         expected_sink: ExpectedSink,
     ) -> Self {
+        RepoSeam::from_canonical_parts(
+            file,
+            owner,
+            kind,
+            byte_offset,
+            byte_offset,
+            display_line,
+            expression,
+            required_discriminator,
+            expected_sink,
+        )
+    }
+
+    /// Construct a seam whose `byte_offset` was measured against the source
+    /// `crlf_pairs` was built from, hashing the ID's local coordinate over
+    /// the file's logical content with CRLF pairs normalized to LF (#7203).
+    ///
+    /// The stored [`RepoSeam::byte_offset`] stays the raw offset into the
+    /// source: rendering, span geometry and stub placement index the actual
+    /// file bytes. Only the ID reads the normalized coordinate — the offset
+    /// the seam would have in the same text with CRLF pairs spelled LF — so
+    /// a checkout's line-ending spelling (`core.autocrlf=true`) cannot split
+    /// one logical seam into `new`+`removed` across snapshots
+    /// (RIPR-SPEC-0005 § "Stable Seam ID Rules"). This is the
+    /// local-coordinate counterpart of [`normalize_path`], and mirrors the
+    /// input-identity normalization `normalize_workspace_file_bytes`
+    /// applies since #3118: CRLF and LF spell the same line break, while a
+    /// standalone CR is preserved so invalid text cannot collide with a
+    /// valid LF input.
+    ///
+    /// `crlf_pairs` must be [`CrlfPairPositions::build`] over the same
+    /// source the offsets were measured against — the per-file table is
+    /// built once beside `build_line_starts` and reused for every seam,
+    /// keeping construction O(log pairs) per seam instead of a per-seam
+    /// prefix scan.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The source-backed twin of `new`; it carries the same eight intrinsic fields plus the offset table the source's line endings produce."
+    )]
+    pub(crate) fn new_in_source(
+        file: impl AsRef<Path>,
+        owner: impl Into<String>,
+        kind: SeamKind,
+        byte_offset: usize,
+        display_line: usize,
+        expression: impl Into<String>,
+        required_discriminator: RequiredDiscriminator,
+        expected_sink: ExpectedSink,
+        crlf_pairs: &CrlfPairPositions,
+    ) -> Self {
+        let identity_offset = crlf_pairs.normalized_identity_offset(byte_offset);
+        RepoSeam::from_canonical_parts(
+            file,
+            owner,
+            kind,
+            byte_offset,
+            identity_offset,
+            display_line,
+            expression,
+            required_discriminator,
+            expected_sink,
+        )
+    }
+
+    /// Shared constructor: `identity_offset` is the local coordinate the ID
+    /// hashes; `byte_offset` is the raw coordinate stored for rendering.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Internal funnel for `new`/`new_in_source`; the fields are the seam's intrinsic identity and presentation set."
+    )]
+    fn from_canonical_parts(
+        file: impl AsRef<Path>,
+        owner: impl Into<String>,
+        kind: SeamKind,
+        byte_offset: usize,
+        identity_offset: usize,
+        display_line: usize,
+        expression: impl Into<String>,
+        required_discriminator: RequiredDiscriminator,
+        expected_sink: ExpectedSink,
+    ) -> Self {
         let file_normalized = normalize_path(file.as_ref());
         let owner = owner.into();
-        let id = compute_seam_id(&file_normalized, &owner, kind, byte_offset);
+        let id = compute_seam_id(&file_normalized, &owner, kind, identity_offset);
         RepoSeam {
             id,
             kind,
@@ -414,6 +592,7 @@ impl RepoSeam {
             required_discriminator,
             expected_sink,
             span: None,
+            owner_call: OwnerCallShape::Unknown,
         }
     }
 
@@ -421,6 +600,12 @@ impl RepoSeam {
     /// file/owner/kind/byte offset only, so spans never change identity.
     pub(crate) fn with_span(mut self, span: SeamSpan) -> Self {
         self.span = Some(span);
+        self
+    }
+
+    /// Attach the owner's call shape read from the parser (#5357).
+    pub(crate) fn with_owner_call(mut self, owner_call: OwnerCallShape) -> Self {
+        self.owner_call = owner_call;
         self
     }
 
@@ -454,6 +639,17 @@ impl RepoSeam {
     pub(crate) fn expected_sink(&self) -> ExpectedSink {
         self.expected_sink
     }
+    pub(crate) fn owner_call(&self) -> &OwnerCallShape {
+        &self.owner_call
+    }
+    /// Whether this seam strictly encloses another seam: both seams carry
+    /// parser spans and this seam's span strictly encloses the other's span (#7179).
+    pub(crate) fn strictly_encloses(&self, other: &RepoSeam) -> bool {
+        match (self.span(), other.span()) {
+            (Some(outer_span), Some(inner_span)) => outer_span.strictly_encloses(&inner_span),
+            _ => false,
+        }
+    }
 }
 
 /// Repo-root-relative path normalization: Unix separators, no leading `./`.
@@ -462,6 +658,52 @@ impl RepoSeam {
 fn normalize_path(p: &Path) -> String {
     let s = p.to_string_lossy().replace('\\', "/");
     s.strip_prefix("./").unwrap_or(&s).to_string()
+}
+
+/// Byte positions of every CRLF pair in one source, ascending. Built once
+/// per source file (beside [`build_line_starts`]) and reused for every seam
+/// of that file, so identity normalization is one binary search per seam
+/// instead of a per-seam prefix scan over large sources.
+pub(crate) struct CrlfPairPositions {
+    positions: Vec<usize>,
+    source_len: usize,
+}
+
+impl CrlfPairPositions {
+    pub(crate) fn build(source: &str) -> Self {
+        let bytes = source.as_bytes();
+        let mut positions = Vec::new();
+        let mut index = 0;
+        while index + 1 < bytes.len() {
+            if bytes[index] == b'\r' && bytes[index + 1] == b'\n' {
+                positions.push(index);
+                index += 2;
+            } else {
+                index += 1;
+            }
+        }
+        Self {
+            positions,
+            source_len: bytes.len(),
+        }
+    }
+
+    /// The seam ID's local coordinate for a raw `byte_offset` measured
+    /// against this source: the offset the same byte has after CRLF→LF
+    /// normalization (#7203).
+    ///
+    /// Each pair before the offset shifts it by one byte; an offset that
+    /// points at the LF of a pair lands where that pair collapses. A
+    /// standalone CR is preserved, mirroring
+    /// `normalize_workspace_file_bytes` (#3118): only a CRLF pair spells the
+    /// same line break as LF, so text holding a lone CR cannot be read as
+    /// the LF spelling of different content. An offset beyond the source's
+    /// length clamps to the normalized length instead of underflowing.
+    fn normalized_identity_offset(&self, byte_offset: usize) -> usize {
+        let bound = byte_offset.min(self.source_len);
+        let pairs_before = self.positions.partition_point(|position| *position < bound);
+        bound - pairs_before
+    }
 }
 
 /// FNV-1a 64-bit hash of the canonical seam fields, encoded as a 16-char
@@ -478,7 +720,7 @@ fn normalize_path(p: &Path) -> String {
 /// gap ID (`crates/ripr/src/analysis/canonical_gap.rs:128`), and the seam
 /// cache (`crates/ripr/src/analysis/seam_cache.rs:1411`). Deliberate
 /// parity: all gap/seam IDs across languages use one scheme. See #1722.
-fn compute_seam_id(file: &str, owner: &str, kind: SeamKind, byte_offset: usize) -> SeamId {
+fn compute_seam_id(file: &str, owner: &str, kind: SeamKind, identity_offset: usize) -> SeamId {
     // FNV-1a constants — deliberate parity with Perl adapter
     // (crates/ripr/src/analysis/language/perl/mod.rs). Both sides must use
     // identical constants so Rust and Perl gap IDs are comparable (#1722).
@@ -488,8 +730,8 @@ fn compute_seam_id(file: &str, owner: &str, kind: SeamKind, byte_offset: usize) 
     // Null byte separator avoids collisions: `\0` cannot appear in POSIX
     // or Windows file paths, in Rust module/identifier names that make up
     // owner symbols, in our static kind discriminants, or in the decimal
-    // stringification of `byte_offset`.
-    let offset_str = byte_offset.to_string();
+    // stringification of `identity_offset`.
+    let offset_str = identity_offset.to_string();
     let parts: [&[u8]; 7] = [
         file.as_bytes(),
         b"\0",
@@ -785,6 +1027,134 @@ mod tests {
         assert_eq!(plain.id(), dotted.id());
     }
 
+    /// #7203: the ID's local coordinate is the offset in the file's logical
+    /// CRLF→LF-normalized content, so the same source spelled with CRLF
+    /// terminators (`core.autocrlf=true` checkout) hashes to the same seam
+    /// ID as the LF spelling, while the stored raw offset — what rendering
+    /// and span geometry index — keeps its position in the actual bytes.
+    #[test]
+    fn seam_in_source_hashes_the_lf_normalized_offset_and_keeps_the_raw_one() -> Result<(), String>
+    {
+        let lf = "fn f(x: i32) -> bool {\n    x >= 0\n}\n";
+        let crlf = lf.replace('\n', "\r\n");
+        let lf_offset = lf
+            .find("x >= 0")
+            .ok_or_else(|| "fixture predicate must exist".to_string())?;
+        let crlf_offset = crlf
+            .find("x >= 0")
+            .ok_or_else(|| "fixture predicate must exist".to_string())?;
+        let lf_seam = RepoSeam::new_in_source(
+            "src/pricing.rs",
+            "pricing::f",
+            SeamKind::PredicateBoundary,
+            lf_offset,
+            2,
+            "x >= 0",
+            RequiredDiscriminator::BoundaryValue {
+                description: "x >= 0".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+            &CrlfPairPositions::build(lf),
+        );
+        let crlf_seam = RepoSeam::new_in_source(
+            "src/pricing.rs",
+            "pricing::f",
+            SeamKind::PredicateBoundary,
+            crlf_offset,
+            2,
+            "x >= 0",
+            RequiredDiscriminator::BoundaryValue {
+                description: "x >= 0".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+            &CrlfPairPositions::build(&crlf),
+        );
+        // The fixture must exercise the shift: the CRLF spelling moves the
+        // raw byte behind line 1's two-byte terminator.
+        assert_ne!(
+            lf_seam.byte_offset(),
+            crlf_seam.byte_offset(),
+            "fixture must place the predicate behind a CRLF pair"
+        );
+        assert_eq!(
+            lf_seam.id(),
+            crlf_seam.id(),
+            "line-ending spelling must not move the seam ID"
+        );
+        assert_eq!(
+            crlf_seam.byte_offset(),
+            crlf_offset,
+            "the stored offset stays raw so rendering indexes the real bytes"
+        );
+        Ok(())
+    }
+
+    /// Existing LF-only inventories keep their IDs byte-for-byte: for an LF
+    /// source the normalized coordinate equals the raw offset, so
+    /// `new_in_source` agrees with the offset-as-given constructor.
+    #[test]
+    fn seam_in_source_matches_the_legacy_id_for_lf_sources() -> Result<(), String> {
+        let source = "fn f(x: i32) -> bool {\n    x >= 0\n}\n";
+        let offset = source
+            .find("x >= 0")
+            .ok_or_else(|| "fixture predicate must exist".to_string())?;
+        let from_source = RepoSeam::new_in_source(
+            "src/pricing.rs",
+            "pricing::f",
+            SeamKind::PredicateBoundary,
+            offset,
+            2,
+            "x >= 0",
+            RequiredDiscriminator::BoundaryValue {
+                description: "x >= 0".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+            &CrlfPairPositions::build(source),
+        );
+        let legacy = RepoSeam::new(
+            "src/pricing.rs",
+            "pricing::f",
+            SeamKind::PredicateBoundary,
+            offset,
+            2,
+            "x >= 0",
+            RequiredDiscriminator::BoundaryValue {
+                description: "x >= 0".to_string(),
+            },
+            ExpectedSink::ReturnValue,
+        );
+        assert_eq!(from_source.id(), legacy.id());
+        Ok(())
+    }
+
+    /// Only a CRLF pair spells a line break for identity purposes. A
+    /// standalone CR shifts nothing, mirroring
+    /// `normalize_workspace_file_bytes` (#3118): treating lone CR as a
+    /// removed terminator would collide text that never held a line break
+    /// with the LF spelling of different content.
+    #[test]
+    fn identity_offset_normalizes_crlf_pairs_and_preserves_standalone_cr() {
+        let normalize = |source: &str, offset: usize| {
+            CrlfPairPositions::build(source).normalized_identity_offset(offset)
+        };
+        // "ab\r\ncd": the 'd' sits at raw 5, normalized 4 — behind one pair.
+        assert_eq!(normalize("ab\r\ncd", 5), 4);
+        // LF-only coordinates pass through unchanged.
+        assert_eq!(normalize("ab\ncd", 4), 4);
+        // A standalone CR is not a line break: nothing shifts.
+        assert_eq!(normalize("ab\rcd", 4), 4);
+        // An offset pointing at the CR of a pair is still at the pair.
+        assert_eq!(normalize("ab\r\ncd", 2), 2);
+        // An offset pointing at the LF of a pair lands where the pair
+        // collapses to.
+        assert_eq!(normalize("ab\r\ncd", 3), 2);
+        // Multiple pairs each shift once.
+        assert_eq!(normalize("a\r\nb\r\ncd", 7), 5);
+        // An offset past the source end saturates to the normalized length.
+        assert_eq!(normalize("ab\r\n", 100), 3);
+        assert_eq!(normalize("", 0), 0);
+    }
+
     #[test]
     fn seam_id_is_16_lowercase_hex_chars() -> Result<(), String> {
         let seam = make_seam("src/x.rs", "x::y", SeamKind::PredicateBoundary, 0);
@@ -923,5 +1293,110 @@ mod tests {
             }
             other => Err(format!("expected BoundaryValue, got {}", other.as_str())),
         }
+    }
+
+    /// #5357: the call shape decides the call syntax. Before the fix every
+    /// shape rendered as the `Free` form, so the method and associated cases
+    /// below failed and the `Unknown` case presented a free call.
+    #[test]
+    fn owner_call_shape_renders_receiver_path_or_honest_placeholder() {
+        let hint = "/* boundary input where unit == 0 */";
+        assert_eq!(
+            OwnerCallShape::Free.call("clamp_units", hint),
+            "clamp_units(/* boundary input where unit == 0 */)"
+        );
+        assert_eq!(
+            OwnerCallShape::Method {
+                self_type: "ByteSize".to_string()
+            }
+            .call("as_whole_units", hint),
+            "/* ByteSize value */.as_whole_units(/* boundary input where unit == 0 */)"
+        );
+        assert_eq!(
+            OwnerCallShape::Associated {
+                self_type: "ByteSize".to_string()
+            }
+            .call("from_kib", "/* input */"),
+            "ByteSize::from_kib(/* input */)"
+        );
+        let unknown = OwnerCallShape::Unknown.call("as_whole_units", hint);
+        assert_eq!(
+            unknown,
+            "/* call as_whole_units (receiver or path not established) with boundary input where unit == 0 */"
+        );
+        assert!(
+            !unknown.contains("as_whole_units("),
+            "an unestablished shape must not present a call: {unknown}"
+        );
+        assert_eq!(
+            OwnerCallShape::Unknown.call("emit", "..."),
+            "/* call emit (receiver or path not established) with ... */"
+        );
+    }
+
+    /// A seam built without parser facts, or read from a cache entry older
+    /// than the field, has no established call shape.
+    #[test]
+    fn owner_call_defaults_to_unknown_for_new_and_legacy_seams() -> Result<(), String> {
+        let seam = make_seam("src/lib.rs", "src/lib.rs::f", SeamKind::ReturnValue, 0);
+        assert_eq!(seam.owner_call(), &OwnerCallShape::Unknown);
+        let mut legacy = serde_json::to_value(&seam).map_err(|err| err.to_string())?;
+        legacy
+            .as_object_mut()
+            .ok_or("seam serializes as an object")?
+            .remove("owner_call");
+        let restored: RepoSeam = serde_json::from_value(legacy).map_err(|err| err.to_string())?;
+        assert_eq!(restored.owner_call(), &OwnerCallShape::Unknown);
+        let shaped = seam.with_owner_call(OwnerCallShape::Free);
+        assert_eq!(shaped.owner_call(), &OwnerCallShape::Free);
+        Ok(())
+    }
+
+    #[test]
+    fn seam_span_strictly_encloses_proper_subsets_only() {
+        let outer = SeamSpan {
+            start_line: 2,
+            start_column: 1,
+            end_line: 4,
+            end_column: 10,
+        };
+        let inner = SeamSpan {
+            start_line: 2,
+            start_column: 5,
+            end_line: 2,
+            end_column: 11,
+        };
+        assert!(outer.strictly_encloses(&inner));
+        assert!(!inner.strictly_encloses(&outer));
+        assert!(!outer.strictly_encloses(&outer));
+
+        // Same line, column subset
+        let same_line_outer = SeamSpan {
+            start_line: 10,
+            start_column: 5,
+            end_line: 10,
+            end_column: 30,
+        };
+        let same_line_inner = SeamSpan {
+            start_line: 10,
+            start_column: 10,
+            end_line: 10,
+            end_column: 20,
+        };
+        assert!(same_line_outer.strictly_encloses(&same_line_inner));
+        assert!(!same_line_inner.strictly_encloses(&same_line_outer));
+
+        // Equal spans do not strictly enclose
+        assert!(!same_line_outer.strictly_encloses(&same_line_outer));
+
+        // Disjoint spans
+        let disjoint = SeamSpan {
+            start_line: 11,
+            start_column: 1,
+            end_line: 12,
+            end_column: 1,
+        };
+        assert!(!outer.strictly_encloses(&disjoint));
+        assert!(!disjoint.strictly_encloses(&outer));
     }
 }

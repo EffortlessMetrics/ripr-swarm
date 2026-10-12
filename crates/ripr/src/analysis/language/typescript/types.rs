@@ -362,6 +362,38 @@ impl TypeScriptOwnerPathDisposition {
     }
 }
 
+/// Whether one related test exercises a changed predicate boundary (#5527).
+///
+/// Computed per candidate from the same parsing, owner-call identity,
+/// constant resolution and position rules as the finding-wide boundary
+/// witness, which is the reduction "any row is `Witnessed`". One row's
+/// witness never stands in for another row: a mixed finding keeps a
+/// `MissedBoundary` row beside a `Witnessed` one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TypeScriptPredicateActivation {
+    /// The changed line is not a predicate, so there is no boundary to hit.
+    NotApplicable,
+    /// A strong, pinned, family-matching assertion observes an owner call
+    /// that carries the boundary input, and its expected side is live: the
+    /// row's share of the RIPR-SPEC-0027 boundary witness.
+    Witnessed,
+    /// An owner call in the test carries the boundary input, but no
+    /// assertion that could discriminate the change witnesses it (weak or
+    /// unpinned, self-comparing, dead expected side, or unobserved call).
+    /// The input is present, so this is never a missing input.
+    ReachedWithoutDiscriminator,
+    /// The owner module pins the boundary input statically (the
+    /// `typescript_boundary_input` / `_parameters` fact), and every owner
+    /// call the test makes passes a plain integer input off it. The only
+    /// state that may support a row-owned missing input.
+    MissedBoundary,
+    /// Static evidence cannot place the test relative to the boundary: an
+    /// untrusted or shadowed owner path, an unparsed or underived boundary,
+    /// a computed or absent input, or an owner reference that is not a
+    /// plain call. Never a missing input.
+    Unresolved,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TypeScriptRelatedCandidate<'a> {
     pub(crate) test: &'a TypeScriptTest,
@@ -517,6 +549,17 @@ impl TypeScriptErrorPayload {
             TypeScriptErrorPayloadKind::RejectsMatchObject => {
                 format!("await expect(...).rejects.toMatchObject({})", self.expected)
             }
+            TypeScriptErrorPayloadKind::ChaiThrowLiteral => {
+                format!("expect(...).to.throw({})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::AssertThrowsRegex
+            | TypeScriptErrorPayloadKind::AssertThrowsObject => {
+                format!("assert.throws(..., {})", self.expected)
+            }
+            TypeScriptErrorPayloadKind::AssertRejectsRegex
+            | TypeScriptErrorPayloadKind::AssertRejectsObject => {
+                format!("await assert.rejects(..., {})", self.expected)
+            }
         }
     }
 }
@@ -540,4 +583,14 @@ pub(crate) enum TypeScriptErrorPayloadKind {
     RejectsThrowClass,
     /// `await expect(...).rejects.toMatchObject({ code: "X" })`.
     RejectsMatchObject,
+    /// chai `expect(...).to.throw("message")` (RIPR-SPEC-0243 rule 10).
+    ChaiThrowLiteral,
+    /// `node:assert` `throws(fn, /^...$/)` (RIPR-SPEC-0243 rule 10).
+    AssertThrowsRegex,
+    /// `node:assert` `throws(fn, { message: "..." })` (RIPR-SPEC-0243 rule 10).
+    AssertThrowsObject,
+    /// `node:assert` `rejects(p, /^...$/)` (RIPR-SPEC-0243 rule 10).
+    AssertRejectsRegex,
+    /// `node:assert` `rejects(p, { message: "..." })` (RIPR-SPEC-0243 rule 10).
+    AssertRejectsObject,
 }

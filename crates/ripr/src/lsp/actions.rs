@@ -3,7 +3,9 @@ use super::action_contract::{
     disabled_reason_emittable, parse_validated_action_data,
 };
 use super::client_features::ClientFeatureProfile;
-use super::gap_artifacts::{ValidatedGapArtifact, command_payload_is_safe, workspace_path_is_safe};
+use super::gap_artifacts::{
+    ValidatedGapArtifact, bind_portable_command, editor_command_is_safe, workspace_path_is_safe,
+};
 use super::state::AnalysisSnapshot;
 use super::uri::file_uri_for_path;
 use super::{
@@ -678,25 +680,33 @@ fn push_seam_actions(
         context.diagnostic,
         Some(context.snapshot),
     ));
-    actions.push(copy_agent_loop_command_action(
-        AGENT_BRIEF_COMMAND_TITLE,
-        COPY_AGENT_BRIEF_COMMAND,
-        "copy_agent_brief_command",
-        agent_loop_command_target(
-            context.snapshot,
-            context.diagnostic,
-            context.seam,
-            "agent_brief",
-            loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
-            loop_commands::agent_brief_command(
-                &root,
-                context.seam.seam.id().as_str(),
+    // Gate rather than reroute or annotate: the brief command refuses
+    // static-limitation seams (opaque and `*_unknown`) with an empty brief
+    // and a named omission warning (#6775, #7126). Matching that refusal
+    // here keeps the editor from advertising a handoff that will not
+    // populate. The packet action stays so `inspect_static_limitation`
+    // remains copyable.
+    if !context.seam.class.is_static_limitation() {
+        actions.push(copy_agent_loop_command_action(
+            AGENT_BRIEF_COMMAND_TITLE,
+            COPY_AGENT_BRIEF_COMMAND,
+            "copy_agent_brief_command",
+            agent_loop_command_target(
+                context.snapshot,
+                context.diagnostic,
+                context.seam,
+                "agent_brief",
                 loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
+                loop_commands::agent_brief_command(
+                    &root,
+                    context.seam.seam.id().as_str(),
+                    loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
+                ),
             ),
-        ),
-        context.diagnostic,
-        Some(context.snapshot),
-    ));
+            context.diagnostic,
+            Some(context.snapshot),
+        ));
+    }
     actions.push(copy_agent_loop_command_action(
         AFTER_SNAPSHOT_COMMAND_TITLE,
         COPY_AFTER_SNAPSHOT_COMMAND,
@@ -1869,8 +1879,8 @@ fn safe_commands_at(root: &Path, data: &Value, path: &[&str]) -> Vec<String> {
         .flat_map(|items| items.iter())
         .filter_map(Value::as_str)
         .map(str::trim)
-        .filter(|command| command_payload_is_safe(root, command))
-        .map(ToOwned::to_owned)
+        .filter(|command| editor_command_is_safe(root, command))
+        .filter_map(|command| bind_portable_command(root, command))
         .collect()
 }
 
@@ -1882,8 +1892,8 @@ fn first_safe_receipt_command(root: &Path, data: &Value) -> Option<String> {
     ]
     .iter()
     .filter_map(|path| string_at(data, path))
-    .find(|command| command_payload_is_safe(root, command))
-    .map(ToOwned::to_owned)
+    .filter(|command| editor_command_is_safe(root, command))
+    .find_map(|command| bind_portable_command(root, command))
 }
 
 fn gap_related_test_target(snapshot: &AnalysisSnapshot, data: &Value) -> Option<LSPAny> {
@@ -2385,6 +2395,24 @@ mod tests {
     };
 
     #[test]
+    fn receipt_command_falls_back_past_a_route_it_cannot_bind() {
+        // #4001: a safe receipt route the binder withholds (a `\` escape next
+        // to `--root .`) does not hide a later bindable candidate.
+        let root = std::env::temp_dir().join("ripr-receipt-fallback");
+        let data = serde_json::json!({
+            "receipt_command": "ripr receipt write --note it\\s --root . --json",
+            "commands": { "receipt": "ripr agent receipt --root . --json" },
+        });
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+        );
+        assert_eq!(
+            first_safe_receipt_command(&root, &data),
+            Some(format!("ripr agent receipt --root {bound} --json"))
+        );
+    }
+
+    #[test]
     fn path_matches_diagnostic_language_covers_modern_ts_js_extensions() {
         // #4116: diagnostic↔path language matching consumes the shared
         // extension authority, so .mts/.cts match typescript diagnostics and
@@ -2843,6 +2871,7 @@ mod tests {
     fn action_artifact() -> ValidatedGapArtifact {
         ValidatedGapArtifact {
             kind: GapArtifactKind::GapDecisionLedger,
+            corpus_currentness: None,
             root: Some(".".to_string()),
             identities: vec![GapArtifactIdentity {
                 canonical_gap_id: Some("gap:py:pricing".to_string()),
@@ -2930,6 +2959,7 @@ mod tests {
             analysis_outcome: None,
             diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
@@ -2940,6 +2970,7 @@ mod tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
         }
     }
 

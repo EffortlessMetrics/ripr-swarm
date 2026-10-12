@@ -1,0 +1,13 @@
+diff --git a/src/priceFeeMocked.ts b/src/priceFeeMocked.ts
+index 0000000..1111111 100644
+--- a/src/priceFeeMocked.ts
++++ b/src/priceFeeMocked.ts
+@@ -2,7 +2,7 @@
+ 
+ export function priceFeeMocked(amount: number): number {
+   if (amount > 100) {
+-    return fee31(amount - 10);
++    return fee31(amount - 20);
+   }
+   return amount;
+ }

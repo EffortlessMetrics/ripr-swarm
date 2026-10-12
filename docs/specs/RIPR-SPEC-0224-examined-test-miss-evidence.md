@@ -197,6 +197,64 @@ identity gates when the candidate is built (#5523):
 second gate run. The disposition is not serialized, promotes no relation, and
 changes no rank, confidence, class, stage, actionability or rendered output.
 
+### Predicate-boundary activation (TypeScript)
+
+A `missing_input` reason must belong to the row that lacks the input. The
+finding-wide RIPR-SPEC-0027 boundary witness cannot carry that: in a mixed
+finding one test hits the changed boundary and another misses it. Each
+related candidate therefore gets one internal
+`TypeScriptPredicateActivation`, computed from the same parsing, owner-call
+identity, receiver resolution, shadow guard, constant resolution and
+position rules as the witness (#5527):
+
+1. `not_applicable`: the changed line is not a predicate.
+2. `witnessed`: a strong, pinned, family-matching assertion of this test
+   observes an owner call carrying the boundary input, and its expected side
+   is live. The finding-wide witness is "some row is `witnessed`".
+3. `reached_without_discriminator`: an owner call in this test carries the
+   boundary input, but no such assertion witnesses it. The input is present,
+   so this is never a missing input.
+4. `missed_boundary`: the owner module pins the boundary statically (the
+   `typescript_boundary_input` or `typescript_boundary_parameters` fact), and
+   every input the test can feed the owner is visible, by one closed rule:
+   - The owner module names the owner only at its declaration, so no
+     recursion, mutual recursion or self alias re-enters it.
+   - The test reaches the owner through a direct, import-alias or namespace
+     call, and its assertion admission is `recognized`.
+   - Outside every test body (with its imports dropped), the test file holds
+     only inert lines: `describe('name', () => {` openers, their closers and
+     comments. A hook, helper, global getter or loader there refuses,
+     whatever its spelling. It has no side-effect import (`import './setup'`)
+     and no `import x = require(...)` or `import (...)`; each import must be
+     one complete static import with nothing after its terminator.
+   - The file imports only the owner's names, owner-module namespaces,
+     the owner module's own `const` integers and test frameworks. An
+     UPPER_CASE import from any other module refuses, since it may be a
+     function or getter that reaches the owner.
+   - The body is closed: every statement is
+     `expect(<one owner call or body local>)<literal matcher chain>`, a
+     `const` bound to one owner call, or a `const` integer. Matcher
+     arguments are literals (numbers, plain strings, `true`, `false`,
+     `null`, `undefined`, object keys) or body `const` integers.
+   - Every owner-call argument, read or not, is a plain integer or a
+     resolved constant, every read one is off the boundary, and no
+     constant argument is rebound by an enclosing scope.
+
+   Project-level setup files (vitest `setupFiles`, jest
+   `setupFilesAfterEnv`) are outside this rule's view; a hook there that
+   calls the owner is a known limit, as is a module the owner's own module
+   imports for its side effects that registers such a hook.
+
+   A visible owner call at the boundary is checked first and yields
+   `reached_without_discriminator`. `missed_boundary` is the only state that
+   may support a row-owned `missing_input`.
+5. `unresolved`: anything else (an untrusted or shadowed path, an unparsed or
+   underived boundary, a computed, absent or spread input, or an owner
+   reference that is not a plain call). Never a missing input.
+
+Activation is not serialized and changes no class, stage, missing text,
+actionability or rendered output.
+
 ## Required Evidence
 
 - A unit test that a test whose assertions match nothing is listed as

@@ -61,7 +61,7 @@ a time through the tool or the resource.
 | --- | --- |
 | Tool (no arguments) | `ripr_workspace_status` |
 | Tool (no arguments) | `ripr_refresh` |
-| Tool (`snapshot_id?`) | `ripr_list_gaps` |
+| Tool (`snapshot_id?`, `offset?`, `limit?`) | `ripr_list_gaps` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_gap` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_prepare_repair` |
 | Tool (`attempt_id`) | `ripr_get_repair_attempt` |
@@ -100,9 +100,16 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
 - the transport, tool, resource, resource-template, and byte bounds under
   `mcp`.
 
-`ripr_refresh` runs one bounded static analysis of the workspace diff through
-the same shared check authority as `ripr check` and the language server, then
-commits the completed snapshot into the session. The call blocks until the
+`ripr_refresh` analyzes the committed default-branch diff through the shared
+check authority, then commits the completed snapshot into the session.
+Staged and unstaged tracked edits and untracked files are outside this scope.
+The initialize/discover instructions, refresh tool description, and MCP help
+disclose this before invocation. `ripr check` defaults to the working tree
+when staged or unstaged tracked edits exist; sharing the authority does not
+mean identical input. `ripr check --committed` selects committed input;
+`ripr check --worktree --format json` analyzes staged and unstaged tracked
+edits outside MCP. The existing response `scope` note discloses detected
+excluded edits. The call blocks until the
 attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
 canonical item identities, and each item's evidence digest — equivalent
@@ -135,6 +142,28 @@ never truncates silently, and infers no business risk. Overflow is disclosed
 with reasons and the continuation route (`ripr_get_gap`). Pass `snapshot_id`
 to bind the read to a specific snapshot: a mismatched identity fails closed
 with `stale_snapshot` and the current identity.
+
+Paging (#6021): `offset` (default 0) and `limit` (minimum 1) page over the
+selected items in snapshot order, disclosed through the `page` window
+(`offset`, `limit` when caller-set, `returned`, `has_more`, `next_offset`).
+Optional tool fields must be omitted to use their defaults: explicit `null`
+is invalid for `snapshot_id`, `offset`, and `limit` (#7314). The server
+returns `-32602` Invalid Params naming the field with the same request ID;
+correct the argument or omit it and retry on the same connection.
+When the whole selection cannot fit one wire response, the default call
+returns the first wire-fitting page and `continuation.next_page` names the
+`ripr_list_gaps` call that resumes the walk — pinned to the snapshot
+identity, so a refresh between pages fails closed with `stale_snapshot`
+instead of silently mixing snapshots; walking `next_offset` covers the
+selection exactly once. Pages are sized so the complete structured result
+(`structuredContent`, per the tool's advertised `outputSchema`) measures
+under the 128-KiB response bound. Only a listing that cannot fit even one
+page — an omission disclosure alone over the ceiling — fails closed with
+`result_too_large` naming `ripr://snapshot/{snapshot_id}` as the identity
+route. Other tool responses carry the document once at full fidelity:
+`content[0].text` is the compact JSON serialization, and
+`structuredContent` repeats it only while the complete envelope stays under
+the response bound.
 
 `ripr_get_gap` (and the equivalent resource `ripr://gap/{canonical_id}`)
 returns one canonical item's complete bounded evidence bound to its snapshot

@@ -1,0 +1,13 @@
+pub fn ramp(base: u32) -> u32 {
+    base * 29
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ramp_is_deterministic() {
+        assert_eq!(ramp(2), ramp(2));
+    }
+}

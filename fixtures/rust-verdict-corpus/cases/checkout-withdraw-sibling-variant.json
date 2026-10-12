@@ -39,7 +39,7 @@
       "limited"
     ]
   },
-  "reasoning": "No test freezes a wallet; the guarded match pins Insufficient, a sibling variant, so the Frozen return is never observed. Spec cells: RIPR-SPEC-0175, RIPR-SPEC-0106.",
+  "reasoning": "No test freezes a wallet; the guarded match pins Insufficient, a sibling variant, so the Frozen return is never observed. Spec cells: RIPR-SPEC-0175, RIPR-SPEC-0106; RIPR-SPEC-0227 example 10.",
   "labeling_observation": {
     "ripr_commit": "b0c6ef6",
     "full_checkout_verdict": "gap",
@@ -48,5 +48,8 @@
       "weakly_exposed"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0227#10"
+  ]
 }

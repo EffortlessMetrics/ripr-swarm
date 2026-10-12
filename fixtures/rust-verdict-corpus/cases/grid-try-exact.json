@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "error_propagation_question_mark",
   "test_shape": "exact_pin_assert",
-  "hard_case": "is_err() is a broad oracle (RIPR-SPEC-0227). Its `?` side-flip rule covers an added or removed `?`, not a mutant that swallows one, so no spec credits this pin.",
+  "hard_case": "is_err() is a broad oracle (RIPR-SPEC-0227). Rule 3b by decision 4 credits it only because this `?` is parse_port's sole Err source and the rewrite keeps the same `?` operand; without decision 4 no spec credited this pin.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

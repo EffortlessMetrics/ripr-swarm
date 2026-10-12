@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_boundary",
   "test_shape": "table_driven_loop",
-  "hard_case": "The assert_eq! inside a for loop over literal rows is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: a for-loop body is not an ordinary statement/block path; #5328).",
+  "hard_case": "The assert_eq! sits inside a for loop over a let-bound array of literal rows. RIPR-SPEC-0197 admits it as running (#5328), and RIPR-SPEC-0186 reads the loop variable cents as one boundary input per row, so the 5_000 row pairs with the exact pin.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

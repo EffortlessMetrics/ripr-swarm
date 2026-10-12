@@ -1,0 +1,11 @@
+diff --git a/src/shipping.ts b/src/shipping.ts
+index 0000000..1111111 100644
+--- a/src/shipping.ts
++++ b/src/shipping.ts
+@@ -1,5 +1,5 @@
+ export function shippingFee(weight: number): number {
+-  if (weight > 20) {
++  if (20 < weight) {
+     return 15;
+   }
+   return 5;

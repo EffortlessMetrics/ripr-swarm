@@ -1,0 +1,12 @@
+diff --git a/src/help.rs b/src/help.rs
+--- a/src/help.rs
++++ b/src/help.rs
+@@ -3,7 +3,7 @@
+ 
+ pub const USAGE: &str = "usage: tally [--json] FILE";
+ pub const ABOUT: &str = "Counts lines in files.";
+-pub const VERSION_TEXT: &str = "tally 1.4";
++pub const VERSION_TEXT: &str = "tally 1.5";
+ 
+ pub fn help() -> String {
+     format!("{USAGE}\n")

@@ -7,7 +7,9 @@ name: Public Proof Drift
 # the page against its receipts only, so a PR that moves a scoreboard or the
 # corpus does not fail required CI. This lane is how the page's lag is
 # surfaced. It runs nightly, on demand, and when a pull request that touches a
-# source, a receipt or the page is opened ready or leaves draft. A push after
+# source, a receipt or the page is opened ready or leaves draft. Verdict
+# corpus case PRs are left out on purpose: the page is a corpus snapshot that
+# a separate refresh PR updates, so case PRs share no generated line (#6660). A push after
 # that reruns it only through a draft-to-ready toggle. On failure the job
 # summary shows the changed page lines and the refresh commands.
 
@@ -19,7 +21,6 @@ on:
     types: [opened, ready_for_review]
     paths:
       - "metrics/dx-scoreboard/baseline.json"
-      - "fixtures/rust-verdict-corpus/expected/**"
       - "benchmarks/rust_corpus/manifest.json"
       - "metrics/public-proof/**"
       - "docs/PUBLIC_PROOF.md"

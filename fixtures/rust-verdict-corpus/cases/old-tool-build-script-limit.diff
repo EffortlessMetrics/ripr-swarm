@@ -1,0 +1,11 @@
+diff --git a/build.rs b/build.rs
+--- a/build.rs
++++ b/build.rs
+@@ -1,6 +1,6 @@
+ //! Sets the line limit the library reads at compile time.
+ 
+ fn main() {
+-    println!("cargo:rustc-env=TALLY_LIMIT={}", 64);
++    println!("cargo:rustc-env=TALLY_LIMIT={}", 8 * 8);
+     println!("cargo:rerun-if-changed=build.rs");
+ }

@@ -1,0 +1,45 @@
+{
+  "case_id": "grid-flow-else-pinned",
+  "subject_id": "authored-grid-flow",
+  "diff": "cases/grid-flow-else-pinned.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 23
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "branch_move",
+  "test_shape": "exact_pin_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "} else {",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "heavy_parcels_pay_the_surcharge",
+        "equivalence_review": "the edit itself: shipping_fee(2_000) is 150 instead of 160"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Structural edit: a lone `} else {` inserted between two existing statements moves `fee += 10` into a new else branch. RIPR-SPEC-0001 keeps a probe on such a line because it moves existing code between branches. The exact pin shipping_fee(2_000) == 160 fails on the edit. The edit fails cargo test. Spec cells: RIPR-SPEC-0001.",
+  "labeling_observation": {
+    "ripr_commit": "fddf363",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

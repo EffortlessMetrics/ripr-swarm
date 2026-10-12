@@ -1,5 +1,7 @@
 use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
-use crate::domain::{Confidence, RelationReason, StageEvidence, StageState};
+use crate::domain::{
+    CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
+};
 
 pub(in crate::analysis) fn reach_evidence(
     related_tests: &[(&TestSummary, RelationReason)],
@@ -74,26 +76,39 @@ pub(in crate::analysis) fn reach_evidence(
             ),
         );
     }
-    let summary = if owner_anchored.is_empty() {
+    // #7003: callee-only relations never invoke the changed owner — the
+    // callee summary says so itself — so reporting `Yes` contradicted the
+    // evidence in one struct and every `reach.state` consumer inherited the
+    // lie (the all-no-path honesty note stayed suppressed, hints claimed a
+    // reaching test). `Weak`/`Low` matches the proximity-only branch, which
+    // faces the same "no test is seen calling the owner" situation. `No`
+    // would be stronger than the evidence: it would fire `reach_ruled_out`
+    // (rewriting downstream `Yes` stages to unreached) and demote the class
+    // to `no_static_path`, while the tests do exercise the seam's callee.
+    if owner_anchored.is_empty() {
         let names = callee_only
             .iter()
             .take(3)
             .map(|t| t.name.as_str())
             .collect::<Vec<_>>()
             .join(", ");
-        format!(
-            "Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): {names}"
-        )
-    } else {
-        let names = owner_anchored
-            .iter()
-            .take(3)
-            .map(|t| t.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("Related tests appear to reach {target}: {names}")
-    };
-    StageEvidence::new(StageState::Yes, Confidence::Medium, summary)
+        return StageEvidence::new(
+            StageState::Weak,
+            Confidence::Low,
+            format!("{CALLEE_ONLY_REACH_PREFIX}: {names}"),
+        );
+    }
+    let names = owner_anchored
+        .iter()
+        .take(3)
+        .map(|t| t.name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
+    StageEvidence::new(
+        StageState::Yes,
+        Confidence::Medium,
+        format!("Related tests appear to reach {target}: {names}"),
+    )
 }
 
 /// Whether a test could run `owner` without any indexed test body calling it
@@ -221,7 +236,7 @@ pub(super) fn invokes_opaque_macro(body: &str) -> bool {
 
 /// Relations that come from file or name proximity alone, with no captured
 /// call, helper chain, or assertion affinity tying the test to the owner.
-pub(super) fn is_proximity_only(reason: RelationReason) -> bool {
+pub(in crate::analysis) fn is_proximity_only(reason: RelationReason) -> bool {
     matches!(
         reason,
         RelationReason::SameTestFile
@@ -402,7 +417,8 @@ mod tests {
     }
 
     // #3714 round-2 review (devin hDRL2): callee-only relations must not
-    // claim owner reach in the summary.
+    // claim owner reach in the summary. #7003: the state must agree with
+    // that summary — `Weak`/`Low`, never `Yes`.
     #[test]
     fn given_callee_only_relations_when_building_reach_evidence_then_summary_names_callee_affinity()
     {
@@ -416,7 +432,8 @@ mod tests {
 
         let evidence = reach_evidence(&related, Some(&owner), || false);
 
-        assert_eq!(evidence.state, StageState::Yes);
+        assert_eq!(evidence.state, StageState::Weak);
+        assert_eq!(evidence.confidence, Confidence::Low);
         assert_eq!(
             evidence.summary,
             "Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them): observes_callee_outcome, other_callee_probe"
@@ -437,6 +454,8 @@ mod tests {
 
         let evidence = reach_evidence(&related, Some(&owner), || false);
 
+        // #7003 negative: one owner-anchored relation still reports `Yes`.
+        assert_eq!(evidence.state, StageState::Yes);
         assert_eq!(
             evidence.summary,
             "Related tests appear to reach parse_summary: parse_summary_fails_closed"

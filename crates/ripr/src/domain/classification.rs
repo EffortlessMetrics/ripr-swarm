@@ -58,6 +58,15 @@ pub(crate) const ASSERTION_NOT_CREDITED_PREFIX: &str = "assertion not credited: 
 /// the renderer can tell this refusal from "no assertion at all".
 pub(crate) const ASSERTION_CONTEXT_UNESTABLISHED: &str = "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)";
 
+/// Reach summary prefix when every related test is a `SeamCalleeCall`: the
+/// tests exercise the seam's converted callee and never invoke the changed
+/// owner (#3714). The producer (`analysis::classify::reach`) builds the
+/// summary from this literal, and the human renderer recognizes it so no
+/// classification hint claims a reaching test for such a finding (#7003).
+/// Shared here in `domain/` so the two sides agree on one literal across
+/// the analysis/output seam (reuse, don't fork).
+pub(crate) const CALLEE_ONLY_REACH_PREFIX: &str = "Related tests exercise the wrapper seam's converted callee (the changed owner is not invoked by them)";
+
 /// RIPR-SPEC-0114/0117: stable evidence prefixes for named static-limitation
 /// detail. Producers append these lines to `Finding.evidence`; renderers and
 /// corpus checks consume the same prefixes so the unresolved edge stays visible

@@ -98,20 +98,38 @@ fn normalize_indexed_file_test_styles(
     let lexical_lines = facts
         .used_lexical_fallback
         .then(|| facts.source.lines().collect::<Vec<_>>());
+    let cfg_test_lines = std::cell::OnceCell::new();
     let mut normalized_tests = Vec::new();
     for &id in &facts.functions {
         cancellation::checkpoint()?;
         let function = &mut functions[id];
         let existing = existing_tests.remove(&(function.start_line, function.name.clone()));
-        let has_test_attribute = match lexical_lines.as_deref() {
+        let (defines_test, compiled_out) = match lexical_lines.as_deref() {
             Some(lines) => {
-                attributes_define_test(lexical_attributes_before(lines, function.start_line))
+                let attributes = lexical_attributes_before(lines, function.start_line);
+                let gates = lexical_gate_attributes_before(lines, function.start_line);
+                (
+                    attributes_define_test(attributes.iter().copied()),
+                    attributes_compile_out_in_test_build(gates.iter().map(String::as_str)),
+                )
             }
-            None => attributes_define_test(function.attrs.iter().map(String::as_str)),
+            None => (
+                attributes_define_test(function.attrs.iter().map(String::as_str)),
+                attributes_compile_out_in_test_build(function.attrs.iter().map(String::as_str)),
+            ),
         };
-        let preserve_cfg_test_role = !has_test_attribute
-            && function.source_role.is_evidence_role()
-            && is_inside_cfg_test_module(&facts.source, function.start_line);
+        let has_test_attribute = defines_test && !compiled_out;
+        // A test under a cfg that is false in a test build never runs and
+        // never compiles (#6293): evidence-only, so it is neither an
+        // executable test nor a production probe subject.
+        let preserve_cfg_test_role = (defines_test && compiled_out)
+            || (!has_test_attribute
+                && function.source_role.is_evidence_role()
+                && inside_cfg_test_module_at(
+                    cfg_test_lines.get_or_init(|| cfg_test_module_lines(&facts.source)),
+                    &facts.source,
+                    function.start_line,
+                ));
         let promotion_claimed_expansion =
             function.source_role == FunctionSourceRole::ParameterizedExpansion;
         function.source_role = if has_test_attribute {
@@ -153,13 +171,29 @@ fn test_fact_from_function(function: &FunctionFact) -> TestFact {
     }
 }
 
-fn attributes_define_test<'attribute>(
+/// Whether any attribute is a recognised test attribute (`#[test]`,
+/// `#[tokio::test]`, `#[rstest]`, ...). The one authority for which functions
+/// are tests; the inline test-region cage consumes it to decide whether an
+/// inserted function is a new test.
+pub(crate) fn attributes_define_test<'attribute>(
     attributes: impl IntoIterator<Item = &'attribute str>,
 ) -> bool {
     attributes.into_iter().any(|attribute| {
         normalized_test_attribute_path(attribute)
             .as_deref()
             .is_some_and(is_test_attribute_path)
+    })
+}
+
+/// A `#[test]` under a `cfg` that is false in a test build (`cfg(any())`,
+/// `cfg(not(test))`) never runs, so it cannot discriminate anything (#6293).
+/// Only a provably false gate counts; feature, target and custom atoms stay
+/// unknown and keep the test, as before.
+fn attributes_compile_out_in_test_build<'attribute>(
+    attributes: impl IntoIterator<Item = &'attribute str>,
+) -> bool {
+    attributes.into_iter().any(|attribute| {
+        cfg_predicates::attribute_test_build_availability(attribute) == Some(false)
     })
 }
 
@@ -186,6 +220,151 @@ fn lexical_attributes_before<'source>(
     attributes
 }
 
+/// Collects the attributes immediately preceding `start_line` so the
+/// compile-out check sees a multi-line gate (`#[cfg(\n    any()\n)]`) the
+/// same way a one-line gate is seen (#6293, #7043).
+///
+/// The scan is a single forward pass over a byte-bounded suffix of the
+/// prefix: comments and blank lines are skipped, complete `#[...]` forms
+/// are split with the shared bracket authority, and other code resets the
+/// trailing sequence. An unclosed `#[` stops the scan (fail open) instead
+/// of walking the rest of the file. This path is independent of
+/// [`join_leading_attribute`]'s 32-line bound, which still governs
+/// cfg-test *module* detection.
+fn lexical_gate_attributes_before(lines: &[&str], start_line: usize) -> Vec<String> {
+    // Real gates are small; this bound keeps an unclosed `#[` and a long
+    // run of `]`-ending junk linear in the budget rather than the file.
+    const MAX_GATE_SCAN_BYTES: usize = 8 * 1024;
+    let function_index = start_line.saturating_sub(1).min(lines.len());
+    let window_start = lexical_gate_scan_window_start(lines, function_index, MAX_GATE_SCAN_BYTES);
+    lines
+        .get(window_start..function_index)
+        .map(collect_trailing_gate_attributes)
+        .unwrap_or_default()
+}
+
+fn lexical_gate_scan_window_start(lines: &[&str], end: usize, max_bytes: usize) -> usize {
+    let mut consumed = 0usize;
+    let mut start = end;
+    while start > 0 {
+        let previous = start - 1;
+        let Some(line) = lines.get(previous) else {
+            break;
+        };
+        let line_bytes = line.len().saturating_add(1);
+        if consumed.saturating_add(line_bytes) > max_bytes {
+            break;
+        }
+        consumed += line_bytes;
+        start = previous;
+    }
+    start
+}
+
+fn collect_trailing_gate_attributes(lines: &[&str]) -> Vec<String> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let joined = lines.join("\n");
+    let bytes = joined.as_bytes();
+    let mut index = 0usize;
+    let mut attributes = Vec::new();
+    while index < bytes.len() {
+        index = skip_whitespace_and_comments(bytes, index);
+        if index >= bytes.len() {
+            break;
+        }
+        let Some(rest) = joined.get(index..) else {
+            break;
+        };
+        if rest.starts_with("#[") || rest.starts_with("#![") {
+            match cfg_predicates::split_leading_attribute(rest) {
+                Some((attribute, remainder)) => {
+                    attributes.push(attribute.to_string());
+                    let next = joined.len().saturating_sub(remainder.len());
+                    if next <= index {
+                        break;
+                    }
+                    index = next;
+                }
+                None => {
+                    // Unclosed `#[`: do not rescan from every later `#`
+                    // (that would be quadratic). Fail open for this region.
+                    attributes.clear();
+                    break;
+                }
+            }
+            continue;
+        }
+        attributes.clear();
+        let next = skip_line(bytes, index);
+        if next <= index {
+            break;
+        }
+        index = next;
+    }
+    attributes
+}
+
+fn skip_whitespace_and_comments(bytes: &[u8], mut index: usize) -> usize {
+    while let Some(&byte) = bytes.get(index) {
+        if byte.is_ascii_whitespace() {
+            index += 1;
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            index += 2;
+            while bytes.get(index).is_some_and(|current| *current != b'\n') {
+                index += 1;
+            }
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            match skip_nested_block_comment(bytes, index) {
+                Some(next) => {
+                    index = next;
+                    continue;
+                }
+                None => break,
+            }
+        }
+        break;
+    }
+    index
+}
+
+fn skip_nested_block_comment(bytes: &[u8], index: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut cursor = index.checked_add(2)?;
+    while cursor < bytes.len() {
+        let current = bytes.get(cursor).copied()?;
+        let next = bytes.get(cursor + 1).copied();
+        if current == b'/' && next == Some(b'*') {
+            depth = depth.saturating_add(1);
+            cursor = cursor.checked_add(2)?;
+        } else if current == b'*' && next == Some(b'/') {
+            cursor = cursor.checked_add(2)?;
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(cursor);
+            }
+        } else {
+            cursor += 1;
+        }
+    }
+    None
+}
+
+fn skip_line(bytes: &[u8], mut index: usize) -> usize {
+    while let Some(&byte) = bytes.get(index) {
+        index += 1;
+        if byte == b'\n' {
+            break;
+        }
+    }
+    index
+}
+
 /// Line walk that preserves producer-owned cfg-test evidence roles. The
 /// cfg-term semantics come from the one shared authority
 /// (`cfg_predicates`, #3530) — the same source the parser producer
@@ -198,11 +377,50 @@ fn is_inside_cfg_test_module(source: &str, function_start_line: usize) -> bool {
         .lines()
         .take(function_start_line.saturating_sub(1))
         .collect();
-    let mut scopes = Vec::new();
+    cfg_test_module_walk(&lines, |_, _| {})
+}
+
+/// [`is_inside_cfg_test_module`] for every line of one file from a single
+/// walk: entry `n` answers for a function whose first `n` lines precede it.
+/// Asking per function rewalked the file from its top each time, which was
+/// quadratic in large test files and most of `index_test_styles` on warm
+/// runs (#5363). `None` marks a line inside a multi-line attribute: the
+/// prefix walk would stop mid-attribute, so that answer comes from the
+/// prefix walk itself.
+fn cfg_test_module_lines(source: &str) -> Vec<Option<bool>> {
+    let lines: Vec<&str> = source.lines().collect();
+    let mut inside = vec![None; lines.len() + 1];
+    let at_end = cfg_test_module_walk(&lines, |index, state| inside[index] = Some(state));
+    inside[lines.len()] = Some(at_end);
+    inside
+}
+
+fn inside_cfg_test_module_at(
+    table: &[Option<bool>],
+    source: &str,
+    function_start_line: usize,
+) -> bool {
+    match table.get(function_start_line.saturating_sub(1)) {
+        Some(Some(inside)) => *inside,
+        _ => is_inside_cfg_test_module(source, function_start_line),
+    }
+}
+
+/// Walks `lines` and returns whether the end is inside a `cfg(test)`
+/// module. `at_line(index, inside)` reports the same answer for the prefix
+/// `lines[..index]` at every line where a walk step starts; a walk of that
+/// prefix alone takes the same steps, since no attribute join before
+/// `index` reaches past it.
+fn cfg_test_module_walk(lines: &[&str], mut at_line: impl FnMut(usize, bool)) -> bool {
+    let mut scopes: Vec<bool> = Vec::new();
+    // How many open scopes are `cfg(test)` modules, so asking "inside one?"
+    // at every step costs O(1) instead of a scan of the scope stack.
+    let mut cfg_test_scopes = 0usize;
     let mut pending_cfg_test = false;
     let mut index = 0usize;
 
     while index < lines.len() {
+        at_line(index, cfg_test_scopes != 0);
         let remainder_storage;
         let line: &str = if lines[index].trim_start().starts_with("#[") {
             match join_leading_attribute(&lines[index..]) {
@@ -242,11 +460,13 @@ fn is_inside_cfg_test_module(source: &str, function_start_line: usize) -> bool {
         for character in line.chars() {
             match character {
                 '{' => {
-                    scopes.push(declares_cfg_test_module && !module_opened);
+                    let is_cfg_test_module = declares_cfg_test_module && !module_opened;
+                    cfg_test_scopes += usize::from(is_cfg_test_module);
+                    scopes.push(is_cfg_test_module);
                     module_opened = true;
                 }
                 '}' => {
-                    scopes.pop();
+                    cfg_test_scopes -= usize::from(scopes.pop() == Some(true));
                 }
                 _ => {}
             }
@@ -257,7 +477,7 @@ fn is_inside_cfg_test_module(source: &str, function_start_line: usize) -> bool {
         index += 1;
     }
 
-    scopes.iter().any(|is_cfg_test_module| *is_cfg_test_module)
+    cfg_test_scopes != 0
 }
 
 /// Joins continuation lines until the leading attribute's closing bracket so

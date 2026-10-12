@@ -1,0 +1,12 @@
+diff --git a/src/pricing.ts b/src/pricing.ts
+--- a/src/pricing.ts
++++ b/src/pricing.ts
+@@ -57,7 +57,7 @@ export interface Quote {
+ export function quote(subtotalCents: number, points: number): Quote {
+   const tier = tierForPoints(points);
+   const total = subtotalCents - discountCents(tier, subtotalCents);
+-  return { tier, totalCents: total + shippingFee(subtotalCents) };
++  return { tier, totalCents: total };
+ }
+ 
+ export function receiptFooter(storeName: string): string {

@@ -75,6 +75,7 @@ pub(crate) struct GapDecisionLedgerReport {
 pub(crate) struct ParsedGapRecordSource {
     pub(crate) root: Option<String>,
     pub(crate) generated_at: Option<String>,
+    pub(crate) source_subject: Option<Value>,
     pub(crate) records: Vec<GapRecord>,
 }
 
@@ -295,6 +296,7 @@ fn command_role_label(role: CommandRole) -> &'static str {
         CommandRole::Regeneration => "regeneration",
         CommandRole::Inspection => "inspection",
         CommandRole::TargetedRerun => "targeted_rerun",
+        CommandRole::RepairStart => "repair_start",
     }
 }
 
@@ -630,7 +632,20 @@ pub(crate) fn stamp_gap_decision_ledger_source_subject(
         root,
         &required,
     ) {
-        Ok(subject) => {
+        Ok(mut subject) => {
+            if report
+                .input_root
+                .as_deref()
+                .is_none_or(|input_root| !Path::new(input_root).is_absolute())
+                && subject.corpus.is_some()
+            {
+                // A relative producer label cannot recover the working
+                // directory of captured aggregate inputs. Preserve existing
+                // named-file legacy rebasing without blessing the corpus.
+                subject.corpus = Some(serde_json::json!({
+                    "unavailable": "input_source_subject_corpus_root_missing"
+                }));
+            }
             report.source_subject = Some(subject);
             report.source_subject_unavailable = None;
         }
@@ -886,6 +901,7 @@ fn parse_gap_record_source_json_with_root(
     Ok(ParsedGapRecordSource {
         root,
         generated_at,
+        source_subject: value.get("source_subject").cloned(),
         records,
     })
 }

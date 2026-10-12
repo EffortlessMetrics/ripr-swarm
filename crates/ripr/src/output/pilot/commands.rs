@@ -1,7 +1,9 @@
 use crate::agent::loop_commands::{self, display_path};
+use crate::analysis::ClassifiedSeam;
 use crate::analysis::repair_route::repair_packet_eligibility;
-use crate::analysis::{ClassifiedSeam, is_test_surface_path};
-use crate::output::agent_seam_packets::recommended_test_for;
+use crate::output::agent_seam_packets::{
+    recommended_inline_test_module, recommended_test_for, recommended_test_is_repair_edit_target,
+};
 use crate::output::pilot::PilotSummaryContext;
 use std::path::Path;
 
@@ -10,10 +12,11 @@ use std::path::Path;
 /// route readiness alone, is the authority here: a wrong actionable repair
 /// signal is worse than falling back to the snapshot comparison.
 ///
-/// `agent repair` also refuses an edit target outside a test surface, so a
-/// seam whose recommended test lives in an inline `#[cfg(test)]` module of a
-/// production file gets no repair line: offering one would send the user into
-/// a refusal.
+/// `agent repair` also refuses an edit target it cannot route, so the target
+/// must pass the shared `recommended_test_is_repair_edit_target`: a test
+/// surface, or the seam's own Rust file confined to its one governed inline
+/// `#[cfg(test)]` module (#5210). Any other target gets no repair line:
+/// offering one would send the user into a refusal.
 ///
 /// Built here rather than in `agent::loop_commands`, whose file xtask includes
 /// into its own tree: a template only pilot calls reads as dead code there.
@@ -21,7 +24,7 @@ pub(super) fn repair_start_command(root: &Path, entry: &ClassifiedSeam) -> Optio
     if !repair_packet_eligibility(entry).eligible() {
         return None;
     }
-    if !is_test_surface_path(&recommended_test_for(entry).file) {
+    if !recommended_test_is_repair_edit_target(entry) {
         return None;
     }
     Some(format!(
@@ -29,6 +32,20 @@ pub(super) fn repair_start_command(root: &Path, entry: &ClassifiedSeam) -> Optio
         loop_commands::shell_arg(&loop_commands::bound_root(&display_path(root))),
         loop_commands::shell_arg(entry.seam.id().as_str()),
     ))
+}
+
+/// Where the focused test may go for `entry`'s repair, stated after the
+/// "add the focused test" step: test files, or only new test functions inside
+/// the inline test module the edit cage confines the repair to (#5210).
+pub(super) fn repair_edit_scope(entry: &ClassifiedSeam) -> String {
+    let recommended = recommended_test_for(entry);
+    match recommended_inline_test_module(entry, &recommended.file) {
+        Some(module) => format!(
+            "(new test functions inside `mod {module}` of {} only; production code and existing tests stay unchanged)",
+            recommended.file
+        ),
+        None => "(test files only)".to_string(),
+    }
 }
 
 /// `ripr first-pr` for a Python repair card without its own receipt command.

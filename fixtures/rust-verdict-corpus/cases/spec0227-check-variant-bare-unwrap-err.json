@@ -47,5 +47,8 @@
       "reachable_unrevealed"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0227#7"
+  ]
 }

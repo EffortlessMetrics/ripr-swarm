@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0231-oracle-ensure-matches-ok-wildcard",
+  "subject_id": "authored-spec0231-18",
+  "diff": "cases/spec0231-oracle-ensure-matches-ok-wildcard.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "ok_return",
+  "test_shape": "ensure_matches_ok_wildcard",
+  "hard_case": "Measured defect: ripr reports exact_value / strong (the spec's 'today'); the spec adopts smoke_only / smoke (rules 3, step 0).",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Ok(x + 1)",
+        "mutated_line": "Ok(x + 1)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: check(5) returns Ok(6); Ok(_) accepts it"
+      },
+      {
+        "replacement": "Err(E::Bad)",
+        "mutated_line": "Err(E::Bad)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::check_accepts_five",
+        "equivalence_review": "not equivalent: check(5) errs"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "ensure!(matches!(check(5), Ok(_))) via a local macro_rules! ensure only checks the Ok side. Spec cells: RIPR-SPEC-0231 example 18.",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#18"
+  ]
+}

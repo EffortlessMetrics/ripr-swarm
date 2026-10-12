@@ -71,9 +71,9 @@ action refs pinned to immutable SHAs
 per-PR concurrency for automatic review
 repo-scoped concurrency for scheduled security scan
 cancel-in-progress: false
-auto-review contents: write
+auto-review contents: read
 manual Droid contents: read
-security scan contents: write
+security scan contents: read
 security_scan_schedule: true
 security_scan_days: 7
 security_severity_threshold: medium
@@ -85,9 +85,12 @@ If the target repository has a workflow allowlist or shell-line budget policy,
 update it for every Droid workflow. Do not invent that policy only for Droid
 unless the target repository explicitly wants the governance.
 
-Do not reduce auto-review to `contents: read` in the baseline rollout. Keep the
-working `ripr` permissions until a focused permission-test PR proves the Factory
-Action does not rely on `contents: write`.
+The working `ripr` permission shape for auto-review, manual `@droid`, and
+scheduled security scan is `contents: read` (plus `pull-requests: write`,
+`issues: write`, and `actions: read`). That posture landed in #2498 after
+dropping `contents: write` and `id-token: write`. Do not expand the baseline
+rollout to `contents: write`; keep the working `ripr` permissions until a
+focused permission-test PR proves a write requirement.
 
 ## Validation
 

@@ -1,0 +1,89 @@
+{
+  "subject_id": "authored-ts-jest-mined",
+  "origin": "authored",
+  "version_label": "authored@2026-10-04",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "jest.config.js",
+      "sha256": "06ffef8b53b4cb850f7bf2691d6fe2f3ad3bce674d2aa636ad1e29dcd22152a5"
+    },
+    {
+      "path": "package.json",
+      "sha256": "490e729f8cfdca52705445d5c657ef8b5f9cd2e9ffeaebcd90af43d33f6ae381"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/average.ts",
+      "sha256": "e1241041652d9eab147dfe88e28bb361a0a881913b75fc2473bcc9aa699797ec"
+    },
+    {
+      "path": "src/errors.ts",
+      "sha256": "86956cf35088a884feb4e318ba2052aea5c2bf7a6c74de4d3ccd5ecb5bce7587"
+    },
+    {
+      "path": "src/options.ts",
+      "sha256": "2748f8c77ece47de065d064e43d17cc38235bfbc16d2ab2e850847e0bd9fd5ee"
+    },
+    {
+      "path": "src/profile.ts",
+      "sha256": "92d22f85247cbf65f6397435b7a958ec066532ad703483f45695bceb8d8bd77a"
+    },
+    {
+      "path": "src/settings.ts",
+      "sha256": "769c2f5b963f6d462ad0f7f9493c6e56f7d352f2ddec8c8a96264622f4ccba6a"
+    },
+    {
+      "path": "src/store.ts",
+      "sha256": "7fd079381bb2d64e412ff6fbc8c4e7428d61b11f32f2b049e40dce35ec8202ac"
+    },
+    {
+      "path": "src/sum.ts",
+      "sha256": "42c652625aaf272d68dd28dfc2d73cfdbe9f79ee61315c10e31647dc1694f969"
+    },
+    {
+      "path": "src/utils.ts",
+      "sha256": "db4b7cdee49ac97674e2fcefdc15f589a81d901b5b074fe6473f15a6ce50dbc4"
+    },
+    {
+      "path": "test/average.test.ts",
+      "sha256": "91f6cc2154f517ba4e834e0efb20ad6fa4862d61a0c3c9b860d8c8a05ed7bf54"
+    },
+    {
+      "path": "test/errors.test.ts",
+      "sha256": "8b0ba4cab01f7ee60b87513062fc7b1b35507bb1d3f2dd18d39aabdc565d01fa"
+    },
+    {
+      "path": "test/options.test.ts",
+      "sha256": "2fb73644d24aae2e4ce06b0e9dbafc916613eb1eccea2ae06149f8fb9ed49f97"
+    },
+    {
+      "path": "test/profile.test.ts",
+      "sha256": "feff3033be6e8fd77e4e7e0d444023d78d86cc3f2ea76d0ab41b526687bf1730"
+    },
+    {
+      "path": "test/settings.test.ts",
+      "sha256": "780f4f45218c02ceba21ac97beb5f31b1add28aa9b93baa7b295f9f3aff19571"
+    },
+    {
+      "path": "test/store.test.ts",
+      "sha256": "f9e9a5c26c69d04e9d92aad1c1619120e5275ff949a9f4efe6b780b715db8940"
+    },
+    {
+      "path": "test/sum.test.ts",
+      "sha256": "01a3700577d04d6daf0baa2936fc0c47281c5711a5817fd815ac6229428e7a12"
+    },
+    {
+      "path": "test/utils.test.ts",
+      "sha256": "ef038b3980213f8a7749fe072b2e3b418542f16a05b63844f4553de4fc25cd85"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "f6cc3423554323dafa1e27b7726571abbb8f612680393f198b11ce352aace598"
+    }
+  ]
+}

@@ -3,7 +3,7 @@ use super::propagation_witness::{
     PropagationWitnessV1, complete_direct_witness, is_direct_collection_state_write,
     normalize_semantic_text, valid_owner_bound_partial_witness,
 };
-use super::text::{exact_error_variant, question_mark_error_variant};
+use super::text::{exact_error_variant, question_mark_error_variant, spells_result_err};
 use crate::domain::*;
 
 pub(in crate::analysis) fn propagation_evidence(
@@ -152,7 +152,17 @@ pub(in crate::analysis) fn local_flow_sinks(
             owner.clone(),
         )],
         ProbeFamily::SideEffect | ProbeFamily::CallDeletion => {
-            if probe.expression.contains("Err(") {
+            // A discarded value (`drop(Err::<(), E>(E::X))`, `let _ = ..`)
+            // propagates nowhere, whatever it constructs, so the discard is
+            // read before any error or return sink (#7063 review).
+            if value_is_swallowed(&probe.expression) {
+                vec![flow_sink(
+                    FlowSinkKind::Unknown,
+                    "value is discarded at the call-chain tail; propagation unknown",
+                    probe.location.line,
+                    owner.clone(),
+                )]
+            } else if constructs_result_error(&probe.expression) {
                 vec![flow_sink(
                     FlowSinkKind::ErrorVariant,
                     result_error_text(&probe.expression),
@@ -166,13 +176,6 @@ pub(in crate::analysis) fn local_flow_sinks(
                 vec![flow_sink(
                     FlowSinkKind::ReturnValue,
                     return_sink_text(&probe.expression),
-                    probe.location.line,
-                    owner.clone(),
-                )]
-            } else if value_is_swallowed(&probe.expression) {
-                vec![flow_sink(
-                    FlowSinkKind::Unknown,
-                    "value is discarded at the call-chain tail; propagation unknown",
                     probe.location.line,
                     owner.clone(),
                 )]
@@ -328,7 +331,7 @@ fn return_value_sink(
     owner_fn: Option<&FunctionSummary>,
     owner: Option<SymbolId>,
 ) -> FlowSinkFact {
-    if probe.expression.contains("Err(") {
+    if constructs_result_error(&probe.expression) {
         return flow_sink(
             FlowSinkKind::ErrorVariant,
             result_error_text(&probe.expression),
@@ -1031,6 +1034,12 @@ fn plain_block_head(head: &str) -> bool {
             })
 }
 
+/// `Err(..)`, or a qualified or turbofish constructor such as
+/// `Err::<T, E>(E::X)` whose variant reads exactly.
+fn constructs_result_error(text: &str) -> bool {
+    spells_result_err(text)
+}
+
 fn result_error_text(text: &str) -> String {
     if let Some(variant) = exact_error_variant(text) {
         return format!("Result::Err({variant})");
@@ -1125,6 +1134,64 @@ mod tests {
     use crate::analysis::facts::FunctionSourceRole;
     use crate::analysis::rust_index::ReturnFact;
     use std::path::PathBuf;
+
+    /// #7063: a turbofish `Err::<T, E>(..)` constructs the same error as
+    /// `Err(..)`, so its return-value sink is the error variant, not the
+    /// nearest plain return.
+    #[test]
+    fn turbofish_err_return_sinks_to_the_error_variant() {
+        let owner = function(
+            "pub fn refund(amount: i64) -> Result<i64, PayError> {\n    if amount > 10_000 {\n        return Err::<i64, PayError>(PayError::Limit);\n    }\n    Ok(amount)\n}",
+        );
+        for family in [ProbeFamily::ReturnValue, ProbeFamily::SideEffect] {
+            let probe = probe(
+                family.clone(),
+                "return Err::<i64, PayError>(PayError::Limit);",
+                3,
+            );
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks
+                    .iter()
+                    .any(|sink| sink.kind == FlowSinkKind::ErrorVariant
+                        && sink.text == "Result::Err(PayError::Limit)"),
+                "{family:?}: {sinks:?}"
+            );
+        }
+
+        // A custom `MyErr::<E>(..)` constructor is not `Result::Err`; the
+        // `Err::<` inside its name must not bind the error identity.
+        let custom = function(
+            "pub fn refund(amount: i64) -> MyErr<PayError> {\n    if amount > 10_000 {\n        return MyErr::<PayError>(PayError::Limit);\n    }\n    MyErr::<PayError>(PayError::None)\n}",
+        );
+        for family in [ProbeFamily::ReturnValue, ProbeFamily::SideEffect] {
+            let probe = probe(
+                family.clone(),
+                "return MyErr::<PayError>(PayError::Limit);",
+                3,
+            );
+            let sinks = local_flow_sinks(&probe, Some(&custom));
+            assert!(
+                sinks
+                    .iter()
+                    .all(|sink| sink.kind != FlowSinkKind::ErrorVariant),
+                "{family:?}: {sinks:?}"
+            );
+        }
+
+        // A discarded turbofish `Err` propagates nowhere.
+        for discarded in [
+            "drop(Err::<(), PayError>(PayError::Limit));",
+            "let _ = Err::<(), PayError>(PayError::Limit);",
+        ] {
+            let probe = probe(ProbeFamily::SideEffect, discarded, 3);
+            let sinks = local_flow_sinks(&probe, Some(&owner));
+            assert!(
+                sinks.iter().all(|sink| sink.kind == FlowSinkKind::Unknown),
+                "{discarded}: {sinks:?}"
+            );
+        }
+    }
 
     #[test]
     fn predicate_flow_uses_nearest_return_after_changed_line() {

@@ -1,8 +1,8 @@
 use super::{
     BADGE_REASON_KEYS, BadgePolicy, BadgeScope, BadgeStatus, TestEfficiencyBadgeSummary,
-    badge_status_color, parse_test_efficiency_badge_summary, render_native_json,
-    render_shields_json, repo_gap_ledger_badge_summary_from_json, ripr_badge_summary,
-    ripr_canonical_actionable_gap_badge_summary, ripr_plus_badge_summary,
+    badge_status_color, parse_test_efficiency_badge_summary, refusal_badge_summary,
+    render_native_json, render_shields_json, repo_gap_ledger_badge_summary_from_json,
+    ripr_badge_summary, ripr_canonical_actionable_gap_badge_summary, ripr_plus_badge_summary,
     ripr_plus_canonical_actionable_gap_badge_summary, ripr_seam_badge_summary,
 };
 use crate::analysis::ClassifiedSeam;
@@ -111,6 +111,7 @@ fn check_output(findings: Vec<Finding>) -> CheckOutput {
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
+        analyzed_revisions: None,
     }
 }
 
@@ -161,6 +162,7 @@ fn classified_seam(class: SeamGripClass) -> ClassifiedSeam {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         },
         seam,
         class,
@@ -187,6 +189,39 @@ fn badge_summary_counts_weakly_exposed_reachable_unrevealed_and_no_static_path()
 
     assert_eq!(summary.counts.unsuppressed_exposure_gaps, 3);
     assert_eq!(summary.message, "3");
+}
+
+/// #7332: a refused run renders the badge family's degraded-state convention
+/// (warn + lightgrey, zeroed counts) with the typed identity in the message
+/// and the repair route in the first warning — parseable badge JSON, never
+/// zero bytes that a badge consumer could read as "no gaps".
+#[test]
+fn refusal_badge_summary_applies_the_degraded_state_convention() -> Result<(), String> {
+    let notice = crate::core_error::CoreError::base_unresolvable(
+        "the base `deadbeef` does not resolve to a commit",
+    )
+    .refusal_notice();
+    let summary = refusal_badge_summary(&notice);
+    assert_eq!(summary.status, BadgeStatus::Warn);
+    assert_eq!(summary.color, "lightgrey");
+    assert_eq!(summary.message, "refused: base_unresolvable");
+    assert_eq!(summary.counts.unsuppressed_exposure_gaps, 0);
+    assert_eq!(summary.counts.analyzed_findings, 0);
+    let warning = summary
+        .warnings
+        .first()
+        .ok_or("refusal badge must name the recovery in warnings")?;
+    assert!(
+        warning.contains("run refused:") && warning.contains("analysis/base-resolution"),
+        "warning must carry the diagnostic and repair route: {warning}"
+    );
+
+    let rendered = render_native_json(&summary);
+    let value: serde_json::Value =
+        serde_json::from_str(&rendered).map_err(|err| format!("parse badge JSON: {err}"))?;
+    assert_eq!(value["message"], "refused: base_unresolvable");
+    assert_eq!(value["status"], "warn");
+    Ok(())
 }
 
 /// #6761: a candidate-current preview finding is visible in the analyzed
@@ -1895,6 +1930,7 @@ fn check_output_with_preview_advisory(
         suppression: None,
         analysis_outcome: None,
         partial_scope: None,
+        analyzed_revisions: None,
     }
 }
 

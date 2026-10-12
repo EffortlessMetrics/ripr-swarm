@@ -1,0 +1,61 @@
+{
+  "case_id": "spec0231-oracle-is-some-and-threshold",
+  "subject_id": "authored-spec0231-15",
+  "diff": "cases/spec0231-oracle-is-some-and-threshold.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "option_return",
+  "test_shape": "is_some_and_threshold",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Some(1);",
+        "mutated_line": "return Some(1);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::lookup_one_exceeds_one",
+        "equivalence_review": "not equivalent: 1 fails v > 1"
+      },
+      {
+        "replacement": "return Some(5);",
+        "mutated_line": "return Some(5);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: lookup(1) returns 5, not 4; the test only checks > 1"
+      },
+      {
+        "replacement": "return None;",
+        "mutated_line": "return None;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::lookup_one_exceeds_one",
+        "equivalence_review": "not equivalent: is_some_and is false on None"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "is_some_and(|v| v > 1) catches None and values <= 1 but not other values above 1. Spec cells: RIPR-SPEC-0231 example 15 (unchanged; control).",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#15"
+  ]
+}

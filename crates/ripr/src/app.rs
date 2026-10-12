@@ -11,6 +11,7 @@ pub(crate) mod causal_projection;
 mod check;
 pub(crate) mod check_artifact;
 mod context;
+pub(crate) mod diff_source;
 mod explain;
 pub(crate) mod impacted_evidence;
 mod navigation;
@@ -36,6 +37,11 @@ pub(crate) mod repair_card_handoff;
 /// real-opportunity accounting that back the versioned decision receipt.
 pub mod repair_card_usability;
 pub(crate) mod ripr_plus;
+/// Task-first repair selection services behind `ripr repair` and
+/// `ripr continue` (#6305). The CLI adapter parses and renders; the
+/// decisions here reuse the inventory, eligibility, selector, and attempt
+/// authorities.
+pub(crate) mod task_first;
 
 /// Shared final qualification boundary for legacy RIPR+ receipt composition.
 /// Exposure summaries and gap ledgers preserve useful observed counts, but
@@ -312,6 +318,11 @@ pub struct CheckOutput {
     /// lower bound, and the result is never a gate, baseline, badge, or RIPR
     /// Zero input (`gate_eligibility: ineligible`).
     pub partial_scope: Option<crate::analysis::PartialDiffScope>,
+    /// The base and head a live-repository diff analyzed (ref and commits,
+    /// and whether the diff ended at `HEAD` or at the working tree), named in
+    /// every diff-scoped check header. `None` when the input was a diff file,
+    /// stdin, a candidate tree, or a repo-scope run.
+    pub(crate) analyzed_revisions: Option<crate::analysis::AnalyzedRevisions>,
 }
 
 /// Renders a previously computed [`CheckOutput`] in the requested format.

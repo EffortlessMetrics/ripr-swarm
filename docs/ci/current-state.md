@@ -82,11 +82,20 @@ so the separate MSRV workspace check is not repeated on each push.
 Coverage and Test Analytics no longer rebuild the entire workspace on every
 ordinary pull request. Their artifacts have five-day retention on these lanes.
 
+### PR Plan retirement (#4987)
+
+The automatic structural placeholder is retired. It supplied a best-effort
+changed-file list, ledger-presence echo, and constant summary, with no decision
+output or downstream qualification consumer. Its optional explicit-base/head
+[local diagnostic](pr-plan.md#local-advisory-diagnostic) remains available.
+Existing `pr-ready`, `check-fast`, `precommit`, and `check-pr` own candidate shaping;
+required Ready checks and protections are unchanged by this slice.
+
 ## Gaps vs target state
 
 | Gap | Impact |
 | --- | --- |
-| No numeric PR Plan (`ci-plan.json`) | The structural PR Plan exists, but there is no machine-readable LEM forecast before lane selection. |
+| No numeric PR Plan (`ci-plan.json`) | The automatic placeholder is retired; `cargo xtask ci plan` and a machine-readable LEM forecast remain planned. |
 | No `ci-actuals.json` emission | There is no forecast-to-actuals feedback loop or measured post-decision waste metric. |
 | VS Code is not path-gated or wired to `vscode` | `full-ci` remains the only PR label that runs the editor lane. |
 | Advisory workflows do not consume canonical Rust artifacts | Coverage and Test Analytics are selected economically, but selected runs still compile independently. |

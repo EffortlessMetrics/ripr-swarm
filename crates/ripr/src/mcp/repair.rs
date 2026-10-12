@@ -968,6 +968,7 @@ mod tests {
             unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
+            analyzed_revisions: None,
         })
     }
 
@@ -982,6 +983,7 @@ mod tests {
             in_flight: false,
             last_good: Some(Arc::new(snapshot)),
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
@@ -996,6 +998,7 @@ mod tests {
             in_flight: false,
             last_good: None,
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
@@ -1026,6 +1029,7 @@ mod tests {
             in_flight: false,
             last_good: None,
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),

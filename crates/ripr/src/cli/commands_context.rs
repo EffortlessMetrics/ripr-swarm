@@ -177,6 +177,81 @@ pub(super) fn load_root_input_and_config(root: &Path) -> Result<(CheckInput, Rip
     Ok((input, config))
 }
 
+/// Write `text` to stdout in bounded chunks.
+///
+/// A single large write to a Windows console or pipe can fail with
+/// `os error 87` ("the parameter is incorrect"); chunking keeps every
+/// underlying write small enough to avoid that limit. Write errors are
+/// returned as `Err` rather than panicking, so a failed write surfaces as
+/// a normal CLI error instead of aborting the process.
+pub(super) fn write_stdout_chunked(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    const CHUNK: usize = 16 * 1024;
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    for chunk in text.as_bytes().chunks(CHUNK) {
+        handle
+            .write_all(chunk)
+            .map_err(|err| format!("write to stdout failed: {err}"))?;
+    }
+    handle
+        .flush()
+        .map_err(|err| format!("flush stdout failed: {err}"))
+}
+
+/// Typed refusal for a [`load_for_root`] failure (#6834, shared #7331).
+///
+/// A present-but-unloadable config entry is `config_invalid`. No config
+/// entry anywhere means automatic language detection refused (e.g. Python
+/// markers in a Rust-only binary), not a broken file: the untyped fallback
+/// makes no claim, while `config_invalid` would misdirect to
+/// `analysis/config-load` (#6952 review).
+pub(super) fn config_load_refusal(root: &Path, err: String) -> crate::core_error::CoreError {
+    if crate::config::config_discovered_for_root(root) {
+        crate::core_error::CoreError::config_invalid(err)
+    } else {
+        crate::core_error::CoreError::from(err)
+    }
+}
+
+/// Refusal exit for a post-argv-parse failure of a `--json` command
+/// (#7331).
+///
+/// Writes the shared typed refusal envelope — the same shape `check` uses
+/// (#6834), keyed with the refusing command's own `schema_version` — to
+/// stdout, then returns the unchanged prose error for stderr. The exit code
+/// stays `2` and argv usage errors stay prose-only: every command calls this
+/// only below its argv parser, exactly like `refuse_check`.
+pub(super) fn refuse_json_envelope(
+    schema_version: &'static str,
+    scope: &'static str,
+    mode: Option<&'static str>,
+    root: &Path,
+    base: Option<&str>,
+    error: impl Into<crate::core_error::CoreError>,
+) -> String {
+    let error = error.into();
+    let rendered = crate::output::limited_check::render_refusal_envelope(
+        &crate::output::limited_check::RefusalEnvelopeContext {
+            schema_version,
+            scope,
+            mode,
+            root,
+            base,
+        },
+        &error,
+    );
+    match rendered {
+        Ok(document) => {
+            if let Err(write) = write_stdout_chunked(&document) {
+                return write;
+            }
+        }
+        Err(render) => return render,
+    }
+    error.to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

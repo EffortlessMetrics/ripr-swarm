@@ -1,0 +1,11 @@
+diff --git a/src/sizing.rs b/src/sizing.rs
+index de0cd39..3cd50b0 100644
+--- a/src/sizing.rs
++++ b/src/sizing.rs
+@@ -1,5 +1,5 @@
+ pub fn widen(width: u32) -> u32 {
+-    width + 4
++    4 + width
+ }
+ 
+ #[cfg(test)]

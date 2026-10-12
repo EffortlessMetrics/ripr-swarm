@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "predicate_equality",
   "test_shape": "helper_wrapped_assert",
-  "hard_case": "The assert_eq! inside a local check_* helper is refused by owner-pin admission (RIPR-SPEC-0197 rule 1: not in the test's own body; #6482).",
+  "hard_case": "The helper's assert_eq! is admitted (RIPR-SPEC-0197 rule 7) and the predicate pairs through the helper's call (#6482), but the changed tail is an `&&`, which evaluates conditionally, so the return_value twin gets no owner pin and reads weakly_exposed.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

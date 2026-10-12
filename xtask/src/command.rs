@@ -121,6 +121,7 @@ pub(crate) enum XtaskCommand {
     CheckCoveredBy,
     RustConversionCandidates,
     CheckExecutableFiles,
+    CheckTextEncoding,
     CheckWorkflows,
     CheckDroidReviewConfig,
     CheckSpecFormat,
@@ -171,6 +172,7 @@ pub(crate) enum XtaskCommand {
     WorkPortfolio(Vec<String>),
     WorkCandidates(Vec<String>),
     WorkExplain(Vec<String>),
+    WorkSelectionCheck(Vec<String>),
     Unknown(String),
 }
 
@@ -306,6 +308,7 @@ impl XtaskCommand {
             "check-covered-by" => Self::CheckCoveredBy,
             "rust-conversion-candidates" => Self::RustConversionCandidates,
             "check-executable-files" => Self::CheckExecutableFiles,
+            "check-text-encoding" => Self::CheckTextEncoding,
             "check-workflows" => Self::CheckWorkflows,
             "check-droid-review-config" => Self::CheckDroidReviewConfig,
             "check-spec-format" => Self::CheckSpecFormat,
@@ -358,6 +361,13 @@ impl XtaskCommand {
                 Some("portfolio") => Self::WorkPortfolio(rest[1..].to_vec()),
                 Some("candidates") => Self::WorkCandidates(rest[1..].to_vec()),
                 Some("explain") => Self::WorkExplain(rest[1..].to_vec()),
+                Some("selection") => match rest.get(1).map(|arg| arg.as_str()) {
+                    Some("check") => Self::WorkSelectionCheck(rest[2..].to_vec()),
+                    _ => Self::Unknown(format!(
+                        "work selection {}",
+                        rest.get(1).map(|arg| arg.as_str()).unwrap_or("")
+                    )),
+                },
                 _ => Self::Unknown(format!(
                     "work {}",
                     rest.first().map(|arg| arg.as_str()).unwrap_or("")
@@ -460,12 +470,12 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "python-repair-trust check [--manifest <path>] [--attempts <dir-or-file>]",
         "python-repair-trust check-driver [--manifest <path>] --bindings <dir-or-file>",
         "python-repair-trust check-verification [--manifest <path>] --receipts <dir-or-file>",
-        "verdict-corpus validate",
-        "verdict-corpus check [--cases <id,...>] [--out <dir>]",
+        "verdict-corpus validate [--language <language>]",
+        "verdict-corpus check [--language <language>] [--cases <id,...>] [--out <dir>]",
         "verdict-corpus check-all",
-        "verdict-corpus report [--cases <id,...>] [--out <dir>]",
-        "verdict-corpus bless",
-        "verdict-corpus split",
+        "verdict-corpus report [--language <language>] [--cases <id,...>] [--out <dir>]",
+        "verdict-corpus bless [--language <language>]",
+        "verdict-corpus split [--language <language>]",
         "verdict-corpus relabel [--sample <n> [--seed <s>] | --case <id>...] [--checkouts <dir>] [--repeat <k>] [--timeout-secs <t>] [--out <dir>] [--work-dir <dir>]",
         "test-oracle-report",
         "check-test-oracles",
@@ -559,6 +569,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "check-covered-by",
         "rust-conversion-candidates",
         "check-executable-files",
+        "check-text-encoding",
         "check-workflows",
         "check-droid-review-config",
         "check-spec-format",
@@ -613,6 +624,7 @@ pub(crate) fn known_commands() -> Vec<&'static str> {
         "work portfolio [--captured <dir>] [--json]",
         "work candidates [--captured <dir>] [--campaign <id>] [--surface <id>] [--limit <n>] [--json]",
         "work explain --candidate <id> [--captured <dir>] [--json]",
+        "work selection check [--corpus <dir>] [--json]",
     ]
 }
 
@@ -1037,20 +1049,20 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Validates retained #3570 verification candidate receipts against the accepted selection manifest offline (RIPR-SPEC-0176): manifest and selection-digest staleness, native-identity and target agreement, the closed execution and movement vocabularies bound to their retained process dispositions, output commitments on real runs, typed reasons for stale/uncertain/limited movements, unrelated-finding visibility, rollback evidence, and the standing non-claims. No rule derives movement from execution or execution from movement, and the schema admits no lifecycle field, so a passing execution alone can never mark an attempt accepted or closed. It executes no external command and makes no support-tier or repair-correctness claim.",
         ),
         command_entry(
-            "verdict-corpus validate",
+            "verdict-corpus validate [--language <language>]",
             "non_mutating_check",
             "stdout only",
             false,
             false,
-            "Validates the labeled Rust verdict corpus offline (RIPR-SPEC-0219): per-record subject and case files named after their ids, retained upstream excerpt digests, diff anchors, mutant-outcome-derived truth, and the truth-to-verdict label table. It builds and runs nothing.",
+            "Validates a labeled verdict corpus offline (RIPR-SPEC-0219): fixtures/rust-verdict-corpus, or fixtures/<language>-verdict-corpus with --language; per-record subject and case files named after their ids, retained upstream excerpt digests, diff anchors, mutant-outcome-derived truth, and the truth-to-verdict label table. It builds and runs nothing.",
         ),
         command_entry(
-            "verdict-corpus check [--cases <id,...>] [--out <dir>]",
+            "verdict-corpus check [--language <language>] [--cases <id,...>] [--out <dir>]",
             "report_only",
-            "target/ripr/reports/verdict-corpus/report.{json,md} or --out <dir>; target/ripr/verdict-corpus/rust/",
+            "target/ripr/reports/verdict-corpus/[<language>/]report.{json,md} or --out <dir>; target/ripr/verdict-corpus/<language>/",
             false,
             false,
-            "Runs ripr check on each labeled case's retained excerpt in parallel, scores the anchored verdict against its stored runtime-mutant truth label, writes false-verdict and contradiction rates, and fails naming each case whose row drifts from fixtures/rust-verdict-corpus/expected/rows/<case>.json, plus summary.json and stale rows on a whole-corpus run. --cases checks only the named rows. Runs no mutation testing.",
+            "Runs ripr check on each labeled case's retained excerpt in parallel, scores the anchored verdict against its stored runtime-mutant truth label, writes false-verdict and contradiction rates, and fails naming each case whose row drifts from fixtures/<language>-verdict-corpus/expected/rows/<case>.json (Rust unless --language names another corpus), plus missing rows and stale files (a leftover summary.json among them; the summary is derived from the rows) on a whole-corpus run. --cases checks only the named rows. Runs no mutation testing.",
         ),
         command_entry(
             "verdict-corpus check-all",
@@ -1061,28 +1073,28 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Runs verdict-corpus check on every fixtures/<language>-verdict-corpus directory, found by name so a new language's corpus is gated without a workflow change, and fails if any corpus drifts or a corpus directory has no corpus.json. The required Rust gate runs this.",
         ),
         command_entry(
-            "verdict-corpus report [--cases <id,...>] [--out <dir>]",
+            "verdict-corpus report [--language <language>] [--cases <id,...>] [--out <dir>]",
             "argument_dependent",
-            "target/ripr/reports/verdict-corpus/report.{json,md} or --out <dir>",
+            "target/ripr/reports/verdict-corpus/[<language>/]report.{json,md} or --out <dir>",
             false,
             false,
-            "Same scoring as verdict-corpus check without the expected comparison. Writes depending on --out: by default under target/ripr/reports/verdict-corpus. Refuses an --out inside fixtures/rust-verdict-corpus/expected; bless owns that directory.",
+            "Same scoring as verdict-corpus check without the expected comparison. Writes depending on --out: by default under target/ripr/reports/verdict-corpus. Refuses an --out inside the corpus's expected directory; bless owns that directory.",
         ),
         command_entry(
-            "verdict-corpus bless",
+            "verdict-corpus bless [--language <language>]",
             "mutating",
-            "fixtures/rust-verdict-corpus/expected/{summary.json,rows/<case>.json}",
+            "fixtures/<language>-verdict-corpus/expected/rows/<case>.json",
             false,
             false,
-            "Runs the whole corpus and replaces the reviewed expected state: summary.json and one row file per case, removing rows of deleted cases. Use it only when a verdict change is intended, and state why each moved row changed in the PR.",
+            "Runs the whole corpus (Rust unless --language names another) and replaces the reviewed expected state: one row file per case, removing rows of deleted cases. The aggregate rates are derived from the rows, not committed. Use it only when a verdict change is intended, and state why each moved row changed in the PR.",
         ),
         command_entry(
-            "verdict-corpus split",
+            "verdict-corpus split [--language <language>]",
             "mutating",
-            "fixtures/rust-verdict-corpus/{corpus.json,subjects/<id>.json,cases/<id>.json}",
+            "fixtures/<language>-verdict-corpus/{corpus.json,subjects/<id>.json,cases/<id>.json}",
             false,
             false,
-            "Moves a pre-split corpus.json's subjects and cases arrays into per-record files and drops corpus_version, so a branch written against the one-file layout resolves its conflict by keeping its own corpus.json and running this. Existing records with other content are kept and named.",
+            "Moves a pre-split corpus.json's (Rust unless --language names another) subjects and cases arrays into per-record files and drops corpus_version, so a branch written against the one-file layout resolves its conflict by keeping its own corpus.json and running this. Existing records with other content are kept and named.",
         ),
         command_entry(
             "verdict-corpus relabel [--sample <n> [--seed <s>] | --case <id>...] [--checkouts <dir>] [--repeat <k>] [--timeout-secs <t>] [--out <dir>] [--work-dir <dir>]",
@@ -1090,7 +1102,7 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "target/ripr/reports/verdict-corpus/relabel.json or --out <dir>; run-owned trees under the system temp dir or --work-dir <dir>",
             false,
             false,
-            "Re-derives runtime truth for a deterministic sample of labeled cases: in a run-owned copy of each subject it runs the case's own `cargo test` command on the unedited tree, on the edit, and on every mutant's mutated_line, each --repeat times, and fails when an outcome, failing test, or derived truth drifts from the label, a mutant does not compile or changes nothing, repeated runs disagree, or the toolchain differs from the labeled one. Authored subjects replay offline; upstream excerpts replay only from full checkouts at the pinned commit under --checkouts. Never clones, fetches, or edits the corpus.",
+            "Re-derives runtime truth for a deterministic sample of labeled cases: in a run-owned copy of each subject it runs the case's own `cargo test` command on the unedited tree, on the edit, and on every mutant's mutated_line, each --repeat times, and fails when an outcome, failing test, or derived truth drifts from the label, a mutant does not compile or changes nothing, repeated runs disagree, or the toolchain differs from the labeled one. Authored subjects replay offline; upstream excerpts replay only from full checkouts at the pinned commit under --checkouts. Never clones, fetches, or edits the corpus. relabel.json (schema ripr_verdict_corpus_relabel.v2) records git HEAD and a sha256 digest of cases/ and subjects/.",
         ),
         command_entry(
             "test-oracle-report",
@@ -1837,6 +1849,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             "Checks executable-file policy.",
         ),
         command_entry(
+            "check-text-encoding",
+            "non_mutating_check",
+            "target/ripr/reports/text-encoding.md",
+            false,
+            true,
+            "Checks tracked text files for a leading UTF-8 BOM.",
+        ),
+        command_entry(
             "check-workflows",
             "non_mutating_check",
             "target/ripr/reports/workflows.md",
@@ -2267,6 +2287,14 @@ pub(crate) fn command_catalog() -> Vec<CommandCatalogEntry> {
             false,
             false,
             "Renders exactly one work candidate by stable id with its lifecycle stage, next durable transition, blockers, conflicts, capacity, costs, confidence and the eight explicit ordered ranking factors; unknown ids fail closed.",
+        ),
+        command_entry(
+            "work selection check [--corpus <dir>] [--json]",
+            "report_only",
+            "target/ripr/reports/work-selection-check.{json,md}",
+            false,
+            false,
+            "Validates committed SelectedWorkIdentityV1 packets against the PortfolioBasisV1 compiled from immutable captured inputs (#1706 PR A, RIPR-SPEC-0244); wrong repository/issue/action/basis/worktree/head identities fail with exact recompile/reconcile routes, legacy active-goal/current-work-item refs stay read-only with no authority, and no GitHub, branch, worktree, claim, spec, campaign or source state is touched.",
         ),
     ]
 }
