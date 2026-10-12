@@ -4327,4 +4327,82 @@ mod tests {
         assert!(!known_static_limit_kind("runtime_magic"));
         assert!(!known_static_limit_kind("python_arbitrary_new_limit"));
     }
+
+    #[test]
+    fn quoted_spaced_comparison_identity_and_destination_preserve_one_redirect()
+    -> Result<(), String> {
+        let root = &TEST_ROOT;
+        for (identity, target) in [
+            ("gap:python:comparison:amount > threshold", None),
+            (
+                "gap:python:comparison:amount > threshold",
+                Some("target/ripr/receipt.json"),
+            ),
+            (
+                "gap:python:comparison:amount",
+                Some("target/ripr/receipt > data.json"),
+            ),
+            (
+                "gap:python:comparison:amount > threshold",
+                Some("target/ripr/receipt > data.json"),
+            ),
+        ] {
+            let body = format!("ripr receipt write --root . --gap '{identity}' --status not_run");
+            let command = match target {
+                Some(target) => format!("{body} > '{target}'"),
+                None => body.clone(),
+            };
+            assert!(
+                command_payload_is_safe(root, &command),
+                "a whole single-quoted comparison is data: {command:?}"
+            );
+            assert_eq!(
+                strip_workspace_redirect(root, &command),
+                Some(body.as_str()),
+                "only the real trailing redirect may be removed: {command:?}"
+            );
+            let bound = bind_portable_command(root, &command)
+                .ok_or_else(|| format!("the safe portable route must bind: {command:?}"))?;
+            assert!(
+                bound.contains(&format!("--gap '{identity}'")) && !bound.contains("--root ."),
+                "binding must preserve the entire quoted identity and select the root: {bound:?}"
+            );
+            assert!(editor_command_is_safe(root, &bound), "{bound:?}");
+            if let Some(target) = target {
+                // This is a lexical in-root target. No file is created, and
+                // it makes no claim that this filename is valid on Windows.
+                assert!(
+                    bound.ends_with(&format!("/{target}'"))
+                        || (!target.contains('>') && bound.ends_with(&format!("/{target}"))),
+                    "binding must preserve and anchor the whole target: {bound:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn quoted_comparison_data_keeps_duplicate_redirects_and_other_metacharacters_refused() {
+        let root = &TEST_ROOT;
+        for command in [
+            "ripr receipt write --root . --gap 'gap:amount > threshold' > target/ripr/one.json > target/ripr/two.json",
+            "ripr receipt write --root . --gap 'gap:amount > threshold' > 'target/ripr/one.json' extra",
+            "ripr receipt write --root . --gap 'gap:amount > threshold' >> target/ripr/one.json",
+            "ripr receipt write --root . --gap 'gap:amount;threshold' --status not_run",
+            "ripr receipt write --root . --gap 'gap:amount|threshold' --status not_run",
+            "ripr receipt write --root . --gap 'gap:amount&threshold' --status not_run",
+            "ripr receipt write --root . --gap 'gap:amount;threshold' > target/ripr/one.json",
+            "ripr receipt write --root . --gap 'gap:amount|threshold' > target/ripr/one.json",
+            "ripr receipt write --root . --gap 'gap:amount&threshold' > target/ripr/one.json",
+        ] {
+            assert!(
+                !command_payload_is_safe(root, command),
+                "comparison quoting must not admit unrelated syntax: {command:?}"
+            );
+            assert!(
+                !editor_command_is_safe(root, command),
+                "unsafe input must also be withheld at the editor guard: {command:?}"
+            );
+        }
+    }
 }
