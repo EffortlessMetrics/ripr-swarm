@@ -1,0 +1,10 @@
+diff --git a/src/label.ts b/src/label.ts
+index 0000000..1111111 100644
+--- a/src/label.ts
++++ b/src/label.ts
+@@ -1,4 +1,4 @@
+ export function shippingLabel(name: string, qty: number): string {
+-  const units = qty === 1 ? "unit" : "units";
++  const units = qty !== 1 ? "units" : "unit";
+   return `${name} (${qty} ${units})`;
+ }

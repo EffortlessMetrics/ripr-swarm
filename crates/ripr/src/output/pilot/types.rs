@@ -3,7 +3,7 @@ use crate::domain::{ExposureClass, LanguageId};
 use crate::output::python_repair_card::{PythonRepairCard, python_repair_card};
 use std::path::{Path, PathBuf};
 
-pub(crate) const PILOT_SUMMARY_SCHEMA_VERSION: &str = "0.2";
+pub(crate) const PILOT_SUMMARY_SCHEMA_VERSION: &str = "0.3";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct PilotArtifacts {
@@ -26,6 +26,9 @@ pub(crate) struct PilotSummaryContext<'a> {
     /// Routes for languages pilot's Rust seam scan does not rank. `None` when
     /// they were not collected (the timeout summary).
     pub(crate) language_routes: Option<&'a super::PilotLanguageRoutes>,
+    /// The current change (see `PilotCurrentChange`). `None` when it was not
+    /// collected (the timeout summary).
+    pub(crate) current_change: Option<&'a super::PilotCurrentChange>,
     /// Set when a seam limit (pilot budget or inventory limit) cut the
     /// classified seams before ranking, so counts over them are lower bounds.
     pub(crate) seam_limit: Option<&'a crate::analysis::SeamLimitInfo>,

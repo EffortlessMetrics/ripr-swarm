@@ -22,7 +22,9 @@ cargo xtask fixtures helper_chain_controls
 No helper-owned probe relates through a chain: both changed helpers
 stay `no_static_path` with no related tests, keeping the pre-transfer
 output, and no transferred input row or call-operand evaluation
-appears for these shapes.
+appears for these shapes. Tests call the unique entries `classify` and
+`ambiguous`, not the non-unique helper `is_word_start`, so this remains
+the #7080 negative control (a uniqueness stop that no test enters).
 
 ## Must Not
 

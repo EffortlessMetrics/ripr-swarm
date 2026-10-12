@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 9ea04c7..13103e3 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -53,7 +53,7 @@ pub fn mask(payload: &mut [u8]) {
+ 
+ static DIGITS: [u8; 16] = [
+     b'0', b'1', b'2', b'3', b'4', b'5', b'6', b'7',
+-    b'8', b'9',
++    0x38, 0x39,
+     b'a', b'b', b'c', b'd', b'e', b'f',
+ ];
+ 

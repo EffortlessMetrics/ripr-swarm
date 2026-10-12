@@ -5,4 +5,4 @@
   a one-line edit drops from 1.61 s to 0.74 s on rust-analyzer and from
   2.19 s to 1.70 s on bevy. The module-graph walk compares plain paths by
   bytes, and the dependent-package scans run on all cores, so bevy's pinned
-  upstream diff reruns in about 1.85 s instead of 2.4 s.
+  upstream diff reruns in about 1.85 s instead of 2.4 s (#6629).

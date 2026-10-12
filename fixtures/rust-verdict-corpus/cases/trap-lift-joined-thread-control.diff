@@ -1,0 +1,11 @@
+diff --git a/src/lifts.rs b/src/lifts.rs
+index b935837..933c3e2 100644
+--- a/src/lifts.rs
++++ b/src/lifts.rs
+@@ -1,5 +1,5 @@
+ pub fn lift(base: u32) -> u32 {
+-    base * 19
++    19 * base
+ }
+ 
+ #[cfg(test)]

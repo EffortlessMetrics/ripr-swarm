@@ -1,0 +1,65 @@
+{
+  "case_id": "nodetest-shipping-describe-it",
+  "subject_id": "authored-ts-nodetest-billing",
+  "diff": "cases/nodetest-shipping-describe-it.diff",
+  "anchor": {
+    "file": "src/shipping.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "nodetest_describe_it_assert_equal_boundary_unpinned",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "node 22.22.0; tsx 4.23.15; node:test + node:assert (built in); @stryker-mutator/core 10.0.0 (command runner)",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "shippingCost charges the light rate far below the limit",
+        "equivalence_review": "not equivalent: returns 15 for weight 5"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "shippingCost charges the heavy rate far above the limit",
+        "equivalence_review": "not equivalent: returns 5 for weight 30"
+      },
+      {
+        "replacement": "if (20 <= weight) {",
+        "mutated_line": "if (20 <= weight) {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: differs at weight == 20"
+      },
+      {
+        "replacement": "if (20 >= weight) {",
+        "mutated_line": "if (20 >= weight) {",
+        "outcome": "tests_failed",
+        "failing_test": "shippingCost charges the heavy rate far above the limit",
+        "equivalence_review": "not equivalent: inverts the predicate away from the boundary"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`if (weight > 20)` rewritten to the exactly equivalent `if (20 < weight)`. `describe`/`it` from node:test with `assert.equal` from `node:assert/strict` pin weights 30 and 5 only, so every mutant except the off-by-one `20 <= weight` failed. ripr reads exact_value/strong but reports `weakly_exposed` because no assertion witnesses the `20 == weight` boundary, the ideal gap for partial truth.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

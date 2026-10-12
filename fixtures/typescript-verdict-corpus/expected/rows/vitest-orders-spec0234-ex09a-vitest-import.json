@@ -1,0 +1,22 @@
+{
+  "case_id": "vitest-orders-spec0234-ex09a-vitest-import",
+  "subject_id": "authored-ts-vitest-orders",
+  "origin": "authored",
+  "anchor": "src/priceEx09a.ts:3",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_imported_expect_tobe_exact",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -7,4 +7,4 @@
   receipts. `public-proof --check` also fails when the scoreboard, verdict-corpus
   or corpus-manifest receipt differs from its in-repo source; that comparison is
   advisory, so a corpus update does not fail required CI. The other receipts
-  have no in-repo source and are committed harness output.
+  have no in-repo source and are committed harness output (#5405).

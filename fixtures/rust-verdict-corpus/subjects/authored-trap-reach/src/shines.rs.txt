@@ -1,0 +1,13 @@
+pub fn shine(base: u32) -> u32 {
+    base * 47
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shine_renders_the_value() {
+        assert_eq!(format!("{:?}", shine(2)), "94");
+    }
+}

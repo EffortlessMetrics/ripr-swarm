@@ -1,0 +1,52 @@
+{
+  "case_id": "mined-macro-closure-header-length",
+  "subject_id": "authored-mined-wire",
+  "diff": "cases/mined-macro-closure-header-length.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 39
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "macro_test_closure_body_assert",
+  "hard_case": "A macro_rules! generates each #[test]; the test's assert_eq! sits in a closure the generated body always calls. Mined from httparse's req!/res! macros, which put the asserts in a nested fn the generated test always calls (https://github.com/seanmonstar/httparse/blob/a0fa552e4e0fa9a5914a736ef3a556748fef709b/src/lib.rs#L1332), about 300 macro-generated tests. The corpus's other test-generating macro cases (itoa) are not_discriminated.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "[1, len, ..] => Status::Complete(*len as usize + 3),",
+        "mutated_line": "[1, len, ..] => Status::Complete(*len as usize + 3),",
+        "outcome": "tests_failed",
+        "failing_test": "tests::version_one_counts_its_length",
+        "equivalence_review": "not equivalent: a 3-byte length reads as Complete(6)"
+      },
+      {
+        "replacement": "[1, len, ..] => Status::Complete(*len as usize * 2),",
+        "mutated_line": "[1, len, ..] => Status::Complete(*len as usize * 2),",
+        "outcome": "tests_failed",
+        "failing_test": "tests::version_one_counts_its_length",
+        "equivalence_review": "not equivalent: a 3-byte length reads as Complete(6)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "version_one_counts_its_length expands to a #[test] that calls the closure with header(&[1, 3, ..]) and asserts Complete(5), so both arithmetic mutants fail it.",
+  "labeling_observation": {
+    "ripr_commit": "da6a44d",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

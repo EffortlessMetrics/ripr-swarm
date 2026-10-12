@@ -266,9 +266,9 @@ fn write_first_pr(repo: &Path, options: &FirstPrOptions) -> Result<(), String> {
     let json_text = serde_json::to_string_pretty(&packet)
         .map_err(|err| format!("failed to serialize first-pr packet: {err}"))?;
     fs::write(&json_path, format!("{json_text}\n"))
-        .map_err(|err| format!("failed to write {}: {err}", json_path.display()))?;
+        .map_err(|err| crate::output::file_write::write_failure_message(&json_path, &err))?;
     fs::write(&markdown_path, render_start_here_markdown(&packet))
-        .map_err(|err| format!("failed to write {}: {err}", markdown_path.display()))?;
+        .map_err(|err| crate::output::file_write::write_failure_message(&markdown_path, &err))?;
     validate_start_here_packet(&json_path, &markdown_path)?;
     print!(
         "{}",
@@ -645,14 +645,15 @@ fn materialize_check_output_gap_ledger(
             .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
     }
     fs::write(&gap_ledger_path, json)
-        .map_err(|err| format!("failed to write {}: {err}", gap_ledger_path.display()))?;
+        .map_err(|err| crate::output::file_write::write_failure_message(&gap_ledger_path, &err))?;
     let gap_ledger_markdown = resolve_path(root, &with_extension(&options.gap_ledger, "md"));
     if let Some(parent) = gap_ledger_markdown.parent() {
         fs::create_dir_all(parent)
             .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
     }
-    fs::write(&gap_ledger_markdown, markdown)
-        .map_err(|err| format!("failed to write {}: {err}", gap_ledger_markdown.display()))?;
+    fs::write(&gap_ledger_markdown, markdown).map_err(|err| {
+        crate::output::file_write::write_failure_message(&gap_ledger_markdown, &err)
+    })?;
     Ok(())
 }
 
@@ -2468,9 +2469,9 @@ fn regenerate_check_output_gap_ledger_command(options: &FirstPrOptions) -> Strin
 /// Rewrites the check output (the supplied `--check-output` path when there
 /// is one) before rebuilding the ledger from it. This is the stale-evidence
 /// refresh after a test or source edit, and that edit is usually still
-/// uncommitted: plain `ripr check` reads each file as committed at HEAD, so
-/// the refresh reads the working tree (`--worktree`), or it would select the
-/// gap the edit just closed again (MCP agent walk, 2026-09-29).
+/// uncommitted. The refresh names `--worktree` explicitly rather than relying
+/// on `ripr check`'s dirty-tree default, so a committed-history read can never
+/// select the gap the edit just closed again (MCP agent walk, 2026-09-29).
 fn rerun_check_output_gap_ledger_command(options: &FirstPrOptions) -> String {
     check_output_gap_ledger_command(options, true, true)
 }
@@ -3322,7 +3323,7 @@ mod tests {
             "Missing artifact: Repo exposure report at `target/ripr/reports/repo-exposure.json`"
         ));
         assert!(summary.contains(&format!(
-            "Regeneration command: `ripr check --root {} --mode instant",
+            "Regeneration command (Bash): `ripr check --root {} --mode instant",
             shell_arg(&crate::agent::loop_commands::bound_root("."))
         )));
         assert_eq!(packet["selected"]["also_missing"][0]["id"], "gap_ledger");
@@ -3339,8 +3340,17 @@ mod tests {
             "Also missing: Gap decision ledger at `target/ripr/reports/gap-decision-ledger.json`"
         ));
         assert!(summary.contains("Then run: `ripr reports gap-ledger"));
+        // Resolve both positions: the recovery command carries a `(Bash)`
+        // label once a PowerShell variant exists, so an unlabeled `find`
+        // returns `None` and `None < Some(_)` would pass vacuously.
+        let regen_at = summary
+            .find("Regeneration command (Bash):")
+            .ok_or_else(|| summary.clone())?;
+        let also_missing_at = summary
+            .find("Also missing:")
+            .ok_or_else(|| summary.clone())?;
         assert!(
-            summary.find("Regeneration command:") < summary.find("Also missing:"),
+            regen_at < also_missing_at,
             "repo exposure recovery must precede the dependent ledger: {summary}"
         );
         let markdown = render_start_here_markdown(&packet);
@@ -5917,7 +5927,7 @@ mod tests {
             Path::new("start-here.md"),
         );
         let status_line = format!("{RECEIPT_STATUS_LABEL}: {RECEIPT_STATUS_STEP}\n");
-        let recheck_line = format!("{STATIC_RECHECK_LABEL}: `{expected}`\n");
+        let recheck_line = format!("{STATIC_RECHECK_LABEL} (Bash): `{expected}`\n");
         let boundary_line = format!("{RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n");
         let status_at = summary.find(&status_line).ok_or(summary.clone())?;
         let recheck_at = summary.find(&recheck_line).ok_or(summary.clone())?;
@@ -5937,7 +5947,7 @@ mod tests {
         );
         let markdown = render_start_here_markdown(&packet);
         assert!(
-            markdown.contains(&format!("- {STATIC_RECHECK_LABEL}: `{expected}`\n"))
+            markdown.contains(&format!("- {STATIC_RECHECK_LABEL} (Bash): `{expected}`\n"))
                 && markdown.contains(&format!(
                     "- {RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n"
                 )),

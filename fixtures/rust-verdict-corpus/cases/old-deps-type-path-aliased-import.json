@@ -1,0 +1,52 @@
+{
+  "case_id": "old-deps-type-path-aliased-import",
+  "subject_id": "authored-old-deps",
+  "diff": "cases/old-deps-type-path-aliased-import.diff",
+  "anchor": {
+    "file": "meter/src/lib.rs",
+    "line": 15
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "type_path_call_via_aliased_import",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "6",
+        "mutated_line": "6",
+        "outcome": "tests_failed",
+        "failing_test": "knob_level_is_seven",
+        "equivalence_review": "not equivalent: the level is 6"
+      },
+      {
+        "replacement": "8",
+        "mutated_line": "8",
+        "outcome": "tests_failed",
+        "failing_test": "knob_level_is_seven",
+        "equivalence_review": "not equivalent: the level is 8"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "knob_level_is_seven pins Knob::level() to 7 where Knob is meter::Dial renamed, so either neighbor fails it; spare also defines a free fn level, and RIPR-SPEC-0172 refuses an aliased import, so ripr may only limit. Spec cells: RIPR-SPEC-0172 (aliased-import control).",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

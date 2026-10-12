@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 9f6995d..2708b76 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -6,7 +6,7 @@ pub enum E {
+ 
+ pub fn check(x: u32) -> Result<u32, E> {
+     if x > 10 {
+-        return Err(E::Bad);
++        return Result::Err(E::Bad);
+     }
+     Ok(x)
+ }

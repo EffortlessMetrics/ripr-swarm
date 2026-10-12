@@ -1,0 +1,95 @@
+{
+  "schema_version": "work_pull_requests.v1",
+  "pull_requests": [
+    {
+      "number": 8805,
+      "title": "Docs polish",
+      "state": "merged",
+      "draft": false,
+      "head_branch": "feat/work-9301",
+      "base_branch": "main",
+      "linked_issues": [
+        9301
+      ],
+      "review_state": "approved",
+      "unresolved_review_findings": 0,
+      "checks_state": "success"
+    },
+    {
+      "number": 8806,
+      "title": "Preview fix",
+      "state": "merged",
+      "draft": false,
+      "head_branch": "feat/work-9109",
+      "base_branch": "main",
+      "linked_issues": [
+        9109
+      ],
+      "review_state": "approved",
+      "unresolved_review_findings": 0,
+      "checks_state": "success"
+    },
+    {
+      "number": 8803,
+      "title": "Workflow receipts",
+      "state": "open",
+      "draft": false,
+      "head_branch": "feat/work-9103",
+      "base_branch": "main",
+      "linked_issues": [
+        9103
+      ],
+      "review_state": "approved",
+      "unresolved_review_findings": 0,
+      "checks_state": "success",
+      "registered_claim": "claim-9103"
+    },
+    {
+      "number": 8801,
+      "title": "Golden drift repair",
+      "state": "open",
+      "draft": false,
+      "head_branch": "feat/work-9101",
+      "base_branch": "main",
+      "linked_issues": [
+        9101
+      ],
+      "review_state": "changes_requested",
+      "unresolved_review_findings": 2,
+      "checks_state": "success",
+      "registered_claim": "claim-9101",
+      "worktree_path": "\\\\builds\\ripr-swarm\\wt-9101"
+    },
+    {
+      "number": 8804,
+      "title": "Doctor lane (unregistered)",
+      "state": "open",
+      "draft": false,
+      "head_branch": "feat/work-9108",
+      "base_branch": "main",
+      "linked_issues": [
+        9108
+      ],
+      "review_state": "none",
+      "unresolved_review_findings": 0,
+      "checks_state": "unknown",
+      "worktree_path": "\\\\builds\\ripr-swarm\\wt-9108"
+    },
+    {
+      "number": 8802,
+      "title": "Formatter receipts",
+      "state": "open",
+      "draft": false,
+      "head_branch": "feat/work-9102",
+      "base_branch": "main",
+      "linked_issues": [
+        9102
+      ],
+      "review_state": "none",
+      "unresolved_review_findings": 0,
+      "checks_state": "pending",
+      "registered_claim": "claim-9102",
+      "worktree_path": "\\\\builds\\ripr-swarm\\wt-9102"
+    }
+  ]
+}

@@ -179,6 +179,15 @@ The first implementation should start with deterministic routing:
 The producer must expose why the selected action came first. It must not hide
 lower-priority evidence when it explains the fallback state.
 
+A carried review card can lead with its existing repair command before an
+assistant proof exists. When it names a missing discriminator, the repair-start
+rationale identifies that value neutrally and names the repair start (#7055 A1).
+The card does not carry reach or relation evidence, so the rationale must not
+infer that a test invokes the changed owner from its grip classification.
+Selection, evidence-strength projection, carried commands and schema are
+unchanged. The existing callee-only wrapper remains refused by its producer;
+an actionable callee-only runtime case is not established by this contract.
+
 ## JSON Shape
 
 The JSON report uses schema version `0.1`:
@@ -376,6 +385,16 @@ Next: refresh RIPR evidence before acting on this recommendation.
 
 ## Test Mapping
 
+- `crates/ripr/src/output/first_useful_action/tests.rs::carried_repair_start_names_the_discriminator_without_inventing_reach`
+- `crates/ripr/src/output/first_useful_action/tests.rs::carried_exposure_card_keeps_the_neutral_repair_report`
+- `crates/ripr/src/output/first_useful_action/tests.rs::carried_ungripped_card_keeps_its_identity_commands_and_neutral_rationale`
+- `crates/ripr/src/output/first_useful_action/tests.rs::absent_or_blank_carried_command_keeps_the_missing_proof_route`
+- `crates/ripr/tests/agent_stub_compiles.rs::first_action_real_repair_card_uses_neutral_rationale_and_recovers`
+- `crates/ripr/tests/agent_stub_compiles.rs::first_action_real_callee_only_wrapper_keeps_its_refusal`
+  pin the literal neutral rationale, canonical non-prose fields, real producer
+  selection, missing/blank-command recovery and the genuine callee-only refusal.
+  Artifact class variants do not claim live analyzer admission.
+
 - `crates/ripr/src/cli/commands/agent_root_tests.rs::cli_receipt_first_action_reopens_literal_unix_root_and_refuses_decoy`
   exercises actual eligible receipt issuance, native identity reopening,
   foreign/tampered refusal and immutable producer evidence.
@@ -394,6 +413,9 @@ Follow-up tests should cover:
 - malformed, missing, stale, and incompatible input tests.
 
 ## Implementation Mapping
+
+Repair-start rationale owner: `crates/ripr/src/output/first_useful_action.rs::repair_start_report`.
+Shared discriminator vocabulary: `crates/ripr/src/output/gap_vocabulary.rs`.
 
 Follow-up implementation belongs to Campaign 22:
 

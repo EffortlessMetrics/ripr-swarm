@@ -1,0 +1,9 @@
+//! The banner command prints a rule of `=` characters.
+
+fn banner_width() -> usize {
+    40
+}
+
+fn main() {
+    println!("{}", "=".repeat(banner_width()));
+}

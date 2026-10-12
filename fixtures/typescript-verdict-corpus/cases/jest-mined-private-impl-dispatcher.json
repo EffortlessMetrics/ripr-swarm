@@ -1,0 +1,59 @@
+{
+  "case_id": "jest-mined-private-impl-dispatcher",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-mined-private-impl-dispatcher.diff",
+  "anchor": {
+    "file": "src/store.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "jest_private_impl_behind_exported_dispatcher",
+  "hard_case": "edit sits in a private createImpl behind the exported createStore (mined from zustand)",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "const state = {};",
+        "mutated_line": "const state = {};",
+        "outcome": "tests_failed",
+        "failing_test": "bump adds three",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      },
+      {
+        "replacement": "const state = { value: initial, bump: () => undefined };",
+        "mutated_line": "const state = { value: initial, bump: () => undefined };",
+        "outcome": "tests_failed",
+        "failing_test": "bump adds three",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      },
+      {
+        "replacement": "const state = { value: initial, bump: () => (state.value = state.value - 3) };",
+        "mutated_line": "const state = { value: initial, bump: () => (state.value = state.value - 3) };",
+        "outcome": "tests_failed",
+        "failing_test": "bump adds three",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "bump() through createStore is pinned at 4, so every mutant of the state line fails. ripr reports weakly_exposed on the anchor, a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -21,6 +21,7 @@ use crate::output::typescript_preview_card::{
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use super::finding_alignment;
 use super::{array_field, escape, field, float_field, number_field};
@@ -64,6 +65,33 @@ pub(crate) const FINDINGS_BOUND_REPAIR_ROUTE: &str = "output/check-findings-budg
 pub(crate) enum FindingsBudgetSource {
     Default,
     Configured,
+}
+
+/// Additive base/head identity for a live-repository diff (RIPR-SPEC-0116
+/// amendment): `base_commit` (and `merge_base_commit` when the diff started
+/// from a different commit) beside the existing `base` ref, and `head` naming
+/// whether the diff ended at the `HEAD` commit or at the working tree. Absent
+/// for diff-file, stdin, candidate-tree and repo-scope runs.
+fn analyzed_revisions_json(out: &mut String, output: &CheckOutput) {
+    let Some(revisions) = output.analyzed_revisions.as_ref() else {
+        return;
+    };
+    if let Some(commit) = &revisions.base_commit {
+        field(out, 1, "base_commit", commit, true);
+    }
+    if let Some(commit) = &revisions.merge_base_commit {
+        field(out, 1, "merge_base_commit", commit, true);
+    }
+    out.push_str("  \"head\": {\n");
+    let source = crate::output::analyzed_revisions::head_source(revisions);
+    match &revisions.head_commit {
+        Some(commit) => {
+            field(out, 2, "source", source, true);
+            field(out, 2, "commit", commit, false);
+        }
+        None => field(out, 2, "source", source, false),
+    }
+    out.push_str("  },\n");
 }
 
 /// Carries a findings-array byte-budget truncation so the JSON renderer can
@@ -174,6 +202,7 @@ pub(crate) fn render_with_config(
     if let Some(base) = &output.base {
         field(&mut out, 1, "base", base, true);
     }
+    analyzed_revisions_json(&mut out, output);
     out.push_str("  \"summary\": ");
     summary_json(&mut out, output);
     out.push_str(",\n");
@@ -226,6 +255,7 @@ pub(crate) fn render_with_config(
             config,
             &canonical_gap_counts,
             suppressed_selectors.get(finding.id.as_str()).copied(),
+            &output.root,
         );
         rendered_findings += 1;
         let last_analysis_finding = idx + 1 == output.findings.len();
@@ -400,7 +430,21 @@ pub(crate) fn render_with_config(
         field(&mut out, 3, "category", "no_scope_disclosure", true);
         // #4012: on an established-but-empty range the why names the
         // compared base instead of claiming no scope was provided.
-        if let Some(base) = output.base.as_deref() {
+        // RIPR-SPEC-0116: a working-tree read diffs the merge base against
+        // the working tree, so its why names that range, not `...HEAD`.
+        if let Some(base) = output.base.as_deref()
+            && crate::output::analyzed_revisions::is_working_tree_read(output)
+        {
+            field(
+                &mut out,
+                3,
+                "why",
+                &format!(
+                    "empty working-tree range: the merge base of {base} and HEAD to the working tree contains no changed tracked files; nothing was analyzed because nothing changed"
+                ),
+                false,
+            );
+        } else if let Some(base) = output.base.as_deref() {
             field(
                 &mut out,
                 3,
@@ -428,6 +472,23 @@ pub(crate) fn render_with_config(
     // See RIPR-SPEC-0112.
     if output.unanalyzed_working_tree {
         out.push_str(",\n  \"unanalyzed_working_tree\": true");
+    }
+    // Additive advisory field: emitted when routed source or test files are
+    // untracked in the live repository, on both committed-history and
+    // working-tree reads, since neither read analyzes them (RIPR-SPEC-0112
+    // #5258, RIPR-SPEC-0116 amendment). Absent when the list is empty. This
+    // is the machine-readable form of the human/GitHub untracked-files notes;
+    // without it a zero-finding JSON report reads as complete while routed
+    // files were silently excluded (#5997 review).
+    if !output.untracked_working_tree_source_paths.is_empty() {
+        out.push_str(",\n");
+        array_field(
+            &mut out,
+            1,
+            "untracked_working_tree_source_paths",
+            &output.untracked_working_tree_source_paths,
+            false,
+        );
     }
     // Additive advisory field — emitted only when preview-language files were
     // in scope. Absent for pure-Rust diffs (RIPR-SPEC-0082).
@@ -641,6 +702,7 @@ pub(super) fn finding_json(out: &mut String, finding: &Finding, indent: usize) {
         &RiprConfig::default(),
         &BTreeMap::new(),
         None,
+        Path::new("."),
     );
 }
 
@@ -651,6 +713,7 @@ fn finding_json_with_config_and_counts(
     config: &RiprConfig,
     canonical_gap_counts: &BTreeMap<&str, usize>,
     suppressed_selector: Option<&str>,
+    root: &Path,
 ) {
     let sp = "  ".repeat(indent);
     out.push_str(&format!("{sp}{{\n"));
@@ -708,7 +771,10 @@ fn finding_json_with_config_and_counts(
         out,
         indent + 2,
         "file",
-        &crate::output::path::display_path(&finding.probe.location.file),
+        // The shared finding-location owner (#5996): check JSON is the
+        // listing agents join MCP items and LSP packets against, so the
+        // location renders in the one shared workspace-relative form.
+        &crate::analysis::finding_location_text(root, &finding.probe.location.file),
         true,
     );
     number_field(out, indent + 2, "line", finding.probe.location.line, true);
@@ -1743,8 +1809,10 @@ mod harness_projection_tests {
             no_scope_provided: false,
             unanalyzed_working_tree: false,
             untracked_working_tree_source_paths: Vec::new(),
+            unlinked_python_tests: None,
             suppression: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 

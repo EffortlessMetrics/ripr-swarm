@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0231-oracle-some-at-literal",
+  "subject_id": "authored-spec0231-23b",
+  "diff": "cases/spec0231-oracle-some-at-literal.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "option_return",
+  "test_shape": "matches_some_at_literal",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Some(4);",
+        "mutated_line": "return Some(4);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::lookup_one_is_three",
+        "equivalence_review": "not equivalent: 4 does not match the pinned 3"
+      },
+      {
+        "replacement": "return None;",
+        "mutated_line": "return None;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::lookup_one_is_three",
+        "equivalence_review": "not equivalent: lookup(1) returns None"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Some(x @ 3) pins the value 3. Spec cells: RIPR-SPEC-0231 example 23 (unchanged; control) (form Some(x @ 3)).",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#23"
+  ]
+}

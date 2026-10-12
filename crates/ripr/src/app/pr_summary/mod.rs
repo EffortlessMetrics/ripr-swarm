@@ -92,7 +92,8 @@ fn write_evidence_summary_pair(repo: &Path, options: &SummaryOptions) -> Result<
         None
     };
 
-    let summary_struct = build_pr_evidence_summary(
+    let summary_struct = json::build_pr_evidence_summary_for_root(
+        repo,
         start_here.value.as_ref(),
         gap_ledger.value.as_ref(),
         repo_exposure.value.as_ref(),

@@ -1,0 +1,52 @@
+{
+  "case_id": "checkout-bulk-custom-assert-macro",
+  "subject_id": "authored-checkout",
+  "diff": "cases/checkout-bulk-custom-assert-macro.diff",
+  "anchor": {
+    "file": "src/limits.rs",
+    "line": 31
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "custom_assertion_macro",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "count > 100",
+        "mutated_line": "count > 100",
+        "outcome": "tests_failed",
+        "failing_test": "limits::tests::bulk_starts_at_one_hundred",
+        "equivalence_review": "not equivalent: exactly 100 is no longer bulk"
+      },
+      {
+        "replacement": "count >= 99",
+        "mutated_line": "count >= 99",
+        "outcome": "tests_failed",
+        "failing_test": "limits::tests::bulk_starts_at_one_hundred",
+        "equivalence_review": "not equivalent: 99 becomes bulk"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "assert_flag! expands to assert_eq! and checks 100 and 99, so both boundary shifts fail the test. Spec cells: RIPR-SPEC-0120, RIPR-SPEC-0108.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

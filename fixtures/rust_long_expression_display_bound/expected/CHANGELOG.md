@@ -251,3 +251,109 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (11)
+
+Reason:
+RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted. The three inherited config_identity drifts in wrapper_seam_callee_call_attribution reproduce on the base and are not part of this blessing.
+RIPR-SPEC-0045: the Rust producer now populates Finding.canonical_gap and canonical_gap_id (#5268) with the gap:rust identity shape; additive output members only - golden-drift.json shows zero semantic flips (no added/removed findings, no class/oracle/stop-reason changes) across all 388 drifted surfaces
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (12)
+
+Reason:
+RIPR-SPEC-0002: issue #5996 routes finding locations through the shared workspace-relative owner (analysis::finding_location_text); the fixture-input root prefix (fixtures/<name>/input/...) no longer appears in check.json/human location fields, matching the root-relative form the LSP and MCP surfaces already emitted.
+RIPR-SPEC-0045: review fix #5268 - quoted string/char literals are now byte-encoded in the Rust gap discriminator key so distinct predicates never share one identity; golden-drift.json shows zero semantic flips on the re-run
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (13)
+
+Reason:
+RIPR-SPEC-0002: merge of origin/main (#5268 canonical_gap for Rust and sibling updates) onto the #5996 workspace-relative location owner — expected files regenerate through the merged tree
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (14)
+
+Reason:
+RIPR-SPEC-0001: probe now names the changed == 1 predicate, not the unchanged == 0 one on the removed line (#6731); class unchanged; re-blessed on merged main (canonical gap key)
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (15)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (16)
+
+Reason:
+RIPR-SPEC-0001 unresolved boundary input (#6674): the closure comparison cannot be cut into boundary operands, so the boundary is unresolved (infection_unknown) instead of a garbled missing discriminator; before/after wrapping unchanged
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (17)
+
+Reason:
+RIPR-SPEC-0001: the human 'Why unknown' line for infection_unknown says 'reaches a sink' only when propagation is yes (CodeRabbit review on #6796); propagation is not yes here, so the line no longer claims a sink
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_long_expression_display_bound (18)
+
+Reason:
+RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+
+Command:
+`cargo xtask goldens bless rust_long_expression_display_bound --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

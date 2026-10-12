@@ -1,0 +1,20 @@
+{
+  "case_id": "roles-cfg-test-helper-input",
+  "subject_id": "authored-roles",
+  "origin": "authored",
+  "anchor": "src/lib.rs:19",
+  "behavior_family": "test_helper_value",
+  "test_shape": "cfg_test_helper_feeds_assert_eq",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "silent",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 0,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1,0 +1,12 @@
+{
+  "name": "ts-nodetest-billing",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.23.15"
+  }
+}

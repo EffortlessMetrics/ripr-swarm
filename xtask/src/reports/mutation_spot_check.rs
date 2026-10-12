@@ -5,18 +5,19 @@
 //! snapshot, obtains a cargo-mutants `mutants.out` directory (supplied, or run
 //! with `--run-mutants`), and joins the two through the product
 //! `ripr calibrate cargo-mutants` path so the join stays owned by one
-//! implementation. The harness then scores only the joins it can trust:
+//! implementation. Every runtime record then gets one disposition:
 //!
-//! - `seam_precise`: an operator mutant (cargo-mutants `BinaryOperator` or
-//!   `UnaryOperator`) whose original operator token appears in the expression
-//!   of a `predicate_boundary` or `return_value` seam on the same line. The
-//!   mutant changes the seam's own behavior, so its outcome tests the verdict.
-//! - `function_body`: a `FnValue` mutant that replaces the whole function
-//!   body. It is caught or missed by the function's tests as a whole, not by a
-//!   discriminator for the joined seam; reported, never scored.
-//! - `same_line_other`: any other unambiguous file/line join (a call-presence
-//!   seam joined to an arithmetic mutant on the same line, for example);
-//!   reported, never scored.
+//! - `canonical_precise`: a `BinaryOperator` or `UnaryOperator` mutant that
+//!   the calibration joined by `seam_id` or by unique `span_containment` to a
+//!   `predicate_boundary` or `return_value` seam, with a `caught` or `missed`
+//!   outcome. The mutated range lies inside the seam, so its outcome tests the
+//!   seam's verdict. Only these records are scored.
+//! - an exclusion reason for everything else: `file_line_only` (the
+//!   calibration's line fallback, compatibility evidence rather than a precise
+//!   pairing), `ambiguous_span_overlap`, `ambiguous_file_line`,
+//!   `unmatched_<reason>`, `unsupported_genre` (including `FnValue`
+//!   function-body mutants), `unknown_genre` (absent from `mutants.json`),
+//!   `unsupported_seam_kind`, `unscoreable_outcome`, or `unknown_join_method`.
 //!
 //! Scored verdict families: `strongly_gripped` claims a discriminator exists
 //! (a caught mutant agrees, a missed one is an overclaim); `ungripped` and
@@ -25,6 +26,10 @@
 //! claim a single operator mutant can settle, so their outcomes are counted
 //! but not scored. Claims are limited to the recorded checkout revisions, the
 //! cargo-mutants version that produced the outcomes, and this join rule.
+//!
+//! v1 paired a mutant with a seam when its original operator token appeared
+//! in the seam's expression on the same line. v2 keeps that check only as the
+//! `operator_token_diagnostic`, which never overrides the canonical join.
 //!
 //! The report also scores `ripr pilot`'s top recommendations against the same
 //! outcomes (see [`pilot`]), because a wrong top recommendation is the error a
@@ -37,12 +42,21 @@ use crate::run::{
     capture_stdout_to_file_with_timeout,
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v1";
+const SCHEMA_VERSION: &str = "ripr-mutation-spot-check-v2";
+/// Calibration schema that carries the span-containment join and explicit
+/// span-overlap and unmatched reasons.
+const CALIBRATION_SCHEMA_VERSION: &str = "0.2";
+const CANONICAL_PRECISE: &str = "canonical_precise";
+const CANONICAL_JOIN_METHODS: &[&str] = &["seam_id", "span_containment"];
+const SUPPORTED_GENRES: &[&str] = &["BinaryOperator", "UnaryOperator"];
+const SUPPORTED_SEAM_KINDS: &[&str] = &["predicate_boundary", "return_value"];
+const SCOREABLE_OUTCOMES: &[&str] = &["caught", "missed"];
 const DEFAULT_JOBS: usize = 2;
 const DEFAULT_MUTANT_TIMEOUT_SECS: u64 = 60;
 const DEFAULT_EXAMPLES: usize = 10;
@@ -287,10 +301,15 @@ struct RepoRun {
     revision: String,
     diffs_checked: usize,
     exposure_run_status: Option<String>,
-    cargo_mutants_args: Vec<String>,
+    /// `None` for a supplied `mutants.out`: its run's arguments are not
+    /// recorded anywhere this harness can read.
+    cargo_mutants_args: Option<Vec<String>>,
     cargo_mutants_version: Option<String>,
+    /// The harness's per-mutant timeout; `None` for a supplied `mutants.out`.
+    mutant_timeout_secs: Option<u64>,
+    mutant_set_sha256: String,
     metrics: Value,
-    pairs: Vec<Pair>,
+    records: Vec<Record>,
     /// Judged pilot recommendations, or why pilot produced none. A pilot
     /// failure does not discard the repo's validated mutation outcomes.
     pilot: Result<Vec<Value>, String>,
@@ -388,16 +407,25 @@ fn spot_check_repo(
             .and_then(Value::as_str)
             .map(str::to_string),
         cargo_mutants_args: if options.mutants_out.contains_key(name) {
-            Vec::new()
+            None
         } else {
-            options.mutants_args.get(name).cloned().unwrap_or_default()
+            Some(options.mutants_args.get(name).cloned().unwrap_or_default())
         },
+        mutant_timeout_secs: (!options.mutants_out.contains_key(name))
+            .then_some(options.mutant_timeout_secs),
+        mutant_set_sha256: mutant_set_sha256(&mutant_records)
+            .map_err(|err| format!("`{name}`: {err}"))?,
         cargo_mutants_version: outcomes
             .get("cargo_mutants_version")
             .and_then(Value::as_str)
             .map(str::to_string),
         metrics: calibration.get("metrics").cloned().unwrap_or(Value::Null),
-        pairs: classify_matches(&calibration, &exposure_json, &mutant_records),
+        records: classify_records(
+            &calibration,
+            &exposure_json,
+            &mutant_genres(&mutant_records),
+        )
+        .map_err(|err| format!("`{name}`: {err}"))?,
         pilot: pilot_top.map(|top| {
             pilot::judge_recommendations(
                 &top,
@@ -668,17 +696,22 @@ fn path_arg(path: &Path) -> String {
     path.display().to_string()
 }
 
+/// One runtime record from the calibration join and the harness's
+/// disposition for it: `canonical_precise` when it can be scored, otherwise
+/// the explicit exclusion reason.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Pair {
-    pairing: &'static str,
+struct Record {
+    disposition: String,
+    join_method: String,
     grip_class: String,
     outcome: String,
     seam_id: String,
     seam_kind: String,
     file: String,
     line: u64,
-    expression: String,
+    expression: Option<String>,
     mutant: String,
+    operator_token: &'static str,
 }
 
 /// Seam id to source expression, from the repo exposure JSON.
@@ -697,21 +730,81 @@ pub(crate) fn seam_expressions(exposure: &Value) -> BTreeMap<&str, &str> {
         .collect()
 }
 
-/// Classify every unambiguous calibration match. Ambiguous and unmatched
-/// runtime records stay in the calibration metrics and are never scored.
-fn classify_matches(calibration: &Value, exposure: &Value, mutants: &Value) -> Vec<Pair> {
-    let genres: BTreeMap<&str, &str> = mutants
+/// cargo-mutants genre per mutant name, from `mutants.out/mutants.json`.
+/// Digest of the sorted mutant names cargo-mutants generated. The set is what
+/// the rates are computed over, and it reflects selection arguments
+/// (`--re`, `--exclude`, `--workspace`) even when a supplied run did not
+/// record them, so the scoreboard keys comparability on it.
+///
+/// A nameless entry would leave the digest short of the real set, so it is
+/// refused rather than skipped.
+fn mutant_set_sha256(mutants: &Value) -> Result<String, String> {
+    let entries = mutants
+        .as_array()
+        .ok_or("mutants.json is not an array of mutants")?;
+    let mut names = entries
+        .iter()
+        .enumerate()
+        .map(|(index, mutant)| {
+            mutant
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("mutants.json entry {} has no string `name`", index + 1))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    names.sort_unstable();
+    let mut digest = Sha256::new();
+    for name in names {
+        digest.update(name.as_bytes());
+        digest.update(b"\n");
+    }
+    Ok(format!("{:x}", digest.finalize()))
+}
+
+fn mutant_genres(mutants: &Value) -> BTreeMap<String, String> {
+    mutants
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|mutant| {
             Some((
-                mutant.get("name")?.as_str()?,
-                mutant.get("genre")?.as_str()?,
+                mutant.get("name")?.as_str()?.to_string(),
+                mutant.get("genre")?.as_str()?.to_string(),
+            ))
+        })
+        .collect()
+}
+
+/// Give every runtime record in the calibration report one disposition. The
+/// join itself stays owned by `ripr calibrate cargo-mutants`; the harness only
+/// decides which joined records it can score. Every record is accounted for,
+/// so the dispositions always sum to the calibration's `mutants_total`.
+fn classify_records(
+    calibration: &Value,
+    exposure: &Value,
+    genres: &BTreeMap<String, String>,
+) -> Result<Vec<Record>, String> {
+    let schema = calibration
+        .get("schema_version")
+        .and_then(Value::as_str)
+        .unwrap_or("missing");
+    if schema != CALIBRATION_SCHEMA_VERSION {
+        return Err(format!(
+            "mutation calibration schema {schema} has no span-containment join; the spot check needs calibration schema {CALIBRATION_SCHEMA_VERSION}"
+        ));
+    }
+    let expressions: BTreeMap<&str, &str> = exposure
+        .get("seams")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|seam| {
+            Some((
+                seam.get("seam_id")?.as_str()?,
+                seam.get("expression")?.as_str()?,
             ))
         })
         .collect();
-    let expressions = seam_expressions(exposure);
     let text = |value: &Value, pointer: &str| {
         value
             .pointer(pointer)
@@ -719,59 +812,151 @@ fn classify_matches(calibration: &Value, exposure: &Value, mutants: &Value) -> V
             .unwrap_or("")
             .to_string()
     };
-    calibration
-        .get("matches")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .map(|record| {
-            let mutant = text(record, "/runtime/mutant_id");
-            let seam_id = text(record, "/static/seam_id");
-            let seam_kind = text(record, "/static/seam_kind");
-            let expression = expressions
-                .get(seam_id.as_str())
-                .copied()
-                .unwrap_or("")
-                .to_string();
-            let genre = genres.get(mutant.as_str()).copied().unwrap_or("");
-            Pair {
-                pairing: pairing_for(genre, &mutant, &seam_kind, &expression),
-                grip_class: text(record, "/static/seam_grip_class"),
-                outcome: text(record, "/runtime/runtime_outcome"),
-                seam_id,
-                seam_kind,
-                file: text(record, "/static/file"),
-                line: record
-                    .pointer("/static/line")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0),
-                expression,
-                mutant,
-            }
-        })
-        .collect()
+    let list = |key: &str| {
+        calibration
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+    };
+    let mut records = Vec::new();
+    for record in list("matches") {
+        let mutant = text(record, "/runtime/mutant_id");
+        let join_method = text(record, "/join_method");
+        let seam_id = text(record, "/static/seam_id");
+        let seam_kind = text(record, "/static/seam_kind");
+        let outcome = text(record, "/runtime/runtime_outcome");
+        let genre = genres.get(&mutant).map_or("", String::as_str);
+        let expression = expressions
+            .get(seam_id.as_str())
+            .map(|expression| (*expression).to_string());
+        let disposition = match_disposition(&join_method, genre, &seam_kind, &outcome);
+        let operator_token = if disposition == CANONICAL_PRECISE {
+            operator_token_diagnostic(&mutant, expression.as_deref())
+        } else {
+            "not_applicable"
+        };
+        records.push(Record {
+            disposition: disposition.to_string(),
+            join_method,
+            grip_class: text(record, "/static/seam_grip_class"),
+            outcome,
+            seam_id,
+            seam_kind,
+            file: text(record, "/static/file"),
+            line: record
+                .pointer("/static/line")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            expression,
+            mutant,
+            operator_token,
+        });
+    }
+    let unjoined = |runtime: &Value, disposition: String| Record {
+        disposition,
+        join_method: String::new(),
+        grip_class: String::new(),
+        outcome: text(runtime, "/runtime_outcome"),
+        seam_id: String::new(),
+        seam_kind: String::new(),
+        file: text(runtime, "/file"),
+        line: runtime.get("line").and_then(Value::as_u64).unwrap_or(0),
+        expression: None,
+        mutant: text(runtime, "/mutant_id"),
+        operator_token: "not_applicable",
+    };
+    for (key, disposition) in [
+        ("ambiguous_file_line_matches", "ambiguous_file_line"),
+        ("ambiguous_span_overlap_matches", "ambiguous_span_overlap"),
+    ] {
+        for record in list(key) {
+            let runtime = record.get("runtime").unwrap_or(&Value::Null);
+            records.push(unjoined(runtime, disposition.to_string()));
+        }
+    }
+    for record in list("unmatched_mutants") {
+        let reason = record
+            .get("unmatched_reason")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown_reason");
+        records.push(unjoined(record, format!("unmatched_{reason}")));
+    }
+    let total = calibration
+        .pointer("/metrics/mutants_total")
+        .and_then(Value::as_u64);
+    if total != Some(records.len() as u64) {
+        return Err(format!(
+            "mutation calibration lists {} runtime records but reports mutants_total {}; refusing to score a partial join",
+            records.len(),
+            total.map_or_else(|| "missing".to_string(), |total| total.to_string())
+        ));
+    }
+    Ok(records)
 }
 
-fn pairing_for(genre: &str, mutant: &str, seam_kind: &str, expression: &str) -> &'static str {
-    if genre == "FnValue" {
-        return "function_body";
+/// A matched record is scoreable only when the calibration joined it by an
+/// authoritative method and its genre, seam kind and outcome are ones this
+/// benchmark scores. A file/line fallback join is compatibility evidence, not
+/// a precise pairing, so it is excluded however plausible the pair looks.
+fn match_disposition(
+    join_method: &str,
+    genre: &str,
+    seam_kind: &str,
+    outcome: &str,
+) -> &'static str {
+    if join_method == "file_line" {
+        "file_line_only"
+    } else if !CANONICAL_JOIN_METHODS.contains(&join_method) {
+        "unknown_join_method"
+    } else if genre.is_empty() {
+        // Not in mutants.json: an input problem, not an operator family.
+        "unknown_genre"
+    } else if !SUPPORTED_GENRES.contains(&genre) {
+        "unsupported_genre"
+    } else if !SUPPORTED_SEAM_KINDS.contains(&seam_kind) {
+        "unsupported_seam_kind"
+    } else if !SCOREABLE_OUTCOMES.contains(&outcome) {
+        "unscoreable_outcome"
+    } else {
+        CANONICAL_PRECISE
     }
-    let operator_genre = matches!(genre, "BinaryOperator" | "UnaryOperator");
-    let behavior_seam = matches!(seam_kind, "predicate_boundary" | "return_value");
-    match original_operator(mutant) {
-        Some(operator)
-            if operator_genre && behavior_seam && contains_operator_token(expression, operator) =>
-        {
-            "seam_precise"
-        }
-        _ => "same_line_other",
+}
+
+/// The pilot judge's `seam` tier: an operator mutant of a predicate or return
+/// seam whose original operator token occurs in that seam's expression. This
+/// is the v1 pairing rule, kept for pilot picks, which carry no calibration
+/// join of their own; it never scores a verdict family.
+fn operator_mutant_of_expression(
+    genre: &str,
+    mutant: &str,
+    seam_kind: &str,
+    expression: &str,
+) -> bool {
+    matches!(genre, "BinaryOperator" | "UnaryOperator")
+        && matches!(seam_kind, "predicate_boundary" | "return_value")
+        && original_operator(mutant)
+            .is_some_and(|operator| contains_operator_token(expression, operator))
+}
+
+/// Audit diagnostic only: whether the mutant's original operator token
+/// appears in the joined seam's serialized expression. v1 used this text
+/// match as the pairing rule; v2 records it so a disagreement with the
+/// canonical join stays visible, and it never changes a disposition.
+fn operator_token_diagnostic(mutant: &str, expression: Option<&str>) -> &'static str {
+    let Some(operator) = original_operator(mutant) else {
+        return "no_original_operator";
+    };
+    match expression {
+        None | Some("") => "expression_unavailable",
+        Some(expression) if contains_operator_token(expression, operator) => "present",
+        Some(_) => "absent",
     }
 }
 
 /// True when `operator` occurs in `expression` with no adjacent operator
 /// character, so `>` does not match inside `>=`, `->`, `=>`, or `>>`, and `!`
-/// does not match inside `!=`. A generic bracket such as `Vec<u8>` can still
-/// match `<`; the line-level join already narrows candidates to one seam.
+/// does not match inside `!=`.
 fn contains_operator_token(expression: &str, operator: &str) -> bool {
     const OPERATOR_CHARS: &str = "!%&*+-/<=>^|";
     expression.match_indices(operator).any(|(start, _)| {
@@ -816,25 +1001,43 @@ fn agreement(family: &str, outcome: &str) -> &'static str {
 }
 
 fn build_report(repos: &[RepoRun], examples: usize) -> Value {
-    let mut by_pairing: BTreeMap<&str, BTreeMap<String, BTreeMap<String, usize>>> = BTreeMap::new();
-    let mut scored: BTreeMap<&str, BTreeMap<&str, usize>> = BTreeMap::new();
+    let mut by_disposition: BTreeMap<String, BTreeMap<String, BTreeMap<String, usize>>> =
+        BTreeMap::new();
+    // Both families are always reported, so a run that scores only one
+    // still ingests; the empty family carries a null rate (#6135 review).
+    let mut scored: BTreeMap<&str, BTreeMap<&str, usize>> =
+        ["claims_discriminator", "claims_no_discriminator"]
+            .into_iter()
+            .map(|family| (family, BTreeMap::new()))
+            .collect();
     let mut seams_scored: BTreeMap<&str, BTreeSet<(String, String)>> = BTreeMap::new();
     let mut disagreements: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
     let mut example_seams = BTreeSet::new();
+    let mut operator_tokens: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut operator_token_absent = Vec::new();
     for repo in repos {
-        for pair in &repo.pairs {
-            *by_pairing
-                .entry(pair.pairing)
+        for record in &repo.records {
+            let grip_class = if record.grip_class.is_empty() {
+                "no_joined_seam"
+            } else {
+                record.grip_class.as_str()
+            };
+            *by_disposition
+                .entry(record.disposition.clone())
                 .or_default()
-                .entry(pair.grip_class.clone())
+                .entry(grip_class.to_string())
                 .or_default()
-                .entry(pair.outcome.clone())
+                .entry(record.outcome.clone())
                 .or_default() += 1;
-            if pair.pairing != "seam_precise" {
+            if record.disposition != CANONICAL_PRECISE {
                 continue;
             }
-            let family = verdict_family(&pair.grip_class);
-            let verdict = agreement(family, &pair.outcome);
+            *operator_tokens.entry(record.operator_token).or_default() += 1;
+            if record.operator_token == "absent" && operator_token_absent.len() < examples {
+                operator_token_absent.push(example(repo, record));
+            }
+            let family = verdict_family(&record.grip_class);
+            let verdict = agreement(family, &record.outcome);
             if verdict == "unscored" {
                 continue;
             }
@@ -846,24 +1049,13 @@ fn build_report(repos: &[RepoRun], examples: usize) -> Value {
             seams_scored
                 .entry(family)
                 .or_default()
-                .insert((repo.name.clone(), pair.seam_id.clone()));
+                .insert((repo.name.clone(), record.seam_id.clone()));
             let list = disagreements.entry(verdict).or_default();
             if verdict != "agree"
                 && list.len() < examples
-                && example_seams.insert((repo.name.clone(), pair.seam_id.clone()))
+                && example_seams.insert((repo.name.clone(), record.seam_id.clone()))
             {
-                list.push(json!({
-                    "repo": repo.name,
-                    "revision": repo.revision,
-                    "file": pair.file,
-                    "line": pair.line,
-                    "seam_kind": pair.seam_kind,
-                    "seam_id": pair.seam_id,
-                    "expression": pair.expression,
-                    "grip_class": pair.grip_class,
-                    "mutant": pair.mutant,
-                    "runtime_outcome": pair.outcome,
-                }));
+                list.push(example(repo, record));
             }
         }
     }
@@ -887,7 +1079,7 @@ fn build_report(repos: &[RepoRun], examples: usize) -> Value {
     json!({
         "schema_version": SCHEMA_VERSION,
         "status": "advisory",
-        "claim_boundary": "Agreement is scored only on seam_precise joins (operator mutants whose original operator appears in a predicate_boundary or return_value seam expression on the same line). Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
+        "claim_boundary": "Agreement is scored only on canonical_precise records: a BinaryOperator or UnaryOperator mutant that ripr calibrate joined by seam_id or by unique span containment to a predicate_boundary or return_value seam, with a caught or missed outcome. File/line fallback joins, span-overlap ties, unmatched records, and unsupported genres, seam kinds or outcomes are counted as exclusions and never scored. Claims are limited to the recorded checkout revisions, cargo-mutants versions, and this join rule; this is not a suite adequacy measure.",
         "repos": repos.iter().map(|repo| json!({
             "name": repo.name,
             "revision": repo.revision,
@@ -895,12 +1087,18 @@ fn build_report(repos: &[RepoRun], examples: usize) -> Value {
             "exposure_run_status": repo.exposure_run_status,
             "cargo_mutants_args": repo.cargo_mutants_args,
             "cargo_mutants_version": repo.cargo_mutants_version,
+            "mutant_timeout_secs": repo.mutant_timeout_secs,
+            "mutant_set_sha256": repo.mutant_set_sha256,
             "calibration_metrics": repo.metrics,
-            "pairings": pairing_counts(&repo.pairs),
+            "pairings": pairing_counts(&repo.records),
         })).collect::<Vec<_>>(),
-        "outcomes_by_pairing_and_grip_class": by_pairing,
+        "outcomes_by_disposition_and_grip_class": by_disposition,
         "scored_families": families,
         "disagreement_examples": disagreements,
+        "operator_token_diagnostic": {
+            "counts": operator_tokens,
+            "absent_examples": operator_token_absent,
+        },
         "pilot_top_recommendations": pilot::summarize(
             &repos
                 .iter()
@@ -910,12 +1108,45 @@ fn build_report(repos: &[RepoRun], examples: usize) -> Value {
     })
 }
 
-fn pairing_counts(pairs: &[Pair]) -> BTreeMap<&'static str, usize> {
-    let mut counts = BTreeMap::new();
-    for pair in pairs {
-        *counts.entry(pair.pairing).or_default() += 1;
+fn example(repo: &RepoRun, record: &Record) -> Value {
+    json!({
+        "repo": repo.name,
+        "revision": repo.revision,
+        "file": record.file,
+        "line": record.line,
+        "join_method": record.join_method,
+        "seam_kind": record.seam_kind,
+        "seam_id": record.seam_id,
+        "expression": record.expression,
+        "grip_class": record.grip_class,
+        "mutant": record.mutant,
+        "runtime_outcome": record.outcome,
+    })
+}
+
+/// The denominator stays every runtime record: `canonical_precise` plus every
+/// exclusion always equals `records_total`.
+fn pairing_counts(records: &[Record]) -> Value {
+    let mut by_join_method: BTreeMap<&str, usize> = CANONICAL_JOIN_METHODS
+        .iter()
+        .map(|method| (*method, 0))
+        .collect();
+    let mut excluded: BTreeMap<&str, usize> = BTreeMap::new();
+    for record in records {
+        if record.disposition == CANONICAL_PRECISE {
+            *by_join_method
+                .entry(record.join_method.as_str())
+                .or_default() += 1;
+        } else {
+            *excluded.entry(record.disposition.as_str()).or_default() += 1;
+        }
     }
-    counts
+    json!({
+        "records_total": records.len(),
+        "canonical_precise": by_join_method.values().sum::<usize>(),
+        "canonical_precise_by_join_method": by_join_method,
+        "excluded": excluded,
+    })
 }
 
 fn rate(numerator: usize, denominator: usize) -> Value {
@@ -931,44 +1162,53 @@ fn spot_check_markdown(report: &Value) -> String {
     if let Some(boundary) = report.get("claim_boundary").and_then(Value::as_str) {
         out.push_str(&format!("{boundary}\n\n"));
     }
-    out.push_str("## Repositories\n\n| Repo | Revision | cargo-mutants | Mutants | Unambiguous joins | Ambiguous | Unmatched | Seam-precise |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n");
-    for repo in report
-        .get("repos")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        let metric = |key: &str| {
-            repo.pointer(&format!("/calibration_metrics/{key}"))
+    let repos = || {
+        report
+            .get("repos")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+    };
+    let name = |repo: &Value| {
+        repo.get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    out.push_str("## Repositories\n\n| Repo | Revision | cargo-mutants | Mutants | Canonical precise | By seam ID | By span containment | Excluded |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+    for repo in repos() {
+        let count = |pointer: &str| {
+            repo.pointer(&format!("/pairings/{pointer}"))
                 .and_then(Value::as_u64)
                 .unwrap_or(0)
         };
+        let excluded: u64 = repo
+            .pointer("/pairings/excluded")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .filter_map(|(_, count)| count.as_u64())
+            .sum();
         out.push_str(&format!(
             "| {} | `{}` | {} | {} | {} | {} | {} | {} |\n",
-            repo.get("name").and_then(Value::as_str).unwrap_or(""),
+            name(repo),
             repo.get("revision")
                 .and_then(Value::as_str)
                 .unwrap_or("")
-                .get(..12)
-                .unwrap_or(""),
+                .chars()
+                .take(12)
+                .collect::<String>(),
             repo.get("cargo_mutants_version")
                 .and_then(Value::as_str)
                 .unwrap_or("unknown"),
-            metric("mutants_total"),
-            metric("matched_total"),
-            metric("ambiguous_file_line_total"),
-            metric("unmatched_mutants_total"),
-            repo.pointer("/pairings/seam_precise")
-                .and_then(Value::as_u64)
-                .unwrap_or(0),
+            count("records_total"),
+            count("canonical_precise"),
+            count("canonical_precise_by_join_method/seam_id"),
+            count("canonical_precise_by_join_method/span_containment"),
+            excluded,
         ));
     }
-    for repo in report
-        .get("repos")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
+    for repo in repos() {
         let sampled = repo
             .get("cargo_mutants_args")
             .and_then(Value::as_array)
@@ -980,12 +1220,27 @@ fn spot_check_markdown(report: &Value) -> String {
         if !sampled.is_empty() {
             out.push_str(&format!(
                 "\n{} ran cargo-mutants with {}.\n",
-                repo.get("name").and_then(Value::as_str).unwrap_or(""),
+                name(repo),
                 sampled.join(" ")
             ));
         }
     }
-    out.push_str("\n## Scored verdicts (seam-precise joins)\n\n| Verdict family | Seams | Mutants | Agree | Overclaim | False gap | Agreement |\n| --- | --- | --- | --- | --- | --- | --- |\n");
+    out.push_str("\n## Exclusions\n\n| Repo | Reason | Mutants |\n| --- | --- | --- |\n");
+    for repo in repos() {
+        for (reason, count) in repo
+            .pointer("/pairings/excluded")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+        {
+            out.push_str(&format!(
+                "| {} | `{reason}` | {} |\n",
+                name(repo),
+                count.as_u64().unwrap_or(0)
+            ));
+        }
+    }
+    out.push_str("\n## Scored verdicts (canonical precise joins)\n\n| Verdict family | Seams | Mutants | Agree | Overclaim | False gap | Agreement |\n| --- | --- | --- | --- | --- | --- | --- |\n");
     if let Some(families) = report.get("scored_families").and_then(Value::as_object) {
         for (family, row) in families {
             let count = |key: &str| {
@@ -1008,12 +1263,12 @@ fn spot_check_markdown(report: &Value) -> String {
             ));
         }
     }
-    out.push_str("\n## Outcomes by pairing and grip class\n\n| Pairing | Grip class | Outcomes |\n| --- | --- | --- |\n");
-    if let Some(pairings) = report
-        .get("outcomes_by_pairing_and_grip_class")
+    out.push_str("\n## Outcomes by disposition and grip class\n\n| Disposition | Grip class | Outcomes |\n| --- | --- | --- |\n");
+    if let Some(dispositions) = report
+        .get("outcomes_by_disposition_and_grip_class")
         .and_then(Value::as_object)
     {
-        for (pairing, classes) in pairings {
+        for (disposition, classes) in dispositions {
             for (class, outcomes) in classes.as_object().into_iter().flatten() {
                 let cells = outcomes
                     .as_object()
@@ -1022,7 +1277,7 @@ fn spot_check_markdown(report: &Value) -> String {
                     .map(|(outcome, count)| format!("{outcome} {count}"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                out.push_str(&format!("| {pairing} | {class} | {cells} |\n"));
+                out.push_str(&format!("| {disposition} | {class} | {cells} |\n"));
             }
         }
     }
@@ -1036,27 +1291,59 @@ fn spot_check_markdown(report: &Value) -> String {
     {
         for row in rows.as_array().into_iter().flatten() {
             any = true;
-            let field = |key: &str| row.get(key).and_then(Value::as_str).unwrap_or("");
-            out.push_str(&format!(
-                "- **{verdict}** {} `{}:{}` {} `{}` is `{}`; mutant `{}` was {}.\n",
-                field("repo"),
-                field("file"),
-                row.get("line").and_then(Value::as_u64).unwrap_or(0),
-                field("seam_kind"),
-                field("expression"),
-                field("grip_class"),
-                field("mutant")
-                    .split_once(": ")
-                    .map_or(field("mutant"), |(_, rest)| rest),
-                field("runtime_outcome"),
-            ));
+            out.push_str(&format!("- **{verdict}** {}\n", example_line(row)));
         }
     }
     if !any {
         out.push_str("None in the scored joins.\n");
     }
+    out.push_str("\n## Operator-token diagnostic\n\nWhether each canonical precise mutant's original operator appears in the joined seam's expression. Audit only: it never changes a disposition.\n\n");
+    let counts = report
+        .pointer("/operator_token_diagnostic/counts")
+        .and_then(Value::as_object);
+    if counts.is_none_or(serde_json::Map::is_empty) {
+        out.push_str("No canonical precise joins.\n");
+    } else {
+        let cells = counts
+            .into_iter()
+            .flatten()
+            .map(|(state, count)| format!("{state} {count}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push_str(&format!("{cells}.\n"));
+    }
+    for row in report
+        .pointer("/operator_token_diagnostic/absent_examples")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        out.push_str(&format!("- **absent** {}\n", example_line(row)));
+    }
     out.push_str(&pilot::markdown(report));
     out
+}
+
+fn example_line(row: &Value) -> String {
+    let field = |key: &str| row.get(key).and_then(Value::as_str).unwrap_or("");
+    format!(
+        "{} `{}:{}` {} `{}` is `{}` (joined by {}); mutant `{}` was {}.",
+        field("repo"),
+        field("file"),
+        row.get("line").and_then(Value::as_u64).unwrap_or(0),
+        field("seam_kind"),
+        // A multi-line seam expression would break the Markdown list item.
+        field("expression")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" "),
+        field("grip_class"),
+        field("join_method"),
+        field("mutant")
+            .split_once(": ")
+            .map_or(field("mutant"), |(_, rest)| rest),
+        field("runtime_outcome"),
+    )
 }
 
 #[cfg(test)]
@@ -1251,53 +1538,182 @@ mod tests {
     }
 
     #[test]
-    fn pairing_scores_only_operator_mutants_inside_behavior_seams() {
-        let boundary = "src/a.rs:3:9: replace > with >= in f";
+    fn only_canonical_joins_of_supported_families_are_scoreable() {
+        let disposition =
+            |join, genre, kind, outcome| match_disposition(join, genre, kind, outcome);
         assert_eq!(
-            pairing_for("BinaryOperator", boundary, "predicate_boundary", "i > 0"),
-            "seam_precise"
-        );
-        // Same line, but the seam's claim is about a call, not the operator.
-        assert_eq!(
-            pairing_for("BinaryOperator", boundary, "call_presence", "f(i > 0)"),
-            "same_line_other"
-        );
-        // `>` appears only inside the seam's `>=`, so it is not the seam's operator.
-        assert_eq!(
-            pairing_for("BinaryOperator", boundary, "predicate_boundary", "x >= y"),
-            "same_line_other"
-        );
-        assert_eq!(
-            pairing_for(
-                "UnaryOperator",
-                "src/a.rs:3:9: delete ! in f",
-                "predicate_boundary",
-                "a != b"
-            ),
-            "same_line_other"
-        );
-        assert_eq!(
-            pairing_for(
+            disposition(
+                "span_containment",
                 "BinaryOperator",
-                "src/a.rs:3:9: replace >= with < in f",
                 "predicate_boundary",
-                "x >= y"
+                "missed"
             ),
-            "seam_precise"
-        );
-        // Same line and kind, but the operator is outside the seam expression.
-        assert_eq!(
-            pairing_for("BinaryOperator", boundary, "predicate_boundary", "x == y"),
-            "same_line_other"
+            "canonical_precise"
         );
         assert_eq!(
-            pairing_for(
-                "FnValue",
-                "src/a.rs:3:9: replace f -> bool with true",
-                "return_value",
-                "x > 0"
+            disposition("seam_id", "UnaryOperator", "return_value", "caught"),
+            "canonical_precise"
+        );
+        // A line fallback is excluded even for a supported genre and seam kind.
+        assert_eq!(
+            disposition(
+                "file_line",
+                "BinaryOperator",
+                "predicate_boundary",
+                "missed"
             ),
-            "function_body"
+            "file_line_only"
+        );
+        assert_eq!(
+            disposition(
+                "line_guess",
+                "BinaryOperator",
+                "predicate_boundary",
+                "missed"
+            ),
+            "unknown_join_method"
+        );
+        assert_eq!(
+            disposition("span_containment", "FnValue", "return_value", "missed"),
+            "unsupported_genre"
+        );
+        assert_eq!(
+            disposition("span_containment", "", "return_value", "missed"),
+            "unknown_genre"
+        );
+        assert_eq!(
+            disposition(
+                "span_containment",
+                "UnaryOperator",
+                "call_presence",
+                "missed"
+            ),
+            "unsupported_seam_kind"
+        );
+        assert_eq!(
+            disposition(
+                "span_containment",
+                "BinaryOperator",
+                "predicate_boundary",
+                "unviable"
+            ),
+            "unscoreable_outcome"
+        );
+    }
+
+    #[test]
+    fn mutant_set_digest_ignores_order_and_tracks_membership() -> Result<(), String> {
+        let a = json!({"name": "src/a.rs:1:1: replace > with <", "genre": "BinaryOperator"});
+        let b = json!({"name": "src/b.rs:2:2: replace f -> bool with true", "genre": "FnValue"});
+        let forward = mutant_set_sha256(&json!([a.clone(), b.clone()]))?;
+        assert_eq!(forward, mutant_set_sha256(&json!([b.clone(), a.clone()]))?);
+        assert_ne!(forward, mutant_set_sha256(&json!([a.clone()]))?);
+        assert_eq!(forward.len(), 64);
+        // A nameless mutant or a non-array file cannot yield a digest of the
+        // real set.
+        assert!(
+            mutant_set_sha256(&json!([a, {"genre": "FnValue"}]))
+                .is_err_and(|err| err.contains("entry 2 has no string `name`"))
+        );
+        assert!(mutant_set_sha256(&json!({})).is_err_and(|err| err.contains("not an array")));
+        Ok(())
+    }
+
+    #[test]
+    fn genres_come_from_the_mutants_json_array() {
+        let mutants = json!([
+            {"name": "src/a.rs:3:9: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator"},
+            {"name": "src/a.rs:5:5: replace f -> bool with true", "file": "src/a.rs", "genre": "FnValue"},
+            {"file": "src/a.rs", "genre": "UnaryOperator"}
+        ]);
+        assert_eq!(
+            mutant_genres(&mutants),
+            BTreeMap::from([
+                (
+                    "src/a.rs:3:9: replace > with < in f".to_string(),
+                    "BinaryOperator".to_string()
+                ),
+                (
+                    "src/a.rs:5:5: replace f -> bool with true".to_string(),
+                    "FnValue".to_string()
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn operator_token_is_a_diagnostic_that_cannot_veto_a_canonical_join() -> Result<(), String> {
+        // `>` appears in the expression only inside `>=`, which v1 refused to
+        // pair; the span join is authoritative, so the record is still scored.
+        let calibration = calibration_v2(
+            json!([
+                {"join_method": "span_containment",
+                 "static": {"seam_id": "s1", "seam_kind": "predicate_boundary", "seam_grip_class": "ungripped", "file": "src/a.rs", "line": 3},
+                 "runtime": {"mutant_id": "src/a.rs:3:9: replace > with < in f", "runtime_outcome": "caught"}}
+            ]),
+            json!([]),
+            json!([]),
+            json!([]),
+        );
+        let exposure = json!({"seams": [{"seam_id": "s1", "expression": "x >= y"}]});
+        let genres = BTreeMap::from([(
+            "src/a.rs:3:9: replace > with < in f".to_string(),
+            "BinaryOperator".to_string(),
+        )]);
+        let records = classify_records(&calibration, &exposure, &genres)?;
+        assert_eq!(records[0].disposition, "canonical_precise");
+        assert_eq!(records[0].operator_token, "absent");
+        let report = build_report(&[repo_run(records)], 5);
+        assert_eq!(
+            report["scored_families"]["claims_no_discriminator"]["counts"]["false_gap"],
+            1
+        );
+        assert_eq!(report["operator_token_diagnostic"]["counts"]["absent"], 1);
+        assert_eq!(
+            report["operator_token_diagnostic"]["absent_examples"][0]["seam_id"],
+            "s1"
+        );
+        assert_eq!(
+            operator_token_diagnostic("src/a.rs:3:9: replace > with < in f", Some("i > 0")),
+            "present"
+        );
+        assert_eq!(
+            operator_token_diagnostic("src/a.rs:3:9: replace > with < in f", None),
+            "expression_unavailable"
+        );
+        assert_eq!(
+            operator_token_diagnostic("src/a.rs:3:9: replace f -> bool with true", Some("x")),
+            "no_original_operator"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn calibration_without_span_joins_or_with_missing_records_is_refused() {
+        let genres = BTreeMap::new();
+        let mut v1 = calibration_v2(json!([]), json!([]), json!([]), json!([]));
+        v1["schema_version"] = json!("0.1");
+        assert!(
+            classify_records(&v1, &Value::Null, &genres)
+                .is_err_and(|err| err.contains("calibration schema 0.2"))
+        );
+        // mutants_total counts a record the lists do not carry.
+        let mut partial = calibration_v2(
+            json!([]),
+            json!([]),
+            json!([]),
+            json!([{"mutant_id": "src/a.rs:3:9: replace > with < in f", "file": "src/a.rs", "line": 3,
+                    "runtime_outcome": "missed", "unmatched_reason": "no_seam_on_line"}]),
+        );
+        assert_eq!(
+            classify_records(&partial, &Value::Null, &genres).map(|records| records.len()),
+            Ok(1)
+        );
+        partial["metrics"]["mutants_total"] = json!(2);
+        assert!(
+            classify_records(&partial, &Value::Null, &genres).is_err_and(
+                |err| err.contains("lists 1 runtime records but reports mutants_total 2")
+            )
         );
     }
 
@@ -1330,68 +1746,209 @@ mod tests {
         );
     }
 
+    /// A calibration 0.2 report whose `mutants_total` equals its records.
+    fn calibration_v2(
+        matches: Value,
+        ambiguous_file_line: Value,
+        ambiguous_span_overlap: Value,
+        unmatched: Value,
+    ) -> Value {
+        let total = [
+            &matches,
+            &ambiguous_file_line,
+            &ambiguous_span_overlap,
+            &unmatched,
+        ]
+        .iter()
+        .map(|list| list.as_array().map_or(0, Vec::len))
+        .sum::<usize>();
+        json!({
+            "schema_version": "0.2",
+            "metrics": {"mutants_total": total},
+            "matches": matches,
+            "ambiguous_file_line_matches": ambiguous_file_line,
+            "ambiguous_span_overlap_matches": ambiguous_span_overlap,
+            "unmatched_mutants": unmatched,
+        })
+    }
+
+    fn repo_run(records: Vec<Record>) -> RepoRun {
+        RepoRun {
+            name: "demo".to_string(),
+            revision: "abc".to_string(),
+            diffs_checked: records.len(),
+            exposure_run_status: None,
+            cargo_mutants_args: Some(Vec::new()),
+            cargo_mutants_version: Some("27.1.0".to_string()),
+            mutant_timeout_secs: Some(60),
+            mutant_set_sha256: "0".repeat(64),
+            metrics: Value::Null,
+            records,
+            pilot: Ok(Vec::new()),
+        }
+    }
+
+    fn fixture(dir: &str, file: &str) -> Result<Value, String> {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../fixtures/boundary_gap/calibration")
+            .join(dir)
+            .join(file);
+        read_json(&path)
+    }
+
+    /// Genres from a cargo-mutants `outcomes.json`-shaped fixture, standing in
+    /// for the `mutants.json` a real `mutants.out` directory carries.
+    fn fixture_genres(dir: &str) -> Result<BTreeMap<String, String>, String> {
+        let outcomes = fixture(dir, "runtime-mutants.json")?;
+        let mutants = outcomes["outcomes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|outcome| outcome.pointer("/scenario/Mutant").cloned())
+            .collect::<Vec<_>>();
+        Ok(mutant_genres(&Value::Array(mutants)))
+    }
+
     #[test]
-    fn report_scores_precise_joins_and_keeps_examples_per_seam() {
-        let calibration = json!({"matches": [
-            {"static": {"seam_id": "s1", "seam_kind": "predicate_boundary", "seam_grip_class": "ungripped", "file": "src/a.rs", "line": 3},
-             "runtime": {"mutant_id": "src/a.rs:3:9: replace > with < in f", "runtime_outcome": "caught"}},
-            {"static": {"seam_id": "s1", "seam_kind": "predicate_boundary", "seam_grip_class": "ungripped", "file": "src/a.rs", "line": 3},
-             "runtime": {"mutant_id": "src/a.rs:3:9: replace > with >= in f", "runtime_outcome": "missed"}},
-            {"static": {"seam_id": "s2", "seam_kind": "return_value", "seam_grip_class": "strongly_gripped", "file": "src/a.rs", "line": 7},
-             "runtime": {"mutant_id": "src/a.rs:7:5: replace + with - in g", "runtime_outcome": "caught"}},
-            {"static": {"seam_id": "s3", "seam_kind": "call_presence", "seam_grip_class": "strongly_gripped", "file": "src/a.rs", "line": 9},
-             "runtime": {"mutant_id": "src/a.rs:9:5: replace + with - in h", "runtime_outcome": "missed"}}
-        ]});
+    fn a_run_scoring_one_family_still_ingests() -> Result<(), String> {
+        let calibration = calibration_v2(
+            json!([
+                {"join_method": "span_containment",
+                 "static": {"seam_id": "s1", "seam_kind": "predicate_boundary", "seam_grip_class": "ungripped", "file": "src/a.rs", "line": 3},
+                 "runtime": {"mutant_id": "src/a.rs:3:9: replace > with < in f", "runtime_outcome": "missed"}}
+            ]),
+            json!([]),
+            json!([]),
+            json!([]),
+        );
+        let exposure = json!({"seams": [{"seam_id": "s1", "expression": "i > 0"}]});
+        let genres = [(
+            "src/a.rs:3:9: replace > with < in f".to_string(),
+            "BinaryOperator".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let mut run = repo_run(classify_records(&calibration, &exposure, &genres)?);
+        run.metrics = json!({"mutants_total": 1});
+        let report = build_report(&[run], 5);
+        let clean = &report["scored_families"]["claims_discriminator"];
+        assert_eq!(clean["mutants_scored"], 0);
+        assert!(clean["agreement_rate"].is_null());
+        assert_eq!(
+            report["scored_families"]["claims_no_discriminator"]["mutants_scored"],
+            1
+        );
+        let input = crate::reports::dx_scoreboard::mutation_spot_check_to_input(&report)?;
+        let ids: Vec<_> = input["metrics"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|row| row["id"].as_str())
+            .collect();
+        assert!(ids.contains(&"trust.gap_claim_agreement"), "{ids:?}");
+        assert!(
+            !ids.contains(&"trust.discriminator_claim_agreement"),
+            "{ids:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn report_scores_canonical_joins_and_keeps_examples_per_seam() -> Result<(), String> {
+        let at = |seam: &str, kind: &str, class: &str, line: u64| json!({"seam_id": seam, "seam_kind": kind, "seam_grip_class": class, "file": "src/a.rs", "line": line});
+        let calibration = calibration_v2(
+            json!([
+                {"join_method": "span_containment", "static": at("s1", "predicate_boundary", "ungripped", 3),
+                 "runtime": {"mutant_id": "src/a.rs:3:9: replace > with < in f", "runtime_outcome": "caught"}},
+                {"join_method": "span_containment", "static": at("s1", "predicate_boundary", "ungripped", 3),
+                 "runtime": {"mutant_id": "src/a.rs:3:9: replace > with >= in f", "runtime_outcome": "missed"}},
+                {"join_method": "seam_id", "static": at("s2", "return_value", "strongly_gripped", 7),
+                 "runtime": {"mutant_id": "src/a.rs:7:5: replace + with - in g", "runtime_outcome": "caught"}},
+                {"join_method": "span_containment", "static": at("s3", "call_presence", "strongly_gripped", 9),
+                 "runtime": {"mutant_id": "src/a.rs:9:5: replace + with - in h", "runtime_outcome": "missed"}},
+                {"join_method": "file_line", "static": at("s4", "predicate_boundary", "strongly_gripped", 11),
+                 "runtime": {"mutant_id": "src/a.rs:11:5: replace < with > in k", "runtime_outcome": "missed"}}
+            ]),
+            json!([{"runtime": {"mutant_id": "src/a.rs:13:5: replace - with + in m", "file": "src/a.rs", "line": 13, "runtime_outcome": "missed"}}]),
+            json!([{"runtime": {"mutant_id": "src/a.rs:15:5: replace && with || in n", "file": "src/a.rs", "line": 15, "runtime_outcome": "missed"}}]),
+            json!([{"mutant_id": "src/a.rs:17:5: replace * with + in p", "file": "src/a.rs", "line": 17,
+                    "runtime_outcome": "caught", "unmatched_reason": "no_containing_seam"}]),
+        );
         let exposure = json!({"seams": [
             {"seam_id": "s1", "expression": "i > 0"},
             {"seam_id": "s2", "expression": "a + b"},
             {"seam_id": "s3", "expression": "h(a + b)"}
         ]});
-        let mutants = json!([
-            {"name": "src/a.rs:3:9: replace > with < in f", "genre": "BinaryOperator"},
-            {"name": "src/a.rs:3:9: replace > with >= in f", "genre": "BinaryOperator"},
-            {"name": "src/a.rs:7:5: replace + with - in g", "genre": "BinaryOperator"},
-            {"name": "src/a.rs:9:5: replace + with - in h", "genre": "BinaryOperator"}
+        let genres = [
+            "src/a.rs:3:9: replace > with < in f",
+            "src/a.rs:3:9: replace > with >= in f",
+            "src/a.rs:7:5: replace + with - in g",
+            "src/a.rs:9:5: replace + with - in h",
+            "src/a.rs:11:5: replace < with > in k",
+        ]
+        .map(|name| (name.to_string(), "BinaryOperator".to_string()))
+        .into_iter()
+        .collect();
+        let records = classify_records(&calibration, &exposure, &genres)?;
+        let mut run = repo_run(records);
+        run.pilot = Ok(vec![
+            json!({"verdict": "refuted", "tier": "line", "grip_class": "weakly_gripped"}),
         ]);
-        let repo = RepoRun {
-            name: "demo".to_string(),
-            revision: "abc".to_string(),
-            diffs_checked: 4,
-            exposure_run_status: None,
-            cargo_mutants_args: Vec::new(),
-            cargo_mutants_version: Some("27.1.0".to_string()),
-            metrics: Value::Null,
-            pairs: classify_matches(&calibration, &exposure, &mutants),
-            pilot: Ok(vec![
-                json!({"verdict": "refuted", "tier": "line", "grip_class": "weakly_gripped"}),
-            ]),
-        };
-        let report = build_report(&[repo], 5);
+        let report = build_report(&[run], 5);
 
+        let pairings = &report["repos"][0]["pairings"];
+        assert_eq!(pairings["records_total"], 8);
+        assert_eq!(pairings["canonical_precise"], 3);
+        assert_eq!(pairings["canonical_precise_by_join_method"]["seam_id"], 1);
+        assert_eq!(
+            pairings["canonical_precise_by_join_method"]["span_containment"],
+            2
+        );
+        assert_eq!(
+            pairings["excluded"],
+            json!({
+                "ambiguous_file_line": 1,
+                "ambiguous_span_overlap": 1,
+                "file_line_only": 1,
+                "unmatched_no_containing_seam": 1,
+                "unsupported_seam_kind": 1,
+            })
+        );
         let gap = &report["scored_families"]["claims_no_discriminator"];
         assert_eq!(gap["mutants_scored"], 2);
         assert_eq!(gap["seams_scored"], 1);
         assert_eq!(gap["counts"]["false_gap"], 1);
         assert_eq!(gap["agreement_rate"], 0.5);
-        // The call-presence miss is a same-line join, so it cannot count as
-        // an overclaim against the strongly gripped verdict.
+        // The call-presence and file/line misses are excluded, so neither can
+        // count as an overclaim against a strongly gripped verdict.
         let clean = &report["scored_families"]["claims_discriminator"];
         assert_eq!(clean["mutants_scored"], 1);
         assert_eq!(clean["agreement_rate"], 1.0);
         assert_eq!(
-            report["outcomes_by_pairing_and_grip_class"]["same_line_other"]["strongly_gripped"]["missed"],
+            report["outcomes_by_disposition_and_grip_class"]["file_line_only"]["strongly_gripped"]
+                ["missed"],
             1
         );
         assert_eq!(
-            report["disagreement_examples"]["false_gap"][0]["seam_id"],
-            "s1"
+            report["outcomes_by_disposition_and_grip_class"]["unmatched_no_containing_seam"]["no_joined_seam"]
+                ["caught"],
+            1
         );
+        let example = &report["disagreement_examples"]["false_gap"][0];
+        assert_eq!(example["seam_id"], "s1");
+        assert_eq!(example["join_method"], "span_containment");
         assert!(report["disagreement_examples"].get("overclaim").is_none());
         let markdown = spot_check_markdown(&report);
+        assert!(markdown.contains("| demo | `abc` | 27.1.0 | 8 | 3 | 1 | 2 | 5 |"));
+        assert!(markdown.contains("| demo | `file_line_only` | 1 |"));
         assert!(markdown.contains("**false_gap** demo `src/a.rs:3`"));
+        assert!(markdown.contains("(joined by span_containment)"));
+        assert!(markdown.contains("present 3."));
         assert!(!markdown.contains("ran cargo-mutants with"));
 
         let mut report = report;
+        report["disagreement_examples"]["false_gap"][0]["expression"] = json!("i\n        > 0");
+        assert!(spot_check_markdown(&report).contains("predicate_boundary `i > 0` is"));
         report["repos"][0]["cargo_mutants_args"] = json!(["--re=decode", "--workspace"]);
         assert!(
             spot_check_markdown(&report)
@@ -1399,5 +1956,96 @@ mod tests {
         );
         assert_eq!(report["pilot_top_recommendations"]["counts"]["refuted"], 1);
         assert!(spot_check_markdown(&report).contains("## Pilot top recommendations"));
+        Ok(())
+    }
+
+    /// atuinsh/atuin@90f590b9235556363ffb5b2c66728f8af3c27afe, 27 cargo-mutants
+    /// 27.1.0 records. v1 (operator text over file/line joins) scored 1 of
+    /// them; the canonical join scores 7 and attributes the other 20.
+    #[test]
+    fn atuin_multi_seam_lines_score_from_the_canonical_join() -> Result<(), String> {
+        let dir = "span-containment-atuin";
+        let records = classify_records(
+            &fixture(dir, "mutation-calibration.json")?,
+            &fixture(dir, "repo-exposure.json")?,
+            &fixture_genres(dir)?,
+        )?;
+        let report = build_report(&[repo_run(records)], 10);
+        let pairings = &report["repos"][0]["pairings"];
+        assert_eq!(pairings["records_total"], 27);
+        assert_eq!(pairings["canonical_precise"], 7);
+        assert_eq!(
+            pairings["canonical_precise_by_join_method"],
+            json!({"seam_id": 0, "span_containment": 7})
+        );
+        // No exclusion is the catch-all `ambiguous_file_line`: each names why.
+        assert_eq!(
+            pairings["excluded"],
+            json!({
+                "ambiguous_span_overlap": 6,
+                "file_line_only": 5,
+                "unmatched_no_containing_seam": 8,
+                "unsupported_seam_kind": 1,
+            })
+        );
+        let families = &report["scored_families"];
+        assert_eq!(
+            families["claims_discriminator"]["counts"],
+            json!({"overclaim": 2})
+        );
+        assert_eq!(families["claims_discriminator"]["seams_scored"], 2);
+        assert_eq!(
+            families["claims_no_discriminator"]["counts"],
+            json!({"agree": 5})
+        );
+        assert_eq!(families["claims_no_discriminator"]["seams_scored"], 4);
+        let overclaims = report["disagreement_examples"]["overclaim"]
+            .as_array()
+            .map(|rows| {
+                rows.iter()
+                    .map(|row| format!("{}:{}", row["file"].as_str().unwrap_or(""), row["line"]))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        assert_eq!(
+            overclaims,
+            [
+                "crates/atuin-ai/src/context.rs:72",
+                "crates/atuin/src/logs/otel/enabled.rs:62"
+            ]
+        );
+        // The reduced fixture omits seam expressions, so the diagnostic says
+        // so instead of guessing.
+        assert_eq!(
+            report["operator_token_diagnostic"]["counts"],
+            json!({"expression_unavailable": 7})
+        );
+        Ok(())
+    }
+
+    /// semver `display.rs:20`: the `+` mutants sit beside, not inside, the
+    /// call seam that starts on the same line, so neither joins nor scores.
+    #[test]
+    fn semver_same_line_call_seam_is_not_a_precise_pair() -> Result<(), String> {
+        let dir = "span-containment-semver-display";
+        let records = classify_records(
+            &fixture(dir, "mutation-calibration.json")?,
+            &fixture(dir, "repo-exposure.json")?,
+            &fixture_genres(dir)?,
+        )?;
+        let report = build_report(&[repo_run(records)], 10);
+        let pairings = &report["repos"][0]["pairings"];
+        assert_eq!(pairings["records_total"], 2);
+        assert_eq!(pairings["canonical_precise"], 0);
+        assert_eq!(
+            pairings["excluded"],
+            json!({"unmatched_no_containing_seam": 2})
+        );
+        // Nothing is scored, yet both families stay present with null rates.
+        for family in ["claims_discriminator", "claims_no_discriminator"] {
+            assert_eq!(report["scored_families"][family]["mutants_scored"], 0);
+            assert!(report["scored_families"][family]["agreement_rate"].is_null());
+        }
+        Ok(())
     }
 }

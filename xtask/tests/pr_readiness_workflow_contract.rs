@@ -252,6 +252,46 @@ fn contract_rejects_a_watchdog_without_the_in_flight_check() -> Result<(), Strin
     Ok(())
 }
 
+/// A conflicting (`dirty`) PR silently gets zero `pull_request` runs:
+/// `routed-rust.yml` evaluates from the merge ref, which does not exist while
+/// the PR conflicts (#7079). The report must carry each PR's `mergeable_state`
+/// so the conflicted dark mode ("merge main first") is distinguishable from a
+/// dropped delivery ("re-toggle Draft -> Ready").
+const WATCHDOG_MERGEABLE_STATE_QUERY: &str = "repos/$REPOSITORY/pulls/$number";
+const WATCHDOG_MERGEABLE_STATE_COLUMN: &str = "| PR | head | mergeable_state | disposition |";
+
+fn watchdog_reports_mergeable_state(source: &str) -> bool {
+    source.contains(WATCHDOG_MERGEABLE_STATE_QUERY)
+        && source.contains(".mergeable_state")
+        && source.contains(WATCHDOG_MERGEABLE_STATE_COLUMN)
+        && source.contains("DARK (conflicted)")
+}
+
+#[test]
+fn staleness_watchdog_reports_mergeable_state() -> Result<(), String> {
+    let source = repo_file(WATCHDOG)?;
+    assert!(
+        watchdog_reports_mergeable_state(&source),
+        "watchdog must report each PR's mergeable_state so a conflicted dark head is distinguishable from a dropped delivery",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_rejects_a_watchdog_without_mergeable_state() -> Result<(), String> {
+    let source = repo_file(WATCHDOG)?;
+    let changed = source.replace(
+        WATCHDOG_MERGEABLE_STATE_QUERY,
+        "repos/$REPOSITORY/issues/$number",
+    );
+    assert_ne!(changed, source, "mergeable-state mutation must engage");
+    assert!(
+        !watchdog_reports_mergeable_state(&changed),
+        "a watchdog that stops reading the single-PR mergeable_state must violate the contract",
+    );
+    Ok(())
+}
+
 #[test]
 fn contract_rejects_a_dispatching_watchdog() -> Result<(), String> {
     let source = repo_file(WATCHDOG)?;
@@ -267,5 +307,188 @@ fn contract_rejects_a_dispatching_watchdog() -> Result<(), String> {
         vec!["actions: write", "gh workflow run"],
         "a restored dispatch path must violate the alert-only contract",
     );
+    Ok(())
+}
+
+// #4987: these are event/config contract checks, not a scheduler, review cache,
+// or a claim that a hosted lifecycle has been observed.
+const UB_WORKFLOW: &str = ".github/workflows/ub-review.yml";
+const DROID_WORKFLOW: &str = ".github/workflows/droid-review.yml";
+const REVIEW_EVENTS: &[&str] = &["opened", "reopened", "synchronize"];
+
+fn parsed_types(source: &str) -> Result<Vec<String>, String> {
+    repo_policy::routed_rust_pull_request_types(source)
+        .ok_or_else(|| "workflow declares auditable on.pull_request.types".to_owned())
+}
+
+fn publication_events(config: &str) -> Result<Vec<String>, String> {
+    let config: toml::Value = toml::from_str(config).map_err(|error| format!("{error}"))?;
+    config
+        .get("gate")
+        .and_then(|gate| gate.get("post_review_on"))
+        .and_then(toml::Value::as_array)
+        .ok_or_else(|| {
+            "explicit gate.post_review_on required: pin defaults omit repair publication".to_owned()
+        })?
+        .iter()
+        .map(|event| {
+            event
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "publication event is a string".to_owned())
+        })
+        .collect()
+}
+
+fn advisory_contract(ub: &str, droid: &str, config: &str) -> Result<(), String> {
+    let mut ub_events = parsed_types(ub)?;
+    ub_events.sort();
+    if ub_events != REVIEW_EVENTS {
+        return Err(format!("UB early review events changed: {ub_events:?}"));
+    }
+    let mut droid_events = parsed_types(droid)?;
+    droid_events.sort();
+    if droid_events != ["labeled", "opened", "reopened", "synchronize", "unlabeled"] {
+        return Err(format!(
+            "Droid early/label review events changed: {droid_events:?}"
+        ));
+    }
+    let mut posts = publication_events(config)?;
+    posts.sort();
+    if posts != REVIEW_EVENTS {
+        return Err(format!(
+            "UB must publish all early review passes: {posts:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn advisory_ready_dedup_contract() -> Result<(), String> {
+    advisory_contract(
+        &repo_file(UB_WORKFLOW)?,
+        &repo_file(DROID_WORKFLOW)?,
+        &repo_file(".ub-review.toml")?,
+    )
+}
+
+#[test]
+fn ready_after_active_completed_or_unavailable_advisory_has_no_new_admission() -> Result<(), String>
+{
+    // GitHub event admission has no dependency on the previous run's outcome.
+    // One assertion per real workflow covers all three prior states; there is
+    // no fixture state machine that could manufacture review success.
+    for path in [UB_WORKFLOW, DROID_WORKFLOW] {
+        let events = parsed_types(&repo_file(path)?)?;
+        assert!(
+            !events.iter().any(|event| event == "ready_for_review"),
+            "{path}: Ready must neither replace active work nor repeat completed/unavailable work"
+        );
+    }
+    assert_eq!(parsed_types(&workflow_source()?)?, ["ready_for_review"]);
+    Ok(())
+}
+
+#[test]
+fn new_head_synchronize_and_reopened_keep_review_and_publication() -> Result<(), String> {
+    let posts = publication_events(&repo_file(".ub-review.toml")?)?;
+    for action in REVIEW_EVENTS {
+        for path in [UB_WORKFLOW, DROID_WORKFLOW] {
+            assert!(
+                parsed_types(&repo_file(path)?)?
+                    .iter()
+                    .any(|event| event == action),
+                "{path}: {action} still computes review"
+            );
+        }
+        assert!(
+            posts.iter().any(|event| event == action),
+            "UB {action} still permits publication through the pinned action"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn advisory_guards_and_concurrency_remain_exact() -> Result<(), String> {
+    let ub = repo_file(UB_WORKFLOW)?;
+    let droid = repo_file(DROID_WORKFLOW)?;
+    // Pin executable guard fields, not coincidental words in comments.
+    assert!(
+        ub.contains("    if: github.event.pull_request.head.repo.full_name == github.repository\n")
+    );
+    assert!(droid.contains("    if: |\n      github.event.pull_request.head.repo.full_name == github.repository &&\n      !contains(github.event.pull_request.title, '[skip-review]') &&\n      !contains(github.event.pull_request.labels.*.name, 'release-check')\n"));
+    assert!(ub.contains("  group: ub-review-${{ github.event.pull_request.number || github.ref }}\n  cancel-in-progress: true\n"));
+    assert!(droid.contains("  group: droid-review-${{ github.repository }}-${{ github.event.pull_request.number }}\n  cancel-in-progress: false\n"));
+    assert!(ub.contains("          review-mode: advisory\n"));
+    assert!(ub.contains("          config: .ub-review.toml\n"));
+    assert!(ub.contains("          posting: review\n"));
+    assert!(ub.contains("          pr-head-sha: ${{ github.event.pull_request.head.sha }}\n"));
+    Ok(())
+}
+
+#[test]
+fn contract_rejects_ready_reentry_and_missing_repair_publication() -> Result<(), String> {
+    let ub = repo_file(UB_WORKFLOW)?;
+    let droid = repo_file(DROID_WORKFLOW)?;
+    let config = repo_file(".ub-review.toml")?;
+    for (path, source) in [(UB_WORKFLOW, &ub), (DROID_WORKFLOW, &droid)] {
+        let changed = source.replacen("types: [", "types: [ready_for_review, ", 1);
+        assert_ne!(&changed, source, "mutation engages {path}");
+        let result = if path == UB_WORKFLOW {
+            advisory_contract(&changed, &droid, &config)
+        } else {
+            advisory_contract(&ub, &changed, &config)
+        };
+        assert!(result.is_err(), "Ready reentry must violate {path}");
+    }
+    let changed = config.replace("\"synchronize\", ", "");
+    assert_ne!(changed, config, "publication mutation engages");
+    assert!(advisory_contract(&ub, &droid, &changed).is_err());
+    Ok(())
+}
+
+#[test]
+fn event_parser_ignores_decoys_outside_pull_request() -> Result<(), String> {
+    let source = "# types: [ready_for_review]\non:\n  workflow_dispatch:\n    inputs:\n      types: [ready_for_review]\n  pull_request:\n    types: ['opened', \"synchronize\", reopened] # real events\njobs:\n  decoy:\n    run: |\n      types: [ready_for_review]\n";
+    assert_eq!(parsed_types(source)?, ["opened", "synchronize", "reopened"]);
+    assert!(
+        repo_policy::routed_rust_pull_request_types(
+            "jobs:\n  decoy:\n    run: |\n      types: [ready_for_review]\n"
+        )
+        .is_none()
+    );
+    Ok(())
+}
+
+#[test]
+fn unauditable_event_layouts_and_missing_publication_fail_closed() -> Result<(), String> {
+    for source in [
+        "on:\n  pull_request:\n",
+        "on:\n  pull_request:\n    types:\n      - opened\n",
+        "on:\n  pull_request:\n    types: [opened\n",
+        "on:\n  pull_request:\n    types: ['opened\"]\n",
+    ] {
+        assert!(repo_policy::routed_rust_pull_request_types(source).is_none());
+    }
+    for config in [
+        "[gate]\nrequired_check = 'ub-review/gate'\n",
+        "[gate]\npost_review_on = 'opened'\n",
+    ] {
+        let Err(error) = publication_events(config) else {
+            return Err("missing/non-array publication policy must fail closed".to_owned());
+        };
+        assert!(error.contains("explicit gate.post_review_on required"));
+    }
+    Ok(())
+}
+
+#[test]
+fn contract_rejects_replacing_required_ready_admission() -> Result<(), String> {
+    let source = workflow_source()?;
+    let changed = source.replace("types: [ready_for_review]", "types: [opened]");
+    assert_ne!(changed, source, "required-admission mutation engages");
+    assert_ne!(event_declarations(&changed)?, EXPECTED_EVENT_DECLARATIONS);
+    assert_ne!(parsed_types(&changed)?, ["ready_for_review"]);
     Ok(())
 }

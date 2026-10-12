@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:7f019e84",
+      "canonical_gap_id": "gap:rust:src/lib.rs:render_status:predicate_boundary:predicate:code==299",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:render_status:predicate_boundary:predicate:code==299",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "render_status",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "code==299"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.84,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:7f019e84",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/snapshot_oracle/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "if code <= 299 {"
        },

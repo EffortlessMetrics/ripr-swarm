@@ -1,0 +1,52 @@
+{
+  "case_id": "checkout-withdraw-guarded-match-pin",
+  "subject_id": "authored-checkout",
+  "diff": "cases/checkout-withdraw-guarded-match-pin.diff",
+  "anchor": {
+    "file": "src/payment.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "guarded_result_match_pin",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(PayError::Limit);",
+        "mutated_line": "return Err(PayError::Limit);",
+        "outcome": "tests_failed",
+        "failing_test": "payment::tests::overdrawing_reports_insufficient",
+        "equivalence_review": "not equivalent: overdrawing reports Limit"
+      },
+      {
+        "replacement": "return Ok(0);",
+        "mutated_line": "return Ok(0);",
+        "outcome": "tests_failed",
+        "failing_test": "payment::tests::overdrawing_reports_insufficient",
+        "equivalence_review": "not equivalent: overdrawing succeeds"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test matches withdraw's Result and panics on Ok or on any error other than Insufficient. Spec cells: RIPR-SPEC-0175.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
