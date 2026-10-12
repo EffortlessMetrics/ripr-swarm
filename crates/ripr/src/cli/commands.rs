@@ -1320,12 +1320,15 @@ enum SnapshotCaptureKind {
 }
 
 fn snapshot_capture_hint(kind: SnapshotCaptureKind, displayed_path: &str) -> String {
+    // Quote after `display_path`: the NotFound prefix stays human-readable,
+    // but the pasted redirect must remain one shell token (#7349, #5188).
+    let quoted_path = crate::agent::loop_commands::shell_arg(displayed_path);
     match kind {
         SnapshotCaptureKind::Outcome => format!(
-            "Run `ripr check --format repo-exposure-json > {displayed_path}` first, or pass a `ripr check --json` output."
+            "Run `ripr check --format repo-exposure-json > {quoted_path}` first, or pass a `ripr check --json` output."
         ),
         SnapshotCaptureKind::RepoExposure => {
-            format!("Run `ripr check --format repo-exposure-json > {displayed_path}` first.")
+            format!("Run `ripr check --format repo-exposure-json > {quoted_path}` first.")
         }
         SnapshotCaptureKind::CargoMutants => {
             "Run `cargo mutants` first, then pass its output directory or `outcomes.json`."
@@ -7169,6 +7172,123 @@ language = "rust"
                 "ripr check --json",
             ],
         );
+        Ok(())
+    }
+
+    #[test]
+    fn read_calibration_text_quotes_spaced_not_found_redirect_and_keeps_plain_path_bare()
+    -> Result<(), String> {
+        use crate::agent::loop_commands::shell_arg;
+
+        let plain = PathBuf::from("definitely-missing-snapshot.json");
+        let plain_display = output::outcome::display_path(&plain);
+        assert_eq!(
+            shell_arg(&plain_display),
+            plain_display,
+            "control path must stay a bare shell token"
+        );
+        let plain_message = err_message(
+            read_calibration_text(&plain, SnapshotCaptureKind::Outcome),
+            "plain missing outcome snapshot must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &plain_message,
+            &plain_display,
+            &format!("ripr check --format repo-exposure-json > {plain_display}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            !plain_message.contains(&format!("> '{plain_display}'")),
+            "unambiguous redirect must stay unquoted:\n{plain_message}"
+        );
+
+        let spaced = PathBuf::from("missing snapshot.json");
+        let spaced_display = output::outcome::display_path(&spaced);
+        let quoted = shell_arg(&spaced_display);
+        assert_ne!(
+            quoted, spaced_display,
+            "a space must force quoting of the redirect token"
+        );
+        assert!(
+            spaced_display.contains(' '),
+            "fixture path must contain a space: {spaced_display}"
+        );
+
+        let outcome = err_message(
+            read_calibration_text(&spaced, SnapshotCaptureKind::Outcome),
+            "spaced missing outcome snapshot must fail",
+        )?;
+        assert!(
+            outcome.starts_with(&format!("read {spaced_display} failed: not found.")),
+            "NotFound prefix stays unquoted:\n{outcome}"
+        );
+        assert_missing_snapshot_named_capture(
+            &outcome,
+            &spaced_display,
+            &format!("ripr check --format repo-exposure-json > {quoted}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            !outcome.contains(&format!("> {spaced_display}`")),
+            "spaced redirect must not stay bare:\n{outcome}"
+        );
+
+        let repo = err_message(
+            read_calibration_text(&spaced, SnapshotCaptureKind::RepoExposure),
+            "spaced missing repo-exposure snapshot must fail",
+        )?;
+        assert!(
+            repo.starts_with(&format!("read {spaced_display} failed: not found.")),
+            "RepoExposure prefix stays unquoted:\n{repo}"
+        );
+        assert_missing_snapshot_named_capture(
+            &repo,
+            &spaced_display,
+            &format!("ripr check --format repo-exposure-json > {quoted}"),
+            &["cargo mutants", "ripr check --json"],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn outcome_not_found_quotes_spaced_capture_redirect() -> Result<(), String> {
+        use crate::agent::loop_commands::shell_arg;
+
+        let dir = unique_command_test_dir("outcome-spaced");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let missing_before = dir.join("missing before.json");
+        let displayed = output::outcome::display_path(&missing_before);
+        let quoted = shell_arg(&displayed);
+        assert!(
+            displayed.contains(' '),
+            "CLI fixture path must contain a space: {displayed}"
+        );
+        assert_ne!(quoted, displayed);
+
+        let message = err_message(
+            outcome(&args(&[
+                "--before",
+                &missing_before.display().to_string(),
+                "--after",
+                &dir.join("after.json").display().to_string(),
+            ])),
+            "spaced missing --before must fail",
+        )?;
+        assert!(
+            message.starts_with(&format!("read {displayed} failed: not found.")),
+            "CLI NotFound prefix stays unquoted:\n{message}"
+        );
+        assert_missing_snapshot_named_capture(
+            &message,
+            &displayed,
+            &format!("ripr check --format repo-exposure-json > {quoted}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            !message.contains(&format!("> {displayed}`")),
+            "CLI spaced redirect must not stay bare:\n{message}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
 
