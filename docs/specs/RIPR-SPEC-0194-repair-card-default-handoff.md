@@ -14,6 +14,7 @@ Linked issues:
 - #4666 (bounded detail references; landed as PR #4980, RIPR-SPEC-0193)
 - #4669 (measured budget ratification)
 - #4330 (edit-cage authority)
+- #7179 (nested same-kind spans select most-specific candidate)
 - EffortlessMetrics/ripr#1810 (primary journey truthfulness)
 
 Support-tier impact:
@@ -60,7 +61,21 @@ check), then assembles one `RepairCardV1`:
   `unavailable()` when no finding names the gap). Because the canonical gap
   id is content-derived and excludes the source location, sibling seams can
   share one id: the finding match requires the gap owner to equal the seam
-  owner, so another seam's witness is never credited to this card. The
+  owner, and the producer-structured branch additionally requires the
+  finding's probe line to fall on the seam — inside its recorded span, else
+  exactly its display line — so twin seams of one function that share file,
+  owner, and kind split by line and another seam's witness is never credited
+  to this card (#7177). When nested same-kind seams in one function share a line
+  (such as compound expressions enclosing sub-expressions), the join selects the
+  most-specific span: an outer strictly enclosing seam is refused when an inner
+  candidate matches, and competing equal minimal spans fail closed as ambiguous (#7179).
+  Most-specific selection is only trustworthy over a complete candidate set:
+  when the repo seam limit truncates the CLI inventory the card refuses with
+  the typed `incomplete_inventory` refusal (#7179 review); the LSP card join
+  matches against the complete raw seam inventory retained on the snapshot,
+  never the class-filtered diagnostic projection, and omits the card when the
+  inventory was deferred, disabled, or truncated; the MCP producer binds over
+  the uncapped diff-scoped inventory. The
   repository head (`git rev-parse HEAD`), the portable
   workspace identity, the seam's most recent repair-attempt manifest by
   `created_unix_ms`, the rendered canonical packet behind a portable
@@ -218,9 +233,10 @@ live caller (`git_output`, `task_for`, `TASK_WRITE_TARGETED_TEST`).
 - `crates/ripr/src/app/repair_card_handoff.rs` unit tests cover the pure
   assembly over producer-owned facts: the nine-family projection with the
   packet route, the closed-gate omission of the next action, the default
-  budget bounds, the owner-discriminated gap match, the packet-queue
-  omission failing closed on the canonical packet family, and the
-  foreign-head attempt projecting `stale`.
+  budget bounds, the owner-discriminated gap match, the probe-line twin
+  split (`producer_finding_binds_only_the_twin_seam_at_its_line`), the
+  packet-queue omission failing closed on the canonical packet family, and
+  the foreign-head attempt projecting `stale`.
 - `crates/ripr/src/cli/agent.rs` unit tests cover option parsing and the
   updated unknown-subcommand listing.
 - `crates/ripr/tests/cli_smoke.rs` `agent_card_hands_off_one_seam_as_the_default_repair_card`

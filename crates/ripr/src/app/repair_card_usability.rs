@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 use crate::agent::command_specs::{AgentArtifactRoute, agent_inspection_command_spec};
 use crate::analysis::ClassifiedSeam;
 use crate::analysis::seams::{
-    ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
+    ExpectedSink, OwnerCallShape, RepoSeam, RequiredDiscriminator, SeamGripClass, SeamKind,
 };
 use crate::analysis::test_grip_evidence::TestGripEvidence;
 use crate::cli::commands::agent_card::agent_card_prose_lines;
@@ -73,6 +73,8 @@ fn boundary_seam() -> RepoSeam {
         },
         ExpectedSink::ReturnValue,
     )
+    // The synthetic owner models a module-level function (#5357).
+    .with_owner_call(OwnerCallShape::Free)
 }
 
 fn classified_entry() -> ClassifiedSeam {
@@ -90,6 +92,7 @@ fn classified_entry() -> ClassifiedSeam {
             discriminate: stage(StageState::No),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         },
         class: SeamGripClass::WeaklyGripped,
@@ -236,7 +239,7 @@ fn measure_profile(profile: &SyntheticProfile) -> Result<Value, String> {
     let card_wire = render_pretty_with_newline(&card, "repair card usability measurement")?;
     // The measurement has no checkout to bind, so the closing packet line
     // carries the typed command's portable display.
-    let human_lines = agent_card_prose_lines(&card, &next_command_display);
+    let human_lines = agent_card_prose_lines(&card, &next_command_display, None);
     let human_rendered = format!("{}\n", human_lines.join("\n"));
     let packet_surfaces_seam = {
         let envelope: Value = serde_json::from_str(&packet_json)

@@ -1,0 +1,52 @@
+{
+  "case_id": "grid-bindings-shadowed",
+  "subject_id": "authored-grid-bindings",
+  "diff": "cases/grid-bindings-shadowed.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "changed_binding_shadowed_before_comparison",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let quota = 101;",
+        "mutated_line": "let quota = 101;",
+        "outcome": "tests_failed",
+        "failing_test": "quota_is_two_hundred",
+        "equivalence_review": "not equivalent: quota_is_two_hundred fails on it"
+      },
+      {
+        "replacement": "let quota = 99;",
+        "mutated_line": "let quota = 99;",
+        "outcome": "tests_failed",
+        "failing_test": "quota_is_two_hundred",
+        "equivalence_review": "not equivalent: quota_is_two_hundred fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Changed binding reaches the comparison only through a shadow (`let quota = quota * 2;`). RIPR-SPEC-0157 lists shadowing as a fail-closed blocker for the binding-to-predicate relation. The pins at 200 and 201 catch both mutants. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0157.",
+  "labeling_observation": {
+    "ripr_commit": "fddf363",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -572,6 +572,10 @@ pub(crate) fn related_profile_bun_tests(
         .filter(|test| normalized_path(&test.file) == profile.ts_test_file)
         .filter(|test| !bun_array_buffer_facts_for_test(test).is_empty())
         .map(|test| {
+            // Bridge rows back a changed Rust line whose verdict comes from
+            // the Bun bridge profile, not from a TypeScript probe family, so
+            // there is no family to select by; they keep the strongest
+            // assertion overall (#5525 leaves Bun bridge semantics unchanged).
             let strongest = strongest_assertion(&test.assertions);
             let (oracle_kind, oracle_strength, oracle_text) = match strongest {
                 Some(assertion) => (

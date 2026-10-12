@@ -18,7 +18,7 @@ Start here:
   Static exposure: exposed (info, confidence 0.60)
   Changed behavior: if (amount >= threshold) {
   Discriminator (observed, advisory): Related test reaches `applyDiscount` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
-  Related test (1 of 2): tests/pricing.test.ts:7 alias import observes threshold
+  Related test (1 of 2 matched rows): tests/pricing.test.ts:7 alias import observes threshold
   Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
     - reach yes: 2 related test(s) found for owner `applyDiscount`
@@ -26,8 +26,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/typescript_related_test_matching/input --diff fixtures/typescript_related_test_matching/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:bd772dc8
-  ripr context --root fixtures/typescript_related_test_matching/input --diff fixtures/typescript_related_test_matching/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:bd772dc8
+  ripr explain --root <cwd>/fixtures/typescript_related_test_matching/input --diff <cwd>/fixtures/typescript_related_test_matching/diff.patch --mode fast probe:src_pricing.ts:typescript_preview:bd772dc8
+  ripr context --root <cwd>/fixtures/typescript_related_test_matching/input --diff <cwd>/fixtures/typescript_related_test_matching/diff.patch --mode fast --at probe:src_pricing.ts:typescript_preview:bd772dc8
 
 More:
   Full evidence: rerun with --format human-full

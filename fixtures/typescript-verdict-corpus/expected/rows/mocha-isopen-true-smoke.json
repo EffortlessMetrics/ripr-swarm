@@ -1,0 +1,22 @@
+{
+  "case_id": "mocha-isopen-true-smoke",
+  "subject_id": "authored-ts-mocha-ledger",
+  "origin": "authored",
+  "anchor": "src/hours.ts:2",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "mocha_chai_expect_to_be_true_smoke",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

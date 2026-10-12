@@ -1,0 +1,51 @@
+{
+  "case_id": "config-bool-false-arm",
+  "subject_id": "authored-config",
+  "diff": "cases/config-bool-false-arm.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 91
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "integration_test_assert_eq_one_branch",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "\"0\" | \"false\" | \"no\" | \"off\" => Some(true),",
+        "mutated_line": "\"0\" | \"false\" | \"no\" | \"off\" => Some(true),",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: parse_bool(\"no\") returns Some(true) instead of Some(false)"
+      },
+      {
+        "replacement": "\"0\" | \"false\" | \"no\" | \"off\" => None,",
+        "mutated_line": "\"0\" | \"false\" | \"no\" | \"off\" => None,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: parse_bool(\"no\") returns None instead of Some(false)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "flags_accept_common_spellings asserts exact values but only for true spellings and an unknown word, so the false arm's value is never checked. ripr reports weakly_exposed, the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "case_id": "ledger-receive-refresh-low-stock",
+  "subject_id": "authored-ledger",
+  "diff": "cases/ledger-receive-refresh-low-stock.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 63
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "call_deletion",
+  "test_shape": "no_test_observes_effect",
+  "hard_case": "the edit inserts a call; the base is the call-deleted variant",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.refresh_low_stock(sku);",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: receive(\"BOLT-M8\", 2) with threshold 5 now flags BOLT-M8 low, and restocking above the threshold clears the flag, where the base left the watch list unchanged on receipt"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No test reads is_low after a receive; shipping_below_threshold_flags_low_stock only observes the flag set by ship, so adding the call changes nothing the tests see. ripr reports call_deletion exposed, citing the whole-log equality in history_records_every_movement_in_order, a false exposed verdict.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

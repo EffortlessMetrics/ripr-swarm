@@ -1,0 +1,58 @@
+{
+  "case_id": "trap-stack-container-length",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-stack-container-length.diff",
+  "anchor": {
+    "file": "src/stacks.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_on_container_length_not_element",
+  "hard_case": "The test wraps the result in a vec and asserts the vec's length, which is 1 for any value.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 32",
+        "mutated_line": "base * 32",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `31 * base` with `base * 32`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "base + 31",
+        "mutated_line": "base + 31",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `31 * base` with `base + 31`, which changes the result, but no executed assertion observes it"
+      },
+      {
+        "replacement": "base * 30",
+        "mutated_line": "base * 30",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: replaces `31 * base` with `base * 30`, which changes the result, but no executed assertion observes it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "stack_holds_one_entry asserts vec![stack(2)].len() == 1; the element is never read. Adversarial shape (assert on a property of the wrapper, not the result). ripr's gap here is incidental today: it grades any owner call wrapped in a projection below an exact pin, even one that keeps the value, so the paired control (trap-pile-first-element-control) scores false_actionable. This case guards the fix: once faithful projections earn credit, this lossy one must not.",
+  "labeling_observation": {
+    "ripr_commit": "fce75e1",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

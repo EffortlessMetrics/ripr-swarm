@@ -512,14 +512,24 @@ fn proposal_edit_surface_is_test_only_and_cage_rejects_production() -> Result<()
     edit_cage_policy_from_packet(&accepted, entry.seam.id().as_str())
         .map_err(|error| format!("proposal file must be a cage-legal test surface: {error}"))?;
 
-    let refused = serde_json::json!({
+    // A production Rust file is never a whole-file edit target: the policy
+    // can only confine it to its one governed inline test module (#5210),
+    // and this package's src/lib.rs has none, so the region capture refuses
+    // before any attempt exists.
+    let confined = serde_json::json!({
         "seam_id": entry.seam.id().as_str(),
         "allowed_edit_surface": ["src/lib.rs"],
         "forbidden_files": []
     })
     .to_string();
-    if edit_cage_policy_from_packet(&refused, entry.seam.id().as_str()).is_ok() {
-        return Err("production src/lib.rs must not become the authored edit target".to_string());
+    let policy = edit_cage_policy_from_packet(&confined, entry.seam.id().as_str())?;
+    if !policy.inline_test_module_target {
+        return Err("production src/lib.rs must not become a whole-file edit target".to_string());
+    }
+    if crate::edit_cage::inline_test_region::capture_attempt_inline_region(&root.0, "src/lib.rs")
+        .is_ok()
+    {
+        return Err("src/lib.rs without an inline test module must not be captured".to_string());
     }
     Ok(())
 }

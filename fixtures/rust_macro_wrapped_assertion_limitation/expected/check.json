@@ -18,7 +18,7 @@
         "id": "probe:src_internal.rs:predicate:114f2322",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/rust_macro_wrapped_assertion_limitation/input/src/internal.rs",
+        "file": "./src/internal.rs",
         "line": 2,
         "expression": "if a >= b {"
        },
@@ -118,7 +118,7 @@
         "id": "probe:src_internal.rs:predicate:10b08bc9",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/rust_macro_wrapped_assertion_limitation/input/src/internal.rs",
+        "file": "./src/internal.rs",
         "line": 2,
         "expression": "if a > b {"
        },

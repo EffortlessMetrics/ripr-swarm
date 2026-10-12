@@ -1,0 +1,12 @@
+use std::process::Command;
+
+#[test]
+fn shell_echo_names_the_binary_variable() {
+    let output = Command::new("sh")
+        .arg("-c")
+        .arg("echo CARGO_BIN_EXE_banner")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stdout).contains("CARGO_BIN_EXE_banner"));
+}

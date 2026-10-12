@@ -104,16 +104,24 @@ impl ComponentOutcome {
         }
     }
 
-    /// The component did not run and that is a normal, non-degraded state
-    /// (for example seam diagnostics disabled by configuration).
-    pub(super) fn unavailable(component: AnalysisComponent, kind: &'static str) -> Self {
+    /// The component did not run for a named, repairable configuration
+    /// reason (#6001): a normal, non-degraded `unavailable` state, but
+    /// the wire names the switch that enables the component and the message
+    /// names the blocking condition, instead of a bare `recovery: null` no
+    /// agent consumer can act on.
+    pub(super) fn unavailable_recoverable(
+        component: AnalysisComponent,
+        kind: &'static str,
+        message: impl Into<String>,
+        recovery: &'static str,
+    ) -> Self {
         Self {
             component,
             state: ComponentState::Unavailable,
             kind: Some(kind),
-            message: None,
+            message: Some(bounded_message(&message.into())),
             findings_trustworthy: true,
-            recovery: None,
+            recovery: Some(recovery),
         }
     }
 
@@ -344,7 +352,12 @@ mod tests {
     fn degraded_states_are_exactly_limited_and_failed() {
         let mut degraded = ComponentOutcome::complete(AnalysisComponent::Diff);
         assert!(!degraded.is_degraded());
-        degraded = ComponentOutcome::unavailable(AnalysisComponent::SeamInventory, "disabled");
+        degraded = ComponentOutcome::unavailable_recoverable(
+            AnalysisComponent::SeamInventory,
+            "disabled",
+            "seam diagnostics are disabled by configuration",
+            "set [lsp] seam_diagnostics = true in ripr.toml, then run ripr.refresh",
+        );
         assert!(!degraded.is_degraded());
         degraded =
             ComponentOutcome::deferred(AnalysisComponent::SeamInventory, "defer", "retry refresh");
@@ -415,6 +428,44 @@ mod tests {
             || payload["snapshot_identity"].as_str() != Some("snapshot:7")
         {
             return Err(format!("unexpected status payload: {payload}"));
+        }
+        Ok(())
+    }
+
+    /// #6001: an unavailable component with a known enable switch must put
+    /// that switch on the wire — `recovery: null` gives an agent consumer no
+    /// path to the component, and the state must stay non-degraded.
+    #[test]
+    fn unavailable_recoverable_names_enable_route_without_degrading() -> Result<(), String> {
+        let outcome = ComponentOutcome::unavailable_recoverable(
+            AnalysisComponent::SeamInventory,
+            "seam_diagnostics_not_enabled",
+            "seam diagnostics require the full profile (current: actionable)",
+            "set [lsp] diagnostic_profile = \"full\" in ripr.toml, then run ripr.refresh",
+        );
+        if outcome.is_degraded() {
+            return Err("an unavailable outcome must never degrade the run".to_string());
+        }
+        let payload = outcome.status_payload(Some("snapshot:1"));
+        if payload["state"].as_str() != Some("unavailable")
+            || payload["kind"].as_str() != Some("seam_diagnostics_not_enabled")
+            || payload["findings_trustworthy"].as_bool() != Some(true)
+        {
+            return Err(format!("unexpected unavailable payload: {payload}"));
+        }
+        let Some(recovery) = payload["recovery"].as_str() else {
+            return Err(format!("recovery must name the enable route: {payload}"));
+        };
+        if !recovery.contains("diagnostic_profile") || !recovery.contains("ripr.refresh") {
+            return Err(format!("recovery must name the enable route: {recovery}"));
+        }
+        let Some(message) = payload["message"].as_str() else {
+            return Err(format!(
+                "message must name the blocking condition: {payload}"
+            ));
+        };
+        if !message.contains("actionable") {
+            return Err(format!("message must name the current profile: {message}"));
         }
         Ok(())
     }

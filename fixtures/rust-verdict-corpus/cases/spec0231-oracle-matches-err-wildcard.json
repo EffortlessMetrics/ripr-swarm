@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0231-oracle-matches-err-wildcard",
+  "subject_id": "authored-spec0231-4",
+  "diff": "cases/spec0231-oracle-matches-err-wildcard.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "result_threshold_predicate",
+  "test_shape": "matches_err_wildcard",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if x > 30 {",
+        "mutated_line": "if x > 30 {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::check_twenty_is_an_error",
+        "equivalence_review": "not equivalent: check(20) becomes Ok(20)"
+      },
+      {
+        "replacement": "if x > 5 {",
+        "mutated_line": "if x > 5 {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: check(6..=10) become Err"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "matches!(check(20), Err(_)) only checks the side: threshold 30 makes check(20) Ok and fails it, threshold 5 passes. Spec cells: RIPR-SPEC-0231 example 4 (control: spec marks it unchanged); spec-adopted oracle broad_error / weak.",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#4"
+  ]
+}

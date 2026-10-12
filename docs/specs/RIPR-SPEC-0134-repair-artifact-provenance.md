@@ -60,6 +60,19 @@ Receipt issuance also preserves the native UTF-8 Unix root and artifact paths
 in its provenance and absolute verify locator, so first-action can reopen the
 authentic evidence. This changes identity serialization, not root-independent
 digests, canonical equality, containment or receipt-currentness admission.
+Missing default workflow verify input still refuses receipt issuance. Its
+recovery command preserves the native canonical root and the selected relative
+or absolute output path, so the next receipt reads the genuine verifier output
+from that repository. Custom missing inputs do not invent a workflow producer;
+successful recovery does not promote missing analysis evidence to complete
+receipt evidence (#6684).
+Generated workflow commands must preserve the custom output directory selected
+by `agent start --out` under an absolute repository root without a literal Unix
+backslash in the root's name, including literal UTF-8 Unix backslashes and shell
+quotes in the output directory. A genuine verifier and receipt from a
+different slash-normalized directory do not establish that selected-directory
+identity. Preserving the native locator does not change snapshot commitments,
+containment, canonical equality, currentness or completeness admission (#6809).
 Root containment and canonical equality remain mandatory, including when an
 authentic artifact is presented through a different checkout with the same HEAD.
 Version 4 (#3906)
@@ -366,6 +379,33 @@ authenticate the invoked executable, and the existing unlocked race limits
 remain. Initial archive/executable capture and archive decompression are not
 bounded by this reread contract; full package/install qualification remains
 separate from these controls.
+
+The existing admitted installed-candidate handle also retains the actual
+Cargo-install executable artifact and observed Cargo/rustc versions. Its
+install-specific rustc command is one absolute PATH-selected invocation entry,
+observed before and after compilation under the same controlled environment.
+The install command and owned Cargo configuration pin both compiler selectors,
+disable both wrappers and control child PATH, including their Cargo environment
+counterparts. Plain relative PATH entries resolve from the extracted working
+directory; prefixed drive-relative entries refuse. Parent resolution preserves
+a rustup proxy's rustc basename. Package production retains its existing policy;
+these observations do not authenticate SDK bytes or bind arbitrary build scripts,
+rustflags or linkers. The selected compiler executable must belong to the owned
+install target and match the
+installed bytes before initial capture. The qualified negative-corpus consumer
+captures those retained bytes once using exclusive creation in its owned producer
+root; an occupied destination refuses even when its bytes match. Complete
+readback precedes publication of the captured handle. Subsequent qualified runs
+reuse that handle and validate its frozen file, source and archive, without
+recopying or rereading mutable compiler/install outputs. Failed capture publishes
+no handle. Unix cleanup removes only the observed created inode with one link;
+where native ownership is unavailable, the named partial remains retained. Capture
+errors also make the existing qualification producer-root guard retain
+and name its whole directory for owner verification. Neither its destructor nor
+explicit finish may delete that retained root. Successful capture restores normal
+automatic cleanup; source/package/install setup failures keep their prior cleanup.
+These unlocked observations do not establish hostile race safety, crash durability,
+generic artifact reuse or final installed-candidate qualification.
 
 The 2026-10-02 review census had 5,411 ordinary blobs, 58,566,161 body bytes,
 1,949,776 bytes in the largest blob, and 647,658 metadata bytes. That observation

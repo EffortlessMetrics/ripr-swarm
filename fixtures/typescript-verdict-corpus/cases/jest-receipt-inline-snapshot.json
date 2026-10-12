@@ -1,0 +1,52 @@
+{
+  "case_id": "jest-receipt-inline-snapshot",
+  "subject_id": "authored-ts-jest-checkout",
+  "diff": "cases/jest-receipt-inline-snapshot.diff",
+  "anchor": {
+    "file": "src/receipt.ts",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "jest_tomatchinlinesnapshot_field",
+  "hard_case": "an inline snapshot is an exact whole-object oracle that ripr grades medium (RIPR-SPEC-0243 example 3)",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "currency: \"\" + \"D\",",
+        "mutated_line": "currency: \"\" + \"D\",",
+        "outcome": "tests_failed",
+        "failing_test": "receipt shape",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      },
+      {
+        "replacement": "currency: \"US\" + \"\",",
+        "mutated_line": "currency: \"US\" + \"\",",
+        "outcome": "tests_failed",
+        "failing_test": "receipt shape",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The inline snapshot records currency USD, so both string mutants of the field fail it. ripr reports weakly_exposed on the anchor, a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

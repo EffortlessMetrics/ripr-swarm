@@ -1,0 +1,59 @@
+{
+  "case_id": "spot-code-length-guard-query",
+  "subject_id": "authored-spot",
+  "diff": "cases/spot-code-length-guard-query.diff",
+  "anchor": {
+    "file": "src/parse.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pure_query_call_in_guard_exact_result",
+  "hard_case": "The tests pass \"1234\" and \"123\", both sides of the length boundary, but ripr does not carry those literals through s.len() and reports the equality witness s.len() == 4 as missing.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if s.len() <= 4 {",
+        "mutated_line": "if s.len() <= 4 {",
+        "outcome": "tests_failed",
+        "failing_test": "parse::tests::a_letter_is_not_a_digit",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      },
+      {
+        "replacement": "if s.len() > 4 {",
+        "mutated_line": "if s.len() > 4 {",
+        "outcome": "tests_failed",
+        "failing_test": "parse::tests::three_characters_are_too_short",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      },
+      {
+        "replacement": "if s.len() == 4 {",
+        "mutated_line": "if s.len() == 4 {",
+        "outcome": "tests_failed",
+        "failing_test": "parse::tests::four_digits_parse_to_their_value",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Each test pins parse_code's exact Result, so moving the length boundary either way, or swapping the comparison for equality, changes a pinned value. Pattern from refuted pilot picks: humantime date.rs:85 and date.rs:89 (s.len(), ends_with), bytesize display.rs:242 (powi), rust-hex lib.rs:225 (hex.len()), semver identifier.rs is_empty/as_str branch calls.",
+  "labeling_observation": {
+    "ripr_commit": "b2f2a21",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

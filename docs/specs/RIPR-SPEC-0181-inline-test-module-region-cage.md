@@ -24,6 +24,7 @@ Linked issues:
 - #3162 — parent new-test target capability
 - #3163 — file-level RepairAttempt edit cage (does not grant intra-file permission)
 - #4784 — InlineUnit producer admission; consumes this cage and is out of this slice
+- #5210 — RepairAttempt binding: a production Rust target routed only as its inline test module
 
 Linked PRs:
 
@@ -72,16 +73,61 @@ test-layout files, ambiguous duplicate names, symlink or FIFO escapes,
 traversals, inner-attribute cfg-basis changes, and stale source digests fail
 closed. Capture reads through a no-follow handle of the walked path.
 
-An admitted edit is a pure insertion of test-role `fn` items (optional `use`
-companions, including at more than one site) into the named body. Existing
-items remain an in-order subsequence. Production bytes, module
-declaration/cfg basis, and existing item text must remain unchanged. A
-parseable after-file with no new test-role function is `NotARepair`, not a
-completed repair.
+An admitted edit is a pure insertion into the named body, possibly at more
+than one site. Every byte of the before body survives in order: existing
+items, detached comments, and whitespace reappear unchanged (whitespace may
+only grow), and an inserted span holds only new `fn` items, `use` items,
+comments, and whitespace. At least one inserted `fn` must carry a test
+attribute recognised by the facts normalizer
+(`analysis::facts::attributes_define_test`: `#[test]`, `#[tokio::test]`,
+`#[rstest]`, ...); helper functions and `use` items are admitted only beside
+one. Production bytes and module declaration/cfg basis must remain unchanged.
+A parseable after-file with no new test function (whitespace-only, `use`-only,
+or helper-only) is `NotARepair`, not a completed repair. Rewriting or removing
+an existing comment or blank line is `NotPureInsertion`.
 
 The contract is reusable by an InlineUnit proposal and RepairAttempt. This
 slice does not select a target, generate a test, apply an edit, or flip
 actionability.
+
+### RepairAttempt binding (#5210)
+
+`ripr agent repair` may name a production Rust file as its selected edit
+target only through this cage:
+
+- The packet policy (`edit_cage_policy_from_packet`) admits a non-test-surface
+  selected target only when it is a `.rs` file, and then marks the policy
+  `inline_test_module_target`. Any other production path, and any second
+  allowed path that is not a test surface, is still refused before a cage
+  exists.
+- The before phase (`capture_attempt_baseline`) reads the file through the
+  same no-follow containment, refuses a generated file (built-in naming or
+  the repository's configured `generated_file_patterns`, which the seam
+  inventory already excludes upstream), and requires exactly one governed inline
+  cfg-test module and no out-of-line `mod tests;` (the InlineUnit
+  uniqueness law), then a successful region authority. Otherwise no attempt
+  is created, and the refusal names the `tests/` alternative. The exact
+  before text is retained in the baseline artifact.
+- The after phase observes the selected target whenever it changed: the
+  worktree bytes go through `validate_inline_test_region_edit`, and the
+  index copy and any committed copy on top of the prepared head must each be
+  unchanged or exactly those validated bytes. The observation is part of the
+  bound delta, so the verdict kernel is compliant only with an admitted
+  observation (a missing one fails closed as `outside_inline_test_region`),
+  and a production edit made after the after phase changes the recomputed
+  delta and breaks the receipt binding.
+- Seam surfaces (packet `task`/`allowed_edit_surface`, pilot, evidence
+  record, LSP repair start) offer the repair only through
+  `recommended_test_is_repair_edit_target`: a test surface, or the seam's own
+  file whose one governed inline module the InlineUnit producer recorded as
+  `owner_inline_region`. That projection can under-offer but never widen
+  what the cage admits. The compact repair card that allows such a file
+  states the same `mod <name>` confinement as the packet in its
+  `stop_conditions`.
+
+Rewriting an existing test is not admitted: the repair adds a new test
+function. Whether the added test is useful stays with the after-phase
+analysis and receipt.
 
 ## Required Evidence
 
@@ -89,9 +135,18 @@ actionability.
   plus production, sibling/nested-module, cfg/name/visibility, stale,
   generated (built-in and configured), traversal, symlink, FIFO,
   function-local, inner-attribute, relocated-root, line-movement, non-test
-  subject, and file-level-removal controls
+  subject, helper-only, comment/blank-line preservation, and
+  file-level-removal controls
 - A file-level-only weaker oracle must accept the combined
   production-and-test edit that the region cage rejects
+
+- `crates/ripr/src/edit_cage/inline_test_region/attempt_tests.rs` — the
+  bound attempt over real Git: insertion compliant; production edit,
+  existing-test rewrite, helper-only insertion, existing-comment rewrite,
+  staged production edit, committed production edit, and a missing
+  observation violated; a new test with comments and blank lines compliant;
+  ungoverned, ambiguous, and configured-generated targets not captured; a
+  later production edit moves the recomputed delta
 
 ## Non-Goals
 
@@ -100,7 +155,8 @@ actionability.
 - no whole-test body or expected-value generation
 - no automatic edit application
 - no Integration-target redesign
-- no public schema, CLI, LSP, or support-tier change
+- no support-tier change (the #5210 binding changes which seams the CLI,
+  packet, pilot, and LSP offer a repair start for; no schema field is added)
 
 ## Acceptance Examples
 
@@ -113,6 +169,11 @@ actionability.
   region stays unique beside that lookalike.
 - Inserting `#![cfg(not(test))]` plus a function into the named body is
   rejected as a cfg-basis change.
+- Inserting only a helper `fn` is `NotARepair`; a helper beside a new `#[test]`
+  function is admitted.
+- Rewriting a comment between existing items while adding a test is rejected
+  as `NotPureInsertion`; a new test with its own doc comment and blank lines
+  is admitted.
 - Relocating the same bytes to another checkout preserves portable identity.
 - Removing the region check makes the production-and-test negative pass the
   weaker file-level oracle.
@@ -137,12 +198,28 @@ actionability.
 - `crates/ripr/src/edit_cage/inline_test_region/tests.rs::inner_cfg_not_test_plus_a_function_is_rejected`
 - `crates/ripr/src/edit_cage/inline_test_region/tests.rs::configured_generated_pattern_rejects_a_non_conventional_path`
 - `crates/ripr/src/edit_cage/inline_test_region/tests.rs::fifo_at_the_captured_path_is_rejected_without_blocking`
+- `crates/ripr/src/edit_cage/inline_test_region/attempt_tests.rs::inserting_a_test_function_into_the_governed_inline_module_is_compliant`
+- `crates/ripr/src/edit_cage/inline_test_region/attempt_tests.rs::a_production_edit_beside_the_inserted_test_is_violated`
+- `crates/ripr/src/edit_cage/inline_test_region/attempt_tests.rs::an_inline_module_without_a_test_cfg_cannot_be_captured`
+- `crates/ripr/src/edit_cage/inline_test_region/attempt_tests.rs::a_staged_production_edit_behind_a_clean_worktree_is_violated`
+- `crates/ripr/src/edit_cage/inline_test_region/attempt_tests.rs::a_committed_production_edit_reverted_only_in_the_worktree_is_violated`
+- `crates/ripr/src/edit_cage/inline_test_region/tests.rs::helper_only_insertion_is_not_a_completed_repair`
+- `crates/ripr/src/edit_cage/inline_test_region/tests.rs::helper_beside_a_new_test_function_is_admitted`
+- `crates/ripr/src/edit_cage/inline_test_region/tests.rs::rewriting_an_existing_comment_while_adding_a_test_is_rejected`
+- `crates/ripr/src/edit_cage/inline_test_region/tests.rs::new_test_with_comments_and_blank_lines_is_admitted`
+- `crates/ripr/src/edit_cage/inline_test_region/attempt_tests.rs::inserting_only_a_helper_function_is_violated`
+- `crates/ripr/src/edit_cage/inline_test_region/attempt_tests.rs::rewriting_an_existing_comment_beside_an_inserted_test_is_violated`
+- `crates/ripr/src/edit_cage/inline_test_region/attempt_tests.rs::a_new_test_with_comments_and_blank_lines_is_compliant`
+- `crates/ripr/src/edit_cage/inline_test_region/attempt_tests.rs::a_configured_generated_target_cannot_be_captured`
+- `crates/ripr/src/app/repair_card_handoff.rs::inline_repair_card_stop_conditions_name_the_module_confinement`
+- `crates/ripr/src/analysis/new_test_target/tests.rs::owner_inline_region_rides_with_an_existing_target_in_the_same_file`
 
 ## Implementation Mapping
 
 - `crates/ripr/src/edit_cage/inline_test_region/mod.rs` — authority, capture, portable identity
 - `crates/ripr/src/edit_cage/inline_test_region/observe.rs` — parser-backed unique region observation
 - `crates/ripr/src/edit_cage/inline_test_region/validate.rs` — before/after containment and insertion law
+- `crates/ripr/src/edit_cage/inline_test_region/attempt.rs` — RepairAttempt capture and after-phase observation
 
 ## Metrics
 

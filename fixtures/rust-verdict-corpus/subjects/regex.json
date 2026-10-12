@@ -1,0 +1,34 @@
+{
+  "subject_id": "regex",
+  "upstream": "https://github.com/rust-lang/regex",
+  "commit": "c21ed55e3c61dc373a82ad2b1293031a132c408d",
+  "version_label": "master@c21ed55 (shared corpus pin)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": {
+    "manifest": "benchmarks/rust_corpus/manifest.json (draft #5288)",
+    "corpus_version": "2026-10-04.1",
+    "repo_id": "regex"
+  },
+  "retained_files": [
+    {
+      "path": "regex-syntax/Cargo.toml",
+      "sha256": "fdfdadd590cb4121437df8e9b72f3ca2e6eff812bb9436f2828c76b1810b1f6b"
+    },
+    {
+      "path": "regex-syntax/LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2"
+    },
+    {
+      "path": "regex-syntax/LICENSE-MIT",
+      "sha256": "6485b8ed310d3f0340bf1ad1f47645069ce4069dcc6bb46c7d5c6faf41de1fdb"
+    },
+    {
+      "path": "regex-syntax/src/lib.rs",
+      "sha256": "c51d1e55a8b6c4608e21a278ed0ef9480f73ab5b814b6ca6127f4a049c4d5007"
+    },
+    {
+      "path": "regex-syntax/src/utf8.rs",
+      "sha256": "193f280f3b48116ed6ca8b5fe80b9d6401b6e733dfa138caf64ec1b017b6f175"
+    }
+  ]
+}

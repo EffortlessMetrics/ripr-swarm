@@ -74,6 +74,26 @@ owner = "product"
 reason = "Checked example calibration report contains runtime vocabulary imported from supplied cargo-mutants data."
 
 [[allow]]
+path = "fixtures/boundary_gap/calibration/span-containment-atuin/mutation-calibration.json"
+owner = "product"
+reason = "Checked calibration fixture report contains runtime vocabulary imported from supplied cargo-mutants data."
+
+[[allow]]
+path = "fixtures/boundary_gap/calibration/span-containment-atuin/mutation-calibration.md"
+owner = "product"
+reason = "Checked calibration fixture report contains runtime vocabulary imported from supplied cargo-mutants data."
+
+[[allow]]
+path = "fixtures/boundary_gap/calibration/span-containment-semver-display/mutation-calibration.json"
+owner = "product"
+reason = "Checked calibration fixture report contains runtime vocabulary imported from supplied cargo-mutants data."
+
+[[allow]]
+path = "fixtures/boundary_gap/calibration/span-containment-semver-display/mutation-calibration.md"
+owner = "product"
+reason = "Checked calibration fixture report contains runtime vocabulary imported from supplied cargo-mutants data."
+
+[[allow]]
 path = "fixtures/boundary_gap/calibration/runtime-fixtures-v1/mutation-calibration.json"
 owner = "product"
 reason = "Checked calibration fixture report contains runtime vocabulary imported from supplied cargo-mutants data."

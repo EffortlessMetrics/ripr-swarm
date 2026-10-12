@@ -45,7 +45,7 @@ pub(super) fn pattern_assertion_classification(line: &str) -> Option<OracleClass
     // A guard that equates the scrutinee or a pattern binding with a value
     // pins that value itself (`_ if value == 2`, RIPR-SPEC-0108's
     // runtime-controlled fixtures), so the ordinary chain keeps its reading
-    // (decision 6).
+    // (decision 7).
     if guard.is_some_and(|guard| guard_pins_value(guard, &scrutinee, pattern)) {
         return None;
     }
@@ -762,7 +762,7 @@ mod tests {
                 Weak,
             ),
             // Other forms the rules name. A guard `==` that does not equate
-            // the scrutinee or a binding pins no value (decision 6).
+            // the scrutinee or a binding pins no value (decision 7).
             (
                 "assert!(matches!(check(20), Err(e) if e.len() == 3))",
                 BroadError,
@@ -801,7 +801,7 @@ mod tests {
         // Patterns that pin a value keep the ordinary chain's reading, and
         // compound conditions are not pattern assertions. `Only::Value` and
         // `Cfg { .. }` pin nothing per examples 24 and 25, but the line
-        // cannot resolve them, so they keep today's reading (decision 5,
+        // cannot resolve them, so they keep today's reading (decision 6,
         // #6737).
         for text in [
             "assert!(matches!(check(5), Ok(5)))",
@@ -818,7 +818,7 @@ mod tests {
             "assert!(matches!(check(5), Ok(_)) && score(2) == 4)",
             "assert_eq!(check(20), Err(e))",
             // A guard equating the scrutinee or a binding pins a value
-            // (decision 6).
+            // (decision 7).
             "assert!(matches!(value, _ if value == 2))",
             "assert_matches!(value, _ if value == 2)",
             "assert!(matches!(lookup(1), Some(x) if x == 3))",

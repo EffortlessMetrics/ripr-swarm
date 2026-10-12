@@ -1,0 +1,12 @@
+diff --git a/src/checks.rs b/src/checks.rs
+--- a/src/checks.rs
++++ b/src/checks.rs
+@@ -3,7 +3,7 @@
+ 
+ /// Panics when the ratio is above one.
+ pub fn check_ratio(num: u32, den: u32) {
+-    assert!(num <= den, "ratio above one");
++    assert!(!(num > den), "ratio above one");
+ }
+ 
+ fn check_share(num: u32, den: u32) {

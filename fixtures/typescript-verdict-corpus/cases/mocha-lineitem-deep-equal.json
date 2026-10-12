@@ -1,0 +1,45 @@
+{
+  "case_id": "mocha-lineitem-deep-equal",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-lineitem-deep-equal.diff",
+  "anchor": {
+    "file": "src/entry.ts",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "mocha_chai_expect_to_deep_equal_object",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; @stryker-mutator/core 10.0.0 (command runner over `npx mocha`; @stryker-mutator/mocha-runner cannot load mocha 12)",
+    "mutants": [
+      {
+        "replacement": "total: unitCents / qty,",
+        "mutated_line": "total: unitCents / qty,",
+        "outcome": "tests_failed",
+        "failing_test": "lineItem builds the line item with its total",
+        "equivalence_review": "not equivalent: 200 / 3 is not 600"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The returned object's `total` field is rewritten from `qty * unitCents` to the commutative `unitCents * qty`. `expect(lineItem(\"pen\", 3, 200)).to.deep.equal({...total: 600})` pins the whole object, so the single arithmetic mutant fails. ripr reports `exposed` (oracle `expect(...).to.deep.equal(...)`, exact_value/strong).",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

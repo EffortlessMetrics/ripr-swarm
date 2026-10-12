@@ -1,0 +1,25 @@
+//! A second crate: a same-named type and associated function, and free
+//! functions named like the meter crate's associated functions.
+
+pub struct Meter;
+
+impl Meter {
+    pub fn tick() -> u32 {
+        1
+    }
+}
+
+/// Free functions sharing the meter crate's associated-function names: the
+/// names are ambiguous across the workspace, but a `T::name()` call cannot
+/// reach a free function, so these do not compete with the meter owners.
+pub fn reading() -> u32 {
+    0
+}
+
+pub fn level() -> u32 {
+    0
+}
+
+pub fn lumens() -> u32 {
+    0
+}

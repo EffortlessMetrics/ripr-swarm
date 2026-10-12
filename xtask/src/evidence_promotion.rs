@@ -286,6 +286,7 @@ pub(crate) enum EvidencePromotionSemanticAssertion {
         line: u64,
         kind: String,
         strength: String,
+        relation_reason: Option<String>,
     },
     ExpectedClass {
         class: String,
@@ -681,6 +682,12 @@ fn evidence_promotion_parse_assertion(
                 strength: evidence_promotion_required_assertion_string(
                     case_id, index, assertion, "strength",
                 )?,
+                relation_reason: evidence_promotion_optional_assertion_string(
+                    case_id,
+                    index,
+                    assertion,
+                    "relation_reason",
+                )?,
             })
         }
         "expected_class" => {
@@ -786,6 +793,23 @@ fn evidence_promotion_required_assertion_string(
                 "evidence promotion case `{case_id}` assertion {index}: missing non-empty string `{field}`"
             )
         })
+}
+
+/// An optional non-empty string field: absent (or null) yields `None`,
+/// present-but-empty is a corpus authoring error.
+fn evidence_promotion_optional_assertion_string(
+    case_id: &str,
+    index: usize,
+    assertion: &Value,
+    field: &str,
+) -> Result<Option<String>, String> {
+    match assertion.get(field) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if !value.trim().is_empty() => Ok(Some(value.clone())),
+        Some(_) => Err(format!(
+            "evidence promotion case `{case_id}` assertion {index}: `{field}` must be a non-empty string when present"
+        )),
+    }
 }
 
 fn evidence_promotion_required_assertion_usize(
@@ -1794,6 +1818,7 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                 line,
                 kind,
                 strength,
+                relation_reason,
             } => {
                 if findings.is_empty() {
                     violations.push(format!(
@@ -1814,6 +1839,10 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                                         == Some(kind.as_str())
                                     && test.get("oracle_strength").and_then(Value::as_str)
                                         == Some(strength.as_str())
+                                    && relation_reason.as_deref().is_none_or(|expected| {
+                                        test.get("relation_reason").and_then(Value::as_str)
+                                            == Some(expected)
+                                    })
                             })
                         });
                     if !matched {
@@ -1821,8 +1850,13 @@ pub(crate) fn evidence_promotion_semantic_violations_scoped(
                             .get("id")
                             .and_then(Value::as_str)
                             .unwrap_or("<missing-id>");
+                        let relation_suffix = relation_reason
+                            .as_deref()
+                            .map_or_else(String::new, |expected| {
+                                format!(" with relation `{expected}`")
+                            });
                         violations.push(format!(
-                            "{case_label}: `expected_related_test` requires `{file}:{line} {name}` with oracle `{kind}/{strength}` on finding `{finding_id}`"
+                            "{case_label}: `expected_related_test` requires `{file}:{line} {name}` with oracle `{kind}/{strength}`{relation_suffix} on finding `{finding_id}`"
                         ));
                     }
                 }

@@ -19,7 +19,7 @@ Start here:
   Why weak: a related test reaches this change but does not observe the exact changed value
   Changed behavior: if (amount >= threshold) {
   Missing discriminator (1 of 2): Only heuristic TypeScript test links were found for `applyDiscount`; verify the suggested test location or add a direct Jest/Vitest owner call with an exact-value assertion.
-  Related test (1 of 2): tests/discount.test.ts:5 at threshold discounts
+  Related test (1 of 2 matched rows): tests/discount.test.ts:5 at threshold discounts
   Next step: TypeScript preview advisory: add or strengthen a focused assertion for missing
     discriminator `amount == threshold`; no actionable repair packet is emitted until verify,
     receipt, and edit-boundary fields are available.
@@ -29,8 +29,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/typescript_strong_oracle/input --diff fixtures/typescript_strong_oracle/diff.patch --mode fast probe:src_discount.ts:typescript_preview:2396aec1
-  ripr context --root fixtures/typescript_strong_oracle/input --diff fixtures/typescript_strong_oracle/diff.patch --mode fast --at probe:src_discount.ts:typescript_preview:2396aec1
+  ripr explain --root <cwd>/fixtures/typescript_strong_oracle/input --diff <cwd>/fixtures/typescript_strong_oracle/diff.patch --mode fast probe:src_discount.ts:typescript_preview:2396aec1
+  ripr context --root <cwd>/fixtures/typescript_strong_oracle/input --diff <cwd>/fixtures/typescript_strong_oracle/diff.patch --mode fast --at probe:src_discount.ts:typescript_preview:2396aec1
 
 More:
   Full evidence: rerun with --format human-full

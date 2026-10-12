@@ -1,0 +1,59 @@
+{
+  "case_id": "trap-muffle-times-one-control",
+  "subject_id": "authored-trap-reach",
+  "diff": "cases/trap-muffle-times-one-control.diff",
+  "anchor": {
+    "file": "src/mufflers.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "result_projected_through_identity_op",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 40",
+        "mutated_line": "base * 40",
+        "outcome": "tests_failed",
+        "failing_test": "mufflers::tests::muffle_keeps_the_value",
+        "equivalence_review": "not equivalent: replaces `39 * base` with `base * 40`, which changes the result"
+      },
+      {
+        "replacement": "base + 39",
+        "mutated_line": "base + 39",
+        "outcome": "tests_failed",
+        "failing_test": "mufflers::tests::muffle_keeps_the_value",
+        "equivalence_review": "not equivalent: replaces `39 * base` with `base + 39`, which changes the result"
+      },
+      {
+        "replacement": "base * 38",
+        "mutated_line": "base * 38",
+        "outcome": "tests_failed",
+        "failing_test": "mufflers::tests::muffle_keeps_the_value",
+        "equivalence_review": "not equivalent: replaces `39 * base` with `base * 38`, which changes the result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Negative control for trap-dampen-times-zero: the same projection with `* 1`, which keeps the value, so muffle_keeps_the_value pins muffle(2) * 1 == 78 and fails for each mutant.",
+  "labeling_observation": {
+    "ripr_commit": "fce75e1",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,5 +1,9 @@
 use super::*;
-use crate::analysis::classify::{impl_self_type_name, method_call_resolves_to_impl_type};
+use crate::analysis::classify::{
+    call_text_may_call_free_function, impl_self_type_name, method_call_resolves_to_impl,
+    owner_dispatch_trait, test_calls_free_function,
+};
+use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
 
 pub(super) mod context;
@@ -55,6 +59,10 @@ pub(super) struct OwnerContext {
     prefix: Option<String>,
     fixture_names: Arc<BTreeSet<String>>,
     impl_type: Option<String>,
+    /// The owner is a module-level `fn` (parser-established), so a
+    /// receiver or type-path call of its name reaches something else.
+    free_function: bool,
+    impl_trait: Option<String>,
     same_name_count: usize,
 }
 
@@ -71,6 +79,9 @@ impl OwnerContext {
             .map(|file| context.fixture_names_for_owner_file(file))
             .unwrap_or_default();
         let impl_type = owner_fn.and_then(|owner| impl_self_type_name(&owner.id.0));
+        let free_function =
+            owner_fn.is_some_and(|owner| owner.impl_context == FunctionImplContext::Free);
+        let impl_trait = owner_fn.and_then(owner_dispatch_trait);
         let same_name_count = context.function_name_count(&name);
         Self {
             name,
@@ -80,6 +91,8 @@ impl OwnerContext {
             prefix,
             fixture_names,
             impl_type,
+            free_function,
+            impl_trait,
             same_name_count,
         }
     }
@@ -215,9 +228,23 @@ pub(super) fn match_direct_owner_call(
             let Some(impl_type) = owner.impl_type.as_deref() else {
                 continue;
             };
-            if !method_call_resolves_to_impl_type(indexed.test, &owner.name, impl_type) {
+            if !method_call_resolves_to_impl(
+                indexed.test,
+                &owner.name,
+                impl_type,
+                owner.impl_trait.as_deref(),
+            ) {
                 continue;
             }
+        }
+        // `ByteSize::kb(1)` or `size.kb()` never calls a free `kb` (#6713).
+        if owner.free_function
+            && !context
+                .tests
+                .get(*test_index)
+                .is_some_and(|indexed| test_calls_free_function(indexed.test, &owner.name))
+        {
+            continue;
         }
         insert_related_candidate(
             candidates,
@@ -238,7 +265,17 @@ pub(super) fn match_helper_owner_call(
     if owner.name.is_empty() {
         return;
     }
-    let Some(indices) = context.tests_by_helper_owner_call_name.get(&owner.name) else {
+    // A free owner is reached through a helper only when the helper body
+    // spells a bare or module-qualified call of it; a helper calling only
+    // `Type::name(..)` never credits the free `name` beside it (#6713).
+    let indices = if owner.free_function {
+        context
+            .tests_by_free_helper_owner_call_name
+            .get(&owner.name)
+    } else {
+        context.tests_by_helper_owner_call_name.get(&owner.name)
+    };
+    let Some(indices) = indices else {
         return;
     };
     for test_index in indices {
@@ -266,10 +303,15 @@ pub(super) fn match_target_affinity_owner_call(
     {
         return;
     }
-    let Some(indices) = context
-        .tests_by_target_affinity_owner_call_name
-        .get(&owner.name)
-    else {
+    let Some(indices) = (if owner.free_function {
+        context
+            .tests_by_free_target_affinity_owner_call_name
+            .get(&owner.name)
+    } else {
+        context
+            .tests_by_target_affinity_owner_call_name
+            .get(&owner.name)
+    }) else {
         return;
     };
     for test_index in indices {
@@ -528,7 +570,8 @@ pub(super) fn find_related_tests_compact<'a>(
     context: &'a CompactGripContext<'_>,
 ) -> Vec<&'a CompactTest<'a>> {
     let mut related = find_related_tests_with_context(seam, context);
-    sort_related_tests_for_seam(seam, context, &mut related);
+    let owner_fn = context.owner_function(seam.file(), seam.display_line());
+    sort_related_tests_for_seam(seam, context, owner_fn, &mut related);
     related
         .into_iter()
         .take(COMPACT_RELATED_TEST_LIMIT)
@@ -550,12 +593,13 @@ pub(super) struct RelatedTestRankKey {
 pub(super) fn sort_related_tests_for_seam(
     seam: &RepoSeam,
     context: &CompactGripContext<'_>,
+    owner_fn: Option<&FunctionSummary>,
     related: &mut [(&CompactTest<'_>, RelationReason)],
 ) {
     let owner = seam_owner_activation(seam, context);
     related.sort_by_cached_key(|entry| {
         let (indexed, reason) = *entry;
-        related_test_rank_key(seam, context, indexed, reason, owner.as_ref())
+        related_test_rank_key(seam, context, indexed, reason, owner.as_ref(), owner_fn)
     });
 }
 
@@ -565,8 +609,9 @@ pub(super) fn related_test_rank_key(
     indexed: &CompactTest<'_>,
     reason: RelationReason,
     owner: Option<&SeamOwnerActivation<'_>>,
+    owner_fn: Option<&FunctionSummary>,
 ) -> RelatedTestRankKey {
-    let (_oracle_kind, oracle_strength) = best_oracle(indexed.test, seam);
+    let (_oracle_kind, oracle_strength, _contradiction) = best_oracle(indexed.test, seam, owner_fn);
     RelatedTestRankKey {
         relation_confidence: reason.confidence().rank(),
         relation_reason: reason.priority(),

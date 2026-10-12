@@ -1,0 +1,22 @@
+{
+  "case_id": "trap-fee-name-only",
+  "subject_id": "authored-trap-kit",
+  "origin": "authored",
+  "anchor": "src/labels.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "name_only_relation",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

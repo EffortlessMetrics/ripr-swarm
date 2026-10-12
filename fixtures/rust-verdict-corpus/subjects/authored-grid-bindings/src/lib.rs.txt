@@ -1,0 +1,50 @@
+//! Changed bindings that reach a comparison only through a shadow, a
+//! reassignment, or a helper called with a computed argument.
+
+pub fn within_quota(used: u32) -> bool {
+    let quota = 100;
+    let quota = quota * 2;
+    used <= quota
+}
+
+pub fn within_budget(spent: u32) -> bool {
+    let mut budget = 100;
+    budget += 20;
+    spent <= budget
+}
+
+fn is_bulk(qty: u32) -> bool {
+    qty >= 10
+}
+
+pub fn order_discount(qty: u32) -> u32 {
+    if is_bulk(qty) {
+        5
+    } else {
+        0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn quota_is_two_hundred() {
+        assert_eq!(within_quota(200), true);
+        assert_eq!(within_quota(201), false);
+    }
+
+    #[test]
+    fn budget_is_one_hundred_twenty() {
+        assert_eq!(within_budget(120), true);
+        assert_eq!(within_budget(121), false);
+    }
+
+    #[test]
+    fn ten_items_earn_the_bulk_discount() {
+        let base = 9;
+        assert_eq!(order_discount(base + 1), 5);
+        assert_eq!(order_discount(base), 0);
+    }
+}

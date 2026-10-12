@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-mined-test-fn-reference",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-mined-test-fn-reference.diff",
+  "anchor": {
+    "file": "src/sum.ts",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "jest_test_registered_by_function_reference",
+  "hard_case": "test body passed by reference: test(title, fn) (mined from match-sorter)",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "total = total - v;",
+        "mutated_line": "total = total - v;",
+        "outcome": "tests_failed",
+        "failing_test": "sum adds every value",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The referenced function asserts toBe(9), so the total - v mutant fails it. ripr reports no_static_path on the anchor, an abstention.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

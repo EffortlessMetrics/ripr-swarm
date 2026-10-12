@@ -7,17 +7,18 @@ Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
 
-INFO fixtures/predicate_oracle_execution_direct/input/src/lib.rs:2
+INFO ./src/lib.rs:2
   id: probe:src_lib.rs:predicate:c80557eb
 
 Changed
-  before: if amount > discount_threshold {
+  before: amount > discount_threshold
   after:  amount >= discount_threshold
 
 Probe
   family: predicate
   delta:  control
   owner:  src/lib.rs::discounted_total
+  canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
 
 Static exposure
   exposed (info, confidence 1.00)
@@ -35,5 +36,5 @@ Evidence
   - source function argument value amount == discount_threshold at line 14
   - source function argument value discount_threshold = 100 at line 14
 Drill in:
-  ripr explain --root fixtures/predicate_oracle_execution_direct/input --diff fixtures/predicate_oracle_execution_direct/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
-  ripr context --root fixtures/predicate_oracle_execution_direct/input --diff fixtures/predicate_oracle_execution_direct/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb
+  ripr explain --root <cwd>/fixtures/predicate_oracle_execution_direct/input --diff <cwd>/fixtures/predicate_oracle_execution_direct/diff.patch --mode fast probe:src_lib.rs:predicate:c80557eb
+  ripr context --root <cwd>/fixtures/predicate_oracle_execution_direct/input --diff <cwd>/fixtures/predicate_oracle_execution_direct/diff.patch --mode fast --at probe:src_lib.rs:predicate:c80557eb

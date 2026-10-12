@@ -1,0 +1,12 @@
+diff --git a/src/fees.rs b/src/fees.rs
+--- a/src/fees.rs
++++ b/src/fees.rs
+@@ -12,7 +12,7 @@
+ 
+ /// Net after a twenty percent deduction.
+ pub fn net(gross: u64) -> u64 {
+-    gross - gross / 5
++    gross - gross / 4
+ }
+ 
+ /// A fifteen percent tip.

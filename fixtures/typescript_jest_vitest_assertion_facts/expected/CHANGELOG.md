@@ -504,3 +504,74 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — typescript_jest_vitest_assertion_facts (12)
+
+Reason:
+RIPR-SPEC-0140: issue 5988 populates identity.config_identity from the canonical finding-affecting config fingerprint whenever a ripr.toml is loaded, so fixtures that load one record it (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (13)
+
+Reason:
+RIPR-SPEC-0140: issue 5988 review repair publishes the fingerprint of the exact loaded ripr.toml text in identity.config_identity, so fixtures that load one record the text fingerprint (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (14)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (15)
+
+Reason:
+RIPR-SPEC-0247 rule 1: literal toHaveBeenCalledWith on the parameter's own test-local vi.fn() reads strong; notifyStatus and notifyLiteral move to exposed
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (16)
+
+Reason:
+RIPR-SPEC-0247 rule 1: related-test rows for a credited mock payload show mock_expectation/strong, matching the exposed verdict
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (17)
+
+Reason:
+RIPR-SPEC-0247: add notifyAudit, a mock payload rule 1 refuses (name differs from the parameter), as the source finding for the mock_interaction_without_payload_proof audit case
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

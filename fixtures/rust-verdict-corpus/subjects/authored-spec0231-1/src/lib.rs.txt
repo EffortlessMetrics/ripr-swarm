@@ -1,0 +1,13 @@
+pub fn score(x: u32) -> u32 {
+    x * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn score_is_not_zero() {
+        assert_ne!(score(2), 0);
+    }
+}

@@ -1,0 +1,18 @@
+pub fn send(events_sent: &mut Vec<u32>, id: u32) {
+    if id > 0 {
+        events_sent.push(id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn send_records_the_id() {
+        let mut events_sent = Vec::new();
+        let id = 7;
+        send(&mut events_sent, id);
+        assert!(events_sent.contains(&id));
+    }
+}
