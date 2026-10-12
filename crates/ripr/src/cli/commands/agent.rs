@@ -844,8 +844,11 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
             &after_refusal_reason(error, &refusal.narration),
         )
     {
+        // A persistence miss here is a note, not a second failure: the
+        // refusal itself already printed with its cause and recovery, and a
+        // terminal attempt's verdict is unaffected (#7378).
         eprintln!(
-            "ripr: could not record the after-phase refusal on attempt `{}`: {record_error}",
+            "ripr: note: after-phase refusal narration was not persisted on attempt `{}` for `ripr agent status`: {record_error}",
             attempt_id.as_str()
         );
     }
@@ -905,9 +908,26 @@ fn record_after_phase_refusal(
             root, store, attempt_id, reason,
         )
     } else {
-        crate::app::repair_attempt::record_repair_attempt_after_refusal_from(
+        match crate::app::repair_attempt::record_repair_attempt_after_refusal_from(
             root, store, attempt_id, reason,
-        )
+        ) {
+            Ok(()) => Ok(()),
+            // A terminal failure — the edit cage refusing the delta, an
+            // incomparable finish — commits the after verdict before the
+            // refusal records, so the resumable authority refuses the write
+            // by design; the narration still belongs beside the verdict,
+            // where `agent status` reads it (#7378). Any other refusal is
+            // genuine and surfaces unchanged.
+            Err(record_error)
+                if record_error
+                    .contains(crate::app::repair_attempt::AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL) =>
+            {
+                crate::app::repair_attempt::record_repair_attempt_terminal_after_refusal_from(
+                    root, store, attempt_id, reason,
+                )
+            }
+            Err(record_error) => Err(record_error),
+        }
     }
 }
 
@@ -3053,11 +3073,15 @@ mod tests {
         violated_result
     }
 
-    /// The recording dispatch routes by refusal family (#5262 review): the
-    /// trusted-surface refusal — which only ever fires after the durable
-    /// finish — records beside the committed after verdict through the
-    /// terminal authority, while every other family keeps the resumable
-    /// authority, whose concurrent-finish guard refuses beside a verdict.
+    /// The recording dispatch routes by attempt state as well as refusal
+    /// family (#5262 review, #7378): the trusted-surface refusal — which only
+    /// ever fires after the durable finish — records beside the committed
+    /// after verdict through the terminal authority. Every other family keeps
+    /// the resumable authority while the attempt is resumable; once a
+    /// terminal failure (the edit cage, an incomparable finish) has
+    /// committed the verdict, the resumable authority's guard refusal routes
+    /// the narration to the terminal authority instead of dropping it, so
+    /// `agent status` can say why the attempt ended.
     #[test]
     fn after_phase_refusal_recording_routes_trusted_surface_to_the_terminal_authority()
     -> Result<(), String> {
@@ -3110,15 +3134,24 @@ mod tests {
                 return Err("the terminal record moved the attempt's finish".to_string());
             }
 
+            // A terminal failure family (the edit cage's refusal is the
+            // canonical case) records beside the committed verdict too: the
+            // resumable authority's guard refusal routes it to the terminal
+            // authority, so the narration reaches `agent status` (#7378).
             let other_error =
                 "repair attempt changed while the after phase ran; retry the after phase";
-            match record_after_phase_refusal(&root, None, attempt_id, other_error, "changed") {
-                Err(error) if error.contains("already has an after verdict") => {}
+            record_after_phase_refusal(&root, None, attempt_id, other_error, "changed")?;
+            let rerouted = load_repair_attempt_manifest(&root, attempt_id)?;
+            match rerouted.last_after_refusal {
+                Some(refusal) if refusal.reason == "changed" => {}
                 other => {
                     return Err(format!(
-                        "the resumable authority must stay guarded beside a verdict: {other:?}"
+                        "the terminal family must record beside the verdict: {other:?}"
                     ));
                 }
+            }
+            if rerouted.after.is_none() || rerouted.state != RepairAttemptState::ReadyToFinish {
+                return Err("the terminal record moved the attempt's finish".to_string());
             }
             Ok(())
         })();

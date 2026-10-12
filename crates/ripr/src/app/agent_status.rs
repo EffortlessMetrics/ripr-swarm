@@ -2379,11 +2379,22 @@ fn restart_attempt_command(
 ) -> Option<AgentStatusCommand> {
     let id = manifest.repair_attempt_id.as_str();
     let seam = manifest.seam_id.as_str();
+    // A terminal attempt can carry a recorded refusal (the edit cage's
+    // refused paths and rule, an incomparable finish's cause) that the
+    // per-class reason below cannot repeat; status must project it so a
+    // fresh session never restarts blind (#7378).
+    let with_recorded_refusal = |reason: String| match &view.last_after_refusal {
+        Some(refusal) => format!(
+            "{reason}. Its recorded refusal explains why it ended: {}",
+            refusal.reason.trim_end_matches('.')
+        ),
+        None => reason,
+    };
     let restart = |reason: String| {
         Some(AgentStatusCommand {
             step: "repair_attempt_before".to_string(),
             artifact: manifest_label.to_string(),
-            reason,
+            reason: with_recorded_refusal(reason),
             command: new_repair_attempt_command(root_display, seam, store_flag),
         })
     };
@@ -5106,9 +5117,42 @@ mod tests {
         Ok(())
     }
 
+    /// A terminal attempt's recorded after-phase refusal (the edit cage's
+    /// narration, persisted beside the verdict, #7378) must reach the
+    /// restart reason `agent status` prints: without the projection the
+    /// message can only repeat "ended failed" and a fresh session restarts
+    /// blind to the cause the refusal names.
     #[test]
-    fn canonical_subject_root_uses_the_bound_root_not_the_manifest() -> Result<(), String> {
-        // The fixture manifest records "." (the before phase's spelling);
+    fn failed_restart_reason_projects_the_recorded_terminal_refusal() -> Result<(), String> {
+        let manifest = canonical_test_manifest(RepairAttemptState::Failed)?;
+        let mut view = canonical_test_view();
+        view.last_after_refusal = Some(AgentStatusAfterRefusal {
+            reason: "the edit cage refused 1 path(s); only the packet's allowed test surface may change: src/lib.rs (ForbiddenPath). To recover: undo the refused changes, then start a new attempt.".to_string(),
+            recorded_unix_ms: 1_700_000_000_000,
+        });
+        let action = attempt_next_action(
+            &manifest,
+            &view,
+            "failed",
+            ".",
+            "store/repair-attempt-01/attempt.json",
+            "",
+        )
+        .ok_or_else(|| "the failed class must arm a restart command".to_string())?;
+        if action.step != "repair_attempt_before" {
+            return Err(format!("unexpected step: {}", action.step));
+        }
+        if !action.reason.contains("ended failed") || !action.reason.contains("ForbiddenPath") {
+            return Err(format!(
+                "the restart reason lost the recorded refusal: {}",
+                action.reason
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_subject_root_uses_the_bound_root_not_the_manifest() -> Result<(), String> {        // The fixture manifest records "." (the before phase's spelling);
         // the subject must name the caller's bound root (#3999), matching
         // the recorded restart/after commands.
         let manifest = canonical_test_manifest(RepairAttemptState::ReadyToFinish)?;
