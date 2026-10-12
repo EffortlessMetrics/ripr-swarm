@@ -45,6 +45,11 @@ Use `workflow_dispatch` on the `Coverage` workflow to verify after changing:
 
 Expected artifacts after a coverage run:
 - `lcov.info`, uploaded by GitHub Actions as the `rust-lcov` artifact.
+- `target/ripr/reports/coverage-diagnostics/`, uploaded as
+  `coverage-failure-diagnostics` only when profile merging fails. This bounded
+  artifact records profile-list inventory, validated replay status, limited
+  malformed-profile prefixes, and tool diagnostics; it does not change the
+  failed coverage result.
 
 Codecov upload requires the `CODECOV_TOKEN` secret and runs only for trusted
 pushes, manual dispatches, and same-repo pull requests. Fork pull requests still
