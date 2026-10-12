@@ -84,6 +84,12 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
             "NotFound",
         ),
         (
+            "the changed if sits in an arrow",
+            "export function errorFor(status: number): Error {\n  const pick = () => {\n  if (status === 404) {\n    return new NotFound(\"missing\");\n  }\n  return new Forbidden(\"denied\");\n  };\n  audit(pick());\n  return new NotFound(\"x\");\n}".to_string(),
+            ERRORS.to_string(),
+            "NotFound",
+        ),
+        (
             "the other class is imported",
             OWNER.replace("new Forbidden(", "new Remote("),
             ERRORS.to_string(),
@@ -118,7 +124,15 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
             !ts_owner_branches_split_class(&owner, &module, CHANGED, asserted),
             "{label}"
         );
-    }
+    } // A one-line `if (c) { return a; }` closes its own body, so the scan
+    // would read the enclosing block's returns as its branches.
+    let one_line = "export function errorFor(status: number, admin: boolean): Error {\n  if (!admin) {\n    if (status === 404) { return new NotFound(\"a\"); }\n    return new NotFound(\"b\");\n  }\n  return new Forbidden(\"x\");\n}";
+    assert!(!ts_owner_branches_split_class(
+        one_line,
+        ERRORS,
+        "    if (status === 404) { return new NotFound(\"a\"); }",
+        "NotFound"
+    ));
 }
 
 fn errors_finding(

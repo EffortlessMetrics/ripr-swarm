@@ -125,7 +125,19 @@ fn branch_classes(owner_source: &str, line_text: &str) -> Option<(String, String
     if lines.len() != owner_source.lines().count() {
         return None;
     }
+    // A `return` inside an arrow or nested function is not the owner's.
+    let body = masked_owner_body(owner_source)?;
+    if body.contains("=>") || !identifier_offsets(&body, "function").is_empty() {
+        return None;
+    }
     let target = blank(line_text);
+    // The changed line must open the if-body and leave it open: a one-line
+    // `if (c) { return a; }` would hand the scan the enclosing block.
+    let opens = target.matches('{').count();
+    let closes = target.matches('}').count();
+    if !target.trim_end().ends_with('{') || opens != closes + 1 {
+        return None;
+    }
     let mut matching = lines
         .iter()
         .enumerate()

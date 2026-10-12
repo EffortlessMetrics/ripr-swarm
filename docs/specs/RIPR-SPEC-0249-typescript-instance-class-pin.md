@@ -96,7 +96,10 @@ ladder and in its related-test row, when all of these hold:
   `ns.owner(...)`, optionally awaited, or a local bound once to that call
   (not `f(owner(...))` or `owner(...).field`), and the test does not
   shadow the owner;
-- the changed line is an `if (...) {` found once in the owner, and the
+- the owner body has no arrow or nested `function`, and the changed line
+  is an `if (...) {` found once in the owner that ends with `{` and leaves
+  exactly one more brace open than it closes (a one-line
+  `if (c) { return a; }` fails), and the
   RIPR-SPEC-0027 branch scan reads its true branch and its false branch
   (an `else` block or the fall-through) as a single `return` each, with
   string and comment text blanked first; another statement in a branch,
@@ -160,6 +163,10 @@ documented decisions and proceed"). Recorded on #6654.
 - `typescript_oracle_confidence` in the oracle metadata evidence reads the
   assertion's default (weak) strength, so a credited pin shows `low`.
 - Single-line `if (...) return ...;`, ternaries and `switch` are not read.
+- The boundary witness checks that a tested call carries the boundary
+  input, not that control reaches the changed `if`: an earlier
+  `if (admin) { return ...; }` can stop the tested call first. This
+  RIPR-SPEC-0027 limit applies to every strong predicate assertion.
 
 ## Required Evidence
 
@@ -192,7 +199,8 @@ documented decisions and proceed"). Recorded on #6654.
 6. As example 1 where the false branch falls through to
    `if (status >= 400) { return new NotFound("client"); }`: not credited.
 7. A branch returning `cached`, `new Forbidden("denied").asNotFound()`,
-   an imported class, or holding another statement: not credited.
+   an imported class, or holding another statement; a changed `if` inside
+   an arrow; a one-line `if (c) { return ...; }`: not credited.
 8. `return new Forbidden("denied")` changed to
    `return new Forbidden("refused")` with the problem's tests: not
    `exposed`, and rule 1 reads no pin on that value seam.
