@@ -839,6 +839,7 @@ mod tests {
         assert!(DOCTOR_HELP.contains("Usage: ripr doctor [--root PATH]"));
         assert!(DOCTOR_HELP.contains("--json"));
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
+        assert!(DOCTOR_HELP.contains("nested Cargo.toml in this tree"));
         assert!(DOCTOR_HELP.contains("https://rustup.rs"));
         assert!(DOCTOR_HELP.contains("Printed for every profile."));
         assert!(
