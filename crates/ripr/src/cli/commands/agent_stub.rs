@@ -28,6 +28,24 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
         Ok(resolution) => resolution,
         Err(TestStubError::NotFound(message)) => {
             let root = shell_arg(&bound_root(&options.root.to_string_lossy()));
+            if options.json {
+                // EXIT_CODES.md promises the versioned `rust_test_stub`
+                // `state: "refused"` envelope under `--json` for every
+                // agent-stub refusal, explicitly including "the selector
+                // names no reported gap" (#7390). The document keeps the
+                // post-resolution refusal's field set, with `null` where
+                // seam resolution would have supplied a value; stdout stays
+                // empty and the prose still reaches stderr via
+                // `CommandError` after the envelope.
+                match render_not_found_refusal_document(&options.selector, &message) {
+                    // A JSON document, not report text: keep it parseable (#6309).
+                    Ok(rendered) => ::std::eprintln!(
+                        "{}",
+                        crate::terminal_text::json_terminal_safe(rendered)
+                    ),
+                    Err(render_error) => eprintln!("ripr: {render_error}"),
+                }
+            }
             return Err(CommandError::Decision(format!(
                 "agent stub: {message}. Run `ripr check --root {root}` to list finding locations or `ripr pilot --root {root}` to list seam IDs."
             )));
@@ -176,6 +194,34 @@ fn render(document: &serde_json::Value) -> Result<String, CommandError> {
     })
 }
 
+/// The versioned `rust_test_stub` `state: "refused"` document for a
+/// selector that named no reported gap (#7390): the same field set the
+/// post-resolution refusal arm emits, with `null` where seam resolution
+/// would have supplied a value. `seam_id` repeats the requested id for a
+/// `--seam-id` selector and is `null` for a location selector, which never
+/// resolved to a seam id.
+fn render_not_found_refusal_document(
+    selector: &TestStubSelector,
+    message: &str,
+) -> Result<String, CommandError> {
+    let seam_id = match selector {
+        TestStubSelector::SeamId(id) => serde_json::json!(id),
+        TestStubSelector::At { .. } => serde_json::Value::Null,
+    };
+    let document = serde_json::json!({
+        "schema_version": RUST_TEST_STUB_SCHEMA_VERSION,
+        "kind": "rust_test_stub",
+        "seam_id": seam_id,
+        "owner": serde_json::Value::Null,
+        "state": "refused",
+        "refusal": {"kind": "seam_not_found", "reason": message},
+        "grip_class": serde_json::Value::Null,
+        "classification": serde_json::Value::Null,
+        "warnings": [],
+    });
+    render(&document)
+}
+
 /// Inventory grip plus the check-side exposure counterpart, and the
 /// packet/repair omission prose when that class is omitted from agent
 /// results. Additive on `rust_test_stub` schema `0.1` (#7290).
@@ -207,6 +253,59 @@ fn stub_grip_disclosure(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #7390: the not-found refusal — the most common agent-stub refusal, a
+    /// stale or mistyped seam id — must render the same versioned
+    /// `rust_test_stub` `state: "refused"` envelope the post-resolution
+    /// refusals emit, so an `--json` consumer can branch on the typed
+    /// `refusal.kind` instead of meeting free prose.
+    #[test]
+    fn not_found_refusal_renders_the_typed_envelope() -> Result<(), String> {
+        let rendered = render_not_found_refusal_document(
+            &TestStubSelector::SeamId("no-such-seam".to_string()),
+            "seam_id no-such-seam was not found",
+        )
+        .map_err(|error| format!("envelope render refused: {error:?}"))?;
+        let document: serde_json::Value = serde_json::from_str(&rendered)
+            .map_err(|error| format!("envelope was not parseable JSON: {error}"))?;
+        assert_eq!(document["schema_version"], "0.1");
+        assert_eq!(document["kind"], "rust_test_stub");
+        assert_eq!(document["seam_id"], "no-such-seam");
+        assert_eq!(document["state"], "refused");
+        assert_eq!(document["refusal"]["kind"], "seam_not_found");
+        assert_eq!(
+            document["refusal"]["reason"],
+            "seam_id no-such-seam was not found"
+        );
+        assert_eq!(document["warnings"], serde_json::json!([]));
+        Ok(())
+    }
+
+    /// A location selector never resolved to a seam id, so the envelope
+    /// keeps the field set but leaves `seam_id` null rather than inventing
+    /// an identity.
+    #[test]
+    fn not_found_refusal_for_location_selector_keeps_seam_id_null() -> Result<(), String> {
+        let rendered = render_not_found_refusal_document(
+            &TestStubSelector::At {
+                file: "src/lib.rs".to_string(),
+                line: 12,
+                kind: None,
+            },
+            "no finding matched src/lib.rs:12",
+        )
+        .map_err(|error| format!("envelope render refused: {error:?}"))?;
+        let document: serde_json::Value = serde_json::from_str(&rendered)
+            .map_err(|error| format!("envelope was not parseable JSON: {error}"))?;
+        assert_eq!(document["state"], "refused");
+        assert_eq!(document["refusal"]["kind"], "seam_not_found");
+        if !document["seam_id"].is_null() {
+            return Err(format!(
+                "a location selector must not invent a seam id: {document}"
+            ));
+        }
+        Ok(())
+    }
 
     #[test]
     fn strongly_gripped_stub_reuses_the_packet_omission_reason() {

@@ -232,7 +232,13 @@ already and is not a refusal.
 `ripr agent stub --json` emits one `rust_test_stub` document on stdout when
 the producer yields a stub (`state: ready`, exit 0). A producer refusal
 keeps stdout empty and, under `--json`, writes the same `kind` on stderr
-with `state: refused` (#5355). Additive fields on schema `0.1` (#7290):
+with `state: refused` (#5355). A selector that names no reported gap — a
+stale or mistyped seam id, the most common refusal — renders the envelope
+too, with `refusal.kind: seam_not_found`, `seam_id` repeating the
+requested id (`null` for a location selector, which never resolved to a
+seam id), and `owner` / `grip_class` / `classification` `null` where seam
+resolution would have supplied them (#7390). Additive fields on schema
+`0.1` (#7290):
 
 - `grip_class` — the inventory seam grip class when classification named
   this seam (`strongly_gripped`, `weakly_gripped`, `ungripped`, …), else
