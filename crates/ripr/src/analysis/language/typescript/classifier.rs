@@ -95,6 +95,15 @@ fn strip_synthesized_prefix(discriminator_value: &str) -> &str {
     discriminator_value
 }
 
+/// The change-specific credit facts the observation guard reads: mocked
+/// payloads (RIPR-SPEC-0247) and credited class or match-object pins
+/// (RIPR-SPEC-0249, RIPR-SPEC-0250).
+#[derive(Clone, Copy)]
+pub(crate) struct CreditFacts<'a> {
+    pub(crate) mock_facts: &'a MockCallFacts,
+    pub(crate) pin_facts: &'a PinFacts,
+}
+
 /// Returns `true` when there is static evidence that a strong assertion in one
 /// of the oracle-eligible related tests observes the specific changed
 /// sub-expression — not just some other part of the same function body.
@@ -186,9 +195,12 @@ pub(crate) fn ts_changed_value_is_observed(
     candidates: &[TypeScriptRelatedCandidate<'_>],
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
-    mock_facts: &MockCallFacts,
-    pin_facts: &PinFacts,
+    credits: CreditFacts<'_>,
 ) -> bool {
+    let CreditFacts {
+        mock_facts,
+        pin_facts,
+    } = credits;
     let owner_name = owner.name.as_str();
     // Apply the guard to effect families (SideEffect / CallDeletion) and value
     // families (ReturnValue / FieldConstruction). All other families keep the
@@ -3847,8 +3859,10 @@ pub(crate) fn classify_change_with_alias_state(
             &related_candidates,
             alias_map,
             workspace_root,
-            &mock_facts,
-            &pin_facts,
+            CreditFacts {
+                mock_facts: &mock_facts,
+                pin_facts: &pin_facts,
+            },
         );
 
     let (class, reach_state, observe_state, discriminate_state, missing) = if related.is_empty() {
@@ -4770,8 +4784,10 @@ fn ts_rule8_mocked_changed_callee(
                 &subset,
                 alias_map,
                 workspace_root,
-                mock_facts,
-                pin_facts,
+                CreditFacts {
+                    mock_facts,
+                    pin_facts,
+                },
             )
         {
             exposing.push(representative);

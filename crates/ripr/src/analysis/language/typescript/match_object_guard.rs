@@ -121,8 +121,12 @@ pub(crate) fn ts_owner_returned_field_key(owner_source: &str, line_text: &str) -
         return None;
     }
     let mut literal = String::new();
-    for index in open_line..=close_line {
-        let line = kept_lines[index];
+    for (index, line) in kept_lines
+        .iter()
+        .enumerate()
+        .take(close_line + 1)
+        .skip(open_line)
+    {
         let start = if index == open_line {
             open_column + 1
         } else {
@@ -275,7 +279,7 @@ pub(crate) fn ts_match_object_facts(
                 .expected_value_or_variant
                 .as_deref()
                 .and_then(flat_object_keys)
-                .is_some_and(|keys| keys.iter().any(|listed| *listed == key));
+                .is_some_and(|keys| keys.contains(&key));
             if lists_key
                 && ts_observes_whole_owner_result(candidate.test, assertion, owner, &receivers)
             {
