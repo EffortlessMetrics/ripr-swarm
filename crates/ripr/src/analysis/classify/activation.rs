@@ -907,6 +907,9 @@ fn missing_boundary_discriminator(
                 })
                 .flatten()
             })
+            .or_else(|| {
+                call_built_input_reason(owner, &parameters, related_tests, compared, &call_values)
+            })
             .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
         return None;
     }
@@ -1059,6 +1062,19 @@ fn missing_boundary_discriminator(
         helper_chain,
         &unknown_operands,
         [left_parameter.as_deref(), right_parameter.as_deref()],
+    ) {
+        *unresolved = Some(reason);
+        return None;
+    }
+    // RIPR-SPEC-0032 (#6615): a compared parameter no row gives a value,
+    // fed by a call ripr does not evaluate (`surcharge(big_order())`),
+    // may sit on the boundary. A visible one-sided input keeps its gap.
+    if let Some(reason) = call_built_input_reason(
+        owner,
+        &parameters,
+        related_tests,
+        [left_parameter.clone(), right_parameter.clone()],
+        &call_values,
     ) {
         *unresolved = Some(reason);
         return None;
@@ -1233,6 +1249,53 @@ fn is_simple_operand(operand: &str) -> bool {
         && !masked.starts_with("if ")
         && !masked.contains(['=', '|', '{', '}'])
         && opens == closes
+}
+
+/// Why a compared parameter's input is unreadable when it comes from a
+/// call (RIPR-SPEC-0032, #6615): no row gives the parameter a value, and a
+/// direct owner call passes it an argument the syntax tree reads as built
+/// by a function or method call (`big_order()`, `build::<Order>()`,
+/// `order.amount()`) that carries no visible literal. ripr does not
+/// evaluate the callee, so which side of the boundary that call reaches
+/// is unknown, not missing. A literal-carrying call (`order(5000)`) keeps
+/// its visible value, and a parameter some row already gives a value keeps
+/// the ordinary missing-equality reading.
+fn call_built_input_reason(
+    owner: &FunctionSummary,
+    parameters: &[String],
+    related_tests: &[&TestSummary],
+    compared: [Option<String>; 2],
+    call_values: &[Vec<ParameterValue>],
+) -> Option<String> {
+    let free_owner = is_free(owner);
+    compared.into_iter().flatten().find_map(|parameter| {
+        if call_values
+            .iter()
+            .any(|row| parameter_value(row, &parameter).is_some())
+        {
+            return None;
+        }
+        let position = parameters.iter().position(|name| *name == parameter)?;
+        related_tests.iter().find_map(|test| {
+            test.body_calls()
+                .filter(|call| call.name == owner.name)
+                .find_map(|call| {
+                    let text = owner_name_call_text(&call.text, &owner.name, free_owner)?;
+                    let open = text.find(&format!("{}(", call.name))? + call.name.len();
+                    let contents = delimited_contents_at(text, open)?;
+                    let arguments =
+                        crate::analysis::syntax::fn_signature::call_argument_facts(&contents)?;
+                    let argument = arguments.get(position)?;
+                    (argument.built_by_call && owner_argument_values(test, &argument.text).is_empty())
+                        .then(|| {
+                            format!(
+                                "a related test passes `{parameter}` the result of a call (`{}`), whose value ripr does not evaluate statically, so it cannot tell which side of the boundary that call reaches",
+                                argument.text
+                            )
+                        })
+                })
+        })
+    })
 }
 
 fn computed_argument_reason(parameter: &str) -> String {
@@ -5583,6 +5646,128 @@ assert_eq!(input.amount, 100);"#
         );
         assert_eq!(gathered.unresolved_boundary, None);
         assert_eq!(gathered.activation.missing_discriminators.len(), 1);
+    }
+
+    #[test]
+    fn call_built_boundary_inputs_are_unresolved_not_missing() {
+        // #6615 / RIPR-SPEC-0032: `score(big_order())` and
+        // `score(small_order())` feed the compared parameter through
+        // calls ripr does not evaluate; the only literals are expected
+        // values, so no missing `amount == 999` is named.
+        let owner = function(
+            "pub fn score(amount: u64) -> u64 {\n    if amount > 999 { 25 } else { 0 }\n}",
+        );
+        let predicate = probe(ProbeFamily::Predicate, "amount > 999");
+        let helpers = test_with_body_calls(
+            "assert_eq!(score(big_order()), 25);\nassert_eq!(score(small_order()), 0);",
+            &[
+                (10, "assert_eq!(score(big_order()), 25);"),
+                (11, "assert_eq!(score(small_order()), 0);"),
+            ],
+        );
+        let gathered = boundary_input(&owner, &predicate, &[&helpers]);
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        let reason = gathered.unresolved_boundary.unwrap_or_default();
+        assert!(
+            reason.contains("passes `amount` the result of a call (`big_order()`)"),
+            "got {reason:?}"
+        );
+
+        // Turbofish, path and method calls are call inputs too, read from
+        // the syntax tree (a comma inside the generics does not split).
+        for argument in [
+            "build::<Order, u8>()",
+            "fixtures::order()",
+            "order.amount()",
+        ] {
+            let line = format!("assert_eq!(score({argument}), 25);");
+            let test = test_with_body_calls(&line, &[(10, line.as_str())]);
+            let gathered = boundary_input(&owner, &predicate, &[&test]);
+            assert!(gathered.activation.missing_discriminators.is_empty());
+            assert!(
+                gathered
+                    .unresolved_boundary
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains(&format!("(`{argument}`)"))),
+                "{argument}: {:?}",
+                gathered.unresolved_boundary
+            );
+        }
+
+        // The call feeding another parameter says nothing about `amount`
+        // when no row reads `amount` either (a call in its slot does).
+        let two = function(
+            "pub fn score(amount: u64, rate: u64) -> u64 {\n    if amount > 999 { rate } else { 0 }\n}",
+        );
+        let compared = test_with_body_calls(
+            "assert_eq!(score(big(), 3), 3);",
+            &[(10, "assert_eq!(score(big(), 3), 3);")],
+        );
+        let gathered = boundary_input(&two, &predicate, &[&compared]);
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        assert!(gathered.unresolved_boundary.is_some());
+    }
+
+    #[test]
+    fn visible_boundary_inputs_keep_their_gap_beside_call_built_inputs() {
+        let owner = function(
+            "pub fn score(amount: u64) -> u64 {\n    if amount > 999 { 25 } else { 0 }\n}",
+        );
+        let predicate = probe(ProbeFamily::Predicate, "amount > 999");
+        let gap = |body: &str, lines: &[(usize, &str)]| {
+            let test = test_with_body_calls(body, lines);
+            let gathered = boundary_input(&owner, &predicate, &[&test]);
+            (
+                gathered.unresolved_boundary,
+                gathered
+                    .activation
+                    .missing_discriminators
+                    .iter()
+                    .map(|fact| fact.value.clone())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let missing = vec!["amount == 999".to_string()];
+        // A one-sided literal input stays the missing equality.
+        assert_eq!(
+            gap(
+                "assert_eq!(score(5000), 25);",
+                &[(10, "assert_eq!(score(5000), 25);")]
+            ),
+            (None, missing.clone())
+        );
+        // A literal-carrying call is a visible literal (existing reading).
+        assert_eq!(
+            gap(
+                "assert_eq!(score(order(5000)), 25);",
+                &[(10, "assert_eq!(score(order(5000)), 25);")]
+            ),
+            (None, missing.clone())
+        );
+        // A visible one-sided literal beside a call-built input keeps the
+        // missing equality: the visible row already names the boundary.
+        assert_eq!(
+            gap(
+                "assert_eq!(score(5000), 25);\nassert_eq!(score(big_order()), 25);",
+                &[
+                    (10, "assert_eq!(score(5000), 25);"),
+                    (11, "assert_eq!(score(big_order()), 25);"),
+                ]
+            ),
+            (None, missing.clone())
+        );
+        // Call-shaped text in a string literal or a macro is not a call
+        // input, so nothing unresolves the boundary.
+        for argument in [r#""big_order()""#, "amount!()", "base() + 1"] {
+            let line = format!("assert_eq!(score({argument}), 25);");
+            let (unresolved, _) = gap(&line, &[(10, line.as_str())]);
+            assert!(
+                unresolved
+                    .as_deref()
+                    .is_none_or(|reason| !reason.contains("result of a call")),
+                "{argument}: {unresolved:?}"
+            );
+        }
     }
 
     #[test]

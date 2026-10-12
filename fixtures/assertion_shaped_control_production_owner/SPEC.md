@@ -34,9 +34,11 @@ ripr check --root fixtures/assertion_shaped_control_production_owner/input --dif
 
 ## Then
 
-Control: the standard code-under-test guidance is emitted unchanged (the
-`weakly_exposed` boundary-test advice), and the finding evidence contains no
-`owner_shape:` line. The assertion-shaped reframe must not leak onto ordinary
+Control: the standard code-under-test guidance is emitted unchanged, and the
+finding evidence contains no `owner_shape:` line. The only owner input is the
+helper call `boundary_amount()`, whose value ripr does not evaluate, so the
+boundary reads `infection_unknown` (activation unknown, RIPR-SPEC-0032, #6615)
+with the standard boundary-test next step. The assertion-shaped reframe must not leak onto ordinary
 production owners.
 
 ## Must Not
