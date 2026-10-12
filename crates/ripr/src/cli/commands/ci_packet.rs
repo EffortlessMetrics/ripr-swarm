@@ -981,6 +981,14 @@ impl PacketRun {
                 // rejects outright. Skip with an explicit note instead of
                 // writing a start-here whose next action cannot succeed.
                 if base.is_empty() {
+                    // A reused target/ripr/reports can still hold a
+                    // start-here packet from an earlier run whose base was
+                    // derivable; leaving it in place would let the index and
+                    // CI summary present the earlier packet as this run's
+                    // guidance. Remove both outputs with the skip.
+                    for stale in ["start-here.json", "start-here.md"] {
+                        let _ = fs::remove_file(run.root.join(REPORTS).join(stale));
+                    }
                     println!(
                         "RIPR step \"Render RIPR first-pr start-here\" skipped: no base derivable from the event payload (base_ref and default_branch are both empty); re-run with an event JSON that names the repository's default branch."
                     );
@@ -2159,6 +2167,12 @@ mod tests {
             line!()
         ));
         fs::create_dir_all(&root).map_err(|err| err.to_string())?;
+        // Seed stale start-here outputs from an earlier run so the skip must
+        // clear them instead of leaving the earlier packet behind.
+        fs::create_dir_all(root.join(REPORTS)).map_err(|err| err.to_string())?;
+        for stale in ["start-here.json", "start-here.md"] {
+            fs::write(root.join(REPORTS).join(stale), "stale").map_err(|err| err.to_string())?;
+        }
         let mut empty_run = PacketRun {
             root: root.clone(),
             exe: PathBuf::from("ripr"),
@@ -2170,6 +2184,12 @@ mod tests {
             recorded: Some(std::cell::RefCell::new(Vec::new())),
         };
         empty_run.all_stages();
+        for stale in ["start-here.json", "start-here.md"] {
+            assert!(
+                !root.join(REPORTS).join(stale).exists(),
+                "stale {stale} must be removed by the skip"
+            );
+        }
         let empty_commands = empty_run
             .recorded
             .take()
