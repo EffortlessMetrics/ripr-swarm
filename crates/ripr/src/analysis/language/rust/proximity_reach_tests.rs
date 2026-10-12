@@ -1,6 +1,8 @@
 //! RIPR-SPEC-0114/0117 on proximity-only reach: a `weakly_exposed` finding
 //! whose related tests only share the owner's file or a name token names the
-//! transitive or macro reach limit instead of reporting a gap.
+//! transitive or macro reach limit instead of reporting a gap. RIPR-SPEC-0120
+//! (#7089): a direct test whose only observer is an unread assertion macro
+//! names that limit beside a proximity-only weak oracle.
 use super::RustAdapter;
 use crate::analysis::language::LanguageAdapter;
 use crate::analysis::{AnalysisMode, AnalysisOptions, diff};
@@ -395,6 +397,112 @@ fn a_generator_with_a_second_same_named_definition_names_no_limit() -> Result<()
         &GENERATED.replacen(
             "    rate_case!(rate_triples",
             "    #[cfg(any())]\n    macro_rules! rate_case {\n        ($($t:tt)*) => {};\n    }\n    rate_case!(rate_triples",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+/// #7089: the only test that calls the owner observes it through a custom
+/// assertion macro ripr cannot read; a weak oracle in a test that only shares
+/// the file made the finding `weakly_exposed`.
+const CUSTOM_ASSERT: &str = "fn inner_rate(x: i64) -> i64 {
+    3 * x
+}
+pub fn other(x: i64) -> i64 {
+    x + 1
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    macro_rules! assert_rate {
+        ($actual:expr, $expected:expr) => {
+            if $actual != $expected {
+                panic!(\"rate mismatch\");
+            }
+        };
+    }
+    #[test]
+    fn rate_triples() {
+        assert_rate!(inner_rate(4), 12);
+    }
+    #[test]
+    fn other_is_positive() {
+        assert!(other(1) > 0);
+    }
+}
+";
+
+#[test]
+fn an_owner_call_inside_an_unread_assertion_macro_names_the_macro_limit() -> Result<(), String> {
+    let fixture = Fixture::new("custom-assert", CUSTOM_ASSERT)?;
+    let finding = fixture.rate_finding()?;
+    // Fixture construction: the direct test has no recognized oracle, and the
+    // only recognized one comes from a test that just shares the file.
+    let direct = finding
+        .related_tests
+        .iter()
+        .find(|test| test.name == "rate_triples")
+        .ok_or("rate_triples is not related")?;
+    assert!(direct.oracle.is_none(), "{direct:?}");
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .filter(|test| test.oracle.is_some())
+            .all(|test| test
+                .relation_reason
+                .is_some_and(crate::analysis::classify::is_proximity_only)),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("`rate_triples`") && line.contains("`assert_rate!`")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unread_assertion_macro_without_the_owner_call_keeps_the_gap() -> Result<(), String> {
+    // The owner's value reaches the macro only through a binding.
+    let fixture = Fixture::new(
+        "custom-assert-binding",
+        &CUSTOM_ASSERT.replacen(
+            "        assert_rate!(inner_rate(4), 12);",
+            "        let rate = inner_rate(4);\n        assert_rate!(rate, 12);",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn a_direct_test_with_a_recognized_oracle_keeps_the_gap() -> Result<(), String> {
+    // The direct test's own weak oracle is what ripr judged; the custom macro
+    // beside it does not turn that judgment into a limit.
+    let fixture = Fixture::new(
+        "custom-assert-direct-oracle",
+        &CUSTOM_ASSERT.replacen(
+            "        assert_rate!(inner_rate(4), 12);",
+            "        assert!(inner_rate(4) > 0);\n        assert_rate!(inner_rate(4), 12);",
             1,
         ),
     )?;
