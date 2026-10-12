@@ -13985,6 +13985,29 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0251"
+name = "TypeScript default-import owner local"
+spec = "docs/specs/RIPR-SPEC-0251-typescript-default-import-owner-local.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/spec0243_owner_tests.rs::rule7_default_import_rename_counts_as_the_owner",
+  "crates/ripr/src/analysis/language/typescript/tests/spec0243_owner_tests.rs::rule7_default_import_rename_negatives_keep_no_credit",
+  "crates/ripr/src/analysis/language/typescript/tests/spec0243_owner_tests.rs::default_import_owner_locals_keeps_only_the_owner_binding",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/related_tests.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0251-typescript-default-import-owner-local.md",
+]
+metrics = [
+  "typescript_default_import_local_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0250"
 name = "TypeScript match-object field pin"
 spec = "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md"

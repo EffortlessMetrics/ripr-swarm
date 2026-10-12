@@ -1688,6 +1688,37 @@ pub(crate) fn import_alias_owner_locals<'t>(
         .collect()
 }
 
+/// The locals of every default import (`import local from "./owner"`) of
+/// the owner's module that calls the owner under another name: the owner
+/// IS that module's default export, the local differs from the owner's
+/// name, it is called as `local(` in the body, and no body-local or
+/// enclosing-scope declaration shadows it (RIPR-SPEC-0251). These calls
+/// give the test its `ImportedOwnerCall` relation; the observation guard
+/// reads them as owner names, as it reads `import { owner as local }`.
+pub(crate) fn default_import_owner_locals<'t>(
+    test: &'t TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<&'t str> {
+    if !owner.exported_as_default {
+        return Vec::new();
+    }
+    test.imports_in_file
+        .iter()
+        .filter(|import| {
+            !import.namespace
+                && import.imported.as_deref() == Some("default")
+                && import.local != owner.name
+                && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+                && contains_call_name(&test.body_text, &import.local)
+                && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+                && !enclosing_scope_shadows(test, &import.local)
+        })
+        .map(|import| import.local.as_str())
+        .collect()
+}
+
 /// #4103 shape 1: `true` when a declaration anchors a bare `ownerName(...)`
 /// call to the owner under analysis — the test lives in the owner's own
 /// file, it imports the owner (named import, or a default/require binding

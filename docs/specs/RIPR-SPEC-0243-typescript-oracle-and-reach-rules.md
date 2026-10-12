@@ -452,8 +452,8 @@ branch, the observed expression also references the owner when it names,
 as a whole identifier, the `local` of an `import { owner as local }` that
 gives the same test its `ImportAliasOwnerCall` relation. The one-hop
 initializer accepts the same local. This makes RIPR-SPEC-0102's stated
-`exposed` class hold. A default-import local is not covered (see
-Non-Goals).
+`exposed` class hold. RIPR-SPEC-0251 extends this to a renamed default
+import of a default-exported owner.
 
 ### Static limits
 
@@ -515,8 +515,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    assertions.
 3. **Alias rename (D2).** Adopted: rule 7, alias arm only, because
    RIPR-SPEC-0102 is accepted and states the class stays `exposed`. A
-   default-import local gets no new credit, because RIPR-SPEC-0102 puts
-   default imports out of scope. Rejected: amend
+   default-import local got no credit here, because RIPR-SPEC-0102 puts
+   default imports out of scope; RIPR-SPEC-0251 now adds it. Rejected: amend
    RIPR-SPEC-0102 to `weakly_exposed`, which would keep a false downgrade
    of the most direct discriminator.
 4. **Substring owner match (D3).** Adopted: rule 6 in the value branch
@@ -612,11 +612,10 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No infection or propagation modeling.
 - No change to the per-test display oracle (filed separately).
 - No new credit for a default-import local in the observation guard.
-  RIPR-SPEC-0102 puts default imports out of scope, and RIPR-SPEC-0095
-  does not follow default imports through re-export chains. A
-  default-import call whose local name differs from the owner's name
-  keeps `import_path_affinity` and `weakly_exposed`; a default import
-  bound under the owner's own name stays `exposed` (example 17).
+  Superseded by RIPR-SPEC-0251: a renamed default import of a
+  default-exported owner from the owner's own module now counts as the
+  owner; RIPR-SPEC-0095 still does not follow default imports through
+  re-export chains.
 - No change to Rust or Python oracle classification.
 
 ## Acceptance Examples
@@ -707,8 +706,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
     base body. `import price from "../src/lib"` and
     `expect(price(150)).toBe(130)`: `exposed` (unchanged).
     `import cost from "../src/lib"` and `expect(cost(150)).toBe(130)`:
-    `import_path_affinity`, `weakly_exposed` (unchanged, measured in
-    review).
+    `import_path_affinity`, `exposed` (RIPR-SPEC-0251; this spec read
+    `weakly_exposed`).
 18. `import { price as p } from "../src/lib";` and
     `expect(p(150)).toBe(130)`: `direct_owner_call` / high, `exposed`
     (today `weakly_exposed` with `propagation_unknown`).
