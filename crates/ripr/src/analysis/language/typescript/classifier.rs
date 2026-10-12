@@ -188,8 +188,9 @@ pub(crate) struct CreditFacts<'a> {
 /// reference `price`. The observed expression (and the one-hop initializer)
 /// also references the owner when it names the `local` of an
 /// `import { owner as local }` that gives the same test its
-/// `ImportAliasOwnerCall` relation. A default-import local gets no such
-/// credit. The effect side-channel test below stays a substring test
+/// `ImportAliasOwnerCall` relation, or the `local` of a default import of
+/// the owner's own default export behind an `ImportedOwnerCall` relation
+/// (RIPR-SPEC-0251). The effect side-channel test below stays a substring test
 /// (Decision 4): there a miss grants credit, so tightening it would add
 /// credit.
 pub(crate) fn ts_changed_value_is_observed(
@@ -283,6 +284,16 @@ pub(crate) fn ts_changed_value_is_observed(
                 let mut owner_names: Vec<&str> = vec![owner_name];
                 if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
                     owner_names.extend(import_alias_owner_locals(
+                        candidate.test,
+                        owner,
+                        alias_map,
+                        workspace_root,
+                    ));
+                }
+                // RIPR-SPEC-0251: a default import of the owner's own
+                // default export calls the owner under its local name.
+                if candidate.relation == TypeScriptRelationKind::ImportedOwnerCall {
+                    owner_names.extend(default_import_owner_locals(
                         candidate.test,
                         owner,
                         alias_map,
@@ -4492,6 +4503,15 @@ pub(crate) fn ts_dropped_term_witness(
         let mut names: Vec<&str> = vec![owner.name.as_str()];
         if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
             names.extend(import_alias_owner_locals(
+                candidate.test,
+                owner,
+                alias_map,
+                workspace_root,
+            ));
+        }
+        // RIPR-SPEC-0251: `import local from "./owner"` calls it as `local`.
+        if candidate.relation == TypeScriptRelationKind::ImportedOwnerCall {
+            names.extend(default_import_owner_locals(
                 candidate.test,
                 owner,
                 alias_map,
