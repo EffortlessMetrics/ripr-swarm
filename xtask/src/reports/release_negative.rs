@@ -358,6 +358,14 @@ fn corpus_failure_hint(written_report: &Path) -> String {
 
 struct OwnedQualificationRoot(PathBuf);
 impl OwnedQualificationRoot {
+    fn capture(&mut self, capture: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        capture().map_err(|error| {
+            format!(
+                "{error}; qualification capture producer root: {}",
+                self.0.display()
+            )
+        })
+    }
     fn finish(self) -> Result<(), String> {
         fs::remove_dir_all(&self.0)
             .map_err(|error| format!("remove owned qualification producer root: {error}"))
@@ -367,6 +375,15 @@ impl Drop for OwnedQualificationRoot {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.0);
     }
+}
+
+#[cfg(all(test, unix))]
+pub(crate) fn capture_with_owned_root_for_test(
+    owned_root: &Path,
+    capture: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
+    let mut producer = OwnedQualificationRoot(owned_root.to_path_buf());
+    producer.capture(capture)
 }
 
 fn run_negative_corpus_with_input(
@@ -399,11 +416,14 @@ fn run_negative_corpus_with_input(
         let path = corpus_root.join("owned-producer");
         fs::create_dir(&path)
             .map_err(|error| format!("exclusive qualification producer root: {error}"))?;
-        owned_root = Some(OwnedQualificationRoot(path.clone()));
+        let mut producer = OwnedQualificationRoot(path.clone());
         let mut installed = AttributedArchive::produce(source, &path)?.install(&path)?;
-        installed.freeze_into(
-            &path.join(format!("candidate-witness{}", std::env::consts::EXE_SUFFIX)),
-        )?;
+        producer.capture(|| {
+            installed.freeze_into(
+                &path.join(format!("candidate-witness{}", std::env::consts::EXE_SUFFIX)),
+            )
+        })?;
+        owned_root = Some(producer);
         qualified = installed;
         let execution = CandidateExecution::Qualified(&qualified);
         let version_result = execution.run(

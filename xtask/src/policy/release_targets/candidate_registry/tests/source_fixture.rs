@@ -1402,3 +1402,333 @@ fn real_compiler_bound_competing_capture_creators_leave_one_complete_witness() -
     fixture.guard.finish()
 }
 // 4510 successor proof: competing creators test end.
+
+// 4510 independent proof: actual consumer owned-root cleanup start.
+#[cfg(unix)]
+#[test]
+fn real_compiler_bound_consumer_retains_failed_capture_root_and_cleans_success()
+-> Result<(), String> {
+    use crate::reports::capture_with_owned_root_for_test;
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, CandidateExecution,
+    };
+    use std::io::Write;
+    use std::os::unix::fs::MetadataExt;
+
+    let fixture = create_source_fixture()?;
+    let (input, owned) = capture_fixture_input(&fixture, "actual consumer-guard producer")?;
+    let admitted = AdmittedSource::admit(&input, "0.11.0")?;
+    assert_eq!(admitted.source_sha()?, fixture.sha);
+    let rustc = capture_observed_verbose_version("rustc", &fixture.source)?;
+    let cargo = capture_observed_verbose_version("cargo", &fixture.source)?;
+    let mut installed = AttributedArchive::produce(admitted, &owned)?.install(&owned)?;
+    let original_path = installed.binary().to_path_buf();
+    let actual_bytes = fs::read(&original_path).map_err(|error| error.to_string())?;
+    assert!(
+        actual_bytes.len() > 16,
+        "real installed executable must supply a nonempty strict prefix"
+    );
+    let original_custody = installed.custody_json();
+    let selected = capture_assert_real_install_identity(
+        &original_custody,
+        &original_path,
+        &actual_bytes,
+        &owned,
+        &rustc,
+        &cargo,
+    )?;
+    let archive = PathBuf::from(original_custody["archive"].as_str().ok_or_else(|| {
+        "SETUP: actual package custody must name its emitted archive".to_string()
+    })?);
+    assert!(
+        archive
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+            .starts_with(&owned)
+    );
+    let actual_archive = fs::read(&archive).map_err(|error| error.to_string())?;
+    assert!(
+        !actual_archive.is_empty(),
+        "actual Cargo package archive must be nonempty"
+    );
+    assert_eq!(
+        original_custody["archive_sha256"],
+        sha256_hex(&actual_archive)
+    );
+    let root_before = capture_path_metadata(&owned)?;
+    let compiler_before = capture_path_metadata(&selected)?;
+    let installed_before = capture_path_metadata(&original_path)?;
+    let archive_before = capture_path_metadata(&archive)?;
+    let positive = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 actual installed positive before consumer cleanup control",
+    )?;
+    assert!(positive.success && positive.status == Some(0));
+    assert_eq!(positive.stdout, "fixture source A\n");
+
+    // This explicit destructive control needs pre-failure copies outside the
+    // producer root. These are observed bytes, never rebuilt originals or a
+    // replacement for the source/Cargo/toolchain custody authority.
+    let saved_executable = fixture.guard.root.join(format!(
+        "observed-compiler-executable{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    let mut saved_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&saved_executable)
+        .map_err(|error| format!("save observed compiler bytes: {error}"))?;
+    saved_file
+        .write_all(&actual_bytes)
+        .map_err(|error| error.to_string())?;
+    saved_file
+        .set_permissions(
+            fs::metadata(&selected)
+                .map_err(|error| error.to_string())?
+                .permissions(),
+        )
+        .map_err(|error| error.to_string())?;
+    saved_file.sync_all().map_err(|error| error.to_string())?;
+    drop(saved_file);
+    let saved_archive = fixture.guard.root.join("observed-cargo-package.crate");
+    let mut saved_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&saved_archive)
+        .map_err(|error| format!("save observed archive bytes: {error}"))?;
+    saved_file
+        .write_all(&actual_archive)
+        .map_err(|error| error.to_string())?;
+    saved_file.sync_all().map_err(|error| error.to_string())?;
+    drop(saved_file);
+    assert_eq!(
+        fs::read(&saved_executable).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(
+        fs::read(&saved_archive).map_err(|error| error.to_string())?,
+        actual_archive
+    );
+    let observations = json!({
+        "custody": original_custody, "producer_root": owned,
+        "compiler_selected": selected, "native_success": positive.success,
+        "native_status": positive.status, "native_stdout": positive.stdout,
+        "observed_executable_copy": saved_executable,
+        "observed_archive_copy": saved_archive,
+        "copies_claim": "exact pre-failure observed bytes; not rebuilt or reconstituted originals"
+    });
+    let observations_path = fixture.guard.root.join("observed-consumer-input.json");
+    let mut saved_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&observations_path)
+        .map_err(|error| error.to_string())?;
+    saved_file
+        .write_all(&serde_json::to_vec_pretty(&observations).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
+    saved_file.sync_all().map_err(|error| error.to_string())?;
+    drop(saved_file);
+    eprintln!("4510 actual consumer pre-failure observations: {observations}");
+
+    let slot = owned.join("consumer-failure-single-link-replacement");
+    let own_backup = owned.join("consumer-created-partial-backup");
+    let replacement_bytes = b"retain this single-link consumer failure witness\n";
+    let mut writer_reached = false;
+    let mut replacement_before = None;
+    let refused = capture_with_owned_root_for_test(&owned, || {
+        installed.freeze_into_with_writer_for_test(&slot, |file, retained| {
+            writer_reached = true;
+            if retained != actual_bytes {
+                return Err(std::io::Error::other(
+                    "SETUP: wrong retained compiler-produced bytes",
+                ));
+            }
+            file.write_all(&retained[..16])?;
+            fs::rename(&slot, &own_backup)?;
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&slot)?
+                .write_all(replacement_bytes)?;
+            let created = file.metadata()?;
+            let replacement = fs::symlink_metadata(&slot)?;
+            if !replacement.file_type().is_file()
+                || replacement.nlink() != 1
+                || (replacement.dev(), replacement.ino()) == (created.dev(), created.ino())
+            {
+                return Err(std::io::Error::other(
+                    "SETUP: consumer replacement must be a different single-link regular inode",
+                ));
+            }
+            replacement_before = Some(capture_path_metadata(&slot).map_err(std::io::Error::other)?);
+            Err(std::io::Error::other(
+                "injected consumer-root capture failure",
+            ))
+        })
+    });
+    assert!(
+        writer_reached,
+        "SETUP: actual consumer must reach the retained-byte failure writer"
+    );
+    let refusal = refused
+        .err()
+        .ok_or_else(|| "consumer unexpectedly accepted injected capture failure".to_string())?;
+    require_refusal(
+        Err::<(), String>(refusal.clone()),
+        "injected consumer-root capture failure",
+    )?;
+    assert!(
+        owned.is_dir(),
+        "consumer Drop must retain the original producer root after capture failure"
+    );
+    assert!(
+        fs::symlink_metadata(&slot).is_ok(),
+        "consumer Drop must retain the single-link replacement witness"
+    );
+    assert!(
+        fs::symlink_metadata(&own_backup).is_ok(),
+        "consumer Drop must retain the original attempt-owned partial backup"
+    );
+    let replacement_before = replacement_before.ok_or_else(|| {
+        "SETUP: actual writer did not observe its single-link replacement".to_string()
+    })?;
+    assert_eq!(capture_path_metadata(&owned)?, root_before);
+    assert_eq!(capture_path_metadata(&slot)?, replacement_before);
+    assert_eq!(
+        fs::read(&slot).map_err(|error| error.to_string())?,
+        replacement_bytes
+    );
+    assert_eq!(
+        fs::read(&own_backup).map_err(|error| error.to_string())?,
+        actual_bytes[..16]
+    );
+    assert_eq!(capture_path_metadata(&selected)?, compiler_before);
+    assert_eq!(capture_path_metadata(&original_path)?, installed_before);
+    assert_eq!(capture_path_metadata(&archive)?, archive_before);
+    assert_eq!(
+        fs::read(&selected).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(
+        fs::read(&original_path).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(
+        fs::read(&archive).map_err(|error| error.to_string())?,
+        actual_archive
+    );
+    assert!(
+        refusal.contains(&owned.display().to_string()),
+        "consumer refusal must name its retained producer root: {refusal}"
+    );
+    assert_eq!(installed.binary(), original_path.as_path());
+    assert_eq!(installed.custody_json(), original_custody);
+    installed.revalidate()?;
+    eprintln!("4510 actual consumer retained capture-failure root: {refusal}");
+
+    let refused = capture_with_owned_root_for_test(&owned, || installed.freeze_into(&slot));
+    let refusal = refused.err().ok_or_else(|| {
+        "consumer unexpectedly reused an occupied initial capture slot".to_string()
+    })?;
+    require_refusal(
+        Err::<(), String>(refusal.clone()),
+        "capture destination creation refused",
+    )?;
+    assert!(
+        owned.is_dir(),
+        "consumer Drop must retain producer root after occupied capture refusal"
+    );
+    assert_eq!(capture_path_metadata(&owned)?, root_before);
+    assert_eq!(capture_path_metadata(&slot)?, replacement_before);
+    assert_eq!(
+        fs::read(&slot).map_err(|error| error.to_string())?,
+        replacement_bytes
+    );
+    assert_eq!(
+        fs::read(&own_backup).map_err(|error| error.to_string())?,
+        actual_bytes[..16]
+    );
+    assert_eq!(capture_path_metadata(&selected)?, compiler_before);
+    assert_eq!(capture_path_metadata(&original_path)?, installed_before);
+    assert_eq!(capture_path_metadata(&archive)?, archive_before);
+    assert_eq!(
+        fs::read(&selected).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(
+        fs::read(&original_path).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(
+        fs::read(&archive).map_err(|error| error.to_string())?,
+        actual_archive
+    );
+    assert!(
+        refusal.contains(&owned.display().to_string()),
+        "occupied capture refusal must name its retained producer root: {refusal}"
+    );
+    assert_eq!(installed.binary(), original_path.as_path());
+    assert_eq!(installed.custody_json(), original_custody);
+
+    // A fresh guard owns normal successful cleanup. A blanket keep-on-Drop
+    // cannot satisfy this actual capture and Qualified execution positive.
+    let clean = owned.join(format!(
+        "consumer-successful-capture{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    let mut successful_observations = None;
+    capture_with_owned_root_for_test(&owned, || {
+        installed.freeze_into(&clean)?;
+        assert_eq!(
+            fs::read(&clean).map_err(|error| error.to_string())?,
+            actual_bytes
+        );
+        let consumed = CandidateExecution::Qualified(&installed).run(
+            &[],
+            &fixture.controller,
+            "4510 actual consumer successful capture before normal cleanup",
+        )?;
+        assert!(consumed.success && consumed.status == Some(0));
+        assert_eq!(consumed.stdout, "fixture source A\n");
+        let captured = installed.custody_json();
+        assert_eq!(captured["capture_mode"], "exclusive_frozen_reference");
+        assert_eq!(
+            captured["compiler_artifact"],
+            original_custody["compiler_artifact"]
+        );
+        assert_eq!(
+            captured["executable_sha256"],
+            original_custody["executable_sha256"]
+        );
+        successful_observations = Some(json!({"custody": captured,
+            "native_success": consumed.success, "native_status": consumed.status,
+            "native_stdout": consumed.stdout}));
+        Ok(())
+    })?;
+    let successful_observations = successful_observations.ok_or_else(|| {
+        "SETUP: consumer must capture and execute before returning success".to_string()
+    })?;
+    assert!(
+        !owned.exists(),
+        "successful consumer guard must perform normal producer-root cleanup"
+    );
+    assert_eq!(
+        fs::read(&saved_executable).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(
+        fs::read(&saved_archive).map_err(|error| error.to_string())?,
+        actual_archive
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(
+            &fs::read(&observations_path).map_err(|error| error.to_string())?
+        )
+        .map_err(|error| error.to_string())?,
+        observations
+    );
+    eprintln!("4510 actual consumer successful cleanup observations: {successful_observations}");
+    fixture.guard.finish()
+}
+// 4510 independent proof: actual consumer owned-root cleanup end.
