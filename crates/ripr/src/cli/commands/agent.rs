@@ -934,8 +934,9 @@ fn record_after_phase_refusal(
             // refusal is genuine and surfaces unchanged.
             Err(record_error)
                 if observed_terminal_finish
-                    && record_error
-                        .contains(crate::app::repair_attempt::AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL) =>
+                    && record_error.contains(
+                        crate::app::repair_attempt::AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL,
+                    ) =>
             {
                 crate::app::repair_attempt::record_repair_attempt_terminal_after_refusal_from(
                     root, store, attempt_id, reason,

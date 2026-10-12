@@ -5231,7 +5231,8 @@ mod tests {
     }
 
     #[test]
-    fn canonical_subject_root_uses_the_bound_root_not_the_manifest() -> Result<(), String> {        // The fixture manifest records "." (the before phase's spelling);
+    fn canonical_subject_root_uses_the_bound_root_not_the_manifest() -> Result<(), String> {
+        // The fixture manifest records "." (the before phase's spelling);
         // the subject must name the caller's bound root (#3999), matching
         // the recorded restart/after commands.
         let manifest = canonical_test_manifest(RepairAttemptState::ReadyToFinish)?;

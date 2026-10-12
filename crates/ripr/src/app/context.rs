@@ -111,12 +111,7 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
     let worktree_list_command = worktree_navigation.list_command();
     let committed_history = input.diff_file.is_none() && input.git_candidate.is_none();
     let output = if worktree {
-        check_with_progress(
-            input,
-            config,
-            AnalysisProgressScope::Worktree,
-            sink,
-        )?
+        check_with_progress(input, config, AnalysisProgressScope::Worktree, sink)?
     } else {
         check_with_progress(input, config, AnalysisProgressScope::Diff, sink)?
     };

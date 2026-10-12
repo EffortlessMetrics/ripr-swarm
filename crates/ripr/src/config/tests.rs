@@ -1862,7 +1862,6 @@ fn candidate_config_error_timeout_renders_the_timeout_diagnostic() {
     );
 }
 
-
 /// #7353: `reports.max_related_tests = 0` used to be accepted silently and
 /// emptied `related_tests` in every context packet; it must now fail closed
 /// with a named error naming the key and the accepted set, like the

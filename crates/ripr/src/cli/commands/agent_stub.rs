@@ -39,10 +39,9 @@ pub(super) fn run_agent_stub(options: AgentStubOptions) -> Result<(), CommandErr
                 // `CommandError` after the envelope.
                 match render_not_found_refusal_document(&options.selector, &message) {
                     // A JSON document, not report text: keep it parseable (#6309).
-                    Ok(rendered) => ::std::eprintln!(
-                        "{}",
-                        crate::terminal_text::json_terminal_safe(rendered)
-                    ),
+                    Ok(rendered) => {
+                        ::std::eprintln!("{}", crate::terminal_text::json_terminal_safe(rendered))
+                    }
                     Err(render_error) => eprintln!("ripr: {render_error}"),
                 }
             }

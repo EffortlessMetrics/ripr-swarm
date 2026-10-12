@@ -564,9 +564,7 @@ mod tests {
                 }
                 for expected in ["repair-ready", "--phase before", "seam:demo"] {
                     if !limitation.contains(expected) {
-                        return Err(format!(
-                            "the limitation lost `{expected}`: {limitation}"
-                        ));
+                        return Err(format!("the limitation lost `{expected}`: {limitation}"));
                     }
                 }
             }

@@ -1,7 +1,7 @@
+use super::CheckInput;
 use super::check::check_with_progress;
 use super::progress::{AnalysisProgressScope, AnalysisProgressSink};
 use super::selector::select_finding;
-use super::CheckInput;
 use crate::config::RiprConfig;
 use crate::output;
 use std::path::Path;
@@ -80,12 +80,7 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
     // replay the supplied patch, so the clause stays silent there.
     let committed_history = input.diff_file.is_none() && input.git_candidate.is_none();
     let output = if worktree {
-        check_with_progress(
-            input,
-            config,
-            AnalysisProgressScope::Worktree,
-            sink,
-        )?
+        check_with_progress(input, config, AnalysisProgressScope::Worktree, sink)?
     } else {
         check_with_progress(input, config, AnalysisProgressScope::Diff, sink)?
     };

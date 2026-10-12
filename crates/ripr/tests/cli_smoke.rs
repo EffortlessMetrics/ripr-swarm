@@ -22698,18 +22698,19 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
 /// name the worktree retry; once the edits are committed (clean tree), the
 /// clause must stay silent.
 #[test]
-fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
--> Result<(), String> {
+fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist() -> Result<(), String>
+{
     let root = unique_temp_workspace("worktree-miss-hint");
     std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
     run_git(&root, &["init"])?;
     run_git(&root, &["config", "user.email", "test@test.com"])?;
     run_git(&root, &["config", "user.name", "Test"])?;
     let write_lib = |body: &str| -> Result<(), String> {
-        std::fs::write(root.join("src/lib.rs"), body)
-            .map_err(|err| format!("write lib.rs: {err}"))
+        std::fs::write(root.join("src/lib.rs"), body).map_err(|err| format!("write lib.rs: {err}"))
     };
-    write_lib("pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n")?;
+    write_lib(
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n",
+    )?;
     std::fs::write(
         root.join("Cargo.toml"),
         "[package]\nname = \"worktree-miss-hint\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
@@ -22720,11 +22721,15 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
     // v2 changes no probe-worthy boundary, so the committed-history
     // listing the miss message suggests stays empty of the worktree
     // finding — the dead-end premise of #7328.
-    write_lib("pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n\npub fn always_ready() -> bool {\n    true\n}\n")?;
+    write_lib(
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n\npub fn always_ready() -> bool {\n    true\n}\n",
+    )?;
     run_git(&root, &["add", "."])?;
     run_git(&root, &["commit", "-m", "v2"])?;
     // The uncommitted edit: only `check --worktree` can see this finding.
-    write_lib("pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount < threshold\n}\n\npub fn always_ready() -> bool {\n    true\n}\n")?;
+    write_lib(
+        "pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount < threshold\n}\n\npub fn always_ready() -> bool {\n    true\n}\n",
+    )?;
     let root_str = root.to_string_lossy().into_owned();
 
     let listed = run_ripr(&[
@@ -22768,18 +22773,10 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
         ),
         (
             "context",
-            format!(
-                "ripr context --root {root_str} --base 'HEAD~1' --worktree --at {finding_id}"
-            ),
+            format!("ripr context --root {root_str} --base 'HEAD~1' --worktree --at {finding_id}"),
         ),
     ] {
-        let mut args = vec![
-            command,
-            "--root",
-            root_str.as_str(),
-            "--base",
-            "HEAD~1",
-        ];
+        let mut args = vec![command, "--root", root_str.as_str(), "--base", "HEAD~1"];
         if command == "context" {
             args.push("--at");
         }
@@ -22832,13 +22829,7 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
             ),
         ),
     ] {
-        let mut args = vec![
-            command,
-            "--root",
-            root_str.as_str(),
-            "--base",
-            "HEAD~1",
-        ];
+        let mut args = vec![command, "--root", root_str.as_str(), "--base", "HEAD~1"];
         if command == "context" {
             args.push("--at");
         }
@@ -22872,8 +22863,7 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
     )
     .into_owned();
     let diff_path = root.join("supplied-scope.diff");
-    std::fs::write(&diff_path, diff_text)
-        .map_err(|err| format!("write supplied diff: {err}"))?;
+    std::fs::write(&diff_path, diff_text).map_err(|err| format!("write supplied diff: {err}"))?;
     let diff_str = diff_path.to_string_lossy().into_owned();
     std::fs::write(root.join("src/lib.rs"), "pub fn dirty_marker() {}\n")
         .map_err(|err| format!("dirty the tracked tree: {err}"))?;

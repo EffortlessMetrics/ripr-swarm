@@ -4874,9 +4874,7 @@ mod tests {
                 "the terminal after-phase refusal was not recorded on the manifest".to_string()
             })?;
             if !refusal.reason.contains("ForbiddenPath") {
-                return Err(format!(
-                    "recorded refusal lost the cage cause: {refusal:?}"
-                ));
+                return Err(format!("recorded refusal lost the cage cause: {refusal:?}"));
             }
             if manifest.after.is_none() || manifest.state != RepairAttemptState::ReadyToFinish {
                 return Err(format!(

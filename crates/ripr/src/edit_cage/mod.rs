@@ -2190,14 +2190,14 @@ mod tests {
         let policy = policy()?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
         // The focused test edit the attempt exists for.
-        fs::write(fixture.root.join("tests/pricing.rs"), "fn boundary() {}\n\n#[test]\nfn focused() {}\n")
-            .map_err(|err| format!("write focused test edit: {err}"))?;
-        // The checkout-rewrite flip: only the production file's endings move.
         fs::write(
-            fixture.root.join("src/pricing.rs"),
-            "pub fn price() {}\r\n",
+            fixture.root.join("tests/pricing.rs"),
+            "fn boundary() {}\n\n#[test]\nfn focused() {}\n",
         )
-        .map_err(|err| format!("rewrite CRLF production file: {err}"))?;
+        .map_err(|err| format!("write focused test edit: {err}"))?;
+        // The checkout-rewrite flip: only the production file's endings move.
+        fs::write(fixture.root.join("src/pricing.rs"), "pub fn price() {}\r\n")
+            .map_err(|err| format!("rewrite CRLF production file: {err}"))?;
         let (delta, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
         if delta
             .changes
@@ -2252,20 +2252,15 @@ mod tests {
         let fixture = git_fixture("eol-flip-visible")?;
         let policy = policy()?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
-        fs::write(
-            fixture.root.join("src/pricing.rs"),
-            "pub fn price() {}\r\n",
-        )
-        .map_err(|err| format!("rewrite CRLF production file: {err}"))?;
+        fs::write(fixture.root.join("src/pricing.rs"), "pub fn price() {}\r\n")
+            .map_err(|err| format!("rewrite CRLF production file: {err}"))?;
         let (delta, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
         if !delta
             .changes
             .iter()
             .any(|change| change.path.as_path() == std::path::Path::new("src/pricing.rs"))
         {
-            return Err(format!(
-                "a git-visible EOL flip left the delta: {delta:?}"
-            ));
+            return Err(format!("a git-visible EOL flip left the delta: {delta:?}"));
         }
         if verdict.status != EditCageVerdictStatus::Violated
             || !verdict
