@@ -2684,6 +2684,13 @@ mod tests {
         Ok(root)
     }
 
+    /// Bound ancestor Cargo.toml discovery at this fixture. Tests live under
+    /// the ripr work tree (`target/`), so without a local `.git` the walk
+    /// would credit `/workspace/Cargo.toml`.
+    fn isolate_as_git_root(root: &Path) -> Result<(), String> {
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))
+    }
+
     /// Evaluate a root with a probe where every tool except `git` is
     /// missing, recording which tools doctor actually probed.
     fn evaluate_without_rust_toolchain(
@@ -3149,6 +3156,7 @@ mod tests {
             "scope-rust-no-manifest",
             &[("src/lib.rs", "pub fn f() {}\n")],
         )?;
+        isolate_as_git_root(&root)?;
         let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Rust]);
         let _ = std::fs::remove_dir_all(&root);
         let cargo_toml = check(&report, "cargo_toml")?;
@@ -3508,6 +3516,7 @@ mod tests {
     #[test]
     fn empty_root_with_default_config_keeps_the_cargo_toml_failure() -> Result<(), String> {
         let root = doctor_scope_root("scope-empty", &[])?;
+        isolate_as_git_root(&root)?;
         let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
         let _ = std::fs::remove_dir_all(&root);
         if check(&report, "cargo_toml")?.status != DoctorCheckStatus::Fail
