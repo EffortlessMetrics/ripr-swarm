@@ -8826,7 +8826,7 @@ fn selected() {
                             "#[test]\nfn selected() {{ let value = {call}; assert_eq!(value, 1); }}\n"
                         ),
                         "parameter" => format!(
-                            "use rstest::rstest;\n#[rstest]\nfn selected(#[values({call})] x: i32) {{ assert_eq!(x, 1); }}\n"
+                            "#[cfg(test)]\nuse rstest::rstest;\n#[cfg(test)]\n#[rstest]\nfn selected(#[values({call})] x: i32) {{ assert_eq!(x, 1); }}\n"
                         ),
                         _ => format!("#[test]\nfn selected() {{ assert_eq!({call}, 1); }}\n"),
                     };
@@ -8962,7 +8962,7 @@ fn selected() {
                         "#[test]\nfn selected() {{ let value = {call}; assert_eq!(value, 1); }}"
                     ),
                     "parameter" => format!(
-                        "use rstest::rstest;\n#[rstest]\nfn selected(#[values({call})] x: i32) {{ assert_eq!(x, 1); }}"
+                        "#[cfg(test)]\nuse rstest::rstest;\n#[cfg(test)]\n#[rstest]\nfn selected(#[values({call})] x: i32) {{ assert_eq!(x, 1); }}"
                     ),
                     _ => format!("#[test]\nfn selected() {{ assert_eq!({call}, 1); }}"),
                 };
