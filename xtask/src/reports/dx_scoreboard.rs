@@ -23,6 +23,7 @@
 //! Cloning the real-repository corpus is opt-in (`--clone`).
 
 mod measure;
+mod population;
 
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -169,6 +170,8 @@ pub(crate) struct Sample {
 pub(crate) enum SampleOutcome {
     /// The instrument produced a number.
     Value(f64),
+    /// A committed verdict rate with its case identities and contributions.
+    Corpus(population::Population),
     /// The instrument ran but the product did not reach a useful result
     /// (for example pilot exited nonzero). The elapsed number is kept for
     /// context but the sample can never meet its target.
@@ -1853,12 +1856,16 @@ fn metric_row(def: &MetricDef, samples: &[&Sample]) -> Value {
         .iter()
         .map(|sample| {
             let (value, status) = sample_value_status(def, &sample.outcome);
-            json!({
+            let mut rendered = json!({
                 "repo": sample.repo,
                 "value": value,
                 "status": status,
                 "detail": sample.detail,
-            })
+            });
+            if let SampleOutcome::Corpus(population) = &sample.outcome {
+                rendered["population"] = json!(population);
+            }
+            rendered
         })
         .collect();
 
@@ -1891,8 +1898,9 @@ fn metric_row(def: &MetricDef, samples: &[&Sample]) -> Value {
         .any(|s| matches!(s.outcome, SampleOutcome::Incomplete(_)));
     let measured: Vec<f64> = samples
         .iter()
-        .filter_map(|s| match s.outcome {
-            SampleOutcome::Value(v) | SampleOutcome::Incomplete(v) => Some(v),
+        .filter_map(|s| match &s.outcome {
+            SampleOutcome::Value(v) | SampleOutcome::Incomplete(v) => Some(*v),
+            SampleOutcome::Corpus(population) => population.value(),
             SampleOutcome::NotMeasured | SampleOutcome::Failed => None,
         })
         .collect();
@@ -1934,6 +1942,10 @@ fn metric_row(def: &MetricDef, samples: &[&Sample]) -> Value {
 
 fn sample_value_status(def: &MetricDef, outcome: &SampleOutcome) -> (Value, &'static str) {
     match outcome {
+        SampleOutcome::Corpus(population) => match population.value() {
+            Some(value) => sample_value_status(def, &SampleOutcome::Value(value)),
+            None => (Value::Null, "not_measured"),
+        },
         SampleOutcome::Value(v) => (
             json!(round(*v)),
             if meets_target(def, *v) {
@@ -2589,3 +2601,6 @@ fn read_json(path: &Path) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod population_tests;
