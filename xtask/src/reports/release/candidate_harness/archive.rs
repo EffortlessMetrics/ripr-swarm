@@ -398,6 +398,18 @@ impl InstalledCandidate {
         slot: &Path,
         writer: impl FnOnce(&mut std::fs::File, &[u8]) -> std::io::Result<()>,
     ) -> Result<(), String> {
+        let captured = self.capture_with(slot, || Ok(()), writer)?;
+        self.binary = slot.to_path_buf();
+        self.captured = Some(captured);
+        Ok(())
+    }
+
+    fn capture_with(
+        &self,
+        slot: &Path,
+        before_create: impl FnOnce() -> Result<(), String>,
+        writer: impl FnOnce(&mut std::fs::File, &[u8]) -> std::io::Result<()>,
+    ) -> Result<CapturedFile, String> {
         if self.captured.is_some() {
             return Err(
                 "candidate executable already frozen; reuse its retained reference".to_string(),
@@ -419,18 +431,16 @@ impl InstalledCandidate {
         let permissions = std::fs::metadata(&self.installed_binary)
             .map_err(|error| format!("read installed executable permissions: {error}"))?
             .permissions();
-        let captured = capture_retained_executable_with(
+        capture_retained_executable_with(
             &self.executable_bytes,
             permissions,
             slot,
+            before_create,
             |file, bytes| {
                 writer(file, bytes)?;
                 self.archive.revalidate().map_err(std::io::Error::other)
             },
-        )?;
-        self.binary = slot.to_path_buf();
-        self.captured = Some(captured);
-        Ok(())
+        )
     }
 
     #[cfg(test)]
@@ -440,6 +450,16 @@ impl InstalledCandidate {
         writer: impl FnOnce(&mut std::fs::File, &[u8]) -> std::io::Result<()>,
     ) -> Result<(), String> {
         self.freeze_with(slot, writer)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn capture_unpublished_with_gate_for_test(
+        &self,
+        slot: &Path,
+        before_create: impl FnOnce() -> Result<(), String>,
+    ) -> Result<(), String> {
+        let captured = self.capture_with(slot, before_create, |file, bytes| file.write_all(bytes))?;
+        captured.revalidate(&self.executable_bytes)
     }
 
     pub(crate) fn custody_json(&self) -> serde_json::Value {

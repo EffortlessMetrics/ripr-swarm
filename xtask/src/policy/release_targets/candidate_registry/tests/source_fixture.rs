@@ -708,6 +708,45 @@ fn capture_assert_real_install_identity(
     Ok(selected)
 }
 
+// 4510 successor proof: observed path metadata helper start.
+// Test observations use existing native metadata; this is not custody authority.
+#[derive(Debug, PartialEq, Eq)]
+struct CapturePathMetadata {
+    regular_file: bool,
+    directory: bool,
+    symlink: bool,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    links: u64,
+}
+
+fn capture_path_metadata(path: &Path) -> Result<CapturePathMetadata, String> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        format!(
+            "witness path metadata unavailable at {}: {error}",
+            path.display()
+        )
+    })?;
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    let kind = metadata.file_type();
+    Ok(CapturePathMetadata {
+        regular_file: kind.is_file(),
+        directory: kind.is_dir(),
+        symlink: kind.is_symlink(),
+        #[cfg(unix)]
+        device: metadata.dev(),
+        #[cfg(unix)]
+        inode: metadata.ino(),
+        #[cfg(unix)]
+        links: metadata.nlink(),
+    })
+}
+// 4510 successor proof: observed path metadata helper end.
+
 #[test]
 fn real_compiler_bound_witness_consumes_frozen_reference_after_mutable_outputs_change()
 -> Result<(), String> {
@@ -844,6 +883,44 @@ fn real_compiler_bound_capture_refuses_occupied_regular_and_link_canaries() -> R
         )?;
         assert!(!owned.join("must-not-be-created").exists());
     }
+    // 4510 successor proof: byte-equal occupied payload start.
+    // Initial capture refuses even an actual byte-equal payload. Only the
+    // already-published handle may reuse a frozen reference.
+    let actual_bytes = fs::read(&original_path).map_err(|error| error.to_string())?;
+    assert!(
+        !actual_bytes.is_empty(),
+        "real installed payload must be nonempty"
+    );
+    assert_eq!(
+        original_custody["executable_sha256"],
+        sha256_hex(&actual_bytes)
+    );
+    let byte_equal = owned.join(format!(
+        "occupied-byte-equal{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    fs::write(&byte_equal, &actual_bytes).map_err(|error| error.to_string())?;
+    let byte_equal_before = capture_path_metadata(&byte_equal)?;
+    let refused = installed.freeze_into(&byte_equal);
+    assert!(
+        fs::symlink_metadata(&byte_equal).is_ok(),
+        "byte-equal occupied payload must survive initial capture refusal"
+    );
+    assert_eq!(
+        fs::read(&byte_equal).map_err(|error| error.to_string())?,
+        actual_bytes,
+        "initial capture must not rewrite byte-equal occupied payload"
+    );
+    assert_eq!(
+        capture_path_metadata(&byte_equal)?,
+        byte_equal_before,
+        "byte-equal occupied payload must preserve native type and identity"
+    );
+    require_refusal(refused, "capture destination creation refused")?;
+    assert_eq!(installed.binary(), original_path.as_path());
+    assert_eq!(installed.custody_json(), original_custody);
+    // 4510 successor proof: byte-equal occupied payload end.
+
     let canary = owned.join("protected-canary");
     let canary_bytes = b"preserve this occupied witness canary\n";
     fs::write(&canary, canary_bytes).map_err(|error| error.to_string())?;
@@ -861,7 +938,29 @@ fn real_compiler_bound_capture_refuses_occupied_regular_and_link_canaries() -> R
         slots
     };
     for slot in slots {
+        // 4510 successor proof: occupied metadata before start.
+        let slot_before = capture_path_metadata(&slot)?;
+        let canary_before = capture_path_metadata(&canary)?;
+        // 4510 successor proof: occupied metadata before end.
         let refused = installed.freeze_into(&slot);
+        // 4510 successor proof: occupied metadata after start.
+        assert!(
+            fs::symlink_metadata(&slot).is_ok(),
+            "occupied witness path must survive creation refusal: {}",
+            slot.display()
+        );
+        assert_eq!(
+            capture_path_metadata(&slot)?,
+            slot_before,
+            "occupied witness must preserve native type and identity: {}",
+            slot.display()
+        );
+        assert_eq!(
+            capture_path_metadata(&canary)?,
+            canary_before,
+            "creation refusal must preserve the canary target's native type and identity"
+        );
+        // 4510 successor proof: occupied metadata after end.
         let slot_bytes = fs::read(&slot).map_err(|error| error.to_string())?;
         if slot_bytes != canary_bytes
             || fs::read(&canary).map_err(|error| error.to_string())? != canary_bytes
@@ -960,12 +1059,26 @@ fn real_compiler_bound_partial_capture_cleans_only_its_observed_owned_object() -
     let canary = owned.join("partial-protected-canary");
     let canary_bytes = b"do not clean a pre-existing or replacement witness\n";
     fs::write(&canary, canary_bytes).map_err(|error| error.to_string())?;
+    // 4510 successor proof: partial canary metadata before start.
+    let canary_before = capture_path_metadata(&canary)?;
+    // 4510 successor proof: partial canary metadata before end.
     let mut occupied_writer_reached = false;
     let refused = installed.freeze_into_with_writer_for_test(&canary, |_, _| {
         occupied_writer_reached = true;
         Err(std::io::Error::other("occupied writer must not run"))
     });
     assert!(!occupied_writer_reached);
+    // 4510 successor proof: partial canary metadata after start.
+    assert!(
+        fs::symlink_metadata(&canary).is_ok(),
+        "occupied failure hook must retain its pre-existing canary"
+    );
+    assert_eq!(
+        capture_path_metadata(&canary)?,
+        canary_before,
+        "occupied failure hook must preserve canary native type and identity"
+    );
+    // 4510 successor proof: partial canary metadata after end.
     assert_eq!(
         fs::read(&canary).map_err(|error| error.to_string())?,
         canary_bytes
@@ -983,6 +1096,12 @@ fn real_compiler_bound_partial_capture_cleans_only_its_observed_owned_object() -
             Err(std::io::Error::other("injected replacement-path failure"))
         });
         require_refusal(refused, "injected replacement-path failure")?;
+        // 4510 successor proof: hardlink replacement presence start.
+        assert!(
+            fs::symlink_metadata(&replaced).is_ok(),
+            "failure cleanup must retain the hardlink replacement witness"
+        );
+        // 4510 successor proof: hardlink replacement presence end.
         assert_eq!(
             fs::read(&replaced).map_err(|error| error.to_string())?,
             canary_bytes
@@ -997,6 +1116,70 @@ fn real_compiler_bound_partial_capture_cleans_only_its_observed_owned_object() -
         );
         assert_eq!(installed.binary(), original_path.as_path());
     }
+    // 4510 successor proof: single-link inode replacement start.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let replaced = owned.join("partial-with-single-link-replacement");
+        let own_backup = owned.join("owned-partial-single-link-backup");
+        let replacement_bytes = b"retain this different single-link regular witness\n";
+        let mut replacement_before = None;
+        let refused = installed.freeze_into_with_writer_for_test(&replaced, |file, retained| {
+            if retained != actual_bytes {
+                return Err(std::io::Error::other(
+                    "wrong retained compiler-produced bytes",
+                ));
+            }
+            file.write_all(&retained[..16])?;
+            fs::rename(&replaced, &own_backup)?;
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&replaced)?
+                .write_all(replacement_bytes)?;
+            let created = file.metadata()?;
+            let replacement = fs::symlink_metadata(&replaced)?;
+            if !replacement.file_type().is_file()
+                || replacement.nlink() != 1
+                || (replacement.dev(), replacement.ino()) == (created.dev(), created.ino())
+            {
+                return Err(std::io::Error::other(
+                    "SETUP: replacement must be a different single-link regular inode",
+                ));
+            }
+            replacement_before =
+                Some(capture_path_metadata(&replaced).map_err(std::io::Error::other)?);
+            Err(std::io::Error::other(
+                "injected single-link replacement failure",
+            ))
+        });
+        require_refusal(refused, "injected single-link replacement failure")?;
+        assert!(
+            fs::symlink_metadata(&replaced).is_ok(),
+            "failure cleanup must retain a different single-link regular replacement"
+        );
+        let expected = replacement_before.ok_or_else(|| {
+            "SETUP: writer did not observe the different single-link replacement".to_string()
+        })?;
+        assert_eq!(
+            capture_path_metadata(&replaced)?,
+            expected,
+            "failure cleanup must preserve replacement type, single link and different inode"
+        );
+        assert_eq!(
+            fs::read(&replaced).map_err(|error| error.to_string())?,
+            replacement_bytes,
+            "failure cleanup must not modify the single-link replacement bytes"
+        );
+        assert_eq!(
+            fs::read(&own_backup).map_err(|error| error.to_string())?,
+            actual_bytes[..16]
+        );
+        assert_eq!(installed.binary(), original_path.as_path());
+        assert_eq!(installed.custody_json(), original_custody);
+    }
+    // 4510 successor proof: single-link inode replacement end.
+
     let retry = owned.join(format!(
         "complete-after-failure{}",
         std::env::consts::EXE_SUFFIX
@@ -1020,3 +1203,202 @@ fn real_compiler_bound_partial_capture_cleans_only_its_observed_owned_object() -
     );
     fixture.guard.finish()
 }
+
+// 4510 successor proof: competing creators test start.
+#[test]
+fn real_compiler_bound_competing_capture_creators_leave_one_complete_witness() -> Result<(), String>
+{
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, CandidateExecution,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Condvar, Mutex};
+
+    let fixture = create_source_fixture()?;
+    let (input, owned) = capture_fixture_input(&fixture, "actual competing-capture producer")?;
+    let rustc = capture_observed_verbose_version("rustc", &fixture.source)?;
+    let cargo = capture_observed_verbose_version("cargo", &fixture.source)?;
+    let mut installed =
+        AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &owned)?
+            .install(&owned)?;
+    let original_path = installed.binary().to_path_buf();
+    let actual_bytes = fs::read(&original_path).map_err(|error| error.to_string())?;
+    let original_custody = installed.custody_json();
+    capture_assert_real_install_identity(
+        &original_custody,
+        &original_path,
+        &actual_bytes,
+        &owned,
+        &rustc,
+        &cargo,
+    )?;
+    let before = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 real installed positive before competing creators",
+    )?;
+    assert!(before.success && before.status == Some(0));
+    assert_eq!(before.stdout, "fixture source A\n");
+    eprintln!(
+        "4510 real competing-creator setup: {}",
+        json!({"custody": original_custody, "native_success": before.success,
+            "native_status": before.status, "native_stdout": before.stdout})
+    );
+    let slot = owned.join(format!(
+        "one-competing-witness{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    assert!(
+        !slot.exists(),
+        "SETUP: competing witness slot must be absent"
+    );
+    let gate = (Mutex::new(0_usize), Condvar::new());
+    let gate_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let reached = AtomicUsize::new(0);
+    let attempt = || {
+        // Both callbacks run after any precheck and immediately before the
+        // same native creation owner. The test never copies an executable.
+        let result = installed.capture_unpublished_with_gate_for_test(&slot, || {
+            let mut participants = gate.0.lock().map_err(|_| {
+                "INSTRUMENT: competing capture creation gate lock poisoned".to_string()
+            })?;
+            reached.fetch_add(1, Ordering::SeqCst);
+            *participants += 1;
+            gate.1.notify_all();
+            if std::time::Instant::now() >= gate_deadline {
+                return Err("INSTRUMENT: competing capture creation gate deadline expired before both creators arrived".to_string());
+            }
+            while *participants < 2 {
+                let remaining = gate_deadline
+                    .checked_duration_since(std::time::Instant::now())
+                    .filter(|remaining| !remaining.is_zero())
+                    .ok_or_else(|| {
+                        "INSTRUMENT: competing capture creation gate deadline expired before both creators arrived".to_string()
+                    })?;
+                let (observed, wait) = gate.1.wait_timeout(participants, remaining)
+                    .map_err(|_| {
+                        "INSTRUMENT: competing capture creation gate wait poisoned".to_string()
+                    })?;
+                participants = observed;
+                if wait.timed_out() && *participants < 2 {
+                    return Err("INSTRUMENT: competing capture creation gate deadline expired before both creators arrived".to_string());
+                }
+            }
+            Ok(())
+        });
+        let completed_metadata = result.is_ok().then(|| capture_path_metadata(&slot));
+        (result, completed_metadata)
+    };
+    let outcomes = std::thread::scope(|scope| {
+        let first = scope.spawn(&attempt);
+        let second = scope.spawn(&attempt);
+        // Reap both scoped workers before propagating either failure. A peer
+        // that fails before its gate cannot leave an unbounded arrival wait.
+        let first = first.join();
+        let second = second.join();
+        let first = first.map_err(|_| {
+            "INSTRUMENT: competing capture first worker did not complete normally".to_string()
+        })?;
+        let second = second.map_err(|_| {
+            "INSTRUMENT: competing capture second worker did not complete normally".to_string()
+        })?;
+        Ok::<_, String>([first, second])
+    })?;
+    for (result, _) in &outcomes {
+        if let Err(error) = result
+            && error.starts_with("INSTRUMENT:")
+        {
+            return Err(error.clone());
+        }
+    }
+    assert_eq!(
+        reached.load(Ordering::SeqCst),
+        2,
+        "both real capture attempts must reach the native-creation gate"
+    );
+    let mut winners = 0;
+    let mut refusals = Vec::new();
+    let mut winner_metadata = None;
+    for (result, completed_metadata) in outcomes {
+        match result {
+            Ok(()) => {
+                winners += 1;
+                winner_metadata = completed_metadata;
+            }
+            Err(error) => refusals.push(error),
+        }
+    }
+    assert_eq!(
+        winners, 1,
+        "competing creators must publish exactly one complete capture; refusals={refusals:?}"
+    );
+    assert_eq!(
+        refusals.len(),
+        1,
+        "competing creators must have exactly one loser"
+    );
+    require_refusal(
+        Err::<(), String>(refusals[0].clone()),
+        "capture destination creation refused",
+    )?;
+    assert!(
+        fs::symlink_metadata(&slot).is_ok(),
+        "losing creator must not remove the completed winning witness"
+    );
+    let winner_metadata = winner_metadata
+        .ok_or_else(|| "successful capture did not observe its completed native file".to_string())?
+        .map_err(|error| format!("completed winning witness was lost: {error}"))?;
+    assert!(winner_metadata.regular_file && !winner_metadata.symlink);
+    #[cfg(unix)]
+    assert_eq!(winner_metadata.links, 1);
+    assert_eq!(
+        capture_path_metadata(&slot)?,
+        winner_metadata,
+        "losing creator must preserve the winner's complete native file and inode"
+    );
+    assert_eq!(
+        fs::read(&slot).map_err(|error| error.to_string())?,
+        actual_bytes,
+        "winning witness must contain the complete real compiler-selected installed bytes"
+    );
+    assert_eq!(installed.binary(), original_path.as_path());
+    assert_eq!(installed.custody_json(), original_custody);
+
+    // The gate intentionally publishes no InstalledCandidate state. Reopening
+    // that completed slot is initial recapture, never implicit handle reuse.
+    require_refusal(
+        installed.freeze_into(&slot),
+        "capture destination creation refused",
+    )?;
+    assert_eq!(capture_path_metadata(&slot)?, winner_metadata);
+    assert_eq!(
+        fs::read(&slot).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(installed.binary(), original_path.as_path());
+    assert_eq!(installed.custody_json(), original_custody);
+    let clean = owned.join(format!(
+        "published-after-competing-capture{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    installed.freeze_into(&clean)?;
+    assert_eq!(
+        fs::read(&clean).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    let consumed = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 actual published capture after competing creators",
+    )?;
+    assert!(consumed.success && consumed.status == Some(0));
+    assert_eq!(consumed.stdout, "fixture source A\n");
+    eprintln!(
+        "4510 competing creation and genuine published consumer: {}",
+        json!({"custody": installed.custody_json(), "successful_creators": winners,
+            "refusals": refusals, "unpublished_witness": slot,
+            "unpublished_sha256": sha256_hex(&actual_bytes)})
+    );
+    fixture.guard.finish()
+}
+// 4510 successor proof: competing creators test end.

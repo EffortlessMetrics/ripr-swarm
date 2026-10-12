@@ -52,8 +52,10 @@ pub(crate) fn capture_retained_executable_with(
     bytes: &[u8],
     permissions: Permissions,
     path: &Path,
+    before_create: impl FnOnce() -> Result<(), String>,
     writer: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
 ) -> Result<CapturedFile, String> {
+    before_create()?;
     let mut file = OpenOptions::new()
         .write(true)
         .create_new(true)
