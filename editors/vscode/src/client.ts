@@ -1626,12 +1626,14 @@ export class RiprClientController {
     }
     if (message.startsWith('ripr analysis refresh completed')) {
       const completed = this.statusAfterRefreshCompleted(message);
-      // A completed refresh always describes the saved workspace — dirty
-      // buffers are unsaved client-side state, not analysis input — so keep
-      // the newest completed status even while documents are dirty. Closing
-      // the last dirty buffer without saving then restores the freshest
-      // snapshot instead of an older generation (#7340).
-      this.lastCompletedStatus = completed;
+      // Remember the saved-workspace result so closing an unsaved buffer
+      // without saving can restore it instead of inventing a queue that no
+      // close-path refresh may resolve (#7340). A completed refresh always
+      // describes the saved workspace — dirty buffers are unsaved client-side
+      // state — so store the clean completion form even while documents are
+      // dirty; the dirty-buffer overlay applies to the visible status only
+      // and must not survive into the restored close-path status.
+      this.lastCompletedStatus = statusFromRefreshCompletedMessage(message);
       this.updateStatus(completed);
       void this.refreshFirstUsefulActionStatus();
       return;

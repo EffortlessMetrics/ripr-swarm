@@ -3998,6 +3998,9 @@ suite('Extension Smoke', () => {
       // analysis.
       assert.ok(context.status.text.includes('ripr: diagnostics'));
       assert.ok(String(context.status.tooltip).includes(document.uri.fsPath));
+      // The dirty-buffer overlay must not survive into the restored status:
+      // the buffer is closed, so no unsaved-changes wording may remain.
+      assert.ok(!String(context.status.tooltip).includes('Unsaved routed files'));
       await context.controller.showStatus();
       assert.ok(context.infoMessages.at(-1)?.includes('ripr analysis completed'));
     } finally {
