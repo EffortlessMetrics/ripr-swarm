@@ -126,13 +126,54 @@ impl<'index> TargetedCallSyntax<'index> {
                     test,
                     &mut occurrences,
                 );
-                retain_hidden(
+                // Preserve the producer's documented parameter-input call surface.
+                // Recognition alone never clears opacity: this exact attribute must
+                // successfully parse and map to the selected function's source.
+                let mut mapped_attributes = Vec::new();
+                for attribute in function.syntax().descendants().filter_map(ast::Attr::cast) {
+                    if !attribute
+                        .syntax()
+                        .ancestors()
+                        .any(|node| ast::Param::can_cast(node.kind()))
+                        || attribute
+                            .syntax()
+                            .ancestors()
+                            .filter_map(ast::Fn::cast)
+                            .next()
+                            .as_ref()
+                            != Some(function)
+                        || !crate::analysis::extract::runs_its_arguments(
+                            &attribute.syntax().text().to_string(),
+                        )
+                    {
+                        continue;
+                    }
+                    let Some(ast::Meta::TokenTreeMeta(meta)) = attribute.meta() else {
+                        continue;
+                    };
+                    let Some(tree) = meta.token_tree() else {
+                        continue;
+                    };
+                    if collect_operands(
+                        &tree,
+                        None,
+                        &facts.source,
+                        opaque_source,
+                        lines,
+                        test,
+                        &mut occurrences,
+                    ) {
+                        mapped_attributes.push(attribute.syntax().clone());
+                    }
+                }
+                retain_hidden_except(
                     function.syntax(),
                     opaque_source,
                     0,
                     lines,
                     test,
                     &mut occurrences,
+                    &mapped_attributes,
                 );
                 for invocation in function
                     .syntax()
@@ -191,19 +232,15 @@ impl<'index> TargetedCallSyntax<'index> {
                     let Some(tree) = invocation.token_tree() else {
                         continue;
                     };
-                    let range = tree.syntax().text_range();
-                    let start = usize::from(range.start()) + 1;
-                    let end = usize::from(range.end()).saturating_sub(1);
-                    let Some(tokens) = facts.source.get(start..end) else {
-                        continue;
-                    };
-                    // A tuple wrapper gives the parser complete expressions, including
-                    // commas inside generic arguments. Only semantic operands are read;
-                    // diagnostic formatting arguments retain unproven lexical rows.
-                    const PREFIX: &str = "fn occurrence(){let _ = (";
-                    let tokens = tokens.trim_end().strip_suffix(',').unwrap_or(tokens);
-                    let wrapped = format!("{PREFIX}{tokens},);}}");
-                    let Some(operand_parse) = parse_clean_source_file(&wrapped) else {
+                    if !collect_operands(
+                        &tree,
+                        Some(operands),
+                        &facts.source,
+                        opaque_source,
+                        lines,
+                        test,
+                        &mut occurrences,
+                    ) {
                         opaque(
                             invocation.syntax(),
                             opaque_source,
@@ -212,84 +249,6 @@ impl<'index> TargetedCallSyntax<'index> {
                             test,
                             &mut occurrences,
                         );
-                        continue;
-                    };
-                    let Some(tuple) = operand_parse
-                        .tree()
-                        .syntax()
-                        .descendants()
-                        .find_map(ast::TupleExpr::cast)
-                    else {
-                        continue;
-                    };
-                    if tuple.fields().count() < operands {
-                        opaque(
-                            invocation.syntax(),
-                            opaque_source,
-                            0,
-                            lines,
-                            test,
-                            &mut occurrences,
-                        );
-                        continue;
-                    }
-                    for (position, operand) in tuple.fields().enumerate() {
-                        let Some(shift) = isize::try_from(start)
-                            .ok()
-                            .zip(isize::try_from(PREFIX.len()).ok())
-                            .and_then(|(start, prefix)| start.checked_sub(prefix))
-                        else {
-                            opaque(
-                                invocation.syntax(),
-                                opaque_source,
-                                0,
-                                lines,
-                                test,
-                                &mut occurrences,
-                            );
-                            break;
-                        };
-                        if position >= operands {
-                            opaque(
-                                operand.syntax(),
-                                opaque_source,
-                                shift,
-                                lines,
-                                test,
-                                &mut occurrences,
-                            );
-                            continue;
-                        }
-                        collect(
-                            operand.syntax(),
-                            &facts.source,
-                            shift,
-                            lines,
-                            test,
-                            &mut occurrences,
-                        );
-                        retain_hidden(
-                            operand.syntax(),
-                            opaque_source,
-                            shift,
-                            lines,
-                            test,
-                            &mut occurrences,
-                        );
-                        for nested in operand
-                            .syntax()
-                            .descendants()
-                            .filter_map(ast::MacroCall::cast)
-                        {
-                            opaque(
-                                nested.syntax(),
-                                opaque_source,
-                                shift,
-                                lines,
-                                test,
-                                &mut occurrences,
-                            );
-                        }
                     }
                 }
             }
@@ -323,6 +282,66 @@ impl<'index> TargetedCallSyntax<'index> {
         });
         occurrences
     }
+}
+
+/// Parse expression operands without expanding their enclosing macro/attribute.
+/// Assertion diagnostics remain opaque; documented parameter inputs use all
+/// operands. The same source mapping and capture filter apply to both surfaces.
+fn collect_operands(
+    tree: &ast::TokenTree,
+    operand_limit: Option<usize>,
+    source: &str,
+    opaque_source: &str,
+    lines: &LineIndex,
+    test: &TestSummary,
+    out: &mut Vec<TargetedCallOccurrence>,
+) -> bool {
+    let range = tree.syntax().text_range();
+    let start = usize::from(range.start()) + 1;
+    let end = usize::from(range.end()).saturating_sub(1);
+    let Some(tokens) = source.get(start..end) else {
+        return false;
+    };
+    const PREFIX: &str = "fn occurrence(){let _ = (";
+    let tokens = tokens.trim_end().strip_suffix(',').unwrap_or(tokens);
+    let wrapped = format!("{PREFIX}{tokens},);}}");
+    let Some(parse) = parse_clean_source_file(&wrapped) else {
+        return false;
+    };
+    let Some(tuple) = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::TupleExpr::cast)
+    else {
+        return false;
+    };
+    if operand_limit.is_some_and(|limit| tuple.fields().count() < limit) {
+        return false;
+    }
+    let Some(shift) = isize::try_from(start)
+        .ok()
+        .zip(isize::try_from(PREFIX.len()).ok())
+        .and_then(|(start, prefix)| start.checked_sub(prefix))
+    else {
+        return false;
+    };
+    for (position, operand) in tuple.fields().enumerate() {
+        if operand_limit.is_some_and(|limit| position >= limit) {
+            opaque(operand.syntax(), opaque_source, shift, lines, test, out);
+            continue;
+        }
+        collect(operand.syntax(), source, shift, lines, test, out);
+        retain_hidden(operand.syntax(), opaque_source, shift, lines, test, out);
+        for nested in operand
+            .syntax()
+            .descendants()
+            .filter_map(ast::MacroCall::cast)
+        {
+            opaque(nested.syntax(), opaque_source, shift, lines, test, out);
+        }
+    }
+    true
 }
 
 fn collect(
@@ -495,9 +514,21 @@ fn retain_hidden(
     test: &TestSummary,
     out: &mut Vec<TargetedCallOccurrence>,
 ) {
+    retain_hidden_except(root, source, shift, lines, test, out, &[]);
+}
+
+fn retain_hidden_except(
+    root: &SyntaxNode,
+    source: &str,
+    shift: isize,
+    lines: &LineIndex,
+    test: &TestSummary,
+    out: &mut Vec<TargetedCallOccurrence>,
+    mapped_attributes: &[SyntaxNode],
+) {
     for node in root.descendants().filter(|node| node != root) {
         if ast::Fn::can_cast(node.kind())
-            || ast::Attr::can_cast(node.kind())
+            || (ast::Attr::can_cast(node.kind()) && !mapped_attributes.contains(&node))
             || ast::MacroRules::can_cast(node.kind())
             || ast::MacroDef::can_cast(node.kind())
         {

@@ -94,7 +94,10 @@ within that file. An unknown or ambiguous node is a named limitation
 `changed_test_owner_ambiguous`).
 Selected owner admission uses individual parser-backed source occurrences,
 including byte-mapped expression operands of unambiguously bound `assert!`,
-`assert_eq!` and `assert_ne!`. Supported local/free call qualifiers retain their
+`assert_eq!` and `assert_ne!`, and already-captured execution-bearing parameter
+attribute expressions documented by RIPR-SPEC-0115. Parameter inputs use the
+same existing owner-binding checks; this preserves capture behavior without
+proving arbitrary proc-macro harness execution. Supported local/free call qualifiers retain their
 identity across lines. Same-line occurrences cannot lend each other authority;
 opaque macros, diagnostic formatting operands and unmodeled captures cannot
 authorize a workspace owner. Parsing is cached only within one immutable index
