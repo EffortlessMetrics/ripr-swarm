@@ -706,9 +706,9 @@ rule only for an assertion whose context was admitted.
    pin), so every family that consumes the shared admission (`return_value`,
    `error_path`, `predicate`) sees one answer.
 
-### Proposed rule 7a: a fallible literal check (#4478)
+### Rule 7a: a fallible literal check (#4478)
 
-Design-review proposal, not implemented or an expansion of accepted rule 7.
+A bounded extension separate from accepted rule 7.
 This slice targets only a parameterless free owner with an unconditional `u8`
 literal tail, observed through one test-only helper. The frozen acceptance is
 UB-review `03f351a1e32bba33dbe5090fb428143e85ee3b21`,
@@ -717,6 +717,12 @@ binds `let actual = super::answer();`, checks `ensure!(actual == 7);`, ends
 in `Ok(())`, and the collected `Result<()>` test ends in `check_answer()`.
 The helper and test are top-level items in the out-of-line module declared by
 `#[cfg(test)] #[path = "test_support.rs"] mod tests;` in the library root.
+
+The initial adapter admits a standalone owning package at the analysis root.
+Its library root has exactly the owner and one module declaration; the child
+file has exactly the canonical import, helper and test. Additional declarations,
+workspace-member ownership and unrecognized token forms yield no receipt. This
+closed grammar is intentionally narrower than general helper admission.
 
 All premises below must come from the same immutable index and dependency
 snapshot; a strong related oracle never substitutes for a missing premise.
@@ -835,8 +841,7 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    identity; otherwise this narrow result must bypass classified reuse. A
    generation bump alone cannot make changed dependency inputs safe.
 
-Proposed acceptance/control matrix (static outcomes are implementation targets,
-not observations on the current source):
+Acceptance/control matrix:
 
 | Subject | Runtime with answer 8 | Required static result |
 | --- | --- | --- |
@@ -852,7 +857,7 @@ not observations on the current source):
 | Refused/ambiguous out-of-line parent, disabled/ignored/panic-expected test, custom Result/Termination or non-libtest target | not reliable | no new receipt or exposure |
 | Existing rule-7 assert_eq helpers and numeric assert_eq control | matched controls retained | accepted admission unchanged; no generic numeric propagation change |
 
-Implementation sequence after independent design review:
+Implementation and validation obligations:
 
 1. Retain the frozen nine-case static/runtime receipts and add the exact positive
    public-API discriminator first. Observe its intended non-exposed-versus-exposed

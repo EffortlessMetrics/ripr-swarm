@@ -416,13 +416,7 @@ pub(crate) fn verified_anyhow_identity(package_root: &Path) -> Option<AnyhowIden
         return None;
     }
     Some(AnyhowIdentity {
-        semantic_digest: digest(
-            format!(
-                "SPEC-0197-7a:{package_id}:{CHECKSUM}:{}",
-                library_root.to_str()?
-            )
-            .as_bytes(),
-        ),
+        semantic_digest: digest(format!("SPEC-0197-7a:{package_id}:{CHECKSUM}").as_bytes()),
         validation_digest: digest(&serde_json::to_vec(&(after, digest(&bytes))).ok()?),
         library_root,
     })

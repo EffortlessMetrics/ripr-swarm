@@ -11938,6 +11938,14 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/fallible_check.rs::tests::literal_witness_rejects_receipt_and_owner_identity_mutations",
+  "crates/ripr/tests/fallible_owner_return.rs::frozen_fallible_literal_helper_exposes_exact_owner_return",
+  "crates/ripr/tests/fallible_owner_return.rs::fallible_literal_helper_refuses_unbound_or_ineffective_oracles",
+  "crates/ripr/tests/fallible_owner_return.rs::warm_analysis_revalidates_config_lock_and_source_role",
+  "crates/ripr/src/analysis/workspace/assertion_dependency.rs::tests::exact_regular_manifest_and_refusals",
+  "crates/ripr/src/analysis/workspace/assertion_dependency.rs::tests::injected_config_and_environment_refusals",
+  "crates/ripr/src/analysis/workspace/assertion_dependency.rs::tests::canonical_lock_requires_unique_checksum_identity",
+  "crates/ripr/src/analysis/workspace/assertion_dependency.rs::tests::resolved_regular_edge_and_library_controls",
   "crates/ripr/tests/owner_pin_execution.rs::trait_shadow_corpus_matches_compiled_owner_dispatch",
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_total_pinned_equal_to_its_subtotal_names_the_unseen_operand",
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::different_pinned_values_discriminate_the_operand",

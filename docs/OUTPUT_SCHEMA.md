@@ -18266,7 +18266,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.62",
+      "schema_version": "1.63",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -18864,3 +18864,14 @@ always `false`: this historical report verifies a candidate-only disposition but
 construct, mutate, merge, qualify, or publish a candidate tree. Markdown is a
 projection of the same normalized report and cannot strengthen a
 `reconcile_required` result.
+
+
+The SPEC-0197 rule-7a fallible literal check adds a private optional observer
+receipt to the propagation witness. Its semantic digest binds owner/helper/test,
+literal values and canonical dependency identity; its separate validation digest
+binds source hashes, spans, coordinates and effective Cargo configuration.
+Existing witnesses without this receipt retain their semantic digest. Full
+classified cache generation 1.63 and compact/sharded generation 0.69 reject
+prior envelopes; eligible standalone packages also revalidate locked dependency
+and effective configuration identity before classified reuse. Public finding
+and oracle schemas are unchanged.

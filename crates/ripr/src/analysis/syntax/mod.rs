@@ -14,6 +14,7 @@ pub(crate) use owner_pin::{
     local_empty_macro_names, macro_binding_scan, macro_call_is_statement, owner_pin_assertions,
     returns_leave_the_function, trusted_macro_binding_sites,
 };
+pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
 pub(crate) mod ra;
 
 pub use adapter::{
