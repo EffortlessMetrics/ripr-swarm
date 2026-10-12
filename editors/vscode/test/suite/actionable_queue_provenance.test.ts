@@ -160,12 +160,26 @@ suite('Genuine actionable queue consumer', () => {
     }],
     ['unsafe actionable sibling', q => {
       const sibling = structuredClone(q.packets[0]); sibling.receipt_command_or_path = '../outside.json'; q.packets.push(sibling);
+    }],
+    ['actionable sibling missing identity', q => {
+      const sibling = structuredClone(q.packets[0]); delete sibling.canonical_gap_id; q.packets.push(sibling);
+    }],
+    ['actionable sibling missing receipt', q => {
+      const sibling = structuredClone(q.packets[0]); delete sibling.receipt_command_or_path; q.packets.push(sibling);
+    }],
+    ['canonical actionable sibling missing verification', q => {
+      const sibling = structuredClone(q.packets[0]);
+      sibling.verify_command_source = 'canonical_item.verify_command'; delete sibling.verify_command; q.packets.push(sibling);
     }]
   ];
 
   for (const [name, mutate] of controls) {
     test(`Copy Current Repair Packet refuses ${name}`, async () => {
       const changed = structuredClone(genuine); mutate(changed);
+      if (changed.packets.length === 2) {
+        Object.assign(changed.summary, { actionable_gaps: 2, canonical_items: 2,
+          packets_emitted: 2, public_projection_eligible_packets: 2, raw_signals: 2 });
+      }
       const h = controllerHarness(JSON.stringify(changed));
       try {
         await h.controller.start(); h.reads.length = 0;
