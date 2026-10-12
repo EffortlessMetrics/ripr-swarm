@@ -578,7 +578,8 @@ fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bo
     let Some(arguments) = close.and_then(|close| rest.get(open + 1..close)) else {
         return false;
     };
-    if arguments.contains('\'') {
+    // A nested macro (`stringify!(owner(1))`) may never evaluate its tokens.
+    if arguments.contains('\'') || contains_macro_invocation(arguments) {
         return false;
     }
     arguments.match_indices(owner_name).any(|(start, _)| {
@@ -589,6 +590,18 @@ fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bo
             .is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | ':' | '.'));
         let after = &arguments[start + owner_name.len()..];
         !qualified_or_ident && after.trim_start().starts_with('(')
+    })
+}
+
+fn contains_macro_invocation(text: &str) -> bool {
+    text.match_indices('!').any(|(bang, _)| {
+        let before = text[..bang].trim_end();
+        let after = text[bang + 1..].trim_start();
+        before
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+            && after.starts_with(['(', '[', '{'])
     })
 }
 
@@ -991,11 +1004,24 @@ mod tests {
         );
         // A same-named item on another path, and arguments that an unmasked
         // char literal lets run past the statement, do not count.
-        let tricky = "{\n    assert_custom!(Bar::bulk(2).is_ok());\n    assert_custom!(c == '('); let _ = bulk(1);\n    assert_twice!(c == '(' || c == '(');\n    let _ = bulk(1);\n    let close = (')', ')');\n    assert_multi!(\n        0.5,\n        bulk (3)\n    );\n}\n";
+        let tricky = "{\n    assert_custom!(Bar::bulk(2).is_ok());\n    assert_custom!(c == '('); let _ = bulk(1);\n    assert_twice!(c == '(' || c == '(');\n    let _ = bulk(1);\n    let close = (')', ')');\n    assert_quoted!(stringify!(bulk(1)), \"bulk(1)\");\n    assert_multi!(\n        0.5,\n        bulk (3)\n    );\n}\n";
         assert_eq!(
             unresolved_assertion_macro_invocations(tricky, 1, Some("bulk")),
-            vec![("assert_multi".to_string(), 7)]
+            vec![("assert_multi".to_string(), 8)]
         );
+        // Empty and whitespace-only argument spans name no call.
+        assert!(!super::macro_arguments_call("assert_empty!();", 13, "bulk"));
+        assert!(!super::macro_arguments_call(
+            "assert_space!(   );",
+            13,
+            "bulk"
+        ));
+        assert!(!super::macro_arguments_call("assert_open!(", 12, "bulk"));
+        assert!(super::macro_arguments_call(
+            "assert_flag!(bulk(1));",
+            12,
+            "bulk"
+        ));
     }
 
     #[test]

@@ -542,3 +542,21 @@ fn a_direct_test_with_a_recognized_oracle_keeps_the_gap() -> Result<(), String> 
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
 }
+
+#[test]
+fn an_owner_call_quoted_by_stringify_keeps_the_gap() -> Result<(), String> {
+    // `stringify!` turns the call into text; the owner never runs.
+    let fixture = Fixture::new(
+        "custom-assert-stringify",
+        &CUSTOM_ASSERT.replacen(
+            "        assert_rate!(inner_rate(4), 12);",
+            "        assert_rate!(stringify!(inner_rate(4)), \"inner_rate(4)\");",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert_custom_assert_construction(&finding, false);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
