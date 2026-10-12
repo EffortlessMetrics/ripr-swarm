@@ -10,4 +10,4 @@
   body rebinds by destructuring (`const { cost } = helpers`, or
   `const { p } = helpers` after `import { price as p }`) no longer counts
   as the owner. Such a test used to read `exposed` for an alias rename
-  while the assertion observed the helper.
+  while the assertion observed the helper (#6654).

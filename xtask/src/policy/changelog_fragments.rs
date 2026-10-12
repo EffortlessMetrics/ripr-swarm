@@ -168,16 +168,6 @@ fn fragment_violations(name: &str, text: &str) -> Vec<String> {
     }
 
     let body: Vec<&str> = lines.collect();
-    match body.iter().find(|line| !line.trim().is_empty()) {
-        None => violations.push(format!("{path}: entry is empty")),
-        Some(line) if !line.starts_with("- ") => violations.push(format!(
-            "{path}: entry must start with a `- ` bullet at column 0, found `{line}`"
-        )),
-        Some(line) if line[2..].trim().is_empty() => {
-            violations.push(format!("{path}: the bullet line has no entry text"))
-        }
-        Some(_) => {}
-    }
     // HTML comments are copied into CHANGELOG.md verbatim at the fold, so a
     // second section line or a reference hidden in a comment is not an entry.
     if body.iter().any(|line| line.contains("<!--")) {
@@ -185,14 +175,45 @@ fn fragment_violations(name: &str, text: &str) -> Vec<String> {
             "{path}: only the first line may hold an HTML comment; one fragment holds one section"
         ));
     }
-    if !body
-        .iter()
-        .filter(|line| !line.contains("<!--"))
-        .any(|line| has_issue_reference(line))
-    {
-        violations.push(format!(
-            "{path}: entry names no issue or PR; add `(#N)` or a link to it"
-        ));
+    // Each `- ` line at column 0 opens an entry; indented lines continue it.
+    // Every entry is folded into the release notes on its own, so each one
+    // must be a bullet and carry its own issue or PR reference.
+    let mut entries: Vec<Vec<&str>> = Vec::new();
+    for line in &body {
+        // Blank lines separate entries; comment lines are reported above.
+        if line.trim().is_empty() || line.trim_start().starts_with("<!--") {
+            continue;
+        }
+        let continues = line.starts_with(char::is_whitespace) && !entries.is_empty();
+        if continues {
+            if let Some(entry) = entries.last_mut() {
+                entry.push(line);
+            }
+            continue;
+        }
+        if !line.starts_with("- ") {
+            violations.push(format!(
+                "{path}: entry must start with a `- ` bullet at column 0, found `{line}`"
+            ));
+        } else if line[2..].trim().is_empty() {
+            violations.push(format!("{path}: the bullet line has no entry text"));
+        }
+        entries.push(vec![line]);
+    }
+    if entries.is_empty() {
+        violations.push(format!("{path}: entry is empty"));
+    }
+    for entry in &entries {
+        if !entry
+            .iter()
+            .filter(|line| !line.contains("<!--"))
+            .any(|line| has_issue_reference(line))
+        {
+            violations.push(format!(
+                "{path}: entry `{}` names no issue or PR; add `(#N)` or a link to it",
+                entry[0].trim()
+            ));
+        }
     }
     violations
 }
@@ -299,10 +320,9 @@ mod tests {
     fn issue_repro_fragment_fails_on_section_and_reference() {
         // The #6341 repro: `hello` passed every gate before this check.
         let violations = fragment_violations("x.md", "hello\n");
-        assert_eq!(violations.len(), 3, "{violations:?}");
+        assert_eq!(violations.len(), 2, "{violations:?}");
         assert!(violations[0].contains("first line must be `<!-- section: X -->`"));
         assert!(violations[1].contains("entry is empty"));
-        assert!(violations[2].contains("names no issue or PR"));
     }
 
     #[test]
@@ -351,6 +371,36 @@ mod tests {
             "<!-- section: Fixed -->\n- x (#1).\n<!-- section: Added -->\n- y (#2).\n";
         let violations = fragment_violations("two.md", two_sections);
         assert_eq!(violations.len(), 1, "{violations:?}");
+    }
+
+    #[test]
+    fn every_entry_is_a_bullet_with_its_own_reference() {
+        let prose = fragment_violations(
+            "1-two.md",
+            "<!-- section: Fixed -->\n- First fix (#1).\n\nSecond fix (#2).\n",
+        );
+        assert!(
+            prose
+                .iter()
+                .any(|v| v.contains("must start with a `- ` bullet") && v.contains("Second fix")),
+            "{prose:?}"
+        );
+        let unreferenced = fragment_violations(
+            "1-two.md",
+            "<!-- section: Fixed -->\n- First fix (#1).\n- Second fix.\n",
+        );
+        assert_eq!(
+            unreferenced,
+            vec![
+                "changelog.d/1-two.md: entry `- Second fix.` names no issue or PR; add `(#N)` or a link to it"
+                    .to_string()
+            ]
+        );
+        let wrapped = fragment_violations(
+            "1-two.md",
+            "<!-- section: Fixed -->\n- First fix\n  wraps here (#1).\n  - nested detail\n- Second fix (#2).\n",
+        );
+        assert!(wrapped.is_empty(), "{wrapped:?}");
     }
 
     #[test]
