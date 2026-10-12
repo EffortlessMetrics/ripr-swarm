@@ -21,6 +21,12 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
         CHANGED,
         "Forbidden"
     ));
+    // A type assertion naming the class is not a binding.
+    let cast =
+        format!("{ERRORS}export function cast(e: unknown) {{\n  return e as NotFound;\n}}\n");
+    assert!(ts_owner_branches_split_class(
+        OWNER, &cast, CHANGED, "NotFound"
+    ));
     // A builtin on the other branch is never a user class instance.
     let builtin = OWNER.replace("new Forbidden(", "new RangeError(");
     assert!(ts_owner_branches_split_class(
@@ -117,6 +123,48 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
             "a generic class header is not read",
             OWNER.to_string(),
             ERRORS.replace("class Forbidden extends Error", "class Forbidden<T> extends NotFound"),
+            "NotFound",
+        ),
+        (
+            "the other class's builtin parent is imported",
+            OWNER.to_string(),
+            format!("import {{ Error }} from \"./base\";\n{ERRORS}"),
+            "NotFound",
+        ),
+        (
+            "the module assigns the other class's builtin parent",
+            OWNER.to_string(),
+            format!("{ERRORS}globalThis.x = 1;\nError = NotFound;\n"),
+            "NotFound",
+        ),
+        (
+            "the asserted class is nested and a non-class export takes its name",
+            OWNER.to_string(),
+            format!(
+                "export const NotFound = Error;\nexport class Forbidden extends Error {{}}\nfunction scope() {{\n  class NotFound extends Error {{}}\n}}\n{OWNER}\n"
+            ),
+            "NotFound",
+        ),
+        (
+            "the asserted class is not exported",
+            OWNER.to_string(),
+            ERRORS.replace("export class NotFound", "class NotFound"),
+            "NotFound",
+        ),
+        (
+            "an export rename takes the asserted name",
+            OWNER.to_string(),
+            ERRORS.replace("export class NotFound", "class NotFound")
+                + "export { Forbidden as NotFound };\n",
+            "NotFound",
+        ),
+        (
+            "the asserted class extends an imported parent",
+            OWNER.to_string(),
+            format!(
+                "import {{ Base }} from \"./base\";\n{}",
+                ERRORS.replace("class NotFound extends Error", "class NotFound extends Base")
+            ),
             "NotFound",
         ),
     ] {

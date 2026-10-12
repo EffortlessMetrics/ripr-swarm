@@ -110,11 +110,16 @@ ladder and in its related-test row, when all of these hold:
 - each branch returns exactly `new X(...)`, with nothing after the
   argument list (`new X().as()` and `new X() || y` fail);
 - one branch returns `C`, the other returns a different class `D`, and the
-  owner's module declares `class C`;
-- `D` can never be a `C`: walking its `extends` chain through classes the
-  module declares reaches a class with no `extends`, or a name in the
-  builtin list below that the module does not itself declare, without
-  meeting `C`;
+  owner's module declares `export class C` outside every block;
+- the module does not otherwise bind a class name the check reads: no
+  `const`, `let` or `var` declaration, `function`, `enum`, `namespace`,
+  import, `export { X as C }` rename or assignment of it, in any scope;
+- every ancestor of `C` is a top-level module class or a builtin, so no
+  imported parent can hand `C` an inherited `Symbol.hasInstance` hook;
+- `D` can never be a `C`: walking its `extends` chain through top-level
+  classes the module declares reaches a class with no `extends`, or a name
+  in the builtin list below that the module does not itself declare or
+  bind, without meeting `C`;
 - the test's `C` is the module's class: the test file imports it under its
   own name from the owner's module (`import { C } from ...`), and neither
   the test body nor an enclosing scope rebinds it (`const C = Error`);
@@ -125,7 +130,9 @@ ladder and in its related-test row, when all of these hold:
 The module scan reads every `class Name` declaration; a module with any
 generic (`class A<T>`), anonymous (`export default class {`) or repeated
 class declaration is not read, and a mixin or member parent
-(`extends mix(C)`, `extends ns.Base`) or an imported class stops the walk.
+(`extends mix(C)`, `extends ns.Base`), a nested class or an imported class
+stops the walk. The binding scan errs towards a binding: a type annotation
+such as `const e: C = ...` counts, and the pin keeps the weak reading.
 Builtins: `Error`, `TypeError`, `RangeError`, `SyntaxError`,
 `ReferenceError`, `EvalError`, `URIError`, `AggregateError`, `Object`,
 `Array`, `Map`, `Set`, `WeakMap`, `WeakSet`, `Date`, `RegExp`, `Promise`.
@@ -163,9 +170,6 @@ documented decisions and proceed"). Recorded on #6654.
 
 ### Known limits
 
-- The asserted class is matched by name. The test's `C` is not resolved to
-  the owner module's binding, so a test-local `const NotFound = Error`
-  imported under that name could be credited.
 - A renamed owner import (`import { errorFor as ef }`) is not read, and
   its pins keep the weak reading.
 - `typescript_oracle_confidence` in the oracle metadata evidence reads the

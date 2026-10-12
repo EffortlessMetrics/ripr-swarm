@@ -73,17 +73,39 @@ fn leading_identifier(text: &str) -> Option<&str> {
         .then_some(name)
 }
 
-/// The classes a module declares (`class Name`), each with its `extends`
-/// clause as written (empty when there is none). `None` when a class
+/// A class the module declares.
+#[derive(Debug)]
+struct ModuleClass {
+    name: String,
+    /// The `extends` clause as written, empty when there is none.
+    parent: String,
+    /// Declared outside every block, so module code and imports see it.
+    top_level: bool,
+    /// Declared as `export class Name`.
+    exported: bool,
+}
+
+/// The classes a module declares (`class Name`). `None` when a class
 /// declaration has no name the scan can read, or a name repeats.
-fn module_classes(masked_module: &str) -> Option<Vec<(String, String)>> {
-    let mut classes: Vec<(String, String)> = Vec::new();
+fn module_classes(masked_module: &str) -> Option<Vec<ModuleClass>> {
+    let mut classes: Vec<ModuleClass> = Vec::new();
     for at in identifier_offsets(masked_module, "class") {
         let rest = masked_module[at + "class".len()..].trim_start();
         let name = leading_identifier(rest)?;
-        if name == "extends" || classes.iter().any(|(known, _)| known == name) {
+        if name == "extends" || classes.iter().any(|known| known.name == name) {
             return None;
         }
+        let before = &masked_module[..at];
+        let top_level = before.matches('{').count() == before.matches('}').count();
+        let exported = before
+            .trim_end()
+            .strip_suffix("export")
+            .is_some_and(|head| {
+                !head
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+            });
         let header = &rest[name.len()..];
         let header = &header[..header.find('{')?];
         // A generic header (`class A<T> extends B`) is not read.
@@ -95,9 +117,121 @@ fn module_classes(masked_module: &str) -> Option<Vec<(String, String)>> {
             .strip_prefix("extends")
             .map_or("", str::trim)
             .to_string();
-        classes.push((name.to_string(), parent));
+        classes.push(ModuleClass {
+            name: name.to_string(),
+            parent,
+            top_level,
+            exported,
+        });
     }
     Some(classes)
+}
+
+/// `true` when the module binds `name` other than by `class name`: a
+/// `const`, `let` or `var` declaration, a `function`, `enum` or `namespace`,
+/// an import, an `export { other as name }` rename, or an assignment
+/// (`name = ...`). Nested scopes and type annotations count too, so the
+/// answer errs towards a binding.
+fn module_rebinds(masked_module: &str, name: &str) -> bool {
+    let declares = |keyword: &str| {
+        identifier_offsets(masked_module, keyword)
+            .into_iter()
+            .any(|at| {
+                let rest = &masked_module[at + keyword.len()..];
+                let end = rest.find(['=', ';']).unwrap_or(rest.len());
+                !identifier_offsets(&rest[..end], name).is_empty()
+            })
+    };
+    if ["const", "let", "var"]
+        .iter()
+        .any(|keyword| declares(keyword))
+    {
+        return true;
+    }
+    // An import statement runs to its `;`.
+    let imports = identifier_offsets(masked_module, "import")
+        .into_iter()
+        .any(|at| {
+            let rest = &masked_module[at..];
+            let end = rest.find(';').unwrap_or(rest.len());
+            !identifier_offsets(&rest[..end], name).is_empty()
+        });
+    // `as` only inside an export clause: `x as NotFound` elsewhere is a type
+    // assertion.
+    let renamed = identifier_offsets(masked_module, "export")
+        .into_iter()
+        .any(|at| {
+            let rest = masked_module[at + "export".len()..].trim_start();
+            let Some(clause) = rest.strip_prefix('{') else {
+                return false;
+            };
+            let clause = &clause[..clause.find('}').unwrap_or(clause.len())];
+            identifier_offsets(clause, name)
+                .into_iter()
+                .any(|at| clause[..at].trim_end().ends_with(" as"))
+        });
+    imports
+        || renamed
+        || identifier_offsets(masked_module, name)
+            .into_iter()
+            .any(|at| {
+                let before = masked_module[..at].trim_end();
+                let previous = before
+                    .rsplit(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '$')))
+                    .next()
+                    .unwrap_or("");
+                let after = masked_module[at + name.len()..].trim_start();
+                ["function", "enum", "namespace"].contains(&previous)
+                    || (after.starts_with('=')
+                        && !after.starts_with("==")
+                        && !after.starts_with("=>"))
+            })
+}
+
+/// The module class named `name` when the owner and the module's importers
+/// see that declaration: declared at the top level and not rebound.
+fn visible_class<'a>(
+    name: &str,
+    classes: &'a [ModuleClass],
+    masked_module: &str,
+) -> Option<&'a ModuleClass> {
+    classes
+        .iter()
+        .find(|class| class.name == name)
+        .filter(|class| class.top_level && !module_rebinds(masked_module, name))
+}
+
+/// The parent a class's `extends` clause names, when it is one plain name:
+/// `extends mixin(Base)` or `extends ns.Base` is not read.
+fn plain_parent(parent: &str) -> Option<&str> {
+    leading_identifier(parent).filter(|next| next.len() == parent.len())
+}
+
+/// `true` when `name` is a builtin class the module does not bind itself.
+fn unbound_builtin(name: &str, classes: &[ModuleClass], masked_module: &str) -> bool {
+    BUILTIN_CLASSES.contains(&name)
+        && !classes.iter().any(|class| class.name == name)
+        && !module_rebinds(masked_module, name)
+}
+
+/// `true` when every ancestor of `asserted` is a visible module class or an
+/// unbound builtin, so no imported or unknown parent can hand it a
+/// `Symbol.hasInstance` hook the module scan does not see.
+fn chain_resolved(asserted: &str, classes: &[ModuleClass], masked_module: &str) -> bool {
+    let mut current = asserted;
+    for _ in 0..=classes.len() {
+        let Some(class) = visible_class(current, classes, masked_module) else {
+            return unbound_builtin(current, classes, masked_module);
+        };
+        if class.parent.is_empty() {
+            return true;
+        }
+        match plain_parent(&class.parent) {
+            Some(next) => current = next,
+            None => return false,
+        }
+    }
+    false
 }
 
 /// The class a return expression constructs when it is exactly
@@ -166,7 +300,12 @@ fn branch_classes(owner_source: &str, line_text: &str) -> Option<(String, String
 /// `true` when an instance of `class` can never pass `toBeInstanceOf(asserted)`:
 /// its chain reaches a builtin or the top without meeting `asserted`, and
 /// every class on the way is one the module declares.
-fn never_instance_of(class: &str, asserted: &str, classes: &[(String, String)]) -> bool {
+fn never_instance_of(
+    class: &str,
+    asserted: &str,
+    classes: &[ModuleClass],
+    masked_module: &str,
+) -> bool {
     let mut current = class;
     for _ in 0..=classes.len() {
         if current == asserted {
@@ -174,18 +313,16 @@ fn never_instance_of(class: &str, asserted: &str, classes: &[(String, String)]) 
         }
         // A module class shadows a builtin of the same name (`class Map
         // extends NotFound`), so the module is read first.
-        let Some((_, parent)) = classes.iter().find(|(name, _)| name == current) else {
-            // Imported or unknown classes are not read.
-            return BUILTIN_CLASSES.contains(&current);
+        let Some(class) = visible_class(current, classes, masked_module) else {
+            // Imported, nested, rebound or unknown classes are not read.
+            return unbound_builtin(current, classes, masked_module);
         };
-        if parent.is_empty() {
+        if class.parent.is_empty() {
             return true;
         }
-        match leading_identifier(parent) {
-            // `extends Base` only; `extends mixin(Base)` or `extends ns.Base`
-            // is not read.
-            Some(next) if next.len() == parent.len() => current = next,
-            _ => return false,
+        match plain_parent(&class.parent) {
+            Some(next) => current = next,
+            None => return false,
         }
     }
     false
@@ -218,9 +355,12 @@ pub(crate) fn ts_owner_branches_split_class(
     let Some(classes) = module_classes(&module) else {
         return false;
     };
-    classes.iter().any(|(name, _)| name == asserted)
+    // The test imports `asserted` from this module, so it must be the
+    // module's own top-level `export class`, with every ancestor resolved.
+    visible_class(asserted, &classes, &module).is_some_and(|class| class.exported)
+        && chain_resolved(asserted, &classes, &module)
         && other != asserted
-        && never_instance_of(&other, asserted, &classes)
+        && never_instance_of(&other, asserted, &classes, &module)
 }
 
 /// `true` when the module can make `instanceof` disagree with the `extends`
