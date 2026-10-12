@@ -41,7 +41,8 @@ way a user opts a repository in today.
 
 Each case is one edit under `cases/` (one changed line, except the
 `*-throw-second-replaced-line` and `*-throw-uneven-*-block` cases, which
-replace a comment line and a `throw` together), labeled with
+change a `throw` in the same block as a comment line that is reworded,
+deleted or joined by a second one), labeled with
 what the package's own tests discriminate. A behavior-preserving rewrite
 lists the StrykerJS 10 mutants of the edited line (jest, vitest and mocha
 runners; node:test through the command runner) and the outcome of each;
