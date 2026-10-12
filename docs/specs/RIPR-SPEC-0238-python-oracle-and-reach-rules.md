@@ -200,7 +200,9 @@ as strong for one credit branch only; its table row is unchanged.
    operands are the same token sequence, ignoring whitespace outside
    string literals, assigns `relational_check` / weak. It cannot
    discriminate a change to the code both sides run. This mirrors
-   RIPR-SPEC-0231 step 3. A comparison chain that mixes `==` with any
+   RIPR-SPEC-0231 step 3. In an all-`==` chain only a chain whose every
+   link is such a pair is weak: `fee(10) == fee(10) == 30` still pins the
+   result through its last link. A comparison chain that mixes `==` with any
    other operator (`int('1') == 1 < parse('x')`) also assigns
    `relational_check` / weak: the operand the owner result sits in may be
    compared only by the other operator.
@@ -231,17 +233,21 @@ as strong for one credit branch only; its table row is unchanged.
 4. **Every strong assertion is read.** A related test's reported strength
    is the highest strength among its assertions (unchanged). Sink
    alignment reads every strong assertion of every strong oracle-eligible
-   related test, not one text per test. The credit branches keep their
+   related test, not one text per test, among the assertions the
+   RIPR-SPEC-0224 family filter admits for the changed line: a
+   `pytest.raises` call never credits a changed `return`, whatever its
+   body calls. The credit branches keep their
    order (see Sink alignment). A branch credits only when one assertion
    satisfies all of it: the branch's own token or call test, the owner
    identity check (module or class identity, read from the imports of the
    test that holds that assertion), the dict and list changed-element gate (rule 10), the
    f-string length gate (rule 11) and, for an attribute write, the
    co-observation check. No gate may be satisfied by a different
-   assertion or test. The reported `oracle` text, kind and
-   `observed_sink` come from the first crediting assertion, branches in
-   order, then related-test order, then source order. When none credits,
-   they come from the strongest related oracle (the last of equal
+   assertion or test. The finding's oracle kind and `observed_sink` come
+   from the first crediting assertion, branches in order, then
+   related-test order, then source order; each related-test row and its
+   `test_oracle` evidence keep the RIPR-SPEC-0224 selected assertion.
+   When none credits, they come from the strongest related oracle (the last of equal
    strength in related-test order, as before this rule). The class never depends on assertion order or test
    names. This adds credit where an owner assertion was hidden by a later
    one, and removes it where today's gates were met by two different
@@ -688,8 +694,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 - No new oracle kind, strength, relation, limit kind or alignment value,
   apart from rule 17's `alignment_reason` token.
 - No helper body resolution, fixture resolution or import graph.
-- No change to the boundary activation rule, the changed-default rule, the
-  dunder rules or RIPR-SPEC-0201.
+- No change to the boundary activation rule, apart from rule 16's offset
+  operands, and no change to the changed-default rule, the dunder rules
+  or RIPR-SPEC-0201.
 - No relation for a callable passed to any call other than the
   exception assertions of rule 13.
 - No change to Rust, TypeScript or Perl classification.
@@ -970,14 +977,15 @@ and the test is `tests/test_subject.py`, which imports each owner from
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/python/oracles.rs`: assertion table,
-  rules 1 to 3, 12 and 14.
+  rules 1 to 3, 12, 14 and 15, and each assertion's gate text (rule 4).
 - `crates/ripr/src/analysis/language/python/related_tests.rs`:
   `strongest_assertion` and `RelatedTest` oracle text (rule 4), relation
   order, rules 7 and 13.
 - `crates/ripr/src/analysis/language/python/sink_alignment.rs`: per
-  assertion credit (rule 4), rules 9 to 11.
-- `crates/ripr/src/analysis/language/python/classify.rs`: error-path gate
-  (rule 6) and the verdict ladder.
+  assertion credit (rule 4) under the RIPR-SPEC-0224 family filter, the
+  error-path gate (rule 6), rules 9 to 11 and the rule 17 credit branch.
+- `crates/ripr/src/analysis/language/python/classify.rs`: the verdict
+  ladder.
 - `crates/ripr/src/analysis/language/python/probe_shape.rs`: error-path
   family (rule 5), unchanged.
 - `crates/ripr/src/analysis/language/python/static_limits.rs`: limit

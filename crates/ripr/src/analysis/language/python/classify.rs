@@ -162,20 +162,9 @@ pub(super) fn classify_change_with_context(
     // evidence — reads that one selection.
     let focus = PythonAssertionFocus::for_change(family.clone(), line_text, old_line_text);
     let related_candidates = related_test_candidates(owner, all_tests);
-    let mut related = related_tests_for_candidates(&related_candidates, Some(&focus));
+    let related = related_tests_for_candidates(&related_candidates, Some(&focus));
     let alignment =
         classify_sink_alignment_with_old(owner, line_text, old_line_text, &related, all_tests);
-    // RIPR-SPEC-0238 rule 4: a crediting finding reports the assertion that
-    // credited, not whichever assertion of its test the focus selected.
-    if alignment.observes()
-        && let Some(credited) = &alignment.credited
-        && let Some(test) = related
-            .iter_mut()
-            .find(|test| test.name == credited.test_name && test.file == credited.test_file)
-    {
-        test.oracle = Some(credited.text.clone());
-        test.oracle_kind = credited.kind.clone();
-    }
     let static_limit =
         static_limit_for_focused_change(line_text, &focus, owner, &related_candidates)
             .or_else(|| implicit_dunder_dispatch_limit(owner, all_tests, &related_candidates));

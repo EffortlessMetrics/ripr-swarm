@@ -134,7 +134,7 @@ Updated:
 ## Pending — python_named_constant_boundary_repair_gap (12)
 
 Reason:
-RIPR-SPEC-0238 rule 4: the finding reports the assertion that credited (the boundary row), class unchanged (#6600)
+RIPR-SPEC-0238 rule 4: the finding reports the first crediting assertion in related-test order, class unchanged (#6600)
 
 Command:
 `cargo xtask goldens bless python_named_constant_boundary_repair_gap --reason "..."`

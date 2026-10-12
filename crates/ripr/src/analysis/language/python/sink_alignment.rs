@@ -1,3 +1,4 @@
+use super::assertion_selection::PythonAssertionFocus;
 use super::effect_alignment::{
     ChangedEffect, EffectReads, calls_owner_through_module, expected_computed_through_owner,
 };
@@ -516,14 +517,26 @@ pub(super) fn classify_sink_alignment_with_old(
     // RIPR-SPEC-0238 rule 6: an error-path change is observed only by an
     // `exact_error_variant` assertion that itself credits a branch; a strong
     // value assertion never runs the changed raise.
-    let error_path = matches!(classify_probe_shape(line_text).0, ProbeFamily::ErrorPath);
+    let family = classify_probe_shape(line_text).0;
+    let error_path = matches!(family, ProbeFamily::ErrorPath);
     // RIPR-SPEC-0238 rule 4: every strong assertion of every strong related
-    // test is read, and each credit branch must hold on one assertion.
-    let mut units = alignment_units(&strong_tests, all_tests, error_path, effect.as_ref());
+    // test is read, and each credit branch must hold on one assertion. The
+    // RIPR-SPEC-0224 family filter still applies: an assertion of another
+    // behavior family (a `pytest.raises` for a changed `return`) never
+    // credits, whichever branch its text would pass.
+    let focus = PythonAssertionFocus::for_change(family, line_text, old_line_text);
+    let mut units = alignment_units(
+        &strong_tests,
+        all_tests,
+        error_path,
+        &focus,
+        effect.as_ref(),
+    );
     units.extend(alignment_units(
         &mock_tests,
         all_tests,
         error_path,
+        &focus,
         effect.as_ref(),
     ));
     if units.is_empty() {
@@ -835,7 +848,7 @@ pub(super) fn classify_sink_alignment_with_old(
         effect_reads(unit)
             .as_ref()
             .as_ref()
-            .is_some_and(|reads| reads.observed_by(&unit.text))
+            .is_some_and(|reads| reads.observed_by(&unit.text, unit.line))
             && field_construction_credit_ok(unit)
             && fstring_credit_ok(unit)
     };
@@ -954,6 +967,8 @@ struct AlignmentUnit<'a> {
     text: String,
     /// The assertion text a crediting finding reports.
     reported: String,
+    /// The file line the assertion starts on, when it is a source assertion.
+    line: Option<usize>,
     kind: OracleKind,
     /// A mock assertion admitted only to observe a changed call's arguments.
     effect_only: bool,
@@ -967,6 +982,7 @@ fn alignment_units<'a>(
     strong_tests: &[&'a RelatedTest],
     all_tests: &'a [PythonTest],
     error_path: bool,
+    focus: &PythonAssertionFocus,
     effect: Option<&ChangedEffect>,
 ) -> Vec<AlignmentUnit<'a>> {
     let admits = |kind: &OracleKind| !error_path || matches!(kind, OracleKind::ExactErrorVariant);
@@ -982,7 +998,8 @@ fn alignment_units<'a>(
         if let Some(test) = test {
             units.extend(test.assertions.iter().filter_map(|assertion| {
                 let strong = assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
-                    && admits(&assertion.oracle_kind);
+                    && admits(&assertion.oracle_kind)
+                    && focus.admits(assertion);
                 let mock =
                     admits_mock && matches!(assertion.oracle_kind, OracleKind::MockExpectation);
                 (strong || mock).then(|| AlignmentUnit {
@@ -990,6 +1007,7 @@ fn alignment_units<'a>(
                     test: Some(test),
                     text: assertion.gate_text.clone(),
                     reported: assertion.text.clone(),
+                    line: Some(assertion.line),
                     kind: assertion.oracle_kind.clone(),
                     effect_only: !strong,
                 })
@@ -1007,6 +1025,7 @@ fn alignment_units<'a>(
                 test,
                 text: text.clone(),
                 reported: text.clone(),
+                line: None,
                 kind: related.oracle_kind.clone(),
                 effect_only: false,
             });

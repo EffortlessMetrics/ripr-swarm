@@ -708,7 +708,10 @@ fn changed_raise_class_is_independent_of_assertion_order() -> Result<(), String>
 fn passed_over_sibling_field_assertion_does_not_suppress_test_side_limits() {
     let owners = extract_owners(Path::new("src/calc.py"), OWNER_SOURCE);
     let changed = "        self.total = amount";
-    let property_source = "import pytest\nfrom hypothesis import given, strategies as st\nfrom src.calc import f\n\n@given(st.integers())\ndef test_f(value):\n    order = f(value)\n    assert order.count == 1\n    assert order.total > 0\n";
+    // The `@example` row binds the generated input, so only the selected
+    // assertion's strength decides the property-based limit (RIPR-SPEC-0238
+    // rule 19); without it the limit holds whatever the selection.
+    let property_source = "import pytest\nfrom hypothesis import example, given, strategies as st\nfrom src.calc import f\n\n@given(st.integers())\n@example(5)\ndef test_f(value):\n    order = f(value)\n    assert order.count == 1\n    assert order.total > 0\n";
     let helper_source = "import pytest\nfrom src.calc import f\n\ndef test_f():\n    order = f(5)\n    assert order.count == 1\n    assert order.total > 0\n    assert_valid(order)\n";
     let property_tests = extract_tests(Path::new("tests/test_calc.py"), property_source);
     let helper_tests = extract_tests(Path::new("tests/test_calc.py"), helper_source);
@@ -750,18 +753,9 @@ fn passed_over_sibling_field_assertion_does_not_suppress_test_side_limits() {
     );
     // Control: a strong assertion on the changed field itself suppresses
     // the property-based and opaque-helper limits.
-    // The control carries an `@example` row: without one, a strong assertion
-    // fed only by a strategy the body reads keeps the property-based limit
-    // (RIPR-SPEC-0238 rule 19).
     let strong_property = extract_tests(
         Path::new("tests/test_calc.py"),
-        &property_source
-            .replace("order.total > 0", "order.total == 5")
-            .replace("import given,", "import example, given,")
-            .replace(
-                "@given(st.integers())\n",
-                "@given(st.integers())\n@example(5)\n",
-            ),
+        &property_source.replace("order.total > 0", "order.total == 5"),
     );
     let strong_helper = extract_tests(
         Path::new("tests/test_calc.py"),

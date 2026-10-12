@@ -232,14 +232,15 @@ fn oracle_for_compare(
 ) -> (OracleKind, OracleStrength, PythonOracleShape) {
     let has_exact = compare.ops.iter().any(|op| matches!(op, ast::CmpOp::Eq));
     // RIPR-SPEC-0238 rule 1: `==` pins a value only when every operator in the
-    // chain is `==` and the compared operands are not one token sequence
-    // (`owner(1) == owner(1)` runs the changed code on both sides).
+    // chain is `==` and some link compares two different token sequences
+    // (`owner(1) == owner(1)` runs the changed code on both sides, while
+    // `owner(1) == owner(1) == 30` still pins the result through its last link).
     let all_exact = compare.ops.iter().all(|op| matches!(op, ast::CmpOp::Eq));
     let tautology = std::iter::once(compare.left.as_ref())
         .chain(compare.comparators.iter())
         .collect::<Vec<_>>()
         .windows(2)
-        .any(|pair| same_tokens(source, pair[0], pair[1]));
+        .all(|pair| same_tokens(source, pair[0], pair[1]));
     let (kind, strength) = if has_exact && all_exact && !tautology {
         (OracleKind::ExactValue, OracleStrength::Strong)
     } else {

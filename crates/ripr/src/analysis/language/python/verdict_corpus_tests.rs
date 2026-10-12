@@ -60,6 +60,15 @@ fn an_owner_compared_with_itself_does_not_credit() -> Result<(), String> {
         fee_class("def test_fee():\n    assert fee(10) == 30\n")?,
         ExposureClass::Exposed
     );
+    assert_ne!(
+        fee_class("def test_fee():\n    assert fee(10) == fee(10) == fee(10)\n")?,
+        ExposureClass::Exposed
+    );
+    // A chain with one repeated link still pins the result through the other.
+    assert_eq!(
+        fee_class("def test_fee():\n    assert fee(10) == fee(10) == 30\n")?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }
 
@@ -357,6 +366,38 @@ fn a_bound_local_reads_a_changed_self_field() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn a_read_before_the_owner_call_does_not_observe_its_effect() -> Result<(), String> {
+    // The field and the captured output are read before the changed method
+    // or print runs, so the assertion sees the earlier state on both sides
+    // of the change.
+    assert_ne!(
+        classify(
+            COUNTER,
+            6,
+            COUNTER_OLD,
+            &test_module(
+                "from src.shop import Counter",
+                "def test_bump():\n    counter = Counter()\n    assert counter.count == 0\n    counter.bump()\n"
+            )
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(
+        classify(
+            GREET,
+            2,
+            GREET_OLD,
+            &test_module(
+                "from src.shop import greet",
+                "def test_greet(capsys):\n    assert capsys.readouterr().out == \"\"\n    greet(\"a\")\n"
+            )
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
 const PASSED: &str = "def passed(score):\n    return score >= 50\n";
 const PASSED_OLD: &str = "    return score > 50";
 const HYPOTHESIS_IMPORTS: &str = "from hypothesis import example, given\nfrom hypothesis import strategies as st\n\nfrom src.shop import passed";
@@ -619,6 +660,103 @@ fn an_effect_needs_the_owner_from_its_own_module() -> Result<(), String> {
             &test_module(
                 "from src.other import greet",
                 "def test_greet(capsys):\n    greet(\"a\")\n    assert capsys.readouterr().out == \"hello a\\n\"\n"
+            )
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+const DOUBLE: &str = "def double(x):\n    if x < 0:\n        raise ValueError(\"neg\")\n    return x * 3\n\n\ndef triple(x):\n    return x * 3\n";
+const DOUBLE_OLD: &str = "    return x * 2";
+
+#[test]
+fn an_assertion_of_another_behavior_family_does_not_credit() -> Result<(), String> {
+    // RIPR-SPEC-0224 still filters rule 4's units: the `pytest.raises` call
+    // names the owner, but it runs only the raise, never the changed return.
+    let imports = "import pytest\n\nfrom src.shop import double, triple";
+    assert_eq!(
+        classify(
+            DOUBLE,
+            4,
+            DOUBLE_OLD,
+            &test_module(
+                imports,
+                "def test_calc():\n    assert triple(1) == 3\n    with pytest.raises(ValueError, match=\"neg\"):\n        double(-1)\n"
+            )
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    assert_eq!(
+        classify(
+            DOUBLE,
+            4,
+            DOUBLE_OLD,
+            &test_module(
+                imports,
+                "def test_calc():\n    assert double(1) == 3\n    with pytest.raises(ValueError, match=\"neg\"):\n        double(-1)\n"
+            )
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn credit_comes_from_one_owner_observing_assertion_in_any_position() -> Result<(), String> {
+    // Rule 4: an unrelated strong assertion before or after the crediting one
+    // changes nothing.
+    for body in [
+        "def test_fee():\n    other = 5\n    assert fee(10) == 30\n    assert other == 5\n",
+        "def test_fee():\n    other = 5\n    assert other == 5\n    assert fee(10) == 30\n",
+    ] {
+        assert_eq!(fee_class(body)?, ExposureClass::Exposed);
+    }
+    Ok(())
+}
+
+#[test]
+fn an_assert_message_and_a_mixed_chain_do_not_credit() -> Result<(), String> {
+    // Rule 4 gate text drops the failure message; rule 1 weakens a chain
+    // that mixes `==` with another operator.
+    for body in [
+        "def test_fee():\n    other = 5\n    assert other == 5, fee(10)\n",
+        "def test_fee():\n    assert int('1') == 1 < fee(10)\n",
+        "import unittest\n\n\nclass FeeTest(unittest.TestCase):\n    def test_fee(self):\n        self.assertEqual(fee(10), fee(10))\n",
+    ] {
+        assert_ne!(fee_class(body)?, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+const SHOW: &str = "def show(n):\n    print(n * 2)\n";
+const SHOW_OLD: &str = "    print(n * 3)";
+
+#[test]
+fn a_capture_bound_after_the_owner_call_observes_its_output() -> Result<(), String> {
+    // The expected `"4\n"` holds no changed-line token, so only the effect
+    // channel can credit it.
+    let imports = "from src.shop import show";
+    assert_eq!(
+        classify(
+            SHOW,
+            2,
+            SHOW_OLD,
+            &test_module(
+                imports,
+                "def test_show(capsys):\n    show(2)\n    captured = capsys.readouterr()\n    assert captured.out == \"4\\n\"\n"
+            )
+        )?,
+        ExposureClass::Exposed
+    );
+    assert_ne!(
+        classify(
+            SHOW,
+            2,
+            SHOW_OLD,
+            &test_module(
+                imports,
+                "def test_show(capsys):\n    captured = capsys.readouterr()\n    show(2)\n    assert captured.out == \"4\\n\"\n"
             )
         )?,
         ExposureClass::Exposed

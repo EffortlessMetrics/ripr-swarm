@@ -96,11 +96,20 @@ impl ChangedEffect {
 pub(super) struct EffectReads {
     operands: Vec<String>,
     mocked_calls: Vec<String>,
+    /// The file line of the test's first owner call. A read on an earlier
+    /// line sees the state before the changed effect ran, so it observes
+    /// nothing of it.
+    first_call_line: Option<usize>,
 }
 
 impl EffectReads {
     pub(super) fn of(effect: &ChangedEffect, test: &PythonTest, owner: &PythonOwner) -> Self {
-        let mut reads = Self::default();
+        let mut reads = Self {
+            first_call_line: owner_calls(test, owner)
+                .first()
+                .map(|(offset, _)| test.line + test.body_text[..*offset].matches('\n').count()),
+            ..Self::default()
+        };
         match effect {
             ChangedEffect::Stdout => reads.operands = captured_stream_operands(test, owner, "out"),
             ChangedEffect::Stderr => reads.operands = captured_stream_operands(test, owner, "err"),
@@ -128,8 +137,18 @@ impl EffectReads {
         reads
     }
 
-    /// Whether one assertion (its gate text) observes the effect.
-    pub(super) fn observed_by(&self, assertion: &str) -> bool {
+    /// Whether one assertion (its gate text, starting on file line `line`)
+    /// observes the effect. It must run after an owner call: an assertion
+    /// with no known line, or one above the first owner call, reads the
+    /// channel before the changed effect could write it.
+    pub(super) fn observed_by(&self, assertion: &str, line: Option<usize>) -> bool {
+        if !self
+            .first_call_line
+            .zip(line)
+            .is_some_and(|(first_call, line)| line >= first_call)
+        {
+            return false;
+        }
         if !self.operands.is_empty() {
             let compared = compared_operands(assertion);
             if self
