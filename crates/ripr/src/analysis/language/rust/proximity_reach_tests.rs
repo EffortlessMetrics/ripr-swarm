@@ -560,3 +560,31 @@ fn an_owner_call_quoted_by_stringify_keeps_the_gap() -> Result<(), String> {
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
 }
+
+#[test]
+fn a_trait_default_method_owner_keeps_the_gap() -> Result<(), String> {
+    // A bare `inner_rate(` call cannot name a trait default method, so it is
+    // no evidence that the macro asserts on the owner.
+    let fixture = Fixture::new(
+        "custom-assert-trait-default",
+        &CUSTOM_ASSERT.replacen(
+            "fn inner_rate(x: i64) -> i64 {\n    3 * x\n}\n",
+            "pub trait Rate { fn inner_rate(x: i64) -> i64 {\n    3 * x\n} }\n",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert!(
+        finding
+            .probe
+            .owner
+            .as_ref()
+            .is_some_and(|owner| owner.0.ends_with("::inner_rate")),
+        "{:?}",
+        finding.probe.owner
+    );
+    assert_custom_assert_construction(&finding, false);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}

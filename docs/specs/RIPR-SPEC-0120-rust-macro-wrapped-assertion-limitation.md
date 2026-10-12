@@ -94,8 +94,10 @@ none. The same limit applies to that finding when all of these hold:
   and does not count, nor does an argument list that runs past a `;` or holds
   a `'` (char literals are not masked and can unbalance the delimiters) or a
   nested macro invocation (`stringify!(owner(1))` never evaluates its tokens);
-- the owner is a free function. For a method owner (`impl Cart::total`) a bare
-  `total(` can only be another item, so the path does not run.
+- the parser established the owner as a free function. For a method owner
+  (`impl Cart::total`) or a trait default method a bare `total(` can only be
+  another item, so the path does not run; the lexical fallback leaves the
+  context unknown, so it does not run there either.
 
 The class stays `weakly_exposed`; the finding names the limit instead of
 reporting a gap. An owner value that reaches the macro only through a binding,
@@ -170,6 +172,7 @@ or a direct test that also holds a recognized oracle, keeps the gap.
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::an_unread_assertion_macro_without_the_owner_call_keeps_the_gap`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_direct_test_with_a_recognized_oracle_keeps_the_gap`
 - `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::an_owner_call_quoted_by_stringify_keeps_the_gap`
+- `crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_trait_default_method_owner_keeps_the_gap`
 - `crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable`
 - `crates/ripr/src/domain/language.rs::tests::static_limit_kind_describe_is_present_and_distinct`
 - `crates/ripr/src/lsp/gap_artifacts.rs::tests::validation_accepts_rust_macro_wrapped_assertion_static_limit_kind`
