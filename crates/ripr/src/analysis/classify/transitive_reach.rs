@@ -360,11 +360,17 @@ impl<'a> ReachGraph<'a> {
     }
 
     /// Whether `macro_name` has exactly one `macro_rules!` definition in the
-    /// index and its body names `owner_name` as an identifier.
+    /// index and its body names `owner_name` as an identifier outside comments
+    /// and strings (the raw check is a cheap prefilter before masking).
     fn macro_definition_mentions_owner(&self, macro_name: &str, owner_name: &str) -> bool {
         matches!(
             self.macro_definitions.get(macro_name).map(Vec::as_slice),
-            Some([Some(body)]) if contains_identifier(body, owner_name)
+            Some([Some(body)])
+                if contains_identifier(body, owner_name)
+                    && contains_identifier(
+                        &crate::analysis::extract::mask_comments_and_strings(body),
+                        owner_name,
+                    )
         )
     }
 
@@ -1548,11 +1554,10 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
     {
         return Vec::new();
     }
-    let line_of = |offset: usize| {
-        masked
-            .get(..offset)
-            .map_or(1, |prefix| prefix.matches('\n').count() + 1)
-    };
+    let line_starts: Vec<usize> = std::iter::once(0)
+        .chain(masked.match_indices('\n').map(|(offset, _)| offset + 1))
+        .collect();
+    let line_of = |offset: usize| line_starts.partition_point(|&start| start <= offset);
     let definitions = macro_definition_markers(&masked);
     let body_lines: Vec<(usize, usize)> = definitions
         .iter()
@@ -1581,9 +1586,6 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
         return Vec::new();
     }
     let lines: Vec<&str> = masked.lines().collect();
-    let line_starts: Vec<usize> = std::iter::once(0)
-        .chain(masked.match_indices('\n').map(|(offset, _)| offset + 1))
-        .collect();
     let invocations: Vec<(MacroInvocation, usize)> = macro_invocations_in_text(&masked, 1)
         .into_iter()
         .filter_map(|invocation| {
