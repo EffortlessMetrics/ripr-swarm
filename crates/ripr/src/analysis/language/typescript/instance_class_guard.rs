@@ -162,23 +162,53 @@ fn module_rebinds(masked_module: &str, name: &str) -> bool {
         })
 }
 
-/// `true` when the module can patch a global or a constructor where the
-/// class-name scan cannot see it: a decorator, an ambient `declare`, a
-/// global object, `eval` or `Function`, `Symbol` or `Reflect` access, or a
-/// hook or constructor name spelled in a string (`[Symbol["hasInstance"]]`,
-/// `"constructor"() { ... }`).
+/// `true` when the module can reach a class, a global or a reflection API
+/// where the class-name scan cannot see it, so a `Symbol.hasInstance` hook
+/// or a prototype rewrite could be installed without spelling its name:
+/// - a decorator, an ambient `declare`, a `static` member or block;
+/// - a global object, `eval`, `Function`, `Object`, `Reflect`, `Symbol` or
+///   `Proxy`;
+/// - a namespace or dynamic import, which can reach the module's own
+///   exports;
+/// - a `.constructor` or `.prototype` member, or a computed member access
+///   (`x[key]`; an empty `string[]` type is fine);
+/// - a backslash in code, since `\u0046orbidden` is `Forbidden`;
+/// - a hook, prototype or constructor name spelled in string text.
 fn module_escapes_name_scan(raw_module: &str, masked_module: &str) -> bool {
-    masked_module.contains('@')
+    let computed_access = masked_module.match_indices('[').any(|(at, _)| {
+        let before = masked_module[..at].trim_end();
+        let after = masked_module[at + 1..].trim_start();
+        before
+            .chars()
+            .next_back()
+            .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | ')' | ']'))
+            && !after.starts_with(']')
+    });
+    let namespace_import = identifier_offsets(masked_module, "import")
+        .into_iter()
+        .any(|at| {
+            let rest = masked_module[at + "import".len()..].trim_start();
+            rest.starts_with('*') || rest.starts_with('(')
+        });
+    masked_module.contains(['@', '\\'])
+        || computed_access
+        || namespace_import
+        || [".constructor", ".prototype"]
+            .iter()
+            .any(|member| masked_module.contains(member))
         || [
             "declare",
+            "static",
             "globalThis",
             "window",
             "global",
             "self",
             "eval",
             "Function",
-            "Symbol",
+            "Object",
             "Reflect",
+            "Symbol",
+            "Proxy",
         ]
         .iter()
         .any(|name| !identifier_offsets(masked_module, name).is_empty())

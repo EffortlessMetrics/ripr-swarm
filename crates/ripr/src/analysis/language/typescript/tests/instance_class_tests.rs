@@ -28,6 +28,11 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
     assert!(ts_owner_branches_split_class(
         OWNER, &reads, CHANGED, "NotFound"
     ));
+    // An empty `[]` type is not a computed access.
+    let typed = format!("{ERRORS}export const codes: number[] = [404, 403];\n");
+    assert!(ts_owner_branches_split_class(
+        OWNER, &typed, CHANGED, "NotFound"
+    ));
     // A builtin on the other branch is never a user class instance.
     let builtin = OWNER.replace("new Forbidden(", "new RangeError(");
     assert!(ts_owner_branches_split_class(
@@ -214,6 +219,42 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
                 "class Forbidden extends Error {}",
                 "class Forbidden extends Error {\n  \"constructor\"() {\n    super();\n  }\n}",
             ),
+            "NotFound",
+        ),
+        (
+            "a static block installs a hook through a reflected symbol",
+            OWNER.to_string(),
+            format!(
+                "const h = Object.getOwnPropertySymbols(Object.getPrototypeOf(Object))[0];\n{}",
+                ERRORS.replace(
+                    "class NotFound extends Error {}",
+                    "class NotFound extends Error {\n  static {\n    Object.defineProperty(this, h, {{ value: () => true }});\n  }\n}",
+                )
+            ),
+            "NotFound",
+        ),
+        (
+            "a computed member rewrites a prototype",
+            OWNER.to_string(),
+            format!("let p: any;\nlet q: any;\n{ERRORS}x[\"set\" + \"PrototypeOf\"](q, p);\n"),
+            "NotFound",
+        ),
+        (
+            "a constructor reached through a member",
+            OWNER.to_string(),
+            format!("{ERRORS}const make = (1).constructor;\n"),
+            "NotFound",
+        ),
+        (
+            "a namespace import reaches the module's own exports",
+            OWNER.to_string(),
+            format!("import * as me from \"./errors\";\n{ERRORS}"),
+            "NotFound",
+        ),
+        (
+            "a unicode escape spells the other class",
+            OWNER.replace("(status: number)", "(status: number, \\u0046orbidden: any)"),
+            ERRORS.replace("(status: number)", "(status: number, \\u0046orbidden: any)"),
             "NotFound",
         ),
         (

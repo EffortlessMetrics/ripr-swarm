@@ -129,12 +129,20 @@ ladder and in its related-test row, when all of these hold:
   the test body nor an enclosing scope rebinds it (`const C = Error`);
 - the module has no `Symbol.hasInstance` hook, prototype rewrite
   (`setPrototypeOf`, `__proto__`) or constructor that contains a `return`,
-  any of which lets `instanceof` disagree with the `extends` chain; the
-  hook and prototype names are matched in string text too, and a module
-  with a decorator, an ambient `declare`, `globalThis`, `window`,
-  `global`, `self`, `eval`, `Function`, `Symbol`, `Reflect` or a
-  string-named `constructor` fails, since each can patch a class or a
-  global where the name scan cannot see it.
+  any of which lets `instanceof` disagree with the `extends` chain. Since
+  such a hook or rewrite can be built without spelling its name, the
+  module also fails when it has any of these, each of which can reach a
+  class, a global or a reflection API where the name scan cannot see it:
+  - a decorator, an ambient `declare`, or a `static` member or block;
+  - `globalThis`, `window`, `global`, `self`, `eval`, `Function`,
+    `Object`, `Reflect`, `Symbol` or `Proxy`;
+  - a namespace or dynamic import (`import * as`, `import(`);
+  - a `.constructor` or `.prototype` member, or a computed member access
+    (`x[key]`; an empty `T[]` type is fine);
+  - a backslash in code, since an escaped identifier (`\u0046orbidden`)
+    names the same binding;
+  - `hasInstance`, `setPrototypeOf`, `__proto__` or a quoted
+    `constructor` anywhere, string text included.
 
 The module scan reads every `class Name` declaration; a module with any
 generic (`class A<T>`), anonymous (`export default class {`) or repeated
