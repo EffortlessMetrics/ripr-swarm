@@ -1472,9 +1472,11 @@ fn doctor_tool_probe_dir<'a>(tool: &str, root: &'a Path) -> Option<&'a Path> {
     RUST_TOOLCHAIN_TOOLS.contains(&tool).then_some(root)
 }
 
-/// Bare missing-tool state shared by spawn-not-found and the unmatched-run
-/// catch-all. The source-build profile appends an install route; analysis
-/// keeps this state so its advisory wrapping does not change.
+/// Bare missing-tool state shared by spawn-not-found and wait/pipe-reader
+/// failure. The source-build profile appends an install route only for
+/// spawn-not-found and this exact sentence; wait stays this sentence without
+/// the install suffix. Analysis keeps this state so its advisory wrapping
+/// does not change.
 fn rust_toolchain_missing_state(tool: &str) -> String {
     format!("{tool} not available")
 }
@@ -1603,7 +1605,11 @@ fn doctor_tool_run_result(
         }
         Err(DoctorToolRunError::Spawn(kind)) => doctor_spawn_failure(tool, kind),
         Err(DoctorToolRunError::Wait) => {
-            DoctorToolCheckResult::failure(doctor_tool_unavailable_evidence(tool))
+            // Wait/pipe-reader failure is not a missing-tool diagnosis: cargo
+            // or rustc may already have started. Keep the pre-existing
+            // `{tool} not available` sentence and reserve the install route
+            // for spawn-not-found and the source-build missing-tool projection.
+            DoctorToolCheckResult::failure(format!("{tool} not available"))
         }
     }
 }
@@ -3102,9 +3108,11 @@ mod tests {
     fn doctor_wait_failure_uses_the_missing_tool_evidence() {
         let cargo_wait =
             doctor_tool_run_result("cargo", DOCTOR_TOOL_TIMEOUT, Err(DoctorToolRunError::Wait));
-        assert_eq!(
-            cargo_wait.evidence,
-            rust_toolchain_missing_with_install_fix("cargo")
+        assert_eq!(cargo_wait.evidence, "cargo not available");
+        assert!(
+            !cargo_wait.evidence.contains("https://rustup.rs"),
+            "a wait failure must not name the missing-tool install route: {}",
+            cargo_wait.evidence
         );
         let git_wait =
             doctor_tool_run_result("git", DOCTOR_TOOL_TIMEOUT, Err(DoctorToolRunError::Wait));

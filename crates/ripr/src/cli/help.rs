@@ -838,8 +838,14 @@ mod tests {
         assert!(DOCTOR_HELP.contains("--json"));
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
         assert!(DOCTOR_HELP.contains("https://rustup.rs"));
-        assert!(DOCTOR_HELP.contains("not printed for --profile source-build"));
-        assert!(DOCTOR_HELP.contains("Start-here next step:"));
+        assert!(DOCTOR_HELP.contains("Printed for every profile."));
+        assert!(
+            DOCTOR_HELP
+                .contains("Recommended first command (analysis profile; not printed for --profile")
+        );
+        assert!(DOCTOR_HELP.contains(
+            "Start-here next step (analysis profile; not printed for --profile source-build):"
+        ));
         // The compose commands take whatever base the caller has; this screen
         // no longer asserts `origin/main`, which does not exist in a repository
         // whose default branch is not `main`.

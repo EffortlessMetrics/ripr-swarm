@@ -454,25 +454,27 @@ or when no other language is detected or enabled. Otherwise (for example a
 Python-only or TypeScript-only root) the Cargo.toml, cargo, and rustc checks
 print as skipped with the reason and do not fail doctor.
 
-First-run diagnosis (analysis profile; not printed for --profile source-build):
+First-run diagnosis:
   - Detected languages: shallow file-marker scan; each language shows its
     canonical tier (stable or preview) and [adapter not compiled] when the
     feature is absent. Only languages with concrete markers are listed —
-    no overclaiming.
+    no overclaiming. Printed for every profile.
   - Detected test surfaces: per detected language, the first recognizable
     framework marker (cargo test, pytest, jest, vitest, bun). Prints
-    "test framework not detected" rather than guessing.
+    "test framework not detected" rather than guessing. Printed for every
+    profile.
   - Known limitations: static notes on preview coverage, cross-language
     oracle visibility (fail-closed), large-repo scan bounds, and advisory
-    nature of preview-language evidence.
-  - Recommended first command: ripr check (no base: the loader resolves this
+    nature of preview-language evidence. Printed for every profile.
+  - Recommended first command (analysis profile; not printed for --profile
+    source-build): ripr check (no base: the loader resolves this
     repository's own default branch). When git is not on PATH, the `!` git line
     names install git or `--diff PATH` / `--diff -`, and the recommended
     command is `ripr check --diff PATH`. Outside a Git work tree it names the
     repository-free scan, and a missing root is named in the recovery command
     through its lossless spelling.
 
-Start-here next step:
+Start-here next step (analysis profile; not printed for --profile source-build):
   - open `target/ripr/reports/start-here.md` first when it exists
   - when it does not, run `ripr check` first: `ripr first-pr` and
     `ripr start-here` compose that packet from analysis evidence and run no
