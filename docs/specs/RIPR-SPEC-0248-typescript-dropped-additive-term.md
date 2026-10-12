@@ -76,11 +76,16 @@ against `a`, in either direction), an `exposed` ladder result keeps its
 class only when some strong value assertion (`exact_value`,
 `whole_object_equality` or `snapshot`; an error matcher such as
 `rejects.toThrow` never sees the returned value) of an oracle relation
-observes the whole result of an owner call (`owner(...)`, `ns.owner(...)`, optionally
+observes the whole result of an owner call (`owner(...)`, `ns.owner(...)`,
+the `local(...)` of an `import { owner as local }` rename, optionally
 awaited, or a local bound once to that call; not `owner(...).field` or
-`f(owner(...))`) for which `t` folds to a non-zero number. Otherwise the finding
+`f(owner(...))`; in `owner(owner(a, b), c)` the outer call's arguments) for
+which `t` folds to a non-zero number (any non-zero double, since JavaScript
+adds in the same doubles). Otherwise the finding
 reads `weakly_exposed`, discrimination `weak`, and its missing line names
-the term and asks for an input that makes it non-zero.
+the term and asks for an input that makes it non-zero. The discriminate
+summary then says a change-specific rule withdrew the credit and repeats
+that line, as it does after RIPR-SPEC-0246 rule 1.
 
 The fold binds:
 

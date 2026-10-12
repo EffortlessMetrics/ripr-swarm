@@ -164,6 +164,12 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
         "{:?}",
         finding.missing
     );
+    // The discriminate summary agrees with the withdrawn credit.
+    let summary = &finding.ripr.reveal.discriminate.summary;
+    assert!(
+        summary.contains("withdrew discrimination credit") && summary.contains("`fee`"),
+        "{summary}"
+    );
 
     // A call term does not fold: `shipping(6000)` is 0, and ripr cannot
     // show otherwise.
@@ -190,6 +196,24 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
         "  return subtotal + shipping(subtotal) + FLAT;",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+
+    // The whole result of a renamed import, an outer call
+    // around an inner one, and a tiny non-zero `fee` each witness the term.
+    for (label, import, call) in [
+        ("dropped-term-alias", "price as subject", "subject(6000, 7)"),
+        ("dropped-term-outer", "price", "price(price(6000, 0), 7)"),
+        ("dropped-term-tiny", "price", "price(6000, 0.0000000001)"),
+    ] {
+        let test = format!(
+            "import {{ {import} }} from \"../src/price\";\ntest(\"price\", () => {{\n  expect({call}).toBe(1);\n}});\n"
+        );
+        let finding = price_finding(
+            label,
+            &test,
+            "  return subtotal + shipping(subtotal) + FLAT;",
+        )?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{label}: {:?}", finding.missing);
+    }
 
     // A non-zero call the assertion sees only through another expression
     // does not count: `Math.sign` hides the dropped `fee`.

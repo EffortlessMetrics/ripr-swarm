@@ -3847,6 +3847,7 @@ pub(crate) fn classify_change_with_alias_state(
         discriminate_state,
         missing,
     };
+    let ladder_exposed = matches!(verdict.class, ExposureClass::Exposed);
     ts_apply_post_ladder_rules(
         &mut verdict,
         &mut static_limit,
@@ -3973,6 +3974,14 @@ pub(crate) fn classify_change_with_alias_state(
     let observe = StageEvidence::new(observe_state, Confidence::Low, &observe_summary);
     let discriminate_summary = if static_unknown_by_mock {
         "TypeScript preview adapter: every exposing test file mocks a module the changed line calls; discriminate unknown (RIPR-SPEC-0243 rule 8).".to_string()
+    } else if ladder_exposed && !matches!(class, ExposureClass::Exposed) {
+        // A post-ladder rule (RIPR-SPEC-0246, RIPR-SPEC-0248) withdrew the
+        // ladder's credit; its missing line says why.
+        format!(
+            "TypeScript preview adapter: related test uses a `{}` oracle, but a change-specific rule withdrew discrimination credit: {}",
+            strongest_kind.as_str(),
+            missing.first().map_or("see missing evidence.", String::as_str)
+        )
     } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
         format!(
             "Related test uses a `{}` oracle; static evidence suggests the changed behavior is discriminated.",
@@ -4365,6 +4374,16 @@ pub(crate) fn ts_dropped_term_witness(
             continue;
         }
         let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        // An `import { owner as local }` rename calls the owner as `local`.
+        let mut names: Vec<&str> = vec![owner.name.as_str()];
+        if candidate.relation == TypeScriptRelationKind::ImportAliasOwnerCall {
+            names.extend(import_alias_owner_locals(
+                candidate.test,
+                owner,
+                alias_map,
+                workspace_root,
+            ));
+        }
         for assertion in &candidate.test.assertions {
             // A value matcher sees the returned value; an error matcher
             // (`rejects.toThrow`) sees only that the call fails.
@@ -4380,38 +4399,18 @@ pub(crate) fn ts_dropped_term_witness(
                 continue;
             };
             // Only an assertion on the call's whole result sees the term:
-            // `quote(6000, 5).tier` does not.
-            let bare = std::iter::once(String::new())
-                .chain(receivers.iter().map(|receiver| format!("{receiver}.")))
-                .any(|prefix| {
-                    let observed = observed.trim();
-                    observed
-                        .strip_prefix("await ")
-                        .map_or(observed, str::trim_start)
-                        .strip_prefix(prefix.as_str())
-                        .and_then(|rest| rest.strip_prefix(owner.name.as_str()))
-                        .is_some_and(ts_is_one_argument_list)
+            // `quote(6000, 5).tier` does not. In `price(price(6000, 0), 7)`
+            // the outer call's arguments are the asserted result's.
+            let arguments = ts_whole_owner_call_arguments(observed, &names, owner, &receivers)
+                .or_else(|| {
+                    ts_observed_local_owner_call_arguments(
+                        candidate.test,
+                        assertion,
+                        &owner.name,
+                        &receivers,
+                    )
                 });
-            // One call only: in `price(price(6000, 7), 0)` the inner call's
-            // `fee` is not the asserted result's.
-            let mut argument_lists = if bare {
-                owner_call_arguments(observed, &owner.name, &receivers)
-            } else {
-                Vec::new()
-            };
-            if argument_lists.len() != 1 {
-                argument_lists.clear();
-            }
-            if argument_lists.is_empty()
-                && let Some(arguments) = ts_observed_local_owner_call_arguments(
-                    candidate.test,
-                    assertion,
-                    &owner.name,
-                    &receivers,
-                )
-            {
-                argument_lists.push(arguments);
-            }
+            let argument_lists: Vec<Vec<String>> = arguments.into_iter().collect();
             for arguments in argument_lists {
                 let arguments = substitute_constant_arguments(
                     arguments,
@@ -4433,7 +4432,9 @@ pub(crate) fn ts_dropped_term_witness(
                     }
                 }
                 match fold_numeric_expression(term, &bindings) {
-                    Some(value) if value.abs() > 1e-9 => return DroppedTermWitness::NonZero,
+                    // JavaScript adds in the same IEEE doubles, so any
+                    // non-zero fold changes the sum.
+                    Some(value) if value != 0.0 => return DroppedTermWitness::NonZero,
                     Some(_) => zero = true,
                     None => unknown = true,
                 }
@@ -4445,6 +4446,34 @@ pub(crate) fn ts_dropped_term_witness(
     } else {
         DroppedTermWitness::Unknown
     }
+}
+
+/// The arguments of the owner call `observed` is, whole: `name(...)` for the
+/// owner's name or one of its rename locals, or `ns.owner(...)` through a
+/// receiver bound to the owner's module, optionally awaited, with optional
+/// space before `(`. `None` for a member or call on the result.
+fn ts_whole_owner_call_arguments(
+    observed: &str,
+    names: &[&str],
+    owner: &TypeScriptOwner,
+    receivers: &[String],
+) -> Option<Vec<String>> {
+    let observed = observed.trim();
+    let observed = observed
+        .strip_prefix("await ")
+        .map_or(observed, str::trim_start);
+    let qualified = receivers
+        .iter()
+        .filter_map(|receiver| observed.strip_prefix(receiver.as_str()))
+        .filter_map(|rest| rest.trim_start().strip_prefix('.'))
+        .filter_map(|rest| rest.trim_start().strip_prefix(owner.name.as_str()));
+    let bare = names
+        .iter()
+        .filter_map(|name| observed.strip_prefix(name));
+    bare.chain(qualified)
+        .map(str::trim_start)
+        .find(|rest| ts_is_one_argument_list(rest))
+        .and_then(|rest| balanced_call_arguments(&rest[1..]))
 }
 
 /// RIPR-SPEC-0246 rule 1: the identifier whose returned object the change
