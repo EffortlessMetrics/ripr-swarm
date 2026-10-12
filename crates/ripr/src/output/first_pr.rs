@@ -2674,9 +2674,11 @@ fn fetch_base_command(options: &FirstPrOptions) -> String {
             // Fail closed (#7368): an `origin/` base with an empty branch is
             // an invalid ref that no fetch spelling can make resolve, so
             // fetch-everything advice would be dead recovery. Point at a
-            // rerun with a valid base instead.
+            // rerun with a valid base instead; the example ref is concrete so
+            // the line stays safe to copy into a shell (an unquoted `<ref>`
+            // would parse as redirection).
             return format!(
-                "ripr first-pr --root {} --base <ref> --head HEAD",
+                "ripr first-pr --root {} --base origin/main --head HEAD",
                 shell_arg(&options.command_root())
             );
         }
@@ -2906,7 +2908,14 @@ mod tests {
             ..FirstPrOptions::default()
         };
         let command = fetch_base_command(&empty);
-        assert!(command.contains("--base <ref> --head HEAD"), "{command}");
+        assert!(
+            command.contains("--base origin/main --head HEAD"),
+            "{command}"
+        );
+        assert!(
+            !command.contains('<'),
+            "the recovery command must stay safe to copy into a shell: {command}"
+        );
         assert!(!command.contains("fetch"), "{command}");
 
         let named = FirstPrOptions {

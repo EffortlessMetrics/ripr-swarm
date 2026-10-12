@@ -239,6 +239,9 @@ pub(crate) fn build_report_packet_index_report(
     } else if failures > 0 {
         "fail"
     } else if !missing_expected.is_empty()
+        || warnings
+            .iter()
+            .any(|warning| warning.kind == "receipts_dir_error")
         || entries.iter().any(|grouped| {
             matches!(
                 grouped.entry.status.as_str(),
@@ -842,15 +845,33 @@ fn artifact_available(spec: &ArtifactSpec) -> bool {
 /// receipts directory becomes a `validation_receipts` entry; one that does
 /// not parse as a JSON object renders as `malformed` with a warning instead
 /// of silently passing. Files already claimed by a spec are not double
-/// listed, and an unreadable or absent directory yields nothing.
+/// listed; an absent directory yields nothing, while an unreadable one warns
+/// so it cannot masquerade as "no receipts were written".
 fn scan_receipt_entries(
     receipts_dir: &Path,
     specs: &[ArtifactSpec],
 ) -> (Vec<GroupedEntry>, Vec<IndexWarning>) {
     let mut entries = Vec::new();
     let mut warnings = Vec::new();
-    let Ok(readdir) = std::fs::read_dir(receipts_dir) else {
-        return (entries, warnings);
+    // An absent receipts directory means nothing was written there yet and
+    // stays silent; any other read failure (permissions, a regular file at
+    // the path) must warn instead of masquerading as an empty directory.
+    let readdir = match std::fs::read_dir(receipts_dir) {
+        Ok(readdir) => readdir,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return (entries, warnings);
+        }
+        Err(err) => {
+            warnings.push(IndexWarning {
+                kind: "receipts_dir_error".to_string(),
+                message: format!(
+                    "Could not read the receipts directory {}: {err}",
+                    display_path(receipts_dir)
+                ),
+                source_artifact: Some(display_path(receipts_dir)),
+            });
+            return (entries, warnings);
+        }
     };
     // Surface directory-entry failures instead of dropping them, and accept
     // only regular files: `file_type` does not follow symlinks, so a symlink
@@ -2923,6 +2944,32 @@ mod tests {
             warning.message.contains("invalid JSON"),
             "scanned-receipt warning must carry the parse reason: {}",
             warning.message
+        );
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn receipts_dir_that_is_a_file_warns_instead_of_passing_silently() -> Result<(), String> {
+        // Review follow-up: a receipts path that exists but cannot be listed
+        // (here a regular file sitting where the directory belongs) used to
+        // look exactly like "no receipts were written", letting an index with
+        // every known artifact available report pass. The packet must warn.
+        let root = temp_root("receipts-dir-is-file")?;
+        write(&root.join("target/ripr/receipts"), "not a directory")?;
+        let report = build_report_packet_index_report(input_for_root(&root));
+
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|warning| warning.kind == "receipts_dir_error"),
+            "expected a receipts_dir_error warning: {:?}",
+            report.warnings
+        );
+        assert_ne!(
+            report.status, "pass",
+            "an unreadable receipts directory must not pass silently"
         );
         let _ = std::fs::remove_dir_all(&root);
         Ok(())
