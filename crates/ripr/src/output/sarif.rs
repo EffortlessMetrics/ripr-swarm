@@ -941,7 +941,7 @@ fn finding_rules() -> Vec<Value> {
     all_exposure_classes()
         .iter()
         .map(|class| {
-            let (full_description, help) = finding_class_help(*class);
+            let (full_description, help) = finding_class_help(class);
             rule(
                 finding_rule_id(class),
                 format!("ripr {}", class.as_str()),
@@ -958,7 +958,7 @@ fn seam_rules() -> Vec<Value> {
     SeamGripClass::ALL
         .iter()
         .map(|class| {
-            let (full_description, help) = seam_class_help(*class);
+            let (full_description, help) = seam_class_help(class);
             rule(
                 seam_rule_id(*class),
                 format!("ripr seam {}", class.as_str()),
@@ -976,7 +976,7 @@ fn seam_rules() -> Vec<Value> {
 /// and naming the typical next step. The vocabulary mirrors
 /// `docs/STATIC_EXPOSURE_MODEL.md` and the seam inventory spec; these strings
 /// are the rule-page text code scanning shows on its alert and rule pages.
-fn finding_class_help(class: ExposureClass) -> (&'static str, &'static str) {
+fn finding_class_help(class: &ExposureClass) -> (&'static str, &'static str) {
     match class {
         ExposureClass::Exposed => (
             "Static analysis found a complete path from the changed code to a test oracle strong enough to observe the changed behavior.",
@@ -1009,7 +1009,7 @@ fn finding_class_help(class: ExposureClass) -> (&'static str, &'static str) {
     }
 }
 
-fn seam_class_help(class: SeamGripClass) -> (&'static str, &'static str) {
+fn seam_class_help(class: &SeamGripClass) -> (&'static str, &'static str) {
     match class {
         SeamGripClass::StronglyGripped => (
             "Current tests strongly grip this seam: a related test reaches it with a discriminating oracle.",
