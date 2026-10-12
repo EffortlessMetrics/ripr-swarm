@@ -197,10 +197,13 @@ fn annotate_related_test_misses(
         // so such a row never calls the owner and that is why it misses. An
         // assertion-level reason `reveal` recorded first
         // (`assertion_not_credited`) would point the reader at assertion
-        // admission instead of the missing call.
+        // admission instead of the missing call. An `assertion_not_observing`
+        // row keeps its miss: that value is what marks it examined-only
+        // (`RelatedTest::is_unmatched`), and the no-static-path reach limit
+        // and fix-site selection read `oracle_related_tests` through it.
         for test in related_tests
             .iter_mut()
-            .filter(|test| test.relation_reason.is_none_or(reaches_nothing))
+            .filter(|test| test.relation_reason.is_none_or(reaches_nothing) && !test.is_unmatched())
         {
             test.miss = Some(RelatedTestMiss::NoCallPath);
         }
@@ -575,6 +578,11 @@ mod tests {
                 Some(crate::domain::RelatedTestMiss::NoAssertion),
             ),
             row(
+                "same_file_unmatched",
+                RelationReason::SameTestFile,
+                Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
+            ),
+            row(
                 "seam_callee_refused",
                 RelationReason::SeamCalleeCall,
                 Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
@@ -602,6 +610,7 @@ mod tests {
             vec![
                 Some(crate::domain::RelatedTestMiss::NoCallPath),
                 Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
                 Some(crate::domain::RelatedTestMiss::NoCallPath),
                 Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
                 Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
