@@ -55,5 +55,8 @@
       "reachable_unrevealed"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0120#1"
+  ]
 }

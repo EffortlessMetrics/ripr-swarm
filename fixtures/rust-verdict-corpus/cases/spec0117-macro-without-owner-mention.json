@@ -55,5 +55,8 @@
       "no_static_path"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0117#2"
+  ]
 }

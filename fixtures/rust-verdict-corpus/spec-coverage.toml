@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 71
+floor = 89
 
 # LSP Repair Packet Command
 [[spec]]
@@ -90,6 +90,10 @@ reason = "output wording or disclosure; the classification is unchanged, so a ve
 [[spec]]
 id = "RIPR-SPEC-0114"
 scope = "in"
+
+[[spec.waived]]
+example = 3
+reason = "a crate with no tests at all; `verdict-corpus relabel` needs at least one test to run, so no runtime truth exists to label"
 
 # Rust Transitive-Reach Witness
 [[spec]]
