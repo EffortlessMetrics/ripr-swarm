@@ -2669,6 +2669,16 @@ fn base_fetch_refspec(branch: &str) -> String {
 
 fn fetch_base_command(options: &FirstPrOptions) -> String {
     if let Some(branch) = options.base.strip_prefix("origin/") {
+        if branch.is_empty() {
+            // Fail closed (#7368): an `origin/` base with an empty branch
+            // composes the invalid refspec `+refs/heads/:refs/remotes/origin/`
+            // that git rejects; fall back to the fetch-everything spelling a
+            // non-origin base already uses.
+            return format!(
+                "git -C {} fetch --all --prune",
+                shell_arg(&options.command_root())
+            );
+        }
         format!(
             "git -C {} fetch origin -- {}",
             shell_arg(&options.command_root()),
@@ -2882,6 +2892,31 @@ mod tests {
         assert!(
             first_pr_write_command(&FirstPrOptions::default(), out, true)
                 .contains("--base <ref> --head")
+        );
+    }
+
+    #[test]
+    fn fetch_base_command_with_empty_origin_branch_falls_back_to_fetch_all() {
+        // #7368: `origin/` with an empty branch composes the invalid refspec
+        // `+refs/heads/:refs/remotes/origin/`; the recovery must fall back to
+        // the fetch-everything spelling instead of printing a command git
+        // rejects outright.
+        let empty = FirstPrOptions {
+            base: "origin/".to_string(),
+            ..FirstPrOptions::default()
+        };
+        let command = fetch_base_command(&empty);
+        assert!(command.contains("fetch --all --prune"), "{command}");
+        assert!(!command.contains("refs/heads/:"), "{command}");
+
+        let named = FirstPrOptions {
+            base: "origin/trunk".to_string(),
+            ..FirstPrOptions::default()
+        };
+        let command = fetch_base_command(&named);
+        assert!(
+            command.contains("+refs/heads/trunk:refs/remotes/origin/trunk"),
+            "{command}"
         );
     }
 
