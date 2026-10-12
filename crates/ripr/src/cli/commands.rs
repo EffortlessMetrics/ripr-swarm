@@ -558,7 +558,17 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
             )
         })?;
     let input = output::gap_decision_ledger::GapDecisionLedgerInput {
-        root: output::baseline_delta::display_path(&selected_root),
+        // `root` is consumed as a native path. Display escaping would turn
+        // a literal `%` into a different directory named `%25` (#7382).
+        root: selected_root
+            .to_str()
+            .ok_or_else(|| {
+                format!(
+                    "reports gap-ledger root {} resolves to a non-UTF-8 path; select a UTF-8 repository root",
+                    options.root
+                )
+            })?
+            .to_string(),
         generated_at: gap_decision_ledger_generated_at()?,
         source_kind: options.source.kind(),
         records_path,

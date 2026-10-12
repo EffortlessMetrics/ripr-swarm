@@ -17391,7 +17391,9 @@ unit tests.
 
 The CLI writer persists the selected canonical absolute `root`, including the
 default `--root .`, so a consumer cannot reinterpret the producer's directory
-label in its own working directory (#7382). Source-subject digests remain copied
+label in its own working directory (#7382). It keeps the native path spelling,
+including literal `%`, and refuses a non-UTF-8 canonical root before writing
+either ledger output. Source-subject digests remain copied
 from the analysis input; resolving the root does not mint fresh provenance.
 
 `ripr reports gap-ledger --records <path>` renders a read-only advisory ledger
