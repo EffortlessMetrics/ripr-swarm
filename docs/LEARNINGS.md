@@ -3,6 +3,17 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-12: Calibrate joins are identity-blind; disclose like outcome (#7449)
+
+`ripr calibrate cargo-mutants` joins by `seam_id` / span / file+line. It
+cannot tell a same-repo mutant from a foreign record that happens to share
+a path and line. `ripr outcome` already discloses missing or differing heads
+on the same snapshot family. Calibrate must print the same class of caveat
+on stderr and in `--help`. Do not treat a file+line match as proof the
+artifacts share a subject, and do not refuse that join in the provenance
+fix. Do not fold producer-help (#7450), `matched_total` meaning (#7451), or
+the xtask duplicate renderer (#6691) into this disclosure.
+
 ## 2026-10-12: Doctor `cargo_toml` is not `resolve_project_root` (#7466)
 
 `ripr check`'s `resolve_project_root` walks *up* and can return a git top
