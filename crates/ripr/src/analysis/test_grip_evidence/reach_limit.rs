@@ -81,6 +81,9 @@ pub(in crate::analysis::test_grip_evidence) struct TypeMentionIndex {
     /// Type-shaped identifiers in each struct or enum definition, by type
     /// name: what `self.field` or a `match self` binding may hold.
     field_types: BTreeMap<String, BTreeSet<String>>,
+    /// Whether a test expects a panic (`#[should_panic]`, `catch_unwind`),
+    /// so production failure messages may format on a passing run.
+    panics_expected: bool,
 }
 
 /// Where test-reached code first uses a gated trait's call syntax.
@@ -105,9 +108,19 @@ impl TypeMentionIndex {
             (&a.file, a.start_line, &a.name).cmp(&(&b.file, b.start_line, &b.name))
         });
         let mut test_files: BTreeSet<&std::path::Path> = BTreeSet::new();
+        for test in &tests {
+            index.panics_expected |= expects_panic(test);
+        }
         for test in tests {
             index.add_test_mentions(test);
-            index.add_trait_uses(&test.body, &test.name, &test.file, test.start_line, true);
+            index.add_trait_uses(
+                &test.body,
+                &test.name,
+                &test.file,
+                test.start_line,
+                true,
+                expects_panic(test),
+            );
             test_files.insert(test.file.as_path());
         }
         // A test file's imports (`use serde_json::to_string;`) say what its
@@ -115,7 +128,7 @@ impl TypeMentionIndex {
         for file in test_files {
             if let Some(facts) = context.index.files().get(file) {
                 let imports = use_items(&facts.data().source);
-                index.add_trait_uses(&imports, "use", file, 1, true);
+                index.add_trait_uses(&imports, "use", file, 1, true, false);
             }
         }
         let reach = &context.transitive_reach;
@@ -241,14 +254,16 @@ impl TypeMentionIndex {
 
     fn add_function_trait_uses(&mut self, function: &FunctionSummary) {
         let test_code = is_test_file(&function.file) || is_generic_signature(&function.body);
+        let failure_paths_run = self.panics_expected;
         self.add_trait_uses(
             &function.body,
             &function.name,
             &function.file,
             function.start_line,
             test_code,
+            failure_paths_run,
         );
-        if test_code || gated_trait_uses(&function.body).is_empty() {
+        if test_code || gated_trait_uses(&function.body, failure_paths_run).is_empty() {
             return;
         }
         // A method that uses the syntax on `self`, `Self` or a field
@@ -268,6 +283,7 @@ impl TypeMentionIndex {
             &function.file,
             function.start_line,
             held.into_iter().map(Some).collect(),
+            failure_paths_run,
         );
     }
 
@@ -296,6 +312,7 @@ impl TypeMentionIndex {
         file: &std::path::Path,
         line: usize,
         test_code: bool,
+        failure_paths_run: bool,
     ) {
         let types: Vec<Option<String>> = if test_code {
             vec![None]
@@ -305,7 +322,7 @@ impl TypeMentionIndex {
                 .map(|(token, _)| Some(token))
                 .collect()
         };
-        self.add_trait_uses_for(body, site, file, line, types);
+        self.add_trait_uses_for(body, site, file, line, types, failure_paths_run);
     }
 
     fn add_trait_uses_for(
@@ -315,8 +332,9 @@ impl TypeMentionIndex {
         file: &std::path::Path,
         line: usize,
         types: Vec<Option<String>>,
+        failure_paths_run: bool,
     ) {
-        let uses = gated_trait_uses(body);
+        let uses = gated_trait_uses(body, failure_paths_run);
         for (gated, syntax) in uses {
             for type_name in &types {
                 self.trait_uses
@@ -683,13 +701,12 @@ impl GatedTrait {
     }
 
     /// Operators and macro syntax (outside comments and strings) whose use
-    /// runs the trait. `<` and `>` count only with a space on each side, so
-    /// generics and `->` do not. Any `vec![` counts for `Clone`, since
-    /// `vec![x; n]` clones `x`.
+    /// runs the trait. Any `vec![` counts for `Clone`, since `vec![x; n]`
+    /// clones `x`. `Ord`'s comparison operators come from
+    /// `comparison_operator`, which tells them from generics.
     fn operators(self) -> &'static [&'static str] {
         match self {
             Self::PartialEq => &["==", "!="],
-            Self::Ord => &[" < ", " > ", "<=", ">="],
             Self::Clone => &["vec!["],
             _ => &[],
         }
@@ -698,21 +715,32 @@ impl GatedTrait {
 
 /// Each gated trait whose call syntax `body` uses, with the first syntax
 /// found. A format string counts only outside a failure message
-/// (`assert!`, `panic!`, `expect`), which formats only when the test fails.
-fn gated_trait_uses(body: &str) -> Vec<(GatedTrait, &'static str)> {
+/// (`assert!`, `panic!`, `expect`), which formats only when the test fails,
+/// unless `failure_paths_run`: a test that expects a panic passes by taking
+/// that path, where `assert_eq!` and `unwrap` also format with `Debug`.
+fn gated_trait_uses(body: &str, failure_paths_run: bool) -> Vec<(GatedTrait, &'static str)> {
     let code = body
         .lines()
         .map(strip_comments_and_strings)
         .collect::<Vec<_>>()
         .join("\n");
     let words = words(&code);
-    let (display_placeholder, debug_placeholder) = format_placeholders(body);
+    let (display_placeholder, debug_placeholder) = format_placeholders(body, failure_paths_run);
+    let failure_debug = failure_paths_run
+        .then(|| {
+            FAILURE_DEBUG
+                .iter()
+                .copied()
+                .find(|ident| words.contains(ident))
+        })
+        .flatten();
     GatedTrait::ALL
         .into_iter()
         .filter_map(|gated| {
             let placeholder = match gated {
                 GatedTrait::Display if display_placeholder => Some("{}"),
                 GatedTrait::Debug if debug_placeholder => Some("{:?}"),
+                GatedTrait::Debug => failure_debug,
                 _ => None,
             };
             let syntax = placeholder
@@ -729,7 +757,11 @@ fn gated_trait_uses(body: &str) -> Vec<(GatedTrait, &'static str)> {
                         .iter()
                         .copied()
                         .find(|op| code.contains(op))
-                        .map(str::trim)
+                })
+                .or_else(|| {
+                    (gated == GatedTrait::Ord)
+                        .then(|| comparison_operator(&code))
+                        .flatten()
                 })?;
             Some((gated, syntax))
         })
@@ -742,10 +774,108 @@ fn words(code: &str) -> BTreeSet<&str> {
         .collect()
 }
 
+/// Calls that format their operands or error with `Debug` when they fail.
+const FAILURE_DEBUG: &[&str] = &[
+    "assert_eq",
+    "assert_ne",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "unwrap",
+    "unwrap_err",
+    "expect",
+    "expect_err",
+];
+
+/// Whether `test` passes by panicking (`#[should_panic]`) or catches a
+/// panic it causes (`catch_unwind`).
+fn expects_panic(test: &TestSummary) -> bool {
+    test.attrs.iter().any(|attr| attr.contains("should_panic"))
+        || words(&strip_comments_and_strings(&test.body)).contains("catch_unwind")
+}
+
+/// The first comparison operator (`<`, `>`, `<=`, `>=`) in `code`, with
+/// comments and strings stripped, spaced or not. A `<` opens generics after
+/// `::`, a capitalized type name, a keyword (`impl`, `for`), the name an
+/// item declares (`fn f<T>`) or in a qualified path (`<T as Trait>`); its
+/// `>` closes them. `->`, `=>`, `<<` and `>>` are not comparisons.
+fn comparison_operator(code: &str) -> Option<&'static str> {
+    let bytes = code.as_bytes();
+    let mut generic_depth = 0usize;
+    let mut i = 0;
+    while i < bytes.len() {
+        let next = bytes.get(i + 1).copied();
+        match bytes[i] {
+            b'<' if next == Some(b'=') => return Some("<="),
+            b'<' if next == Some(b'<') => i += 1,
+            b'<' => {
+                let spaced = i > 0
+                    && bytes[i - 1].is_ascii_whitespace()
+                    && next.is_some_and(|b| b.is_ascii_whitespace());
+                if spaced || !opens_generics(&code[..i]) {
+                    return Some("<");
+                }
+                generic_depth += 1;
+            }
+            b'>' if i > 0 && matches!(bytes[i - 1], b'-' | b'=') => {}
+            b'>' if next == Some(b'=') && generic_depth == 0 => return Some(">="),
+            b'>' if generic_depth > 0 => generic_depth -= 1,
+            b'>' if next == Some(b'>') => i += 1,
+            b'>' => return Some(">"),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Whether a `<` right after `before` opens generic arguments rather than
+/// comparing.
+fn opens_generics(before: &str) -> bool {
+    let trimmed = before.trim_end();
+    if trimmed.ends_with("::") {
+        return true;
+    }
+    let (ident_start, ident) = last_ident(trimmed);
+    let Some(first) = ident.chars().next() else {
+        // `(x)<y` and `v[0]<y` compare; `<T as Trait>` after `(`, `=` or a
+        // space opens a qualified path.
+        return !trimmed.ends_with([')', ']']);
+    };
+    if first.is_ascii_digit() {
+        return false;
+    }
+    if matches!(ident, "impl" | "for" | "where") {
+        return true;
+    }
+    if first.is_uppercase() {
+        // An all-caps name (`MAX<x`) is a constant, not a type.
+        return !(ident.len() > 1
+            && ident
+                .chars()
+                .all(|ch| ch.is_uppercase() || ch.is_ascii_digit() || ch == '_'));
+    }
+    matches!(
+        last_ident(trimmed[..ident_start].trim_end()).1,
+        "fn" | "struct" | "enum" | "union" | "trait" | "type"
+    )
+}
+
+/// The identifier that ends `text` and its byte offset (empty when `text`
+/// does not end in one).
+fn last_ident(text: &str) -> (usize, &str) {
+    let start = text
+        .char_indices()
+        .rev()
+        .take_while(|(_, ch)| ch.is_alphanumeric() || *ch == '_')
+        .last()
+        .map_or(text.len(), |(at, _)| at);
+    (start, &text[start..])
+}
+
 /// Whether `body` has a `Display` placeholder (`{}`, `{name}`, `{:>8}`) and
 /// a `Debug` one (`{:?}`, `{x:#?}`) in a string literal that is not a
-/// failure message.
-fn format_placeholders(body: &str) -> (bool, bool) {
+/// failure message, or in any literal when `failure_paths_run`.
+fn format_placeholders(body: &str, failure_paths_run: bool) -> (bool, bool) {
     let mut display = false;
     let mut debug = false;
     let literals = string_literals(body);
@@ -758,7 +888,7 @@ fn format_placeholders(body: &str) -> (bool, bool) {
     }
     let masked = String::from_utf8(masked).unwrap_or_else(|_| body.to_string());
     for (start, literal) in literals {
-        if masked.get(..start).is_some_and(is_failure_message) {
+        if !failure_paths_run && masked.get(..start).is_some_and(is_failure_message) {
             continue;
         }
         let mut rest = literal;
@@ -1185,30 +1315,33 @@ mod tests {
     #[test]
     fn format_strings_count_outside_failure_messages_only() {
         assert_eq!(
-            format_placeholders("let s = format!(\"{}\", v);"),
-            (true, false)
-        );
-        assert_eq!(format_placeholders("println!(\"{v:#?}\");"), (false, true));
-        assert_eq!(
-            format_placeholders("write!(f, \"{:>8}\", v)"),
+            format_placeholders("let s = format!(\"{}\", v);", false),
             (true, false)
         );
         assert_eq!(
-            format_placeholders("assert!(ok(v), \"bad {:?}\", v); x.expect(\"{}\");"),
+            format_placeholders("println!(\"{v:#?}\");", false),
+            (false, true)
+        );
+        assert_eq!(
+            format_placeholders("write!(f, \"{:>8}\", v)", false),
+            (true, false)
+        );
+        assert_eq!(
+            format_placeholders("assert!(ok(v), \"bad {:?}\", v); x.expect(\"{}\");", false),
             (false, false)
         );
         assert_eq!(
-            format_placeholders("assert_eq!(f(x), 1, \"bad {}\", v);"),
+            format_placeholders("assert_eq!(f(x), 1, \"bad {}\", v);", false),
             (false, false)
         );
         // A format string passed to another call inside an assertion runs.
         assert_eq!(
-            format_placeholders("assert_eq!(format!(\"{:?}\", v), \"V\");"),
+            format_placeholders("assert_eq!(format!(\"{:?}\", v), \"V\");", false),
             (false, true)
         );
         // Escaped braces and a char literal quote do not open a placeholder.
         assert_eq!(
-            format_placeholders("let q = '\"'; let s = \"{{x}}\";"),
+            format_placeholders("let q = '\"'; let s = \"{{x}}\";", false),
             (false, false)
         );
     }
@@ -1218,14 +1351,20 @@ mod tests {
         // The inner quote does not end `r#"…"#`, so the later `{:?}` is
         // still read as its own literal.
         assert_eq!(
-            format_placeholders("let a = r#\"say \"x\" {}\"#; let b = format!(\"{:?}\", a);"),
+            format_placeholders(
+                "let a = r#\"say \"x\" {}\"#; let b = format!(\"{:?}\", a);",
+                false
+            ),
             (true, true)
         );
         assert_eq!(
-            format_placeholders("let p = r\"dir\\\"; let s = format!(\"{:?}\", p);"),
+            format_placeholders("let p = r\"dir\\\"; let s = format!(\"{:?}\", p);", false),
             (false, true)
         );
-        assert_eq!(format_placeholders("let b = br\"{x}\";"), (true, false));
+        assert_eq!(
+            format_placeholders("let b = br\"{x}\";", false),
+            (true, false)
+        );
     }
 
     #[test]
@@ -1233,11 +1372,11 @@ mod tests {
         // The `assert(` inside the first literal is text, not the call
         // that encloses the placeholder.
         assert_eq!(
-            format_placeholders("let s = label(\"assert(\", \"{:?}\");"),
+            format_placeholders("let s = label(\"assert(\", \"{:?}\");", false),
             (false, true)
         );
         assert_eq!(
-            format_placeholders("let s = f(\")\", format!(\"{}\", a));"),
+            format_placeholders("let s = f(\")\", format!(\"{}\", a));", false),
             (true, false)
         );
     }
@@ -1267,11 +1406,11 @@ mod tests {
     #[test]
     fn block_comments_hold_no_format_strings() {
         assert_eq!(
-            format_placeholders("let a = 1; /* \"{:?}\" */ let b = 2;"),
+            format_placeholders("let a = 1; /* \"{:?}\" */ let b = 2;", false),
             (false, false)
         );
         assert_eq!(
-            format_placeholders("/* x */ let s = format!(\"{}\", a);"),
+            format_placeholders("/* x */ let s = format!(\"{}\", a);", false),
             (true, false)
         );
     }
@@ -1293,16 +1432,65 @@ mod tests {
 
     #[test]
     fn gated_trait_uses_read_operators_and_identifiers() {
-        let uses =
-            gated_trait_uses("if a < b && v == w { list.sort(); }\nlet x: Vec<u8> = Vec::new();");
+        let uses = gated_trait_uses(
+            "if a < b && v == w { list.sort(); }\nlet x: Vec<u8> = Vec::new();",
+            false,
+        );
         assert_eq!(
             uses,
             vec![(GatedTrait::PartialEq, "=="), (GatedTrait::Ord, "sort"),]
         );
         // `->` and generics are not comparisons.
         assert_eq!(
-            gated_trait_uses("fn f() -> Option<Vec<u8>> { None }"),
+            gated_trait_uses("fn f() -> Option<Vec<u8>> { None }", false),
             vec![]
+        );
+    }
+
+    #[test]
+    fn comparisons_read_without_spaces_and_generics_do_not() {
+        // #6662 review: `a<b` compares as much as `a < b`.
+        for (code, op) in [
+            ("assert!(Amount(1)<Amount(2));", "<"),
+            ("if a<b { }", "<"),
+            ("if v[0]>w { }", ">"),
+            ("if n>=MAX { }", ">="),
+            ("if LIMIT<n { }", "<"),
+            ("let v: Vec<u8> = f(); if v.len()>3 { }", ">"),
+        ] {
+            assert_eq!(comparison_operator(code), Some(op), "{code}");
+        }
+        for code in [
+            "fn f<T: Ord>(x: Vec<Option<T>>) -> Box<dyn Fn() -> u8> { g::<T>() }",
+            "impl<T> From<T> for W<T> { }",
+            "let x = <T as Tr>::f(); let m = a << 2; let n = b >> 1;",
+            "match x { Some(_) => 1, None => 2 }",
+            "let it: Vec<Vec<u8>> = x.collect::<Vec<_>>();",
+        ] {
+            assert_eq!(comparison_operator(code), None, "{code}");
+        }
+    }
+
+    #[test]
+    fn a_test_that_expects_a_panic_runs_its_failure_formatting() {
+        // #6662 review: a `#[should_panic]` test passes through its panic
+        // message and its failing `assert_eq!`.
+        let body = "assert_eq!(Amount(1), Amount(2), \"{}\", note);";
+        assert_eq!(
+            gated_trait_uses(body, false),
+            vec![(GatedTrait::PartialEq, "assert_eq")]
+        );
+        assert_eq!(
+            gated_trait_uses(body, true),
+            vec![
+                (GatedTrait::Display, "{}"),
+                (GatedTrait::Debug, "assert_eq"),
+                (GatedTrait::PartialEq, "assert_eq"),
+            ]
+        );
+        assert_eq!(
+            format_placeholders("panic!(\"{:?}\", v);", true),
+            (false, true)
         );
     }
 

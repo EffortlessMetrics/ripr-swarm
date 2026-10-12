@@ -18633,3 +18633,86 @@ fn display_impl_another_display_impl_delegates_to_is_opaque() -> Result<(), Stri
     assert_eq!(class, SeamGripClass::Opaque);
     Ok(())
 }
+
+#[test]
+fn partial_ord_impl_a_test_compares_without_spaces_is_opaque() -> Result<(), String> {
+    // #6662 review: `Amount(1)<Amount(2)` runs `PartialOrd` as much as a
+    // spaced `<` does.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "#[derive(PartialEq)]\n\
+             pub struct Amount(pub u32);\n\
+             impl PartialOrd for Amount {\n\
+                 fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { None } else { Some(amount.cmp(&other.0)) }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test] fn ordered() { assert!(Amount(1)<Amount(2)); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_a_should_panic_test_formats_in_its_panic_is_opaque() -> Result<(), String> {
+    // #6662 review: a `#[should_panic]` test passes by panicking, so its
+    // panic message formats `Amount` with `Debug`.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test]\n\
+             #[should_panic]\n\
+             fn reports() { panic!(\"{:?}\", Amount(150)); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_a_passing_test_formats_only_in_its_panic_stays_ungripped() -> Result<(), String> {
+    // Negative control: without `#[should_panic]` the panic message formats
+    // only when the test fails.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl Amount { pub fn get(&self) -> u32 { self.0 } }\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test]\n\
+             fn reports() { let a = Amount(150); if a.get() != 150 { panic!(\"{:?}\", a); } }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
