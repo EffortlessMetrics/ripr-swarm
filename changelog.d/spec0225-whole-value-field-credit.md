@@ -8,4 +8,4 @@
   compare by derived `PartialEq` (RIPR-SPEC-0225). A field read copied into
   the expected side (`assert_eq!(c, Config { retries: c.retries, name: "x".into() })`
   or `assert_eq!(c, Config::new(c.retries))`) no longer counts as observing
-  the field.
+  the field (#7066).

@@ -1,1 +1,5 @@
-The real fixture cache-binding tests now own distinct fixture, fact-cache and output paths across test processes. Native Cargo-lock contention controls retain populated facts and rendered output, and failed or aborted runs clean only paths their owner acquired.
+<!-- section: Fixed -->
+- The real fixture cache-binding tests now own distinct fixture, fact-cache
+  and output paths across test processes. Native Cargo-lock contention
+  controls retain populated facts and rendered output, and failed or aborted
+  runs clean only paths their owner acquired (#7300).

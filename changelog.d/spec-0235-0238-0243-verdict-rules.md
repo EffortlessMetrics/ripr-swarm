@@ -3,4 +3,4 @@
   spec: Python and TypeScript oracle and reach rules, the classification
   matrix for Perl fact packets, the seam grip classification order
   (including `opaque` and `activation_unknown`), and `ripr pilot` ranking.
-  Each lists the current over-credit it removes and its acceptance examples.
+  Each lists the current over-credit it removes and its acceptance examples (#6590).
