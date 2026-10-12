@@ -443,17 +443,38 @@ fn verify_layer_before_delete(cache_dir: &Path, layer: &CacheLayerPlan) -> Resul
     }
 }
 
+/// Failure text for a cache-layer removal that the OS refused (#7388). The
+/// user meets this message exactly while recovering from an error, so the
+/// layer path renders through the shared human renderer — the same plain
+/// forward-slash spelling as the `Cache dir:` header in the same output —
+/// instead of the verbatim `\\?\` canonicalized form that pastes poorly into
+/// editors, other shells, and issue reports.
+fn layer_removal_failure_message(
+    layer_path: &Path,
+    error: &std::io::Error,
+    windows: bool,
+) -> String {
+    format!(
+        "failed to remove ripr cache layer {}: {error}; the cache root and unrelated siblings were preserved",
+        output::path::human_path_text(&layer_path.to_string_lossy(), windows)
+    )
+}
+
 fn remove_owned_layers(cache_dir: &Path, plan: &ClearPlan) -> Result<(), String> {
+    remove_owned_layers_for_host(cache_dir, plan, cfg!(windows))
+}
+
+fn remove_owned_layers_for_host(
+    cache_dir: &Path,
+    plan: &ClearPlan,
+    windows: bool,
+) -> Result<(), String> {
     for layer in &plan.layers {
         verify_layer_before_delete(cache_dir, layer)?;
     }
     for layer in &plan.layers {
-        std::fs::remove_dir_all(&layer.path).map_err(|error| {
-            format!(
-                "failed to remove ripr cache layer {}: {error}; the cache root and unrelated siblings were preserved",
-                layer.path.display()
-            )
-        })?;
+        std::fs::remove_dir_all(&layer.path)
+            .map_err(|error| layer_removal_failure_message(&layer.path, &error, windows))?;
     }
     Ok(())
 }
@@ -1287,6 +1308,47 @@ mod tests {
         let aliased_human = render_status(cache_dir, Some(alias_real), &owned_only, false)?;
         if !aliased_human.contains("Real dir: resolved-cache-target") {
             return Err(format!("human alias disclosure drifted: {aliased_human}"));
+        }
+        Ok(())
+    }
+
+    /// #7388: a failed layer removal used to interpolate `Path::display()` of
+    /// the canonicalized layer path, leaking the verbatim `\\?\` spelling on
+    /// the error path while the same command's `Cache dir:` header renders
+    /// the plain forward-slash form (#7326). The failure text now routes
+    /// through the shared human renderer on every host that produces
+    /// verbatim prefixes; Unix keeps the text unchanged.
+    #[test]
+    fn layer_removal_failure_message_strips_windows_verbatim_prefix() -> Result<(), String> {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shape is assembled from parts.
+        let drive = "F:";
+        let verbatim = format!(r"\\?\{drive}\tmp\ripr-audit-scratch\target\ripr\cache\repo-file-facts");
+        let layer_path = Path::new(&verbatim);
+        let error = std::io::Error::from(std::io::ErrorKind::Other);
+        let windows = layer_removal_failure_message(layer_path, &error, true);
+        let expected_path =
+            format!("{drive}/tmp/ripr-audit-scratch/target/ripr/cache/repo-file-facts");
+        if !windows.contains(&format!("failed to remove ripr cache layer {expected_path}:")) {
+            return Err(format!(
+                "windows failure message leaked the verbatim spelling: {windows}"
+            ));
+        }
+        if windows.contains(r"\\?\") || windows.contains('\\') {
+            return Err(format!(
+                "windows failure message must use plain forward-slash spelling: {windows}"
+            ));
+        }
+        if !windows.contains("the cache root and unrelated siblings were preserved") {
+            return Err(format!(
+                "failure message dropped the preservation disclosure: {windows}"
+            ));
+        }
+        let unix = layer_removal_failure_message(layer_path, &error, false);
+        if !unix.contains(&format!("failed to remove ripr cache layer {verbatim}:")) {
+            return Err(format!(
+                "unix failure message must keep verbatim text as a filename: {unix}"
+            ));
         }
         Ok(())
     }
