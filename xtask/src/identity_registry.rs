@@ -4,7 +4,9 @@
 //! covers serialized identity-shaped fields and that the generated human
 //! table agrees with the machine-readable registry.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+use ra_ap_syntax::{AstNode, Edition, SourceFile, SyntaxKind};
 use std::path::Path;
 
 use ripr::domain::{
@@ -153,8 +155,27 @@ fn collect_schema_fields(value: &Value, fields: &mut BTreeSet<String>) {
 fn collect_rust_string_fields(text: &str) -> BTreeSet<String> {
     let mut fields = BTreeSet::new();
     let bytes = text.as_bytes();
+    // Character delimiters are not string delimiters. Reuse the existing Rust
+    // syntax lexer for their byte spans without changing the registry's legacy
+    // quoted-field collection or its unknown/zero-field refusal contracts.
+    let parsed = SourceFile::parse(text, Edition::Edition2024);
+    let tree = parsed.tree();
+    let character_ends = tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| matches!(token.kind(), SyntaxKind::CHAR | SyntaxKind::BYTE))
+        .map(|token| {
+            let range = token.text_range();
+            (usize::from(range.start()), usize::from(range.end()))
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut index = 0;
     while index < bytes.len() {
+        if let Some(end) = character_ends.get(&index) {
+            index = *end;
+            continue;
+        }
         if bytes[index] == b'"' {
             index += 1;
             let start = index;

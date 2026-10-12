@@ -11200,6 +11200,11 @@ tests = [
   "xtask/src/identity_registry.rs::tests::unknown_field_has_no_disposition",
   "xtask/src/identity_registry.rs::tests::same_attempt_id_name_keeps_repair_and_feedback_dispositions_apart",
   "xtask/src/identity_registry.rs::tests::scanner_reports_unknown_and_zero_field_surfaces",
+  "xtask/src/identity_registry.rs::tests::rust_scanner_keeps_real_fields_after_quoted_char_and_byte_literals",
+  "xtask/src/identity_registry.rs::tests::rust_scanner_keeps_lifetimes_and_legacy_escaped_string_fields_distinct",
+  "xtask/src/identity_registry.rs::tests::rust_scanner_collects_command_id_after_the_actual_shared_tokenizer",
+  "xtask/src/identity_registry.rs::tests::rust_scanner_preserves_utf8_offsets_unknown_fields_and_zero_surface_refusal",
+  "xtask/src/identity_registry.rs::tests::rust_scanner_preserves_legacy_ordinary_raw_byte_string_and_quoted_comment_fields",
 ]
 fixtures = [
 ]
