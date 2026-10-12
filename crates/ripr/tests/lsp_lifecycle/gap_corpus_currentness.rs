@@ -760,10 +760,7 @@ impl InvalidCorpus {
                         corpus.insert("scope".into(), json!("unrecognized_workspace"));
                     }
                     Self::UnsupportedSchema => {
-                        corpus.insert(
-                            "cache_schema_version".into(),
-                            json!("1.62"),
-                        );
+                        corpus.insert("cache_schema_version".into(), json!("1.62"));
                     }
                     Self::Missing | Self::Malformed => {
                         return Err("unreachable corpus corruption variant".into());
