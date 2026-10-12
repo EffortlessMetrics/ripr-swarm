@@ -4484,12 +4484,14 @@ pub(crate) fn ts_dropped_term_witness(
             // the outer call's arguments are the asserted result's.
             let arguments = ts_whole_owner_call_arguments(observed, &names, owner, &receivers)
                 .or_else(|| {
-                    ts_observed_local_owner_call_arguments(
-                        candidate.test,
-                        assertion,
-                        &owner.name,
-                        &receivers,
-                    )
+                    names.iter().find_map(|name| {
+                        ts_observed_local_owner_call_arguments(
+                            candidate.test,
+                            assertion,
+                            name,
+                            &receivers,
+                        )
+                    })
                 });
             let argument_lists: Vec<Vec<String>> = arguments.into_iter().collect();
             for arguments in argument_lists {

@@ -220,6 +220,20 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
         );
     }
 
+    // A local bound to a renamed import's call witnesses the term too.
+    let local_alias = "import { price as subject } from \"../src/price\";\ntest(\"price\", () => {\n  const result = subject(6000, 7);\n  expect(result).toBe(1);\n});\n";
+    let finding = price_finding(
+        "dropped-term-alias-local",
+        local_alias,
+        "  return subtotal + shipping(subtotal) + FLAT;",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+
     // A double sum absorbs a term below 2^-52 of its magnitude, so a
     // `fee` under 1e-6 does not witness it.
     let finding = price_finding(
