@@ -865,6 +865,79 @@ fn node_test_context_assert_reads_as_legacy_node_assert() {
     }
 }
 
+/// RIPR-SPEC-0252: each supported `node:test` registration form reads the
+/// context assert; the same registration shadowed by a local `test` in the
+/// enclosing `describe` reads nothing.
+#[test]
+fn node_test_context_assert_follows_the_registration_binding() {
+    let call = "t.assert.equal(lateFee(10), 20);";
+    for (label, imports, registration, credited) in [
+        (
+            "named it",
+            "import { it } from \"node:test\";",
+            "it(\"late fee\", (t) => {\n  CALL\n});",
+            true,
+        ),
+        (
+            "require member",
+            "const test = require(\"node:test\").test;",
+            "test(\"late fee\", (t) => {\n  CALL\n});",
+            true,
+        ),
+        (
+            "only modifier",
+            "import test from \"node:test\";",
+            "test.only(\"late fee\", (t) => {\n  CALL\n});",
+            true,
+        ),
+        (
+            "it nested in describe",
+            "import { describe, it } from \"node:test\";",
+            "describe(\"fees\", () => {\n  it(\"late fee\", (t) => {\n    CALL\n  });\n});",
+            true,
+        ),
+        (
+            "callback body reuses the runner name",
+            "import test from \"node:test\";",
+            "test(\"late fee\", (t) => {\n  const test = 1;\n  CALL\n});",
+            true,
+        ),
+        (
+            "describe imported as test",
+            "import { describe as test } from \"node:test\";",
+            "test(\"late fee\", (t) => {\n  CALL\n});",
+            false,
+        ),
+        (
+            "test shadowed in the enclosing describe",
+            "import { describe, test } from \"node:test\";\nimport { makeRunner } from \"./fixtures\";",
+            "describe(\"fees\", () => {\n  const test = makeRunner();\n  test(\"late fee\", (t) => {\n    CALL\n  });\n});",
+            false,
+        ),
+    ] {
+        let registration = registration.replace("CALL", call);
+        let source =
+            format!("{imports}\nimport {{ lateFee }} from \"../src/latefee\";\n\n{registration}\n");
+        let tests = extract_tests(Path::new("test/latefee.test.ts"), &source);
+        let read: Vec<_> = tests.iter().flat_map(|test| &test.assertions).collect();
+        if credited {
+            assert_eq!(tests.len(), 1, "{label}: {tests:?}");
+            let [assertion] = read.as_slice() else {
+                assert_eq!(read.len(), 1, "{label}: {read:?}");
+                continue;
+            };
+            assert_oracle(
+                assertion,
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+                "t.assert.equal(...)",
+            );
+        } else {
+            assert!(read.is_empty(), "{label}: {read:?}");
+        }
+    }
+}
+
 /// RIPR-SPEC-0252 negatives: without a `node:test` import, on a receiver
 /// that is not the callback's first parameter, or for a method outside the
 /// `node:assert` table, `x.assert.<method>` yields no assertion.

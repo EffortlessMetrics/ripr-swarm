@@ -296,8 +296,9 @@ mirrors RIPR-SPEC-0238 rule 1.
 - Execution-context receiver (AVA, tape, node:test `t`): the table in
   RIPR-SPEC-0085. The receiver is the callback's first parameter whatever
   its name; no runner import is required. A method outside the table
-  yields no assertion. In a file importing `node:test`,
-  `t.assert.<method>(...)` reads as legacy `node:assert` (RIPR-SPEC-0252).
+  yields no assertion. In a test registered through a `test` or `it`
+  bound to `node:test`, `t.assert.<method>(...)` on the callback's first
+  parameter reads as legacy `node:assert` (RIPR-SPEC-0252 rule 1).
 - `node:assert` / chai `assert`: `strictEqual` and `deepStrictEqual` are
   `exact_value` / strong; `equal` is strong only under a strict module or
   the `strict` export; `deepEqual` is strong unless the module is legacy

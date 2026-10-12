@@ -876,7 +876,10 @@ impl TypeScriptAssertionBindings {
     /// namespace import) of `module`.
     fn bind(&mut self, module: &str, imported: Option<&str>, namespace: bool, local: &str) {
         let local = local.to_string();
-        if module == "node:test" {
+        // Only a binding of the test function itself can register a test
+        // whose callback receives a `TestContext`; `describe as test` hands
+        // its callback a `SuiteContext` with no `assert` (RIPR-SPEC-0252).
+        if module == "node:test" && matches!(imported, Some("default" | "test" | "it")) {
             self.node_test_locals.push(local.clone());
         }
         if NODE_ASSERT_MODULES.contains(&module) {
@@ -959,13 +962,14 @@ impl TypeScriptAssertionBindings {
     }
 
     /// These bindings for a test registered through a callee whose root
-    /// identifier is `callee_root` (`test`, `test.only`, `nt.test`): the
+    /// identifier is `callee_root` (`test`, `it`, `test.only`): the
     /// `node:test` context assert is read only when that root is bound to
     /// `node:test` (RIPR-SPEC-0252), not merely because the file imports it.
-    pub(crate) fn for_registration(mut self, callee_root: Option<&str>) -> Self {
-        self.node_test_runner =
+    pub(crate) fn for_registration(&self, callee_root: Option<&str>) -> Self {
+        let mut bindings = self.clone();
+        bindings.node_test_runner =
             callee_root.is_some_and(|root| self.node_test_locals.iter().any(|local| local == root));
-        self
+        bindings
     }
 
     /// These bindings with `expect` destructured from the Vitest test

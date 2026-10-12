@@ -81,9 +81,12 @@ legacy `node:assert`.** A call `<receiver>.assert.<method>(...)`
 
 - the test is registered through a callee whose root identifier is bound
   to `node:test` (`import test from "node:test"`, `import { it } from
-  "node:test"`, a namespace import, or `require("node:test").test`), so a
-  file that imports only a helper from `node:test` and registers tests
-  through another runner reads nothing;
+  "node:test"`, or `const test = require("node:test").test`; only the
+  default export, `test` and `it` qualify, so `import { describe as test }`
+  does not), so a file that imports only a helper from `node:test` and
+  registers tests through another runner reads nothing. The callee is
+  resolved at the call site: a callback body that redeclares `test` does
+  not undo it;
 - `<receiver>` is the test callback's first parameter, as the
   execution-context recogniser already requires, including an awaited
   `t.test` subtest's own parameter (RIPR-SPEC-0246 rule 2);
@@ -127,6 +130,10 @@ documented decisions and proceed"). Recorded on #6654.
 - A test registered through a global `test` / `it` (no import) or
   through a callee whose root identifier is not bound to `node:test` is
   not read.
+- A namespace import (`import * as nt from "node:test"; nt.test(...)`) or
+  an import renamed away from `test` / `it` / `specify`
+  (`import { test as nt } from "node:test"; nt(...)`) is not recognised as
+  a test registration at all, so its `t.assert` calls are not read.
 - `const { assert } = t;`, `t.assert` passed to a helper, optional or
   parenthesized forms (`t.assert?.equal`, `(t).assert`), and `t.assert`
   inside a `forEach` or `.then` callback or on an outer `t` inside a
@@ -150,7 +157,8 @@ documented decisions and proceed"). Recorded on #6654.
 
 ## Acceptance Examples
 
-1. `t.assert.equal(lateFee(10), 20)` in a file importing `node:test`:
+1. `t.assert.equal(lateFee(10), 20)` in a test registered through a
+   `node:test` binding:
    `exact_value` / strong, observed `lateFee(10)`; the corpus case reads
    `credited`.
 2. `t.assert.strictEqual(...)` and `t.assert.deepStrictEqual(...)`:

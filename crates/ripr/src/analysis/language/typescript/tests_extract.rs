@@ -1800,13 +1800,15 @@ pub(crate) fn test_name_and_assertions_from_call(
             names
         })
         .unwrap_or_default();
+    // The registration callee resolves at the call site, so the runner is
+    // decided before the callback's own declarations shadow anything.
     let bindings = bindings
+        .for_registration(callee_root_name(&call.callee))
         .without_shadowed(|name| {
             parameters.iter().any(|parameter| parameter == name)
                 || body_declarations.iter().any(|declared| declared == name)
                 || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
-        })
-        .for_registration(callee_root_name(&call.callee));
+        });
     // RIPR-SPEC-0243 rule 3: Vitest's `test("x", ({ expect }) => ...)`
     // destructures the runner `expect` from the test context, unless the body
     // re-declares it.
@@ -1842,8 +1844,7 @@ pub(crate) fn test_name_and_assertions_from_call(
 }
 
 /// The identifier a registration callee starts from: `test` for `test`,
-/// `test.only` or `test.each(...)`, `nt` for `nt.test`; `None` for any
-/// other shape.
+/// `test.only` or `test.each(...)`; `None` for any other shape.
 fn callee_root_name<'a>(callee: &'a Expression<'_>) -> Option<&'a str> {
     match callee {
         Expression::Identifier(identifier) => Some(identifier.name.as_str()),
