@@ -45,6 +45,8 @@ fixtures/rust-verdict-corpus/cases/*.diff whitespace=-blank-at-eol,-blank-at-eof
 fixtures/rust-verdict-corpus/subjects/** -whitespace
 fixtures/typescript-verdict-corpus/cases/*.diff whitespace=-blank-at-eol,-blank-at-eof
 fixtures/typescript-verdict-corpus/subjects/** -whitespace
+fixtures/python-verdict-corpus/cases/*.diff whitespace=-blank-at-eol,-blank-at-eof
+fixtures/python-verdict-corpus/subjects/** -whitespace
 
 # Append-only logs: entries are self-contained blocks added at the head of
 # their section, so concurrent additions union cleanly (evidence: 5 PRs in

@@ -8010,9 +8010,11 @@ language = "rust"
             overridden.map(|options| (options.base_ref, options.comment_mode)),
             Ok(("release".to_string(), "off".to_string()))
         );
-        // Outside any workflow the base falls back to `main`.
+        // #7368: with no base_ref/default_branch anywhere, the base stays
+        // empty so the summary renders its fail-closed "no base derivable"
+        // wording instead of inventing `origin/main`.
         let bare = super::ci_summary::parse_ci_summary_options(&[]);
-        assert_eq!(bare.map(|options| options.base_ref), Ok("main".to_string()));
+        assert_eq!(bare.map(|options| options.base_ref), Ok(String::new()));
     }
 
     #[test]

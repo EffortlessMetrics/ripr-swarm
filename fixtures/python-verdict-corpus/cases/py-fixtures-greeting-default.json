@@ -1,0 +1,44 @@
+{
+  "case_id": "py-fixtures-greeting-default",
+  "subject_id": "authored-py-pytest-fixtures",
+  "diff": "cases/py-fixtures-greeting-default.diff",
+  "anchor": {
+    "file": "shop/__init__.py",
+    "line": 27
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "default_value",
+  "test_shape": "pytest_monkeypatch_env_always_set",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return f\"hello {os.environ.get('USER_NAME', 'anon')}\"",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: with USER_NAME unset the greeting is \"hello anon\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "test_greeting_uses_environment sets USER_NAME with monkeypatch, so the 'guest' default is never read and changing it passes. ripr reports static_unknown with missing_import_graph, an acceptable limit; the ideal is a gap.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

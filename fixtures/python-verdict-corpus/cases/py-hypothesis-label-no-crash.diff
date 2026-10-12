@@ -1,0 +1,9 @@
+diff --git a/stats/__init__.py b/stats/__init__.py
+--- a/stats/__init__.py
++++ b/stats/__init__.py
+@@ -23,4 +23,4 @@ def is_passing(score):
+ 
+ def grade_label(score):
+     """Display label for a score."""
+-    return "pass" if is_passing(score) else "fail"
++    return "passed" if is_passing(score) else "fail"

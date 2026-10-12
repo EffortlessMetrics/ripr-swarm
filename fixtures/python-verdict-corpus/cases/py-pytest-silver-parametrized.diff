@@ -1,0 +1,12 @@
+diff --git a/pricing/core.py b/pricing/core.py
+--- a/pricing/core.py
++++ b/pricing/core.py
+@@ -15,7 +15,7 @@ def tier_for_points(points):
+     """Loyalty tier earned by accumulated points."""
+     if points >= 5000:
+         return "gold"
+-    if points >= 1000:
++    if points > 999:
+         return "silver"
+     return "bronze"
+ 

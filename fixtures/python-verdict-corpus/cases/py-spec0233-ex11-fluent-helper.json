@@ -1,0 +1,45 @@
+{
+  "case_id": "py-spec0233-ex11-fluent-helper",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex11-fluent-helper.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 37
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "fluent_assert_that_helper",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return int(text) + 2",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_subject.py::test_fluent",
+        "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 11: `assert_that(parse_fluent(\"1\")).is_equal_to(2)` goes through tests/fluent.py, a helper written for this corpus that raises on inequality, so `+ 2` fails. The spec moves this to static_unknown with opaque_custom_assertion_helper (limited, acceptable); ripr today reports weakly_exposed, a false actionable verdict.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
