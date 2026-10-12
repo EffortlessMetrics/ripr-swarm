@@ -1,6 +1,8 @@
 # Fixture: rust_mixed_direct_macro_reach
 
-Spec: RIPR-SPEC-0117 example 6; #7542.
+Spec: RIPR-SPEC-0117
+
+Example 6; #7542.
 
 ## Given
 

@@ -75,6 +75,18 @@ fn owner(output: &ripr::CheckOutput) -> Result<&Finding, String> {
         )),
     }
 }
+
+fn assert_ordinary_weak_gap(finding: &Finding) {
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None);
+    assert!(finding.canonical_gap.is_some(), "{finding:?}");
+    assert_eq!(
+        finding.recommended_next_step.as_deref(),
+        Some(
+            "Replace broad assertions with exact equality or a property that constrains the changed returned value."
+        )
+    );
+}
 #[test]
 fn weak_direct_oracle_preserves_the_macro_witness_in_ready_and_draft() -> Result<(), String> {
     let fixture = Fixture::new(SOURCE)?;
@@ -158,8 +170,7 @@ fn weak_direct_without_a_test_macro_route_keeps_the_gap() -> Result<(), String> 
     ))?;
     let output = fixture.check(Mode::Ready)?;
     let finding = owner(&output)?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(finding.static_limit_kind, None);
+    assert_ordinary_weak_gap(finding);
     Ok(())
 }
 #[test]
@@ -167,8 +178,7 @@ fn unrelated_macro_with_weak_direct_keeps_the_gap() -> Result<(), String> {
     let fixture = Fixture::new(&SOURCE.replace("=> { inner($x) }", "=> { $x * 3 }"))?;
     let output = fixture.check(Mode::Ready)?;
     let finding = owner(&output)?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(finding.static_limit_kind, None);
+    assert_ordinary_weak_gap(finding);
     Ok(())
 }
 #[test]
@@ -176,7 +186,6 @@ fn lexical_transitive_route_with_weak_direct_keeps_the_gap() -> Result<(), Strin
     let fixture = Fixture::new(&SOURCE.replace("call_inner!(x)", "inner(x)"))?;
     let output = fixture.check(Mode::Ready)?;
     let finding = owner(&output)?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(finding.static_limit_kind, None);
+    assert_ordinary_weak_gap(finding);
     Ok(())
 }
