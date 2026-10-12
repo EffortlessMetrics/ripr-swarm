@@ -515,4 +515,39 @@ mod tests {
         }
         Ok(())
     }
+
+    #[test]
+    fn broad_snapshot_recognition_preserves_permitted_command_word_spellings() {
+        // Literal policy cases, not a second tokenizer or general cost oracle.
+        for prefix in [
+            "ripr  agent verify",
+            "ripr\tagent verify",
+            "ripr agent\tverify",
+            "ripr \t agent \t verify",
+            "r'i'pr agent verify",
+            "\"ripr\" agent verify",
+            "ripr 'agent' verify",
+            "ripr ag\"en\"t verify",
+            "ripr agent \"verify\"",
+            "ripr agent v\"er\"ify",
+        ] {
+            let command = format!(
+                "{prefix} --root . --before target/ripr/reports/before.repo-exposure.json --after target/ripr/reports/after.repo-exposure.json --json"
+            );
+            assert!(
+                verify_command_is_unbounded_repo_exposure_snapshot_compare(&command),
+                "the shared owner must retain the known broad-snapshot exclusion: {command:?}"
+            );
+        }
+        for bounded in [
+            "cargo test -p ordinary_shop above_threshold_discounts",
+            "cargo  test\t-p ordinary_shop above_threshold_discounts",
+            "ripr agent verify --root . --json",
+        ] {
+            assert!(
+                !verify_command_is_unbounded_repo_exposure_snapshot_compare(bounded),
+                "recognition must remain limited to the known before/after snapshot command: {bounded:?}"
+            );
+        }
+    }
 }

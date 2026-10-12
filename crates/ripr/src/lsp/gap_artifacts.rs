@@ -4243,4 +4243,56 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn actionable_projection_rejects_token_equivalent_broad_snapshot_at_full_admission()
+    -> Result<(), String> {
+        // Retained healthy canonical fixture establishes full admission and
+        // safe bounded display before these explicit forged-eligible negatives.
+        let healthy = actionable_gaps_report();
+        let admitted = validate_gap_artifact(&healthy, &context(&[LanguageId::Rust]))
+            .map_err(|error| format!("healthy full-admission control: {error:?}"))?;
+        assert_eq!(admitted.kind, GapArtifactKind::ActionableGaps);
+        assert!(!admitted.identities.is_empty());
+        assert!(command_payload_is_safe(
+            &TEST_ROOT,
+            "cargo test -p ordinary_shop above_threshold_discounts"
+        ));
+        for source in [
+            "canonical_item.verify_command",
+            "related_test_or_observer.name",
+        ] {
+            for prefix in [
+                "ripr  agent verify",
+                "ripr\tagent verify",
+                "ripr agent\tverify",
+                "ripr \t agent \t verify",
+                "r'i'pr agent verify",
+                "\"ripr\" agent verify",
+                "ripr 'agent' verify",
+                "ripr ag\"en\"t verify",
+                "ripr agent \"verify\"",
+                "ripr agent v\"er\"ify",
+            ] {
+                let command = format!(
+                    "{prefix} --root . --before target/ripr/reports/before.repo-exposure.json --after target/ripr/reports/after.repo-exposure.json --json"
+                );
+                assert!(
+                    command_payload_is_safe(&TEST_ROOT, &command),
+                    "setup must reach boundedness after existing command/root safety: {command:?}"
+                );
+                let mut negative = healthy.clone();
+                negative["packets"][0]["verify_command_source"] = json!(source);
+                negative["packets"][0]["verify_command"] = json!(command);
+                assert!(
+                    matches!(
+                        validate_gap_artifact(&negative, &context(&[LanguageId::Rust])),
+                        Err(GapArtifactRejection::MalformedArtifact(_))
+                    ),
+                    "full admission must refuse token-equivalent broad verification with {source}: {negative}"
+                );
+            }
+        }
+        Ok(())
+    }
 }
