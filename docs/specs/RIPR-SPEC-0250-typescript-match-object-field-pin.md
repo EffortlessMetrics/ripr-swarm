@@ -101,9 +101,10 @@ these hold:
   exactly one names `key`: the only entry on the changed line, which
   opens at the start of that line and ends on it (a quoted or computed key, a spread, an accessor
   or a second `key` entry fails);
-- `o` lists `key` at its top level, and its string values hold only ASCII
-  text (an object holding a non-ASCII string keeps the weak reading; see
-  Known limits).
+- `o` lists `key` at its top level, and its string values are spelled
+  with ASCII source text only (an object holding a non-ASCII string keeps
+  the weak reading; an ASCII escape such as `"\u00e9"` is read; see Known
+  limits).
 
 ### Decisions
 
@@ -135,7 +136,9 @@ documented decisions and proceed"). Recorded on #6654.
   `&& verified,`), and nested listed objects keep the weak reading.
 - An expected object holding a non-ASCII string (`{ name: "José", adult:
   true }`) keeps the weak reading: the shared masker changes its byte
-  length, so its keys are not read.
+  length, so its keys are not read. The limit is on source spelling, not
+  the decoded value: `"Jos\u00e9"` is read, and the pin still compares the
+  decoded value exactly.
 - A local bound once to the owner call is not checked for later field
   writes (`bo.adult = true`, `Object.assign(bo, ...)`, or a helper that
   mutates `bo`). The same gap applies to `toEqual` through the shared

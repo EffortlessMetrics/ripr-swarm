@@ -7057,6 +7057,45 @@ language = "rust"
     }
 
     #[test]
+    fn calibrate_zero_recognized_mutant_records_fails_closed() -> Result<(), String> {
+        let dir = unique_command_test_dir("calibrate-zero-records");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let repo = dir.join("repo-exposure.json");
+        std::fs::write(&repo, calibration_repo_json())
+            .map_err(|err| format!("write repo exposure: {err}"))?;
+
+        for (label, body) in [
+            ("empty-array", "[]"),
+            ("empty-object", "{}"),
+            ("non-mutant-array", r#"["hello"]"#),
+        ] {
+            let mutants = dir.join(format!("{label}.json"));
+            std::fs::write(&mutants, body).map_err(|err| format!("write {label}: {err}"))?;
+            let message = err_message(
+                calibrate(&args(&[
+                    "cargo-mutants",
+                    "--mutants-json",
+                    &mutants.display().to_string(),
+                    "--repo-exposure-json",
+                    &repo.display().to_string(),
+                ])),
+                &format!("{label} must fail closed"),
+            )?;
+            assert!(
+                message.contains("0 mutant records recognized"),
+                "{label}: expected zero-record error, got {message}"
+            );
+            assert!(
+                !message.contains("All imported runtime mutants matched a static seam"),
+                "{label}: command error must not render the vacuous all-matched report:\n{message}"
+            );
+        }
+
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
     fn calibrate_missing_inputs_name_the_caller_capture_command() -> Result<(), String> {
         let dir = unique_command_test_dir("calibrate-missing");
         std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;

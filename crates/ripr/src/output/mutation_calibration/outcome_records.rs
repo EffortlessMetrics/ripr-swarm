@@ -372,6 +372,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn parser_still_returns_empty_for_json_with_no_mutant_records() -> Result<(), String> {
+        for json in ["[]", "{}", r#"["hello"]"#, r#"{"outcomes":[]}"#] {
+            let records = parse_mutation_outcomes_json(json)?;
+            assert!(
+                records.is_empty(),
+                "shape heuristics must keep returning no records for {json}, got {records:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     fn record_order_breaks_late_ties_on_run_details_then_span_conflict() {
         use std::cmp::Ordering::{Equal, Greater, Less};
         let base = MutationOutcomeRecord {

@@ -31,8 +31,17 @@ impl Drop for Scratch {
 }
 
 fn run(program: &Path, arguments: &[&std::ffi::OsStr]) -> Result<Output, String> {
+    run_with_env(program, arguments, &[])
+}
+
+fn run_with_env(
+    program: &Path,
+    arguments: &[&std::ffi::OsStr],
+    environment: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> Result<Output, String> {
     Command::new(program)
         .args(arguments)
+        .envs(environment.iter().cloned())
         .output()
         .map_err(|error| format!("{}: {error}", program.display()))
 }
@@ -3107,6 +3116,186 @@ fn trait_shadow_corpus_matches_compiled_owner_dispatch() -> Result<(), String> {
                 "direct_owner_call"
             },
             "{fixture_name}: dispatch identity, not assertion token matching"
+        );
+    }
+    Ok(())
+}
+
+fn fallible_fixture_subject(source_fixture: &str) -> Result<Scratch, String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(source_fixture)
+        .join("input");
+    let scratch = Scratch::create()?;
+    std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
+    for file in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "src/lib.rs",
+        "src/test_support.rs",
+    ] {
+        std::fs::copy(fixture.join(file), scratch.0.join(file)).map_err(|e| e.to_string())?;
+    }
+    Ok(scratch)
+}
+
+#[test]
+fn fallible_literal_runtime_pair_and_message_escape_execute_the_real_test() -> Result<(), String> {
+    for (fixture, wrong, expected_success) in [
+        ("owner_return_pin_fallible_literal", false, true),
+        ("owner_return_pin_fallible_literal", true, false),
+        (
+            "owner_return_pin_fallible_literal_message_escape",
+            true,
+            true,
+        ),
+    ] {
+        let subject = fallible_fixture_subject(fixture)?;
+        let library = subject.0.join("src/lib.rs");
+        let original = std::fs::read_to_string(&library).map_err(|e| e.to_string())?;
+        assert_eq!(original.matches("answer() -> u8 { 7 }").count(), 1);
+        if wrong {
+            let mutant = original.replacen("answer() -> u8 { 7 }", "answer() -> u8 { 8 }", 1);
+            assert_ne!(mutant, original, "only the owner value changes");
+            std::fs::write(&library, mutant).map_err(|e| e.to_string())?;
+        }
+        // Each subject owns a distinct target. One variant cannot reuse another
+        // variant's executable, even though their manifests share a name.
+        let target = subject.0.join("runtime-target");
+        let manifest = subject.0.join("Cargo.toml");
+        let output = run(
+            Path::new("cargo"),
+            &[
+                "test".as_ref(),
+                "--offline".as_ref(),
+                "--locked".as_ref(),
+                "--manifest-path".as_ref(),
+                manifest.as_os_str(),
+                "--target-dir".as_ref(),
+                target.as_os_str(),
+                "--".as_ref(),
+                "--nocapture".as_ref(),
+            ],
+        )?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stdout.contains("running 1 test"),
+            "{fixture}: actual libtest execution; {stderr}"
+        );
+        assert!(
+            stdout.contains("0 ignored"),
+            "{fixture}: no ignored subject"
+        );
+        assert!(
+            stdout.contains("observes_answer"),
+            "{fixture}: intended collected test"
+        );
+        assert_eq!(
+            output.status.success(),
+            expected_success,
+            "{fixture}: {stdout} {stderr}"
+        );
+        if !expected_success {
+            assert!(
+                stderr.contains("Condition failed: `actual == 7`"),
+                "intended equality failure, not compilation: {stderr}"
+            );
+            assert!(stdout.contains("1 failed"));
+        } else {
+            assert!(stdout.contains("1 passed"));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn fallible_literal_cli_preserves_unrelated_os_bytes_and_refuses_relevant_inputs()
+-> Result<(), String> {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    let subject = fallible_fixture_subject("owner_return_pin_fallible_literal")?;
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/owner_return_pin_fallible_literal");
+    let diff = fixture.join("diff.patch");
+    for (name, environment, exposed) in [
+        ("ordinary", Vec::new(), true),
+        (
+            "unrelated_value",
+            vec![(
+                OsString::from("RIPR_UNRELATED_VALUE"),
+                OsString::from_vec(vec![0xff]),
+            )],
+            true,
+        ),
+        (
+            "unrelated_name",
+            vec![(
+                OsString::from_vec(b"RIPR_UNRELATED_\xff".to_vec()),
+                OsString::from("ordinary"),
+            )],
+            true,
+        ),
+        (
+            "relevant_value",
+            vec![(
+                OsString::from("CARGO_UNUSED_TEST_INPUT"),
+                OsString::from_vec(vec![0xff]),
+            )],
+            false,
+        ),
+        (
+            "relevant_named_flags",
+            vec![(OsString::from("RUSTFLAGS"), OsString::from_vec(vec![0xff]))],
+            false,
+        ),
+        (
+            "relevant_name",
+            vec![(
+                OsString::from_vec(b"CARGO_UNUSED_\xff".to_vec()),
+                OsString::from("ordinary"),
+            )],
+            false,
+        ),
+        (
+            "override_prefix",
+            vec![(
+                OsString::from("CARGO_SOURCE_CRATES_IO_REPLACE_WITH"),
+                OsString::from("unresolved-test-source"),
+            )],
+            false,
+        ),
+    ] {
+        let output = run_with_env(
+            Path::new(env!("CARGO_BIN_EXE_ripr")),
+            &[
+                "check".as_ref(),
+                "--root".as_ref(),
+                subject.0.as_os_str(),
+                "--diff".as_ref(),
+                diff.as_os_str(),
+                "--mode".as_ref(),
+                "ready".as_ref(),
+                "--format".as_ref(),
+                "json".as_ref(),
+            ],
+            &environment,
+        )?;
+        assert!(
+            output.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        let findings = report["findings"].as_array().ok_or("findings")?;
+        assert_eq!(findings.len(), 1, "{name}: exact nonempty owner subject");
+        assert_eq!(findings[0]["probe"]["expression"], "7");
+        assert_eq!(
+            findings[0]["classification"] == "exposed",
+            exposed,
+            "{name}"
         );
     }
     Ok(())

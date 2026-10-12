@@ -1682,6 +1682,79 @@ pub(crate) fn import_alias_owner_locals<'t>(
                 && import.local != owner.name
                 && contains_call_name(&test.body_text, &import.local)
                 && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+                && !local_destructured_in_test_body(&test.body_text, &import.local)
+                && !enclosing_scope_shadows(test, &import.local)
+        })
+        .map(|import| import.local.as_str())
+        .collect()
+}
+
+/// Whether a body-local destructuring declaration (`const { cost } = h`,
+/// `const { a: cost } = h`, `let [cost] = fns`) names `local` anywhere in
+/// its pattern, read from the opening bracket to its match so a pattern
+/// spread over several lines or holding a default initializer
+/// (`const { cost = fallback } = h`) is read whole. Any mention counts as a shadow: a renamed import local
+/// (`import { owner as local }`, `import local from`) has no destructuring
+/// that could re-anchor it to the owner, so this reads more widely than the
+/// owner-name check and fails closed.
+fn local_destructured_in_test_body(body: &str, local: &str) -> bool {
+    let masked = ts_mask_literals_and_comments(body);
+    ["const", "let", "var"].into_iter().any(|keyword| {
+        identifier_offsets(&masked, keyword).into_iter().any(|at| {
+            let after_keyword = &masked[at + keyword.len()..];
+            let pattern = after_keyword.trim_start();
+            // The binding pattern runs from its opening `{` or `[` to the
+            // matching close, across lines, so a default initializer
+            // (`{ cost = fallback }`) and a multi-line pattern stay inside it.
+            if !pattern.starts_with(['{', '[']) {
+                return false;
+            }
+            let mut depth = 0usize;
+            let mut end = pattern.len();
+            for (offset, c) in pattern.char_indices() {
+                match c {
+                    '{' | '[' | '(' => depth += 1,
+                    '}' | ']' | ')' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            end = offset + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ts_references_identifier(&pattern[..end], local)
+        })
+    })
+}
+
+/// The locals of every default import (`import local from "./owner"`) of
+/// the owner's module that calls the owner under another name: the owner
+/// IS that module's default export, the local differs from the owner's
+/// name, it is called as `local(` in the body, and no body-local or
+/// enclosing-scope declaration shadows it (RIPR-SPEC-0251). These calls
+/// give the test its `ImportedOwnerCall` relation; the observation guard
+/// reads them as owner names, as it reads `import { owner as local }`.
+pub(crate) fn default_import_owner_locals<'t>(
+    test: &'t TypeScriptTest,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> Vec<&'t str> {
+    if !owner.exported_as_default {
+        return Vec::new();
+    }
+    test.imports_in_file
+        .iter()
+        .filter(|import| {
+            !import.namespace
+                && import.imported.as_deref() == Some("default")
+                && import.local != owner.name
+                && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+                && contains_call_name(&test.body_text, &import.local)
+                && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+                && !local_destructured_in_test_body(&test.body_text, &import.local)
                 && !enclosing_scope_shadows(test, &import.local)
         })
         .map(|import| import.local.as_str())
