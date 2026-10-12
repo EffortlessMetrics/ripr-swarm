@@ -304,13 +304,18 @@ name = "agent context packet"
 spec = "docs/specs/RIPR-SPEC-0003-agent-context.md"
 tests = [
   "crates/ripr/src/app/selector.rs::tests::malformed_location_misses_get_syntax_guidance_without_classifying_ids",
-  "crates/ripr/tests/cli_smoke.rs::selector_location_misses_explain_syntax_and_preserve_retry_scope"
+  "crates/ripr/tests/cli_smoke.rs::selector_location_misses_explain_syntax_and_preserve_retry_scope",
+  "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_real_reasons_have_supported_actions_in_every_mode",
+  "crates/ripr/tests/cli_smoke/unknown_explain.rs::unknown_explain_repair_preserves_decidable_recipes"
 ]
 code = [
   "crates/ripr/src/app.rs",
   "crates/ripr/src/app/selector.rs",
   "crates/ripr/src/app/explain.rs",
   "crates/ripr/src/app/context.rs",
+  "crates/ripr/src/analysis/classify/decision.rs",
+  "crates/ripr/src/analysis/classifier/finding.rs",
+  "crates/ripr/src/output/human/explain.rs",
   "crates/ripr/src/output/json/context_packet.rs",
   "crates/ripr/src/lsp"
 ]
@@ -840,6 +845,20 @@ tests = [
   "xtask/src/tests.rs::python_marker_auto_docs_accept_required_phrases",
   "xtask/src/tests.rs::python_marker_auto_docs_reject_opt_in_python_lumping",
   "crates/ripr/src/config.rs::tests::config_file_sets_core_operational_defaults",
+  "crates/ripr/src/config.rs::tests::closer_config_is_skipped_when_the_analysis_root_is_the_workspace",
+  "crates/ripr/src/config.rs::tests::closer_config_is_skipped_when_the_workspace_has_no_ripr_toml",
+  "crates/ripr/src/config.rs::tests::closer_config_from_a_nested_source_dir_is_still_skipped",
+  "crates/ripr/src/config.rs::tests::closer_config_is_skipped_when_the_files_have_identical_contents",
+  "crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_invocation_is_the_analysis_root",
+  "crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_only_the_workspace_has_ripr_toml",
+  "crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_the_member_file_is_a_symlink_to_the_workspace_file",
+  "crates/ripr/src/config.rs::tests::closer_config_names_the_member_entry_when_it_is_a_symlink_to_a_different_file",
+  "crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_both_files_and_the_recovery_root",
+  "crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_built_in_defaults_when_the_workspace_has_no_file",
+  "crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_keeps_root_dot_when_the_invocation_path_has_an_apostrophe",
+  "crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_stays_quiet_at_the_analysis_root",
+  "crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_the_member_entry_when_it_is_a_symlink_to_a_different_file",
+  "crates/ripr/tests/cli_smoke.rs::check_from_a_member_crate_warns_when_it_skips_the_closer_ripr_toml",
   "crates/ripr/src/config.rs::tests::explicit_cli_mode_wins_over_config_mode",
   "crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit",
   "crates/ripr/src/config.rs::tests::malformed_or_unknown_config_is_actionable",
@@ -14494,3 +14513,27 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0253"
+name = "local collect-all policy scans"
+spec = "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md"
+tests = [
+  "xtask/tests/policy_all.rs::policy_all_healthy_fixture_passes_with_original_leaf_reports",
+  "xtask/tests/policy_all.rs::policy_all_reports_two_independent_violations_and_runs_later_leaves",
+  "xtask/tests/policy_all.rs::policy_all_keeps_early_io_error_and_does_not_trust_stale_leaf_report",
+  "xtask/tests/policy_all.rs::policy_all_report_write_error_preserves_leaf_failures",
+  "xtask/tests/policy_all.rs::policy_all_healthy_leaves_still_fail_when_aggregate_report_cannot_be_written",
+]
+fixtures = []
+code = [
+  "xtask/src/policy/all.rs::check_policy_all",
+  "xtask/src/policy/mod.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md",
+  "docs/PR_AUTOMATION.md",
+]
+metrics = ["unit_test_pass_rate"]
