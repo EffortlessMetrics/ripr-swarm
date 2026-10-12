@@ -415,6 +415,21 @@ mod tests {
                 Weak,
             ),
             ("assert!(status.is_err);", RelationalCheck, Weak),
+            (
+                "assert!(r.is_ok() && r.is_err() || fallback);",
+                BroadError,
+                Weak,
+            ),
+            (
+                "assert!(ready && (r.is_ok() || r.is_err()));",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(r?.is_some() || r?.is_none());",
+                RelationalCheck,
+                Weak,
+            ),
             // Rule 5: whole identifier segments, outside free calls.
             (
                 "assert!(sentEvents.contains(&id));",

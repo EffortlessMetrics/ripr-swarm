@@ -282,40 +282,128 @@ pub(super) fn is_smoke_check(text: &str) -> bool {
 }
 
 /// RIPR-SPEC-0231 rule 4: `r.is_ok()` with `r.is_err()`, or `r.is_some()`
-/// with `r.is_none()`, on the same receiver and joined by `||`, accepts every
-/// value. `left.is_ok() || right.is_err()` checks two values and does not.
+/// with `r.is_none()`, as sibling alternatives of one `||` on the same
+/// receiver, accepts every value. `left.is_ok() || right.is_err()` checks two
+/// values, and `r.is_ok() && r.is_err() || fallback` joins the calls with
+/// `&&`, so neither does.
 pub(super) fn tests_both_sides(text: &str) -> bool {
     let masked = mask_comments_and_strings(text);
     if !masked.contains("||") {
         return false;
     }
-    let receivers = |name: &str| side_check_receivers(&masked, name);
-    let both = |a: &str, b: &str| {
-        let left = receivers(a);
-        receivers(b).iter().any(|receiver| left.contains(receiver))
-    };
-    both("is_ok", "is_err") || both("is_some", "is_none")
+    bracket_groups(&masked).into_iter().any(|group| {
+        let calls = split_top_level_operator(group, "||")
+            .into_iter()
+            .filter_map(side_call)
+            .collect::<Vec<_>>();
+        let has = |receiver: &str, name: &str| {
+            calls
+                .iter()
+                .any(|(other, method)| other == receiver && *method == name)
+        };
+        calls.iter().any(|(receiver, method)| match *method {
+            "is_ok" => has(receiver, "is_err"),
+            "is_some" => has(receiver, "is_none"),
+            _ => false,
+        })
+    })
 }
 
-/// Receivers of plain `receiver.name()` calls (not negated, not the
-/// `name_and` combinators), whitespace removed.
-fn side_check_receivers(masked: &str, name: &str) -> Vec<String> {
-    let needle = format!(".{name}");
-    masked
-        .match_indices(&needle)
-        .filter_map(|(dot, _)| {
-            let rest = masked[dot + needle.len()..].trim_start();
-            if !rest.starts_with('(') {
-                return None;
+/// The whole text and the contents of every bracket group in it.
+fn bracket_groups(masked: &str) -> Vec<&str> {
+    let bytes = masked.as_bytes();
+    let mut groups = vec![masked];
+    for (open, byte) in bytes.iter().enumerate() {
+        if !matches!(byte, b'(' | b'[' | b'{') {
+            continue;
+        }
+        let mut depth = 0usize;
+        for (index, inner) in bytes.iter().enumerate().skip(open) {
+            match inner {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        groups.push(&masked[open + 1..index]);
+                        break;
+                    }
+                }
+                _ => {}
             }
-            let start = receiver_start(masked, dot);
-            if masked[..start].trim_end().ends_with('!') {
-                return None;
+        }
+    }
+    groups
+}
+
+/// Split on a two-byte operator outside brackets.
+fn split_top_level_operator<'a>(text: &'a str, operator: &str) -> Vec<&'a str> {
+    let bytes = text.as_bytes();
+    let op = operator.as_bytes();
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && bytes[index..].starts_with(op) => {
+                parts.push(&text[start..index]);
+                index += op.len();
+                start = index;
+                continue;
             }
-            let receiver = masked[start..dot].split_whitespace().collect::<String>();
-            (!receiver.is_empty()).then_some(receiver)
-        })
-        .collect()
+            _ => {}
+        }
+        index += 1;
+    }
+    parts.push(&text[start..]);
+    parts
+}
+
+/// A disjunct that is exactly `receiver.is_ok()` (or `is_err`, `is_some`,
+/// `is_none`), optionally parenthesized: the receiver with whitespace
+/// removed, and the method.
+fn side_call(disjunct: &str) -> Option<(String, &'static str)> {
+    let mut text = disjunct.trim();
+    while let Some(inner) = text
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .filter(|inner| balanced(inner))
+    {
+        text = inner.trim();
+    }
+    let call = text
+        .strip_suffix(')')?
+        .trim_end()
+        .strip_suffix('(')?
+        .trim_end();
+    let (receiver, method) = call.rsplit_once('.')?;
+    let method = ["is_ok", "is_err", "is_some", "is_none"]
+        .into_iter()
+        .find(|name| method.trim() == *name)?;
+    let receiver = receiver.trim_end();
+    if receiver.is_empty() || receiver_start(receiver, receiver.len()) != 0 {
+        return None;
+    }
+    Some((receiver.split_whitespace().collect(), method))
+}
+
+fn balanced(text: &str) -> bool {
+    let mut depth = 0isize;
+    for byte in text.bytes() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
 }
 
 /// Start of the receiver expression that ends at byte `end`: identifiers,
@@ -330,7 +418,7 @@ fn receiver_start(masked: &str, end: usize) -> usize {
             b')' | b']' => depth += 1,
             b'(' | b'[' if depth > 0 => depth -= 1,
             _ if depth > 0 => {}
-            b'.' | b':' | b'_' | b'&' | b'*' => {}
+            b'.' | b':' | b'_' | b'&' | b'*' | b'?' => {}
             _ if byte.is_ascii_alphanumeric() => {}
             _ => break,
         }
