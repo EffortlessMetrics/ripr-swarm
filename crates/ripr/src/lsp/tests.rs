@@ -3380,6 +3380,7 @@ fn refresh_completion_log_message_counts_gap_artifact_state() -> Result<(), Stri
     );
     snapshot.gap_artifacts.push(ValidatedGapArtifact {
         kind: GapArtifactKind::GapDecisionLedger,
+        corpus_currentness: None,
         root: Some(".".to_string()),
         identities: vec![GapArtifactIdentity {
             canonical_gap_id: Some("gap:py:pricing".to_string()),
@@ -13089,6 +13090,7 @@ fn gap_action_diagnostic() -> tower_lsp_server::ls_types::Diagnostic {
 fn validated_gap_artifact() -> ValidatedGapArtifact {
     ValidatedGapArtifact {
         kind: GapArtifactKind::GapDecisionLedger,
+        corpus_currentness: None,
         root: Some(".".to_string()),
         identities: vec![GapArtifactIdentity {
             canonical_gap_id: Some("gap:py:pricing".to_string()),
@@ -16684,6 +16686,7 @@ fn execute_command_collect_workspace_status_with_actionable_gap_and_rejection_re
             .gap_artifacts
             .push(ValidatedGapArtifact {
                 kind: GapArtifactKind::ActionableGaps,
+                corpus_currentness: None,
                 root: Some(".".to_string()),
                 identities: vec![GapArtifactIdentity {
                     canonical_gap_id: Some("gap:rust:pricing:threshold-boundary".to_string()),

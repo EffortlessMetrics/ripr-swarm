@@ -907,3 +907,504 @@ fn active_absolute_legacy_gap_selector_remains_useful_after_corpus_edits() -> Pr
         },
     )
 }
+
+#[test]
+fn passive_corpus_cannot_bypass_rust_currentness_with_missing_or_unknown_language() -> ProofResult {
+    let fixture = CorpusFixture::new("corpus-unproven-language-scope")?;
+    let root = fixture.root();
+    let captured = capture(root)?;
+    let original = derive(root, &captured, "original")?;
+    assert_capture_is_actionable(&captured, &original)?;
+    install(root, &original)?;
+    assert_current_action(&framed_status(root)?)?;
+    let original_head = head(root)?;
+    for (label, language) in [
+        ("removed-language", None),
+        ("unknown-language", Some("unknown_language")),
+    ] {
+        let mut ambiguous = original.clone();
+        ambiguous
+            .as_object_mut()
+            .ok_or("ledger must be an object")?
+            .remove("language");
+        let records = ambiguous["records"]
+            .as_array_mut()
+            .ok_or("ledger must have real records")?;
+        require(records.len() == 1, || {
+            "scope control requires one genuine pricing record".into()
+        })?;
+        let record = records[0]
+            .as_object_mut()
+            .ok_or("real record must be an object")?;
+        match language {
+            Some(language) => {
+                record.insert("language".into(), json!(language));
+            }
+            None => {
+                record.remove("language");
+            }
+        }
+        // Retain the real stamp, root, identity, anchor and complete command
+        // payload. Neither a Rust-looking seam ID/file nor a matching Rust
+        // corpus envelope may supply missing language authority.
+        require(
+            ambiguous["source_subject"] == original["source_subject"]
+                && ambiguous["root"] == original["root"]
+                && ambiguous["records"][0]["seam_id"] == SEAM
+                && ambiguous["records"][0]["canonical_gap_id"] == GAP,
+            || format!("scope negative must alter only language provenance: {ambiguous}"),
+        )?;
+        assert_original_named_bytes(root, &ambiguous)?;
+        require(head(root)? == original_head, || {
+            "language scope control changed actual HEAD".into()
+        })?;
+        install(root, &ambiguous)?;
+        assert_corpus_refused(
+            &framed_status(root)?,
+            "unverifiable_subject",
+            Some("source_subject_corpus_scope_missing"),
+        )
+        .map_err(|error| format!("{label}: {error}"))?;
+    }
+    install(root, &original)?;
+    assert_current_action(&framed_status(root)?)
+}
+
+#[cfg(feature = "lang-python")]
+fn real_preview_and_mixed_scope_ledgers(root: &Path) -> ProofResult<(Value, Value, Value)> {
+    // Python is a genuine check-output producer. Mixed records are a
+    // test-authored compound input, projected by the actual --records
+    // writer using only records and named-file digests copied from the
+    // two real producers. This is scope/admission proof, not qualification
+    // of a single mixed-analysis producer capability.
+    std::fs::write(
+        root.join("ripr.toml"),
+        "[languages]\nenabled = [\"rust\", \"python\"]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("pyproject.toml"),
+        "[project]\nname = \"pricing-preview\"\nversion = \"0.0.0\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/pricing.py"),
+        "def calculate_discount(amount, threshold):\n    if amount > threshold:\n        return amount - 10\n    return amount\n")
+        .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("tests/test_pricing.py"),
+        "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n")
+        .map_err(|error| error.to_string())?;
+    fixture_git::fixture_git_ok(
+        root,
+        &[
+            "add",
+            "ripr.toml",
+            "pyproject.toml",
+            "src/pricing.py",
+            "tests/test_pricing.py",
+        ],
+    )?;
+    fixture_git::fixture_git_ok(root, &["commit", "-m", "Python pricing base"])?;
+    let python_base = head(root)?;
+    std::fs::write(root.join("src/pricing.py"),
+        "def calculate_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n")
+        .map_err(|error| error.to_string())?;
+    fixture_git::fixture_git_ok(root, &["add", "src/pricing.py"])?;
+    fixture_git::fixture_git_ok(root, &["commit", "-m", "include Python equality boundary"])?;
+
+    let rust_capture = capture(root)?;
+    let rust_corpus = captured_corpus(&rust_capture)?.clone();
+    cache_corpus_authority(root, &rust_corpus)?;
+    let rust_ledger = derive(root, &rust_capture, "scope-rust")?;
+    assert_capture_is_actionable(&rust_capture, &rust_ledger)?;
+    let inputs = root.join("target/corpus-proof");
+    std::fs::create_dir_all(&inputs).map_err(|error| error.to_string())?;
+    let python_diff = fixture_git::fixture_git_output(
+        root,
+        &["diff", &python_base, "HEAD", "--", "src/pricing.py"],
+    )?;
+    require(python_diff.contains("+    if amount >= threshold:"), || {
+        format!(
+            "Python-only producer stimulus must contain the real changed boundary: {python_diff}"
+        )
+    })?;
+    let diff_path = inputs.join("python.diff");
+    std::fs::write(&diff_path, python_diff).map_err(|error| error.to_string())?;
+    let python_capture = cli_json(
+        root,
+        &[
+            "check",
+            "--diff",
+            diff_path.to_str().ok_or("diff path is not UTF-8")?,
+            "--json",
+        ],
+    )?;
+    let python_ledger = derive_check_scope_ledger(root, &python_capture, "python-preview")?;
+    let python_records = python_ledger["records"]
+        .as_array()
+        .ok_or("Python producer omitted records")?;
+    require(
+        !python_records.is_empty()
+            && python_records.iter().all(|record| {
+                record["language"] == "python" && record["language_status"] == "preview"
+            }),
+        || {
+            format!(
+                "real Python-only diff must produce nonempty typed Python preview records: {python_ledger}"
+            )
+        },
+    )?;
+    let mixed_ledger = project_copied_mixed_records(root, &rust_ledger, &python_ledger)?;
+    Ok((rust_corpus, python_ledger, mixed_ledger))
+}
+
+#[cfg(feature = "lang-python")]
+fn derive_check_scope_ledger(root: &Path, captured: &Value, label: &str) -> ProofResult<Value> {
+    let inputs = root.join("target/corpus-proof");
+    let input = inputs.join(format!("{label}.check.json"));
+    let output = inputs.join(format!("{label}.gap-ledger.json"));
+    write_json(&input, captured)?;
+    let produced = ripr_binary_probe(
+        Some(root),
+        &[
+            "reports",
+            "gap-ledger",
+            "--check-output",
+            input.to_str().ok_or("check path is not UTF-8")?,
+            "--out",
+            output.to_str().ok_or("ledger path is not UTF-8")?,
+        ],
+    )?;
+    require(produced.status.success(), || {
+        format!("real check-output ledger producer failed: {produced:?}")
+    })?;
+    let ledger = read_json(&output)?;
+    let records = ledger["records"]
+        .as_array()
+        .ok_or("real check-output ledger omitted records")?;
+    require(!records.is_empty(), || {
+        format!("scope proof cannot use a zero-subject producer: {captured}; {ledger}")
+    })?;
+    require(
+        records.iter().all(|record| {
+            record["canonical_gap_id"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty())
+        }),
+        || format!("real scope records must have nonempty canonical identities: {ledger}"),
+    )?;
+    require(
+        ledger["source_subject"]["files"]
+            .as_array()
+            .is_some_and(|files| !files.is_empty()),
+        || format!("known-scope fixture requires actual nonempty named-file provenance: {ledger}"),
+    )?;
+    Ok(ledger)
+}
+
+#[cfg(feature = "lang-python")]
+fn project_copied_mixed_records(root: &Path, rust: &Value, python: &Value) -> ProofResult<Value> {
+    require(rust["root"] == python["root"], || {
+        format!(
+            "compound input must copy producer records from the same actual canonical root: {rust}; {python}"
+        )
+    })?;
+    let mut records = rust["records"]
+        .as_array()
+        .ok_or("Rust ledger omitted records")?
+        .clone();
+    records.extend(
+        python["records"]
+            .as_array()
+            .ok_or("Python ledger omitted records")?
+            .iter()
+            .cloned(),
+    );
+    let mut files = std::collections::BTreeMap::<String, Value>::new();
+    for ledger in [rust, python] {
+        require(
+            ledger["source_subject"]["digest_algorithm"] == "sha256",
+            || {
+                format!(
+                    "compound input requires the actual existing named-file hash type: {ledger}"
+                )
+            },
+        )?;
+        for file in ledger["source_subject"]["files"]
+            .as_array()
+            .ok_or("real ledger omitted named-file digests")?
+        {
+            let path = file["path"]
+                .as_str()
+                .ok_or("real named subject omitted path")?
+                .to_string();
+            if let Some(previous) = files.insert(path.clone(), file.clone()) {
+                require(previous == *file, || {
+                    format!("same-root producers disagree on copied subject {path}")
+                })?;
+            }
+        }
+    }
+    let compound = json!({
+        "root": rust["root"],
+        "records": records.clone(),
+        "source_subject": {
+            "digest_algorithm": "sha256",
+            "files": files.into_values().collect::<Vec<_>>(),
+            "corpus": rust["source_subject"]["corpus"]
+        }
+    });
+    let inputs = root.join("target/corpus-proof");
+    let input = inputs.join("test-authored-mixed-records.json");
+    let output = inputs.join("mixed-projection.gap-ledger.json");
+    write_json(&input, &compound)?;
+    let projected = ripr_binary_probe(
+        Some(root),
+        &[
+            "reports",
+            "gap-ledger",
+            "--records",
+            input.to_str().ok_or("compound path is not UTF-8")?,
+            "--out",
+            output.to_str().ok_or("mixed output path is not UTF-8")?,
+        ],
+    )?;
+    require(projected.status.success(), || {
+        format!("actual mixed-record projection failed: {projected:?}")
+    })?;
+    let mixed = read_json(&output)?;
+    let mixed_records = mixed["records"]
+        .as_array()
+        .ok_or("real records writer omitted mixed records")?;
+    require(
+        mixed_records.len() == records.len()
+            && mixed_records
+                .iter()
+                .any(|record| record["language"] == "rust" && record["seam_id"] == SEAM)
+            && mixed_records.iter().any(|record| {
+                record["language"] == "python" && record["language_status"] == "preview"
+            })
+            && records.iter().all(|copied| {
+                mixed_records.iter().any(|record| {
+                    record["canonical_gap_id"] == copied["canonical_gap_id"]
+                        && record["language"] == copied["language"]
+                })
+            }),
+        || {
+            format!(
+                "records projection must retain all copied native identities and both literal languages: {compound}; {mixed}"
+            )
+        },
+    )?;
+    Ok(mixed)
+}
+
+fn assert_rust_corpus_currentness_row(status: &Value) -> ProofResult {
+    require(
+        status["gap_artifact_currentness"]
+            == json!([{
+                "kind": "gap_decision_ledger",
+                "scope": "rust_workspace",
+                "corpus_currentness": "current",
+                "limitation": null
+            }]),
+        || {
+            format!(
+                "actual admitted Rust ledger must disclose its bounded current corpus scope: {status}"
+            )
+        },
+    )
+}
+
+#[test]
+fn passive_rust_ledger_discloses_actual_corpus_currentness_scope() -> ProofResult {
+    let fixture = CorpusFixture::new("corpus-rust-scope-disclosure")?;
+    let root = fixture.root();
+    let captured = capture(root)?;
+    let ledger = derive(root, &captured, "current")?;
+    assert_capture_is_actionable(&captured, &ledger)?;
+    install(root, &ledger)?;
+    let status = framed_status(root)?;
+    assert_current_action(&status)?;
+    assert_rust_corpus_currentness_row(&status)
+}
+
+#[cfg(feature = "lang-python")]
+fn assert_preview_corpus_unavailable(status: &Value) -> ProofResult {
+    require(
+        status["diagnostics"]["gap_artifacts"] == 1
+            && status["diagnostics"]["gap_artifact_rejections"] == 0,
+        || {
+            format!(
+                "known preview/mixed scope must retain old named-file admission of its real nonempty ledger: {status}"
+            )
+        },
+    )?;
+    require(
+        status["gap_artifact_currentness"]
+            == json!([{
+                "kind": "gap_decision_ledger",
+                "scope": "preview_or_mixed_language",
+                "corpus_currentness": "unavailable",
+                "limitation": "preview_or_mixed_corpus_provenance_unavailable"
+            }]),
+        || {
+            format!(
+                "a Rust hash must never authenticate known preview/mixed corpus currentness: {status}"
+            )
+        },
+    )?;
+    let components = status["analysis_status"]["components"]
+        .as_array()
+        .ok_or("scope status omitted components")?;
+    require(
+        components.iter().any(|component| {
+            component["component"] == "gap_ledger" && component["state"] == "complete"
+        }),
+        || {
+            format!(
+                "known preview scope must preserve actual named-file ledger admission: {status}"
+            )
+        },
+    )
+}
+
+#[cfg(feature = "lang-python")]
+fn assert_preview_projection_retained(before: &Value, after: &Value) -> ProofResult {
+    for path in [
+        "/run_status",
+        "/diagnostics/gap_artifacts",
+        "/diagnostics/gap_artifact_rejections",
+        "/diagnostics/actionable_gap_artifacts",
+        "/diagnostics/actionable_diagnostics",
+        "/diagnostics/seam_diagnostics",
+        "/diagnostics/total",
+        "/top_actionable_packet",
+    ] {
+        let before_value = before
+            .pointer(path)
+            .ok_or_else(|| format!("native preview baseline omitted {path}"))?;
+        let after_value = after
+            .pointer(path)
+            .ok_or_else(|| format!("native preview scope result omitted {path}"))?;
+        require(before_value == after_value, || {
+            format!(
+                "attaching a wrong-scope Rust corpus stamp must preserve existing preview projection at {path}: {before}; {after}"
+            )
+        })?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn native_python_and_copied_mixed_records_cannot_claim_a_current_rust_corpus() -> ProofResult {
+    let fixture = CorpusFixture::new("corpus-preview-mixed-scope")?;
+    let root = fixture.root();
+    let (rust_corpus, python, mixed) = real_preview_and_mixed_scope_ledgers(root)?;
+    for (label, ledger) in [
+        ("native-python-preview", python),
+        ("copied-mixed-records", mixed),
+    ] {
+        let mut baseline = ledger.clone();
+        baseline["source_subject"]
+            .as_object_mut()
+            .ok_or("real scope ledger omitted source_subject")?
+            .remove("corpus");
+        install(root, &baseline)?;
+        let admitted = framed_status(root)?;
+        assert_preview_corpus_unavailable(&admitted)
+            .map_err(|error| format!("{label} baseline: {error}"))?;
+
+        let mut wrong_scope = baseline.clone();
+        wrong_scope["source_subject"]
+            .as_object_mut()
+            .ok_or("scope ledger omitted named stamp")?
+            .insert("corpus".into(), rust_corpus.clone());
+        require(
+            wrong_scope["records"] == baseline["records"]
+                && wrong_scope["source_subject"]["files"] == baseline["source_subject"]["files"],
+            || "wrong-scope control must not edit real records or named-file provenance".into(),
+        )?;
+        install(root, &wrong_scope)?;
+        let qualified = framed_status(root)?;
+        assert_preview_corpus_unavailable(&qualified)
+            .map_err(|error| format!("{label} wrong-scope envelope: {error}"))?;
+        assert_preview_projection_retained(&admitted, &qualified)?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "lang-python")]
+#[test]
+fn unknown_corpus_language_precedes_known_preview_in_both_record_orders() -> ProofResult {
+    let fixture = CorpusFixture::new("corpus-unknown-preview-order")?;
+    let root = fixture.root();
+    let (_, _, mixed) = real_preview_and_mixed_scope_ledgers(root)?;
+    install(root, &mixed)?;
+    assert_preview_corpus_unavailable(&framed_status(root)?)?;
+    let original_head = head(root)?;
+    for language in [None, Some("unknown_language")] {
+        for preview_first in [false, true] {
+            let mut ambiguous = mixed.clone();
+            let records = ambiguous["records"]
+                .as_array_mut()
+                .ok_or("mixed ledger omitted records")?;
+            for record in records
+                .iter_mut()
+                .filter(|record| record["language"] == "rust")
+            {
+                let object = record
+                    .as_object_mut()
+                    .ok_or("native Rust record must be an object")?;
+                match language {
+                    None => {
+                        object.remove("language");
+                    }
+                    Some(language) => {
+                        object.insert("language".into(), json!(language));
+                    }
+                }
+            }
+            records.sort_by_key(|record| {
+                let is_preview = record["language"] == "python";
+                if preview_first {
+                    !is_preview
+                } else {
+                    is_preview
+                }
+            });
+            require(
+                records.iter().any(|record| {
+                    record["language"] == "python" && record["language_status"] == "preview"
+                }) && records
+                    .iter()
+                    .any(|record| record["seam_id"] == SEAM && record["language"] != "rust"),
+                || {
+                    "order control must retain genuine preview and the original now-unproven Rust subject".into()
+                },
+            )?;
+            require(
+                ambiguous["source_subject"] == mixed["source_subject"]
+                    && head(root)? == original_head,
+                || {
+                    "unknown mixed-scope control must retain actual provenance bytes and HEAD"
+                        .into()
+                },
+            )?;
+            install(root, &ambiguous)?;
+            let status = framed_status(root)?;
+            assert_corpus_refused(
+                &status,
+                "unverifiable_subject",
+                Some("source_subject_corpus_scope_missing"),
+            )?;
+            require(status["gap_artifact_currentness"] == json!([]), || {
+                format!(
+                    "refused unknown scope must not inherit a preview or current Rust admitted row: {status}"
+                )
+            })?;
+        }
+    }
+    install(root, &mixed)?;
+    assert_preview_corpus_unavailable(&framed_status(root)?)
+}

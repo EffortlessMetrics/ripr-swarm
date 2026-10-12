@@ -6200,6 +6200,19 @@ id = "RIPR-SPEC-0076"
 name = "LSP diagnostics severity policy"
 spec = "docs/specs/RIPR-SPEC-0076-lsp-diagnostics-policy.md"
 tests = [
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_accepts_empty_commit_and_identical_input_branch",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_accepts_same_head_dirty_non_corpus_input",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_rejects_added_test_at_same_head_and_recovers",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_rejects_changed_unclaimed_test_at_same_head_and_recovers",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_rejects_deleted_unclaimed_test_at_same_head_and_recovers",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::analysis_and_ledger_share_the_real_rust_corpus_content_authority",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_legacy_corpus_requires_regeneration_without_artifact_actions",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::delayed_ledger_derivation_copies_the_analysis_corpus_before_workspace_edit",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::active_absolute_legacy_gap_selector_remains_useful_after_corpus_edits",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_cannot_bypass_rust_currentness_with_missing_or_unknown_language",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_rust_ledger_discloses_actual_corpus_currentness_scope",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::native_python_and_copied_mixed_records_cannot_claim_a_current_rust_corpus",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::unknown_corpus_language_precedes_known_preview_in_both_record_orders",
   "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::no_warning_for_finding_with_static_limit",
   "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::no_warning_for_preview_finding",
   "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::warning_only_when_gap_record_has_complete_packet",

@@ -45,6 +45,7 @@ fn write_pilot_repo_exposure_json(
     limit_info: Option<RepoExposureLimit<'_>>,
     generated_skip: Option<&output::repo_exposure::GeneratedRustSkip>,
     population_differs_from_check: bool,
+    corpus_key: Option<&analysis::seam_cache::RepoSeamCacheKey>,
 ) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, classified);
     let python_guidance =
@@ -71,7 +72,8 @@ fn write_pilot_repo_exposure_json(
         input.mode.as_str().to_string(),
         None,
         config,
-    )?;
+    )?
+    .with_rust_corpus_key(corpus_key);
     let mut render_error = None;
     output::file_write::write_with(path, |file| {
         let mut writer = std::io::BufWriter::new(file);
@@ -174,6 +176,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     } else {
         PilotAnalysisResult::Complete(analysis::ClassifiedSeamsReport {
             classified: Vec::new(),
+            corpus_key: None,
             limit_info: None,
             skipped_generated: Vec::new(),
             naming_only_skips: Vec::new(),
@@ -220,6 +223,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // manageable size.  `limit_info` carries whichever cap fired (pilot
     // budget wins when both fire; inventory limit is the outer bound).
     let mut classified = report.classified;
+    let corpus_key = report.corpus_key;
     let mut inventory_limit_info = report.limit_info;
     let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
         report.skipped_generated,
@@ -344,6 +348,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
         repo_exposure_limit,
         generated_skip.as_ref(),
         pilot_budget_truncated || change_seams_added,
+        corpus_key.as_ref(),
     )?;
     write_pilot_file(
         &artifacts.repo_exposure_md,
@@ -915,6 +920,7 @@ mod tests {
                 crate::analysis::cancellation::checkpoint()?;
                 Ok(analysis::ClassifiedSeamsReport {
                     classified: Vec::new(),
+                    corpus_key: None,
                     limit_info: None,
                     skipped_generated: Vec::new(),
                     naming_only_skips: Vec::new(),

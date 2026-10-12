@@ -632,7 +632,12 @@ pub(crate) fn stamp_gap_decision_ledger_source_subject(
         root,
         &required,
     ) {
-        Ok(subject) => {
+        Ok(mut subject) => {
+            if report.input_root.is_none() && subject.corpus.is_some() {
+                subject.corpus = Some(serde_json::json!({
+                    "unavailable": "input_source_subject_corpus_root_missing"
+                }));
+            }
             report.source_subject = Some(subject);
             report.source_subject_unavailable = None;
         }

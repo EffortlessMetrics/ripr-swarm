@@ -1015,7 +1015,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                         input.mode.as_str().to_string(),
                         input.base.clone(),
                         &config,
-                    )?;
+                    )?
+                    .with_rust_corpus_key(report.corpus_key.as_ref());
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();
                 output::repo_exposure::write_repo_exposure_json_with_context(
