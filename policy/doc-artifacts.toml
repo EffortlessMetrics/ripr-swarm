@@ -1293,6 +1293,14 @@ owner = "product-analysis"
 standalone_reason = "Amends the TypeScript oracle rules from corpus mutation evidence: copy-for-identity changes need an identity matcher, and three nested callbacks that run before the test settles are collected."
 
 [[artifact]]
+id = "RIPR-SPEC-0248"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0248-typescript-dropped-additive-term.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Withdraws TypeScript exposed credit from corpus mutation evidence: a change that only adds or drops one additive term needs a tested input where the term is non-zero."
+
+[[artifact]]
 id = "RIPR-SPEC-0247"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0247-typescript-literal-matcher-strength.md"
