@@ -69,7 +69,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          cargo policy python-wheel-applicability "${GITHUB_EVENT_NAME}" "${EVENT_BASE_SHA}" "${CANDIDATE_SHA}" >> "${GITHUB_OUTPUT}"
+          [[ "${CANDIDATE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "${CANDIDATE_SHA,,}"
+          dispatcher="$(git hash-object -- tools/repo-policy/src/main.rs)"
+          [[ "${dispatcher}" =~ ^[0-9a-f]{40}$ ]]
+          # Source-identical pre-#7411 dispatcher; absence only retains qualification.
+          if test "${dispatcher}" = 248dd1bded04f3c650bbd31d03e7107dfeb5cc5a; then
+            echo "Wheel qualification retained: recognized legacy policy dispatcher without applicability command." >&2
+            printf 'qualify=true\n' >> "${GITHUB_OUTPUT}"
+          else
+            selection="$(mktemp)"
+            trap 'rm -f "${selection}"' EXIT
+            cargo policy python-wheel-applicability "${GITHUB_EVENT_NAME}" "${EVENT_BASE_SHA}" "${CANDIDATE_SHA}" > "${selection}"
+            IFS= read -r decision < "${selection}"
+            case "${decision}" in
+              qualify=true|qualify=false) ;;
+              *) echo "Invalid wheel applicability output." >&2; exit 1 ;;
+            esac
+            if ! cmp -s "${selection}" <(printf '%s\n' "${decision}"); then
+              echo "Invalid or partial wheel applicability output." >&2
+              exit 1
+            fi
+            cat "${selection}" >> "${GITHUB_OUTPUT}"
+          fi
 
   build-wheel:
     needs: applicability
@@ -424,6 +446,8 @@ jobs:
           retention-days: 7
 
   consume:
+    # A successful fallback build is consumable even after failed applicability.
+    if: ${{ always() && !cancelled() && needs.build-wheel.result == 'success' }}
     name: clean ${{ matrix.client }} install and useful Python journey
     needs: build-wheel
     runs-on: ubuntu-22.04

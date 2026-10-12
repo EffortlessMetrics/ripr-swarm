@@ -19,8 +19,15 @@ all records and treats duplicate normalized keys as uncertainty.
 Wheel record additions, deletions, renames or changes, mixed diffs, other ledgers,
 product/package/xtask changes, workflow/selector edits and unavailable or malformed
 history retain qualification. Failed/skipped applicability or missing outputs
-also retain qualification, while cancellation still stops expensive work. The separate `mcp_evidence_pair` manual dispatch has
-no applicability dependency and remains independently reachable. Distribution
+also retain qualification, while cancellation still stops expensive work.
+Consumers explicitly require a successful wheel build and a non-cancelled run,
+including after an applicability failure; that failure remains visible.
+A source-identical pre-#7411 policy dispatcher is recognized by its Git blob
+identity and conservatively qualifies with a diagnostic. Other dispatcher
+versions execute the selector normally; source inspection, candidate identity,
+command or malformed-output failures stay failures. Selector output is validated
+before publishing the decision. The separate `mcp_evidence_pair` manual dispatch
+has no applicability dependency and remains independently reachable. Distribution
 source checks remain inside qualifying wheel work; Windows and the broader
 #4633/#4493 programme retain their existing contracts.
 
