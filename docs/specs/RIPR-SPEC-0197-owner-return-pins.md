@@ -706,6 +706,142 @@ rule only for an assertion whose context was admitted.
    pin), so every family that consumes the shared admission (`return_value`,
    `error_path`, `predicate`) sees one answer.
 
+### Proposed rule 7a: a fallible literal check (#4478)
+
+Design-review proposal, not implemented or an expansion of accepted rule 7.
+This slice targets only a parameterless free owner with an unconditional `u8`
+literal tail, observed through one test-only helper. The frozen acceptance is
+UB-review `03f351a1e32bba33dbe5090fb428143e85ee3b21`,
+`fixtures/ripr-shadow-813/helper-exact`: the owner returns `7`, the helper
+binds `let actual = super::answer();`, checks `ensure!(actual == 7);`, ends
+in `Ok(())`, and the collected `Result<()>` test ends in `check_answer()`.
+The helper and test are top-level items in the out-of-line module declared by
+`#[cfg(test)] #[path = "test_support.rs"] mod tests;` in the library root.
+
+All premises below must come from the same immutable index and dependency
+snapshot; a strong related oracle never substitutes for a missing premise.
+
+1. Owner/value identity. The parser uniquely identifies the changed owner's
+   whole function, its `SymbolId`, source file/body digest and exact literal
+   span. Its signature has no parameters, generics or receiver and explicitly
+   returns primitive `u8`; its complete body is one decimal integer literal
+   in `0..=255`, optionally suffixed `u8`. That expression is the probe's
+   changed expression and exact location. No attributes may conditionally
+   replace the owner, and no lexical fallback, early exit or macro participates.
+   A local return sink must belong to that same owner and literal span. Equal
+   numbers at other locations, in siblings or in expected operands grant nothing.
+2. Module/call identity. The helper and collected test are unique, ordinary,
+   non-async, parameterless, non-generic top-level functions in the same file.
+   The helper's established source role is `CfgTestModule`. For the initial
+   out-of-line shape, existing `role_provenance` must contain exactly one
+   resolved `Module` edge from the owner's library root to that file, with
+   `requires_test = true` and no unresolved reason. Reparse and bind its parent
+   declaration coordinate, module name and exact literal `#[path]` target;
+   both the declaration and file/module attributes pass existing test-build
+   availability gates. `super::owner()` at the child's file root then names
+   the uniquely declared owner in that exact parent module. No re-export,
+   alternate parent, include edge, nested module, raw path, conditional path,
+   competing owner item/import, alias or unresolved composition qualifies.
+   The test's bare helper call must name that sole same-module helper; existing
+   parameter, pattern, local item, import and macro-binding defeats still apply.
+3. Library/macro identity. Initially accept only the canonical external
+   `anyhow` package version `1.0.100`, registry source
+   `registry+https://github.com/rust-lang/crates.io-index`, and lock checksum
+   `a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61`.
+   A bounded read-only `cargo metadata --offline --locked --format-version 1`
+   dependency receipt must resolve the owning package's nonoptional regular
+   extern binding `anyhow` to that exact package ID; spelling or a manifest
+   version requirement alone is insufficient. No renamed dependency, path/git
+   package, replacement/patch, alternate source or unresolved graph qualifies.
+   One unconditional module import is exactly `use anyhow::{Result, ensure};`
+   (member order immaterial), without aliases or globs. No item, import,
+   `extern crate`, macro definition, local binding or opaque macro can compete
+   with `anyhow`, `Result`, `ensure`, `Ok` or the helper/owner names in a relevant
+   scope, including the declaring parent. Imported `Result<()>` then denotes
+   this package's standard Result alias; `ensure!` denotes its condition-false
+   early-Err macro. Other versions/import spellings remain unsupported. The
+   dependency receipt states ordinary Cargo registry-integrity assumptions;
+   it does not certify arbitrary cached or vendored crate bytes.
+4. Helper-local observation. The helper's entire statement list is exactly
+   one immutable simple `let actual = super::owner();`, followed by one
+   `ensure!(actual == <decimal u8 literal>);`, followed by tail `Ok(())`.
+   The expected literal is fixed independently of the owner. The local's only
+   references are its declaration and the whole left comparison operand.
+   Parser identities bind the call, let, comparison and oracle line/text to
+   this helper. No intervening statement, use, rebinding, mutation, borrow,
+   conversion, second owner call, message argument, nested invocation,
+   conditional, closure, attribute or additional return is admitted. Neither
+   self-derived expectations nor unrelated numerically equal locals qualify.
+5. Error forwarding/execution. The helper and test both return the verified
+   imported `Result<()>`. The test's entire body is the sole tail expression
+   `check_answer()`; it passes existing collected-test ancestry, availability,
+   standard libtest and outcome-attribute gates. Thus a false comparison returns
+   the helper's Err unchanged to the test harness. Calls used as statements,
+   dropped/bound Results, `.ok()`, `.is_ok()`, catches, conversions, `unwrap`,
+   `?`, `return`, wrappers and additional statements are refused initially.
+   Helpers classified Production remain refused even if a filename or local
+   `#[test]` resembles the accepted module.
+6. Evidence/consumers. Produce one internal fallible-check receipt binding
+   owner/helper/test SymbolIds, source/body digests, module declaration/call/let/
+   assertion spans, the independent expected literal, and the resolved package,
+   manifest, lock and dependency-configuration identities. Only an exact match
+   of this receipt's test and oracle supplies owner-bound observation and
+   discrimination. A dedicated literal-tail adapter may establish a DirectReturn
+   witness for this exact owner/probe/sink; it requires the complete receipt,
+   embeds its provenance and recomputes the witness digest. A separate validation
+   digest binds exact source bytes/spans; the existing semantic digest retains
+   normalized owner/value relationships without adding line coordinates. Both
+   identities are validated against current inputs before credit or reuse.
+   This adapter does not alter
+   `current_path_witness`, `semantic_tokens` or numeric-token heuristics. No
+   receipt completes a witness for another owner, location, oracle or test.
+   Favorable classified caching requires all receipt inputs in its validity
+   identity; otherwise this narrow result must bypass classified reuse. A
+   generation bump alone cannot make changed dependency inputs safe.
+
+Proposed acceptance/control matrix (static outcomes are implementation targets,
+not observations on the current source):
+
+| Subject | Runtime with answer 8 | Required static result |
+| --- | --- | --- |
+| Frozen helper-exact, unchanged source/patch/manifest/lock | one test fails | answer `exposed`, complete digest-valid owner/value witness, no gap |
+| Frozen helper-no-oracle | one test passes | retains `reachable_unrevealed` |
+| Frozen helper-self-expected | one test passes | no new receipt, retains non-exposed |
+| Frozen production-lookalike | one test fails | answer retains `reachable_unrevealed`; production subjects retained |
+| Shadowed ensure or swallowed helper Result | one test passes | no new receipt or exposure |
+| Shadowed owner, rebound actual, unrelated equal numeric local/sink | one test passes | no new receipt or exposure |
+| Aliased/unresolved owner or macro/import/dependency identity | may fail | no new receipt or exposure |
+| Refused/ambiguous out-of-line parent, disabled/ignored/panic-expected test | not reliable | no new receipt or exposure |
+| Existing rule-7 assert_eq helpers and numeric assert_eq control | matched controls retained | accepted admission unchanged; no generic numeric propagation change |
+
+Implementation sequence after independent design review:
+
+1. Retain the frozen nine-case static/runtime receipts and add the exact positive
+   public-API discriminator first. Observe its intended non-exposed-versus-exposed
+   failure on `601c89c19b4f7a741fc270ff0ff182be3dfce637`, with all refusal
+   controls and dependency/module setup assertions present.
+2. Extend the existing owner-pin owner with private bounded extraction and
+   composition modules under `syntax/owner_pin/` and `classify/owner_pin/`.
+   Reuse cfg/source-role provenance, body identity and call-binding defeats;
+   do not broaden `plain_check_helper` or the existing helper producer.
+3. Add a lazily memoized dependency-identity query under `analysis/workspace/`,
+   bounded to structurally eligible shapes and using the existing deadline,
+   output budget and process policy. Failure yields no receipt, without fetching,
+   running package code or changing manifests/locks. Add its exact process site
+   to the existing policy allowance, with a refusal/runtime control.
+4. Add the receipt-bound literal adapter in `classify/propagation_witness.rs`;
+   wire the same receipt into `OwnerReturnPin`/`ReturnOracleAdmission` and
+   `classifier/evidence.rs`. Keep evidence digest validation, stage decisions,
+   oracle-strength classification and generic numeric matching authoritative.
+   Update classified cache validity/generations in `seam_cache.rs` and document
+   the affected internal witness/cache contract in `docs/OUTPUT_SCHEMA.md`.
+5. Extend `tests/owner_pin_execution.rs` and the owner-pin/witness unit suites;
+   register new discriminators in traceability and the exposure-honesty corpus.
+   Require frozen exact CLI JSON/badge output end to end, actual runtime controls,
+   helper-suite preservation, warm-cache dependency/source mutations, golden
+   blast-radius and focused policy checks before a coherent implementation draft.
+   General oracle-strength work (#6764/#6670) remains with its existing owners.
+
 ### Bool-owner pins
 
 An owner whose signature declares `-> bool` has two values, so a bare
