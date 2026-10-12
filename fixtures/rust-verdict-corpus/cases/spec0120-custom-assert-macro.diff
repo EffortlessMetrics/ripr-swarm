@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index ba3e671..82023dc 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,5 +1,5 @@
+ //! RIPR-SPEC-0120 example 1.
+ 
+ pub fn inner(x: u32) -> u32 {
+-    x + 4
++    4 + x
+ }

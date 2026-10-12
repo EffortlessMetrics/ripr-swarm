@@ -1231,7 +1231,7 @@ mod tests {
     }
 
     #[test]
-    fn given_static_unknown_probe_in_unreached_owner_then_next_step_asks_for_a_test_first() {
+    fn given_static_unknown_probe_in_unreached_owner_then_next_step_discloses_reach_limit() {
         let probe = Probe {
             id: ProbeId("probe:src_lib_rs:2:static_unknown".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
@@ -1244,8 +1244,8 @@ mod tests {
             expected_sinks: vec![],
             required_oracles: vec![],
         };
-        // Nothing in the workspace names `score`: no test can run the
-        // change, so the finding is a plain missing test (#4428).
+        // Nothing in this index names `score`: no static test path is
+        // admitted, so the finding retains the no-path disclosure (#4428).
         let uncalled = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "score")],
             ..Default::default()
@@ -1263,7 +1263,7 @@ mod tests {
 
         // A production caller names `score`, so a test may reach it through a
         // chain static evidence does not follow: the shape stays unknown and
-        // the next step asks for a reaching test first.
+        // the next step discloses the reach limitation before inspection guidance.
         let unreached = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "score")],
             files: BTreeMap::from([(
@@ -1286,11 +1286,11 @@ mod tests {
                 .recommended_next_step
                 .as_deref()
                 .is_some_and(|step| step.starts_with("No static test path reaches this change")),
-            "unreached unknown must ask for a test first: {:?}",
+            "unreached unknown must disclose the reach limitation first: {:?}",
             finding.recommended_next_step
         );
 
-        // Control: a reached owner keeps the escalation guidance.
+        // Control: a reached owner keeps the uncertainty inspection guidance.
         let reached = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "score")],
             tests: vec![test(
@@ -1304,7 +1304,9 @@ mod tests {
         let finding = classify_probe(&probe, &reached, true, None);
         assert_eq!(
             finding.recommended_next_step.as_deref(),
-            Some("Escalate to real mutation testing or deep static analysis for this probe.")
+            Some(
+                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+            )
         );
     }
 
@@ -2467,45 +2469,63 @@ fn far_above_threshold_discounts() {
         let return_value_probe = probe(ProbeFamily::ReturnValue, DeltaKind::Value, "value + 1");
 
         assert_eq!(
-            recommended_next_step(&predicate_probe, &ExposureClass::Exposed, false),
+            recommended_next_step(&predicate_probe, &ExposureClass::Exposed, false, &[]),
             None
         );
         assert_eq!(
-            recommended_next_step(&predicate_probe, &ExposureClass::WeaklyExposed, false)
+            recommended_next_step(&predicate_probe, &ExposureClass::WeaklyExposed, false, &[])
                 .as_deref(),
             Some(
                 "Add boundary tests for below, equal, and above the changed threshold with exact assertions."
             )
         );
         assert_eq!(
-            recommended_next_step(&return_value_probe, &ExposureClass::WeaklyExposed, false)
-                .as_deref(),
+            recommended_next_step(
+                &return_value_probe,
+                &ExposureClass::WeaklyExposed,
+                false,
+                &[]
+            )
+            .as_deref(),
             Some(
                 "Replace broad assertions with exact equality or a property that constrains the changed returned value."
             )
         );
         assert_eq!(
-            recommended_next_step(&predicate_probe, &ExposureClass::ReachableUnrevealed, false)
-                .as_deref(),
+            recommended_next_step(
+                &predicate_probe,
+                &ExposureClass::ReachableUnrevealed,
+                false,
+                &[]
+            )
+            .as_deref(),
             Some(
                 "Add a meaningful assertion that observes the changed value, branch, error, field, event, or side effect."
             )
         );
         assert_eq!(
-            recommended_next_step(&predicate_probe, &ExposureClass::NoStaticPath, false).as_deref(),
+            recommended_next_step(&predicate_probe, &ExposureClass::NoStaticPath, false, &[])
+                .as_deref(),
             Some(NO_STATIC_PATH_NEXT_STEP)
         );
         assert_eq!(
-            recommended_next_step(&predicate_probe, &ExposureClass::InfectionUnknown, false)
-                .as_deref(),
+            recommended_next_step(
+                &predicate_probe,
+                &ExposureClass::InfectionUnknown,
+                false,
+                &[]
+            )
+            .as_deref(),
             Some(
-                "Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml."
+                "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
             )
         );
         assert_eq!(
-            recommended_next_step(&predicate_probe, &ExposureClass::StaticUnknown, false)
+            recommended_next_step(&predicate_probe, &ExposureClass::StaticUnknown, false, &[])
                 .as_deref(),
-            Some("Escalate to real mutation testing or deep static analysis for this probe.")
+            Some(
+                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
+            )
         );
     }
 
@@ -2558,8 +2578,8 @@ fn far_above_threshold_discounts() {
                 && !step.contains("fixture/builder in ripr.toml"),
             "guidance must be reframed for the oracle, got: {step}"
         );
-        // The unknown/static classes keep their standard escalation text; every
-        // other class maps to a reframed const.
+        // Unknown classes inspect the behavior the oracle checks; the other
+        // classes retain their precise reframed guidance.
         let expected = match finding.class {
             ExposureClass::Exposed => None,
             ExposureClass::WeaklyExposed => Some(ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP),
@@ -2567,17 +2587,32 @@ fn far_above_threshold_discounts() {
                 Some(ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP)
             }
             ExposureClass::NoStaticPath => Some(ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP),
-            ExposureClass::InfectionUnknown => Some(ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP),
-            ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown => {
-                Some("Escalate to real mutation testing or deep static analysis for this probe.")
-            }
+            ExposureClass::InfectionUnknown
+            | ExposureClass::PropagationUnknown
+            | ExposureClass::StaticUnknown => Some(ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP),
         };
-        assert_eq!(
-            finding.recommended_next_step.as_deref(),
-            expected,
-            "class {} guidance mismatch",
-            finding.class.as_str()
-        );
+        if matches!(
+            finding.class,
+            ExposureClass::InfectionUnknown
+                | ExposureClass::PropagationUnknown
+                | ExposureClass::StaticUnknown
+        ) {
+            assert!(
+                step.starts_with(ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP),
+                "{step}"
+            );
+            assert!(
+                step.contains("original and changed") && step.contains("may remain unknown"),
+                "{step}"
+            );
+        } else {
+            assert_eq!(
+                finding.recommended_next_step.as_deref(),
+                expected,
+                "class {} guidance mismatch",
+                finding.class.as_str()
+            );
+        }
     }
 
     // RIPR-SPEC-0133 control: an assert-dominated helper WITH a production

@@ -1,0 +1,9 @@
+diff --git a/pricing/core.py b/pricing/core.py
+--- a/pricing/core.py
++++ b/pricing/core.py
+@@ -68,4 +68,4 @@ def quote(subtotal_cents, points):
+     """Tier and total for an order."""
+     tier = tier_for_points(points)
+     total = subtotal_cents - discount_cents(tier, subtotal_cents)
+-    return {"tier": tier, "total_cents": total + shipping_fee(subtotal_cents)}
++    return {"tier": tier, "total_cents": total}

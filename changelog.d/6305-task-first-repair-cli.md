@@ -1,4 +1,4 @@
-<!-- section: Features -->
+<!-- section: Added -->
 - Task-first repair commands (#6305): `ripr repair [<item>]` starts a repair
   attempt for one gap (selecting only when exactly one repair-eligible seam
   is visible, and printing a bounded selection or the honest setup/limitation
