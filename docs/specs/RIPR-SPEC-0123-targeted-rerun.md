@@ -92,7 +92,7 @@ repository-relative test file or an unambiguous `path::test_node` selector
 within that file. An unknown or ambiguous node is a named limitation
 (`changed_test_unresolved`, `changed_test_owner_unresolved`, or
 `changed_test_owner_ambiguous`).
-Exact occurrence admission shares the existing file-composition authority: included, unresolved or unadmitted module provenance remains refused; supported `#[cfg(test)]` module declarations remain admitted. Container attributes must also preserve source items: known built-in metadata/lints and structurally inert or inactive `cfg_attr` are supported, while opaque or qualified lookalike attributes are refused. This does not extend arbitrary function-harness provenance.
+Exact occurrence admission shares the existing file-composition authority: included, unresolved or unadmitted module provenance remains refused; supported `#[cfg(test)]` module declarations remain admitted. Container attributes must also preserve source items: known built-in metadata/lints and structurally inert or inactive `cfg_attr` are supported, while opaque or qualified lookalike attributes are refused. The closed preserving forms include crate `no_std`/`no_main` flags, `feature` identifier lists and `recursion_limit`/`type_length_limit` literal values, including recursively preserving `cfg_attr` wrappers. Unknown conditions cannot admit a possible `cfg` exclusion or opaque introduction. Root attributes remain checked; source preservation does not prove compiler feature availability, prelude identity or libtest invocation. This does not extend arbitrary function-harness provenance.
 
 Selected owner admission uses individual parser-backed source occurrences,
 including byte-mapped expression operands of unambiguously bound `assert!`,

@@ -212,6 +212,23 @@ fn preserving_attribute(tokens: &[Token], depth: usize) -> bool {
         return false;
     }
     match tokens {
+        // These crate built-ins change preludes, entry-point generation or
+        // compiler limits/features, rather than replacing source items.
+        // Keep their declared forms closed; this is not compiler admission
+        // or proof that a libtest harness can run under an active feature.
+        [Token::Word(name)] if matches!(name.as_str(), "no_std" | "no_main") => true,
+        [Token::Word(name), Token::Punct('='), Token::Literal]
+            if matches!(name.as_str(), "recursion_limit" | "type_length_limit") =>
+        {
+            true
+        }
+        [
+            Token::Word(name),
+            Token::Punct('('),
+            inner @ ..,
+            Token::Punct(')'),
+        ] if name == "feature" => availability_arguments(inner)
+            .is_ok_and(|parts| parts.iter().all(|part| matches!(part, [Token::Word(_)]))),
         [
             Token::Word(name),
             Token::Punct('('),

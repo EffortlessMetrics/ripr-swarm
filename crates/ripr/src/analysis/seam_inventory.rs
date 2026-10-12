@@ -9122,7 +9122,9 @@ fn selected() {
                 ("multiline", "crate::\nowner(1)"),
             ] {
                 for shape in ["assertion", "body", "parameter"] {
-                    let root = make_tempdir(&format!("targeted-provenance-{label}-{layout}"))?;
+                    let case = format!("{label}/{layout}/{shape}");
+                    let root =
+                        make_tempdir(&format!("targeted-provenance-{label}-{layout}-{shape}"))?;
                     write_file(
                         &root.join("Cargo.toml"),
                         "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
@@ -9154,23 +9156,34 @@ fn selected() {
                         &root,
                         &[root.join("src/lib.rs"), file.clone()],
                     )?;
-                    assert_eq!(index.tests().len(), 1, "{label}/{layout}: missing test");
+                    assert_eq!(
+                        index.tests().len(),
+                        1,
+                        "{label}/{layout}/{shape}: missing test"
+                    );
                     let test = &index.tests()[0];
-                    assert_eq!(test.file, file);
-                    assert!(test.calls.iter().any(|call| call.name == "owner"));
+                    assert_eq!(test.file, file, "{case}: selected source");
+                    assert!(
+                        test.calls.iter().any(|call| call.name == "owner"),
+                        "{case}: missing captured call"
+                    );
                     assert!(
                         !index
                             .files()
                             .get(&file)
                             .ok_or("missing indexed file")?
-                            .used_lexical_fallback
+                            .used_lexical_fallback,
+                        "{case}: lexical fallback"
                     );
-                    assert!(index.functions().iter().any(|owner| owner.name == "owner"));
+                    assert!(
+                        index.functions().iter().any(|owner| owner.name == "owner"),
+                        "{case}: missing indexed owner"
+                    );
                     let syntax = super::super::classify::OwnerPinSyntax::default();
                     assert_eq!(
                         syntax.targeted_source_provenance_is_admitted(test, &index),
                         admitted,
-                        "{label}/{layout}: provenance authority",
+                        "{label}/{layout}/{shape}: provenance authority",
                     );
                     let result = inventory_changed_test_classified_seams_at_with_config_node(
                         &root,
@@ -9179,17 +9192,18 @@ fn selected() {
                         Some("selected"),
                     );
                     if admitted {
-                        let inventory =
-                            result.map_err(|error| format!("{label}/{layout}: {error:?}"))?;
+                        let inventory = result
+                            .map_err(|error| format!("{label}/{layout}/{shape}: {error:?}"))?;
                         assert!(
                             !inventory.classified.is_empty(),
-                            "{label}/{layout}: empty owner"
+                            "{label}/{layout}/{shape}: empty owner"
                         );
                         assert!(
                             inventory
                                 .classified
                                 .iter()
-                                .all(|entry| entry.seam.owner() == "src/lib.rs::owner")
+                                .all(|entry| entry.seam.owner() == "src/lib.rs::owner"),
+                            "{case}: wrong owner"
                         );
                     } else {
                         assert!(
@@ -9201,7 +9215,196 @@ fn selected() {
                                     ..
                                 })
                             ),
-                            "{label}/{layout}: {result:?}"
+                            "{label}/{layout}/{shape}: {result:?}"
+                        );
+                    }
+                    std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Selector/index proof; active feature and no_main rows do not claim
+    /// compiler acceptance or libtest invocation. Runtime witnesses are separate.
+    #[test]
+    fn changed_test_inventory_exact_occurrence_crate_attributes() -> Result<(), String> {
+        for (label, attributes, admitted) in [
+            ("plain", "", true),
+            ("recursion-limit", "#![recursion_limit = \"256\"]", true),
+            ("type-length-limit", "#![type_length_limit = \"256\"]", true),
+            ("no-std", "#![no_std]", true),
+            ("no-main-source-only", "#![no_main]", true),
+            ("feature-source-only", "#![feature(doc_cfg)]", true),
+            (
+                "active-recursion",
+                "#![cfg_attr(test, recursion_limit = \"256\")]",
+                true,
+            ),
+            ("active-no-std", "#![cfg_attr(test, no_std)]", true),
+            (
+                "unknown-recursion",
+                "#![cfg_attr(feature = \"maybe\", recursion_limit = \"256\")]",
+                true,
+            ),
+            (
+                "unknown-feature",
+                "#![cfg_attr(docsrs, feature(doc_cfg))]",
+                true,
+            ),
+            (
+                "nested-feature",
+                "#![cfg_attr(test, cfg_attr(docsrs, feature(doc_cfg)))]",
+                true,
+            ),
+            (
+                "inactive-opaque",
+                "#![cfg_attr(not(test), opaque_attr)]",
+                true,
+            ),
+            ("false-cfg", "#![cfg(any())]", false),
+            ("unknown-cfg", "#![cfg(feature = \"maybe\")]", false),
+            ("active-opaque", "#![cfg_attr(test, opaque_attr)]", false),
+            ("unknown-opaque", "#![cfg_attr(docsrs, opaque_attr)]", false),
+            (
+                "qualified-lookalike",
+                "#![foreign::recursion_limit = \"256\"]",
+                false,
+            ),
+            (
+                "preserving-and-disabled",
+                "#![recursion_limit = \"256\"]\n#![cfg(any())]",
+                false,
+            ),
+            (
+                "preserving-and-opaque",
+                "#![no_std]\n#![opaque_attr]",
+                false,
+            ),
+            (
+                "unknown-mixed-exclusion",
+                "#![cfg_attr(docsrs, cfg(any()), feature(doc_cfg))]",
+                false,
+            ),
+            ("flag-arguments-source-only", "#![no_std()]", false),
+            (
+                "limit-computed-source-only",
+                "#![recursion_limit = concat!(\"256\")]",
+                false,
+            ),
+            (
+                "feature-literal-source-only",
+                "#![feature(\"doc_cfg\")]",
+                false,
+            ),
+        ] {
+            for layout in ["root", "file-backed", "included"] {
+                // Includes stay a separate source-composition refusal, both
+                // with and without the newly supported root metadata.
+                if layout == "included" && !matches!(label, "plain" | "recursion-limit") {
+                    continue;
+                }
+                for shape in ["assertion", "body", "parameter"] {
+                    let case = format!("{label}/{layout}/{shape}");
+                    let root = make_tempdir(&format!("targeted-crate-{label}-{layout}-{shape}"))?;
+                    write_file(
+                        &root.join("Cargo.toml"),
+                        "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dev-dependencies]\nrstest = { version = \"=0.27.0\", default-features = false }\n",
+                    )?;
+                    let call = "crate::\nowner(1)";
+                    let selected = match shape {
+                        "body" => format!(
+                            "#[test]\nfn selected() {{ let value = {call}; assert_eq!(value, 1); }}\n"
+                        ),
+                        "parameter" => format!(
+                            "#[cfg(test)]\nuse rstest::rstest;\n#[cfg(test)]\n#[rstest]\nfn selected(#[values({call})] x: i32) {{ assert_eq!(x, 1); }}\n"
+                        ),
+                        _ => format!("#[test]\nfn selected() {{ assert_eq!({call}, 1); }}\n"),
+                    };
+                    let file = root.join(if layout == "root" {
+                        "src/lib.rs"
+                    } else {
+                        "src/selected.rs"
+                    });
+                    let declaration = match layout {
+                        "file-backed" => "mod selected;\n",
+                        "included" => "include!(\"selected.rs\");\n",
+                        _ => selected.as_str(),
+                    };
+                    write_file(
+                        &root.join("src/lib.rs"),
+                        &format!(
+                            "{attributes}\npub fn owner(x:i32)->i32 {{ if x>0 {{x}} else {{0}} }}\n{declaration}"
+                        ),
+                    )?;
+                    if layout != "root" {
+                        write_file(&file, &selected)?;
+                    }
+                    let files = if layout == "root" {
+                        vec![file.clone()]
+                    } else {
+                        vec![root.join("src/lib.rs"), file.clone()]
+                    };
+                    let index = crate::analysis::facts::build_index(&root, &files)?;
+                    assert_eq!(index.tests().len(), 1, "{case}: missing test");
+                    let test = &index.tests()[0];
+                    assert_eq!(test.file, file, "{case}: selected source");
+                    assert!(
+                        test.calls.iter().any(|call| call.name == "owner"),
+                        "{case}: missing captured call"
+                    );
+                    assert!(
+                        !index
+                            .files()
+                            .get(&file)
+                            .ok_or("missing indexed file")?
+                            .used_lexical_fallback,
+                        "{case}: lexical fallback"
+                    );
+                    assert!(
+                        index
+                            .functions()
+                            .iter()
+                            .any(|owner| owner.name == "owner"
+                                && !owner.source_role.is_evidence_role()),
+                        "{case}: missing production owner"
+                    );
+                    let relative = if layout == "root" {
+                        "src/lib.rs"
+                    } else {
+                        "src/selected.rs"
+                    };
+                    let result = inventory_changed_test_classified_seams_at_with_config_node(
+                        &root,
+                        &RiprConfig::default(),
+                        Path::new(relative),
+                        Some("selected"),
+                    );
+                    if admitted && layout != "included" {
+                        let inventory = result.map_err(|error| format!("{case}: {error:?}"))?;
+                        assert_eq!(inventory.selected_test_count, 1, "{case}: selected count");
+                        assert!(
+                            !inventory.classified.is_empty(),
+                            "{case}: empty owner seams"
+                        );
+                        assert!(
+                            inventory
+                                .classified
+                                .iter()
+                                .all(|entry| entry.seam.owner() == "src/lib.rs::owner"),
+                            "{case}: wrong owner"
+                        );
+                    } else {
+                        assert!(
+                            matches!(
+                                result,
+                                Err(TargetedTestInventoryError::Selector {
+                                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                                    selected_test_count: 1,
+                                    ..
+                                })
+                            ),
+                            "{case}: {result:?}"
                         );
                     }
                     std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
