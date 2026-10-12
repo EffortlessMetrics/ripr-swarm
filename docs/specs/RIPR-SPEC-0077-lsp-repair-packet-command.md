@@ -106,8 +106,10 @@ The shared passive and command-time validator preserves producer-issued Python
 identities containing literal comparison operators. `<` and `>` are data only
 inside the existing balanced inert single-quoted form; double quotes,
 backslashes or typographic quotes refuse that allowance. Substitution retains
-the same rule. Semicolons, ampersands, pipes, backticks, NUL and line breaks remain
-refused even inside quotes. This is a bounded display policy, not a shell parser
+the same rule. In the command body, semicolons, ampersands, pipes, backticks, NUL
+and line breaks remain refused even inside quotes. Redirect destinations retain
+the existing `shell_arg` token and workspace-path contract. This is a bounded
+display policy, not a shell parser
 or permission to execute a command.
 
 Safety and portable-root binding share the producer's one top-level ` > `
