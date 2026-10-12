@@ -391,9 +391,15 @@ module-qualified call or a result local that is an asserted operand
 (RIPR-SPEC-0028, #4567); `changed_sink_token` from the changed-line token
 delta; `direct` through the channel a changed write reaches (rule 17);
 else `orthogonal`. A free-function owner's identity, delta-token and
-effect-channel credit need module identity. A `<module>` owner with no usable token
-counts as observing. This is the existing behavior and is normative, with
-rule 4 and the rules below.
+effect-channel credit need module identity. An empty owner or changed-sink token
+set does not itself establish observation. All owners, including `<module>` and
+one-letter free functions, require an assertion that satisfies a credit branch
+under rule 4. A genuine short-function output assertion can still credit the
+existing module-identified call branch. With no crediting branch, a strong oracle
+is `orthogonal`; without an admitted strong oracle alignment stays `unknown`.
+This reverses the legacy no-token observing exception (#7526), which could
+credit an unrelated strong assertion. Ordinary module-import links retain their
+heuristic relation and do not gain oracle eligibility from this change.
 
 9. **A method owner's class token is not identity alone.** For a method
    or class-method owner, the class name in the assertion does not

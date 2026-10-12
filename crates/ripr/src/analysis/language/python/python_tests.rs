@@ -3974,17 +3974,17 @@ fn sink_alignment_is_unknown_without_strong_oracle() {
 }
 
 #[test]
-fn sink_alignment_for_module_owner_preserves_observes_decision() {
-    // `<module>` owner with no usable token: the prior boolean returned `true`,
-    // so the derived decision must stay `observes` even though alignment reads
-    // `unknown`. This is the one place `unknown` does not imply not-observed.
+fn sink_alignment_for_module_owner_requires_a_crediting_assertion() {
+    // A strong unrelated row cannot observe a module assignment merely because
+    // the changed line has no usable token. Preserve the original counterexample.
     let owner = align_owner("<module>", "<module>");
     let line = "x = 1";
     let related = [align_strong("assert y == 2")];
     let a = classify_sink_alignment(&owner, line, &related, &[]);
-    assert_eq!(a.oracle_alignment, "unknown");
-    assert_eq!(a.alignment_reason, "module_owner_no_sink_token");
-    assert!(a.observes());
+    assert_eq!(a.oracle_alignment, "orthogonal");
+    assert_eq!(a.alignment_reason, "strong_oracle_observes_different_sink");
+    assert_eq!(a.credited, None);
+    assert!(!a.observes());
 }
 
 #[test]
