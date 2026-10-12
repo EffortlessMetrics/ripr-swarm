@@ -14428,5 +14428,5 @@ code = [
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/cli/commands/cache.rs",
 ]
-output_contracts = ["docs/OUTPUT_SCHEMA.md"]
+outputs = ["docs/OUTPUT_SCHEMA.md"]
 metrics = ["unit_test_pass_rate"]
