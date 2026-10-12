@@ -837,6 +837,8 @@ mod tests {
         assert!(DOCTOR_HELP.contains("Usage: ripr doctor [--root PATH]"));
         assert!(DOCTOR_HELP.contains("--json"));
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
+        assert!(DOCTOR_HELP.contains("https://rustup.rs"));
+        assert!(DOCTOR_HELP.contains("not printed for --profile source-build"));
         assert!(DOCTOR_HELP.contains("Start-here next step:"));
         // The compose commands take whatever base the caller has; this screen
         // no longer asserts `origin/main`, which does not exist in a repository

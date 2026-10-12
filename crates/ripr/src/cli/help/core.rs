@@ -443,15 +443,18 @@ Checks:
   - git is available; cargo and rustc availability is disclosed when Rust is
     in scope. Missing tools or an older workspace rustc are advisory for
     installed-binary static analysis, but fail the source-build profile.
-    Project verification uses the project's selected toolchain and its actual
-    execution result; doctor does not run verification.
+    Missing cargo or rustc on --profile source-build names an install route
+    on the `!` line (https://rustup.rs or the OS package manager). An older
+    rustc still names `rustup update stable`. Project verification uses the
+    project's selected toolchain and its actual execution result; doctor does
+    not run verification.
 
 Rust is in scope when it is enabled and Cargo.toml or .rs files are detected,
 or when no other language is detected or enabled. Otherwise (for example a
 Python-only or TypeScript-only root) the Cargo.toml, cargo, and rustc checks
 print as skipped with the reason and do not fail doctor.
 
-First-run diagnosis (printed automatically):
+First-run diagnosis (analysis profile; not printed for --profile source-build):
   - Detected languages: shallow file-marker scan; each language shows its
     canonical tier (stable or preview) and [adapter not compiled] when the
     feature is absent. Only languages with concrete markers are listed —

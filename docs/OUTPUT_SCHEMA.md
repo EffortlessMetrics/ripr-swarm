@@ -311,7 +311,9 @@ capability without failing installed-binary analysis. An additive
 `.github/workflows/ripr.yml` installs ripr without a version (the 0.10
 template) or pins a version other than the running one; its `evidence` names
 the refresh command. The source-build profile
-fails on missing tools or rustc below RIPR's build MSRV, and reports its
+fails on missing tools or rustc below RIPR's build MSRV. Missing cargo or rustc
+evidence names an install route (rustup or the OS package manager); a rustc
+below the build minimum still names `rustup update stable`. It reports its
 language `runtime_probes` with `required: false` because a language runtime is
 an analysis capability, not a build prerequisite. It does not establish
 whether project verification will succeed; that requires running the selected

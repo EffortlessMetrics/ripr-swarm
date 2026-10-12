@@ -1342,6 +1342,15 @@ fn evaluate_doctor_core_with_probe_for_profile(
             && status == DoctorStatus::Fail
         {
             report.add_advisory_check(&name, analysis_advisory_toolchain_evidence(tool, &evidence));
+        } else if RUST_TOOLCHAIN_TOOLS.contains(&tool)
+            && profile == DoctorProfile::SourceBuild
+            && status == DoctorStatus::Fail
+        {
+            report.add_check(
+                &name,
+                status,
+                Some(source_build_toolchain_failure_evidence(tool, &evidence)),
+            );
         } else {
             report.add_check(&name, status, Some(evidence));
         }
@@ -1463,16 +1472,72 @@ fn doctor_tool_probe_dir<'a>(tool: &str, root: &'a Path) -> Option<&'a Path> {
     RUST_TOOLCHAIN_TOOLS.contains(&tool).then_some(root)
 }
 
+/// Bare missing-tool state shared by spawn-not-found and the unmatched-run
+/// catch-all. The source-build profile appends an install route; analysis
+/// keeps this state so its advisory wrapping does not change.
+fn rust_toolchain_missing_state(tool: &str) -> String {
+    format!("{tool} not available")
+}
+
+/// Install route named on a source-build `!` line when cargo or rustc is
+/// missing. Distinct from the below-minimum path, which already names
+/// `rustup update stable`.
+fn rust_toolchain_install_fix() -> String {
+    format!(
+        "install Rust via rustup (https://rustup.rs) or your OS package manager; the source build requires Rust {MINIMUM_RUSTC_VERSION}+"
+    )
+}
+
+fn rust_toolchain_missing_with_install_fix(tool: &str) -> String {
+    format!(
+        "{}; {}",
+        rust_toolchain_missing_state(tool),
+        rust_toolchain_install_fix()
+    )
+}
+
+/// Evidence for a tool that never launched. Cargo and rustc name the
+/// source-build install route; git keeps its own PATH/saved-diff message at
+/// the spawn site, and other tools stay a bare "not available".
+fn doctor_tool_unavailable_evidence(tool: &str) -> String {
+    if RUST_TOOLCHAIN_TOOLS.contains(&tool) {
+        rust_toolchain_missing_with_install_fix(tool)
+    } else {
+        rust_toolchain_missing_state(tool)
+    }
+}
+
+/// Source-build projection of a failed cargo/rustc check. Only the missing-tool
+/// state gets the install route; timeout, below-minimum, path-pin, and
+/// launch-failure evidence already name their own fix.
+fn source_build_toolchain_failure_evidence(tool: &str, evidence: &str) -> String {
+    if evidence == rust_toolchain_missing_state(tool) {
+        rust_toolchain_missing_with_install_fix(tool)
+    } else {
+        evidence.to_string()
+    }
+}
+
 /// Evidence for an unavailable Cargo/rustc capability under the analysis
 /// profile. The installed binary's static analysis does not compile the
 /// workspace, but it does read `cargo metadata` for the custom test-harness
 /// target inventory, so a missing `cargo` withholds that evidence (the
 /// harness verdict fails closed as `manifest_unavailable`). Doctor names that
 /// degradation instead of implying analysis is unaffected.
+///
+/// A source-build install suffix on the same missing-tool state is stripped
+/// here so the analysis profile's advisory text stays the analysis effect,
+/// not a build-from-source install walk.
 fn analysis_advisory_toolchain_evidence(tool: &str, evidence: &str) -> String {
     if evidence.contains(RUSTC_ANALYSIS_SCOPE) {
         return evidence.to_string();
     }
+    let missing_state = rust_toolchain_missing_state(tool);
+    let evidence = if evidence == rust_toolchain_missing_with_install_fix(tool) {
+        missing_state.as_str()
+    } else {
+        evidence
+    };
     let analysis_effect = if tool == "cargo" {
         "static analysis continues, but evidence that reads `cargo metadata` in the selected root (custom test-harness target inventory) is withheld"
     } else {
@@ -1537,7 +1602,9 @@ fn doctor_tool_run_result(
             ))
         }
         Err(DoctorToolRunError::Spawn(kind)) => doctor_spawn_failure(tool, kind),
-        _ => DoctorToolCheckResult::failure(format!("{tool} not available")),
+        Err(DoctorToolRunError::Wait) => {
+            DoctorToolCheckResult::failure(doctor_tool_unavailable_evidence(tool))
+        }
     }
 }
 
@@ -1606,7 +1673,7 @@ fn doctor_spawn_failure(tool: &str, kind: std::io::ErrorKind) -> DoctorToolCheck
         evidence: if kind == std::io::ErrorKind::NotFound && tool == "git" {
             crate::git::GIT_NOT_FOUND_ON_PATH_MESSAGE.to_string()
         } else if kind == std::io::ErrorKind::NotFound {
-            format!("{tool} not available")
+            doctor_tool_unavailable_evidence(tool)
         } else {
             format!("{tool} could not be launched: {kind:?}")
         },
@@ -2136,6 +2203,19 @@ mod tests {
         if !missing.contains("the installed binary's static analysis does not run rustc") {
             return Err(format!(
                 "a missing rustc still needs the analysis scope: {missing:?}"
+            ));
+        }
+        let spawn_missing = doctor_spawn_failure("rustc", std::io::ErrorKind::NotFound);
+        let from_spawn = analysis_advisory_toolchain_evidence("rustc", &spawn_missing.evidence);
+        let expected_missing = analysis_advisory_toolchain_evidence("rustc", "rustc not available");
+        if from_spawn != expected_missing {
+            return Err(format!(
+                "analysis wrapping of spawn-missing rustc must keep the analysis advisory, not the source-build install route: {from_spawn:?}"
+            ));
+        }
+        if from_spawn.contains("https://rustup.rs") {
+            return Err(format!(
+                "analysis advisory must not carry the source-build install URL: {from_spawn:?}"
             ));
         }
         Ok(())
@@ -2921,16 +3001,119 @@ mod tests {
             .evidence
             .clone()
             .unwrap_or_default();
-        if !cargo.contains("`cargo metadata`")
-            || !cargo.contains("is withheld")
-            || rustc.contains("cargo metadata")
-            || !rustc.contains("does not run rustc")
+        if cargo
+            != "cargo not available; static analysis continues, but evidence that reads `cargo metadata` in the selected root (custom test-harness target inventory) is withheld; project verification and source builds require their own toolchain"
+            || rustc
+                != "rustc not available; the installed binary's static analysis does not run rustc; project verification and source builds require their own toolchain"
+            || cargo.contains("https://rustup.rs")
+            || rustc.contains("https://rustup.rs")
         {
             return Err(format!(
-                "cargo advisory must disclose the cargo-metadata limitation: {cargo:?} / {rustc:?}"
+                "cargo advisory must disclose the cargo-metadata limitation without a source-build install walk: {cargo:?} / {rustc:?}"
             ));
         }
         Ok(())
+    }
+
+    /// #7435: source-build missing cargo/rustc names an install route; other
+    /// failure evidence (below-minimum rustc, timeout, permission denied) keeps
+    /// its own fix, including `rustup update stable`.
+    #[test]
+    fn source_build_missing_toolchain_names_install_fix_and_keeps_other_failures()
+    -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-source-build-missing",
+            &[
+                ("Cargo.toml", "[package]\nname = \"probe\"\n"),
+                ("src/lib.rs", "pub fn f() {}\n"),
+            ],
+        )?;
+        let missing_probe = |tool: &str, _root: &Path| {
+            if tool == "git" {
+                (DoctorStatus::Pass, "git version 2.43.0".to_string())
+            } else {
+                (DoctorStatus::Fail, format!("{tool} not available"))
+            }
+        };
+        let missing = evaluate_doctor_core_with_probe_for_profile(
+            &root,
+            &[LanguageId::Rust],
+            DoctorProfile::SourceBuild,
+            &missing_probe,
+        )
+        .report;
+        let cargo = check(&missing, "tool_cargo")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        let rustc = check(&missing, "tool_rustc")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        if cargo != rust_toolchain_missing_with_install_fix("cargo")
+            || rustc != rust_toolchain_missing_with_install_fix("rustc")
+            || cargo.contains("rustup update stable")
+            || rustc.contains("rustup update stable")
+            || missing.status != DoctorStatus::Fail
+        {
+            let _ = std::fs::remove_dir_all(&root);
+            return Err(format!(
+                "source-build missing cargo/rustc must name the install route: {cargo:?} / {rustc:?} {:?}",
+                missing.status
+            ));
+        }
+
+        let below = below_minimum_rustc_output()?;
+        let mixed_probe = |tool: &str, _root: &Path| match tool {
+            "git" => (DoctorStatus::Pass, "git version 2.43.0".to_string()),
+            "cargo" => (DoctorStatus::Fail, "cargo timed out after 5s".to_string()),
+            "rustc" => doctor_tool_check_success(tool, below.as_bytes()).into_public(),
+            other => (DoctorStatus::Fail, format!("{other} not available")),
+        };
+        let mixed = evaluate_doctor_core_with_probe_for_profile(
+            &root,
+            &[LanguageId::Rust],
+            DoctorProfile::SourceBuild,
+            &mixed_probe,
+        )
+        .report;
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_timeout = check(&mixed, "tool_cargo")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        let rustc_below = check(&mixed, "tool_rustc")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        if cargo_timeout != "cargo timed out after 5s"
+            || cargo_timeout.contains("https://rustup.rs")
+            || !rustc_below.contains("rustup update stable")
+            || rustc_below.contains("https://rustup.rs")
+        {
+            return Err(format!(
+                "timeout and below-minimum evidence must keep their own fix: {cargo_timeout:?} / {rustc_below:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn doctor_wait_failure_uses_the_missing_tool_evidence() {
+        let cargo_wait =
+            doctor_tool_run_result("cargo", DOCTOR_TOOL_TIMEOUT, Err(DoctorToolRunError::Wait));
+        assert_eq!(
+            cargo_wait.evidence,
+            rust_toolchain_missing_with_install_fix("cargo")
+        );
+        let git_wait =
+            doctor_tool_run_result("git", DOCTOR_TOOL_TIMEOUT, Err(DoctorToolRunError::Wait));
+        assert_eq!(git_wait.evidence, "git not available");
+        assert!(
+            !git_wait.evidence.contains("https://rustup.rs"),
+            "git wait must not inherit the Rust install route: {}",
+            git_wait.evidence
+        );
     }
 
     /// PR #4196 review: `cargo` resolves through rustup's per-directory
@@ -3542,10 +3725,39 @@ mod tests {
         );
 
         let cargo_missing = doctor_spawn_failure("cargo", std::io::ErrorKind::NotFound);
-        assert_eq!(cargo_missing.evidence, "cargo not available");
+        assert_eq!(
+            cargo_missing.evidence,
+            rust_toolchain_missing_with_install_fix("cargo")
+        );
+        assert!(
+            cargo_missing.evidence.contains("https://rustup.rs"),
+            "missing cargo must name an install route: {}",
+            cargo_missing.evidence
+        );
+        assert!(
+            !cargo_missing.evidence.contains("rustup update stable"),
+            "missing cargo must not reuse the below-minimum rustup update path: {}",
+            cargo_missing.evidence
+        );
         assert!(
             !cargo_missing.evidence.contains("--diff"),
             "cargo must not inherit git's saved-diff repair"
+        );
+
+        let rustc_missing = doctor_spawn_failure("rustc", std::io::ErrorKind::NotFound);
+        assert_eq!(
+            rustc_missing.evidence,
+            rust_toolchain_missing_with_install_fix("rustc")
+        );
+        assert!(
+            rustc_missing.evidence.contains("https://rustup.rs"),
+            "missing rustc must name an install route: {}",
+            rustc_missing.evidence
+        );
+        assert!(
+            !rustc_missing.evidence.contains("rustup update stable"),
+            "missing rustc must not reuse the below-minimum rustup update path: {}",
+            rustc_missing.evidence
         );
 
         let denied = doctor_spawn_failure("git", std::io::ErrorKind::PermissionDenied);
@@ -3555,6 +3767,18 @@ mod tests {
             denied.evidence
         );
         assert!(!denied.evidence.contains("--diff"));
+
+        let cargo_denied = doctor_spawn_failure("cargo", std::io::ErrorKind::PermissionDenied);
+        assert!(
+            cargo_denied.evidence.contains("could not be launched"),
+            "permission denied is not a missing-tool diagnosis: {}",
+            cargo_denied.evidence
+        );
+        assert!(
+            !cargo_denied.evidence.contains("https://rustup.rs"),
+            "a launch failure must not name the missing-tool install route: {}",
+            cargo_denied.evidence
+        );
     }
 
     /// #5252 item 3: a root that is not there cannot have a manifest, so
