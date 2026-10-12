@@ -340,4 +340,161 @@ mod tests {
         assert!(!fields.contains(r#"pre\"fix"#));
         assert!(!fields.contains("pre\\"));
     }
+
+    #[test]
+    fn rust_scanner_keeps_real_fields_after_quoted_char_and_byte_literals() {
+        for prefix in [
+            r#"let quote = '"';"#,
+            r#"let escaped_quote = '\"';"#,
+            r#"let apostrophe = '\'';"#,
+            r#"let slash = '\\';"#,
+            r#"let byte_quote = b'"';"#,
+            r#"let escaped_byte_quote = b'\"';"#,
+            r#"let byte_apostrophe = b'\'';"#,
+            r#"let byte_slash = b'\\';"#,
+        ] {
+            let source = format!(
+                r#"fn packet() {{
+                    {prefix}
+                    payload.insert("command_id", value);
+                    payload.insert("receipt_id", value);
+                    payload.insert("schema_version", value);
+                }}"#
+            );
+            let fields = collect_rust_string_fields(&source);
+            assert_eq!(
+                fields,
+                std::collections::BTreeSet::from([
+                    "command_id".to_string(),
+                    "receipt_id".to_string(),
+                ]),
+                "CHAR/BYTE punctuation must not consume later genuine string fields: {prefix}"
+            );
+        }
+    }
+
+    #[test]
+    fn rust_scanner_keeps_lifetimes_and_legacy_escaped_string_fields_distinct() {
+        let source = r#"
+            fn borrowed<'a>(value: &'a str) -> &'a str {
+                let escaped = "pre\"fix";
+                payload.insert("command_id", value);
+                payload.insert("receipt_id", value);
+                payload.insert("snapshot_id", value);
+                payload.insert("schema_version", value);
+                value
+            }
+        "#;
+        assert_eq!(
+            collect_rust_string_fields(source),
+            std::collections::BTreeSet::from([
+                "command_id".to_string(),
+                "receipt_id".to_string(),
+                "snapshot_id".to_string(),
+            ])
+        );
+    }
+
+    #[test]
+    fn rust_scanner_collects_command_id_after_the_actual_shared_tokenizer() -> Result<(), String> {
+        // Real governed source, not a comment/string added to make the gate
+        // appear productive. The moved tokenizer precedes an existing DTO
+        // validation-field literal in the same compiled candidate source.
+        let source = include_str!("../../crates/ripr/src/domain/command_spec.rs");
+        let tokenizer = source
+            .find("pub(crate) fn command_tokens(")
+            .ok_or("actual command tokenizer source must be present")?;
+        let command_id = source
+            .find("\"command_id\"")
+            .ok_or("actual command DTO must retain its existing field literal")?;
+        assert!(
+            tokenizer < command_id,
+            "the real char-literal tokenizer must precede the actual field for this discriminator"
+        );
+        let fields = collect_rust_string_fields(source);
+        assert!(
+            fields.contains("command_id"),
+            "the full governed source must retain real command_id after tokenizer CHAR punctuation: {fields:?}"
+        );
+        assert!(
+            surface_field_violations("crates/ripr/src/domain/command_spec.rs", &fields)
+                .iter()
+                .all(|violation| !violation.contains("zero identity-shaped fields")),
+            "a real governed source must not become a false empty registry surface"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rust_scanner_preserves_utf8_offsets_unknown_fields_and_zero_surface_refusal() {
+        let surface = "crates/ripr/src/domain/command_spec.rs";
+        for prefix in [r#"let quote = '"';"#, r#"let byte_quote = b'"';"#] {
+            let source = format!(
+                r#"fn packet() {{
+                    let multibyte = "λé中文🦀";
+                    {prefix}
+                    payload.insert("command_id", value);
+                    payload.insert("brand_new_widget_id", value);
+                }}"#
+            );
+            let fields = collect_rust_string_fields(&source);
+            assert_eq!(
+                fields,
+                std::collections::BTreeSet::from([
+                    "brand_new_widget_id".to_string(),
+                    "command_id".to_string(),
+                ]),
+                "CHAR/BYTE ranges must use UTF-8 byte offsets and retain every real field"
+            );
+            let violations = surface_field_violations(surface, &fields);
+            assert!(
+                violations.iter().any(|violation| {
+                    violation.contains("brand_new_widget_id") && violation.contains("unknown")
+                }),
+                "unknown field after UTF-8/CHAR/BYTE must remain refused: {violations:?}"
+            );
+            assert!(
+                violations
+                    .iter()
+                    .all(|violation| !violation.contains("zero identity-shaped fields")),
+                "nonempty real fields must not masquerade as a zero-field surface"
+            );
+        }
+        let empty = collect_rust_string_fields(
+            r#"fn punctuation_only() { let multibyte = "λé🦀"; let quote = '"'; let byte = b'"'; }"#,
+        );
+        assert!(empty.is_empty());
+        assert_eq!(
+            surface_field_violations(surface, &empty),
+            vec![format!(
+                "governed identity surface `{surface}` produced zero identity-shaped fields"
+            )]
+        );
+    }
+
+    #[test]
+    fn rust_scanner_preserves_legacy_ordinary_raw_byte_string_and_quoted_comment_fields() {
+        // Isolated legacy scanner corpus: these comments are not additions to
+        // any governed production surface or catalog-disposition workaround.
+        let source = r##"
+            fn legacy() {
+                let ordinary = "action_id";
+                let raw = r#"snapshot_id"#;
+                let bytes = b"receipt_id";
+                // "attempt_id"
+                /* "root_identity" */
+                let unrelated = "schema_version";
+            }
+        "##;
+        assert_eq!(
+            collect_rust_string_fields(source),
+            std::collections::BTreeSet::from([
+                "action_id".to_string(),
+                "attempt_id".to_string(),
+                "receipt_id".to_string(),
+                "root_identity".to_string(),
+                "snapshot_id".to_string(),
+            ])
+        );
+    }
 }
