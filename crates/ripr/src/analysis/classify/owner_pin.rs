@@ -673,20 +673,23 @@ impl OwnerPinSyntax {
         if !assertion.text.starts_with("assert_matches") {
             return None;
         }
-        let ambiguous = self.context_ambiguities(test, assertion.line, index).ok()?;
         let facts = index.files().get(&test.file)?;
-        let mut memo = self.pattern_pins.borrow_mut();
-        let pins = memo
-            .entry(test.file.clone())
-            .or_insert_with(|| pattern_pins(&facts.source));
-        let pin = pins.pin(
-            (test.start_line, test.end_line, &test.name),
-            &test.body,
-            (assertion.line, &assertion.text),
-        )?;
-        pin.macros
-            .is_disjoint(&ambiguous)
-            .then(|| pin.value.clone())
+        // Look the cached pin up first; the ambiguity scan only matters when
+        // a pin exists. The memo borrow ends before that scan runs.
+        let pin = {
+            let mut memo = self.pattern_pins.borrow_mut();
+            let pins = memo
+                .entry(test.file.clone())
+                .or_insert_with(|| pattern_pins(&facts.source));
+            pins.pin(
+                (test.start_line, test.end_line, &test.name),
+                &test.body,
+                (assertion.line, &assertion.text),
+            )?
+            .clone()
+        };
+        let ambiguous = self.context_ambiguities(test, assertion.line, index).ok()?;
+        pin.macros.is_disjoint(&ambiguous).then_some(pin.value)
     }
 
     fn refusal(

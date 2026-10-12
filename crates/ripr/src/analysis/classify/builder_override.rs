@@ -17,10 +17,14 @@
 //! owner call through its own method-call receiver chain or through `let`
 //! bindings, with a setter whose result flows into the read value: a
 //! setter-shaped call (`.field(arg)`, `.with_field(arg)`, `.set_field(arg)`)
-//! on that receiver chain, a reassignment `b = b.field(arg)`, or a field
+//! on that receiver chain whose indexed body plainly stores its argument in
+//! the field ([`setter_plainly_writes`]; a name alone proves nothing, since
+//! `with_attempts(n)` may add or clamp), a reassignment `b = b.field(arg)`, or a field
 //! assignment `b.field = value` after the binding's `let`. Setter calls inside
 //! arguments, a setter whose result is discarded (`b.with_field(5);`), and
-//! anything the tree cannot tie to the owner leave the token confirming.
+//! anything the tree cannot tie to the owner leave the token confirming, and
+//! so does any other later statement that touches the binding
+//! (`b.reset();`, `if c { b = .. }`, `let r = &mut b;`).
 
 use crate::analysis::syntax::parse_clean_source_file;
 use ra_ap_syntax::{
@@ -28,7 +32,7 @@ use ra_ap_syntax::{
     ast::{self, HasArgList, HasName},
 };
 
-use super::super::rust_index::{OracleFact, TestSummary};
+use super::super::rust_index::{OracleFact, RustIndex, TestSummary};
 
 /// Upper bound on `let` hops from the assertion's receiver back to the owner
 /// call (`retry` <- `builder.build()` <- `RetryBuilder::new()`).
@@ -41,6 +45,10 @@ const MAX_BINDING_HOPS: usize = 4;
 pub(super) struct OwnerCall<'a> {
     name: &'a str,
     impl_type: Option<&'a str>,
+    /// Method names on the owner's type verified to store their argument in
+    /// an overridden field ([`setter_plainly_writes`]). Empty until
+    /// [`OwnerCall::with_setters`]: no method call then counts as a setter.
+    setters: &'a [String],
 }
 
 impl<'a> OwnerCall<'a> {
@@ -58,7 +66,21 @@ impl<'a> OwnerCall<'a> {
                 let ty = ty.rsplit(" for ").next().unwrap_or(ty).trim();
                 ty.split('<').next().unwrap_or(ty).trim()
             });
-        Some(Self { name, impl_type })
+        Some(Self {
+            name,
+            impl_type,
+            setters: &[],
+        })
+    }
+
+    /// The owner type, when the owner is an associated function.
+    pub(super) fn impl_type(&self) -> Option<&'a str> {
+        self.impl_type
+    }
+
+    /// The same owner with its verified setter method names.
+    pub(super) fn with_setters(self, setters: &'a [String]) -> Self {
+        Self { setters, ..self }
     }
 
     /// Whether `call` is a direct call of the owner: `RetryBuilder::new(..)`
@@ -254,7 +276,7 @@ fn value_state(
     field: &str,
     hops: usize,
 ) -> ValueState {
-    let (root, setter_on_chain) = chain_root(expression, field);
+    let (root, setter_on_chain) = chain_root(expression, owner, field);
     let combine = |state: ValueState, written: bool| match state {
         ValueState::Unknown => ValueState::Unknown,
         _ if written => ValueState::Overridden,
@@ -284,7 +306,7 @@ fn value_state(
                 field,
                 hops,
             );
-            match binding_writes(&visible[index + 1..], &binding, field) {
+            match binding_writes(&visible[index + 1..], &binding, owner, field) {
                 None => ValueState::Unknown,
                 Some(written) => combine(bound, setter_on_chain || written),
             }
@@ -295,13 +317,13 @@ fn value_state(
 
 /// The root of `expression`'s receiver chain (through method calls, parens
 /// and `?`), and whether a setter of `field` is on the chain.
-fn chain_root(expression: &ast::Expr, field: &str) -> (ast::Expr, bool) {
+fn chain_root(expression: &ast::Expr, owner: OwnerCall<'_>, field: &str) -> (ast::Expr, bool) {
     let mut current = expression.clone();
     let mut setter = false;
     loop {
         let next = match &current {
             ast::Expr::MethodCallExpr(call) => {
-                setter |= is_setter(call, field);
+                setter |= is_setter(call, owner, field);
                 call.receiver()
             }
             ast::Expr::ParenExpr(paren) => paren.expr(),
@@ -315,14 +337,24 @@ fn chain_root(expression: &ast::Expr, field: &str) -> (ast::Expr, bool) {
     }
 }
 
-/// A setter-shaped call writing `field` with an argument: `.field(5)`,
-/// `.with_field(5)`, `.set_field(5)`. A zero-argument `.field()` reads.
-fn is_setter(call: &ast::MethodCallExpr, field: &str) -> bool {
+/// The setter-shaped method names for `field`: `field`, `with_field`,
+/// `set_field`.
+pub(super) fn setter_names(field: &str) -> [String; 3] {
+    [
+        field.to_string(),
+        format!("with_{field}"),
+        format!("set_{field}"),
+    ]
+}
+
+/// A setter-shaped call writing `field` with an argument (`.field(5)`,
+/// `.with_field(5)`, `.set_field(5)`) whose method the owner verified. A
+/// zero-argument `.field()` reads.
+fn is_setter(call: &ast::MethodCallExpr, owner: OwnerCall<'_>, field: &str) -> bool {
     let named = call.name_ref().is_some_and(|name| {
         let name = name.text();
-        name == field
-            || name.strip_prefix("with_") == Some(field)
-            || name.strip_prefix("set_") == Some(field)
+        setter_names(field).iter().any(|setter| setter == name)
+            && owner.setters.iter().any(|setter| setter == name)
     });
     named
         && call
@@ -373,24 +405,41 @@ fn binding_let(visible: &[ast::Stmt], binding: &str) -> Option<(usize, ast::LetS
 /// value` with a value not read from `binding`. `None` when `binding` is
 /// reassigned from anything that is not its own setter chain, which leaves
 /// what it holds unread.
-fn binding_writes(statements: &[ast::Stmt], binding: &str, field: &str) -> Option<bool> {
+fn binding_writes(
+    statements: &[ast::Stmt],
+    binding: &str,
+    owner: OwnerCall<'_>,
+    field: &str,
+) -> Option<bool> {
     let mut written = false;
     for statement in statements {
-        let ast::Stmt::ExprStmt(statement) = statement else {
-            continue;
-        };
-        let Some(ast::Expr::BinExpr(assignment)) = statement.expr() else {
-            continue;
-        };
-        if assignment.op_kind() != Some(ast::BinaryOp::Assignment { op: None }) {
+        if !mentions_identifier(statement.syntax(), binding) {
             continue;
         }
-        let (Some(target), Some(value)) = (assignment.lhs(), assignment.rhs()) else {
+        // A `let` reading the binding (`let retry = builder.build();`) leaves
+        // it as it was unless it borrows it mutably.
+        if let ast::Stmt::LetStmt(statement) = statement {
+            if borrows_mutably(statement.syntax(), binding) {
+                return None;
+            }
             continue;
+        }
+        // Anything else touching the binding must be a recognized write.
+        let ast::Stmt::ExprStmt(statement) = statement else {
+            return None;
+        };
+        let Some(ast::Expr::BinExpr(assignment)) = statement.expr() else {
+            return None;
+        };
+        if assignment.op_kind() != Some(ast::BinaryOp::Assignment { op: None }) {
+            return None;
+        }
+        let (Some(target), Some(value)) = (assignment.lhs(), assignment.rhs()) else {
+            return None;
         };
         match target {
             ast::Expr::PathExpr(path) if single_identifier(&path).as_deref() == Some(binding) => {
-                let (root, setter) = chain_root(&value, field);
+                let (root, setter) = chain_root(&value, owner, field);
                 let rooted = matches!(&root, ast::Expr::PathExpr(path)
                     if single_identifier(path).as_deref() == Some(binding));
                 if !rooted {
@@ -407,10 +456,152 @@ fn binding_writes(statements: &[ast::Stmt], binding: &str, field: &str) -> Optio
             {
                 written |= !mentions_identifier(value.syntax(), binding);
             }
-            _ => {}
+            _ => return None,
         }
     }
     Some(written)
+}
+
+/// Whether `node` holds `&mut binding`.
+fn borrows_mutably(node: &SyntaxNode, binding: &str) -> bool {
+    node.descendants()
+        .filter_map(ast::RefExpr::cast)
+        .any(|reference| {
+            reference.mut_token().is_some()
+                && reference.expr().is_some_and(|expr| {
+                    matches!(&expr, ast::Expr::PathExpr(path)
+                        if single_identifier(path).as_deref() == Some(binding))
+                })
+        })
+}
+
+/// Whether the owner type's one indexed method named `setter` plainly stores
+/// its single argument in `field`: it takes `self` (by value or reference)
+/// and one identifier parameter, and every mention of `field` in its body is
+/// `self.field = arg`, a record field `field: arg` (or shorthand), or the
+/// parameter itself. A body that adds, clamps or reads the field
+/// (`self.attempts += n`, `n.min(self.attempts)`), an ambiguous or missing
+/// method, or a free owner leaves the call unverified.
+pub(in crate::analysis) fn setter_plainly_writes(
+    index: &RustIndex,
+    impl_type: &str,
+    setter: &str,
+    field: &str,
+) -> bool {
+    let mut candidates = index.functions().iter().filter(|function| {
+        function.name == setter
+            && !function.source_role.is_evidence_role()
+            && OwnerCall::from_symbol(&function.id.0)
+                .is_some_and(|candidate| candidate.impl_type == Some(impl_type))
+    });
+    let (Some(function), None) = (candidates.next(), candidates.next()) else {
+        return false;
+    };
+    let Some(parse) = parse_clean_source_file(&function.body) else {
+        return false;
+    };
+    let Some(method) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return false;
+    };
+    let Some(parameters) = method.param_list() else {
+        return false;
+    };
+    let mut rest = parameters.params();
+    let (Some(_), Some(parameter), None) = (parameters.self_param(), rest.next(), rest.next())
+    else {
+        return false;
+    };
+    let Some(ast::Pat::IdentPat(parameter)) = parameter.pat() else {
+        return false;
+    };
+    let Some(argument) = parameter.name().map(|name| name.text().to_string()) else {
+        return false;
+    };
+    let Some(body) = method.body() else {
+        return false;
+    };
+    let mentions: Vec<_> = body
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| token.kind() == SyntaxKind::IDENT && token.text() == field)
+        .collect();
+    let mut stores = false;
+    for token in &mentions {
+        let Some(name) = token.parent().and_then(ast::NameRef::cast) else {
+            return false;
+        };
+        let Some(parent) = name.syntax().parent() else {
+            return false;
+        };
+        if let Some(target) = ast::FieldExpr::cast(parent.clone()) {
+            let on_self = target.expr().is_some_and(|receiver| {
+                matches!(&receiver, ast::Expr::PathExpr(path)
+                    if path.path().is_some_and(|path| path.syntax().text() == "self"))
+            });
+            let stored = target
+                .syntax()
+                .parent()
+                .and_then(ast::BinExpr::cast)
+                .filter(|assignment| {
+                    assignment.op_kind() == Some(ast::BinaryOp::Assignment { op: None })
+                        && assignment
+                            .lhs()
+                            .is_some_and(|lhs| lhs.syntax() == target.syntax())
+                        // A top-level statement of the method body, not a
+                        // conditional or looped store.
+                        && assignment
+                            .syntax()
+                            .parent()
+                            .filter(|statement| ast::ExprStmt::can_cast(statement.kind()))
+                            .and_then(|statement| statement.parent())
+                            .and_then(|list| list.parent())
+                            .is_some_and(|block| &block == body.syntax())
+                })
+                .and_then(|assignment| assignment.rhs())
+                .is_some_and(|value| is_path_named(&value, &argument));
+            if !(on_self && stored) {
+                return false;
+            }
+            stores = true;
+        } else if let Some(record_field) = ast::RecordExprField::cast(parent.clone()) {
+            if !record_field
+                .expr()
+                .is_some_and(|value| is_path_named(&value, &argument))
+            {
+                return false;
+            }
+            stores = true;
+        } else if let Some(read) = parameter_read(&parent).filter(|_| field == argument) {
+            // `self.attempts = attempts` names the parameter on the right,
+            // checked at the field mention; shorthand `Self { attempts, .. }`
+            // stores it.
+            stores |= read
+                .syntax()
+                .parent()
+                .and_then(ast::RecordExprField::cast)
+                .is_some_and(|record_field| record_field.name_ref().is_none());
+        } else {
+            return false;
+        }
+    }
+    stores
+}
+
+fn is_path_named(expression: &ast::Expr, name: &str) -> bool {
+    matches!(expression, ast::Expr::PathExpr(path)
+        if single_identifier(path).as_deref() == Some(name))
+}
+
+/// The plain variable read (`attempts`) whose single path segment is a
+/// `NameRef`'s parent.
+fn parameter_read(parent: &SyntaxNode) -> Option<ast::PathExpr> {
+    ast::PathSegment::cast(parent.clone())
+        .and_then(|segment| segment.syntax().parent())
+        .and_then(ast::Path::cast)
+        .filter(|path| path.qualifier().is_none())
+        .and_then(|path| path.syntax().parent())
+        .and_then(ast::PathExpr::cast)
 }
 
 fn mentions_identifier(node: &SyntaxNode, name: &str) -> bool {
@@ -499,8 +690,10 @@ mod tests {
             observed_tokens: Vec::new(),
             ok_value_observed: None,
         };
-        let owner = OwnerCall::from_symbol(OWNER).expect("owner");
-        overridden_fields_read(&test, &assertion, owner, &fields())
+        let setters = setter_names("attempts");
+        OwnerCall::from_symbol(OWNER).map_or_else(Vec::new, |owner| {
+            overridden_fields_read(&test, &assertion, owner.with_setters(&setters), &fields())
+        })
     }
 
     fn attempts() -> Vec<String> {
@@ -524,11 +717,95 @@ mod tests {
 
     #[test]
     fn owner_call_reads_the_impl_type() {
-        let owner = OwnerCall::from_symbol(OWNER).expect("owner");
-        assert_eq!(owner.name, "new");
-        assert_eq!(owner.impl_type, Some("RetryBuilder"));
-        let free = OwnerCall::from_symbol("src/lib.rs::defaults").expect("free owner");
-        assert_eq!((free.name, free.impl_type), ("defaults", None));
+        let owner = OwnerCall::from_symbol(OWNER).map(|owner| (owner.name, owner.impl_type));
+        assert_eq!(owner, Some(("new", Some("RetryBuilder"))));
+        let free = OwnerCall::from_symbol("src/lib.rs::defaults")
+            .map(|owner| (owner.name, owner.impl_type));
+        assert_eq!(free, Some(("defaults", None)));
+    }
+
+    fn settings_index(setter: &str) -> RustIndex {
+        let source = format!(
+            "pub struct RetryBuilder {{ attempts: u32, delay_ms: u64 }}\n\
+             impl RetryBuilder {{\n\
+                 pub fn new() -> Self {{ RetryBuilder {{ attempts: 3, delay_ms: 100 }} }}\n\
+                 {setter}\n\
+             }}\n"
+        );
+        let path = PathBuf::from("src/settings.rs");
+        let facts = crate::analysis::rust_index::summarize_file(path.clone(), source);
+        let mut index = RustIndex::default();
+        index.extend_functions(facts.functions.iter().cloned());
+        index.insert_file_only(path, facts);
+        index
+    }
+
+    #[test]
+    fn setter_counts_only_when_its_body_plainly_stores_the_argument() {
+        for setter in [
+            "pub fn attempts(mut self, attempts: u32) -> Self { self.attempts = attempts; self }",
+            "pub fn attempts(mut self, n: u32) -> Self { self.attempts = n; self }",
+            "pub fn attempts(&mut self, n: u32) -> &mut Self { self.attempts = n; self }",
+            "pub fn attempts(self, attempts: u32) -> Self { Self { attempts, ..self } }",
+            "pub fn attempts(self, n: u32) -> Self { RetryBuilder { attempts: n, ..self } }",
+        ] {
+            let index = settings_index(setter);
+            assert!(
+                setter_plainly_writes(&index, "RetryBuilder", "attempts", "attempts"),
+                "{setter}"
+            );
+        }
+        for setter in [
+            // Adds, clamps, conditionally stores, or stores something else.
+            "pub fn attempts(mut self, n: u32) -> Self { self.attempts += n; self }",
+            "pub fn attempts(mut self, n: u32) -> Self { self.attempts = n.min(self.attempts); self }",
+            "pub fn attempts(mut self, n: u32) -> Self { if n > 0 { self.attempts = n; } self }",
+            "pub fn attempts(mut self, n: u32) -> Self { self.delay_ms = u64::from(n); self }",
+            "pub fn attempts(self, n: u32) -> Self { self }",
+            // Two parameters, or no `self`.
+            "pub fn attempts(mut self, n: u32, m: u32) -> Self { self.attempts = n; self }",
+        ] {
+            let index = settings_index(setter);
+            assert!(
+                !setter_plainly_writes(&index, "RetryBuilder", "attempts", "attempts"),
+                "{setter}"
+            );
+        }
+        // Another type's method of the same name proves nothing.
+        let index =
+            settings_index("pub fn attempts(mut self, n: u32) -> Self { self.attempts = n; self }");
+        assert!(!setter_plainly_writes(
+            &index, "Retry", "attempts", "attempts"
+        ));
+    }
+
+    #[test]
+    fn unverified_setter_name_leaves_the_token_confirming() {
+        let body = "fn case() {\n    let retry = RetryBuilder::new().attempts(5).build();\n    assert_eq!(retry.attempts, 5);\n}";
+        let test = TestSummary {
+            name: "case".to_string(),
+            file: PathBuf::from("src/settings.rs"),
+            start_line: 10,
+            end_line: 13,
+            body: body.into(),
+            calls: Vec::new(),
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        };
+        let assertion = OracleFact {
+            line: 12,
+            text: "assert_eq!(retry.attempts, 5);".to_string(),
+            kind: OracleKind::ExactValue,
+            strength: OracleStrength::Strong,
+            observed_tokens: Vec::new(),
+            ok_value_observed: None,
+        };
+        let read = OwnerCall::from_symbol(OWNER)
+            .map(|owner| overridden_fields_read(&test, &assertion, owner, &fields()));
+        assert_eq!(read, Some(Vec::new()));
     }
 
     #[test]
@@ -607,6 +884,30 @@ mod tests {
                 "    let builder = RetryBuilder::new();\n    builder.with_attempts(5);\n    let retry = builder.build();\n    assert_eq!(retry.attempts, 3);"
             )
             .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_later_unrecognized_touch_of_the_binding_leaves_it_unread() {
+        // The field write is real, but a later mutation, a conditional
+        // reassignment or a mutable borrow may restore the default.
+        for later in [
+            "    builder.reset();",
+            "    if reset { builder = RetryBuilder::new(); }",
+            "    let alias = &mut builder;\n    alias.attempts = 3;",
+            "    builder.attempts += 1;",
+        ] {
+            let statements = format!(
+                "    let mut builder = RetryBuilder::new();\n    builder.attempts = 5;\n{later}\n    assert_eq!(builder.attempts, 5);"
+            );
+            assert!(overridden(&statements).is_empty(), "{later}");
+        }
+        // A plain read of the binding keeps the override.
+        assert_eq!(
+            overridden(
+                "    let mut builder = RetryBuilder::new();\n    builder.attempts = 5;\n    let label = format!(\"{}\", builder.delay_ms);\n    assert_eq!(builder.attempts, 5);"
+            ),
+            attempts()
         );
     }
 

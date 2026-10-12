@@ -27,7 +27,8 @@
 //! - the invoked macro is a bare name with exactly one `macro_rules!`
 //!   definition in the index, and every source that mentions
 //!   `macro_rules` parses cleanly so no other definition can hide;
-//! - exactly one function and one invocation site carry such a token.
+//! - exactly one function and one invocation site carry such a token, and
+//!   that function binds no parameter or local of the owner's name.
 
 use crate::analysis::facts::{FunctionSummary, RustIndex};
 use crate::analysis::syntax::parse_clean_source_file;
@@ -47,13 +48,18 @@ pub(super) fn macro_argument_caller<'a>(
     for function in index.functions().iter() {
         if function.name == callee_name
             || function.source_role.is_evidence_role()
-            || !function.body.contains(callee_name)
+            || !may_hand_name_to_macro(&function.body, callee_name)
         {
             continue;
         }
         let Some(parse) = parse_clean_source_file(&function.body) else {
             continue;
         };
+        // A parameter or local of the owner's name (`let base_rate = 3;
+        // twice!(base_rate)`) hides the owner from the macro argument.
+        if binds_name(parse.tree().syntax(), callee_name) {
+            continue;
+        }
         for (macro_name, text) in invocations_naming(parse.tree().syntax(), callee_name) {
             if found.is_some() {
                 return None;
@@ -63,6 +69,30 @@ pub(super) fn macro_argument_caller<'a>(
     }
     let (caller, macro_name, text) = found?;
     unique_local_macro_rules(&macro_name, index).then_some((caller, text))
+}
+
+/// Cheap text prefilter before the full parse: this runs for every chain
+/// level without direct callers, so a common owner name (`new`, `len`)
+/// would otherwise parse most bodies. The body must invoke some macro and
+/// mention `name` as a whole word; the parse below stays the authority.
+fn may_hand_name_to_macro(body: &str, name: &str) -> bool {
+    let is_word = |c: char| c == '_' || c.is_alphanumeric();
+    body.contains('!')
+        && body.match_indices(name).any(|(at, _)| {
+            let before = body.get(..at).and_then(|head| head.chars().next_back());
+            let after = body
+                .get(at + name.len()..)
+                .and_then(|tail| tail.chars().next());
+            !before.is_some_and(is_word) && !after.is_some_and(is_word)
+        })
+}
+
+/// Whether any pattern under `root` (a parameter, `let`, closure or `match`
+/// binding) binds `name`.
+fn binds_name(root: &SyntaxNode, name: &str) -> bool {
+    root.descendants()
+        .filter_map(ast::IdentPat::cast)
+        .any(|pattern| pattern.name().is_some_and(|bound| bound.text() == name))
 }
 
 /// Every macro invocation under `root` whose token tree carries
@@ -105,9 +135,7 @@ fn token_tree_names(tree: &SyntaxNode, name: &str) -> bool {
                 .checked_sub(1)
                 .and_then(|before| tokens.get(before))
                 .is_some_and(|before| matches!(before.kind(), T![.] | T![:] | T![::]))
-            && !tokens
-                .get(at + 1)
-                .is_some_and(|after| after.kind() == T![!])
+            && tokens.get(at + 1).is_none_or(|after| after.kind() != T![!])
     })
 }
 
@@ -138,16 +166,15 @@ fn unique_local_macro_rules(macro_name: &str, index: &RustIndex) -> bool {
     definitions == 1
 }
 
-/// Whether some related test exactly pins a caller whose reach rests on a
-/// macro-argument hop: an `assert_eq!` (exact value or whole object) with an
-/// operand that is a complete bare call of one of `callers`
-/// (`assert_eq!(doubled_rate(), 14)`). Only such a pin makes a gap claim
-/// unsupported; a projected (`doubled_rate().to_string()`), compared
-/// (`assert!(doubled_rate() > 0)`) or unrelated assertion keeps the existing
-/// evidence, because the oracle's own weakness is established without
-/// expanding the macro.
+/// Whether some related test that calls a caller holds an exact oracle
+/// (`assert_eq!` on a value or whole object), in any operand shape:
+/// `assert_eq!(doubled_rate(), 14)`, `let r = doubled_rate(); assert_eq!(r,
+/// 14)`, `assert_eq!(doubled_rate().to_string(), "14")`. ripr does not
+/// expand the macro, so it cannot tell whether such an oracle observes the
+/// owner at all: crediting it would be unsupported, and so would a gap. Only
+/// a test whose every oracle is weak on its own terms (`assert!(doubled_rate()
+/// > 0)`) keeps the existing evidence.
 pub(in crate::analysis::classify) fn exactly_pins_a_caller(
-    callers: &[&str],
     related_tests: &[(
         &crate::analysis::facts::TestSummary,
         crate::domain::RelationReason,
@@ -158,88 +185,17 @@ pub(in crate::analysis::classify) fn exactly_pins_a_caller(
         .iter()
         .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
         .flat_map(|(test, _)| test.assertions.iter())
-        .filter(|assertion| {
+        .any(|assertion| {
             matches!(
                 assertion.kind,
                 OracleKind::ExactValue | OracleKind::WholeObjectEquality
             )
         })
-        .any(|assertion| {
-            assert_eq_bare_callees(&assertion.text)
-                .iter()
-                .any(|callee| callers.contains(&callee.as_str()))
-        })
-}
-
-/// Bare callee names of the first two operands of a plain `assert_eq!`
-/// that are each a complete call (`banner()`, `rate(3)`). A projected call
-/// (`banner().len()`), a path call (`m::banner()`), or any other assertion
-/// macro names nothing.
-fn assert_eq_bare_callees(text: &str) -> Vec<String> {
-    let source = format!("fn __assertion() {{ {} }}", text.trim());
-    let Some(parse) = parse_clean_source_file(&source) else {
-        return Vec::new();
-    };
-    let Some(call) = parse
-        .tree()
-        .syntax()
-        .descendants()
-        .find_map(ast::MacroCall::cast)
-    else {
-        return Vec::new();
-    };
-    if call
-        .path()
-        .map(|path| path.syntax().text().to_string())
-        .as_deref()
-        != Some("assert_eq")
-    {
-        return Vec::new();
-    }
-    let Some(tree) = call.token_tree() else {
-        return Vec::new();
-    };
-    let tokens = tree.syntax().text().to_string();
-    let Some(inner) = tokens
-        .strip_prefix('(')
-        .and_then(|rest| rest.strip_suffix(')'))
-    else {
-        return Vec::new();
-    };
-    let source = format!("fn __operands() {{ ({inner},) }}");
-    let Some(parse) = parse_clean_source_file(&source) else {
-        return Vec::new();
-    };
-    let Some(tuple) = parse
-        .tree()
-        .syntax()
-        .descendants()
-        .find_map(ast::TupleExpr::cast)
-    else {
-        return Vec::new();
-    };
-    tuple
-        .fields()
-        .take(2)
-        .filter_map(|operand| {
-            let ast::Expr::CallExpr(call) = operand else {
-                return None;
-            };
-            let ast::Expr::PathExpr(path) = call.expr()? else {
-                return None;
-            };
-            let path = path.path()?;
-            if path.qualifier().is_some() || path.coloncolon_token().is_some() {
-                return None;
-            }
-            Some(path.segment()?.name_ref()?.text().to_string())
-        })
-        .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{assert_eq_bare_callees, invocations_naming};
+    use super::{invocations_naming, may_hand_name_to_macro};
     use crate::analysis::syntax::parse_clean_source_file;
     use ra_ap_syntax::AstNode;
 
@@ -262,6 +218,24 @@ mod tests {
             "fn doubled_rate() -> u32 { let x = 1; twice!(x, base_rate) }",
         ] {
             assert_eq!(names(body, "base_rate"), ["twice"], "{body}");
+        }
+    }
+
+    #[test]
+    fn prefilter_keeps_every_naming_body_and_skips_macro_free_or_partial_words() {
+        for body in [
+            "fn doubled_rate() -> u32 { twice!(base_rate) }",
+            "fn doubled_rate() -> u32 { twice![base_rate] }",
+            "fn doubled_rate() -> u32 { twice!(x,base_rate) }",
+        ] {
+            assert!(may_hand_name_to_macro(body, "base_rate"), "{body}");
+        }
+        for body in [
+            "fn doubled_rate() -> u32 { base_rate() + 1 }",
+            "fn doubled_rate() -> u32 { twice!(base_rates) }",
+            "fn doubled_rate() -> u32 { twice!(my_base_rate) }",
+        ] {
+            assert!(!may_hand_name_to_macro(body, "base_rate"), "{body}");
         }
     }
 
@@ -290,28 +264,6 @@ mod tests {
             ),
             [""]
         );
-    }
-
-    #[test]
-    fn only_a_complete_bare_call_operand_of_assert_eq_is_a_pin() {
-        assert_eq!(
-            assert_eq_bare_callees("assert_eq!(doubled_rate(), 14);"),
-            ["doubled_rate"]
-        );
-        assert_eq!(
-            assert_eq_bare_callees("assert_eq!(14, rate(2), \"msg\");"),
-            ["rate"]
-        );
-        for text in [
-            "assert_eq!(banner().len(), 6);",
-            "assert_eq!(m::banner(), \"[x]\");",
-            "assert_ne!(banner(), \"[x]\");",
-            "assert!(doubled_rate() > 0);",
-            "assert!(banner() == \"[x]\");",
-            "assert_eq!(\"doubled_rate()\", x);",
-        ] {
-            assert!(assert_eq_bare_callees(text).is_empty(), "{text}");
-        }
     }
 
     fn chain_for(source: &str) -> Result<super::super::HelperChain, String> {
@@ -361,6 +313,13 @@ mod tests {
             ),
             // The owner name is only a string literal argument.
             format!("{RULE}{OWNER}pub fn doubled_rate() -> u32 {{ twice!(\"base_rate\") }}\n"),
+            // A local or parameter of the owner's name is what the macro gets.
+            format!(
+                "{RULE}{OWNER}pub fn doubled_rate() -> u32 {{ let base_rate = || 3; twice!(base_rate) }}\n"
+            ),
+            format!(
+                "{RULE}{OWNER}pub fn doubled_rate(base_rate: fn() -> u32) -> u32 {{ twice!(base_rate) }}\n"
+            ),
         ] {
             let chain = chain_for(&source)?;
             assert!(chain.hops.is_empty(), "{source}: {chain:?}");

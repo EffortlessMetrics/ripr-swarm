@@ -391,7 +391,8 @@ the diff changes `None => 1` to `None => 0`.
 - `crates/ripr/src/analysis/syntax/pattern_pin/tests.rs` and the
   `arm_selection.rs` pattern-pin unit tests (#6616): the verified macro,
   per-rule trust, delimiters, broad patterns, skipped invocations and
-  rebindings. Verdict corpus case `old-unit-assert-matches-macro`.
+  rebindings. Verdict corpus cases `old-unit-assert-matches-macro` and
+  `old-unit-assert-matches-sibling-arm` (negative control).
 
 - `fixtures/match_arm_blind` (example 1, with the arm added rather than
   changed; the expected result is the same)

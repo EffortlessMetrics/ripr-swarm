@@ -1035,9 +1035,9 @@ pub(crate) fn chain_forwards_owner_result(owner_name: &str, chain: &HelperChain)
 }
 
 /// Whether the observed hops of `chain` include a local-macro argument hop
-/// (#6614) and no related test exactly pins one of the observed callers.
-/// Such reach is the macro-argument edge alone; without an exact pin the
-/// oracle's own weakness is established without expanding the macro, so
+/// (#6614) and no related caller-calling test holds an exact oracle. Such
+/// reach is the macro-argument edge alone; when every oracle is weak on its
+/// own terms the weakness is established without expanding the macro, so
 /// the not-forwarded abstention does not apply and the existing evidence
 /// (a weak oracle's gap) stands.
 pub(crate) fn macro_hop_reach_without_exact_pin(
@@ -1051,8 +1051,7 @@ pub(crate) fn macro_hop_reach_without_exact_pin(
     if !hops.iter().any(|hop| hop.through_macro) {
         return false;
     }
-    let callers: Vec<&str> = hops.iter().map(|hop| hop.caller.name.as_str()).collect();
-    !macro_argument::exactly_pins_a_caller(&callers, related_tests)
+    !macro_argument::exactly_pins_a_caller(related_tests)
 }
 
 /// [`chain_forwards_owner_result`] over only the hops the related tests

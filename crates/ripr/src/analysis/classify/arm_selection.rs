@@ -461,6 +461,10 @@ impl ArmSelector {
         test: &TestSummary,
         assertion: &crate::analysis::facts::OracleFact,
     ) -> bool {
+        // Most selectors carry no pins; skip building the owned key.
+        if self.pattern_pins.is_empty() {
+            return false;
+        }
         self.pattern_pins
             .get(&(
                 test.file.clone(),

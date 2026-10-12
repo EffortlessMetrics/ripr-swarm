@@ -762,6 +762,24 @@ fn exact_pin_through_a_local_macro_argument_abstains_as_not_forwarded() -> Resul
 }
 
 #[test]
+fn any_exact_oracle_on_a_macro_argument_caller_abstains() -> Result<(), String> {
+    // ripr does not expand `twice!`, so an exact oracle in any operand shape
+    // can neither credit nor fault the owner.
+    for tests in [
+        "let rate = doubled_rate();\n        assert_eq!(rate, 14);",
+        "assert_eq!(doubled_rate().to_string(), \"14\");",
+    ] {
+        let finding = macro_rate_finding(IDENT_RULE, "twice!(base_rate)", tests)?;
+        assert_eq!(
+            finding["classification"], "propagation_unknown",
+            "{tests}: {finding}"
+        );
+        assert_not_forwarded(&finding);
+    }
+    Ok(())
+}
+
+#[test]
 fn macro_argument_without_the_owner_or_an_exact_pin_keeps_the_gap() -> Result<(), String> {
     // The macro names a different function: no edge reaches the owner.
     let other = macro_rate_finding(

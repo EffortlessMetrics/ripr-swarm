@@ -3,7 +3,9 @@ use super::super::rust_index::{
 };
 
 use super::arm_selection::ArmSelector;
-use super::builder_override::{OwnerCall, overridden_fields_read, struct_literal_fields};
+use super::builder_override::{
+    OwnerCall, overridden_fields_read, setter_names, struct_literal_fields,
+};
 use super::propagation_witness::{
     assertion_observes_direct_collection, direct_collection_mutation_receiver,
 };
@@ -41,6 +43,11 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// the changed effect writes (`EffectStateCarrier::admits`). Consulted
     /// only for effect families after `effect_observer_confirms`.
     pub(in crate::analysis) effect_state_carried: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// RIPR-SPEC-0040 builder override (#6613): whether the owner type's
+    /// method `(type, setter, field)` plainly stores its argument in the
+    /// field (`builder_override::setter_plainly_writes`). Only a verified
+    /// setter defeats a changed default.
+    pub(in crate::analysis) setter_writes_field: &'a dyn Fn(&str, &str, &str) -> bool,
 }
 
 #[cfg(test)]
@@ -62,6 +69,7 @@ fn reveal_evidence(
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             effect_state_carried: &|_, _| true,
+            setter_writes_field: &|_, _, _| true,
         },
         None,
     );
@@ -556,6 +564,17 @@ fn analyze_related_assertions(
         .owner
         .as_ref()
         .and_then(|symbol| OwnerCall::from_symbol(&symbol.0));
+    let mut override_setters = Vec::new();
+    if let Some(impl_type) = override_owner.and_then(|owner| owner.impl_type()) {
+        for field in &override_fields {
+            for setter in setter_names(field) {
+                if (return_admission.setter_writes_field)(impl_type, &setter, field) {
+                    override_setters.push(setter);
+                }
+            }
+        }
+    }
+    let override_owner = override_owner.map(|owner| owner.with_setters(&override_setters));
     let mut override_defeated = false;
     let mut related = Vec::new();
     let mut strongest = OracleStrength::None;
@@ -3530,6 +3549,7 @@ mod tests {
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
+                    setter_writes_field: &|_, _, _| true,
                 },
                 None,
             )
@@ -3623,6 +3643,7 @@ mod tests {
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
+                    setter_writes_field: &|_, _, _| true,
                 },
                 None,
             )
@@ -3973,6 +3994,7 @@ mod tests {
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -4042,6 +4064,7 @@ mod tests {
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -5570,6 +5593,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -5624,6 +5648,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -5649,6 +5674,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -5693,6 +5719,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -5739,6 +5766,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -5910,6 +5938,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -5938,6 +5967,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -6325,6 +6355,7 @@ return Err(\"typed pin\".into());
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &carried,
+                    setter_writes_field: &|_, _, _| true,
                 },
                 None,
             )
@@ -6599,6 +6630,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -6688,6 +6720,7 @@ return Err(\"typed pin\".into());
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
+                    setter_writes_field: &|_, _, _| true,
                 },
                 None,
             );
@@ -6720,6 +6753,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -7070,6 +7104,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -7367,6 +7402,7 @@ return Err(\"typed pin\".into());
                 owner_parameters,
                 expected_reaches_owner: reaches,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );

@@ -38,8 +38,9 @@ Control: the standard code-under-test guidance is emitted unchanged, and the
 finding evidence contains no `owner_shape:` line. The only owner input is the
 helper call `boundary_amount()`, whose value ripr does not evaluate, so the
 boundary reads `infection_unknown` (activation unknown, RIPR-SPEC-0032, #6615)
-with the standard boundary-test next step. The assertion-shaped reframe must not leak onto ordinary
-production owners.
+with the standard unknown-finding next step (#7477). The class change comes
+from RIPR-SPEC-0032, not RIPR-SPEC-0133. The assertion-shaped reframe must not
+leak onto ordinary production owners.
 
 ## Must Not
 
