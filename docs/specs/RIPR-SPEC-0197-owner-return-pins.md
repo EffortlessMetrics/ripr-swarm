@@ -784,8 +784,15 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    `Ok(())`. The macro has exactly one condition argument and no message/format
    arguments: `ensure!(actual == 7, { return Ok(()); "ignored" })` can absorb
    the failure inside genuine anyhow and is refused, not analyzed as a guard.
-   The expected literal is fixed independently of the owner. The local's only
-   references are its declaration and the whole left comparison operand.
+   The expected literal is fixed independently of the owner, and its parsed
+   `u8` value must equal the parsed owner-tail literal value from premise 1
+   before any favorable receipt is constructed. Independence alone does not
+   establish the right discriminator: owner `7` with expected `8` fails on the
+   current source and passes after changing the owner to `8`. That inverted
+   oracle supplies no new observation credit or complete propagation witness.
+   Value equality is checked only for this already source-bound literal pair;
+   it is not token matching or credit for an unrelated equal number. The
+   local's only references are its declaration and the whole left comparison operand.
    Parser identities bind the call, let, comparison and oracle line/text to
    this helper. No intervening statement, use, rebinding, mutation, borrow,
    conversion, second owner call, message argument, nested invocation,
@@ -811,7 +818,8 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    `#[test]` resembles the accepted module.
 6. Evidence/consumers. Produce one internal fallible-check receipt binding
    owner/helper/test SymbolIds, source/body digests, module declaration/call/let/
-   assertion spans, the independent expected literal, and the resolved package,
+   assertion spans, the parsed owner-tail/independent expected literal pair
+   and its required equal-value check, and the resolved package,
    manifest, lock and dependency-configuration identities. Only an exact match
    of this receipt's test and oracle supplies owner-bound observation and
    discrimination. A dedicated literal-tail adapter may establish a DirectReturn
@@ -833,6 +841,7 @@ not observations on the current source):
 | Subject | Runtime with answer 8 | Required static result |
 | --- | --- | --- |
 | Frozen helper-exact, unchanged source/patch/manifest/lock | one test fails | answer `exposed`, complete digest-valid owner/value witness, no gap |
+| Inverted literal oracle: current owner 7 with fixed expected 8 | one test passes (current owner 7 fails) | no favorable receipt, new observation credit or complete propagation witness |
 | Frozen helper-no-oracle | one test passes | retains `reachable_unrevealed` |
 | Frozen helper-self-expected | one test passes | no new receipt, retains non-exposed |
 | Frozen production-lookalike | one test fails | answer retains `reachable_unrevealed`; production subjects retained |
@@ -848,7 +857,11 @@ Implementation sequence after independent design review:
 1. Retain the frozen nine-case static/runtime receipts and add the exact positive
    public-API discriminator first. Observe its intended non-exposed-versus-exposed
    failure on `601c89c19b4f7a741fc270ff0ff182be3dfce637`, with all refusal
-   controls and dependency/module setup assertions present.
+   controls and dependency/module setup assertions present. Add the inverted
+   oracle refusal discriminator with matched runtime subjects: owner7/oracle7
+   passes, owner7/oracle8 fails, and owner8/oracle8 passes. Changing only the
+   expected literal from 7 to 8 in the indexed baseline must refuse the new
+   receipt, including after a favorable warm-cache result.
 2. Extend the existing owner-pin owner with private bounded extraction and
    composition modules under `syntax/owner_pin/` and `classify/owner_pin/`.
    Reuse cfg/source-role provenance, body identity and call-binding defeats;
