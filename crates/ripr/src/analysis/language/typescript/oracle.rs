@@ -791,8 +791,12 @@ pub(crate) struct TypeScriptAssertionBindings {
     chai_modules: Vec<String>,
     /// What the bare name `expect` reaches (RIPR-SPEC-0243 rule 3).
     expect_binding: ExpectBinding,
-    /// Whether the file imports from `node:test`, whose test context
-    /// carries `t.assert` (RIPR-SPEC-0252).
+    /// Identifiers bound to `node:test` (`test`, `it`, a namespace), whose
+    /// test context carries `t.assert` (RIPR-SPEC-0252).
+    node_test_locals: Vec<String>,
+    /// Whether the test being read was registered through one of
+    /// `node_test_locals`; set only by `for_registration`, so any other
+    /// path reads no context assert.
     node_test_runner: bool,
 }
 
@@ -873,7 +877,7 @@ impl TypeScriptAssertionBindings {
     fn bind(&mut self, module: &str, imported: Option<&str>, namespace: bool, local: &str) {
         let local = local.to_string();
         if module == "node:test" {
-            self.node_test_runner = true;
+            self.node_test_locals.push(local.clone());
         }
         if NODE_ASSERT_MODULES.contains(&module) {
             let flavor = if module.ends_with("/strict") {
@@ -944,8 +948,24 @@ impl TypeScriptAssertionBindings {
             } else {
                 self.expect_binding
             },
+            node_test_locals: self
+                .node_test_locals
+                .iter()
+                .filter(|local| !is_shadowed(local))
+                .cloned()
+                .collect(),
             node_test_runner: self.node_test_runner,
         }
+    }
+
+    /// These bindings for a test registered through a callee whose root
+    /// identifier is `callee_root` (`test`, `test.only`, `nt.test`): the
+    /// `node:test` context assert is read only when that root is bound to
+    /// `node:test` (RIPR-SPEC-0252), not merely because the file imports it.
+    pub(crate) fn for_registration(mut self, callee_root: Option<&str>) -> Self {
+        self.node_test_runner =
+            callee_root.is_some_and(|root| self.node_test_locals.iter().any(|local| local == root));
+        self
     }
 
     /// These bindings with `expect` destructured from the Vitest test

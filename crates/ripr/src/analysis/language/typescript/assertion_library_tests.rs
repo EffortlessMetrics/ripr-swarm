@@ -796,7 +796,7 @@ fn only_a_test_runner_expect_reads_jest_matchers() {
 /// literal coercion cannot reach (RIPR-SPEC-0247 rule 2).
 #[test]
 fn node_test_context_assert_reads_as_legacy_node_assert() {
-    let cases: [(&str, &str, OracleKind, OracleStrength, &str); 6] = [
+    let cases: [(&str, &str, OracleKind, OracleStrength, &str); 7] = [
         (
             "loose equal against a number",
             "t.assert.equal(lateFee(10), 20);",
@@ -831,6 +831,13 @@ fn node_test_context_assert_reads_as_legacy_node_assert() {
             OracleKind::ExactErrorVariant,
             OracleStrength::Strong,
             "t.assert.throws(..., /^Error: days must be positive$/)",
+        ),
+        (
+            "awaited rejects with a literal message object",
+            "await t.assert.rejects(async () => lateFee(-1), { message: \"days must be positive\" });",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+            "t.assert.rejects(..., { message: \"days must be positive\" })",
         ),
         (
             "awaited subtest receiver",
@@ -870,6 +877,16 @@ fn node_test_context_assert_needs_the_runner_receiver_and_a_known_method() {
             "t.assert.equal(lateFee(10), 20);",
         ),
         ("no runner import", "", "t.assert.equal(lateFee(10), 20);"),
+        (
+            "registered through another runner",
+            "import { mock } from \"node:test\";\nimport { test } from \"./fixtures\";",
+            "t.assert.equal(lateFee(10), 20);",
+        ),
+        (
+            "type-only runner import",
+            "import type { TestContext } from \"node:test\";",
+            "t.assert.equal(lateFee(10), 20);",
+        ),
         (
             "another receiver",
             "import test from \"node:test\";\nconst helper = { assert: { equal: () => {} } };",

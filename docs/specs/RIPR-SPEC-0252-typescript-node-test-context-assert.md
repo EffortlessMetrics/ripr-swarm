@@ -76,10 +76,14 @@ test has no assertion, its oracle is unknown and the finding is
 ## Behavior
 
 **Rule 1. `t.assert.<method>(...)` on a `node:test` context reads as
-legacy `node:assert`.** In a file that imports from `node:test`, a call
-`<receiver>.assert.<method>(...)` (optionally awaited) is an assertion when
-all of these hold:
+legacy `node:assert`.** A call `<receiver>.assert.<method>(...)`
+(optionally awaited) is an assertion when all of these hold:
 
+- the test is registered through a callee whose root identifier is bound
+  to `node:test` (`import test from "node:test"`, `import { it } from
+  "node:test"`, a namespace import, or `require("node:test").test`), so a
+  file that imports only a helper from `node:test` and registers tests
+  through another runner reads nothing;
 - `<receiver>` is the test callback's first parameter, as the
   execution-context recogniser already requires, including an awaited
   `t.test` subtest's own parameter (RIPR-SPEC-0246 rule 2);
@@ -106,15 +110,23 @@ documented decisions and proceed"). Recorded on #6654.
    top-level `node:assert` functions, whose `equal` is loose `==`.
    Rejected: reading `equal` as strict, which would credit a loose
    comparison against a coercible value.
-2. **Require a `node:test` import.** Adopted: `t.assert` as an object exists
-   only on the `node:test` context; AVA's `t.assert(value)` is a call and is
-   read by the receiver table. Rejected: accepting any receiver, which would
-   credit a user object that happens to have an `assert` member.
+2. **Require a `node:test` registration.** Adopted: `t.assert` as an
+   object exists only on the `node:test` context, so the test must be
+   registered through a `node:test` binding; AVA's `t.assert(value)` is a
+   call and is read by the receiver table. Rejected: accepting any
+   receiver, which would credit a user object that happens to have an
+   `assert` member. Rejected after review: any file that imports from
+   `node:test`, which credits another runner's context in a mixed file.
 
 ### Known limits
 
 - A file that runs under `node --test` without importing `node:test`
-  (globals only) is not read.
+  (globals only), or that loads it only through `require` destructuring
+  (`const { test } = require("node:test")`) or a type-only import, is not
+  read. `require("node:test").test` is read.
+- A test registered through a global `test` / `it` (no import) or
+  through a callee whose root identifier is not bound to `node:test` is
+  not read.
 - `const { assert } = t;`, `t.assert` passed to a helper, optional or
   parenthesized forms (`t.assert?.equal`, `(t).assert`), and `t.assert`
   inside a `forEach` or `.then` callback or on an outer `t` inside a
@@ -145,11 +157,14 @@ documented decisions and proceed"). Recorded on #6654.
    `exact_value` / strong.
 3. `t.assert.equal(lateFee(10), want)` with a variable `want`:
    `relational_check` / weak.
-4. `t.assert.throws(() => lateFee(-1), /^Error: days must be positive$/)`:
-   `exact_error_variant` / strong.
+4. `t.assert.throws(() => lateFee(-1), /^Error: days must be positive$/)`
+   and `await t.assert.rejects(async () => lateFee(-1), { message: "days
+   must be positive" })`: `exact_error_variant` / strong.
 5. `await t.test("sub", (t2) => { t2.assert.strictEqual(...) })`: read on
    the subtest's receiver.
-6. The same calls in an AVA file, a file with no runner import, on
+6. The same calls in an AVA file, a file with no runner import or only a
+   type-only `node:test` import, a test registered through another
+   runner in a file that imports `mock` from `node:test`, on
    `helper.assert`, on another context member (`t.check.equal`), through
    `t["assert"]` or `t.assert.strict`, or with a method outside the table
    (`snapshot`, an unknown name): no assertion.
@@ -171,7 +186,10 @@ documented decisions and proceed"). Recorded on #6654.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
   `node_test_context_assert_assertion`, `assert_call_assertion` (shared
   with `module_assert_assertion_from_expression`), and the
-  `node_test_runner` flag on `TypeScriptAssertionBindings`.
+  `node_test_locals` / `node_test_runner` fields and `for_registration` on
+  `TypeScriptAssertionBindings`.
+- `crates/ripr/src/analysis/language/typescript/tests_extract.rs`:
+  `test_name_and_assertions_from_call` and `callee_root_name`.
 
 ## Metrics
 
