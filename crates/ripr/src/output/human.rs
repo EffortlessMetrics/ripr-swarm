@@ -232,7 +232,12 @@ pub(crate) fn render_full_with_config_and_navigation(
             continue;
         }
         findings_rendered += 1;
-        out.push_str(&render_finding_with_config(finding, config, &output.root));
+        out.push_str(&render_finding_with_config(
+            finding,
+            config,
+            &output.root,
+            JsonPointerWording::CheckFlag,
+        ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
             for command in [
@@ -884,6 +889,7 @@ pub fn render_finding(finding: &Finding) -> String {
         finding,
         &RiprConfig::default(),
         Path::new("."),
+        JsonPointerWording::CheckFlag,
     ))
 }
 
@@ -895,7 +901,13 @@ pub(crate) fn render_finding_with_context_command(
     context_command: &str,
     root: &Path,
 ) -> String {
-    let mut out = render_finding_with_config(finding, config, root);
+    // #7476: explain reuses check's evidence window, but rejects the
+    // `--format` flag that window names. The pointer wording is selected while
+    // the evidence lines are built (`ExplainNamesCheck`), so it names check as
+    // prose without rewriting anything else in the rendered finding — quoted
+    // source fragments keep their exact bytes.
+    let mut out =
+        render_finding_with_config(finding, config, root, JsonPointerWording::ExplainNamesCheck);
     out.push_str(&explain::render_verdict_explanation(finding));
     out.push_str(&format!("\nNext: {context_command}\n"));
     push_powershell_variant(&mut out, "", context_command);
@@ -917,6 +929,7 @@ mod explain;
 mod sections;
 mod triage;
 
+pub(crate) use evidence_lines::JsonPointerWording;
 pub(crate) use sections::render_finding_with_config;
 
 #[cfg(test)]
@@ -4067,6 +4080,155 @@ mod tests {
         assert!(
             !rendered.contains("full list in --format json"),
             "no surface carries the full list at this size:\n{rendered}"
+        );
+    }
+
+    /// #7476: `ripr explain` prints the same evidence window as check, but it
+    /// does not accept `--format`. The explain footnote must name check's JSON
+    /// format instead of a flag that `ripr explain --format json` rejects.
+    /// Check's own renderer keeps the flag, because that command accepts it.
+    #[test]
+    fn explain_evidence_window_names_check_json_not_an_explain_flag() {
+        let mut finding = sample_finding();
+        for index in 1..9 {
+            finding.related_tests.push(RelatedTest {
+                name: format!("test_extra_{index}"),
+                file: PathBuf::from("tests/sample.rs"),
+                line: 100 + index,
+                oracle: None,
+                oracle_kind: OracleKind::SmokeOnly,
+                oracle_strength: OracleStrength::Weak,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+            });
+        }
+        for index in 0..13 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 200 + index,
+                text: format!("sample({index})"),
+                value: format!("arg{index} = {index}"),
+                context: ValueContext::FunctionArgument,
+            });
+        }
+
+        let explained = super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            explained.contains(
+                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+            ),
+            "{explained}"
+        );
+        assert!(
+            explained.contains(
+                "related tests (showing 5 of 9; more via ripr check, using its JSON format)"
+            ),
+            "{explained}"
+        );
+        assert!(
+            !explained.contains("--format json"),
+            "explain must not print a format flag it rejects:\n{explained}"
+        );
+
+        let checked = super::render_finding(&finding);
+        assert!(
+            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            "{checked}"
+        );
+        assert!(
+            checked.contains("related tests (showing 5 of 9; more in --format json)"),
+            "{checked}"
+        );
+
+        for index in 0..28 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 400 + index,
+                text: format!("extra({index})"),
+                value: format!("extra{index} = {index}"),
+                context: ValueContext::AssertionArgument,
+            });
+        }
+        let over_cap = super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            over_cap.contains(
+                "source values (showing 8 of 42; ripr check, using its JSON format, keeps a ranked 32)"
+            ),
+            "{over_cap}"
+        );
+        assert!(!over_cap.contains("--format"), "{over_cap}");
+    }
+
+    /// #7476 review: the explain pointer rewrite used to run over the whole
+    /// rendered finding, so quoted source or a judged assertion that itself
+    /// contained a pointer phrase was silently changed and explain no longer
+    /// showed the analyzed code. The wording is now selected while the
+    /// evidence lines are built, so explain preserves those bytes verbatim
+    /// and only the window pointers carry the check-prose form.
+    #[test]
+    fn explain_preserves_source_and_oracle_containing_pointer_phrases() {
+        let mut finding = sample_finding();
+        finding.probe.before =
+            Some("assert_eq!(list(), \"full list in --format json\")".to_string());
+        finding.probe.after =
+            Some("assert_eq!(list(), \"--format json keeps a ranked 32\")".to_string());
+        if let Some(test) = finding.related_tests.first_mut() {
+            test.oracle = Some("assert_eq!(line, \"; more in --format json\")".to_string());
+        }
+        for index in 0..13 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 200 + index,
+                text: format!("sample({index})"),
+                value: format!("arg{index} = {index}"),
+                context: ValueContext::FunctionArgument,
+            });
+        }
+
+        let explained = super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            explained.contains("before: assert_eq!(list(), \"full list in --format json\")"),
+            "explain changed the quoted source:\n{explained}"
+        );
+        assert!(
+            explained.contains("after:  assert_eq!(list(), \"--format json keeps a ranked 32\")"),
+            "explain changed the quoted source:\n{explained}"
+        );
+        assert!(
+            explained.contains("assert_eq!(line, \"; more in --format json\")"),
+            "explain changed the judged assertion:\n{explained}"
+        );
+        // Only the window pointer carries the explain wording.
+        assert!(
+            explained.contains(
+                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+            ),
+            "{explained}"
+        );
+
+        // Check's own renderer keeps both the flag pointer and the verbatim
+        // source, pinning the distinction between the two surfaces.
+        let checked = super::render_finding(&finding);
+        assert!(
+            checked.contains("before: assert_eq!(list(), \"full list in --format json\")"),
+            "{checked}"
+        );
+        assert!(
+            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            "{checked}"
         );
     }
 

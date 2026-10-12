@@ -649,6 +649,7 @@ mod tests {
             &finding,
             &crate::config::RiprConfig::default(),
             &root,
+            crate::output::human::JsonPointerWording::CheckFlag,
         );
         if !header
             .lines()
