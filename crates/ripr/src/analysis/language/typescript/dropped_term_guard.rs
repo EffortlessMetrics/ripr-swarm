@@ -240,7 +240,12 @@ pub(crate) fn ts_parameter_is_stable(owner_source: &str, name: &str) -> bool {
             || after.starts_with("--")
             || before.ends_with("++")
             || before.ends_with("--");
-        !increments && !assigns_after(after) && !inside_destructuring_target(&body, at)
+        // `fee! = 0` assigns through a non-null assertion.
+        let target = after
+            .strip_prefix('!')
+            .filter(|rest| !rest.starts_with('='))
+            .map_or(after, str::trim_start);
+        !increments && !assigns_after(target) && !inside_destructuring_target(&body, at)
     })
 }
 
@@ -273,26 +278,24 @@ fn assigns_after(after: &str) -> bool {
     compound && !after[equals + 1..].starts_with(['=', '>'])
 }
 
-/// `true` when the name at `at` sits inside a `[...]` or `{...}` that an
-/// assignment follows (`[fee] = pair`, `({ fee } = o)`).
+/// `true` when the name at `at` sits inside any brackets or parentheses
+/// that an assignment follows before the statement ends (`[fee] = pair`,
+/// `[a, [fee]] = x`, `({ a: { fee } } = o)`, `(fee as number) = 0`).
 fn inside_destructuring_target(body: &str, at: usize) -> bool {
     let mut depth = 0usize;
     for (index, c) in body[at..].char_indices() {
         match c {
             '(' | '[' | '{' => depth += 1,
-            ')' => {
-                let Some(next) = depth.checked_sub(1) else {
-                    return false;
-                };
-                depth = next;
-            }
-            ']' | '}' => {
+            ')' | ']' | '}' => {
                 if depth == 0 {
-                    return assigns_after(body[at + index + 1..].trim_start());
+                    if assigns_after(body[at + index + 1..].trim_start()) {
+                        return true;
+                    }
+                } else {
+                    depth -= 1;
                 }
-                depth -= 1;
             }
-            ';' => return false,
+            ';' if depth == 0 => return false,
             _ => {}
         }
     }

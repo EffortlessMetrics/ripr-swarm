@@ -65,6 +65,11 @@ fn parameter_is_stable_only_when_the_body_never_rebinds_it() {
         "  [subtotal] = pair;\n  return subtotal + fee;",
         "  ({ subtotal } = opts);\n  return subtotal + fee;",
         "  ({ cents: subtotal, fee: other } = opts);\n  return subtotal + fee;",
+        "  [a, [subtotal]] = pair;\n  return subtotal + fee;",
+        "  ({ a: { subtotal } } = opts);\n  return subtotal + fee;",
+        "  (subtotal) = 0;\n  return subtotal + fee;",
+        "  (subtotal as number) = 0;\n  return subtotal + fee;",
+        "  subtotal! = 0;\n  return subtotal + fee;",
     ] {
         let source = format!("function quote(subtotal: number, fee: number) {{\n{body}\n}}");
         assert!(!ts_parameter_is_stable(&source, "subtotal"), "{body}");
@@ -188,21 +193,56 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
 
     // A non-zero call the assertion sees only through another expression
     // does not count: `Math.sign` hides the dropped `fee`.
-    let hidden = "import { price } from \"../src/price\";\ntest(\"price\", () => {\n  expect(price(6000, 0)).toBe(6499);\n  expect(Math.sign(price(6000, 7))).toBe(1);\n});\n";
-    let finding = price_finding(
-        "dropped-term-hidden",
-        hidden,
-        "  return subtotal + shipping(subtotal) + FLAT;",
-    )?;
-    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert!(
-        finding
-            .missing
+    // Nor does an error matcher, which never sees the returned value.
+    for (label, other, kind) in [
+        (
+            "dropped-term-hidden",
+            "  expect(Math.sign(price(6000, 7))).toBe(1);",
+            OracleKind::ExactValue,
+        ),
+        (
+            "dropped-term-rejects",
+            "  await expect(price(0, 7)).rejects.toThrow(\"bad\");",
+            OracleKind::ExactErrorVariant,
+        ),
+    ] {
+        let test = format!(
+            "import {{ price }} from \"../src/price\";\ntest(\"price\", async () => {{\n  expect(price(6000, 0)).toBe(6499);\n{other}\n}});\n"
+        );
+        let tests = extract_tests(Path::new("tests/price.test.ts"), &test);
+        let grades: Vec<(OracleKind, OracleStrength)> = tests
             .iter()
-            .any(|line| line.contains("`fee`, which is 0 for every tested input")),
-        "{:?}",
-        finding.missing
-    );
+            .flat_map(|test| test.assertions.iter())
+            .map(|assertion| {
+                (
+                    assertion.oracle_kind.clone(),
+                    assertion.oracle_strength.clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            grades,
+            vec![
+                (OracleKind::ExactValue, OracleStrength::Strong),
+                (kind, OracleStrength::Strong)
+            ],
+            "{label}"
+        );
+        let finding = price_finding(
+            label,
+            &test,
+            "  return subtotal + shipping(subtotal) + FLAT;",
+        )?;
+        assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("`fee`, which is 0 for every tested input")),
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
     Ok(())
 }
 

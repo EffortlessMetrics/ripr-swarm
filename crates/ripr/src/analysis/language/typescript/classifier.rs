@@ -4346,7 +4346,14 @@ pub(crate) fn ts_dropped_term_witness(
         }
         let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
         for assertion in &candidate.test.assertions {
-            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() {
+            // A value matcher sees the returned value; an error matcher
+            // (`rejects.toThrow`) sees only that the call fails.
+            if assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
+                || !matches!(
+                    assertion.oracle_kind,
+                    OracleKind::ExactValue | OracleKind::WholeObjectEquality | OracleKind::Snapshot
+                )
+            {
                 continue;
             }
             let Some(observed) = assertion.observed_expression.as_deref() else {

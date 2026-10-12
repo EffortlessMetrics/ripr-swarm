@@ -71,8 +71,10 @@ tested input where the term is not zero.** When the changed line and its
 removed counterpart differ by exactly one span, and that span is one
 additive term (`a + t` against `a`, `a - t` against `a`, or `t + a`
 against `a`, in either direction), an `exposed` ladder result keeps its
-class only when some strong assertion of an oracle relation observes the
-whole result of an owner call (`owner(...)`, `ns.owner(...)`, optionally
+class only when some strong value assertion (`exact_value`,
+`whole_object_equality` or `snapshot`; an error matcher such as
+`rejects.toThrow` never sees the returned value) of an oracle relation
+observes the whole result of an owner call (`owner(...)`, `ns.owner(...)`, optionally
 awaited, or a local bound once to that call; not `owner(...).field` or
 `f(owner(...))`) for which `t` folds to a non-zero number. Otherwise the finding
 reads `weakly_exposed`, discrimination `weak`, and its missing line names
@@ -84,10 +86,11 @@ The fold binds:
   argument is a plain numeric literal (or a test-scope constant the
   RIPR-SPEC-0027 boundary path already resolves) and the owner body never
   rebinds the parameter: no assignment or compound assignment (with or
-  without spaces, `fee=-0`), increment, `for (p of ...)` / `for (p in
-  ...)`, destructuring assignment (`[p] = pair`, `({ p } = o)`),
-  shadowing declaration, and no nested function or arrow whose parameter
-  could shadow it;
+  without spaces, `fee=-0`, or through `p!`), increment, any `for (...)`
+  header that mentions it, an assignment to any bracketed or parenthesized
+  target holding it (`[p] = pair`, `[a, [p]] = x`, `({ a: { p } } = o)`,
+  `(p as number) = 0`), shadowing declaration, and no `function` or arrow
+  in the body;
 - a constant-shaped name (`UPPER_CASE`) to the owner module's single
   immutable integer `const`.
 
@@ -142,6 +145,14 @@ documented decisions and proceed"). Recorded on #6654.
   a + t;` tested with `f(1, 5)`) or whether the surrounding expression
   still lets the term move the result (`c ? a : b + t`, `a ?? b + t`).
   Those shapes keep the pre-rule credit.
+- Method shorthand and accessors in an object or class literal inside
+  the owner body (`{ add(fee) { ... } }`) are not read as nested
+  functions, and a declarator scan stops at its first `=`, so a nested
+  destructuring default (`const { a = 1, b: { fee } } = o`) is missed.
+  Each can keep the pre-rule credit.
+- The rebinding checks over-refuse: an indexed write keyed by the
+  parameter (`rates[fee] = 1`) or a loop bound read from it
+  (`for (let i = 0; i < fee; i++)`) unbinds it.
 - Any arrow or nested function in the owner body makes every parameter
   unbound, so `items.reduce((s, x) => s + x, 0) + fee` reads
   `weakly_exposed` even with a non-zero `fee` argument.
@@ -183,8 +194,9 @@ documented decisions and proceed"). Recorded on #6654.
    `weakly_exposed` (`fee` is rebound, so it is not bound); with
    `audit(fee);` there instead: `exposed`.
 7. As example 4 with a second assertion
-   `expect(Math.sign(price(6000, 7))).toBe(1)`: `weakly_exposed`; that
-   assertion does not observe the whole result.
+   `expect(Math.sign(price(6000, 7))).toBe(1)` or
+   `await expect(price(0, 7)).rejects.toThrow("bad")`: `weakly_exposed`;
+   neither assertion observes the returned value.
 8. `return a + b + 0` against `return a + b`: the rule does not apply.
 9. `return a + b * c` against `return a * c`, `return x - a + b` against
    `return x - b`, `total += fee` against `total`, and `return +x`
@@ -193,9 +205,10 @@ documented decisions and proceed"). Recorded on #6654.
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs`
-  pins examples 1 to 9.
-- `fixtures/typescript-verdict-corpus` pins
-  `ts-nodetest-quote-shipping-term` as `gap`.
+  pins examples 2 to 9, and example 1's message through the analogous
+  `shipping(subtotal)` call term.
+- `fixtures/typescript-verdict-corpus` pins example 1 itself:
+  `ts-nodetest-quote-shipping-term` reads `gap`.
 
 ## Implementation Mapping
 
