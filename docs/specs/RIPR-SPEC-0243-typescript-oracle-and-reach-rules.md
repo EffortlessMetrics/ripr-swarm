@@ -453,7 +453,9 @@ as a whole identifier, the `local` of an `import { owner as local }` that
 gives the same test its `ImportAliasOwnerCall` relation. The one-hop
 initializer accepts the same local. This makes RIPR-SPEC-0102's stated
 `exposed` class hold. RIPR-SPEC-0251 extends this to a renamed default
-import of a default-exported owner.
+import of a default-exported owner, and its rule 2 drops the local (and so
+the relation) when a body-local destructuring names it
+(`const { p } = helpers`).
 
 ### Static limits
 
@@ -593,7 +595,8 @@ rejected alternative. Any can be reversed later without touching the rest.
   (`input === ""` to `input.trim() === ""`) is not message-only, so its
   class, string and object payloads all stay `exact_error_variant`.
 - Rules 1, 7, 10 and 11 move a finding to a stronger class only for an
-  awaited root (rule 1), an alias-rename local (rule 7), a literal
+  awaited root (rule 1), an alias-rename local (rule 7; via
+  RIPR-SPEC-0251, also a renamed default import), a literal
   chai or `node:assert` message check (rule 10) or an inline literal
   table row (rule 11).
 - Rule 8 is the only path to a TypeScript `static_unknown`, and an

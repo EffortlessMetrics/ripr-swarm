@@ -1682,10 +1682,35 @@ pub(crate) fn import_alias_owner_locals<'t>(
                 && import.local != owner.name
                 && contains_call_name(&test.body_text, &import.local)
                 && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+                && !local_destructured_in_test_body(&test.body_text, &import.local)
                 && !enclosing_scope_shadows(test, &import.local)
         })
         .map(|import| import.local.as_str())
         .collect()
+}
+
+/// Whether a body-local destructuring declaration (`const { cost } = h`,
+/// `const { a: cost } = h`, `let [cost] = fns`) names `local` anywhere in
+/// its pattern. Any mention counts as a shadow: a renamed import local
+/// (`import { owner as local }`, `import local from`) has no destructuring
+/// that could re-anchor it to the owner, so this reads more widely than the
+/// owner-name check and fails closed.
+fn local_destructured_in_test_body(body: &str, local: &str) -> bool {
+    let masked = ts_mask_literals_and_comments(body);
+    masked.lines().any(|line| {
+        let Some(after_keyword) = ["const ", "let ", "var "]
+            .into_iter()
+            .find_map(|keyword| line.trim_start().strip_prefix(keyword))
+        else {
+            return false;
+        };
+        let pattern = after_keyword.trim_start();
+        if !pattern.starts_with(['{', '[']) {
+            return false;
+        }
+        let pattern = pattern.split_once('=').map_or(pattern, |(lhs, _)| lhs);
+        ts_references_identifier(pattern, local)
+    })
 }
 
 /// The locals of every default import (`import local from "./owner"`) of
@@ -1713,6 +1738,7 @@ pub(crate) fn default_import_owner_locals<'t>(
                 && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
                 && contains_call_name(&test.body_text, &import.local)
                 && !local_identifier_declared_in_test_body(&test.body_text, &import.local)
+                && !local_destructured_in_test_body(&test.body_text, &import.local)
                 && !enclosing_scope_shadows(test, &import.local)
         })
         .map(|import| import.local.as_str())

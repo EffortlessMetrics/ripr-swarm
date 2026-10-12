@@ -484,10 +484,30 @@ fn rule7_default_import_rename_counts_as_the_owner() -> Result<(), String> {
     Ok(())
 }
 
+/// RIPR-SPEC-0251 example 6: a local bound once to the renamed default
+/// import's call observes the owner, as RIPR-SPEC-0243 example 19 reads an
+/// alias rename.
+#[test]
+fn rule7_default_import_local_initializer_is_an_owner_observation() -> Result<(), String> {
+    let owners = owners_of(&price_lib("export default ", ""));
+    let owner = price_owner(&owners)?;
+    let tests = tests_of(
+        "import cost from \"../src/lib\";\n\ntest(\"price\", () => {\n  const r = cost(150);\n  expect(r).toBe(130);\n});\n",
+    );
+    assert_eq!(only_observed(&tests)?, "r");
+    assert_eq!(
+        relations(owner, &tests),
+        vec![TypeScriptRelationKind::ImportedOwnerCall]
+    );
+    assert_eq!(classify(&owners, &tests)?.class, ExposureClass::Exposed);
+    Ok(())
+}
+
 /// RIPR-SPEC-0251 negatives: the renamed default import earns nothing when
 /// the owner is not the module's default export, when the test body
 /// redeclares the local, or when the strong assertion observes another
-/// callee.
+/// callee. The first two are refused at the relation layer (no relation);
+/// the third keeps `ImportedOwnerCall` and is refused by the value guard.
 #[test]
 fn rule7_default_import_rename_negatives_keep_no_credit() -> Result<(), String> {
     let named_lib = price_lib(
@@ -501,26 +521,45 @@ fn rule7_default_import_rename_negatives_keep_no_credit() -> Result<(), String> 
             named_lib.as_str(),
             "import cost from \"../src/lib\";\n\ntest(\"price\", () => {\n  expect(cost(150)).toBe(130);\n});\n",
             "cost(150)",
+            Vec::new(),
         ),
         (
             "test body redeclares the local",
             default_lib.as_str(),
             "import cost from \"../src/lib\";\n\ntest(\"price\", () => {\n  cost(1);\n  const cost = (n: number) => n - 20;\n  expect(cost(150)).toBe(130);\n});\n",
             "cost(150)",
+            Vec::new(),
+        ),
+        (
+            "test body destructures the local from a helper",
+            default_lib.as_str(),
+            "import cost from \"../src/lib\";\nconst helpers = { cost: (n: number) => 140 };\n\ntest(\"price\", () => {\n  const { cost } = helpers;\n  expect(cost(150)).toBe(140);\n});\n",
+            "cost(150)",
+            vec![TypeScriptRelationKind::ImportedOwnerCall],
         ),
         (
             "assertion observes another callee",
             default_lib.as_str(),
             "import cost from \"../src/lib\";\nimport other from \"../src/other\";\n\ntest(\"price\", () => {\n  cost(1);\n  expect(other(150)).toBe(130);\n});\n",
             "other(150)",
+            vec![TypeScriptRelationKind::ImportedOwnerCall],
         ),
     ];
-    for (label, lib, test_source, observed) in cases {
+    for (label, lib, test_source, observed, expected_relations) in cases {
         let owners = owners_of(lib);
         let tests = tests_of(test_source);
         assert_eq!(only_observed(&tests)?, observed, "{label}");
+        assert_eq!(
+            relations(price_owner(&owners)?, &tests),
+            expected_relations,
+            "{label}"
+        );
         let finding = classify(&owners, &tests)?;
-        assert_ne!(finding.class, ExposureClass::Exposed, "{label}: {finding:?}");
+        assert_ne!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {finding:?}"
+        );
     }
     Ok(())
 }
@@ -539,7 +578,7 @@ fn default_import_owner_locals_keeps_only_the_owner_binding() -> Result<(), Stri
     let body = |imports: &str, lines: &str| {
         format!("{imports}\n\ntest(\"price\", () => {{\n{lines}\n}});\n")
     };
-    let cases: [(&str, &TypeScriptOwner, String, Vec<&str>); 9] = [
+    let cases: [(&str, &TypeScriptOwner, String, Vec<&str>); 13] = [
         (
             "renamed default import of the owner",
             default_owner,
@@ -580,6 +619,39 @@ fn default_import_owner_locals_keeps_only_the_owner_binding() -> Result<(), Stri
             Vec::new(),
         ),
         (
+            "test body destructures the local",
+            default_owner,
+            body(
+                "import cost from \"../src/lib\";",
+                "  const { cost } = helpers;\n  expect(cost(150)).toBe(130);",
+            ),
+            Vec::new(),
+        ),
+        (
+            "test body destructures the local under a renamed key",
+            default_owner,
+            body(
+                "import cost from \"../src/lib\";",
+                "  const { price: cost } = helpers;\n  expect(cost(150)).toBe(130);",
+            ),
+            Vec::new(),
+        ),
+        (
+            "test body array-destructures the local",
+            default_owner,
+            body(
+                "import cost from \"../src/lib\";",
+                "  const [cost] = fns;\n  expect(cost(150)).toBe(130);",
+            ),
+            Vec::new(),
+        ),
+        (
+            "top-level require binds the module, not the default",
+            default_owner,
+            body("const cost = require(\"../src/lib\");", "  expect(cost(150)).toBe(130);"),
+            Vec::new(),
+        ),
+        (
             "named import, not the default",
             default_owner,
             body("import { cost } from \"../src/lib\";", "  expect(cost(150)).toBe(130);"),
@@ -608,6 +680,38 @@ fn default_import_owner_locals_keeps_only_the_owner_binding() -> Result<(), Stri
             expected,
             "{label}: {:?}",
             test.imports_in_file
+        );
+    }
+    Ok(())
+}
+
+/// The rule 7 alias-rename local is shadowed by a body-local destructuring
+/// too: `const { p } = helpers` rebinds `p`, so `expect(p(150))` observes
+/// the helper, not the owner.
+#[test]
+fn rule7_alias_local_destructured_in_the_body_is_not_the_owner() -> Result<(), String> {
+    let owners = owners_of(&price_lib("export ", ""));
+    let owner = price_owner(&owners)?;
+    for (label, pattern) in [
+        ("shorthand", "const { p } = helpers;"),
+        ("renamed key", "const { price: p } = helpers;"),
+        ("array", "const [p] = fns;"),
+    ] {
+        let tests = tests_of(&format!(
+            "import {{ price as p }} from \"../src/lib\";\n\ntest(\"price\", () => {{\n  {pattern}\n  expect(p(150)).toBe(140);\n}});\n"
+        ));
+        assert_eq!(only_observed(&tests)?, "p(150)", "{label}");
+        let [test] = tests.as_slice() else {
+            return Err(format!("{label}: expected one test"));
+        };
+        assert!(
+            import_alias_owner_locals(test, owner, None, None).is_empty(),
+            "{label}"
+        );
+        assert_ne!(
+            classify(&owners, &tests)?.class,
+            ExposureClass::Exposed,
+            "{label}"
         );
     }
     Ok(())

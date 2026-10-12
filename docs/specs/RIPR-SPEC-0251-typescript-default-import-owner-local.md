@@ -40,7 +40,8 @@ Policy impact:
 - No schema version bump. No new oracle kind, strength, class, relation
   reason or limitation name.
 - Amends the RIPR-SPEC-0243 rule 7 scope, its non-goal on default-import
-  locals, decision 3 and example 17.
+  locals, decision 3 and example 17, and adds rule 2's destructuring
+  shadow to the rule 7 alias-rename local.
 - Rust is not changed.
 
 ## Problem
@@ -82,18 +83,32 @@ dropped-term witness, the observed expression also references the owner
 when it names, as a whole identifier, the `local` of an
 `import local from "<module>"` in the test's file, when all of these hold:
 
-- the owner is that module's default export (`export default function`);
+- the owner is that module's default export (`exported_as_default`, the
+  RIPR-SPEC-0243 rule 5 proof: `export default function price`,
+  `export default price;`, `export { price as default }` or
+  `module.exports = function`);
 - the test relates to the owner through `ImportedOwnerCall`;
-- the import is a default import, not a namespace import, and `local`
-  differs from the owner's name;
+- the import binds the module's `default` (`import cost from`, or
+  `import { default as cost } from`), not a namespace or a `require`, and
+  `local` differs from the owner's name;
 - the import's module resolves to the owner's file, by the same path and
   alias-map match that gives `ImportedOwnerCall`;
 - the test body calls `local(`;
-- neither the test body nor an enclosing scope declares `local`.
+- neither the test body nor an enclosing scope declares `local`, and no
+  body-local destructuring declaration names it (rule 2).
 
 The one-hop initializer accepts the same local, as rule 7 does for an
 alias rename. The relation itself is unchanged: the related-test row keeps
 `import_path_affinity`.
+
+**Rule 2. A destructured local is shadowed.** A body-local destructuring
+declaration whose pattern names a renamed import local
+(`const { cost } = helpers`, `const { price: cost } = helpers`,
+`const [cost] = fns`) rebinds it, so the local earns no owner credit. This
+applies to the rule 1 default-import local and to the RIPR-SPEC-0243
+rule 7 alias-rename local. Any mention in the pattern counts: a renamed
+local has no destructuring that re-anchors it to the owner, unlike the
+owner's own name (#4103 shape 1).
 
 ### Decisions
 
@@ -119,11 +134,20 @@ documented decisions and proceed"). Recorded on #6654.
 - A default import re-exported through a barrel (`export { default as
   cost } from "./priceRenamed"`) is not followed.
 - `require` and dynamic `import()` bindings are not covered.
+- The shadow checks rule 1 shares with the same-name and alias-rename
+  paths read only line-start declarations, enclosing `describe`
+  declarations and rule 2's destructuring. A catch, function or for-of
+  parameter, a later declarator (`const x = 1, cost = ...`), a member
+  call (`helper.cost(150)`), a `typeof cost` observation and a
+  `spyOn(ns, "default")` fabrication can still read `exposed` on all
+  three paths (#7507).
 
 ## Required Evidence
 
 - On the TypeScript verdict corpus, `jest-spec0234-ex17-renamed` moves
   from `gap` to `credited` and no other row moves.
+- Every rule 1 condition and rule 2 is held by a test that fails when the
+  condition is removed.
 - `cargo xtask goldens check` reports no drift.
 
 ## Non-Goals
@@ -148,23 +172,39 @@ Base fixture: RIPR-SPEC-0243's `src/lib.ts` with
    `exposed`.
 4. As example 1 with the strong assertion on `other(150)`, where `other`
    is the default import of another module: not `exposed`.
+5. As example 1 with `const { cost } = helpers` in the test body: not
+   `exposed` (rule 2). The same holds for `import { price as p }` and
+   `const { p } = helpers`.
+6. As example 1 with `const r = cost(150); expect(r).toBe(130)`:
+   `exposed`, as RIPR-SPEC-0243 example 19 reads an alias rename.
+7. RIPR-SPEC-0248's `price(subtotal, fee)` fixture as a default export,
+   with `fee` dropped: `expect(cost(6000, 7))` is `exposed`;
+   `expect(cost(6000, 0))` is `weakly_exposed` with `fee` named as 0 for
+   every tested input, directly or through a one-hop local.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/spec0243_owner_tests.rs`:
   `rule7_default_import_rename_counts_as_the_owner` pins example 1;
   `rule7_default_import_rename_negatives_keep_no_credit` pins examples 2
-  to 4; `default_import_owner_locals_keeps_only_the_owner_binding` pins
-  rule 1's conditions on the helper.
+  to 5 with each case's relation;
+  `default_import_owner_locals_keeps_only_the_owner_binding` pins rule 1's
+  conditions and rule 2 on the helper;
+  `rule7_default_import_local_initializer_is_an_owner_observation` pins
+  example 6; `rule7_alias_local_destructured_in_the_body_is_not_the_owner`
+  pins rule 2 for the alias-rename local.
+- `crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs`:
+  `dropped_term_reads_a_renamed_default_import` pins example 7.
 - `fixtures/typescript-verdict-corpus` pins example 1:
   `jest-spec0234-ex17-renamed` reads `credited`.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/typescript/related_tests.rs`:
-  `default_import_owner_locals`.
+  `default_import_owner_locals`, `local_destructured_in_test_body`
+  (also used by `import_alias_owner_locals`).
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
-  `ts_changed_value_is_observed`, the dropped-term witness names.
+  `ts_changed_value_is_observed` and `ts_dropped_term_witness`.
 
 ## Metrics
 

@@ -84,8 +84,17 @@ fn parameter_is_stable_only_when_the_body_never_rebinds_it() {
 const PRICE: &str = "export const FLAT = 499;\n\nexport function shipping(subtotal: number): number {\n  return subtotal >= 5000 ? 0 : FLAT;\n}\n\nexport function price(subtotal: number, fee: number): number {\n  return subtotal + fee + shipping(subtotal) + FLAT;\n}\n";
 
 fn price_finding(label: &str, test: &str, added: &str) -> Result<Finding, String> {
+    price_finding_in(PRICE, label, test, added)
+}
+
+fn price_finding_in(
+    price_source: &str,
+    label: &str,
+    test: &str,
+    added: &str,
+) -> Result<Finding, String> {
     let root = ts_unique_tempdir(label)?;
-    let source = PRICE.replace(
+    let source = price_source.replace(
         "  return subtotal + fee + shipping(subtotal) + FLAT;",
         added,
     );
@@ -412,5 +421,67 @@ fn dropped_term_leaves_an_error_seam_alone() -> Result<(), String> {
         "{:?}",
         finding.missing
     );
+    Ok(())
+}
+
+/// RIPR-SPEC-0251 rule 1 reaches the RIPR-SPEC-0248 dropped-term witness:
+/// `import cost from "../src/price"` calls the default-exported `price` as
+/// `cost`, directly or through a local bound once to the call. A non-zero
+/// `fee` keeps the credit; a zero `fee` withdraws it.
+#[test]
+fn dropped_term_reads_a_renamed_default_import() -> Result<(), String> {
+    let default_price = PRICE.replace("export function price", "export default function price");
+    let dropped = "  return subtotal + shipping(subtotal) + FLAT;";
+    for (label, lines, observed, class) in [
+        (
+            "dropped-term-default-nonzero",
+            "  expect(cost(6000, 7)).toBe(6506);",
+            "cost(6000, 7)",
+            ExposureClass::Exposed,
+        ),
+        (
+            "dropped-term-default-zero",
+            "  expect(cost(6000, 0)).toBe(6499);",
+            "cost(6000, 0)",
+            ExposureClass::WeaklyExposed,
+        ),
+        (
+            "dropped-term-default-local-nonzero",
+            "  const result = cost(6000, 7);\n  expect(result).toBe(6506);",
+            "result",
+            ExposureClass::Exposed,
+        ),
+        (
+            "dropped-term-default-local-zero",
+            "  const result = cost(6000, 0);\n  expect(result).toBe(6499);",
+            "result",
+            ExposureClass::WeaklyExposed,
+        ),
+    ] {
+        let test = format!(
+            "import cost from \"../src/price\";\ntest(\"price\", () => {{\n{lines}\n}});\n"
+        );
+        assert_eq!(
+            extract_tests(Path::new("tests/price.test.ts"), &test)
+                .iter()
+                .flat_map(|test| test.assertions.iter())
+                .map(|assertion| assertion.observed_expression.clone())
+                .collect::<Vec<_>>(),
+            vec![Some(observed.to_string())],
+            "{label}"
+        );
+        let finding = price_finding_in(&default_price, label, &test, dropped)?;
+        assert_eq!(finding.class, class, "{label}: {:?}", finding.missing);
+        if class == ExposureClass::WeaklyExposed {
+            assert!(
+                finding
+                    .missing
+                    .iter()
+                    .any(|line| line.contains("`fee`, which is 0 for every tested input")),
+                "{label}: {:?}",
+                finding.missing
+            );
+        }
+    }
     Ok(())
 }
