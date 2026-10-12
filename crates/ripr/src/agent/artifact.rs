@@ -389,14 +389,17 @@ pub(crate) fn validate_repo_exposure_artifact(
         ));
     }
     // #7369: a present stamp must carry the same `unix_ms:` millisecond
-    // disclosure shape the producer pins. A legacy artifact without the field
-    // stays acceptable — the absence is a missing disclosure, not invalid
-    // identity — but a malformed stamp fails closed instead of passing.
+    // disclosure shape the producer pins, or the producer's documented
+    // `unavailable` fallback for a clock that predates the Unix epoch. A
+    // legacy artifact without the field stays acceptable — the absence is a
+    // missing disclosure, not invalid identity — but any other stamp fails
+    // closed instead of passing.
     if let Some(stamp) = identity.generated_at.as_deref()
+        && stamp != "unavailable"
         && !stamp.starts_with("unix_ms:")
     {
         return Err(format!(
-            "agent verify {label} artifact carries a generated_at stamp that is not a unix_ms millisecond disclosure: {stamp}"
+            "agent verify {label} artifact carries a generated_at stamp that is neither a unix_ms millisecond disclosure nor the documented \"unavailable\" fallback: {stamp}"
         ));
     }
     // Version gate (#2823): only the current input-identity algorithm
@@ -2399,8 +2402,19 @@ mod tests {
             expect_identity_rejection(
                 "non-unix_ms generated_at stamp",
                 malformed,
-                "not a unix_ms millisecond disclosure",
+                "neither a unix_ms millisecond disclosure nor",
             )?;
+            let fallback = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["generated_at"] = json!("unavailable");
+            })?;
+            match fallback {
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(format!(
+                        "the documented unavailable fallback must keep validating: {error}"
+                    ));
+                }
+            }
             let well_formed = validate_mutated_identity(&root, &document, |document| {
                 document["artifact"]["generated_at"] = json!("unix_ms:1760000000000");
             })?;
