@@ -76,6 +76,28 @@ verification step.
    sentinel when the gap is not actionable or the packet is incomplete.
    Never emits a partial packet.
 
+### Actionable verification provenance
+
+Passive actionable-gap admission and command-time packet reads use the same
+whole-artifact validator. Its verification-source policy agrees with the existing
+RIPR-SPEC-0057 projector: exactly `canonical_item.verify_command` or
+`related_test_or_observer.name`. The related-target source is the producer's
+typed Rust package/test-filter fallback; consumers preserve that source label
+and bounded command instead of rewriting it to canonical provenance.
+
+Unknown, missing or nonstring source labels refuse as `malformed_artifact`.
+The existing broad before/after repo-exposure snapshot comparison also refuses
+as `malformed_artifact`, even if the artifact asserts eligibility. Projection
+exclusions, unsafe commands, out-of-root paths, and source/corpus currentness
+continue to gate the whole artifact, including invalid sibling packets, before
+a selected packet is rendered. Genuine fresh production can recover the same
+nonempty packet after an unclaimed test changes the corpus.
+
+The shared command-policy predicates are admission metadata, not producer
+authentication or execution authority. Cargo test display commands retain their
+existing workspace working-directory context; foreign-CWD execution is not
+established by provenance admission.
+
 ## Non-Goals
 
 - Does not run mutants, execute tests, or modify any file.

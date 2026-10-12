@@ -784,12 +784,22 @@ fn validate_actionable_packet_projection_fields(
         "canonical_item.repair_route",
         "actionable packet must carry canonical repair_route_source",
     )?;
-    require_actionable_packet_source(
-        packet,
-        &["verify_command_source"],
-        "canonical_item.verify_command",
-        "actionable packet must carry canonical verify_command_source",
-    )?;
+    if !path_value(Some(packet), &["verify_command_source"])
+        .and_then(Value::as_str)
+        .is_some_and(crate::domain::actionable_verify_source_is_supported)
+    {
+        return Err(GapArtifactRejection::MalformedArtifact(
+            "actionable packet must carry supported verify_command_source",
+        ));
+    }
+    if path_value(Some(packet), &["verify_command"])
+        .and_then(Value::as_str)
+        .is_some_and(crate::domain::verify_command_is_unbounded_repo_exposure_snapshot_compare)
+    {
+        return Err(GapArtifactRejection::MalformedArtifact(
+            "actionable packet must not carry an unbounded verify_command",
+        ));
+    }
     if packet
         .get("public_projection_eligible")
         .and_then(Value::as_bool)

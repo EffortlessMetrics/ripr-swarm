@@ -17708,6 +17708,19 @@ absent from the ledger retains the not-found route. Selected stale or invalid
 artifacts still refuse without falling back to another packet. Replacing an
 artifact after a healthy refresh cannot bypass those checks.
 
+Actionable verification provenance is the closed set
+`canonical_item.verify_command` and `related_test_or_observer.name`, shared
+with the existing actionable projector. The latter retains the producer's
+bounded typed-related-test command and its truthful source label. Unknown,
+missing or nonstring labels refuse as `malformed_artifact`. A broad before/after
+repo-exposure snapshot comparison also refuses as `malformed_artifact` even
+when eligibility is asserted; it does not become bounded through a recognized
+source label. Ineligible packets and nonempty projection exclusions still
+refuse. Command-time reads apply these same rules to the entire selected
+artifact, including sibling packets. These predicates do not authenticate a
+producer, grant execution authority or bind a Cargo test display command to a
+foreign working directory.
+
 Known preview or mixed-language artifacts retain their existing named-file
 admission. Rust provenance alone cannot establish their whole corpus
 currentness. `ripr.workspaceStatus` discloses each admitted ledger or

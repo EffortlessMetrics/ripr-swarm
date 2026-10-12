@@ -43,6 +43,8 @@ pub use command_spec::{
     CancellationPolicy, CommandAuthorityBoundary, CommandCostClass, CommandExecutionMode,
     CommandPlatform, CommandRole, CommandSpec, CommandSpecValidationError, EnvironmentAssignment,
     EnvironmentPolicy, ExpectedResultParser, NetworkPolicy, StdinPolicy,
+    actionable_verify_source_is_supported,
+    verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
 pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,

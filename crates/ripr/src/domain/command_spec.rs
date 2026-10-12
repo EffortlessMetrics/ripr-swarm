@@ -10,6 +10,31 @@ use std::path::{Component, Path};
 const MAX_DISPLAY_LENGTH: usize = 512;
 const MAX_TIMEOUT_MS: u64 = 3_600_000;
 
+/// Recognize the closed verification-provenance set of actionable packets.
+///
+/// RIPR-SPEC-0057 admits an existing canonical command or the producer's
+/// bounded typed-related-test fallback. A recognized label does not
+/// authenticate its producer or grant command-execution authority.
+pub fn actionable_verify_source_is_supported(source: &str) -> bool {
+    matches!(
+        source,
+        "canonical_item.verify_command" | "related_test_or_observer.name"
+    )
+}
+
+/// Identify the broad snapshot comparison excluded from actionable verification.
+///
+/// This is the existing RIPR-SPEC-0057 display-policy predicate, shared by
+/// projection and passive admission. It is not a shell parser, a general cost
+/// estimate, or permission to execute any other command.
+pub fn verify_command_is_unbounded_repo_exposure_snapshot_compare(command: &str) -> bool {
+    let normalized = command.trim().replace('\\', "/");
+    normalized.contains("ripr agent verify")
+        && normalized.contains("--before")
+        && normalized.contains("--after")
+        && normalized.contains("repo-exposure.json")
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CommandSpec {
     pub schema_version: String,

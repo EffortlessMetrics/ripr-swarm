@@ -443,9 +443,9 @@ fn genuine_workspace_producer_preserves_current_corpus_and_native_bounded_projec
             )
         },
     )
-    // This proves shared xtask generation, not full LSP admission. Its
-    // verify_command_source is the real fallback, which the inherited LSP
-    // canonical-source-only guard currently rejects before corpus validation.
+    // This proves genuine generation. Framed consumer qualification reads
+    // these exact fields and bytes; source/corpus currentness and full LSP
+    // admission remain independently checked at the shared consumer boundary.
 }
 
 #[test]
