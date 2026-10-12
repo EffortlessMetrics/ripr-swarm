@@ -3992,9 +3992,34 @@ suite('Extension Smoke', () => {
 
       context.controller.markWorkspaceStale(document);
       context.controller.markWorkspaceClosed(document);
-      assert.ok(context.status.text.includes('ripr: queued'));
+      // #7340: a no-save close starts no refresh, so the status must not
+      // claim a queued analysis; it restores the last completed state
+      // (diagnostics describe the saved workspace) and names the close.
+      assert.ok(context.status.text.includes('ripr: diagnostics'));
+      assert.ok(String(context.status.tooltip).includes(document.uri.fsPath));
       await context.controller.showStatus();
-      assert.ok(context.infoMessages.at(-1)?.includes('analysis is queued'));
+      assert.ok(context.infoMessages.at(-1)?.includes('ripr analysis completed'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('closing an unsaved buffer before any completed refresh reports paused analysis, not queued', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+
+      context.controller.markWorkspaceStale(document);
+      context.controller.markWorkspaceClosed(document);
+      // No refresh has completed yet, so there is no completed state to
+      // restore; the status must still not claim a queue that no close-path
+      // refresh will start.
+      assert.ok(context.status.text.includes('ripr: ready'));
+      assert.ok(String(context.status.tooltip).includes(document.uri.fsPath));
+      assert.ok(String(context.status.tooltip).includes('without saving'));
+      await context.controller.showStatus();
+      assert.ok(context.infoMessages.at(-1)?.includes('saved workspace'));
     } finally {
       await context.dispose();
     }

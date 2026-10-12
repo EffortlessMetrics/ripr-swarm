@@ -456,6 +456,14 @@ export class RiprClientController {
     detail: 'Open a workspace or run ripr: Restart Server.',
     nextStep: 'Open a workspace folder, then run ripr: Restart Server.'
   };
+  /**
+   * The last refresh-completed status observed with no unsaved routed
+   * documents (#7340). Closing an unsaved buffer without saving starts no
+   * refresh — the on-disk file is unchanged — so the close path restores
+   * this state instead of claiming a queued analysis that nothing will
+   * start. Reset whenever the session stops.
+   */
+  private lastCompletedStatus: RiprStatusState | undefined;
   private workspaceRoot: string | undefined;
   /**
    * Session-scoped workspace folder picked through `ripr: Select Workspace
@@ -922,6 +930,7 @@ export class RiprClientController {
     this.typedAnalysisStatusState = undefined;
     this.firstUsefulAction = undefined;
     this.dirtyRiprDocuments.clear();
+    this.lastCompletedStatus = undefined;
     this.clearAttemptStatusBar();
     this.updateStatus({
       kind: 'stopped',
@@ -966,12 +975,27 @@ export class RiprClientController {
     }
     this.dirtyRiprDocuments.delete(document.uri.toString());
     if (this.client && this.dirtyRiprDocuments.size === 0 && this.status.kind === 'stale') {
-      this.updateStatus({
-        kind: 'analysisQueued',
-        summary: 'ripr saved-workspace analysis is queued after close.',
-        detail: `Closed unsaved ${document.languageId} buffer: ${document.uri.fsPath}`,
-        nextStep: 'Wait for ripr to refresh diagnostics.'
-      });
+      // #7340: closing an unsaved buffer without saving starts no refresh —
+      // the on-disk file is unchanged, and didClose is not one of the
+      // refresh triggers — so claiming a queued analysis would leave a
+      // spinning 'queued' state that nothing resolves until an unrelated
+      // event overwrites it. The truthful state is the last completed one:
+      // current diagnostics still describe the saved workspace. Restore it
+      // when known; before the first completed refresh there is nothing to
+      // restore, so report the paused state with the real refresh triggers.
+      const closedUnsaved = `Closed unsaved ${document.languageId} buffer without saving: ${document.uri.fsPath}`;
+      const restored = this.lastCompletedStatus;
+      this.updateStatus(restored
+        ? {
+            ...restored,
+            detail: [restored.detail, closedUnsaved].filter((line): line is string => Boolean(line)).join('\n')
+          }
+        : {
+            kind: 'ready',
+            summary: 'ripr diagnostics describe the saved workspace.',
+            detail: closedUnsaved,
+            nextStep: 'Open or save a Rust or enabled preview-language file to refresh diagnostics.'
+          });
     }
   }
 
@@ -1596,7 +1620,14 @@ export class RiprClientController {
       return;
     }
     if (message.startsWith('ripr analysis refresh completed')) {
-      this.updateStatus(this.statusAfterRefreshCompleted(message));
+      const completed = this.statusAfterRefreshCompleted(message);
+      if (this.dirtyRiprDocuments.size === 0) {
+        // Remember the clean completed state so closing an unsaved buffer
+        // without saving can restore it instead of inventing a queue that
+        // no close-path refresh will resolve (#7340).
+        this.lastCompletedStatus = completed;
+      }
+      this.updateStatus(completed);
       void this.refreshFirstUsefulActionStatus();
       return;
     }
