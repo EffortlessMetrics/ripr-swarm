@@ -299,7 +299,8 @@ const VERIFY_PACKET_RUNNER: CommandEffects = CommandEffects {
     may_start_child_process: true,
 };
 
-/// Doctor probes installed tool versions but runs no analysis.
+/// Environment probes (doctor tool versions or implicit-root Git boundary)
+/// run no analysis, compilation, tests, mutation or network operations.
 const TOOL_PROBES: CommandEffects = CommandEffects {
     may_run_analysis: false,
     may_compile: false,
@@ -2217,10 +2218,7 @@ const METADATA: &[CommandMetadata] = &[
         workflows: &["setup", "reports"],
         operation: CommandOperation::WritesArtifacts,
         cost: CommandCost::Workspace,
-        effects: CommandEffects {
-            may_start_child_process: true,
-            ..READS_ONLY
-        },
+        effects: TOOL_PROBES,
         primary_inputs: &[
             "current workspace bytes and configuration",
             "the live workspace cache",
