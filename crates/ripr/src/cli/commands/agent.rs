@@ -842,6 +842,7 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
             attempt_id,
             error,
             &after_refusal_reason(error, &refusal.narration),
+            refusal.terminal_finish.is_some(),
         )
     {
         // A persistence miss here is a note, not a second failure: the
@@ -896,12 +897,21 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
 /// attempt whose receipt is missing. Every other recorded refusal happens
 /// while the attempt is still resumable and keeps the resumable authority and
 /// its concurrent-finish guard.
+///
+/// `observed_terminal_finish` must attest that THIS invocation reached the
+/// durable finish: the resumable authority's "already has an after verdict"
+/// tail is also the shape a losing concurrent after phase meets after a
+/// sibling phase committed the verdict under it — routing that narration to
+/// the terminal authority would attribute the loser's refusal to the winner's
+/// verdict. Only a phase whose own tail committed the verdict may record
+/// beside it (#7378 review).
 fn record_after_phase_refusal(
     root: &Path,
     store: Option<&Path>,
     attempt_id: &crate::app::repair_attempt::RepairAttemptId,
     error: &str,
     reason: &str,
+    observed_terminal_finish: bool,
 ) -> Result<(), String> {
     if error.contains(crate::app::repair_attempt::TRUSTED_SURFACE_REFUSAL_TAIL) {
         crate::app::repair_attempt::record_repair_attempt_terminal_receipt_refusal_from(
@@ -916,11 +926,16 @@ fn record_after_phase_refusal(
             // incomparable finish — commits the after verdict before the
             // refusal records, so the resumable authority refuses the write
             // by design; the narration still belongs beside the verdict,
-            // where `agent status` reads it (#7378). Any other refusal is
-            // genuine and surfaces unchanged.
+            // where `agent status` reads it (#7378). The fallback is gated on
+            // this phase having reached that finish itself: the same tail
+            // from the resumable authority is also what a concurrent after
+            // phase that LOST the finish commit meets, and its narration must
+            // not land beside a verdict a sibling phase committed. Any other
+            // refusal is genuine and surfaces unchanged.
             Err(record_error)
-                if record_error
-                    .contains(crate::app::repair_attempt::AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL) =>
+                if observed_terminal_finish
+                    && record_error
+                        .contains(crate::app::repair_attempt::AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL) =>
             {
                 crate::app::repair_attempt::record_repair_attempt_terminal_after_refusal_from(
                     root, store, attempt_id, reason,
@@ -3122,6 +3137,7 @@ mod tests {
                 attempt_id,
                 &trusted_error,
                 "repair receipt observed repository path outside trusted edit surface: src/lib.rs. To recover: commit the production change, then start a new attempt.",
+                false,
             )?;
             let recorded = load_repair_attempt_manifest(&root, attempt_id)?;
             let refusal = recorded
@@ -3137,10 +3153,11 @@ mod tests {
             // A terminal failure family (the edit cage's refusal is the
             // canonical case) records beside the committed verdict too: the
             // resumable authority's guard refusal routes it to the terminal
-            // authority, so the narration reaches `agent status` (#7378).
+            // authority, so the narration reaches `agent status` (#7378). The
+            // caller attests its own tail committed the verdict.
             let other_error =
                 "repair attempt changed while the after phase ran; retry the after phase";
-            record_after_phase_refusal(&root, None, attempt_id, other_error, "changed")?;
+            record_after_phase_refusal(&root, None, attempt_id, other_error, "changed", true)?;
             let rerouted = load_repair_attempt_manifest(&root, attempt_id)?;
             match rerouted.last_after_refusal {
                 Some(refusal) if refusal.reason == "changed" => {}
@@ -3152,6 +3169,35 @@ mod tests {
             }
             if rerouted.after.is_none() || rerouted.state != RepairAttemptState::ReadyToFinish {
                 return Err("the terminal record moved the attempt's finish".to_string());
+            }
+
+            // A concurrent after phase that LOST the finish commit meets the
+            // same resumable guard tail, but its tail never committed the
+            // verdict: without its own terminal finish the fallback is
+            // refused, so the loser's narration cannot attribute a refusal
+            // to the winner's verdict (#7378 review).
+            let lost = record_after_phase_refusal(
+                &root,
+                None,
+                attempt_id,
+                other_error,
+                "losing phase narration",
+                false,
+            );
+            if lost.is_ok() {
+                return Err(
+                    "a losing phase's refusal must not record beside a verdict it did not commit"
+                        .to_string(),
+                );
+            }
+            let guarded = load_repair_attempt_manifest(&root, attempt_id)?;
+            match guarded.last_after_refusal {
+                Some(refusal) if refusal.reason == "changed" => {}
+                other => {
+                    return Err(format!(
+                        "the losing phase's narration replaced the winner's record: {other:?}"
+                    ));
+                }
             }
             Ok(())
         })();
