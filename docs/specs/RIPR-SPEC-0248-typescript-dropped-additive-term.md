@@ -80,8 +80,10 @@ observes the whole result of an owner call (`owner(...)`, `ns.owner(...)`,
 the `local(...)` of an `import { owner as local }` rename, optionally
 awaited, or a local bound once to that call; not `owner(...).field` or
 `f(owner(...))`; in `owner(owner(a, b), c)` the outer call's arguments) for
-which `t` folds to a non-zero number (any non-zero double, since JavaScript
-adds in the same doubles). Otherwise the finding
+which `t` folds to a number of magnitude at least `1e-6`. A double sum
+absorbs an addend below 2^-52 of its own magnitude (`6499 + 1e-13 ===
+6499`), and a term of at least `1e-6` changes every sum below about
+`4.5e9`. Otherwise the finding
 reads `weakly_exposed`, discrimination `weak`, and its missing line names
 the term and asks for an input that makes it non-zero. The discriminate
 summary then says a change-specific rule withdrew the credit and repeats
@@ -171,6 +173,13 @@ test may not need.
 - The rebinding check reads the owner body after the change. A diff that
   removes a reassignment on another line can let the fold bind the
   pre-change argument.
+- A sum beyond about `4.5e9` can absorb a term between `1e-6` and 2^-52 of
+  the sum; such a term still keeps the pre-rule credit. A term under
+  `1e-6` reads as not shown to be non-zero even where the sum is small
+  enough to show it.
+- In `owner(owner(a, b), c)` only the outer call's arguments bind, so a
+  non-zero term in the inner call (which still moves the outer result)
+  does not witness the change.
 - String terms never fold, and under string concatenation `0` is not an
   identity (`"n=" + 0` differs from `"n="`). Dropping `+ name` from
   `greeting + name` therefore reads `weakly_exposed` even when the test

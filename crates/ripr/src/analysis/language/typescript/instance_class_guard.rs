@@ -8,8 +8,8 @@
 //! `NotFound`. The matcher alone is not an exact discriminator (it passes
 //! for any instance of `C` or of a subclass), so it reads as one only for a
 //! predicate change, only on the whole result of an owner call, and only
-//! when every value the owner returns is a `new` of a class whose relation
-//! to `C` the owner's module settles.
+//! when the changed `if`'s two branches return `new` instances of two
+//! classes the owner's module keeps apart.
 
 use super::*;
 
@@ -39,7 +39,8 @@ const BUILTIN_CLASSES: [&str; 17] = [
 /// predicate change, by test file and assertion line.
 #[derive(Debug, Default)]
 pub(crate) struct InstanceClassFacts {
-    credited: Vec<(PathBuf, usize)>,
+    /// Test file, assertion line and observed expression of each pin.
+    credited: Vec<(PathBuf, usize, String)>,
 }
 
 impl InstanceClassFacts {
@@ -47,10 +48,11 @@ impl InstanceClassFacts {
     /// `toBeInstanceOf` pin.
     pub(crate) fn credits(&self, file: &Path, assertion: &TypeScriptAssertion) -> bool {
         assertion.matcher == "toBeInstanceOf"
-            && self
-                .credited
-                .iter()
-                .any(|(path, line)| path == file && *line == assertion.line)
+            && self.credited.iter().any(|(path, line, observed)| {
+                path == file
+                    && *line == assertion.line
+                    && assertion.observed_expression.as_deref() == Some(observed.as_str())
+            })
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -98,33 +100,46 @@ fn module_classes(masked_module: &str) -> Option<Vec<(String, String)>> {
     Some(classes)
 }
 
-/// The class each `return` of the owner body constructs (`return new X(...)`).
-/// `None` when the body has a nested function (whose `return` is not the
-/// owner's) or a `return` of anything else.
-fn returned_classes(masked_body: &str) -> Option<Vec<String>> {
-    if masked_body.contains("=>") || !identifier_offsets(masked_body, "function").is_empty() {
+/// The class a return expression constructs when it is exactly
+/// `new X(...)`: nothing may follow the argument list (`new X().as()`,
+/// `new X() || y`).
+fn constructed_class(expression: &str) -> Option<String> {
+    let rest = expression.trim().strip_prefix("new")?;
+    if !rest.starts_with(char::is_whitespace) {
         return None;
     }
-    let returns = identifier_offsets(masked_body, "return");
-    if returns.is_empty() {
+    let rest = rest.trim_start();
+    let class = leading_identifier(rest)?;
+    ts_is_one_argument_list(rest[class.len()..].trim_start()).then(|| class.to_string())
+}
+
+/// The classes the changed `if` (`line_text`, found once in the owner)
+/// returns on its true and false branches, each `return new X(...)`, read by
+/// the RIPR-SPEC-0027 branch scan. String and comment text is blanked first
+/// so a message such as `"missing"` does not stop the scan; a comment that
+/// spans lines fails it.
+fn branch_classes(owner_source: &str, line_text: &str) -> Option<(String, String)> {
+    let blank = |text: &str| ts_mask_literals_and_comments(text).replace(['"', '\'', '`'], " ");
+    let masked = blank(owner_source);
+    let lines: Vec<&str> = masked.lines().collect();
+    if lines.len() != owner_source.lines().count() {
         return None;
     }
-    returns
-        .into_iter()
-        .map(|at| {
-            let rest = masked_body[at + "return".len()..].trim_start();
-            let rest = rest.strip_prefix("new")?;
-            if !rest.starts_with(char::is_whitespace) {
-                return None;
-            }
-            let rest = rest.trim_start();
-            let class = leading_identifier(rest)?;
-            rest[class.len()..]
-                .trim_start()
-                .starts_with('(')
-                .then(|| class.to_string())
-        })
-        .collect()
+    let target = blank(line_text);
+    let mut matching = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim() == target.trim())
+        .map(|(index, _)| index);
+    let start = matching.next()?;
+    if matching.next().is_some() {
+        return None;
+    }
+    let (true_return, false_return) = branch_return_expressions(&lines, start)?;
+    Some((
+        constructed_class(&true_return)?,
+        constructed_class(&false_return)?,
+    ))
 }
 
 /// `true` when an instance of `class` can never pass `toBeInstanceOf(asserted)`:
@@ -136,11 +151,11 @@ fn never_instance_of(class: &str, asserted: &str, classes: &[(String, String)]) 
         if current == asserted {
             return false;
         }
-        if BUILTIN_CLASSES.contains(&current) {
-            return true;
-        }
+        // A module class shadows a builtin of the same name (`class Map
+        // extends NotFound`), so the module is read first.
         let Some((_, parent)) = classes.iter().find(|(name, _)| name == current) else {
-            return false; // imported or unknown: its chain is not read
+            // Imported or unknown classes are not read.
+            return BUILTIN_CLASSES.contains(&current);
         };
         if parent.is_empty() {
             return true;
@@ -156,48 +171,41 @@ fn never_instance_of(class: &str, asserted: &str, classes: &[(String, String)]) 
 }
 
 /// RIPR-SPEC-0249 rule 1's owner-side condition: the module declares
-/// `asserted`, every `return` of the owner constructs a class, at least one
-/// returns `asserted` and at least one returns a class that is never an
-/// `asserted` instance, and no returned class could be one through a
-/// subclass.
-pub(crate) fn ts_owner_returns_distinct_classes(
+/// `asserted`, the changed `if` returns `new` instances of two different
+/// classes on its two branches, one of them `asserted`, and the other is
+/// never an `asserted` instance.
+pub(crate) fn ts_owner_branches_split_class(
     owner_source: &str,
     module_source: &str,
+    line_text: &str,
     asserted: &str,
 ) -> bool {
-    let Some(body) = masked_owner_body(owner_source) else {
+    let Some((true_class, false_class)) = branch_classes(owner_source, line_text) else {
         return false;
     };
-    let Some(returned) = returned_classes(&body) else {
+    let other = if true_class == asserted {
+        false_class
+    } else if false_class == asserted {
+        true_class
+    } else {
         return false;
     };
     let module = ts_mask_literals_and_comments(module_source);
     let Some(classes) = module_classes(&module) else {
         return false;
     };
-    if !classes.iter().any(|(name, _)| name == asserted) {
-        return false;
-    }
-    let mut saw_asserted = false;
-    let mut saw_other = false;
-    for class in &returned {
-        if class == asserted {
-            saw_asserted = true;
-        } else if never_instance_of(class, asserted, &classes) {
-            saw_other = true;
-        } else {
-            return false;
-        }
-    }
-    saw_asserted && saw_other
+    classes.iter().any(|(name, _)| name == asserted)
+        && other != asserted
+        && never_instance_of(&other, asserted, &classes)
 }
 
 /// Collect the credited `toBeInstanceOf` assertions for a predicate change:
 /// each on an oracle relation, on the whole result of one owner call
 /// (`owner(...)`, `ns.owner(...)`, awaited, or a local bound once to that
-/// call), naming a class the owner returns on some path and not on another.
+/// call), naming the class one branch of the changed `if` returns.
 pub(crate) fn ts_instance_class_facts(
     probe_family: &ProbeFamily,
+    line_text: &str,
     owner: &TypeScriptOwner,
     candidates: &[TypeScriptRelatedCandidate<'_>],
     alias_map: Option<&TsAliasMap>,
@@ -245,7 +253,12 @@ pub(crate) fn ts_instance_class_facts(
             let owner_ok = match owner_side.iter().find(|(known, _)| known == class) {
                 Some((_, ok)) => *ok,
                 None => {
-                    let ok = ts_owner_returns_distinct_classes(owner_source, &module_source, class);
+                    let ok = ts_owner_branches_split_class(
+                        owner_source,
+                        &module_source,
+                        line_text,
+                        class,
+                    );
                     owner_side.push((class.to_string(), ok));
                     ok
                 }
@@ -253,9 +266,11 @@ pub(crate) fn ts_instance_class_facts(
             if owner_ok
                 && ts_observes_whole_owner_result(candidate.test, assertion, owner, &receivers)
             {
-                facts
-                    .credited
-                    .push((candidate.test.file.clone(), assertion.line));
+                if let Some(observed) = assertion.observed_expression.clone() {
+                    facts
+                        .credited
+                        .push((candidate.test.file.clone(), assertion.line, observed));
+                }
             }
         }
     }

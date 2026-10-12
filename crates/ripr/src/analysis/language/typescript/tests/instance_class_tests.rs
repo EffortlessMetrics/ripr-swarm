@@ -8,47 +8,78 @@ const ERRORS: &str = "export class NotFound extends Error {}\nexport class Forbi
 
 const OWNER: &str = "export function errorFor(status: number): Error {\n  if (status === 404) {\n    return new NotFound(\"missing\");\n  }\n  return new Forbidden(\"denied\");\n}";
 
+const CHANGED: &str = "  if (status === 404) {";
+
 #[test]
-fn owner_returns_distinct_classes_only_when_the_module_settles_them() {
-    assert!(ts_owner_returns_distinct_classes(OWNER, ERRORS, "NotFound"));
-    assert!(ts_owner_returns_distinct_classes(
+fn owner_branches_split_class_only_when_the_module_settles_them() {
+    assert!(ts_owner_branches_split_class(
+        OWNER, ERRORS, CHANGED, "NotFound"
+    ));
+    assert!(ts_owner_branches_split_class(
         OWNER,
         ERRORS,
+        CHANGED,
         "Forbidden"
     ));
-    // A builtin on the other path is never a user class instance.
+    // A builtin on the other branch is never a user class instance.
     let builtin = OWNER.replace("new Forbidden(", "new RangeError(");
-    assert!(ts_owner_returns_distinct_classes(
-        &builtin, ERRORS, "NotFound"
+    assert!(ts_owner_branches_split_class(
+        &builtin, ERRORS, CHANGED, "NotFound"
     ));
     for (label, owner, module, asserted) in [
         (
             "the other class extends the asserted one",
             OWNER.to_string(),
-            ERRORS.replace(
-                "class Forbidden extends Error",
-                "class Forbidden extends NotFound",
-            ),
+            ERRORS.replace("class Forbidden extends Error", "class Forbidden extends NotFound"),
             "NotFound",
         ),
         (
             "a module class extends the asserted one through another",
             OWNER.to_string(),
-            ERRORS.replace(
-                "class Forbidden extends Error",
-                "class Forbidden extends Gone",
-            ) + "class Gone extends NotFound {}\n",
+            ERRORS.replace("class Forbidden extends Error", "class Forbidden extends Gone")
+                + "class Gone extends NotFound {}\n",
             "NotFound",
         ),
         (
-            "both paths return the asserted class",
+            "a module class shadows a builtin name",
+            OWNER.to_string(),
+            ERRORS.replace("class Forbidden extends Error", "class Forbidden extends Map")
+                + "class Map extends NotFound {}\n",
+            "NotFound",
+        ),
+        (
+            "both branches return the asserted class",
             OWNER.replace("new Forbidden(", "new NotFound("),
             ERRORS.to_string(),
             "NotFound",
         ),
         (
-            "a path returns something other than a new instance",
+            "the false branch falls through to another branch",
+            OWNER.replace(
+                "  return new Forbidden(\"denied\");",
+                "  if (status >= 400) {\n    return new NotFound(\"client\");\n  }\n  return new Forbidden(\"denied\");",
+            ),
+            ERRORS.to_string(),
+            "NotFound",
+        ),
+        (
+            "a branch returns something other than a new instance",
             OWNER.replace("return new Forbidden(\"denied\");", "return cached;"),
+            ERRORS.to_string(),
+            "NotFound",
+        ),
+        (
+            "a branch calls a method on the new instance",
+            OWNER.replace("new Forbidden(\"denied\");", "new Forbidden(\"denied\").asNotFound();"),
+            ERRORS.to_string(),
+            "NotFound",
+        ),
+        (
+            "a branch holds another statement",
+            OWNER.replace(
+                "  return new Forbidden(\"denied\");",
+                "  const h = { other() { return new Forbidden(\"x\"); } };\n  return new Forbidden(\"denied\");",
+            ),
             ERRORS.to_string(),
             "NotFound",
         ),
@@ -73,33 +104,18 @@ fn owner_returns_distinct_classes_only_when_the_module_settles_them() {
         (
             "a mixin parent is not read",
             OWNER.to_string(),
-            ERRORS.replace(
-                "class Forbidden extends Error",
-                "class Forbidden extends mix(NotFound)",
-            ),
+            ERRORS.replace("class Forbidden extends Error", "class Forbidden extends mix(NotFound)"),
             "NotFound",
         ),
         (
             "a generic class header is not read",
             OWNER.to_string(),
-            ERRORS.replace(
-                "class Forbidden extends Error",
-                "class Forbidden<T> extends NotFound",
-            ),
-            "NotFound",
-        ),
-        (
-            "a nested function's return is not the owner's",
-            OWNER.replace(
-                "  return new Forbidden(\"denied\");",
-                "  const make = () => { return new Forbidden(\"denied\"); };\n  return make();",
-            ),
-            ERRORS.to_string(),
+            ERRORS.replace("class Forbidden extends Error", "class Forbidden<T> extends NotFound"),
             "NotFound",
         ),
     ] {
         assert!(
-            !ts_owner_returns_distinct_classes(&owner, &module, asserted),
+            !ts_owner_branches_split_class(&owner, &module, CHANGED, asserted),
             "{label}"
         );
     }
@@ -189,6 +205,15 @@ fn instance_pin_exposes_a_predicate_whose_paths_return_different_classes() -> Re
         .ok_or("expected a related test row")?;
     assert_eq!(row.oracle_kind, OracleKind::ExactValue);
     assert_eq!(row.oracle_strength, OracleStrength::Strong);
+    // A recognised matcher is not an unresolved custom matcher.
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("typescript_custom_matcher_unresolved")),
+        "{:?}",
+        finding.evidence
+    );
 
     // A local bound once to the owner call is the whole result too.
     let local = errors_test(
@@ -306,7 +331,8 @@ fn instance_facts_read_predicate_changes_only() -> Result<(), String> {
     let candidates =
         related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
     let read = |family: ProbeFamily| {
-        let facts = ts_instance_class_facts(&family, &owner, &candidates, None, Some(&root));
+        let facts =
+            ts_instance_class_facts(&family, CHANGED, &owner, &candidates, None, Some(&root));
         tests[0]
             .assertions
             .iter()
@@ -315,8 +341,61 @@ fn instance_facts_read_predicate_changes_only() -> Result<(), String> {
     };
     let predicate = read(ProbeFamily::Predicate);
     let value = read(ProbeFamily::ReturnValue);
-    let _ = std::fs::remove_dir_all(&root);
     assert_eq!(predicate, 2);
     assert_eq!(value, 0);
+    // Pins that do not observe the whole owner result, that reject, or that
+    // share a line with a credited pin read no credit of their own.
+    for (label, body, credited) in [
+        (
+            "not-owner-result",
+            "  errorFor(404);\n  expect(new NotFound(\"x\")).toBeInstanceOf(NotFound);",
+            0,
+        ),
+        (
+            "wrapped",
+            "  const wrap = (e: Error) => e;\n  expect(wrap(errorFor(404))).toBeInstanceOf(NotFound);",
+            0,
+        ),
+        (
+            "rejects",
+            "  await expect(errorFor(404)).rejects.toBeInstanceOf(NotFound);",
+            0,
+        ),
+        (
+            "same-line",
+            "  expect(errorFor(403)).toBeInstanceOf(Forbidden); expect(wrap(errorFor(404))).toBeInstanceOf(NotFound);",
+            1,
+        ),
+        (
+            "resolves",
+            "  await expect(errorFor(404)).resolves.toBeInstanceOf(NotFound);",
+            1,
+        ),
+        (
+            "shadowed-owner",
+            "  const errorFor = (s: number) => new NotFound(\"x\");\n  expect(errorFor(404)).toBeInstanceOf(NotFound);",
+            0,
+        ),
+    ] {
+        let test = errors_test(body);
+        let tests = extract_tests(Path::new("tests/errors.test.ts"), &test);
+        let candidates =
+            related_test_candidates(&owner, &tests, Some(&root), &ReExportIndex::empty(), None);
+        let facts = ts_instance_class_facts(
+            &ProbeFamily::Predicate,
+            CHANGED,
+            &owner,
+            &candidates,
+            None,
+            Some(&root),
+        );
+        let count = tests
+            .iter()
+            .flat_map(|test| test.assertions.iter().map(move |a| (test, a)))
+            .filter(|(test, assertion)| facts.credits(&test.file, assertion))
+            .count();
+        assert_eq!(count, credited, "{label}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
     Ok(())
 }

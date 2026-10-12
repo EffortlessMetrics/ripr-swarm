@@ -13930,7 +13930,7 @@ id = "RIPR-SPEC-0249"
 name = "TypeScript instance class pin"
 spec = "docs/specs/RIPR-SPEC-0249-typescript-instance-class-pin.md"
 tests = [
-  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::owner_returns_distinct_classes_only_when_the_module_settles_them",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::owner_branches_split_class_only_when_the_module_settles_them",
   "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_pin_exposes_a_predicate_whose_paths_return_different_classes",
   "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_pin_stays_weak_without_a_settled_class_split",
   "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_pin_does_not_credit_a_returned_message_change",

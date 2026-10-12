@@ -11,3 +11,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — ts_dropped_term_zero_input (2)
+
+Reason:
+RIPR-SPEC-0248: discriminate summary wording for a withdrawn credit
+
+Command:
+`cargo xtask goldens bless ts_dropped_term_zero_input --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

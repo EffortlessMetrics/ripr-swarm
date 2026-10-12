@@ -39,7 +39,8 @@ Policy impact:
   `.ripr/traceability.toml`.
 - No schema version bump. No new oracle kind, strength, class, relation
   reason or limitation name.
-- Adds `toBeInstanceOf` to the RIPR-SPEC-0027 matcher list.
+- Adds `toBeInstanceOf` to the RIPR-SPEC-0243 matcher table
+  (`relational_check` / weak).
 - Rust is not changed.
 
 ## Problem
@@ -76,12 +77,18 @@ unrecognised matcher, so the finding was `weakly_exposed` with
 **Matcher reading.** `expect(x).toBeInstanceOf(C)` (and
 `.resolves.toBeInstanceOf(C)`) is a `relational_check` / weak oracle. It
 passes for an instance of `C` or of any subclass, so on its own it is not an
-exact discriminator. When `C` is one PascalCase identifier the assertion
-records it as its expected value. `.rejects.toBeInstanceOf(C)` observes the
-error, not the returned value, and records none.
+exact discriminator. When the argument is one identifier that starts with
+an uppercase letter, the assertion records it as its expected value, so it
+no longer carries `typescript_dynamic_assertion_unresolved` or
+`typescript_custom_matcher_unresolved`, its test's assertion admission is
+`recognised`, its oracle metadata names the class
+(`typescript_oracle_expected: C`) and its `typescript_oracle_confidence` is
+`low`. `.rejects.toBeInstanceOf(C)` observes the error, not the returned
+value, and records no class; a lowercase or member argument
+(`errors.NotFound`) records none either.
 
-**Rule 1. A class pin reads exact for a predicate change whose paths return
-different classes.** On a `predicate` probe, a `toBeInstanceOf(C)`
+**Rule 1. A class pin reads exact for a predicate change whose branches
+return different classes.** On a `predicate` probe, a `toBeInstanceOf(C)`
 assertion of an oracle relation reads `exact_value` / strong, both in the
 ladder and in its related-test row, when all of these hold:
 
@@ -89,20 +96,34 @@ ladder and in its related-test row, when all of these hold:
   `ns.owner(...)`, optionally awaited, or a local bound once to that call
   (not `f(owner(...))` or `owner(...).field`), and the test does not
   shadow the owner;
-- the owner's module declares `class C`;
-- every `return` in the owner body is `return new X(...)`, the body has no
-  arrow or nested function, and the returned classes include `C` and at
-  least one other class;
-- each other returned class can never be a `C`: walking its `extends`
-  chain through classes the module declares reaches a builtin (`Error`,
-  `RangeError`, `Map`, ...) or a class with no `extends` without meeting
-  `C`. An imported class, a mixin or member parent (`extends mix(C)`,
-  `extends ns.Base`) and a generic class header are not read, and fail the
-  rule.
+- the changed line is an `if (...) {` found once in the owner, and the
+  RIPR-SPEC-0027 branch scan reads its true branch and its false branch
+  (an `else` block or the fall-through) as a single `return` each, with
+  string and comment text blanked first; another statement in a branch,
+  an `else if`, a fall-through that is not a `return`, or a comment that
+  spans lines fails the scan;
+- each branch returns exactly `new X(...)`, with nothing after the
+  argument list (`new X().as()` and `new X() || y` fail);
+- one branch returns `C`, the other returns a different class `D`, and the
+  owner's module declares `class C`;
+- `D` can never be a `C`: walking its `extends` chain through classes the
+  module declares reaches a class with no `extends`, or a name in the
+  builtin list below that the module does not itself declare, without
+  meeting `C`.
 
-The predicate boundary witness (RIPR-SPEC-0027) then runs as for any
-strong assertion: the pin must observe an owner call at the changed
-boundary.
+The module scan reads every `class Name` declaration; a module with any
+generic (`class A<T>`), anonymous (`export default class {`) or repeated
+class declaration is not read, and a mixin or member parent
+(`extends mix(C)`, `extends ns.Base`) or an imported class stops the walk.
+Builtins: `Error`, `TypeError`, `RangeError`, `SyntaxError`,
+`ReferenceError`, `EvalError`, `URIError`, `AggregateError`, `Object`,
+`Array`, `Map`, `Set`, `WeakMap`, `WeakSet`, `Date`, `RegExp`, `Promise`.
+
+A credited pin is identified by its test file, line and observed
+expression, so a pin that shares a line with a credited one does not
+inherit its credit. The predicate boundary witness (RIPR-SPEC-0027) then
+runs as for any strong assertion: the pin must observe an owner call at
+the changed boundary.
 
 ### Decisions
 
@@ -114,26 +135,31 @@ documented decisions and proceed"). Recorded on #6654.
    (`new Forbidden("denied")` to `new Forbidden("refused")`) keeps the
    class, so the pin passes on both versions. Rejected: reading the pin
    strong everywhere, which credits that message change.
-2. **Weak, not unknown, by default.** Adopted: `toBeInstanceOf` is a
+2. **The changed `if`'s own branches, not every return.** Adopted: an
+   independent review showed that an owner returning `C` on both sides of
+   the changed predicate and another class on a third path would be
+   credited by a whole-body reading. Rejected: requiring every `return` of
+   the owner to construct a class, which also counted object-method
+   returns and `new X().as()` tails.
+3. **Weak, not unknown, by default.** Adopted: `toBeInstanceOf` is a
    recognised matcher with known semantics (instance-of, subclass
-   included), the same footing as `toHaveProperty`. Its default reading
-   moves from `unknown` to `relational_check` / weak and the test's
-   assertion admission from unresolved to recognised; the classification
-   of a change it does not pin stays `weakly_exposed`.
-3. **Kind `exact_value`.** Adopted: no new oracle kind; the credited pin
-   fixes which value the owner returns among the classes it can return.
-   Rejected: `exact_error_variant`, which value seams exclude
-   (RIPR-SPEC-0104).
+   included), on the same footing as `toHaveProperty` in the
+   RIPR-SPEC-0243 matcher table. The classification of a change it does
+   not pin stays `weakly_exposed`.
+4. **Kind `exact_value`.** Adopted: no new oracle kind; the credited pin
+   fixes which of the two branch values the owner returns. Rejected:
+   `exact_error_variant`, which value seams exclude (RIPR-SPEC-0104).
 
 ### Known limits
 
-- The rule does not ask which return each branch reaches. An owner that
-  returns `C` on both sides of the changed predicate and a different class
-  on a third path still reads the pin strong.
+- The asserted class is matched by name. The test's `C` is not resolved to
+  the owner module's binding, so a test-local `const NotFound = Error`
+  imported under that name could be credited.
+- A renamed owner import (`import { errorFor as ef }`) is not read, and
+  its pins keep the weak reading.
 - `typescript_oracle_confidence` in the oracle metadata evidence reads the
   assertion's default (weak) strength, so a credited pin shows `low`.
-- Owners whose returns are not all `new X(...)` (a cached instance, a
-  factory call, a ternary) keep the weak reading.
+- Single-line `if (...) return ...;`, ternaries and `switch` are not read.
 
 ## Required Evidence
 
@@ -151,22 +177,30 @@ documented decisions and proceed"). Recorded on #6654.
 ## Acceptance Examples
 
 1. The problem's change and tests: `exposed`; the related row reads
-   `exact_value` / strong.
+   `exact_value` / strong, and the finding carries no
+   `typescript_custom_matcher_unresolved`.
 2. As example 1 with `const missing = errorFor(404);
    expect(missing).toBeInstanceOf(NotFound);`: `exposed`.
-3. As example 1 with `class Forbidden extends NotFound`: not `exposed`.
+3. As example 1 with `class Forbidden extends NotFound`, or through
+   `class Forbidden extends Gone` and `class Gone extends NotFound`, or
+   through a module `class Map extends NotFound`: not credited.
 4. As example 1 asserting `toBeInstanceOf(Error)` twice: not `exposed`.
-5. As example 1 with `expect(normalize(errorFor(404)))` or
-   `expect(new NotFound("x"))`: not `exposed`.
-6. As example 1 with `.rejects.toBeInstanceOf(...)`: not `exposed`.
-7. `return new Forbidden("denied")` changed to
+5. Pins on `new NotFound("x")`, on `wrap(errorFor(404))`, through
+   `.rejects`, or through a test-local `errorFor`: not credited; on the
+   same line as a credited pin, a wrapped pin is still not credited;
+   `.resolves.toBeInstanceOf` is credited.
+6. As example 1 where the false branch falls through to
+   `if (status >= 400) { return new NotFound("client"); }`: not credited.
+7. A branch returning `cached`, `new Forbidden("denied").asNotFound()`,
+   an imported class, or holding another statement: not credited.
+8. `return new Forbidden("denied")` changed to
    `return new Forbidden("refused")` with the problem's tests: not
    `exposed`, and rule 1 reads no pin on that value seam.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs`
-  pins examples 1 to 7 and the owner-side conditions.
+  pins examples 1 to 8 and the owner-side conditions.
 - `fixtures/typescript-verdict-corpus` pins example 1:
   `jest-mined-tobeinstanceof` reads `credited`.
 
@@ -175,7 +209,10 @@ documented decisions and proceed"). Recorded on #6654.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`:
   `oracle_for_matcher`, `instance_class_argument`.
 - `crates/ripr/src/analysis/language/typescript/instance_class_guard.rs`:
-  `ts_owner_returns_distinct_classes`, `ts_instance_class_facts`.
+  `ts_owner_branches_split_class`, `ts_instance_class_facts`.
+- `crates/ripr/src/analysis/language/typescript/classifier.rs`:
+  `branch_return_expressions` (shared with the RIPR-SPEC-0027 boundary
+  witness).
 - `crates/ripr/src/analysis/language/typescript/classifier.rs`:
   `strongest_family_matching_oracle`, `ts_predicate_boundary_row_activation`,
   `project_credited_instance_rows`, `ts_observes_whole_owner_result`.

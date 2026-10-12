@@ -3738,6 +3738,7 @@ pub(crate) fn classify_change_with_alias_state(
     }
     let instance_facts = ts_instance_class_facts(
         &probe_shape.family,
+        line_text,
         owner,
         &related_candidates,
         alias_map,
@@ -4056,7 +4057,7 @@ pub(crate) fn classify_change_with_alias_state(
         // A post-ladder rule (RIPR-SPEC-0246, RIPR-SPEC-0248) withdrew the
         // ladder's credit; its missing line says why.
         format!(
-            "TypeScript preview adapter: related test uses a `{}` oracle, but a change-specific rule withdrew discrimination credit: {}",
+            "TypeScript preview adapter: a change-specific rule withdrew the discrimination credit of the related `{}` oracle: {}",
             strongest_kind.as_str(),
             missing
                 .first()
@@ -4512,9 +4513,10 @@ pub(crate) fn ts_dropped_term_witness(
                     }
                 }
                 match fold_numeric_expression(term, &bindings) {
-                    // JavaScript adds in the same IEEE doubles, so any
-                    // non-zero fold changes the sum.
-                    Some(value) if value != 0.0 => return DroppedTermWitness::NonZero,
+                    // A double sum absorbs an addend below 2^-52 of its
+                    // magnitude (`6499 + 1e-13 === 6499`). A term of at least
+                    // 1e-6 changes every sum below about 4.5e9.
+                    Some(value) if value.abs() >= 1e-6 => return DroppedTermWitness::NonZero,
                     Some(_) => zero = true,
                     None => unknown = true,
                 }
@@ -4642,7 +4644,7 @@ fn ts_test_pins_identity(test: &TypeScriptTest, owner: &str) -> bool {
 /// `true` when `rest` is exactly one balanced `(...)`, so the observed
 /// expression is the owner call itself and not a member or call on it
 /// (`owner(x)["k"]`, `owner(x)?.has(k)`, `owner(x) .name`).
-fn ts_is_one_argument_list(rest: &str) -> bool {
+pub(crate) fn ts_is_one_argument_list(rest: &str) -> bool {
     if !rest.starts_with('(') {
         return false;
     }
