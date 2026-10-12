@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 5c6cfb0..89240bb 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -11,7 +11,7 @@ pub fn check_name(s: &str) -> Result<&str, NameError> {
+         return Err(NameError::Empty);
+     }
+     if s.len() > 8 {
+-        return Err(NameError::TooLong);
++        return Result::Err(NameError::TooLong);
+     }
+     Ok(s)
+ }

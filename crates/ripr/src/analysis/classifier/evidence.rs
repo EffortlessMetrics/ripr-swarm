@@ -4,10 +4,10 @@ use crate::analysis::classify::{
     PropagationWitnessV1, ReturnOracleAdmission, TransitiveReachIndex, WrapperEntryPairing,
     activation_and_boundary_input, body_contains_owner_call, callee_is_unique,
     chain_forwards_to_observed_hops, chain_passes_effect_target_to_observed_hops, classify,
-    confidence_score, contains_as_whole_word, current_path_witness,
-    has_same_test_boundary_oracle_pairing, helper_only_reach, helper_pins_owner_call,
-    infection_evidence_with_boundary_input, local_flow_sinks, operand_only_pin,
-    oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
+    confidence_score, contains_as_whole_word, current_path_witness, fallible_check_receipt,
+    fallible_literal_witness, has_same_test_boundary_oracle_pairing, helper_only_reach,
+    helper_pins_owner_call, infection_evidence_with_boundary_input, local_flow_sinks,
+    operand_only_pin, oracle_crediting_relations, owner_may_be_reached_unseen, package_prefix,
     propagation_evidence_with_witness, reach_evidence, reveal_outcome,
     same_test_pairing_missing_summary, signature_parameters,
 };
@@ -80,6 +80,26 @@ fn return_ledger_limit(
 impl ClassifiedProbeEvidence {
     pub(in crate::analysis) fn gather(context: &ProbeContext<'_>, reveal_expression: &str) -> Self {
         let test_summaries = context.related_test_summaries();
+        let fallback_pin_syntax = OwnerPinSyntax::default();
+        let pin_syntax = context.owner_pin_syntax.unwrap_or(&fallback_pin_syntax);
+        let fallible_checks = context
+            .owner_fn
+            .map(|owner| {
+                context
+                    .related_tests
+                    .iter()
+                    .filter_map(|(test, _)| {
+                        fallible_check_receipt(
+                            context.probe,
+                            owner,
+                            test,
+                            context.index,
+                            pin_syntax,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
         // Without a resolved owner (a line in a `macro_rules!` template, an
         // impl the index did not attribute) there is no name to search for,
         // so nothing rules reach out.
@@ -103,6 +123,11 @@ impl ClassifiedProbeEvidence {
             _ => None,
         };
         let propagation_witness = current_path_witness(context.probe, &flow_sinks)
+            .or_else(|| {
+                fallible_checks.iter().find_map(|receipt| {
+                    fallible_literal_witness(context.probe, &flow_sinks, receipt)
+                })
+            })
             .or_else(|| {
                 returned_ledger.as_ref().and_then(|_| {
                     crate::analysis::classify::returned_ledger_witness(context.probe, &flow_sinks)
@@ -319,8 +344,6 @@ impl ClassifiedProbeEvidence {
         // run-scoped per-file memo on the context.
         // #4478: the owner-side half of the owner-return pin, established
         // once per probe; `None` keeps every assertion on the token rule.
-        let fallback_pin_syntax = OwnerPinSyntax::default();
-        let pin_syntax = context.owner_pin_syntax.unwrap_or(&fallback_pin_syntax);
         // Every diff-classifier consumer of a covered equality uses this same
         // decision. Keep the original TestSummary and assertion cardinality;
         // filtering a clone would manufacture singleton matching fallbacks.
@@ -427,19 +450,26 @@ impl ClassifiedProbeEvidence {
             })
         };
         let owner_pin_admits = |test: &TestSummary, assertion: &OracleFact| {
-            owner_return_pin.as_ref().is_some_and(|pin| {
-                pin.admits(
-                    test,
-                    assertion,
-                    context.index,
-                    &|file, name| {
-                        context.index.files().get(file).is_some_and(|facts| {
-                            context.test_file_imports_foreign_callee_name(file, &facts.source, name)
-                        })
-                    },
-                    pin_syntax,
-                )
-            })
+            fallible_checks
+                .iter()
+                .any(|receipt| receipt.valid_for(context.probe) && receipt.admits(test, assertion))
+                || owner_return_pin.as_ref().is_some_and(|pin| {
+                    pin.admits(
+                        test,
+                        assertion,
+                        context.index,
+                        &|file, name| {
+                            context.index.files().get(file).is_some_and(|facts| {
+                                context.test_file_imports_foreign_callee_name(
+                                    file,
+                                    &facts.source,
+                                    name,
+                                )
+                            })
+                        },
+                        pin_syntax,
+                    )
+                })
         };
         let reveal = reveal_outcome(
             context.probe,

@@ -42,6 +42,12 @@ The report should:
 - report equal or crossing containing spans as ambiguous span overlaps;
 - report unmatched runtime mutants separately, with the reason they did not
   join;
+- fail closed when the importer extracts zero mutant records from valid JSON
+  (`[]`, `{}`, a non-mutant array, or an empty `outcomes`/`mutants` list).
+  That input is not a successful empty calibration: `ripr calibrate
+  cargo-mutants` returns an error instead of rendering
+  "All imported runtime mutants matched a static seam." Vacuous all-matched
+  wording is reserved for imports that actually contained mutant records;
 - summarize static/runtime agreement in advisory buckets;
 - label imported static/runtime agreement as confidence context without changing
   static classifications;
@@ -206,6 +212,18 @@ when ripr calibrate cargo-mutants runs,
 then the report lists the runtime mutant under unmatched_mutants.
 ```
 
+### Zero recognized mutant records fail closed
+
+```text
+Given a repo-exposure snapshot,
+and --mutants-json is syntactically valid JSON that yields zero mutant
+records ([], {}, ["hello"], or {"outcomes":[]}),
+when ripr calibrate cargo-mutants runs,
+then the command exits nonzero with an error that 0 mutant records were
+recognized, and it does not render "All imported runtime mutants matched
+a static seam."
+```
+
 ### Span containment picks the seam holding the mutated token
 
 ```text
@@ -278,6 +296,11 @@ Current tests:
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_parses_repo_exposure_and_cargo_mutants_json`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_merges_mutants_and_outcomes_by_id`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mutation_calibration_reports_are_advisory_and_structured`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::zero_recognized_mutant_records_fail_closed_instead_of_all_matched`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::empty_import_markdown_does_not_claim_all_mutants_matched`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::matched_import_still_may_say_all_imported_mutants_matched`
+- `crates/ripr/src/output/mutation_calibration/outcome_records.rs::tests::parser_still_returns_empty_for_json_with_no_mutant_records`
+- `crates/ripr/src/cli/commands.rs::tests::calibrate_zero_recognized_mutant_records_fails_closed`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_refuses_a_same_line_seam_that_does_not_contain_the_mutant`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_scores_multi_seam_lines_on_the_innermost_containing_seam`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::span_join_reports_equal_and_crossing_overlaps_and_multiline_containment`

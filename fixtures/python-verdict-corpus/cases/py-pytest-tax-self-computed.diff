@@ -1,0 +1,12 @@
+diff --git a/pricing/core.py b/pricing/core.py
+--- a/pricing/core.py
++++ b/pricing/core.py
+@@ -31,7 +31,7 @@ def discount_cents(tier, subtotal_cents):
+ 
+ def tax_cents(subtotal_cents):
+     """Sales tax on a subtotal, rounded down."""
+-    return subtotal_cents * 8 // 100
++    return subtotal_cents * 9 // 100
+ 
+ 
+ def total_with_tax(subtotal_cents):
