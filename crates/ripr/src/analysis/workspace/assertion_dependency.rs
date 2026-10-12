@@ -204,12 +204,11 @@ fn snapshot(root: &Path) -> Option<BTreeMap<String, String>> {
                 path.canonicalize().ok()?.to_str()?.into(),
             );
         }
-        if path.file_name()? == "Cargo.toml" {
-            if let Some(ref bytes) = bytes {
-                if !manifest_allowed(&parse(bytes)?) {
-                    return None;
-                }
-            }
+        if path.file_name()? == "Cargo.toml"
+            && let Some(ref bytes) = bytes
+            && !manifest_allowed(&parse(bytes)?)
+        {
+            return None;
         }
         identities.insert(
             format!("input:{}", path.to_str()?),
@@ -371,7 +370,7 @@ fn metadata_probe(root: &Path) -> Option<Vec<u8>> {
         let start = std::time::Instant::now();
         loop {
             if std::fs::metadata(&path).ok()?.len() > BUDGET
-                || start.elapsed() >= std::time::Duration::from_secs(120)
+                || start.elapsed() >= std::time::Duration::from_mins(2)
             {
                 let _ = child.terminate_tree();
                 return None;
