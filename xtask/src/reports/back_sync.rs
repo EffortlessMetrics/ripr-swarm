@@ -356,7 +356,7 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
     let unfolded = unfolded_changelog_fragments(&source_root, &options.source_release_head)?;
     if !unfolded.is_empty() {
         return Err(format!(
-            "SOURCE_RELEASE_HEAD shipped unfolded changelog.d fragments {unfolded:?}; the released CHANGELOG.md misses them. Fold them in a source release-copy fix-forward (changelog.d/README.md)"
+            "SOURCE_RELEASE_HEAD shipped unfolded changelog.d fragments {unfolded:?}; the published release notes miss these entries. Back-sync stops here; the release owner decides how to correct the notes (changelog.d/README.md)"
         ));
     }
     let authority_paths =
