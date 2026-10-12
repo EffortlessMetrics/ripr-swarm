@@ -1,0 +1,12 @@
+diff --git a/accounts/ledger.py b/accounts/ledger.py
+--- a/accounts/ledger.py
++++ b/accounts/ledger.py
+@@ -16,7 +16,7 @@ class Account:
+     def deposit(self, amount_cents):
+         if amount_cents <= 0:
+             raise ValueError("deposit must be positive")
+-        self.balance_cents += amount_cents
++        self.balance_cents = self.balance_cents + amount_cents
+ 
+     def can_withdraw(self, amount_cents):
+         return amount_cents <= self.balance_cents

@@ -86,6 +86,8 @@ mod parse;
 mod paths;
 mod probe_shape;
 mod related_tests;
+#[cfg(test)]
+mod replaced_block_tests;
 mod static_limit;
 mod table_rows;
 #[cfg(test)]
@@ -466,6 +468,7 @@ impl TypeScriptAdapter {
                 .iter()
                 .map(|removed| removed.text.as_str())
                 .collect();
+            let counterparts = changed.replacement_counterparts();
             for added in &changed.added_lines {
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
@@ -515,10 +518,21 @@ impl TypeScriptAdapter {
                 {
                     continue;
                 }
-                let old_line_text = changed
-                    .removed_lines
-                    .iter()
-                    .find(|removed| removed.new_side_line == added.line)
+                // Every removed line of a replacement block shares the
+                // new-side line where the added run starts, so matching on
+                // that coordinate alone finds an old line only for the run's
+                // first added line (#7524). Pair by position inside an even
+                // block; an uneven or interleaved block keeps the
+                // same-coordinate match.
+                let old_line_text = counterparts
+                    .get(&added.line)
+                    .copied()
+                    .or_else(|| {
+                        changed
+                            .removed_lines
+                            .iter()
+                            .find(|removed| removed.new_side_line == added.line)
+                    })
                     .map(|removed| removed.text.as_str());
                 if let Some(mut finding) = classify_change_with_alias_state(
                     &changed.path,

@@ -1579,6 +1579,75 @@ fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> 
     Ok(())
 }
 
+fn python_corpus_dir() -> PathBuf {
+    crate::dogfood::repo_rooted_fixture_path("fixtures/python-verdict-corpus")
+}
+
+#[test]
+fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(), String> {
+    let corpus = validated_corpus_without_coverage(&python_corpus_dir())?;
+    assert!(
+        corpus.cases.len() >= 60,
+        "python corpus shrank to {}",
+        corpus.cases.len()
+    );
+    // Every runnable RIPR-SPEC-0238 acceptance example up to 33 keeps a case;
+    // 9 and 10 are left out by `fixtures/python-verdict-corpus/SPEC.md`. The
+    // ids keep the prefix of the spec's draft number, RIPR-SPEC-0233.
+    for example in (1..=33).filter(|n| ![9, 10].contains(n)) {
+        let prefix = format!("py-spec0233-ex{example:02}-");
+        assert!(
+            corpus.cases.iter().any(|c| c.case_id.starts_with(&prefix)),
+            "no case for RIPR-SPEC-0238 example {example}"
+        );
+    }
+    // Every test library the corpus exists to cover keeps cases in both
+    // error directions: discriminated cases measure false actionable, the
+    // rest measure false exposed and false silent. A library whose subject
+    // stays listed after its cases are dropped fails here.
+    for library in ["pytest", "unittest", "hypothesis"] {
+        let prefix = format!("authored-py-{library}-");
+        let states: Vec<TruthState> = corpus
+            .cases
+            .iter()
+            .filter(|c| c.subject_id.starts_with(&prefix))
+            .map(|c| c.truth.state)
+            .collect();
+        assert!(
+            states.contains(&TruthState::Discriminated),
+            "no discriminated {library} case"
+        );
+        assert!(
+            states.iter().any(|s| *s != TruthState::Discriminated),
+            "no {library} case that is not fully discriminated"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn python_expected_rows_agree_with_corpus_labels() -> Result<(), String> {
+    let dir = python_corpus_dir();
+    let corpus = load_corpus(&dir)?;
+    let rows_dir = dir.join("expected").join(ROWS_DIR);
+    assert_eq!(files_under(&rows_dir)?.len(), corpus.cases.len());
+    for case in &corpus.cases {
+        let row: Value =
+            serde_json::from_str(&read(&rows_dir.join(format!("{}.json", case.case_id)))?)
+                .map_err(|err| err.to_string())?;
+        assert_eq!(row["truth"], json!(case.truth.state.as_str()));
+        let observed: Verdict =
+            serde_json::from_value(row["observed_verdict"].clone()).map_err(|e| e.to_string())?;
+        assert_eq!(
+            row["outcome"],
+            json!(score(case.truth.state, observed).as_str()),
+            "{}",
+            case.case_id
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn coverage_mode_follows_the_ledger_file() -> Result<(), String> {
     // The ledger declares coverage: no file, no gate. Presence alone decides,

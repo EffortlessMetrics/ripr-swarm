@@ -111,6 +111,18 @@ thread, `authored-ts-nodetest-pricing` and `authored-ts-vitest-cart`,
 mutants applied by hand), recorded per mutant with the failing test, under the
 labeling toolchain and test command each case names.
 
+### Python corpus
+
+Subjects are authored projects (`authored-py-<library>-<name>`) with a
+`pyproject.toml` or `setup.cfg` marker and no `ripr.toml`, so Python is
+enabled the way a new user's repository enables it. Cases cover pytest
+(asserts, `parametrize`, `raises`, fixtures, `capsys`, `tmp_path`,
+`monkeypatch`), unittest (assert methods, mocks, mixins) and Hypothesis
+(`@given`, `@example`, `assume`), plus at least one case per runnable
+RIPR-SPEC-0238 acceptance example (`fixtures/python-verdict-corpus/SPEC.md`
+lists the examples and alternate forms left out). Truth is a hand-applied
+mutant run of the anchored line under the test command each case records.
+
 ### Perl corpus
 
 ripr does not read Perl; it reads a `ripr-perl-facts-v1` packet
@@ -199,6 +211,8 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `a_report_and_its_rebless_hint_name_the_corpus_language`
 - `only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names`
 - `committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels`
+- `committed_python_corpus_is_valid_and_covers_each_test_library`
+- `python_expected_rows_agree_with_corpus_labels`
 - `committed_perl_corpus_is_valid_and_covers_each_test_library`
 - `perl_expected_rows_agree_with_corpus_labels`
 - `validator_holds_perl_packets_to_their_pins_and_provenance`
