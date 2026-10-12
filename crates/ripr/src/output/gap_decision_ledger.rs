@@ -47,7 +47,13 @@ impl GapDecisionLedgerSourceKind {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct GapDecisionLedgerReport {
     status: String,
+    /// Operator label from `--root`. This is not a checkout identity: `.`
+    /// canonicalizes to whatever directory later reads it (#7382).
     root: String,
+    /// Canonical directory `ripr reports gap-ledger` resolved at write time.
+    /// Absent on ledgers written before the field and on in-memory builders
+    /// that do not own a real directory.
+    repository_root: Option<String>,
     generated_at: String,
     inputs: GapDecisionLedgerInputs,
     summary: GapDecisionLedgerSummary,
@@ -74,6 +80,8 @@ pub(crate) struct GapDecisionLedgerReport {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct ParsedGapRecordSource {
     pub(crate) root: Option<String>,
+    /// Canonical checkout recorded by the writer, when present (#7382).
+    pub(crate) repository_root: Option<String>,
     pub(crate) generated_at: Option<String>,
     pub(crate) records: Vec<GapRecord>,
 }
@@ -533,6 +541,7 @@ pub(crate) fn build_gap_decision_ledger_report(
     GapDecisionLedgerReport {
         status,
         root: input.root,
+        repository_root: None,
         generated_at: input.generated_at,
         inputs: GapDecisionLedgerInputs {
             source_kind: input.source_kind.as_str(),
@@ -570,6 +579,8 @@ pub(crate) fn render_gap_decision_ledger_json(
         kind: &'static str,
         status: &'a str,
         root: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        repository_root: Option<&'a str>,
         generated_at: &'a str,
         inputs: &'a GapDecisionLedgerInputs,
         summary: &'a GapDecisionLedgerSummary,
@@ -592,6 +603,7 @@ pub(crate) fn render_gap_decision_ledger_json(
         kind: REPORT_KIND,
         status: &report.status,
         root: &report.root,
+        repository_root: report.repository_root.as_deref(),
         generated_at: &report.generated_at,
         inputs: &report.inputs,
         summary: &report.summary,
@@ -641,6 +653,13 @@ pub(crate) fn stamp_gap_decision_ledger_source_subject(
         }
     }
     Ok(())
+}
+
+/// Record the canonical checkout the ledger writer resolved (#7382).
+/// `root` stays the operator label; consumers that must not follow `.`
+/// compare this field.
+pub(crate) fn stamp_repository_root(report: &mut GapDecisionLedgerReport, repository_root: String) {
+    report.repository_root = Some(repository_root);
 }
 
 /// Every workspace file a ledger derived from this analysis output would
@@ -723,6 +742,12 @@ pub(crate) fn render_gap_decision_ledger_markdown(report: &GapDecisionLedgerRepo
     out.push_str("# RIPR Gap Decision Ledger\n\n");
     out.push_str(&format!("Status: `{}`\n\n", md_inline(&report.status)));
     out.push_str(&format!("Root: `{}`\n\n", md_inline(&report.root)));
+    if let Some(repository_root) = report.repository_root.as_deref() {
+        out.push_str(&format!(
+            "Repository root: `{}`\n\n",
+            md_inline(repository_root)
+        ));
+    }
     out.push_str("Authority: gate-decision artifacts own pass/fail authority. This report is advisory projection input.\n\n");
     if let Some(outcome) = &report.analysis_outcome {
         let complete = outcome
@@ -863,6 +888,13 @@ fn parse_gap_record_source_json_with_root(
         .and_then(|object| object.get("root"))
         .and_then(Value::as_str)
         .map(ToString::to_string);
+    let repository_root = value
+        .as_object()
+        .and_then(|object| object.get("repository_root"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string);
     let generated_at = value
         .as_object()
         .and_then(|object| object.get("generated_at"))
@@ -886,6 +918,7 @@ fn parse_gap_record_source_json_with_root(
     }
     Ok(ParsedGapRecordSource {
         root,
+        repository_root,
         generated_at,
         records,
     })
@@ -6512,12 +6545,32 @@ mod tests {
         let source = parse_gap_record_source_json(&value.to_string())
             .map_err(|err| format!("parse failed: {err}"))?;
         assert_eq!(source.root.as_deref(), Some("fixtures/python/basic"));
+        assert_eq!(source.repository_root.as_deref(), None);
         assert_eq!(
             source.generated_at.as_deref(),
             Some("unix_ms:1778240100000")
         );
         assert_eq!(source.records.len(), 1);
         assert_eq!(source.records[0].gap_id, "gap:python:pricing-boundary");
+        Ok(())
+    }
+
+    #[test]
+    fn repository_root_round_trips_without_replacing_the_operator_label() -> Result<(), String> {
+        let mut report = build_gap_decision_ledger_report(GapDecisionLedgerInput {
+            root: ".".to_string(),
+            generated_at: "test".to_string(),
+            source_kind: GapDecisionLedgerSourceKind::Records,
+            records_path: "records.json".to_string(),
+            records_json: Ok(r#"{"records":[]}"#.to_string()),
+        });
+        stamp_repository_root(&mut report, "/repo/checkout".to_string());
+        let rendered = render_gap_decision_ledger_json(&report)?;
+        let parsed = parse_gap_record_source_json(&rendered)?;
+        assert_eq!(parsed.root.as_deref(), Some("."));
+        assert_eq!(parsed.repository_root.as_deref(), Some("/repo/checkout"));
+        let markdown = render_gap_decision_ledger_markdown(&report);
+        assert!(markdown.contains("Repository root: `/repo/checkout`"));
         Ok(())
     }
 

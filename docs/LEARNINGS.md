@@ -3,6 +3,18 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-11: A gap-ledger `root` of `.` is not a checkout (#7382)
+
+`ripr reports gap-ledger` used to stamp `root` with the `--root` label, which
+defaults to `.`. `ripr rerun --gap` then canonicalized both sides, so `.`
+matched whatever directory the rerun ran in and a foreign ledger failed later
+as `canonical_gap_unresolved`. The writer now also stamps `repository_root`
+with the canonical directory. Rerun compares that field. A ledger that still
+has only `.` or `./` is `stale_gap_ledger` until regenerated. A relative label
+that names a real path still canonicalizes from the invocation directory.
+Do not use parent-repo `HEAD` as this identity: fixture roots share the ripr
+checkout, and `source_subject` already records the analyzed bytes.
+
 ## 2026-10-11: Digest `Related test (1 of N)` counts matched rows, not tests (#6807)
 
 `Finding::related_tests_total()` is `related_tests_matched_total`: matched

@@ -17430,6 +17430,16 @@ not rerun analysis, infer analyzer truth, publish comments, edit source,
 generate tests, call providers, run mutation testing, change gate policy, or
 make CI blocking by default.
 
+`root` is the `--root` label the operator passed. It is not a checkout
+identity: `.` canonicalizes to the directory that later reads the file.
+`ripr reports gap-ledger` also writes additive `repository_root`, the
+canonical directory resolved at write time (#7382). `ripr rerun --gap`
+compares that field to its own `--root`. A ledger that still has only
+`root: "."` (or `./`) is `stale_gap_ledger` until it is regenerated; a
+relative label that names a real path keeps the previous path comparison.
+Head revision is not part of this identity: `source_subject` already records
+the file bytes the analysis saw.
+
 Each supplied `GapRecord` may carry `seam_id` when the producer owns a typed
 canonical seam identity. Generic ordered `evidence_ids`, file/line placement,
 display text, and owner names are not seam-ID fallbacks. A repair route may
@@ -17496,6 +17506,7 @@ JSON shape:
   "kind": "gap_decision_ledger",
   "status": "advisory",
   "root": ".",
+  "repository_root": "/abs/checkout",
   "generated_at": "unix_ms:1778710000000",
   "inputs": {
     "source_kind": "records",

@@ -566,6 +566,16 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
         &mut report,
         &selected_root,
     )?;
+    let canonical_root = std::fs::canonicalize(&selected_root).map_err(|err| {
+        format!(
+            "resolve reports gap-ledger --root {} failed: {err}",
+            selected_root.display()
+        )
+    })?;
+    output::gap_decision_ledger::stamp_repository_root(
+        &mut report,
+        crate::output::path::display_path(&canonical_root),
+    );
     let rendered_json = output::gap_decision_ledger::render_gap_decision_ledger_json(&report)?;
     let rendered_md = output::gap_decision_ledger::render_gap_decision_ledger_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;

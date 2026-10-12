@@ -638,20 +638,15 @@ fn rerun_gap(
             gap_ledger.display()
         ))
     })?;
-    if let Some(ledger_root) = source
-        .root
-        .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        && !same_root(root, Path::new(ledger_root))
-    {
-        return Ok(limited_report(
-            selector,
-            "stale_gap_ledger",
-            format!(
-                "gap ledger root `{ledger_root}` does not match rerun root `{}`",
-                root.display()
-            ),
-        ));
+    // #7382: `.` is the writer's label, not a checkout. Canonicalize only a
+    // recorded repository root, or a label that names a real path. A bare
+    // `.` matches every working directory, so it cannot pass this guard.
+    if let Some(message) = stale_ledger_root_message(
+        root,
+        source.root.as_deref(),
+        source.repository_root.as_deref(),
+    ) {
+        return Ok(limited_report(selector, "stale_gap_ledger", message));
     }
     let records = match resolve_gap_records(source.records, canonical_gap_id) {
         Ok(records) => records,
@@ -1267,6 +1262,51 @@ fn same_root(root: &Path, ledger_root: &Path) -> bool {
         (Ok(root), Ok(ledger_root)) => root == ledger_root,
         _ => false,
     }
+}
+
+/// `.` and `./` name the reader's working directory, so they are not a
+/// persisted checkout identity (#7382).
+fn cwd_root_label(root: &str) -> bool {
+    let normalized = root.trim().replace('\\', "/");
+    let mut value = normalized.as_str();
+    while let Some(stripped) = value.strip_prefix("./") {
+        value = stripped;
+    }
+    value == "." || value.is_empty()
+}
+
+fn stale_ledger_root_message(
+    rerun_root: &Path,
+    ledger_root: Option<&str>,
+    repository_root: Option<&str>,
+) -> Option<String> {
+    if let Some(identity) = repository_root
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if same_root(rerun_root, Path::new(identity)) {
+            return None;
+        }
+        return Some(format!(
+            "gap ledger repository root `{identity}` does not match rerun root `{}`; regenerate the gap decision ledger for this checkout",
+            rerun_root.display()
+        ));
+    }
+    let Some(ledger_root) = ledger_root.map(str::trim).filter(|value| !value.is_empty()) else {
+        return None;
+    };
+    if cwd_root_label(ledger_root) {
+        return Some(format!(
+            "gap ledger root `{ledger_root}` is not a repository identity; regenerate the gap decision ledger so it records the canonical checkout"
+        ));
+    }
+    if !same_root(rerun_root, Path::new(ledger_root)) {
+        return Some(format!(
+            "gap ledger root `{ledger_root}` does not match rerun root `{}`",
+            rerun_root.display()
+        ));
+    }
+    None
 }
 
 fn report(
@@ -3161,6 +3201,119 @@ mod tests {
         if same_root(missing, missing) {
             return Err("two failed root canonicalizations compared equal".to_string());
         }
+        Ok(())
+    }
+
+    #[test]
+    fn rerun_gap_rejects_cwd_label_without_repository_identity() -> Result<(), String> {
+        let ledger_dir = unique_temp_root("rerun-dot-ledger")?;
+        let ledger = ledger_dir.join("gap-ledger.json");
+        for label in [".", "./", ".\\"] {
+            let ledger_json = serde_json::json!({ "root": label, "records": [] });
+            std::fs::write(
+                &ledger,
+                serde_json::to_vec(&ledger_json)
+                    .map_err(|err| format!("serialize dot ledger: {err}"))?,
+            )
+            .map_err(|err| format!("write dot ledger: {err}"))?;
+            let report = rerun_gap(
+                Path::new("."),
+                &crate::config::RiprConfig::default(),
+                "gap:example",
+                &ledger,
+            )?;
+            let limitation = report
+                .limitation
+                .as_ref()
+                .ok_or_else(|| format!("dot ledger `{label}` produced no limitation"))?;
+            if report.state != "limited"
+                || limitation.kind != "stale_gap_ledger"
+                || !limitation.message.contains("not a repository identity")
+            {
+                return Err(format!(
+                    "dot ledger `{label}` was accepted: state={} kind={} message={}",
+                    report.state, limitation.kind, limitation.message
+                ));
+            }
+        }
+        let _ = std::fs::remove_dir_all(&ledger_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn rerun_gap_compares_repository_root_not_the_dot_label() -> Result<(), String> {
+        let checkout = unique_temp_root("rerun-repo-root")?;
+        let other = unique_temp_root("rerun-other-root")?;
+        let ledger = checkout.join("gap-ledger.json");
+        let checkout_identity = crate::output::path::display_path(
+            &std::fs::canonicalize(&checkout).map_err(|err| err.to_string())?,
+        );
+        let other_identity = crate::output::path::display_path(
+            &std::fs::canonicalize(&other).map_err(|err| err.to_string())?,
+        );
+        let matched_json = serde_json::json!({
+            "root": ".",
+            "repository_root": checkout_identity,
+            "records": []
+        });
+        std::fs::write(
+            &ledger,
+            serde_json::to_vec(&matched_json)
+                .map_err(|err| format!("serialize matching ledger: {err}"))?,
+        )
+        .map_err(|err| format!("write matching ledger: {err}"))?;
+        let matched = rerun_gap(
+            &checkout,
+            &crate::config::RiprConfig::default(),
+            "gap:missing",
+            &ledger,
+        )?;
+        if matched
+            .limitation
+            .as_ref()
+            .is_some_and(|limitation| limitation.kind == "stale_gap_ledger")
+        {
+            return Err(format!(
+                "matching repository root was stale: {}",
+                matched
+                    .limitation
+                    .as_ref()
+                    .map(|item| item.message.as_str())
+                    .unwrap_or("")
+            ));
+        }
+        let foreign_json = serde_json::json!({
+            "root": ".",
+            "repository_root": &other_identity,
+            "records": []
+        });
+        std::fs::write(
+            &ledger,
+            serde_json::to_vec(&foreign_json)
+                .map_err(|err| format!("serialize foreign ledger: {err}"))?,
+        )
+        .map_err(|err| format!("write foreign ledger: {err}"))?;
+        let foreign = rerun_gap(
+            &checkout,
+            &crate::config::RiprConfig::default(),
+            "gap:missing",
+            &ledger,
+        )?;
+        let limitation = foreign
+            .limitation
+            .as_ref()
+            .ok_or("foreign repository root produced no limitation")?;
+        if foreign.state != "limited"
+            || limitation.kind != "stale_gap_ledger"
+            || !limitation.message.contains(&other_identity)
+        {
+            return Err(format!(
+                "foreign repository root was accepted: state={} kind={} message={}",
+                foreign.state, limitation.kind, limitation.message
+            ));
+        }
+        let _ = std::fs::remove_dir_all(&checkout);
+        let _ = std::fs::remove_dir_all(&other);
         Ok(())
     }
 
