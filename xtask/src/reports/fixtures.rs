@@ -10,7 +10,7 @@
 //! `evidence_promotion`, and `tests.rs`) compile unchanged.
 
 use crate::no_panic::contains_word;
-use crate::run::{run, run_output_owned, run_output_owned_with_envs};
+use crate::run::{run, run_output_optional, run_output_owned, run_output_owned_with_envs};
 use crate::{
     collect_pr_changes, forbidden_static_terms, has_markdown_heading, json_escape, markdown_cell,
     normalize_path, read_text_lossy, ripr_debug_binary, write_json_string_array, write_report,
@@ -119,13 +119,20 @@ pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn goldens_check() -> Result<(), String> {
     let run_set = collect_golden_runs()?;
-    let entries = write_golden_drift_reports(&run_set.runs, &run_set.violations)?;
+    // One provenance snapshot backs both the drift report and the console
+    // failure card, so the two always name the same build (#7401).
+    let provenance = golden_drift_provenance();
+    let entries = write_golden_drift_reports(&run_set.runs, &run_set.violations, &provenance)?;
     let body = goldens_check_report_body(&run_set.fixtures, &run_set.runs, &run_set.violations);
     write_report("goldens.md", &body)?;
     if run_set.violations.is_empty() {
         Ok(())
     } else {
-        Err(goldens_check_failure_message(&entries, &run_set.violations))
+        Err(goldens_check_failure_message(
+            &entries,
+            &run_set.violations,
+            &provenance,
+        ))
     }
 }
 
@@ -150,10 +157,17 @@ pub(crate) fn golden_assistant_loop_health_contract_violations_at(
 pub(crate) fn goldens_check_failure_message(
     entries: &[GoldenDriftEntry],
     violations: &[String],
+    provenance: &GoldenDriftProvenance,
 ) -> String {
     let mut message = String::from(
         "goldens check failed; semantic drift detail in target/ripr/reports/golden-drift.md\n",
     );
+    // The actual side came from one specific build; name it so a CI log and
+    // a local run can be told apart without guessing (#7401).
+    message.push_str(&format!(
+        "  produced by: {} (binary `{}`, revision `{}`)\n",
+        provenance.ripr_version, provenance.binary, provenance.revision
+    ));
     for entry in entries {
         let blessing = if entry.blessing_reason_present {
             "blessing CHANGELOG present"
@@ -198,7 +212,8 @@ pub(crate) fn goldens_check_failure_message(
 
 pub(crate) fn golden_drift_impl() -> Result<(), String> {
     let run_set = collect_golden_runs()?;
-    write_golden_drift_reports(&run_set.runs, &run_set.violations)?;
+    let provenance = golden_drift_provenance();
+    write_golden_drift_reports(&run_set.runs, &run_set.violations, &provenance)?;
     if run_set
         .violations
         .iter()
@@ -1228,14 +1243,60 @@ fn goldens_check_report_body(
     body
 }
 
+/// Build identity for the actual side of a golden drift report (#7401).
+/// `goldens check` compares committed `expected/` bytes against bytes a
+/// freshly built binary just produced, but neither the console failure card
+/// nor the drift report recorded which build the actual side came from — a
+/// drift entry could not be tied to the binary that generated it. Every
+/// field fails soft to an explicit `unavailable` note: identity here is
+/// disclosure, not gate authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct GoldenDriftProvenance {
+    /// The worktree-absolute debug binary every fixture spawn used.
+    pub(crate) binary: String,
+    /// Its `ripr --version` line: `ripr <version> (<commit>[-dirty])`.
+    pub(crate) ripr_version: String,
+    /// `git rev-parse HEAD` of the checkout the report ran in.
+    pub(crate) revision: String,
+}
+
+fn golden_drift_provenance() -> GoldenDriftProvenance {
+    let binary = ripr_fixture_binary().unwrap_or_else(|_| "unavailable".to_string());
+    let ripr_version = if binary == "unavailable" {
+        "unavailable".to_string()
+    } else {
+        run_output_optional(&binary, &["--version"])
+            .ok()
+            .and_then(|text| {
+                text.lines()
+                    .next()
+                    .map(str::trim)
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "unavailable".to_string())
+    };
+    let revision = run_output_optional("git", &["rev-parse", "HEAD"])
+        .ok()
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "unavailable".to_string());
+    GoldenDriftProvenance {
+        binary,
+        ripr_version,
+        revision,
+    }
+}
+
 fn write_golden_drift_reports(
     runs: &[FixtureRun],
     violations: &[String],
+    provenance: &GoldenDriftProvenance,
 ) -> Result<Vec<GoldenDriftEntry>, String> {
     let changed_paths = collect_changed_paths_set().unwrap_or_default();
     let entries = golden_drift_entries(runs, &changed_paths)?;
-    let markdown = golden_drift_markdown(&entries, violations);
-    let json = golden_drift_json(&entries, violations);
+    let markdown = golden_drift_markdown(&entries, violations, provenance);
+    let json = golden_drift_json(&entries, violations, provenance);
     write_report("golden-drift.md", &markdown)?;
     write_report("golden-drift.json", &json)?;
     Ok(entries)
@@ -1391,7 +1452,11 @@ pub(crate) fn golden_drift_semantics(
     }
 }
 
-fn golden_drift_markdown(entries: &[GoldenDriftEntry], violations: &[String]) -> String {
+fn golden_drift_markdown(
+    entries: &[GoldenDriftEntry],
+    violations: &[String],
+    provenance: &GoldenDriftProvenance,
+) -> String {
     let status = if violations
         .iter()
         .any(|violation| !violation.contains("drift for fixture"))
@@ -1404,7 +1469,11 @@ fn golden_drift_markdown(entries: &[GoldenDriftEntry], violations: &[String]) ->
     };
     let mut body = format!("# ripr golden drift report\n\nStatus: {status}\n\n");
     body.push_str("This report summarizes expected-output drift for reviewer inspection. It never blesses goldens.\n\n");
-    body.push_str("## Summary\n\n");
+    body.push_str("## Provenance\n\n");
+    body.push_str(&format!("- binary: `{}`\n", provenance.binary));
+    body.push_str(&format!("- ripr version: `{}`\n", provenance.ripr_version));
+    body.push_str(&format!("- revision: `{}`\n", provenance.revision));
+    body.push_str("\n## Summary\n\n");
     body.push_str(&format!("- drift entries: {}\n", entries.len()));
     body.push_str(&format!(
         "- fixture errors: {}\n",
@@ -1489,7 +1558,11 @@ fn golden_drift_markdown(entries: &[GoldenDriftEntry], violations: &[String]) ->
     body
 }
 
-fn golden_drift_json(entries: &[GoldenDriftEntry], violations: &[String]) -> String {
+fn golden_drift_json(
+    entries: &[GoldenDriftEntry],
+    violations: &[String],
+    provenance: &GoldenDriftProvenance,
+) -> String {
     let status = if violations
         .iter()
         .any(|violation| !violation.contains("drift for fixture"))
@@ -1504,6 +1577,20 @@ fn golden_drift_json(entries: &[GoldenDriftEntry], violations: &[String]) -> Str
     body.push_str("  \"schema_version\": \"0.1\",\n");
     body.push_str(&format!("  \"status\": \"{}\",\n", json_escape(status)));
     body.push_str(&format!("  \"drift_count\": {},\n", entries.len()));
+    body.push_str("  \"provenance\": {\n");
+    body.push_str(&format!(
+        "    \"binary\": \"{}\",\n",
+        json_escape(&provenance.binary)
+    ));
+    body.push_str(&format!(
+        "    \"ripr_version\": \"{}\",\n",
+        json_escape(&provenance.ripr_version)
+    ));
+    body.push_str(&format!(
+        "    \"revision\": \"{}\"\n",
+        json_escape(&provenance.revision)
+    ));
+    body.push_str("  },\n");
     body.push_str("  \"entries\": [\n");
     for (index, entry) in entries.iter().enumerate() {
         if index > 0 {
@@ -1526,6 +1613,23 @@ fn golden_drift_json(entries: &[GoldenDriftEntry], violations: &[String]) -> Str
             "      \"actual\": \"{}\",\n",
             json_escape(&entry.actual)
         ));
+        // Each entry carries the build identity too, so a copied or
+        // retained single entry stays tied to the binary that produced its
+        // actual side (#7401).
+        body.push_str("      \"provenance\": {\n");
+        body.push_str(&format!(
+            "        \"binary\": \"{}\",\n",
+            json_escape(&provenance.binary)
+        ));
+        body.push_str(&format!(
+            "        \"ripr_version\": \"{}\",\n",
+            json_escape(&provenance.ripr_version)
+        ));
+        body.push_str(&format!(
+            "        \"revision\": \"{}\"\n",
+            json_escape(&provenance.revision)
+        ));
+        body.push_str("      },\n");
         body.push_str(&format!(
             "      \"changed_line_count\": {},\n",
             entry.semantics.changed_line_count
@@ -2091,6 +2195,55 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn golden_drift_reports_record_the_producing_build() -> Result<(), String> {
+        // #7401: neither the drift report nor the console card recorded which
+        // binary build produced the actual side; both now carry binary,
+        // version, and revision in the header and in each JSON entry.
+        let provenance = GoldenDriftProvenance {
+            binary: "/work/target/debug/ripr".to_string(),
+            ripr_version: "ripr 0.11.0 (abc123)".to_string(),
+            revision: "abc123".to_string(),
+        };
+        let entries = vec![GoldenDriftEntry {
+            fixture: "python_field_assignment_shape".to_string(),
+            surface: "check.json".to_string(),
+            expected: "fixtures/x/expected/check.json".to_string(),
+            actual: "target/x/actual/check.json".to_string(),
+            blessing_reason_required: true,
+            blessing_reason_present: false,
+            semantics: GoldenDriftSemantics::default(),
+        }];
+        let markdown = golden_drift_markdown(&entries, &[], &provenance);
+        assert!(markdown.contains("## Provenance"), "{markdown}");
+        assert!(
+            markdown.contains("- binary: `/work/target/debug/ripr`"),
+            "{markdown}"
+        );
+        assert!(
+            markdown.contains("- ripr version: `ripr 0.11.0 (abc123)`"),
+            "{markdown}"
+        );
+        assert!(markdown.contains("- revision: `abc123`"), "{markdown}");
+
+        let json = golden_drift_json(&entries, &[], &provenance);
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|error| format!("golden drift JSON must parse: {error}"))?;
+        assert_eq!(value["provenance"]["binary"], "/work/target/debug/ripr");
+        assert_eq!(value["provenance"]["ripr_version"], "ripr 0.11.0 (abc123)");
+        assert_eq!(value["provenance"]["revision"], "abc123");
+        assert_eq!(
+            value["entries"][0]["provenance"]["binary"],
+            "/work/target/debug/ripr"
+        );
+        assert_eq!(
+            value["entries"][0]["provenance"]["ripr_version"],
+            "ripr 0.11.0 (abc123)"
+        );
+        assert_eq!(value["entries"][0]["provenance"]["revision"], "abc123");
+        Ok(())
+    }
+
     #[test]
     fn cwd_projection_unquotes_a_spaced_checkout_and_keeps_needed_quotes() {
         let prefix = "/tmp/my checkout/";

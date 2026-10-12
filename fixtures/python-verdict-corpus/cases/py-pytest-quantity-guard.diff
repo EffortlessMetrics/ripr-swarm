@@ -1,0 +1,12 @@
+diff --git a/pricing/core.py b/pricing/core.py
+--- a/pricing/core.py
++++ b/pricing/core.py
+@@ -42,7 +42,7 @@ def total_with_tax(subtotal_cents):
+ def parse_quantity(text):
+     """Parse a positive order quantity."""
+     value = int(text)
+-    if value <= 0:
++    if value < 1:
+         raise ValueError("quantity must be positive")
+     return value
+ 

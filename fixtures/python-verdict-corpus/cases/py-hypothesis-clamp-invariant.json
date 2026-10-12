@@ -1,0 +1,44 @@
+{
+  "case_id": "py-hypothesis-clamp-invariant",
+  "subject_id": "authored-py-hypothesis-stats",
+  "diff": "cases/py-hypothesis-clamp-invariant.diff",
+  "anchor": {
+    "file": "stats/__init__.py",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "hypothesis_range_invariant_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return max(lo, min(x, hi - 1))",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: clamp(10, 0, 5) returns 4 instead of 5"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "test_clamp_stays_in_range is a Hypothesis property that checks only `lo <= clamp(...) <= hi`; `min(x, hi - 1)` still stays in range, so it passes. ripr reports static_unknown with property_based_test, an acceptable limit.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

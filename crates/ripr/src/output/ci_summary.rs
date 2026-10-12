@@ -255,9 +255,18 @@ impl Summary {
         } else {
             self.line("- Status: `missing_start_here`");
             self.line("- State: `missing_artifact`");
-            self.line(&format!(
-                "- Safe next action: run `ripr first-pr --root . --base origin/{base_ref} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet {WORKFLOW_AGENT_PACKET_ARTIFACT} --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports`."
-            ));
+            if base_ref.is_empty() {
+                // Fail closed (#7368): with no base_ref or default_branch in
+                // the event payload, `origin/{base_ref}` is the literal
+                // `origin/`, and the printed command's refspec is invalid.
+                // Name the real condition instead of a next action that
+                // cannot succeed.
+                self.line("- Safe next action: no base is derivable from the event payload (base_ref and default_branch are both empty); re-run with an event JSON that names the repository's default branch, or resolve the base commit and pass `ripr first-pr --base <ref>` explicitly.");
+            } else {
+                self.line(&format!(
+                    "- Safe next action: run `ripr first-pr --root . --base origin/{base_ref} --head HEAD --gap-ledger target/ripr/reports/gap-decision-ledger.json --first-action target/ripr/reports/first-useful-action.json --review-comments target/ripr/review/comments.json --agent-packet {WORKFLOW_AGENT_PACKET_ARTIFACT} --gate-decision target/ripr/reports/gate-decision.json --receipts-dir target/ripr/receipts --out-dir target/ripr/reports`."
+                ));
+            }
             self.line("- Fallback safe next action: run `ripr first-action --root . --pr-guidance target/ripr/review/comments.json --out target/ripr/reports/first-useful-action.json --out-md target/ripr/reports/first-useful-action.md` after attaching at least one explicit input.");
             self.line("- Boundary: missing start-here packet does not fail generated CI or create gate authority.");
         }

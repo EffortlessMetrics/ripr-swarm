@@ -180,6 +180,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::GoldenDrift => super::reports::golden_drift(),
         XtaskCommand::CiFast => super::ci_fast(),
         XtaskCommand::CiFull => super::ci_full(),
+        XtaskCommand::CheckPolicyAll => super::policy::check_policy_all(),
         XtaskCommand::CheckStaticLanguage => super::check_static_language(),
         XtaskCommand::CheckAgentSkills => super::agent_skills::check(),
         XtaskCommand::CheckNoPanicFamily(args) => {
