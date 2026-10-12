@@ -4129,4 +4129,108 @@ mod tests {
         fs::remove_dir_all(&root).map_err(|err| format!("remove {}: {err}", root.display()))?;
         Ok(())
     }
+
+    // These are explicit synthetic guard discriminators, separate from the
+    // real producer/projector -> framed-LSP composition proof (#7471).
+    #[test]
+    fn actionable_projection_rejects_unknown_missing_and_recommendation_provenance() {
+        let artifact = actionable_gaps_report();
+        let packet = &artifact["packets"][0];
+        assert_eq!(validate_actionable_packet_projection_fields(packet), Ok(()));
+        for source in [
+            json!("unrecognized.verify_command"),
+            json!("evidence_record.recommendation.verify_command"),
+            json!(""),
+            Value::Null,
+            json!(42),
+            json!(true),
+            json!([]),
+            json!({}),
+        ] {
+            let mut altered = packet.clone();
+            altered["verify_command_source"] = source.clone();
+            assert!(
+                matches!(
+                    validate_actionable_packet_projection_fields(&altered),
+                    Err(GapArtifactRejection::MalformedArtifact(_))
+                ),
+                "an allow-all provenance shortcut must refuse {source}: {altered}"
+            );
+        }
+        let mut missing = packet.clone();
+        if let Some(fields) = missing.as_object_mut() {
+            fields.remove("verify_command_source");
+        }
+        assert!(matches!(
+            validate_actionable_packet_projection_fields(&missing),
+            Err(GapArtifactRejection::MalformedArtifact(_))
+        ));
+    }
+
+    #[test]
+    fn actionable_projection_rejects_broad_snapshot_verify_with_either_recognized_source() {
+        let artifact = actionable_gaps_report();
+        let packet = &artifact["packets"][0];
+        assert_eq!(validate_actionable_packet_projection_fields(packet), Ok(()));
+        // Explicit forged-eligible negative. Shell/root safety alone permits
+        // this safe command body; it does not establish bounded verification.
+        for source in [
+            "canonical_item.verify_command",
+            "related_test_or_observer.name",
+        ] {
+            let mut broad = packet.clone();
+            broad["verify_command_source"] = json!(source);
+            broad["verify_command"] = json!(
+                "ripr agent verify --root . --before target/ripr/reports/before.repo-exposure.json --after target/ripr/reports/after.repo-exposure.json --json"
+            );
+            assert!(
+                matches!(
+                    validate_actionable_packet_projection_fields(&broad),
+                    Err(GapArtifactRejection::MalformedArtifact(_))
+                ),
+                "recognized provenance must not upgrade a broad snapshot comparison: {broad}"
+            );
+        }
+    }
+
+    #[test]
+    fn actionable_projection_related_source_preserves_exclusion_and_payload_guards() {
+        for source in [
+            "canonical_item.verify_command",
+            "related_test_or_observer.name",
+        ] {
+            let mut packet = actionable_gaps_report()["packets"][0].clone();
+            packet["verify_command_source"] = json!(source);
+            for (field, value) in [
+                ("public_projection_eligible", json!(false)),
+                (
+                    "projection_exclusion_reasons",
+                    json!(["unbounded_verify_command"]),
+                ),
+            ] {
+                let mut excluded = packet.clone();
+                excluded[field] = value;
+                assert!(matches!(
+                    validate_actionable_packet_projection_fields(&excluded),
+                    Err(GapArtifactRejection::MalformedArtifact(_))
+                ));
+            }
+        }
+        for command in [
+            "ripr agent verify --root ../outside --json",
+            "ripr agent verify --root . --json; echo injected",
+        ] {
+            let mut unsafe_artifact = actionable_gaps_report();
+            unsafe_artifact["packets"][0]["verify_command_source"] =
+                json!("related_test_or_observer.name");
+            unsafe_artifact["packets"][0]["verify_command"] = json!(command);
+            assert_eq!(
+                validate_gap_artifact(&unsafe_artifact, &context(&[LanguageId::Rust])),
+                Err(GapArtifactRejection::MalformedCommandPayload(
+                    command.to_string()
+                )),
+                "accepting related provenance must preserve the full command/root safety gate"
+            );
+        }
+    }
 }
