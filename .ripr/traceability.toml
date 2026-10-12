@@ -5938,6 +5938,9 @@ tests = [
     "crates/ripr/src/output/review_comments.rs::tests::review_comments_seam_winner_keeps_its_key_past_the_caps",
   "crates/ripr/src/output/gate.rs::tests::gate_markdown_projects_complete_repair_route_for_ci_summary",
   "crates/ripr/src/output/gate.rs::tests::gate_markdown_projects_incomplete_route_limitation_without_fabricated_command",
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_evaluate_refuses_missing_root",
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_evaluate_refuses_file_root",
+  "crates/ripr/src/cli/commands/gate.rs::tests::gate_evaluate_refuses_relative_missing_root",
   "crates/ripr/src/output/gate/presentation.rs::tests::production_caller_target_markdown_preserves_explicit_location",
   "xtask/src/main.rs::tests::dogfood_blocking_gate_report_is_self_contained",
   "xtask/src/verification_contracts.rs::check_verification_contracts"
@@ -5955,6 +5958,7 @@ code = [
   "crates/ripr/src/output/gate/repair_route.rs",
   "crates/ripr/src/output/gate/presentation.rs",
   "crates/ripr/src/output/gap_decision_ledger.rs",
+  "crates/ripr/src/cli/commands/gate.rs",
   "crates/ripr/tests/cli_smoke.rs",
   "xtask/src/main.rs",
   "xtask/src/verification_contracts.rs",
