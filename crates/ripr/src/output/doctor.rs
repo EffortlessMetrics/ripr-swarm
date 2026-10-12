@@ -1217,9 +1217,19 @@ fn evaluate_doctor_core_with_probe(
 
 /// Directories a nested Cargo.toml walk never enters. These are never a
 /// project root; walking them would credit `target/` scratch with a false
-/// manifest.
-const NESTED_CARGO_TOML_SKIP_DIRS: &[&str] = &[".git", "target", "node_modules", ".direnv"];
+/// manifest or stall doctor on a diagnostic command.
+const NESTED_CARGO_TOML_SKIP_DIRS: &[&str] = &[
+    ".git",
+    "target",
+    "node_modules",
+    ".direnv",
+    ".venv",
+    "vendor",
+];
 const NESTED_CARGO_TOML_MAX_DEPTH: usize = 8;
+/// Cap on directories visited during the nested walk so doctor cannot stall
+/// from `$HOME` or a large tree that has no Cargo.toml.
+const NESTED_CARGO_TOML_MAX_DIRS: usize = 512;
 
 /// Where doctor found a Cargo.toml for the `cargo_toml` check (#7466).
 enum CargoTomlFound {
@@ -1252,8 +1262,9 @@ fn manifest_declares_workspace(manifest: &Path) -> bool {
 /// `resolve_project_root` is not this check: it walks up and can return a git
 /// top level or a JS/Python workspace marker that is not a Cargo.toml. Doctor
 /// keeps the selected-root `exists()` test, then the cargo-relevant ancestor
-/// walk (bounded by `.git`), then a bounded nested walk for `rust/`-style
-/// git-root layouts. It does not rebind doctor's `--root` (#7468).
+/// walk (bounded by `.git`), then a breadth-first nested walk (depth 8, 512
+/// directories, skip list) for `rust/`-style git-root layouts. It does not
+/// rebind doctor's `--root` (#7468).
 fn locate_cargo_toml(root: &Path) -> Option<CargoTomlFound> {
     let at_root = root.join("Cargo.toml");
     if at_root.exists() {
@@ -1302,7 +1313,7 @@ fn ancestor_cargo_toml(root: &Path) -> Option<CargoTomlFound> {
 fn nested_cargo_toml(root: &Path) -> Option<CargoTomlFound> {
     let mut workspaces = Vec::new();
     let mut packages = Vec::new();
-    collect_nested_cargo_tomls(root, 0, &mut workspaces, &mut packages);
+    collect_nested_cargo_tomls(root, &mut workspaces, &mut packages);
     pick_shallowest_manifest(root, workspaces)
         .map(|manifest| CargoTomlFound::Nested {
             manifest,
@@ -1333,43 +1344,62 @@ fn nested_manifest_depth(root: &Path, manifest: &Path) -> usize {
 }
 
 fn collect_nested_cargo_tomls(
-    dir: &Path,
-    depth: usize,
+    root: &Path,
     workspaces: &mut Vec<PathBuf>,
     packages: &mut Vec<PathBuf>,
 ) {
-    if depth >= NESTED_CARGO_TOML_MAX_DEPTH {
-        return;
-    }
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_symlink() {
-            continue;
-        }
-        if file_type.is_dir() {
-            let name = path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .unwrap_or("");
-            if NESTED_CARGO_TOML_SKIP_DIRS.contains(&name) {
+    let mut current = vec![root.to_path_buf()];
+    let mut depth = 0;
+    let mut dirs_visited = 0;
+    while depth < NESTED_CARGO_TOML_MAX_DEPTH && !current.is_empty() {
+        let mut next = Vec::new();
+        for dir in current {
+            if dirs_visited >= NESTED_CARGO_TOML_MAX_DIRS {
+                break;
+            }
+            dirs_visited += 1;
+            let Ok(entries) = std::fs::read_dir(&dir) else {
                 continue;
+            };
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let Ok(file_type) = entry.file_type() else {
+                    continue;
+                };
+                // Skip every symlink: directory links can hang (#4457) or
+                // credit a tree outside the selected root, and a file link
+                // named Cargo.toml has the same outside-tree risk. Fail-closed.
+                if file_type.is_symlink() {
+                    continue;
+                }
+                if file_type.is_dir() {
+                    let name = path
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("");
+                    if NESTED_CARGO_TOML_SKIP_DIRS.contains(&name) {
+                        continue;
+                    }
+                    next.push(path);
+                    continue;
+                }
+                if file_type.is_file() && path.file_name().is_some_and(|name| name == "Cargo.toml")
+                {
+                    if manifest_declares_workspace(&path) {
+                        workspaces.push(path);
+                    } else {
+                        packages.push(path);
+                    }
+                }
             }
-            collect_nested_cargo_tomls(&path, depth + 1, workspaces, packages);
-            continue;
         }
-        if file_type.is_file() && path.file_name().is_some_and(|name| name == "Cargo.toml") {
-            if manifest_declares_workspace(&path) {
-                workspaces.push(path);
-            } else {
-                packages.push(path);
-            }
+        // A workspace at this depth beats any deeper workspace; finish the
+        // level for path-stable sibling pick, then stop.
+        if !workspaces.is_empty() {
+            return;
         }
+        current = next;
+        depth += 1;
     }
 }
 
@@ -3628,6 +3658,35 @@ mod tests {
         Ok(())
     }
 
+    /// `.venv/` is an interpreter tree, not a project root. Same skip as
+    /// `target/`.
+    #[test]
+    fn cargo_toml_inside_venv_does_not_pass() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-venv-manifest",
+            &[(
+                ".venv/Cargo.toml",
+                "[package]\nname = \"scratch\"\nversion = \"0.1.0\"\n",
+            )],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        if cargo_toml.status != DoctorCheckStatus::Fail
+            || !cargo_toml
+                .evidence
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("no Cargo.toml found")
+        {
+            return Err(format!(
+                "a .venv/ manifest must not pass cargo_toml: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
     /// Two sibling nested workspaces still pass: "no Cargo.toml found" is
     /// false. The check names the shallowest path-stable workspace.
     #[test]
@@ -3646,11 +3705,10 @@ mod tests {
         let evidence = cargo_toml.evidence.as_deref().unwrap_or_default();
         if cargo_toml.status != DoctorCheckStatus::Pass
             || !evidence.contains("via workspace root")
-            || !(evidence.contains(&human_path(Path::new("backend/Cargo.toml")))
-                || evidence.contains(&human_path(Path::new("rust/Cargo.toml"))))
+            || !evidence.contains(&human_path(Path::new("backend/Cargo.toml")))
         {
             return Err(format!(
-                "sibling workspaces must pass naming one nested workspace: {cargo_toml:?}"
+                "sibling workspaces must pass naming the path-stable workspace: {cargo_toml:?}"
             ));
         }
         Ok(())
