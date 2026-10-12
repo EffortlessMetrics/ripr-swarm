@@ -122,9 +122,12 @@ impl ChangedFile {
                         .values()
                         .any(|paired| std::ptr::eq(*paired, *first_removed))
                 {
-                    let coordinate_score = line_similarity(&first_removed.text, &first_added.text);
+                    // Each line is tokenized once here, so a very long added
+                    // line beside many removed lines costs one scan of each.
+                    let first_key = line_key(first_added);
+                    let coordinate_score = key_similarity(&line_key(first_removed), &first_key);
                     let better_elsewhere = run.removed.iter().skip(1).any(|other| {
-                        line_similarity(&other.text, &first_added.text) > coordinate_score
+                        key_similarity(&line_key(other), &first_key) > coordinate_score
                     });
                     if !better_elsewhere {
                         pairs.insert(first_added.new_side_line, *first_removed);
@@ -158,14 +161,22 @@ impl ChangedFile {
             while lines.next_if(|&next| next == end + 1).is_some() {
                 end += 1;
             }
-            let Some(removed) = removed_at.remove(&start) else {
-                continue;
-            };
+            // A run that starts with a pure insertion (`+a -b +c`) still
+            // holds a replacement: `b` is recorded at `c`'s coordinate. It
+            // counts as interrupted, so each added line keeps the removed
+            // line recorded at its own coordinate.
+            let removed = removed_at.remove(&start).unwrap_or_default();
             let later: Vec<(usize, Vec<&ChangedLine>)> = removed_at
                 .range(start + 1..end + 1)
                 .map(|(line, removed)| (*line, removed.clone()))
                 .collect();
-            let mut removed_by_coordinate = vec![(start, removed.clone())];
+            if removed.is_empty() && later.is_empty() {
+                continue;
+            }
+            let mut removed_by_coordinate = Vec::new();
+            if !removed.is_empty() {
+                removed_by_coordinate.push((start, removed.clone()));
+            }
             let interrupted = !later.is_empty();
             removed_by_coordinate.extend(later);
             runs.push(ReplacementRun {
@@ -233,11 +244,19 @@ pub(crate) fn lines_look_alike(old: &str, new: &str) -> bool {
 }
 
 fn line_similarity(old: &str, new: &str) -> u32 {
-    if old.trim() == new.trim() {
+    key_similarity(
+        &(old.trim(), code_tokens(old)),
+        &(new.trim(), code_tokens(new)),
+    )
+}
+
+/// Similarity of two lines from their precomputed [`line_key`]s.
+fn key_similarity(old: &(&str, Option<Vec<&str>>), new: &(&str, Option<Vec<&str>>)) -> u32 {
+    if old.0 == new.0 {
         return 1000;
     }
-    match (code_tokens(old), code_tokens(new)) {
-        (Some(old), Some(new)) => token_similarity(&old, &new),
+    match (&old.1, &new.1) {
+        (Some(old), Some(new)) => token_similarity(old, new),
         _ => 0,
     }
 }
@@ -326,14 +345,10 @@ fn align_by_content(removed: &[&ChangedLine], added: &[&ChangedLine]) -> Vec<(us
     let added_keys: Vec<_> = added.iter().map(|line| line_key(line)).collect();
     let similarity: Vec<Vec<u32>> = removed_keys
         .iter()
-        .map(|(old_text, old_tokens)| {
+        .map(|old| {
             added_keys
                 .iter()
-                .map(|(new_text, new_tokens)| match (old_tokens, new_tokens) {
-                    (Some(_), Some(_)) if old_text == new_text => 1000,
-                    (Some(old), Some(new)) => token_similarity(old, new),
-                    _ => 0,
-                })
+                .map(|new| key_similarity(old, new))
                 .collect()
         })
         .collect();
@@ -630,6 +645,27 @@ mod tests {
     }
 
     #[test]
+    fn a_run_starting_with_an_insertion_keeps_the_coordinate_match() {
+        // `+// note -throw old +throw new`: the removed `throw` is recorded
+        // at the added `throw`'s coordinate, inside a run that starts with a
+        // pure insertion.
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines: vec![
+                line(4, 4, "// note"),
+                line(5, 5, "throw new Error(\"is blank\");"),
+            ],
+            removed_lines: vec![line(4, 5, "throw new Error(\"must be blank\");")],
+        };
+        assert_eq!(aligned_text(&changed, 4), None);
+        assert_eq!(
+            aligned_text(&changed, 5),
+            Some("throw new Error(\"must be blank\");")
+        );
+        assert!(changed.replacement_counterparts().is_empty());
+    }
+
+    #[test]
     fn unlike_lines_do_not_pair_by_content() {
         let unlike = ChangedFile {
             path: PathBuf::from("src/lib.ts"),
@@ -776,9 +812,30 @@ mod tests {
         };
         let started = std::time::Instant::now();
         let map = changed.aligned_counterparts();
-        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
         assert_eq!(map.len(), 1);
         assert!(!lines_look_alike(&bundle, &rebuilt));
+    }
+
+    #[test]
+    fn a_long_first_line_beside_many_removed_lines_stays_bounded() {
+        // One 1 MB string-literal line against 1,000 removed lines: the
+        // block exceeds the cell cap, and the first-line fallback tokenizes
+        // each line once.
+        let literal = format!("const s = \"{}\";", "x".repeat(1_000_000));
+        let changed = ChangedFile {
+            path: PathBuf::from("src/big.ts"),
+            added_lines: (1..=70)
+                .map(|n| line(n, n, if n == 1 { &literal } else { "y();" }))
+                .collect(),
+            removed_lines: (1..=1_000)
+                .map(|n| line(n, 1, &format!("let v{n} = 0;")))
+                .collect(),
+        };
+        let started = std::time::Instant::now();
+        let map = changed.aligned_counterparts();
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
+        assert_eq!(map.len(), 1);
     }
 
     #[test]

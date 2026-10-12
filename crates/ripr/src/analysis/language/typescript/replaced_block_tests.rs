@@ -248,3 +248,32 @@ const UNEVEN_SHORTER_SOURCE: &str = "export function parseLabel(s: string): stri
 
 /// The comment and the `throw` below it are removed; one `throw` is added.
 const UNEVEN_SHORTER_DIFF: &str = "diff --git a/src/label.ts b/src/label.ts\n--- a/src/label.ts\n+++ b/src/label.ts\n@@ -2,6 +2,5 @@ export function parseLabel(s: string): string {\n   const label = s.trim();\n   if (label === \"\") {\n-    // refuse an empty label\n-    throw new Error(\"label must not be blank\");\n+    throw new Error(\"label is blank\");\n   }\n   return label;\n }\n";
+
+/// Review of #7554: `+// note -throw old +throw new`. The run starts with a
+/// pure insertion, and the removed `throw` is recorded at the added
+/// `throw`'s coordinate; the guard reads it and the substring check stays
+/// broad, as on main.
+#[test]
+fn a_throw_after_an_inserted_comment_keeps_its_coordinate_match() -> Result<(), String> {
+    let new_source = "export function parseLabel(s: string): string {\n  const label = s.trim();\n  if (label === \"\") {\n    // refuse a blank label\n    throw new Error(\"label is blank\");\n  }\n  return label;\n}\n";
+    let diff = "diff --git a/src/label.ts b/src/label.ts\n--- a/src/label.ts\n+++ b/src/label.ts\n@@ -2,5 +2,6 @@ export function parseLabel(s: string): string {\n   const label = s.trim();\n   if (label === \"\") {\n+    // refuse a blank label\n-    throw new Error(\"label must not be blank\");\n+    throw new Error(\"label is blank\");\n   }\n   return label;\n }\n";
+    let changed = crate::analysis::diff::parse_unified_diff(diff);
+    assert_eq!(changed.len(), 1, "fixture must parse one file");
+    assert_eq!(
+        changed[0]
+            .aligned_counterparts()
+            .get(&5)
+            .map(|line| line.text.trim()),
+        Some("throw new Error(\"label must not be blank\");"),
+        "fixture: the removed `throw` is recorded at the added `throw`"
+    );
+    let finding = finding_on(
+        "replaced-block-insertion-first",
+        new_source,
+        &chai_test("\"blank\""),
+        diff,
+        5,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
