@@ -3674,7 +3674,12 @@ fn wrapper_rejects_empty() {
     assert_eq!(related[0].test.name, "wrapper_rejects_empty");
 
     let evidence = compact_evidence_for_seam(error_seam, &context);
-    assert_eq!(evidence.reach.state, StageState::Yes);
+    // #5335 review (coderabbitai, devin): the test only imports `parse`, it
+    // never calls it, so an import-path affinity relation is not owner
+    // reach. The import does name the owner somewhere in the workspace, so
+    // unseen reach keeps the seam `weak` instead of claiming a confirmed
+    // gap; before the shared reach rule this read `yes`.
+    assert_eq!(evidence.reach.state, StageState::Weak);
     assert_eq!(evidence.activate.state, StageState::Unknown);
     Ok(())
 }

@@ -461,16 +461,17 @@ pub(crate) fn compact_evidence_for_seam(
 ///
 /// Only relations that tie a test to running the owner count
 /// ([`relation_establishes_reach`], the rule diff-mode reach uses). A test
-/// related only by sharing the owner's file or module, or by asserting a
-/// token the seam's expression names, may never run the owner: crediting it
-/// let an uncalled `as_kb` borrow a sibling test's exact-value oracle and
-/// read `reach: yes` (#5335). When every related test is such a relation,
-/// the shared diff-mode reach decides: `weak` when something could still run
-/// the owner unseen (a doctest or caller names it, a trait impl, a test
-/// macro), otherwise `no`. A bounded transitive, macro or trait-dispatch
-/// witness from repo reach keeps it `weak` too. Either way the seam can no
-/// longer read `strongly_gripped`; the related tests stay listed as
-/// suggestions.
+/// related only by sharing the owner's file or module, by asserting a token
+/// the seam's expression names, by naming the owner in its own name or an
+/// import path, or by calling a fixture-shaped helper may never run the
+/// owner: crediting it let an uncalled `as_kb` borrow a sibling test's
+/// exact-value oracle and read `reach: yes` (#5335). When every related
+/// test is such a relation, the shared diff-mode reach decides: `weak` when
+/// something could still run the owner unseen (a doctest or caller names
+/// it, a trait impl, a test macro), otherwise `no`. A bounded transitive,
+/// macro or trait-dispatch witness from repo reach keeps it `weak` too.
+/// Either way the seam can no longer read `strongly_gripped`; the related
+/// tests stay listed as suggestions.
 fn reach_evidence(
     seam: &RepoSeam,
     related: &[(&TestSummary, RelationReason)],
