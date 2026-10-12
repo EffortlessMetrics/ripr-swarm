@@ -181,8 +181,10 @@ profile, a missing `cargo` or `rustc`, or a workspace `rustc` older than
 RIPR's build MSRV, is reported as `advisory` and does not change the exit
 code: the installed binary can still analyze the workspace. A missing `cargo`
 still withholds evidence that reads `cargo metadata`. Under
-`--profile source-build`, the same conditions are failures and exit `2`, while
-enabled language runtimes stay visible but do not decide that profile's exit.
+`--profile source-build`, the same conditions are failures and exit `2`. A
+missing cargo or rustc names an install route on the failing check; an older
+rustc still names `rustup update stable`. Enabled language runtimes stay
+visible but do not decide that profile's exit.
 
 ## CI integration
 
