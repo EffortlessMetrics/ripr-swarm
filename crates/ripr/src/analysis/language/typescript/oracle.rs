@@ -27,7 +27,11 @@ pub(crate) fn oracle_for_matcher(matcher: &str) -> (OracleKind, OracleStrength) 
         | "toHaveProperty"
         // RIPR-SPEC-0249: passes for any instance of the class or a subclass;
         // a predicate change can read it strong (`ts_instance_class_facts`).
-        | "toBeInstanceOf" => (OracleKind::RelationalCheck, OracleStrength::Weak),
+        | "toBeInstanceOf"
+        // RIPR-SPEC-0250: passes whatever fields the object leaves unlisted;
+        // a changed returned field it lists can read strong
+        // (`ts_match_object_facts`).
+        | "toMatchObject" => (OracleKind::RelationalCheck, OracleStrength::Weak),
         _ => (OracleKind::Unknown, OracleStrength::Unknown),
     }
 }
@@ -622,6 +626,10 @@ pub(crate) fn expect_assertion_from_expression(
     let error_payload = error_payload_from_assertion(matcher, async_modifier, outer_call, source);
     let (oracle_kind, oracle_strength) = if error_payload.is_some() {
         (OracleKind::ExactErrorVariant, OracleStrength::Strong)
+    } else if matcher == "toMatchObject" && async_modifier == Some("rejects") {
+        // An error object this extraction could not read stays unresolved
+        // (RIPR-SPEC-0250 reads only the returned object).
+        (OracleKind::Unknown, OracleStrength::Unknown)
     } else if inline_snapshot_is_literal(matcher, outer_call) {
         // RIPR-SPEC-0247 rule 3: the expected text is written in the test.
         (OracleKind::Snapshot, OracleStrength::Strong)
@@ -642,6 +650,11 @@ pub(crate) fn expect_assertion_from_expression(
     let (expected_value_or_variant, has_dynamic_matcher_arg) =
         match instance_class_argument(matcher, async_modifier, outer_call) {
             Some(class) => (Some(class), false),
+            // `.rejects.toMatchObject(...)` observes the error, not the
+            // returned object (RIPR-SPEC-0250).
+            None if matcher == "toMatchObject" && async_modifier == Some("rejects") => {
+                (None, false)
+            }
             None => extract_matcher_expected_value(matcher, &error_payload, outer_call, source),
         };
 

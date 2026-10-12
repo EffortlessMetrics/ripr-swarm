@@ -15753,6 +15753,7 @@ mod error_payload_tests;
 mod instance_class_tests;
 mod literal_matcher_tests;
 mod loop_declared_tests;
+mod match_object_tests;
 mod mock_form_tests;
 mod mocked_callee_tests;
 mod module_entry_tests;

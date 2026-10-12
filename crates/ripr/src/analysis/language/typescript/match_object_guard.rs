@@ -1,0 +1,245 @@
+//! RIPR-SPEC-0250 rule 1: `toMatchObject({ key: literal })` pins a changed
+//! field of the object the owner returns.
+//!
+//! `return { name, adult: 18 <= age, tags: [] };` with
+//! `expect(buildProfile("bo", 18)).toMatchObject({ name: "bo", adult: true })`
+//! compares `adult` exactly, as `toEqual` would, and ignores only the fields
+//! it does not list. The matcher alone is not an exact discriminator, so it
+//! reads as one only for a field-construction change, only on the whole
+//! result of an owner call, and only when the changed line is a top-level
+//! `key: value` of the one object literal the owner returns and the matcher
+//! lists `key`.
+
+use super::*;
+
+/// The top-level keys of a flat object literal such as
+/// `{ name: "ana", adult: false }`, or `None` when the text is not one.
+/// Callers pass only matcher arguments `is_literal_argument` accepted, whose
+/// values are scalar literals.
+fn flat_object_keys(object_text: &str) -> Option<Vec<String>> {
+    let masked = ts_mask_literals_and_comments(object_text);
+    if masked.len() != object_text.len() {
+        return None;
+    }
+    let trimmed = masked.trim();
+    let inner_start = masked.find('{')? + 1;
+    let inner_end = masked.rfind('}')?;
+    if !trimmed.starts_with('{') || !trimmed.ends_with('}') || inner_end < inner_start {
+        return None;
+    }
+    let inner = &masked[inner_start..inner_end];
+    if inner.contains(['{', '}', '[', ']']) {
+        return None;
+    }
+    let mut keys = Vec::new();
+    let mut offset = inner_start;
+    for part in inner.split(',') {
+        let start = offset;
+        offset += part.len() + 1;
+        if part.trim().is_empty() {
+            continue;
+        }
+        let colon = part.find(':')?;
+        let raw_key = object_text[start..start + colon].trim();
+        let key = raw_key
+            .strip_prefix('"')
+            .and_then(|key| key.strip_suffix('"'))
+            .or_else(|| {
+                raw_key
+                    .strip_prefix('\'')
+                    .and_then(|key| key.strip_suffix('\''))
+            })
+            .unwrap_or(raw_key);
+        if key.is_empty() {
+            return None;
+        }
+        keys.push(key.to_string());
+    }
+    Some(keys)
+}
+
+/// The key of the changed field when `line_text` is a top-level
+/// `key: value` line of the one object literal the owner returns
+/// (`return {` ... `};`), and nothing else in that literal sets `key`.
+pub(crate) fn ts_owner_returned_field_key(owner_source: &str, line_text: &str) -> Option<String> {
+    let blank = |text: &str| ts_mask_literals_and_comments(text).replace(['"', '\'', '`'], " ");
+    let masked = blank(owner_source);
+    let lines: Vec<&str> = masked.lines().collect();
+    if lines.len() != owner_source.lines().count() {
+        return None;
+    }
+    // One `return`, and no nested function whose `return` it could be.
+    let body = masked_owner_body(owner_source)?;
+    if body.contains("=>")
+        || !identifier_offsets(&body, "function").is_empty()
+        || identifier_offsets(&body, "return").len() != 1
+    {
+        return None;
+    }
+    let target = blank(line_text);
+    let target = target.trim();
+    let key = leading_identifier(target)?;
+    let value = target[key.len()..].trim_start().strip_prefix(':')?;
+    // The value stays on this line: no nested literal or block opens here.
+    // A string value blanks to spaces, so emptiness reads the quotes.
+    let quoted = ts_mask_literals_and_comments(line_text);
+    let has_value = quoted
+        .trim()
+        .get(key.len()..)
+        .and_then(|rest| rest.trim_start().strip_prefix(':'))
+        .is_some_and(|rest| !rest.trim().trim_end_matches(',').trim().is_empty());
+    if !has_value || value.contains(['{', '}', '[', ']']) {
+        return None;
+    }
+    let mut matching = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim() == target)
+        .map(|(index, _)| index);
+    let changed = matching.next()?;
+    if matching.next().is_some() {
+        return None;
+    }
+    let (open_line, open_column) = enclosing_open_brace(&lines, changed)?;
+    let before = lines[open_line][..open_column].trim_end();
+    let before_return = before.strip_suffix("return")?;
+    if before_return
+        .chars()
+        .next_back()
+        .is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'))
+    {
+        return None;
+    }
+    let close_line = matching_close_brace(&lines, open_line, open_column)?;
+    // Another top-level entry of the literal could set `key` again.
+    for (index, line) in lines
+        .iter()
+        .enumerate()
+        .take(close_line)
+        .skip(open_line + 1)
+    {
+        if index == changed {
+            continue;
+        }
+        let entry = line.trim();
+        if entry.contains("...")
+            || leading_identifier(entry).is_some_and(|other| {
+                other == key
+                    && entry[other.len()..]
+                        .trim_start()
+                        .starts_with([':', ',', '('])
+            })
+        {
+            return None;
+        }
+    }
+    Some(key.to_string())
+}
+
+/// The line and column of the `{` that opens the literal holding line
+/// `changed`, when every line between them balances.
+fn enclosing_open_brace(lines: &[&str], changed: usize) -> Option<(usize, usize)> {
+    let mut depth = 0usize;
+    for index in (0..changed).rev() {
+        let line = lines[index];
+        for (column, c) in line.char_indices().rev() {
+            match c {
+                '}' => depth += 1,
+                '{' if depth == 0 => return Some((index, column)),
+                '{' => depth -= 1,
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// The line of the `}` that closes the `{` at (`open_line`, `open_column`)
+/// when only `;` follows it there, or nothing follows and the next line
+/// closes the owner.
+fn matching_close_brace(lines: &[&str], open_line: usize, open_column: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, line) in lines.iter().enumerate().skip(open_line) {
+        let start = if index == open_line { open_column } else { 0 };
+        for (column, c) in line[start..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => {
+                    depth = depth.checked_sub(1)?;
+                    if depth == 0 {
+                        let after = line[start + column + 1..].trim();
+                        let closes_owner = || {
+                            lines[index + 1..]
+                                .iter()
+                                .find(|next| !next.trim().is_empty())
+                                .is_some_and(|next| next.trim().starts_with('}'))
+                        };
+                        return (after == ";" || (after.is_empty() && closes_owner()))
+                            .then_some(index);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+/// Collect the credited `toMatchObject` assertions for a field-construction
+/// change: each on an oracle relation, on the whole result of one owner call
+/// (`owner(...)`, `ns.owner(...)`, awaited, or a local bound once to that
+/// call), with a flat literal object that lists the changed field's key.
+pub(crate) fn ts_match_object_facts(
+    probe_family: &ProbeFamily,
+    line_text: &str,
+    owner: &TypeScriptOwner,
+    candidates: &[TypeScriptRelatedCandidate<'_>],
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> PinFacts {
+    let mut facts = PinFacts::default();
+    if !matches!(probe_family, ProbeFamily::FieldConstruction) {
+        return facts;
+    }
+    let pins = |assertion: &TypeScriptAssertion| {
+        assertion.matcher == "toMatchObject"
+            && matches!(assertion.oracle_kind, OracleKind::RelationalCheck)
+            && assertion.error_payload.is_none()
+            && assertion.expected_value_or_variant.is_some()
+    };
+    if !candidates
+        .iter()
+        .any(|candidate| candidate.test.assertions.iter().any(pins))
+    {
+        return facts;
+    }
+    let Some(key) = owner
+        .source_text
+        .as_deref()
+        .and_then(|source| ts_owner_returned_field_key(source, line_text))
+    else {
+        return facts;
+    };
+    for candidate in candidates
+        .iter()
+        .filter(|candidate| candidate.relation.uses_oracle())
+    {
+        if local_identifier_declared_in_test_body(&candidate.test.body_text, &owner.name) {
+            continue;
+        }
+        let receivers = owner_namespace_receivers(candidate.test, owner, alias_map, workspace_root);
+        for assertion in candidate.test.assertions.iter().filter(|a| pins(a)) {
+            let lists_key = assertion
+                .expected_value_or_variant
+                .as_deref()
+                .and_then(flat_object_keys)
+                .is_some_and(|keys| keys.iter().any(|listed| *listed == key));
+            if lists_key
+                && ts_observes_whole_owner_result(candidate.test, assertion, owner, &receivers)
+            {
+                facts.credit(&candidate.test.file, assertion);
+            }
+        }
+    }
+    facts
+}

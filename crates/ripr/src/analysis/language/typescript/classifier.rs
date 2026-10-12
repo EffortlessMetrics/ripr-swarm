@@ -187,6 +187,7 @@ pub(crate) fn ts_changed_value_is_observed(
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
     mock_facts: &MockCallFacts,
+    pin_facts: &PinFacts,
 ) -> bool {
     let owner_name = owner.name.as_str();
     // Apply the guard to effect families (SideEffect / CallDeletion) and value
@@ -238,6 +239,11 @@ pub(crate) fn ts_changed_value_is_observed(
                     .mock_payload
                     .as_ref()
                     .is_some_and(|payload| mock_facts.credits(payload, &candidate.test.body_text));
+            // RIPR-SPEC-0250: a credited `toMatchObject` pin lists the changed
+            // field and observes the whole owner result, so it sees the sink.
+            if value_family && pin_facts.credits(&candidate.test.file, assertion) {
+                return true;
+            }
             if assertion.oracle_strength.rank() < OracleStrength::Strong.rank() && !credited_mock {
                 continue;
             }
@@ -751,7 +757,7 @@ pub(crate) struct TsBoundaryRowContext<'a> {
     pub(crate) alias_map: Option<&'a TsAliasMap>,
     pub(crate) workspace_root: Option<&'a Path>,
     /// RIPR-SPEC-0249 rule 1 class pins that read strong for this change.
-    pub(crate) instance_facts: Option<&'a InstanceClassFacts>,
+    pub(crate) pin_facts: Option<&'a PinFacts>,
 }
 
 /// One related test's activation of the changed predicate boundary (#5527).
@@ -829,7 +835,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
         sibling_tests,
         alias_map,
         workspace_root,
-        instance_facts,
+        pin_facts,
     } = *context;
     let (left, right, nullish_boundary) = match boundary {
         TsPredicateBoundary::NotPredicate => return TypeScriptPredicateActivation::NotApplicable,
@@ -869,7 +875,7 @@ pub(crate) fn ts_predicate_boundary_row_activation(
     let mut reached = false;
     for assertion in &candidate.test.assertions {
         let pins_class =
-            instance_facts.is_some_and(|facts| facts.credits(&candidate.test.file, assertion));
+            pin_facts.is_some_and(|facts| facts.credits(&candidate.test.file, assertion));
         if !pins_class
             && (assertion.oracle_strength.rank() < OracleStrength::Strong.rank()
                 || !ts_oracle_kind_matches_seam(&assertion.oracle_kind, &ProbeFamily::Predicate))
@@ -3394,7 +3400,7 @@ pub(crate) fn strongest_family_matching_oracle(
     candidates: &[TypeScriptRelatedCandidate<'_>],
     error_facts: &ErrorChangeFacts,
     mock_facts: &MockCallFacts,
-    instance_facts: &InstanceClassFacts,
+    pin_facts: &PinFacts,
 ) -> (u8, OracleKind) {
     let mut best_rank: u8 = 0;
     let mut best_kind = OracleKind::Unknown;
@@ -3426,7 +3432,7 @@ pub(crate) fn strongest_family_matching_oracle(
                 }
                 // RIPR-SPEC-0249 rule 1: a class pin on a predicate whose
                 // branches return different classes.
-                _ if instance_facts.credits(&candidate.test.file, assertion) => {
+                _ if pin_facts.credits(&candidate.test.file, assertion) => {
                     (OracleKind::ExactValue, OracleStrength::Strong)
                 }
                 _ => (
@@ -3481,10 +3487,10 @@ fn project_credited_mock_rows(
 /// RIPR-SPEC-0249 rule 1: a related row whose test holds a credited
 /// `toBeInstanceOf` pin shows it at its `exact_value` / strong reading, so
 /// the public row agrees with the verdict it supports.
-fn project_credited_instance_rows(
+fn project_credited_pin_rows(
     related: &mut [RelatedTest],
     candidates: &[TypeScriptRelatedCandidate<'_>],
-    instance_facts: &InstanceClassFacts,
+    pin_facts: &PinFacts,
 ) {
     for (row, candidate) in related.iter_mut().zip(candidates) {
         if row.oracle_strength.rank() >= OracleStrength::Strong.rank() {
@@ -3494,7 +3500,7 @@ fn project_credited_instance_rows(
             .test
             .assertions
             .iter()
-            .find(|assertion| instance_facts.credits(&candidate.test.file, assertion));
+            .find(|assertion| pin_facts.credits(&candidate.test.file, assertion));
         if let Some(assertion) = credited {
             row.oracle_kind = OracleKind::ExactValue;
             row.oracle_strength = OracleStrength::Strong;
@@ -3736,7 +3742,7 @@ pub(crate) fn classify_change_with_alias_state(
     if reads_mock_payload {
         project_credited_mock_rows(&mut related, &related_candidates, &mock_facts);
     }
-    let instance_facts = ts_instance_class_facts(
+    let mut pin_facts = ts_instance_class_facts(
         &probe_shape.family,
         line_text,
         owner,
@@ -3744,15 +3750,23 @@ pub(crate) fn classify_change_with_alias_state(
         alias_map,
         workspace_root,
     );
-    if !instance_facts.is_empty() {
-        project_credited_instance_rows(&mut related, &related_candidates, &instance_facts);
+    pin_facts.extend(ts_match_object_facts(
+        &probe_shape.family,
+        line_text,
+        owner,
+        &related_candidates,
+        alias_map,
+        workspace_root,
+    ));
+    if !pin_facts.is_empty() {
+        project_credited_pin_rows(&mut related, &related_candidates, &pin_facts);
     }
     let (strongest_strength, strongest_kind) = strongest_family_matching_oracle(
         &probe_shape.family,
         &related_candidates,
         &error_facts,
         &mock_facts,
-        &instance_facts,
+        &pin_facts,
     );
     let mock_payload_oracle = related_mock_payload_oracle(&related);
 
@@ -3785,7 +3799,7 @@ pub(crate) fn classify_change_with_alias_state(
             sibling_tests: all_tests,
             alias_map,
             workspace_root,
-            instance_facts: Some(&instance_facts),
+            pin_facts: Some(&pin_facts),
         };
         ts_predicate_boundary_row_activation(&context, candidate)
     };
@@ -3834,6 +3848,7 @@ pub(crate) fn classify_change_with_alias_state(
             alias_map,
             workspace_root,
             &mock_facts,
+            &pin_facts,
         );
 
     let (class, reach_state, observe_state, discriminate_state, missing) = if related.is_empty() {
@@ -3940,7 +3955,7 @@ pub(crate) fn classify_change_with_alias_state(
                 activations: &predicate_activations,
                 error_facts: &error_facts,
                 mock_facts: &mock_facts,
-                instance_facts: &instance_facts,
+                pin_facts: &pin_facts,
             },
             mock_paths: &mock_paths,
             alias_map,
@@ -4678,7 +4693,7 @@ struct Rule8LadderFacts<'a> {
     activations: &'a [TypeScriptPredicateActivation],
     error_facts: &'a ErrorChangeFacts,
     mock_facts: &'a MockCallFacts,
-    instance_facts: &'a InstanceClassFacts,
+    pin_facts: &'a PinFacts,
 }
 
 /// RIPR-SPEC-0243 rule 8 over the related candidates of an `exposed` ladder
@@ -4704,7 +4719,7 @@ fn ts_rule8_mocked_changed_callee(
         activations,
         error_facts,
         mock_facts,
-        instance_facts,
+        pin_facts,
     } = ladder;
     let mut files: Vec<&Path> = Vec::new();
     for candidate in candidates {
@@ -4743,7 +4758,7 @@ fn ts_rule8_mocked_changed_callee(
             &subset,
             error_facts,
             mock_facts,
-            instance_facts,
+            pin_facts,
         );
         if !only_module_entry
             && strength >= OracleStrength::Strong.rank()
@@ -4756,6 +4771,7 @@ fn ts_rule8_mocked_changed_callee(
                 alias_map,
                 workspace_root,
                 mock_facts,
+                pin_facts,
             )
         {
             exposing.push(representative);

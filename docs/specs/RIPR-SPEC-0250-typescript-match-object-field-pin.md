@@ -1,0 +1,183 @@
+# RIPR-SPEC-0250: TypeScript match-object field pin
+
+Status: proposed
+
+Owner: product / analysis
+
+Created: 2026-10-12
+
+Linked proposal:
+
+- None yet
+
+Linked ADRs:
+
+- None yet
+
+Linked plan:
+
+- None yet
+
+Linked issues:
+
+- #6654 (TypeScript corpus cases scored false after RIPR-SPEC-0243)
+
+Linked PRs:
+
+- #6686 (TypeScript verdict corpus)
+- #7443 (RIPR-SPEC-0249)
+
+Support-tier impact:
+
+- No tier change. TypeScript stays Preview.
+- Claim boundaries remain governed by
+  [support tiers](../status/SUPPORT_TIERS.md).
+
+Policy impact:
+
+- Register this spec in `policy/doc-artifacts.toml` and
+  `.ripr/traceability.toml`.
+- No schema version bump. No new oracle kind, strength, class, relation
+  reason or limitation name.
+- Adds `toMatchObject` to the RIPR-SPEC-0243 relational matcher row.
+- Rust is not changed.
+
+## Problem
+
+The TypeScript verdict corpus reads `jest-mined-tomatchobject-field` as a
+false gap:
+
+```ts
+// src/profile.ts
+export function buildProfile(name: string, age: number) {
+  return {
+    name,
+    adult: age >= 18,          // before
+    adult: 18 <= age,          // after
+    tags: [] as string[],
+  };
+}
+
+// test/profile.test.ts
+expect(buildProfile("ana", 17)).toMatchObject({ name: "ana", adult: false });
+expect(buildProfile("bo", 18)).toMatchObject({ name: "bo", adult: true });
+```
+
+`toMatchObject` compares every field it lists exactly, as `toEqual` would,
+and ignores the fields it leaves out. It lists `adult` at 17 and 18, so
+every mutant of `18 <= age` fails it. ripr read `toMatchObject` as an
+unrecognised matcher, so the finding was `weakly_exposed`. The same test
+written with `toEqual` already read `exposed`.
+
+## Behavior
+
+**Matcher reading.** `expect(x).toMatchObject(o)` (and
+`.resolves.toMatchObject(o)`) is a `relational_check` / weak oracle: on its
+own it says nothing about the fields `o` leaves out. When `o` is a flat
+object literal of scalar literals (`{ name: "ana", adult: false }`, the
+shape RIPR-SPEC-0247 reads for mock payloads) the assertion records it as
+its expected value. `.rejects.toMatchObject(o)` keeps its error-payload
+reading (RIPR-SPEC-0243); one that reading cannot resolve stays `unknown`.
+
+**Rule 1. A match-object pin reads exact for a returned field it lists.**
+On a `field_construction` probe, a `toMatchObject(o)` assertion of an
+oracle relation reads `exact_value` / strong, in the ladder, in its
+related-test row and in the RIPR-SPEC-0098 observation guard, when all of
+these hold:
+
+- it observes the whole result of one owner call: `owner(...)`,
+  `ns.owner(...)`, optionally awaited, or a local bound once to that call
+  (not `f(owner(...))` or `owner(...).field`), and the test does not
+  shadow the owner;
+- the owner body has one `return` and no arrow or nested `function`;
+- the changed line is `key: value` with `value` on that line (no `{`, `}`,
+  `[` or `]` outside literals), found once in the owner;
+- the literal that directly holds the changed line opens right after that
+  `return` and closes with `}` followed by `;` or by the owner's own `}`,
+  so it is the whole returned value (`return { ... }.adult` fails);
+- no other entry of that literal is a spread or sets `key` again;
+- `o` lists `key` at its top level.
+
+### Decisions
+
+The owner delegated these choices on 2026-10-04 ("make reasonable
+documented decisions and proceed"). Recorded on #6654.
+
+1. **Field-construction changes only.** Adopted: the pin compares exactly
+   the fields it lists, so it discriminates a change to one of those fields
+   of the returned object. Rejected: reading it strong on other seams,
+   where an unlisted field or a value outside the object can carry the
+   change.
+2. **Weak, not unknown, by default.** Adopted: `toMatchObject` is a
+   recognised matcher with known semantics, the same footing as
+   `toHaveProperty`. Its default reading moves from `unknown` to
+   `relational_check` / weak.
+3. **Kind `exact_value`.** Adopted: the same reading `toEqual` gets on the
+   whole object, limited to the listed field. No new oracle kind.
+4. **One returned literal.** Adopted: an owner with several returns can
+   reach the test through a literal the change does not touch. Rejected:
+   reading which return a test input reaches.
+
+### Known limits
+
+- `typescript_oracle_confidence` reads the assertion's default (weak)
+  strength, so a credited pin shows `low`.
+- Expression-bodied arrows (`=> ({ ... })`), a literal assigned and then
+  returned, shorthand fields (`adult,`), multi-line values and nested
+  listed objects keep the weak reading.
+- A local bound once to the owner call is not checked for later field
+  writes (`bo.adult = true`).
+
+## Required Evidence
+
+- On the TypeScript verdict corpus, `jest-mined-tomatchobject-field` moves
+  from `gap` to `credited` and no other row moves.
+- `cargo xtask goldens check` reports no drift.
+
+## Non-Goals
+
+- No reading of nested listed objects, arrays or asymmetric matchers
+  (`expect.any`).
+- No `toMatchObject` reading on predicate, error, side-effect or value
+  seams.
+- No change to Rust, Python or other languages.
+
+## Acceptance Examples
+
+1. The problem's change and tests: `exposed`; the related row reads
+   `exact_value` / strong.
+2. As example 1 with `const bo = buildProfile("bo", 18);
+   expect(bo).toMatchObject({ adult: true });`: `exposed`.
+3. As example 1 asserting `toMatchObject({ name: "bo" })` only: not
+   `exposed`.
+4. As example 1 with `expect(normalize(buildProfile(...)))` or
+   `expect(buildProfile(...).meta)`: not `exposed`.
+5. As example 1 with a non-literal argument (`toMatchObject(expected)`) or
+   `.rejects.toMatchObject(...)`: not `exposed`.
+6. As example 1 with a second `return`, the field in a nested literal, a
+   spread or a later `adult:` in the literal, or `return { ... }.adult`:
+   rule 1 reads no pin.
+
+## Test Mapping
+
+- `crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs`
+  pins examples 1 to 6 and the owner-side conditions.
+- `fixtures/typescript-verdict-corpus` pins example 1:
+  `jest-mined-tomatchobject-field` reads `credited`.
+
+## Implementation Mapping
+
+- `crates/ripr/src/analysis/language/typescript/oracle.rs`:
+  `oracle_for_matcher`, `expect_assertion_from_expression`.
+- `crates/ripr/src/analysis/language/typescript/match_object_guard.rs`:
+  `ts_owner_returned_field_key`, `ts_match_object_facts`.
+- `crates/ripr/src/analysis/language/typescript/instance_class_guard.rs`:
+  `PinFacts`, shared with RIPR-SPEC-0249.
+- `crates/ripr/src/analysis/language/typescript/classifier.rs`:
+  `strongest_family_matching_oracle`, `project_credited_pin_rows`,
+  `ts_changed_value_is_observed`.
+
+## Metrics
+
+- `typescript_match_object_pin_mismatch`: acceptance examples whose
+  observed reading differs from this spec. Target: zero.

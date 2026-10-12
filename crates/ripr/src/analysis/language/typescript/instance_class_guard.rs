@@ -35,24 +35,41 @@ const BUILTIN_CLASSES: [&str; 17] = [
     "Promise",
 ];
 
-/// The `toBeInstanceOf` assertions that read `exact_value` / strong for one
-/// predicate change, by test file and assertion line.
+/// The value pins that read `exact_value` / strong for one change, by test
+/// file, assertion line and observed expression: `toBeInstanceOf` on a
+/// predicate (RIPR-SPEC-0249) and `toMatchObject` on a returned field
+/// (RIPR-SPEC-0250).
 #[derive(Debug, Default)]
-pub(crate) struct InstanceClassFacts {
-    /// Test file, assertion line and observed expression of each pin.
-    credited: Vec<(PathBuf, usize, String)>,
+pub(crate) struct PinFacts {
+    /// Test file, assertion line, observed expression and matcher of each pin.
+    credited: Vec<(PathBuf, usize, String, String)>,
 }
 
-impl InstanceClassFacts {
-    /// `true` when `assertion` in the test at `file` is a credited
-    /// `toBeInstanceOf` pin.
+impl PinFacts {
+    /// `true` when `assertion` in the test at `file` is a credited pin.
     pub(crate) fn credits(&self, file: &Path, assertion: &TypeScriptAssertion) -> bool {
-        assertion.matcher == "toBeInstanceOf"
-            && self.credited.iter().any(|(path, line, observed)| {
-                path == file
-                    && *line == assertion.line
-                    && assertion.observed_expression.as_deref() == Some(observed.as_str())
-            })
+        self.credited.iter().any(|(path, line, observed, matcher)| {
+            path == file
+                && *line == assertion.line
+                && *matcher == assertion.matcher
+                && assertion.observed_expression.as_deref() == Some(observed.as_str())
+        })
+    }
+
+    /// Record `assertion` in the test at `file` as a credited pin.
+    pub(crate) fn credit(&mut self, file: &Path, assertion: &TypeScriptAssertion) {
+        if let Some(observed) = assertion.observed_expression.clone() {
+            self.credited.push((
+                file.to_path_buf(),
+                assertion.line,
+                observed,
+                assertion.matcher.clone(),
+            ));
+        }
+    }
+
+    pub(crate) fn extend(&mut self, other: PinFacts) {
+        self.credited.extend(other.credited);
     }
 
     pub(crate) fn is_empty(&self) -> bool {
@@ -61,7 +78,7 @@ impl InstanceClassFacts {
 }
 
 /// The identifier that starts `text`, when one does.
-fn leading_identifier(text: &str) -> Option<&str> {
+pub(crate) fn leading_identifier(text: &str) -> Option<&str> {
     let end = text
         .char_indices()
         .find(|(_, c)| !(c.is_alphanumeric() || matches!(c, '_' | '$')))
@@ -834,8 +851,8 @@ pub(crate) fn ts_instance_class_facts(
     candidates: &[TypeScriptRelatedCandidate<'_>],
     alias_map: Option<&TsAliasMap>,
     workspace_root: Option<&Path>,
-) -> InstanceClassFacts {
-    let mut facts = InstanceClassFacts::default();
+) -> PinFacts {
+    let mut facts = PinFacts::default();
     if !matches!(probe_family, ProbeFamily::Predicate) {
         return facts;
     }
@@ -896,11 +913,8 @@ pub(crate) fn ts_instance_class_facts(
                     workspace_root,
                 )
                 && ts_observes_whole_owner_result(candidate.test, assertion, owner, &receivers)
-                && let Some(observed) = assertion.observed_expression.clone()
             {
-                facts
-                    .credited
-                    .push((candidate.test.file.clone(), assertion.line, observed));
+                facts.credit(&candidate.test.file, assertion);
             }
         }
     }
