@@ -300,7 +300,10 @@ mod tests {
         let canonical = root.canonicalize().unwrap_or_else(|_| root.clone());
         assert_eq!(
             declared_root,
-            crate::agent::loop_commands::root_path_display(&canonical),
+            // #7370: the declared root renders through the artifact's shared
+            // human path owner (verbatim prefix stripped), never the raw
+            // canonical spelling; the check must expect the same rendering.
+            crate::agent::artifact::display_root(&canonical),
             "the declared root must be the analyzed checkout"
         );
         let worktree = artifact["analysis"]["worktree"]
