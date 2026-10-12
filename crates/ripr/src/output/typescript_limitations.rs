@@ -97,11 +97,12 @@ pub(crate) fn build_typescript_limitation_leaderboard_report(
 
     if parsed && summary.findings_total > 0 && summary.typescript_family_findings_total == 0 {
         warnings.push(format!(
-            "check output contained {} findings, but none were TypeScript-family findings; \
+            "check output contained {} finding{}, but none were TypeScript-family findings; \
              no limitation signals were derived from them. Point --check-output at a check run \
              that analyzed TypeScript/JavaScript sources, or use `ripr reports gap-ledger \
              --check-output` for the Python/TypeScript/Perl gap-record route.",
-            summary.findings_total
+            summary.findings_total,
+            if summary.findings_total == 1 { "" } else { "s" }
         ));
     }
 
@@ -505,7 +506,7 @@ mod tests {
         assert_eq!(report.warnings.len(), 1);
         assert!(
             report.warnings[0]
-                .contains("check output contained 1 findings, but none were TypeScript-family")
+                .contains("check output contained 1 finding, but none were TypeScript-family")
         );
     }
 
