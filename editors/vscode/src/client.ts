@@ -4424,10 +4424,10 @@ function validateActionableGapQueue(
       };
     }
     const relatedVerifyIsBounded = actionableGapQueueRelatedVerifyIsBounded(packetObject);
-    for (const command of actionableGapQueuePacketCommands(packetObject)) {
+    for (const { command, role } of actionableGapQueuePacketCommands(packetObject)) {
       if (
         !actionableGapQueueCommandIsSafe(command, redirectRoots)
-        && !(command === packetObject.verify_command && relatedVerifyIsBounded)
+        && !(role === 'verify' && relatedVerifyIsBounded)
       ) {
         return {
           ...base,
@@ -4647,19 +4647,25 @@ function actionableGapQueuePacketPaths(packet: Record<string, unknown>): string[
   ].filter((value): value is string => value !== undefined);
 }
 
-function actionableGapQueuePacketCommands(packet: Record<string, unknown>): string[] {
+function actionableGapQueuePacketCommands(packet: Record<string, unknown>): Array<{
+  command: string; role: 'verify' | 'receipt';
+}> {
   // Preserve raw bytes for the safety check; trimming first could hide a
   // leading/trailing line break in a copied shell command.
   const rawString = (field: string): string | undefined => {
     const value = packet[field];
     return typeof value === 'string' && value.trim() !== '' ? value : undefined;
   };
-  const commands = [rawString('verify_command')];
+  const commands: Array<{ command: string; role: 'verify' | 'receipt' }> = [];
+  const verify = rawString('verify_command');
+  if (verify) {
+    commands.push({ command: verify, role: 'verify' });
+  }
   const receipt = rawString('receipt_command_or_path');
   if (receipt && looksLikeActionableQueueCommand(receipt)) {
-    commands.push(receipt);
+    commands.push({ command: receipt, role: 'receipt' });
   }
-  return commands.filter((value): value is string => value !== undefined);
+  return commands;
 }
 
 function actionableGapQueueReceiptPath(packet: Record<string, unknown>): string | undefined {
@@ -4778,8 +4784,8 @@ function actionableGapQueueRelatedVerifyIsBounded(packet: Record<string, unknown
   const target = file.replace(/\\/g, '/');
   const packageName = target.startsWith('crates/') ? target.split('/')[1]
     : target.startsWith('xtask/') ? 'xtask' : undefined;
-  return Boolean(packageName && /^[A-Za-z0-9_.-]+$/.test(packageName)
-    && /^[A-Za-z0-9_:-]+$/.test(name)
+  return Boolean(packageName && /^[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(packageName)
+    && /^[A-Za-z0-9_][A-Za-z0-9_:-]*$/.test(name)
     && command.trim() === `cargo test -p ${packageName} ${name}`);
 }
 
