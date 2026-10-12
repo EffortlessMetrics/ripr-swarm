@@ -672,6 +672,8 @@ mod tests {
     #[test]
     fn gate_family_help_states_file_backed_output_discipline() {
         assert!(GATE_HELP.contains("stdout contains human `Wrote ...` status lines"));
+        assert!(GATE_HELP.contains("after a completed"));
+        assert!(GATE_HELP.contains("`config_error` reports stay quiet"));
         assert!(BASELINE_HELP.contains("ripr baseline create --from PATH"));
         assert!(BASELINE_HELP.contains("--dry-run"));
         assert!(BASELINE_HELP.contains("it prints the candidate JSON"));
