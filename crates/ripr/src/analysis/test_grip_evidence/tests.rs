@@ -18421,6 +18421,19 @@ fn called_sibling_stays_strongly_gripped_beside_an_uncalled_one() -> Result<(), 
     );
     assert_eq!(compact_reach, StageState::Yes);
     assert_eq!(class, SeamGripClass::StronglyGripped, "{evidence:?}");
+    // #5335 review round 2: the Yes summary names only tests whose relation
+    // establishes reach; the same-file `zero_size` test must not be listed
+    // as reaching `as_kib`.
+    assert!(
+        evidence.reach.summary.contains("conversions"),
+        "{}",
+        evidence.reach.summary
+    );
+    assert!(
+        !evidence.reach.summary.contains("zero_size"),
+        "{}",
+        evidence.reach.summary
+    );
     Ok(())
 }
 

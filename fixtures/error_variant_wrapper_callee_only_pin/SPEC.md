@@ -31,7 +31,8 @@ variant identity but observes nothing about the wrapper: the test relates
 only through its name, which the shared reach-bearing relation rule
 (#5335) does not credit as reach, and nothing calls `parse_summary`, so
 the finding discloses the missing static path instead of a reach claim.
-The discriminate stage still emits `observation_unverified`.
+The discriminate stage reads `no`: no test reaches the changed owner, so
+no test can discriminate this change.
 
 ## Must Not
 

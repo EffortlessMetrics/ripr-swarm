@@ -34,7 +34,8 @@ reports `no_static_path` (NOT `exposed`). The foreign pin constrains another
 call's result, so no wrapper-to-variant binding is established; the name
 anchor no longer counts as reach (#5335) and nothing invokes the wrapper,
 so the finding discloses the missing static path. The discriminate stage
-emits `observation_unverified`.
+reads `no`: no test reaches the changed owner, so no test can discriminate
+this change.
 
 ## Must Not
 

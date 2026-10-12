@@ -503,8 +503,12 @@ fn reach_evidence(
             format!("{} {}", shared.summary, unreached.summary),
         );
     }
+    // Name only the tests whose relation establishes reach, in ranked
+    // order: a proximity or affinity test ranked ahead of the reaching one
+    // must not be named as reaching the owner (#5335 review round 2).
     let names: Vec<&str> = related
         .iter()
+        .filter(|(_, reason)| relation_establishes_reach(*reason, owner_fn.is_some()))
         .take(3)
         .map(|(test, _)| test.name.as_str())
         .collect();
