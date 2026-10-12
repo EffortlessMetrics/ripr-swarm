@@ -1188,13 +1188,19 @@ fn detect_test_surfaces(
                             "perl: adapter compiled (lang-perl feature ON)".to_string(),
                         ));
                     } else {
+                        // #7434: this catalog line is a semicolon-joined
+                        // detection list, not the recovery owner. The full
+                        // `unavailable_adapter_recovery()` paragraph already
+                        // prints as Perl preview `next:` (and JSON
+                        // `perl_preview.next_command`). Repeating it here
+                        // made the human screen print the same ~340-character
+                        // block twice. JSON `test_surfaces[].evidence` is this
+                        // same catalog fragment by contract, so the field
+                        // stays; only the catalog wording shortens.
                         surfaces.push(surface(
                             "perl",
                             None,
-                            format!(
-                                "perl: adapter NOT compiled; {}",
-                                id.unavailable_adapter_recovery()
-                            ),
+                            "perl: adapter NOT compiled (see Perl preview below)".to_string(),
                         ));
                     }
                     // Report runner availability from PATH, never the checkout cwd
@@ -3637,6 +3643,82 @@ mod tests {
                 "uncompiled adapter must not get a runnable-looking next step: {command}"
             );
         }
+    }
+
+    /// #7434: the Perl recovery paragraph belongs on `next:`. The
+    /// test-surfaces catalog is a semicolon-joined detection list; embedding
+    /// the same paragraph there prints it twice on one human screen.
+    #[test]
+    fn uncompiled_perl_adapter_recovery_prints_once_on_the_human_doctor_screen()
+    -> Result<(), String> {
+        let root = unique_command_test_dir("doctor-perl-recovery-once");
+        std::fs::create_dir_all(root.join("lib")).map_err(|err| format!("create lib: {err}"))?;
+        std::fs::create_dir_all(root.join("t")).map_err(|err| format!("create t: {err}"))?;
+        std::fs::write(root.join("lib/Pricing.pm"), "package Pricing;\n1;\n")
+            .map_err(|err| format!("write pm: {err}"))?;
+        std::fs::write(
+            root.join("t/pricing.t"),
+            "use Test::More;\nok(1);\ndone_testing();\n",
+        )
+        .map_err(|err| format!("write t: {err}"))?;
+
+        let detected = detect_languages(&root);
+        assert!(
+            detected.contains(&LanguageId::Perl),
+            "fixture must detect Perl: {detected:?}"
+        );
+        let surfaces = detect_test_surfaces(&root, &detected);
+        assert!(
+            !surfaces.is_empty(),
+            "fixture must produce test-surface evidence"
+        );
+        let catalog = surfaces
+            .iter()
+            .map(|surface| surface.evidence.as_str())
+            .collect::<Vec<_>>()
+            .join("; ");
+        let recovery = LanguageId::Perl.unavailable_adapter_recovery();
+        let preview = probe_perl_preview(&root, None)
+            .ok_or_else(|| format!("fixture must produce a Perl preview: {catalog}"))?;
+        let preview_text = perl_preview_lines(&preview).join("\n");
+        let screen = format!("- Detected test surfaces: {catalog}\n{preview_text}");
+        let occurrences = screen.matches(recovery.as_str()).count();
+
+        assert!(
+            !catalog.contains(&recovery),
+            "the test-surfaces catalog must not embed the recovery paragraph: {catalog}"
+        );
+
+        if cfg!(feature = "lang-perl") {
+            assert_eq!(
+                occurrences, 0,
+                "a lang-perl build has no recovery paragraph to print: {screen}"
+            );
+            assert!(
+                catalog.contains("perl: adapter compiled (lang-perl feature ON)"),
+                "compiled adapter must stay a catalog fact: {catalog}"
+            );
+        } else {
+            assert_eq!(
+                occurrences, 1,
+                "the recovery paragraph must appear once, on next:, not twice: {screen}"
+            );
+            assert!(
+                catalog.contains("perl: adapter NOT compiled (see Perl preview below)"),
+                "the catalog must name adapter state and point at the preview: {catalog}"
+            );
+            assert!(
+                preview_text.contains(&format!("next: {recovery}")),
+                "next: must keep the recovery paragraph: {preview_text}"
+            );
+            assert_eq!(
+                preview.next_command, recovery,
+                "JSON next_command must keep the recovery paragraph"
+            );
+        }
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
     }
 
     #[test]
