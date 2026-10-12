@@ -8847,6 +8847,91 @@ fn selected() {
     }
 
     #[test]
+    fn changed_test_inventory_exact_occurrence_enclosing_context() -> Result<(), String> {
+        for (label, prefix, suffix, admitted) in [
+            ("plain", "", "", true),
+            ("test-cfg", "#[cfg(test)] mod available {", "}", true),
+            ("false-cfg", "#[cfg(any())] mod unavailable {", "}", false),
+            ("opaque", "#[opaque_attr] mod unavailable {", "}", false),
+            ("dormant", "fn dormant() {", "}", false),
+        ] {
+            for shape in ["assertion", "body", "parameter"] {
+                let root = make_tempdir(&format!("targeted-context-{label}-{shape}"))?;
+                write_file(
+                    &root.join("Cargo.toml"),
+                    "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dev-dependencies]\nrstest = { version = \"=0.27.0\", default-features = false }\n",
+                )?;
+                let call = "crate::\nowner(1)";
+                let selected = match shape {
+                    "body" => format!(
+                        "#[test]\nfn selected() {{ let value = {call}; assert_eq!(value, 1); }}"
+                    ),
+                    "parameter" => format!(
+                        "use rstest::rstest;\n#[rstest]\nfn selected(#[values({call})] x: i32) {{ assert_eq!(x, 1); }}"
+                    ),
+                    _ => format!("#[test]\nfn selected() {{ assert_eq!({call}, 1); }}"),
+                };
+                let file = root.join("src/lib.rs");
+                write_file(
+                    &file,
+                    &format!(
+                        "pub fn owner(x:i32)->i32 {{ if x>0 {{x}} else {{0}} }}\n{prefix}\n{selected}\n{suffix}\n"
+                    ),
+                )?;
+                let index =
+                    crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+                assert_eq!(index.tests().len(), 1, "{label}/{shape}: missing test");
+                assert!(
+                    index.tests()[0]
+                        .calls
+                        .iter()
+                        .any(|call| call.name == "owner")
+                );
+                assert!(
+                    !index
+                        .files()
+                        .get(&file)
+                        .ok_or("missing indexed file")?
+                        .used_lexical_fallback
+                );
+                assert!(index.functions().iter().any(|owner| owner.name == "owner"));
+                let result = inventory_changed_test_classified_seams_at_with_config_node(
+                    &root,
+                    &RiprConfig::default(),
+                    Path::new("src/lib.rs"),
+                    Some("selected"),
+                );
+                if admitted {
+                    let inventory =
+                        result.map_err(|error| format!("{label}/{shape}: {error:?}"))?;
+                    assert_eq!(inventory.selected_test_count, 1);
+                    assert!(!inventory.classified.is_empty());
+                    assert!(
+                        inventory
+                            .classified
+                            .iter()
+                            .all(|entry| entry.seam.owner() == "src/lib.rs::owner")
+                    );
+                } else {
+                    assert!(
+                        matches!(
+                            result,
+                            Err(TargetedTestInventoryError::Selector {
+                                kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                                selected_test_count: 1,
+                                ..
+                            })
+                        ),
+                        "{label}/{shape}: {result:?}"
+                    );
+                }
+                std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn changed_test_inventory_exact_occurrence_known_empty_macro_stays_masked() -> Result<(), String>
     {
         let root = make_tempdir("targeted-occurrence-empty-macro")?;

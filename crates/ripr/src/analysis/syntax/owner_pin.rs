@@ -1681,7 +1681,7 @@ fn insert_function(
 
 /// A libtest item cannot be nested in an executable body. Module/source
 /// attributes include inner attributes on ItemList, not only outer attrs.
-pub(super) fn supported_item_context(item: &SyntaxNode) -> bool {
+pub(crate) fn supported_item_context(item: &SyntaxNode) -> bool {
     item_context_refusal(item).is_none()
 }
 

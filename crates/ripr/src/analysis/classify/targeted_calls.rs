@@ -118,7 +118,12 @@ impl<'index> TargetedCallSyntax<'index> {
                     })
                 })
                 .collect::<Vec<_>>();
-            if let [function] = functions.as_slice() {
+            if let [function] = functions.as_slice()
+                && function
+                    .syntax()
+                    .parent()
+                    .is_some_and(|parent| crate::analysis::syntax::supported_item_context(&parent))
+            {
                 let function = *function;
                 collect(
                     function.syntax(),
