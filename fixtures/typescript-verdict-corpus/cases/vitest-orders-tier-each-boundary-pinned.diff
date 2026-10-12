@@ -1,0 +1,11 @@
+diff --git a/src/tier.ts b/src/tier.ts
+index 0000000..1111111 100644
+--- a/src/tier.ts
++++ b/src/tier.ts
+@@ -1,5 +1,5 @@
+ export function isGoldTier(spend: number): boolean {
+-  if (spend >= 500) {
++  if (500 <= spend) {
+     return true;
+   }
+   return false;

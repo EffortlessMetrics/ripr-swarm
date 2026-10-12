@@ -1,0 +1,46 @@
+{
+  "subject_id": "atuin-90f590b9",
+  "upstream": "https://github.com/atuinsh/atuin",
+  "commit": "90f590b9235556363ffb5b2c66728f8af3c27afe",
+  "version_label": "main@90f590b9",
+  "license": "MIT",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "de39a5994d52926dabe574e660a3c881b4c274168b06a30eb1555488545cfe44"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "f87d1042ef858e746db8429f69a0cdd9dc73a28595dc738e5cbeb97ad8586d64"
+    },
+    {
+      "path": "crates/atuin/Cargo.toml",
+      "sha256": "050517e7a36267ec0ba4ce5596b8bdab054b4f1d2b4012ee76279dc513b6e449"
+    },
+    {
+      "path": "crates/atuin-ai/Cargo.toml",
+      "sha256": "ca8756dae4001bb6255e70429710b45b669363499e7d8a0aa3b5052abeb72346"
+    },
+    {
+      "path": "crates/atuin-ai/src/context.rs",
+      "sha256": "e2f27522b75b4b621eee747ae13f806036bd057593df9edd67bcdb44489ea853"
+    },
+    {
+      "path": "crates/atuin-ai/src/context_window.rs",
+      "sha256": "cec012cad88da95b7a9733f717ca3f8a3c9a7767bb63ab4946bd3a8141efd259"
+    },
+    {
+      "path": "crates/atuin/src/command/client/daemon.rs",
+      "sha256": "6c131e529929a0ecb57495f8c00853c993a2b569eabe47308ca7fed7a7570710"
+    },
+    {
+      "path": "crates/atuin/src/logs/mod.rs",
+      "sha256": "6251052bccff6dac50fdd280895903bc1e092f6c913fbe1cfe67c7f7e8b9cd49"
+    },
+    {
+      "path": "crates/atuin/src/logs/otel/enabled.rs",
+      "sha256": "5ebc7b6d5667b07adfb602e6fab555cae12e295fb463505339de133d7e314cc5"
+    }
+  ]
+}

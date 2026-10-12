@@ -13,6 +13,14 @@ use std::path::PathBuf;
 pub(super) const MAX_MESSAGE_BYTES: usize = 256 * 1024;
 pub(super) const MAX_RESPONSE_BYTES: usize = 128 * 1024;
 
+/// Wire-calibrated ceiling for one tool document that a caller can narrow
+/// with paging (#6021): the tool envelope's text copy escapes every byte in
+/// the worst case, so a document at half the response bound (minus fixed
+/// envelope overhead) always renders a deliverable response even in the
+/// pathological all-escapes case. Pagination targets this ceiling so an
+/// approved page can never be overturned by the wire.
+pub(super) const MAX_TOOL_DOCUMENT_BYTES: usize = MAX_RESPONSE_BYTES / 2 - 256;
+
 pub(crate) const MCP_HELP: &str = r#"Expose RIPR's bounded, read-only workspace session over the Model Context Protocol.
 
 Usage: ripr mcp [--stdio] [--root PATH]
@@ -34,8 +42,13 @@ The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
 `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
 `ripr://repair-card/{canonical_id}`.
-`ripr_refresh` runs one bounded static analysis per call through the same
-shared check authority as `ripr check`; the other tools read the committed
+`ripr_refresh` analyzes the committed default-branch diff through the shared
+check authority. In this snapshot, staged and unstaged tracked edits and
+untracked files are outside the analyzed scope. `ripr check` defaults to the
+working tree when staged or unstaged tracked edits exist; shared check
+authority does not mean identical input. Use `ripr check --committed` for
+committed input, or `ripr check --worktree --format json` for staged and
+unstaged tracked edits outside MCP. The other tools read the committed
 snapshot and never re-run analysis. `ripr_prepare_repair` evaluates producer
 repair-readiness facts and may create one in-memory session repair
 transaction; `ripr_get_repair_attempt` and `ripr_get_receipt_status` read

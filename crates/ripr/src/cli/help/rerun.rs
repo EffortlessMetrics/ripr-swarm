@@ -14,6 +14,19 @@ Options:
   --json               Emit the structured current-state report.
   --out PATH           Write the report to a file instead of stdout.
 
+Build the explicit ledger before using --gap (examples from the repository root):
+  Rust: run `ripr check --format repo-exposure-json` and save stdout as repo-exposure.json.
+        ripr reports gap-ledger --repo-exposure repo-exposure.json --out gap-ledger.json
+  TypeScript: repeat the check that produced the gap with --json and save stdout as check.json.
+        ripr reports gap-ledger --check-output check.json --out gap-ledger.json
+  Then: ripr rerun --gap CANONICAL_GAP_ID --gap-ledger gap-ledger.json
+Use the same --root for capture, ledger generation, and rerun when working elsewhere.
+Keep the originating check's --base/--diff/--worktree scope for check.json;
+the ledger must contain the selected canonical gap ID. Rust diff findings and
+repo-inventory gaps can use different IDs: ledger generation does not translate
+an absent ID. A missing selection returns canonical_gap_unresolved, not a rerun
+of unrelated seams. See `ripr help reports` for the ledger source options.
+
 The changed-test selector recomputes only seams owned by uniquely resolved
 functions directly called from the selected test file or test node. An unknown
 or ambiguous node is a named limitation. The gap selector groups

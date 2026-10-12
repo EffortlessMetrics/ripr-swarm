@@ -50,21 +50,28 @@ Err(ParseSummaryError::MalformedSource);`) classifies `exposed` with
 `exact_error_variant` / `strong` — the pre-existing variant-bound credit path
 (RIPR-SPEC-0106), no wrapper heuristics involved.
 
-Every `map_err(Into::into)` wrapper seam — including the one the downcast
-witness reaches — classifies `weakly_exposed` and carries the typed static
-limitation `static_limit_kind: wrapper_error_binding_unresolved`: whether the
-boxed conversion faithfully carries the callee's error variant is not
-statically establishable, so lexical confirmation is refused by construction.
-The downcast witness and the typed sibling test remain listed as related, but
-the emitted missing/recommendation text names the limitation instead of
-prescribing an assertion the suite may already contain. This is the
-fail-closed outcome the issue sanctions; crediting a faithful typed
+The `map_err(Into::into)` wrapper seams with asserting observers — including
+the one the downcast witness reaches — classify `weakly_exposed` and carry
+the typed static limitation
+`static_limit_kind: wrapper_error_binding_unresolved`: whether the boxed
+conversion faithfully carries the callee's error variant is not statically
+establishable, so lexical confirmation is refused by construction. The
+downcast witness and the typed sibling test remain listed as related, but the
+emitted missing/recommendation text names the limitation instead of prescribing
+an assertion the suite may already contain. Crediting a faithful typed
 conversion requires modeling `Into`/`From` through `Box` (follow-up slice).
 
-The fail-closed companions all stay `weakly_exposed` for their own reasons:
-no variant pin (broad `is_err()`), a conversion that destroys the typed
-identity (stringified), an ignored `matches!` result, and pins that are not
-bound to the converted callee (wrong sibling, unrelated enum).
+The asserting fail-closed companions stay `weakly_exposed` for their own
+reasons: no variant pin (broad `is_err()`), a conversion that destroys the typed
+identity (stringified), and pins that are not bound to the converted callee
+(wrong sibling, unrelated enum).
+
+The `theme_summary` observer discards its `matches!` result. Its wrapper
+`error_path` and `return_value` findings are `reachable_unrevealed` with
+`unknown` / `none` oracle metadata and a retained `no_assertion` consumer. The
+primary guidance asks for an assertion. Secondary missing text may still name
+the unresolved wrapper binding; the optional `static_limit_kind` and
+`static_limitation` fields are absent for these findings.
 
 ## Must Not
 

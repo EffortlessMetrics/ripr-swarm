@@ -32,8 +32,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/python_dict_field_repair_gap/input --diff fixtures/python_dict_field_repair_gap/diff.patch --mode fast probe:src_invoice.py:python_preview:5718c46e
-  ripr context --root fixtures/python_dict_field_repair_gap/input --diff fixtures/python_dict_field_repair_gap/diff.patch --mode fast --at probe:src_invoice.py:python_preview:5718c46e
+  ripr explain --root <cwd>/fixtures/python_dict_field_repair_gap/input --diff <cwd>/fixtures/python_dict_field_repair_gap/diff.patch --mode fast probe:src_invoice.py:python_preview:5718c46e
+  ripr context --root <cwd>/fixtures/python_dict_field_repair_gap/input --diff <cwd>/fixtures/python_dict_field_repair_gap/diff.patch --mode fast --at probe:src_invoice.py:python_preview:5718c46e
 
 More:
   Full evidence: rerun with --format human-full

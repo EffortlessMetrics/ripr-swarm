@@ -740,27 +740,13 @@ fn repair_start_report(
         selected.missing_discriminator.as_deref(),
     ) {
         (Some(_), Some(missing)) => {
-            // #4381: quote the shared missing-discriminator sentence and the
-            // canonical label instead of a per-surface "lacks a
-            // discriminator" phrasing; all surfaces must read the same. An
-            // ungripped seam has no related test that reaches the change —
-            // that absence is the class definition — so the reachability
-            // sentence would overclaim there; name the value neutrally.
-            let ungripped = string_path(card, &["grip_class"]).is_some_and(|grip| {
-                crate::output::gap_vocabulary::exposure_class_of(&grip) == Some("no_static_path")
-            });
-            if ungripped {
-                format!(
-                    "The review card identifies {} `{missing}` and names its repair start.",
-                    crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_LABEL,
-                )
-            } else {
-                format!(
-                    "The changed behavior — {}; {} `{missing}`. The review card names its repair start.",
-                    crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_SENTENCE,
-                    crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_LABEL,
-                )
-            }
+            // The card carries a repair start, not the reach or relation
+            // evidence needed to claim a test invokes the changed owner
+            // (#7055 A1). Name its missing value without inferring reach.
+            format!(
+                "The review card identifies {} `{missing}` and names its repair start.",
+                crate::output::gap_vocabulary::MISSING_DISCRIMINATOR_LABEL,
+            )
         }
         _ => {
             "The review card names a repair start for this seam; no repair has run yet.".to_string()

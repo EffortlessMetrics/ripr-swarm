@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0227-total-question-mark-ok-input",
+  "subject_id": "authored-spec0227-12",
+  "diff": "cases/spec0227-total-question-mark-ok-input.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "question_mark_propagation",
+  "test_shape": "is_ok_on_ok_input",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let d = digit(c).unwrap_or(0);",
+        "mutated_line": "let d = digit(c).unwrap_or(0);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: total(\"x\") returns Ok(0) instead of Err(Bad)"
+      },
+      {
+        "replacement": "let d = digit(c).unwrap_or(1);",
+        "mutated_line": "let d = digit(c).unwrap_or(1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: total(\"x\") returns Ok(1) instead of Err(Bad)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "digit_is_accepted asserts total(\"7\").is_ok(); digit('7') is Ok, so the unwrap_or mutants return Ok(7) like the original and the test passes. Spec cells: RIPR-SPEC-0227 example 12 (rule 3b negative control: condition 2 fails, both versions return Ok).",
+  "labeling_observation": {
+    "ripr_commit": "a9d36dc71",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0227#12"
+  ]
+}

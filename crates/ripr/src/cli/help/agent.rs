@@ -132,26 +132,43 @@ prose only, like the sibling verify and repair commands.
 
 pub(super) const AGENT_STUB_HELP: &str = r#"Write a compiling Rust test stub for one gap, ready to fill and run.
 
-Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE) [--write] [--json]
+Usage: ripr agent stub [--root PATH] (--seam-id ID | --at FILE:LINE [--kind FAMILY]) [--write] [--json]
 
 Options:
   --root PATH      Workspace root. Defaults to current directory.
   --seam-id ID     Select one visible seam by ID.
   --at FILE:LINE   Select the gap at a `ripr check` finding location.
+  --kind FAMILY    With --at: the finding's probe family (`predicate`,
+                   `return_value`, `error_path`, `match_arm`). Only seams of
+                   that kind are tried, so a line holding several changes
+                   stubs the one the finding reported; two separate seams of
+                   that kind on one line are refused with their seam IDs.
+                   `ripr check` prints it. Without it, --at tries only the
+                   file's reported gaps, so a seam tests pin is refused.
   --write          Apply the stub: insert it into the owner file's inline
                    `#[cfg(test)]` module (or a new one), or create the
                    proposed `tests/` file. Refuses when the file changed
                    since the stub was computed or the new file exists.
   --json           Emit one `rust_test_stub` JSON document (schema_version
                    `0.1`) with the placement, test name, exact text, the
-                   `todo!()` fill-ins, derived inputs, and run command.
+                   `todo!()` fill-ins, derived inputs, run command, and
+                   inventory `grip_class` plus check `classification`
+                   when known. A strongly_gripped seam stays `state:
+                   ready` (exit 0) and discloses the packet/repair
+                   omission reason in `warnings` and human output.
 
 The stub calls the changed function with its real receiver and parameters,
 fills a boundary input when the changed comparison names one, and stops at a
 labelled `todo!()` for the value the behavior should produce. It compiles and
 fails until that value is written; ripr never invents the expected value.
-Side-effect and call-presence gaps, async, unsafe, and generic owners are
-refused with a named reason (exit `3`); stdout stays empty on a refusal.
+`--at --kind` still selects from that one file's seams without using
+classification to pick the seam; after selection it looks up the inventory
+grip so the stub can disclose it. A strongly_gripped seam is still a
+scaffold (`state: ready`, exit 0) and reuses the packet/repair wording
+("configured off for strongly_gripped seams and is not included in agent
+results"). Side-effect and call-presence gaps, async, unsafe, and generic
+owners are refused with a named reason (exit `3`); stdout stays empty on a
+refusal.
 "#;
 
 pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement between a before and after snapshot.
@@ -374,4 +391,12 @@ Inline `#[cfg(test)]` modules don't qualify their file: a repository
 whose only tests are inline in non-test-surface files is permanently out
 of repair scope — the repair workflow consumes only file-level cage
 authority. The before phase refuses such seams before creating anything.
+
+Environment variables:
+  RIPR_PERSIST_LATENCY_TRACE  When present, emits diagnostic persist-phase
+                                    trace lines for baseline capture, attempt
+                                    publication, and after-phase state
+                                    recapture. Presence enables tracing even
+                                    if the value is empty or 0; it does not
+                                    change any verdict.
 "#;

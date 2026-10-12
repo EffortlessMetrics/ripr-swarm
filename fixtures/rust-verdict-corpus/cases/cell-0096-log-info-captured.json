@@ -1,0 +1,52 @@
+{
+  "case_id": "cell-0096-log-info-captured",
+  "subject_id": "authored-spec-confirm",
+  "diff": "cases/cell-0096-log-info-captured.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 25
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "captured_log_record_assert",
+  "hard_case": "Twin of cell-0096-log-info-smoke-only: the test installs a capturing logger and asserts the exact record, so log:: output is an observable sink here.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "log::info!(\"audited {}\", 7 + amount);",
+        "mutated_line": "log::info!(\"audited {}\", 7 + amount);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::audit_logs_the_scaled_amount",
+        "equivalence_review": "not equivalent: the logged amount changes"
+      },
+      {
+        "replacement": "(delete the line)",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "tests::audit_logs_the_scaled_amount",
+        "equivalence_review": "not equivalent: no record is logged"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "audit_logs_the_scaled_amount captures the record and requires \"audited 42\", which both mutants change or remove. Spec cells: RIPR-SPEC-0096 log:: stays a capturable sink.",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

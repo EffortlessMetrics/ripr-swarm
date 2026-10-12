@@ -13,11 +13,20 @@ const DEFAULT_ACTIONABLE_GAPS_OUT: &str = "target/ripr/reports/actionable-gaps.j
 pub(super) struct GapArtifactValidationContext<'a> {
     pub(super) root: &'a Path,
     pub(super) enabled_languages: &'a [LanguageId],
+    pub(super) repo_config: &'a crate::config::RiprConfig,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum GapArtifactCorpusCurrentness {
+    CurrentRustWorkspace,
+    PreviewOrMixedUnavailable,
+    EmptyActionableQueueUnavailable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ValidatedGapArtifact {
     pub(super) kind: GapArtifactKind,
+    pub(super) corpus_currentness: Option<GapArtifactCorpusCurrentness>,
     pub(super) root: Option<String>,
     pub(super) identities: Vec<GapArtifactIdentity>,
     pub(super) language: Option<LanguageId>,
@@ -65,6 +74,9 @@ pub(super) enum GapArtifactRejection {
     /// A file the artifact's records name no longer has the content the
     /// artifact was computed from (#4544). Carries the repo-relative path.
     StaleSubject(String),
+    /// The full analyzed Rust source/test corpus changed, including files
+    /// outside the artifact's named repair route.
+    StaleCorpus,
     /// The artifact carries no usable `source_subject` stamp, so it cannot be
     /// matched to the current workspace (#4544). Carries the reason code.
     UnverifiableSubject(&'static str),
@@ -76,6 +88,35 @@ pub(super) enum GapArtifactRejection {
 }
 
 impl ValidatedGapArtifact {
+    pub(super) fn corpus_currentness_json(&self) -> Option<Value> {
+        let kind = match self.kind {
+            GapArtifactKind::GapDecisionLedger => "gap_decision_ledger",
+            GapArtifactKind::ActionableGaps => "actionable_gaps",
+            _ => return None,
+        };
+        let (scope, currentness, limitation) = match self.corpus_currentness? {
+            GapArtifactCorpusCurrentness::CurrentRustWorkspace => {
+                ("rust_workspace", "current", None)
+            }
+            GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable => (
+                "preview_or_mixed_language",
+                "unavailable",
+                Some("preview_or_mixed_corpus_provenance_unavailable"),
+            ),
+            GapArtifactCorpusCurrentness::EmptyActionableQueueUnavailable => (
+                "empty_actionable_queue",
+                "unavailable",
+                Some("empty_actionable_queue_corpus_scope_unavailable"),
+            ),
+        };
+        Some(serde_json::json!({
+            "kind": kind,
+            "scope": scope,
+            "corpus_currentness": currentness,
+            "limitation": limitation,
+        }))
+    }
+
     pub(super) fn is_safe_projection_input(&self) -> bool {
         let kind_is_supported = matches!(
             self.kind,
@@ -172,6 +213,7 @@ impl GapArtifactRejection {
             Self::OutOfWorkspacePath(_) => "out_of_workspace_path",
             Self::StaleArtifact => "stale_artifact",
             Self::StaleSubject(_) => "stale_subject",
+            Self::StaleCorpus => "stale_corpus",
             Self::UnverifiableSubject(_) => "unverifiable_subject",
             Self::UnavailableLanguage(_) => "unavailable_language",
             Self::UnsupportedSchema(_) => "unsupported_schema",
@@ -185,10 +227,12 @@ impl GapArtifactRejection {
 pub(super) fn validate_workspace_gap_artifact_report(
     root: &Path,
     enabled_languages: &[LanguageId],
+    repo_config: &crate::config::RiprConfig,
 ) -> GapArtifactValidationReport {
     let context = GapArtifactValidationContext {
         root,
         enabled_languages,
+        repo_config,
     };
     let mut report = GapArtifactValidationReport::default();
     for relative in [
@@ -274,7 +318,8 @@ pub(super) fn validate_gap_artifact(
     {
         return Err(GapArtifactRejection::MissingIdentity);
     }
-    validate_source_subject(artifact, kind, context.root)?;
+    validation.corpus_currentness =
+        validate_source_subject(artifact, kind, context.root, context.repo_config)?;
     Ok(validation)
 }
 
@@ -291,7 +336,8 @@ pub(super) fn validate_source_subject(
     artifact: &Value,
     kind: GapArtifactKind,
     root: &Path,
-) -> Result<(), GapArtifactRejection> {
+    repo_config: &crate::config::RiprConfig,
+) -> Result<Option<GapArtifactCorpusCurrentness>, GapArtifactRejection> {
     let (items, subject_paths): (&[Value], SubjectPathsFn) = match kind {
         GapArtifactKind::GapDecisionLedger => (
             artifact
@@ -310,7 +356,7 @@ pub(super) fn validate_source_subject(
         ),
         GapArtifactKind::EvidenceRecord
         | GapArtifactKind::FirstUsefulAction
-        | GapArtifactKind::AgentReceipt => return Ok(()),
+        | GapArtifactKind::AgentReceipt => return Ok(None),
     };
     let required = items
         .iter()
@@ -320,7 +366,73 @@ pub(super) fn validate_source_subject(
         root,
         artifact.get("source_subject"),
         &required,
-    ))
+    ))?;
+
+    if kind == GapArtifactKind::ActionableGaps && items.is_empty() {
+        // The kind validator already requires the existing complete zero-count
+        // queue contract. Preserve that no-action admission without claiming
+        // that an empty language population proves a current Rust corpus.
+        return Ok(Some(
+            GapArtifactCorpusCurrentness::EmptyActionableQueueUnavailable,
+        ));
+    }
+
+    // Inspect the complete raw population, including no-action records and
+    // every packet finding. A missing language cannot select a weaker scope
+    // merely because a sibling record is a known preview language.
+    let mut known_language = false;
+    let mut preview_or_mixed = false;
+    let mut missing_language = false;
+    let mut observe = |value: &Value| -> Result<(), GapArtifactRejection> {
+        match language_from_value(value)? {
+            Some(language) => {
+                known_language = true;
+                preview_or_mixed |= language != LanguageId::Rust;
+            }
+            None => missing_language = true,
+        }
+        Ok(())
+    };
+    for item in items {
+        if kind == GapArtifactKind::ActionableGaps {
+            let findings = item.get("raw_findings").and_then(Value::as_array);
+            if item.get("language").is_some() || findings.is_none_or(Vec::is_empty) {
+                observe(item)?;
+            }
+            if let Some(findings) = findings {
+                for finding in findings {
+                    observe(finding)?;
+                }
+            }
+        } else {
+            observe(item)?;
+        }
+    }
+    if missing_language || !known_language {
+        return Err(GapArtifactRejection::UnverifiableSubject(
+            "source_subject_corpus_scope_missing",
+        ));
+    }
+    if preview_or_mixed {
+        // Preserve the existing named-file admission for these languages.
+        // A Rust-only hash cannot establish their whole corpus currentness.
+        return Ok(Some(
+            GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable,
+        ));
+    }
+    match gap_source_subject::check_rust_corpus_subject(
+        root,
+        artifact.get("source_subject"),
+        repo_config,
+    ) {
+        gap_source_subject::CorpusSubjectCheck::Current => {
+            Ok(Some(GapArtifactCorpusCurrentness::CurrentRustWorkspace))
+        }
+        gap_source_subject::CorpusSubjectCheck::Stale => Err(GapArtifactRejection::StaleCorpus),
+        gap_source_subject::CorpusSubjectCheck::Unverifiable(reason) => {
+            Err(GapArtifactRejection::UnverifiableSubject(reason))
+        }
+    }
 }
 
 /// Map a stamp comparison onto the shared typed rejection vocabulary so the
@@ -354,6 +466,7 @@ fn validate_first_useful_action(
     let (verify_command_specs, receipt_command_specs) = command_specs_from_value(commands)?;
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::FirstUsefulAction,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities: vec![identity],
         language: language_from_value(artifact)?,
@@ -454,6 +567,7 @@ fn validate_gap_decision_ledger(
     }
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::GapDecisionLedger,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities,
         language,
@@ -604,6 +718,7 @@ fn validate_actionable_gaps(
 
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::ActionableGaps,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities,
         language,
@@ -1031,6 +1146,7 @@ fn validate_evidence_record(
     let (verify_command_specs, receipt_command_specs) = command_specs_from_value(canonical_item)?;
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::EvidenceRecord,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities: vec![identity],
         language: language_from_value(artifact)?,
@@ -1062,6 +1178,7 @@ fn validate_agent_receipt(
     ]);
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::AgentReceipt,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities: vec![identity],
         language: language_from_value(artifact)?,
@@ -1206,7 +1323,10 @@ fn validate_report_root(
         return Ok(());
     }
     let candidate = Path::new(report_root);
-    if candidate.is_absolute() && normalize_path(candidate) == normalize_path(root) {
+    if candidate.is_absolute()
+        && (normalize_path(candidate) == normalize_path(root)
+            || gap_source_subject::same_root(root, candidate))
+    {
         return Ok(());
     }
     Err(GapArtifactRejection::WrongRoot(report_root.to_string()))
@@ -1467,6 +1587,201 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
     true
 }
 
+/// Bind a portable artifact command to the selected workspace root (#4001).
+///
+/// Gap artifacts record `--root .` routes (their typed `CommandSpec` runs
+/// with the working directory at the repository root). A command copied from
+/// the editor runs from whatever directory the user pastes it into, so the
+/// display names the selected workspace instead: `--root .` becomes the bound
+/// root and a relative redirect target is anchored under it, like every other
+/// editor command (#3948). A command that is not a safe payload, or carries
+/// no top-level `--root .`, is returned unchanged so the validator still sees
+/// it as written. A `--root .` route that cannot be bound, including a
+/// mixed-quote spelling `command_tokens` still reads as `--root .`, is
+/// withheld (`None`) rather than shown portable, since a pasted portable
+/// route analyzes whatever directory the terminal is in.
+pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String> {
+    let trimmed = command.trim();
+    if !command_payload_is_safe(root, trimmed) {
+        return Some(command.to_string());
+    }
+    let (body, redirect) = match trimmed.rsplit_once(" > ") {
+        Some((body, tail)) => (body, Some(tail)),
+        None => (trimmed, None),
+    };
+    // Only a top-level `--root .` pair is the route's root; the same text
+    // inside a quoted argument (a recorded `--verify-command '...'`) is data.
+    // A whole token written `'.'` is the same root once the shell unquotes it.
+    // The token scan does not decode `\` escapes (a producer's `'\''` for an
+    // apostrophe reopens a quote), so a body carrying one is not split: its
+    // `--root .` route, if any, is withheld rather than guessed at.
+    if body.contains('\\') {
+        // Literal forms catch producer `--root .` / simply quoted `.`. Mixed-quote
+        // spellings such as `"--root"'' .` are not those substrings, so also
+        // consult the same unquoted tokens `command_payload_is_safe` uses.
+        let portable = ["--root .", "--root '.'", "--root \".\""]
+            .iter()
+            .any(|form| body.contains(form))
+            || command_tokens(body)
+                .windows(2)
+                .any(|pair| pair[0] == "--root" && pair[1] == ".");
+        return (!portable).then(|| command.to_string());
+    }
+    let spans = top_level_token_spans(body);
+    // Decide on the same unquoted tokens `command_payload_is_safe` uses. A
+    // mixed-quote spelling such as `.''` or `"--root"''` still unquotes to a
+    // portable `--root .` pair, but `literal_token` cannot read it to rewrite,
+    // so the route is withheld rather than shown unbound (#7054).
+    let mut dots = Vec::new();
+    let mut unreadable_portable_root = false;
+    for pair in spans.windows(2) {
+        let flag = &body[pair[0].clone()];
+        let value = &body[pair[1].clone()];
+        if !token_unquotes_to(flag, "--root") || !token_unquotes_to(value, ".") {
+            continue;
+        }
+        if literal_token(flag) == Some("--root") && literal_token(value) == Some(".") {
+            dots.push(pair[1].clone());
+        } else {
+            unreadable_portable_root = true;
+        }
+    }
+    if unreadable_portable_root {
+        return None;
+    }
+    // Producers write `--root .`; a `--root=.` spelling is still portable but
+    // is not rewritten, so its route is withheld rather than passed through.
+    if spans
+        .iter()
+        .any(|span| token_unquotes_to(&body[span.clone()], "--root=."))
+    {
+        return None;
+    }
+    let [dot] = dots.as_slice() else {
+        // No portable root passes through; two are ambiguous and withheld.
+        return dots.is_empty().then(|| command.to_string());
+    };
+    // Any other top-level root would compete with the bound one.
+    let roots = spans
+        .iter()
+        .map(|span| body[span.clone()].replace(['\'', '"'], ""))
+        .filter(|token| token == "--root" || token.starts_with("--root="))
+        .count();
+    if roots > 1 {
+        return None;
+    }
+    // A word starting with `#` begins a shell comment, which could hide the
+    // bound root and run the command in the paste directory instead.
+    if spans.iter().any(|span| body[span.clone()].starts_with('#')) {
+        return None;
+    }
+    let dot = dot.clone();
+    // A root the editor cannot copy is withheld. These are the characters the
+    // VS Code client refuses in a selected root (`selectedCommandRoots`): `'`
+    // and `\` need escapes that read differently across shells, and the rest
+    // end or alter a quoted span.
+    let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+    if bound.chars().any(|ch| {
+        crate::agent::loop_commands::needs_terminal_escape(ch)
+            || matches!(
+                ch,
+                '\'' | '"' | '\\' | '`' | '\n' | '\r' | '\0' | '\u{2018}'..='\u{201f}'
+            )
+    }) {
+        return None;
+    }
+    let bound_arg = crate::agent::loop_commands::shell_arg(&bound);
+    let (before, after) = (&body[..dot.start], &body[dot.end..]);
+    let mut display = format!("{before}{bound_arg}{after}");
+    // The bound root is renderer-owned and `shell_arg`-quoted, so a workspace
+    // path's `&` or `;` is inert; re-check everything else with the portable
+    // root in its place. The anchored redirect is checked as rendered.
+    let mut probe = format!("{before}.{after}");
+    if let Some(tail) = redirect {
+        let target = shell_arg_token(tail)?;
+        let anchored = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::anchored_redirect_target(&bound, target),
+        );
+        display.push_str(" > ");
+        display.push_str(&anchored);
+        probe.push_str(" > ");
+        probe.push_str(&anchored);
+    }
+    command_payload_is_safe(root, &probe).then_some(display)
+}
+
+/// Whether a command read back from editor data is safe to offer: either a
+/// safe artifact payload, or exactly what `bind_portable_command` renders
+/// from one. Diagnostics data carries bound commands, and a workspace path's
+/// quoted `&` or `;` would fail the payload check on its own (#4001).
+pub(super) fn editor_command_is_safe(root: &Path, command: &str) -> bool {
+    if command_payload_is_safe(root, command) {
+        return true;
+    }
+    let trimmed = command.trim();
+    let bound = crate::agent::loop_commands::bound_root(&root.to_string_lossy());
+    let needle = format!(" --root {}", crate::agent::loop_commands::shell_arg(&bound));
+    let Some(at) = trimmed.find(&needle) else {
+        return false;
+    };
+    let portable = format!(
+        "{} --root .{}",
+        &trimmed[..at],
+        &trimmed[at + needle.len()..]
+    );
+    command_payload_is_safe(root, &portable)
+        && bind_portable_command(root, &portable).as_deref() == Some(trimmed)
+}
+
+/// Byte spans of the whitespace-separated shell tokens of `command`. A quoted
+/// span, including its whitespace, stays inside one token.
+fn top_level_token_spans(command: &str) -> Vec<std::ops::Range<usize>> {
+    let mut spans = Vec::new();
+    let mut quote = None;
+    let mut start = None;
+    for (index, character) in command.char_indices() {
+        match (quote, character) {
+            (Some(active), value) if value == active => quote = None,
+            (Some(_), _) => {}
+            (None, '"' | '\'') => {
+                quote = Some(character);
+                start.get_or_insert(index);
+            }
+            (None, value) if value.is_whitespace() => {
+                if let Some(begin) = start.take() {
+                    spans.push(begin..index);
+                }
+            }
+            _ => {
+                start.get_or_insert(index);
+            }
+        }
+    }
+    if let Some(begin) = start {
+        spans.push(begin..command.len());
+    }
+    spans
+}
+
+/// The literal text of one shell token: bare text, or one whole quoted span
+/// with no other quote. Any other mix of quotes is not read.
+fn literal_token(token: &str) -> Option<&str> {
+    if !token.contains(['\'', '"']) {
+        return Some(token);
+    }
+    ['\'', '"'].into_iter().find_map(|quote| {
+        let inner = token.strip_prefix(quote)?.strip_suffix(quote)?;
+        (!inner.contains(['\'', '"'])).then_some(inner)
+    })
+}
+
+/// Whether one top-level token unquotes to `expected` under the same quote
+/// pairing `command_tokens` / `command_payload_is_safe` use. Mixed quotes that
+/// collapse to a single word are visible here even when `literal_token` is not.
+fn token_unquotes_to(token: &str, expected: &str) -> bool {
+    matches!(command_tokens(token).as_slice(), [word] if word == expected)
+}
+
 /// Split off the one stdout redirect the producers append (#4306 persists
 /// `agent verify` output where the receipt reads it; #3938 anchors that
 /// target at the resolved `--root`). Returns the command body, which the
@@ -1489,7 +1804,7 @@ fn strip_workspace_redirect<'a>(root: &Path, command: &'a str) -> Option<&'a str
 /// Undo `loop_commands::shell_arg` for one token: bare when every character is
 /// in `[A-Za-z0-9._/:-]`, otherwise one single-quoted span with no embedded
 /// quote (the `'\''` escape is refused rather than decoded).
-fn shell_arg_token(token: &str) -> Option<&str> {
+pub(super) fn shell_arg_token(token: &str) -> Option<&str> {
     let bare = |value: &str| {
         !value.is_empty()
             && value
@@ -1713,6 +2028,7 @@ fn known_static_limit_kind(kind: &str) -> bool {
         StaticLimitKind::RustSubprocessBinaryReachUnresolved,
         StaticLimitKind::WrapperErrorBindingUnresolved,
         StaticLimitKind::PythonTransitiveReachUnresolved,
+        StaticLimitKind::RustAssertionContextUnresolved,
     ]
     .iter()
     .any(|known| known.as_str() == kind)
@@ -1726,14 +2042,242 @@ mod tests {
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    fn root() -> PathBuf {
-        PathBuf::from("/workspace")
+    /// #4001 review: only a top-level `--root .` is the route's root. Text
+    /// inside a quoted argument is data and stays as recorded, a root with a
+    /// space is quoted once, and binding twice changes nothing.
+    #[test]
+    fn bind_portable_command_binds_only_the_top_level_root() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr bind root");
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+        );
+        let cases = [
+            (
+                "ripr agent verify --root . --json".to_string(),
+                format!("ripr agent verify --root {bound} --json"),
+            ),
+            // A recorded verify command inside a quoted argument is data.
+            (
+                "ripr receipt write --gap G --verify-command 'ripr check --root . --json' --status not_run".to_string(),
+                "ripr receipt write --gap G --verify-command 'ripr check --root . --json' --status not_run".to_string(),
+            ),
+            (
+                "ripr agent verify --note 'a --root . b' --root . --json".to_string(),
+                format!("ripr agent verify --note 'a --root . b' --root {bound} --json"),
+            ),
+            // No portable root: unchanged.
+            (
+                "ripr agent verify --root ./sub --json".to_string(),
+                "ripr agent verify --root ./sub --json".to_string(),
+            ),
+            // A whole quoted `'.'` is the same root once the shell unquotes it.
+            (
+                "ripr agent verify --root '.' --json".to_string(),
+                format!("ripr agent verify --root {bound} --json"),
+            ),
+        ];
+        for (command, expected) in cases {
+            assert_binds(&root, &command, &expected)?;
+        }
+
+        // A workspace path's `&` is inert inside the bound root's quotes, so
+        // the route is bound rather than left portable (Devin review).
+        let amp_root = std::env::temp_dir().join("ripr a & b");
+        let amp_bound = crate::agent::loop_commands::bound_root(&amp_root.to_string_lossy());
+        let amp_arg = crate::agent::loop_commands::shell_arg(&amp_bound);
+        assert_binds(
+            &amp_root,
+            "ripr agent verify --root . --json",
+            &format!("ripr agent verify --root {amp_arg} --json"),
+        )?;
+
+        // A relative redirect target is anchored under the bound root.
+        let target = "target/ripr/agent/agent-verify.json";
+        let anchored = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::anchored_redirect_target(&amp_bound, target),
+        );
+        assert_binds(
+            &amp_root,
+            &format!("ripr agent verify --root . --json > {target}"),
+            &format!("ripr agent verify --root {amp_arg} --json > {anchored}"),
+        )?;
+        Ok(())
     }
+
+    /// #4001 re-review: a bound command read back from diagnostics data is
+    /// offered again when it is exactly the binder's rendering, even with a
+    /// workspace path's `&`; anything appended to it is not.
+    #[test]
+    fn editor_command_is_safe_accepts_only_the_binders_rendering() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr a & b");
+        let portable = "ripr agent verify --root . --json";
+        let bound = bind_portable_command(&root, portable)
+            .ok_or_else(|| "an `&` root must bind".to_string())?;
+        assert!(editor_command_is_safe(&root, portable));
+        assert!(editor_command_is_safe(&root, &bound));
+        assert!(!editor_command_is_safe(
+            &root,
+            &format!("{bound}; touch pwned")
+        ));
+        assert!(!editor_command_is_safe(
+            &root,
+            &format!("{bound} & touch pwned")
+        ));
+        let other = std::env::temp_dir().join("ripr c & d");
+        assert!(!editor_command_is_safe(&other, &bound));
+        // The bound spelling placed inside quoted data puts its `&` at top
+        // level, while the swapped text is a safe payload. Only the equality
+        // with the binder's own rendering refuses it.
+        let bound_arg = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+        );
+        let smuggled = format!("ripr agent verify --note 'x --root {bound_arg} y' --root . --json");
+        assert!(!editor_command_is_safe(&root, &smuggled));
+        Ok(())
+    }
+
+    /// #4001 review: a `--root .` route the binder cannot bind is withheld,
+    /// never shown portable.
+    #[test]
+    fn bind_portable_command_withholds_a_route_it_cannot_bind() {
+        let control_root = std::env::temp_dir().join("ripr\u{202e}root");
+        assert_eq!(
+            bind_portable_command(&control_root, "ripr agent verify --root . --json"),
+            None
+        );
+        // A `'\''` escape reopens a quote the token scan cannot follow, so a
+        // route next to one is withheld rather than bound in the wrong place.
+        let root = std::env::temp_dir().join("ripr-escape-root");
+        assert_eq!(
+            bind_portable_command(
+                &root,
+                "ripr receipt write --verify-command 'ripr check --note it'\\''s --root . --json' --root . --json",
+            ),
+            None
+        );
+        // A root the editor client refuses to copy (an apostrophe needs the
+        // `'\''` escape) is withheld rather than shown uncopyable.
+        let mut uncopyable = vec!["o'connor", "say \"hi\"", "tick`root", "smart\u{2019}quote"];
+        // On Windows `\` is a separator and renders as `/`.
+        if cfg!(unix) {
+            uncopyable.push("back\\slash");
+        }
+        for name in uncopyable {
+            let uncopyable_root = std::env::temp_dir().join(name);
+            assert_eq!(
+                bind_portable_command(&uncopyable_root, "ripr agent verify --root . --json"),
+                None,
+                "{name:?}"
+            );
+        }
+        // A shell comment could hide the bound root, and two portable roots
+        // are ambiguous; neither is bound.
+        for command in [
+            "ripr agent verify # --root . --json",
+            "ripr agent verify --root . --json #note",
+            "ripr agent verify --root . --root . --json",
+            "ripr agent verify --root . --root ./sub --json",
+            "ripr agent verify --root=./sub --root . --json",
+            "ripr agent verify --root . '--root=./sub' --json",
+            "ripr agent verify --root=. --json",
+            "ripr agent verify '--root=.' --json",
+            "ripr agent verify --root='.' --json",
+        ] {
+            assert_eq!(bind_portable_command(&root, command), None, "{command:?}");
+        }
+        // A quoted `#` is data, not a comment.
+        assert!(
+            bind_portable_command(&root, "ripr agent verify --root . --note '#1' --json")
+                .is_some_and(|bound| !bound.contains("--root . "))
+        );
+        // Without a portable root there is nothing to withhold.
+        assert_eq!(
+            bind_portable_command(&control_root, "ripr agent verify --root ./sub --json"),
+            Some("ripr agent verify --root ./sub --json".to_string())
+        );
+    }
+
+    /// #7054: mixed-quote `--root .` spellings unquote to a portable root in
+    /// `command_tokens` (so they pass `command_payload_is_safe`) but
+    /// `literal_token` cannot read them. Withhold rather than pass the unbound
+    /// route through. A plain `--root .` still binds.
+    #[test]
+    fn bind_portable_command_withholds_mixed_quote_root_spellings() -> Result<(), String> {
+        let root = std::env::temp_dir().join("ripr-mixed-quote-root");
+        let bound = crate::agent::loop_commands::shell_arg(
+            &crate::agent::loop_commands::bound_root(&root.to_string_lossy()),
+        );
+        assert_binds(
+            &root,
+            "ripr agent verify --root . --json",
+            &format!("ripr agent verify --root {bound} --json"),
+        )?;
+        for command in [
+            "ripr agent verify --root .'' --json",
+            "ripr agent verify --root \".\"'' --json",
+            "ripr agent verify \"--root\"'' . --json",
+            // An unrelated `\` takes the early return that used to miss this
+            // mixed-quote root and pass the unbound command through.
+            "ripr agent verify --note 'path\\file' \"--root\"'' . --json",
+        ] {
+            assert!(
+                command_payload_is_safe(&root, command),
+                "{command:?} must be payload-safe so withhold is the binder, not the safety check"
+            );
+            assert_eq!(bind_portable_command(&root, command), None, "{command:?}");
+        }
+        // `--root ./sub` contains the substring `--root .`, so use a relative
+        // root that is not `.` to show the backslash path still passes through
+        // when unquoted tokens are not a portable pair.
+        assert_eq!(
+            bind_portable_command(
+                &root,
+                "ripr agent verify --note 'path\\file' --root sub --json",
+            ),
+            Some("ripr agent verify --note 'path\\file' --root sub --json".to_string()),
+        );
+        Ok(())
+    }
+
+    fn assert_binds(root: &Path, command: &str, expected: &str) -> Result<(), String> {
+        let once = bind_portable_command(root, command);
+        if once.as_deref() != Some(expected) {
+            return Err(format!(
+                "{command:?} bound to {once:?}, expected {expected:?}"
+            ));
+        }
+        let twice = bind_portable_command(root, expected);
+        if twice.as_deref() != Some(expected) {
+            return Err(format!(
+                "binding is not idempotent: {expected:?} -> {twice:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn root() -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "ripr-lsp-gap-validation-unit-{}",
+            std::process::id()
+        ))
+    }
+
+    static TEST_REPO_CONFIG: std::sync::LazyLock<crate::config::RiprConfig> =
+        std::sync::LazyLock::new(crate::config::RiprConfig::default);
+    static TEST_ROOT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
+        let path = root();
+        assert!(
+            std::fs::create_dir_all(&path).is_ok(),
+            "create owned unit workspace"
+        );
+        path
+    });
 
     fn context(enabled_languages: &[LanguageId]) -> GapArtifactValidationContext<'_> {
         GapArtifactValidationContext {
-            root: Path::new("/workspace"),
+            root: &TEST_ROOT,
             enabled_languages,
+            repo_config: &TEST_REPO_CONFIG,
         }
     }
 
@@ -1896,10 +2440,7 @@ mod tests {
     /// absent under the fixture roots, so the stamp records `null` digests
     /// and stays current until a test creates, edits, or deletes one.
     fn stamped(artifact: Value) -> Value {
-        crate::output::gap_source_subject::with_source_subject_for_test(
-            Path::new("/workspace"),
-            artifact,
-        )
+        crate::output::gap_source_subject::with_source_subject_for_test(&TEST_ROOT, artifact)
     }
 
     fn temp_root(label: &str) -> Result<PathBuf, String> {
@@ -2111,6 +2652,7 @@ mod tests {
         let context = GapArtifactValidationContext {
             root: &workspace,
             enabled_languages: &[LanguageId::Rust],
+            repo_config: &TEST_REPO_CONFIG,
         };
         let validated =
             validate_gap_artifact(&artifact, &context).map_err(|err| format!("{err:?}"))?;
@@ -3123,10 +3665,13 @@ mod tests {
 
     #[test]
     fn command_root_accepts_quoted_workspace_path() {
-        let workspace = root();
-        let command = "ripr agent verify --root \"/workspace\" --json";
+        let workspace = root().join("quoted workspace");
+        let command = format!(
+            "ripr agent verify --root \"{}\" --json",
+            workspace.display()
+        );
 
-        assert!(command_payload_is_safe(&workspace, command));
+        assert!(command_payload_is_safe(&workspace, &command));
     }
 
     #[test]
@@ -3366,6 +3911,7 @@ mod tests {
             let context = GapArtifactValidationContext {
                 root: &root,
                 enabled_languages: &[LanguageId::Rust],
+                repo_config: &TEST_REPO_CONFIG,
             };
             let stamp = |artifact: Value| {
                 crate::output::gap_source_subject::with_source_subject_for_test(&root, artifact)
@@ -3465,6 +4011,7 @@ mod tests {
             let context = GapArtifactValidationContext {
                 root: &root,
                 enabled_languages: &[LanguageId::Rust],
+                repo_config: &TEST_REPO_CONFIG,
             };
             for (shape, observer) in [
                 ("string", json!("tests/observer.rs::t")),
@@ -3535,7 +4082,8 @@ mod tests {
         fs::write(&actionable_path, actionable_gaps_report().to_string())
             .map_err(|err| format!("write {}: {err}", actionable_path.display()))?;
 
-        let report = validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust]);
+        let report =
+            validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust], &TEST_REPO_CONFIG);
         assert_eq!(report.artifacts.len(), 2);
         assert!(report.rejections.is_empty());
         assert!(
@@ -3567,7 +4115,8 @@ mod tests {
         fs::write(&report_path, "{")
             .map_err(|err| format!("write {}: {err}", report_path.display()))?;
 
-        let report = validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust]);
+        let report =
+            validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust], &TEST_REPO_CONFIG);
         assert!(report.artifacts.is_empty());
         assert_eq!(
             report.rejections,

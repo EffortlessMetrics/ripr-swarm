@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0226-ledger-push-exact-history",
+  "subject_id": "authored-spec0226-2",
+  "diff": "cases/spec0226-ledger-push-exact-history.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 10
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "default_receiver_exact_collection_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.history.push(amount + 1);",
+        "mutated_line": "self.history.push(amount + 1);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::record_appends_the_amount",
+        "equivalence_review": "not equivalent: the history holds 6"
+      },
+      {
+        "replacement": "let _ = amount;",
+        "mutated_line": "let _ = amount;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::record_appends_the_amount",
+        "equivalence_review": "not equivalent: the history stays empty"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "record_appends_the_amount builds the ledger with default(), records 5 and asserts history == vec![5], so a wrong pushed value and a deleted push both fail. Spec cells: RIPR-SPEC-0226 example 2, RIPR-SPEC-0001.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0226#2"
+  ]
+}

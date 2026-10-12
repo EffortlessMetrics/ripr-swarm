@@ -16,14 +16,19 @@ use crate::{
     read_text_lossy, write_report,
 };
 
-pub(crate) fn check_no_panic_family_impl() -> Result<(), String> {
-    check_old_panic_allowlist_exists()?;
-
-    let roots = [
+fn no_panic_source_roots() -> [&'static Path; 4] {
+    [
         Path::new("crates/ripr/src"),
         Path::new("crates/ripr/tests"),
         Path::new("xtask/src"),
-    ];
+        Path::new("tools/repo-policy"),
+    ]
+}
+
+pub(crate) fn check_no_panic_family_impl() -> Result<(), String> {
+    check_old_panic_allowlist_exists()?;
+
+    let roots = no_panic_source_roots();
     let patterns = forbidden_panic_patterns();
 
     let mut findings = Vec::new();
@@ -146,11 +151,7 @@ pub(crate) fn check_no_panic_family_with_args(args: &[String]) -> Result<(), Str
 fn propose_no_panic_allowlist_impl() -> Result<(), String> {
     check_old_panic_allowlist_exists()?;
 
-    let roots = [
-        Path::new("crates/ripr/src"),
-        Path::new("crates/ripr/tests"),
-        Path::new("xtask/src"),
-    ];
+    let roots = no_panic_source_roots();
     let patterns = forbidden_panic_patterns();
     let mut semantic_findings = Vec::new();
     for root in roots {

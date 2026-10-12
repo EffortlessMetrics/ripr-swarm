@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0231-oracle-matches-ok-literal",
+  "subject_id": "authored-spec0231-6",
+  "diff": "cases/spec0231-oracle-matches-ok-literal.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "ok_payload_value",
+  "test_shape": "matches_ok_literal",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Ok(x + 1)",
+        "mutated_line": "Ok(x + 1)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::check_five_is_ok_five",
+        "equivalence_review": "not equivalent: check(5) becomes Ok(6)"
+      },
+      {
+        "replacement": "Ok(0)",
+        "mutated_line": "Ok(0)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::check_five_is_ok_five",
+        "equivalence_review": "not equivalent: check(5) becomes Ok(0)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "matches!(check(5), Ok(5)) pins the payload, so both payload mutants fail it. Spec cells: RIPR-SPEC-0231 example 6 (control: spec marks it unchanged); spec-adopted oracle exact_value / strong.",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#6"
+  ]
+}

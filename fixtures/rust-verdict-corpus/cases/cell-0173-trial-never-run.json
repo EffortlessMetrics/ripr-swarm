@@ -1,0 +1,51 @@
+{
+  "case_id": "cell-0173-trial-never-run",
+  "subject_id": "authored-spec-harness",
+  "diff": "cases/cell-0173-trial-never-run.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "harness_trial_never_registered",
+  "hard_case": "The only exact assert on handling sits in a Trial built by spare_trials(), which main never calls or passes to libtest_mimic::run, so the harness never executes it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --workspace",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "6 + items",
+        "mutated_line": "6 + items",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: handling(2) becomes 8"
+      },
+      {
+        "replacement": "6 * items + 1",
+        "mutated_line": "6 * items + 1",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: handling(2) becomes 13"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No executed test reaches handling, so both mutants pass. Spec cells: RIPR-SPEC-0173 dead trial construction (unreachable registration).",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

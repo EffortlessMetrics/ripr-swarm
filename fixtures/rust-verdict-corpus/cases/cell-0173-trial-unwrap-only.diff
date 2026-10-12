@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 64843a2..e461635 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -10,7 +10,7 @@ pub fn shipping(weight: u32) -> u32 {
+ /// Reached by a trial whose only oracle is `.unwrap()`.
+ pub fn parse_qty(text: &str) -> Result<u32, std::num::ParseIntError> {
+     let n: u32 = text.parse()?;
+-    Ok(n * 2)
++    Ok(2 * n)
+ }
+ 
+ /// Reached only by a trial that is built but never handed to the harness.

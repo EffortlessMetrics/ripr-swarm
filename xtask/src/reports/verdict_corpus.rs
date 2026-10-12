@@ -10,6 +10,8 @@
 use super::fixtures::ripr_fixture_binary;
 use crate::normalize_path;
 use crate::run::run_output_owned_with_envs;
+use coverage::{Ledger, SpecExampleCoverage, SpecExamples};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -21,15 +23,20 @@ pub(crate) const CORPUS_DIR: &str = "fixtures/rust-verdict-corpus";
 const CORPUS_SCHEMA: &str = "ripr_verdict_corpus.v1";
 const REPORT_SCHEMA: &str = "ripr_verdict_corpus_report.v1";
 const DEFAULT_OUT: &str = "target/ripr/reports/verdict-corpus";
+const WORK_ROOT: &str = "target/ripr/verdict-corpus";
 const CACHE_ENV: &str = "RIPR_CACHE_DIR";
 
+/// The loaded corpus. On disk, `corpus.json` holds only the header below;
+/// each subject is `subjects/<subject_id>.json` beside its retained files and
+/// each case is `cases/<case_id>.json` beside its diff. Parallel PRs that add
+/// cases or subjects therefore add files instead of appending to one shared
+/// array, and no corpus-wide version line needs a bump.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Corpus {
     pub(crate) schema_version: String,
     pub(crate) kind: String,
     pub(crate) spec: String,
-    pub(crate) corpus_version: String,
     pub(crate) description: String,
     pub(crate) label_method: String,
     pub(crate) verdict_projection: String,
@@ -38,15 +45,28 @@ pub(crate) struct Corpus {
     pub(crate) cases: Vec<Case>,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+/// What `corpus.json` holds. `split` writes it in this field order.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct CorpusHeader {
+    schema_version: String,
+    kind: String,
+    spec: String,
+    description: String,
+    label_method: String,
+    verdict_projection: String,
+    non_claims: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Subject {
     pub(crate) subject_id: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "SubjectOrigin::is_upstream")]
     pub(crate) origin: SubjectOrigin,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) upstream: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) commit: Option<String>,
     pub(crate) version_label: String,
     pub(crate) license: String,
@@ -68,6 +88,10 @@ pub(crate) enum SubjectOrigin {
 }
 
 impl SubjectOrigin {
+    fn is_upstream(&self) -> bool {
+        *self == SubjectOrigin::Upstream
+    }
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             SubjectOrigin::Upstream => "upstream",
@@ -83,7 +107,7 @@ pub(crate) const AUTHORED_LICENSE: &str = "MIT OR Apache-2.0";
 /// that names it, which review sees.
 pub(crate) const AUTHORED_PREFIX: &str = "authored-";
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SharedCorpusRef {
     pub(crate) manifest: String,
@@ -91,14 +115,14 @@ pub(crate) struct SharedCorpusRef {
     pub(crate) repo_id: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct RetainedFile {
     pub(crate) path: String,
     pub(crate) sha256: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Case {
     pub(crate) case_id: String,
@@ -113,12 +137,18 @@ pub(crate) struct Case {
     pub(crate) expected: Expected,
     pub(crate) reasoning: String,
     pub(crate) labeling_observation: LabelingObservation,
+    /// Numbered spec acceptance examples this case labels, as
+    /// `RIPR-SPEC-NNNN#K` (see `verdict_corpus_coverage.rs`). Omitted when
+    /// empty so split records round-trip (`split_moves_..._without_loss`
+    /// compares untyped values, where a missing key differs from `[]`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) spec_examples: Vec<String>,
 }
 
 /// What ripr said when the case was labeled, on the full pinned checkout and
 /// on the retained excerpt. Matching excerpt and full-checkout findings is
 /// what lets the excerpt stand in for the repository.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LabelingObservation {
     pub(crate) ripr_commit: String,
@@ -127,14 +157,14 @@ pub(crate) struct LabelingObservation {
     pub(crate) excerpt_parity: String,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Anchor {
     pub(crate) file: String,
     pub(crate) line: usize,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EditKind {
     /// Same behavior, rewritten; mutants of the rewritten expression carry truth.
@@ -143,7 +173,7 @@ pub(crate) enum EditKind {
     BehaviorChange,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Truth {
     pub(crate) state: TruthState,
@@ -189,16 +219,22 @@ impl TruthState {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Mutant {
     pub(crate) replacement: String,
+    /// The anchor line, trimmed, with this mutant applied: what
+    /// `verdict-corpus relabel` writes over the edited anchor to replay it.
+    /// Empty removes the statement. Required for a behavior-preserving
+    /// rewrite; absent for a behavior change, whose mutant is the edit.
+    #[serde(default)]
+    pub(crate) mutated_line: Option<String>,
     pub(crate) outcome: MutantOutcome,
     pub(crate) failing_test: Option<String>,
     pub(crate) equivalence_review: String,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum MutantOutcome {
     TestsFailed,
@@ -214,7 +250,7 @@ impl MutantOutcome {
     }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Expected {
     pub(crate) ideal_verdict: Verdict,
@@ -246,7 +282,7 @@ impl Verdict {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Outcome {
     Ideal,
@@ -600,7 +636,11 @@ pub(crate) fn ratio(numerator: usize, denominator: usize) -> Ratio {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+/// One scored case. The committed expected state is these rows alone: each
+/// carries its own contradiction counts, so the corpus summary is a function
+/// of the rows (`summarize`) and no shared summary file is committed.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct CaseRow {
     pub(crate) case_id: String,
     pub(crate) subject_id: String,
@@ -621,13 +661,19 @@ pub(crate) struct CaseRow {
     pub(crate) observed_classifications: Vec<String>,
     pub(crate) outcome: Outcome,
     pub(crate) contradictions: Vec<String>,
+    /// Candidate-current findings anywhere in the case's check.
+    pub(crate) findings_scored: usize,
+    /// Of those, the findings with at least one contradiction.
+    pub(crate) findings_contradicted: usize,
+    /// Occurrences per contradiction code, including the per-check
+    /// summary-count codes.
+    pub(crate) contradiction_counts: BTreeMap<String, usize>,
 }
 
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct Report {
     pub(crate) schema_version: String,
     pub(crate) spec: String,
-    pub(crate) corpus_version: String,
     pub(crate) cases_total: usize,
     pub(crate) by_truth: BTreeMap<String, usize>,
     pub(crate) by_outcome: BTreeMap<String, usize>,
@@ -643,6 +689,10 @@ pub(crate) struct Report {
     /// The verdict rates again, per subject origin. Authored cases are chosen
     /// to fill cells, so only the upstream rates describe real-world tests.
     pub(crate) by_origin: BTreeMap<String, OriginRates>,
+    /// Which numbered spec acceptance examples carry a case. Filled from the
+    /// ledger and the spec files, not from ripr's output.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) spec_example_coverage: Option<SpecExampleCoverage>,
     pub(crate) rows: Vec<CaseRow>,
     pub(crate) non_claims: Vec<String>,
 }
@@ -698,7 +748,7 @@ pub(crate) fn case_row(
     origin: SubjectOrigin,
     check: &Value,
     anchor_line: Option<&str>,
-) -> (CaseRow, usize, usize, BTreeMap<String, usize>) {
+) -> CaseRow {
     let anchored = anchored_findings(check, &case.anchor, anchor_line);
     let followed_retarget = anchored
         .iter()
@@ -736,7 +786,7 @@ pub(crate) fn case_row(
         *code_counts.entry(code.clone()).or_insert(0) += 1;
         contradictions.insert(code);
     }
-    let row = CaseRow {
+    CaseRow {
         case_id: case.case_id.clone(),
         subject_id: case.subject_id.clone(),
         origin,
@@ -753,8 +803,10 @@ pub(crate) fn case_row(
         observed_classifications: classes,
         outcome: score(case.truth.state, observed),
         contradictions: contradictions.into_iter().collect(),
-    };
-    (row, scored, contradicted, code_counts)
+        findings_scored: scored,
+        findings_contradicted: contradicted,
+        contradiction_counts: code_counts,
+    }
 }
 
 /// `anchor_lines` maps a case id to its anchor line's text, read from the
@@ -771,9 +823,6 @@ pub(crate) fn build_report(
         .map(|s| (s.subject_id.as_str(), s.origin))
         .collect();
     let mut rows = Vec::new();
-    let mut findings_scored = 0;
-    let mut findings_contradicted = 0;
-    let mut by_code = BTreeMap::new();
     for case in &corpus.cases {
         let check = by_id
             .get(case.case_id.as_str())
@@ -787,19 +836,24 @@ pub(crate) fn build_report(
                     case.case_id, case.subject_id
                 )
             })?;
-        let (row, scored, contradicted, code_counts) = case_row(
+        rows.push(case_row(
             case,
             origin,
             check,
             anchor_lines.get(&case.case_id).map(String::as_str),
-        );
-        findings_scored += scored;
-        findings_contradicted += contradicted;
-        for (code, n) in code_counts {
-            *by_code.entry(code).or_insert(0) += n;
-        }
-        rows.push(row);
+        ));
     }
+    Ok(summarize(
+        corpus.spec.clone(),
+        corpus.non_claims.clone(),
+        rows,
+    ))
+}
+
+/// The aggregate counts and rates over `rows`. Every number is read from the
+/// rows, so a summary rebuilt from the committed row files equals the one the
+/// run produced.
+pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow>) -> Report {
     let count = |outcome: Outcome| rows.iter().filter(|r| r.outcome == outcome).count();
     let truth_count =
         |pred: &dyn Fn(TruthState) -> bool| rows.iter().filter(|r| pred(r.truth)).count();
@@ -811,6 +865,9 @@ pub(crate) fn build_report(
     let mut by_truth = BTreeMap::new();
     let mut by_outcome = BTreeMap::new();
     let mut by_observed = BTreeMap::new();
+    let mut findings_scored = 0;
+    let mut findings_contradicted = 0;
+    let mut by_code = BTreeMap::new();
     for row in &rows {
         *by_truth.entry(row.truth.as_str().to_string()).or_insert(0) += 1;
         *by_outcome
@@ -819,6 +876,11 @@ pub(crate) fn build_report(
         *by_observed
             .entry(row.observed_verdict.as_str().to_string())
             .or_insert(0) += 1;
+        findings_scored += row.findings_scored;
+        findings_contradicted += row.findings_contradicted;
+        for (code, n) in &row.contradiction_counts {
+            *by_code.entry(code.clone()).or_insert(0) += n;
+        }
     }
     let mut by_origin = BTreeMap::new();
     for origin in [SubjectOrigin::Upstream, SubjectOrigin::Authored] {
@@ -827,10 +889,9 @@ pub(crate) fn build_report(
             by_origin.insert(origin.as_str().to_string(), origin_rates(&subset));
         }
     }
-    Ok(Report {
+    Report {
         schema_version: REPORT_SCHEMA.to_string(),
-        spec: corpus.spec.clone(),
-        corpus_version: corpus.corpus_version.clone(),
+        spec,
         cases_total: rows.len(),
         by_truth,
         by_outcome,
@@ -844,9 +905,51 @@ pub(crate) fn build_report(
         contradiction_rate: ratio(findings_contradicted, findings_scored),
         contradictions_by_code: by_code,
         by_origin,
+        spec_example_coverage: None,
         rows,
-        non_claims: corpus.non_claims.clone(),
-    })
+        non_claims,
+    }
+}
+
+/// The report the committed expected state describes: the `corpus.json`
+/// header's spec and non-claims with every `expected/rows/<case>.json`, in
+/// file-name order. Scoreboards and the public proof read the corpus rates
+/// through this instead of a committed summary file.
+pub(crate) fn expected_report(dir: &Path) -> Result<Report, String> {
+    // Only the fields the report repeats; `validate` owns the full header.
+    #[derive(Deserialize)]
+    struct Header {
+        spec: String,
+        non_claims: Vec<String>,
+    }
+    let header_path = dir.join("corpus.json");
+    let header: Header = serde_json::from_value(parse_json(&header_path)?)
+        .map_err(|err| format!("parse {}: {err}", normalize_path(&header_path)))?;
+    let rows_dir = dir.join("expected").join(ROWS_DIR);
+    let rows = record_files(&rows_dir, "case_id")?
+        .into_iter()
+        .map(|value| {
+            serde_json::from_value::<CaseRow>(value)
+                .map_err(|err| format!("parse a row under {}: {err}", normalize_path(&rows_dir)))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    // The rows must cover exactly the corpus's cases: a missing row would
+    // otherwise shrink every denominator into a plausible, wrong rate.
+    let case_ids: BTreeSet<String> = record_files(&dir.join("cases"), "case_id")?
+        .iter()
+        .filter_map(|case| case.get("case_id").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect();
+    let row_ids: BTreeSet<String> = rows.iter().map(|row| row.case_id.clone()).collect();
+    let missing: Vec<&String> = case_ids.difference(&row_ids).collect();
+    let extra: Vec<&String> = row_ids.difference(&case_ids).collect();
+    if !missing.is_empty() || !extra.is_empty() {
+        return Err(format!(
+            "{} does not match the corpus cases (missing rows: {missing:?}; rows without a case: {extra:?}); run `cargo xtask verdict-corpus check`",
+            normalize_path(&rows_dir)
+        ));
+    }
+    Ok(summarize(header.spec, header.non_claims, rows))
 }
 
 pub(crate) fn render_report_json(report: &Report) -> Result<String, String> {
@@ -855,12 +958,15 @@ pub(crate) fn render_report_json(report: &Report) -> Result<String, String> {
         .map_err(|err| format!("render verdict corpus report: {err}"))
 }
 
-pub(crate) fn render_report_markdown(report: &Report) -> String {
+pub(crate) fn render_report_markdown(report: &Report, language: &str) -> String {
     let mut out = String::new();
-    out.push_str("# Rust verdict corpus report\n\n");
     out.push_str(&format!(
-        "Spec: {}. Corpus version: {}. Cases: {}.\n\n",
-        report.spec, report.corpus_version, report.cases_total
+        "# {} verdict corpus report\n\n",
+        language_title(language)
+    ));
+    out.push_str(&format!(
+        "Spec: {}. Cases: {}.\n\n",
+        report.spec, report.cases_total
     ));
     out.push_str("| Rate | Count | Rate |\n| --- | --- | --- |\n");
     for (label, ratio) in [
@@ -939,6 +1045,9 @@ pub(crate) fn render_report_markdown(report: &Report) -> String {
             },
         ));
     }
+    if let Some(coverage) = &report.spec_example_coverage {
+        out.push_str(&coverage::render_coverage_markdown(coverage));
+    }
     out.push_str("\nNon-claims:\n\n");
     for claim in &report.non_claims {
         out.push_str(&format!("- {claim}\n"));
@@ -955,15 +1064,279 @@ fn read(path: &Path) -> Result<String, String> {
     fs::read_to_string(path).map_err(|err| format!("read {}: {err}", normalize_path(path)))
 }
 
-pub(crate) fn load_corpus(dir: &Path) -> Result<Corpus, String> {
+fn parse_json(path: &Path) -> Result<Value, String> {
+    serde_json::from_str(&read(path)?)
+        .map_err(|err| format!("parse {}: {err}", normalize_path(path)))
+}
+
+/// Keys the one-file layout kept in `corpus.json`; `split` moves them out.
+const SPLIT_KEYS: [&str; 3] = ["corpus_version", "subjects", "cases"];
+
+/// One libtest test name: a path without spaces or commas, or rustdoc's
+/// doctest name `<file> - <item> (line <n>)`, which libtest prints as is.
+/// A crate-root doctest has no item (`<file> - (line <n>)`), and libtest
+/// appends ` - compile fail` to a `compile_fail` doctest. Items whose
+/// pretty-printed type holds a space or comma are refused, so a list of
+/// names can never pass.
+fn is_one_test_name(name: &str) -> bool {
+    let plain =
+        |part: &str| !part.is_empty() && !part.contains(char::is_whitespace) && !part.contains(',');
+    if plain(name) {
+        return true;
+    }
+    let name = name.strip_suffix(" - compile fail").unwrap_or(name);
+    let Some((file, rest)) = name.split_once(" - ") else {
+        return false;
+    };
+    let (item_ok, line) = match rest.strip_prefix("(line ") {
+        Some(line) => (true, line),
+        None => match rest.rsplit_once(" (line ") {
+            Some((item, line)) => (plain(item), line),
+            None => return false,
+        },
+    };
+    let Some(line) = line.strip_suffix(')') else {
+        return false;
+    };
+    plain(file) && item_ok && !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// A test title outside Rust, such as a jest or `node:test` name, may hold
+/// spaces and commas, so the only shape it can be held to is one non-empty
+/// trimmed line.
+fn is_one_test_title(name: &str) -> bool {
+    !name.is_empty() && name == name.trim() && !name.contains(['\n', '\r'])
+}
+
+/// Whether a corpus directory keeps the Rust label rules: every directory
+/// except `<language>-verdict-corpus` for a listed non-Rust language, so a
+/// corpus copied anywhere else keeps the strictest rules.
+fn is_rust_corpus(dir: &Path) -> bool {
+    dir.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix(CORPUS_SUFFIX))
+        .is_none_or(|language| !NON_RUST_LANGUAGES.contains(&language))
+}
+
+/// Corpus languages whose labels record the command they ran instead of a
+/// replayable cargo command. Any other directory name keeps the Rust rules,
+/// so a misspelled or new language fails closed until it is listed here.
+const NON_RUST_LANGUAGES: [&str; 3] = ["typescript", "python", "perl"];
+
+/// The corpus as one JSON value: the `corpus.json` header with `subjects`
+/// and `cases` gathered from their per-record files in file-name order.
+pub(crate) fn corpus_value(dir: &Path) -> Result<Value, String> {
     let path = dir.join("corpus.json");
-    serde_json::from_str(&read(&path)?)
-        .map_err(|err| format!("parse {}: {err}", normalize_path(&path)))
+    let mut header = parse_json(&path)?;
+    let Some(fields) = header.as_object_mut() else {
+        return Err(format!("{} is not a JSON object", normalize_path(&path)));
+    };
+    let legacy: Vec<&str> = SPLIT_KEYS
+        .into_iter()
+        .filter(|key| fields.contains_key(*key))
+        .collect();
+    if !legacy.is_empty() {
+        return Err(format!(
+            "{} still carries `{}`; run `cargo xtask verdict-corpus split` to move subjects and cases into their own files",
+            normalize_path(&path),
+            legacy.join("`, `")
+        ));
+    }
+    fields.insert(
+        "subjects".to_string(),
+        Value::Array(record_files(&dir.join("subjects"), "subject_id")?),
+    );
+    fields.insert(
+        "cases".to_string(),
+        Value::Array(record_files(&dir.join("cases"), "case_id")?),
+    );
+    Ok(header)
+}
+
+/// File-name order for corpus records. Kept as a helper so a shuffled listing
+/// can prove the sort without depending on `read_dir` order (#6945).
+fn in_file_name_order(mut paths: Vec<PathBuf>) -> Vec<PathBuf> {
+    paths.sort();
+    paths
+}
+
+/// Every `<id>.json` directly under `root`, in file-name order.
+fn json_record_paths(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut paths = Vec::new();
+    let entries =
+        fs::read_dir(root).map_err(|err| format!("read {}: {err}", normalize_path(root)))?;
+    for entry in entries {
+        let path = entry
+            .map_err(|err| format!("read {}: {err}", normalize_path(root)))?
+            .path();
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "json") {
+            paths.push(path);
+        }
+    }
+    Ok(in_file_name_order(paths))
+}
+
+/// Every `<id>.json` directly under `root`, sorted by file name. A file whose
+/// `id_field` differs from its name is refused, so an id is unique by
+/// construction and a copied file cannot shadow another record.
+fn record_files(root: &Path, id_field: &str) -> Result<Vec<Value>, String> {
+    let paths = json_record_paths(root)?;
+    let mut records = Vec::new();
+    for path in paths {
+        let record = parse_json(&path)?;
+        let stem = path.file_stem().and_then(|stem| stem.to_str());
+        let id = record.get(id_field).and_then(Value::as_str);
+        if stem != id {
+            return Err(format!(
+                "{} holds `{id_field}` {}; name the file after its id",
+                normalize_path(&path),
+                id.map_or("(missing)".to_string(), |id| format!("`{id}`"))
+            ));
+        }
+        records.push(record);
+    }
+    Ok(records)
+}
+
+pub(crate) fn load_corpus(dir: &Path) -> Result<Corpus, String> {
+    serde_json::from_value(corpus_value(dir)?).map_err(|err| {
+        format!(
+            "parse {}: {err}",
+            normalize_path(&dir.join("{corpus.json,subjects/*.json,cases/*.json}"))
+        )
+    })
+}
+
+fn pretty<T: Serialize>(value: &T, what: &str) -> Result<String, String> {
+    serde_json::to_string_pretty(value)
+        .map(|text| format!("{text}\n"))
+        .map_err(|err| format!("render {what}: {err}"))
+}
+
+/// Move the one-file layout's `subjects` and `cases` arrays into per-record
+/// files and drop `corpus_version`. A branch that still appends to the old
+/// arrays resolves its conflict by keeping its own `corpus.json` and running
+/// this: records that already exist with the same content are skipped, and
+/// one that exists with different content is left alone and named.
+/// Mutating destinations under `dir` must be real files, never links:
+/// `split` writes `subjects/`, `cases/` and back to `corpus.json`, so a
+/// repository-controlled symlink at any of them would redirect writes
+/// outside the corpus. Missing entries are fine; links are refused.
+fn reject_nested_symlinks(dir: &Path) -> Result<(), String> {
+    for name in ["corpus.json", "subjects", "cases"] {
+        let path = dir.join(name);
+        if fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_symlink()) {
+            return Err(format!(
+                "verdict-corpus split: {} is a symlink; refusing to write through it",
+                normalize_path(&path)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn split(dir: &Path) -> Result<(), String> {
+    reject_nested_symlinks(dir)?;
+    let path = dir.join("corpus.json");
+    let mut raw = parse_json(&path)?;
+    let Some(fields) = raw.as_object_mut() else {
+        return Err(format!("{} is not a JSON object", normalize_path(&path)));
+    };
+    let take = |fields: &mut serde_json::Map<String, Value>, key: &str| {
+        fields.remove(key).unwrap_or(Value::Array(Vec::new()))
+    };
+    let parse_err = |err: serde_json::Error| format!("parse {}: {err}", normalize_path(&path));
+    let subjects: Vec<Subject> =
+        serde_json::from_value(take(fields, "subjects")).map_err(parse_err)?;
+    let cases: Vec<Case> = serde_json::from_value(take(fields, "cases")).map_err(parse_err)?;
+    fields.remove("corpus_version");
+    let header: CorpusHeader = serde_json::from_value(raw).map_err(parse_err)?;
+    let mut written = 0;
+    let mut differing = Vec::new();
+    // `existing` re-reads a present record through its type, so a key a
+    // hand-written file leaves out and serde fills with null is not a change.
+    let mut place = |target: PathBuf,
+                     value: Value,
+                     text: String,
+                     existing: &dyn Fn(Value) -> Result<Value, serde_json::Error>|
+     -> Result<(), String> {
+        if target.exists() {
+            let typed = existing(parse_json(&target)?)
+                .map_err(|err| format!("parse {}: {err}", normalize_path(&target)))?;
+            if typed != value {
+                differing.push(normalize_path(&target));
+            }
+            return Ok(());
+        }
+        // A dangling record symlink fails `exists` above, so this write is
+        // the first thing that would follow the link and create the file it
+        // names, possibly outside the corpus (#6686 review). Refuse it like
+        // the directory-level links `reject_nested_symlinks` refuses.
+        if fs::symlink_metadata(&target).is_ok_and(|meta| meta.is_symlink()) {
+            return Err(format!(
+                "verdict-corpus split: {} is a symlink; refusing to write through it",
+                normalize_path(&target)
+            ));
+        }
+        fs::write(&target, text)
+            .map_err(|err| format!("write {}: {err}", normalize_path(&target)))?;
+        written += 1;
+        Ok(())
+    };
+    let unsafe_ids: Vec<&str> = subjects
+        .iter()
+        .map(|s| s.subject_id.as_str())
+        .chain(cases.iter().map(|c| c.case_id.as_str()))
+        .filter(|id| !safe_id(id))
+        .collect();
+    if !unsafe_ids.is_empty() {
+        return Err(format!(
+            "verdict-corpus split: `{}` is not a single safe path segment; fix the id before splitting",
+            unsafe_ids.join("`, `")
+        ));
+    }
+    for subject in &subjects {
+        let to_value = serde_json::to_value(subject).map_err(|err| err.to_string())?;
+        place(
+            dir.join("subjects")
+                .join(format!("{}.json", subject.subject_id)),
+            to_value,
+            pretty(subject, "subject")?,
+            &|raw| serde_json::to_value(serde_json::from_value::<Subject>(raw)?),
+        )?;
+    }
+    for case in &cases {
+        let to_value = serde_json::to_value(case).map_err(|err| err.to_string())?;
+        place(
+            dir.join("cases").join(format!("{}.json", case.case_id)),
+            to_value,
+            pretty(case, "case")?,
+            &|raw| serde_json::to_value(serde_json::from_value::<Case>(raw)?),
+        )?;
+    }
+    println!(
+        "verdict-corpus split: wrote {written} record files from {} subjects and {} cases",
+        subjects.len(),
+        cases.len()
+    );
+    if differing.is_empty() {
+        fs::write(&path, pretty(&header, "corpus header")?)
+            .map_err(|err| format!("write {}: {err}", normalize_path(&path)))?;
+        Ok(())
+    } else {
+        // corpus.json keeps its arrays, so this branch's copy of each
+        // differing record stays on disk until it is reconciled.
+        Err(format!(
+            "verdict-corpus split: kept these existing files, which differ from corpus.json's copy; corpus.json is left unchanged so its copy survives. Reconcile each by hand, then run split again:\n- {}",
+            differing.join("\n- ")
+        ))
+    }
 }
 
 /// An identifier that becomes one directory name under the run root.
+/// A leading dot is refused so no id can name the run's shared `.cache`.
 fn safe_id(id: &str) -> bool {
-    safe_relative(id) && !id.contains('/')
+    safe_relative(id) && !id.contains('/') && !id.starts_with('.')
 }
 
 fn safe_relative(path: &str) -> bool {
@@ -994,7 +1367,6 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
     }
     for (field, value) in [
         ("spec", &corpus.spec),
-        ("corpus_version", &corpus.corpus_version),
         ("description", &corpus.description),
         ("label_method", &corpus.label_method),
         ("verdict_projection", &corpus.verdict_projection),
@@ -1035,6 +1407,7 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
             )),
         }
     }
+    violations.extend(case_dir_violations(corpus, dir));
     let truths: BTreeSet<TruthState> = corpus.cases.iter().map(|c| c.truth.state).collect();
     for required in [TruthState::Discriminated, TruthState::NotDiscriminated] {
         if !truths.contains(&required) {
@@ -1045,6 +1418,63 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
         }
     }
     violations
+}
+
+/// `cases/` holds exactly one `<id>.json` and one `<id>.diff` per case, so a
+/// mistyped record name or a diff without its record cannot drop a case.
+fn case_dir_violations(corpus: &Corpus, dir: &Path) -> Vec<String> {
+    let ids: BTreeSet<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
+    let files = match files_under(&dir.join("cases")) {
+        Ok(files) => files,
+        Err(err) => return vec![err],
+    };
+    let mut stray: Vec<String> = files
+        .iter()
+        .filter(|file| {
+            let id = file
+                .strip_suffix(".json")
+                .or_else(|| file.strip_suffix(".diff"));
+            id.is_none_or(|id| !ids.contains(id))
+        })
+        .map(|file| {
+            format!("cases/{file} is not a case record or diff; name it `<case_id>.json` or `<case_id>.diff` beside its pair")
+        })
+        .collect();
+    // subjects/ holds `<id>.json` and the `<id>/` excerpt for each subject.
+    let subject_ids: BTreeSet<&str> = corpus
+        .subjects
+        .iter()
+        .map(|s| s.subject_id.as_str())
+        .collect();
+    let root = dir.join("subjects");
+    match fs::read_dir(&root) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(err) => {
+                        stray.push(format!("read {}: {err}", normalize_path(&root)));
+                        continue;
+                    }
+                };
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let known = if entry.path().is_dir() {
+                    subject_ids.contains(name.as_str())
+                } else {
+                    name.strip_suffix(".json")
+                        .is_some_and(|id| subject_ids.contains(id))
+                };
+                if !known {
+                    stray.push(format!(
+                        "subjects/{name} belongs to no subject record; a subject is `subjects/<subject_id>.json` beside `subjects/<subject_id>/`"
+                    ));
+                }
+            }
+        }
+        Err(err) => stray.push(format!("read {}: {err}", normalize_path(&root))),
+    }
+    stray.sort();
+    stray
 }
 
 fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
@@ -1176,7 +1606,95 @@ fn subject_violations(subject: &Subject, dir: &Path) -> Vec<String> {
         }
         Err(err) => violations.push(err),
     }
+    if subject.origin == SubjectOrigin::Authored {
+        let mut pins_registry = false;
+        for file in &subject.retained_files {
+            if Path::new(&file.path)
+                .file_name()
+                .is_none_or(|name| name != "Cargo.toml")
+            {
+                continue;
+            }
+            let Ok(text) = read(&root.join(stored_path(&file.path))) else {
+                continue;
+            };
+            match manifest_pins_registry_crate(&text) {
+                Ok(pin) => pins_registry |= pin,
+                Err(err) => {
+                    violations.push(format!("authored subject `{id}` Cargo.toml is {err}"));
+                }
+            }
+        }
+        if pins_registry
+            && !subject
+                .retained_files
+                .iter()
+                .any(|file| file.path == "Cargo.lock")
+        {
+            violations.push(format!(
+                "authored subject `{id}` pins a registry crate but retains no Cargo.lock; list the lockfile so relabel can replay with --locked"
+            ));
+        }
+    }
     violations
+}
+
+/// True when a manifest pins a crates.io crate by version. Path, git, and
+/// workspace-inherited deps do not float on the host registry, so they do
+/// not need a retained lockfile. Parse errors are returned instead of
+/// treated as "no pin"; a line scan would miss or over-credit TOML.
+pub(crate) fn manifest_pins_registry_crate(text: &str) -> Result<bool, String> {
+    let value: toml::Value =
+        toml::from_str(text).map_err(|err| format!("not valid TOML: {err}"))?;
+    let Some(root) = value.as_table() else {
+        return Err("root is not a table".to_string());
+    };
+    Ok(table_pins_registry(root))
+}
+
+fn table_pins_registry(table: &toml::Table) -> bool {
+    const DEP_KEYS: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+    for key in DEP_KEYS {
+        if let Some(deps) = table.get(key).and_then(toml::Value::as_table)
+            && deps.values().any(dep_is_registry_pin)
+        {
+            return true;
+        }
+    }
+    if let Some(targets) = table.get("target").and_then(toml::Value::as_table) {
+        for spec in targets.values() {
+            if let Some(cfg) = spec.as_table()
+                && table_pins_registry(cfg)
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn dep_is_registry_pin(value: &toml::Value) -> bool {
+    match value {
+        toml::Value::String(_) => true,
+        toml::Value::Table(dep) => registry_version_pin(dep),
+        _ => false,
+    }
+}
+
+fn registry_version_pin(dep: &toml::Table) -> bool {
+    if dep.contains_key("path") || dep.contains_key("git") {
+        return false;
+    }
+    if dep.get("workspace").and_then(toml::Value::as_bool) == Some(true) {
+        return false;
+    }
+    match dep.get("version") {
+        Some(toml::Value::String(_)) => true,
+        Some(toml::Value::Table(version)) => {
+            version.get("workspace").and_then(toml::Value::as_bool) != Some(true)
+        }
+        _ => false,
+    }
 }
 
 /// Retained Rust sources are stored as `<name>.rs.txt` so the vendored
@@ -1238,6 +1756,15 @@ pub(crate) fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec
         if value.trim().is_empty() {
             violations.push(format!("case `{id}` has an empty `{field}`"));
         }
+    }
+    // `relabel` replays cargo test commands only, so only a Rust case must
+    // name one; another language's labels record the command they ran.
+    let rust = is_rust_corpus(dir);
+    if rust
+        && !case.truth.test_command.trim().is_empty()
+        && let Err(err) = super::verdict_corpus_relabel::test_command_args(&case.truth.test_command)
+    {
+        violations.push(format!("case `{id}` cannot be replayed: {err}"));
     }
     if case.truth.method != "runtime_mutant_kill" {
         violations.push(format!(
@@ -1325,6 +1852,44 @@ pub(crate) fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec
                 if mutant.failing_test.is_some() { "names" } else { "does not name" }
             ));
         }
+        if let Some(name) = &mutant.failing_test
+            && !(if rust {
+                is_one_test_name(name)
+            } else {
+                is_one_test_title(name)
+            })
+        {
+            violations.push(format!(
+                "case `{id}` mutant `{}` failing_test `{name}` is not one test name; name one test that failed and put any other observations in equivalence_review",
+                mutant.replacement
+            ));
+        }
+        match (case.edit_kind, mutant.mutated_line.as_deref()) {
+            (EditKind::BehaviorPreservingRewrite, None) => violations.push(format!(
+                "case `{id}` mutant `{}` has no mutated_line; give the trimmed anchor line with the mutant applied (empty removes the statement) so verdict-corpus relabel can replay it",
+                mutant.replacement
+            )),
+            (EditKind::BehaviorChange, Some(_)) => violations.push(format!(
+                "case `{id}` is a behavior_change, whose mutant is the edit itself; remove mutated_line from mutant `{}`",
+                mutant.replacement
+            )),
+            (_, Some(line)) if line.contains('\n') || line != line.trim() => {
+                violations.push(format!(
+                    "case `{id}` mutant `{}` mutated_line must be one trimmed line",
+                    mutant.replacement
+                ));
+            }
+            _ => {}
+        }
+    }
+    // The diff sits beside its record, so no case can borrow another's diff
+    // and leave its own unscored.
+    let own_diff = format!("cases/{id}.diff");
+    if case.diff != own_diff {
+        violations.push(format!(
+            "case `{id}` diff `{}` is not `{own_diff}`",
+            case.diff
+        ));
     }
     let mut unsafe_path = false;
     for (field, path) in [("diff", &case.diff), ("anchor.file", &case.anchor.file)] {
@@ -1371,6 +1936,20 @@ pub(crate) fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec
                     case.anchor.line, case.anchor.file
                 ));
             }
+            let anchor_text = patches
+                .iter()
+                .filter(|patch| patch.path == case.anchor.file)
+                .find_map(|patch| patch.added_line_text(case.anchor.line));
+            if let Some(anchor_text) = anchor_text {
+                for mutant in mutants {
+                    if mutant.mutated_line.as_deref() == Some(anchor_text.trim()) {
+                        violations.push(format!(
+                            "case `{id}` mutant `{}` mutated_line equals the edited anchor line, so it changes nothing",
+                            mutant.replacement
+                        ));
+                    }
+                }
+            }
         }
         Err(err) => violations.push(format!("case `{id}` diff: {err}")),
     }
@@ -1391,6 +1970,21 @@ pub(crate) struct Hunk {
 }
 
 impl FilePatch {
+    /// The text the patch adds at new-file `line`, if it adds that line.
+    pub(crate) fn added_line_text(&self, line: usize) -> Option<&str> {
+        for hunk in &self.hunks {
+            let mut at = hunk.new_start;
+            for (kind, text) in &hunk.lines {
+                match kind {
+                    '+' if at == line => return Some(text),
+                    '+' | ' ' => at += 1,
+                    _ => {}
+                }
+            }
+        }
+        None
+    }
+
     pub(crate) fn added_lines(&self) -> BTreeSet<usize> {
         let mut added = BTreeSet::new();
         for hunk in &self.hunks {
@@ -1575,7 +2169,7 @@ pub(crate) fn apply_patch(original: &str, patch: &FilePatch) -> Result<String, S
 }
 
 /// Copy a stored subject, restoring upstream `.rs` names.
-fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
+pub(crate) fn copy_tree(from: &Path, to: &Path) -> Result<(), String> {
     for rel in files_under(from)? {
         let logical = logical_path(&rel).ok_or_else(|| {
             format!(
@@ -1604,6 +2198,15 @@ fn materialize(dir: &Path, case: &Case, work_root: &Path) -> Result<(PathBuf, Pa
         Err(err) => return Err(format!("clear {}: {err}", normalize_path(&work))),
     }
     copy_tree(&dir.join("subjects").join(&case.subject_id), &work)?;
+    materialize_edit(dir, case, &work)?;
+    let absolute = |p: &Path| {
+        std::path::absolute(p).map_err(|err| format!("resolve {}: {err}", normalize_path(p)))
+    };
+    Ok((absolute(&work)?, absolute(&dir.join(&case.diff))?))
+}
+
+/// Apply the case edit to a run-owned tree and return the anchored file.
+pub(crate) fn materialize_edit(dir: &Path, case: &Case, work: &Path) -> Result<PathBuf, String> {
     let diff_path = dir.join(&case.diff);
     let context = |err: String| {
         format!(
@@ -1623,10 +2226,7 @@ fn materialize(dir: &Path, case: &Case, work_root: &Path) -> Result<(PathBuf, Pa
         fs::write(&target, patched)
             .map_err(|err| format!("write {}: {err}", normalize_path(&target)))?;
     }
-    let absolute = |p: &Path| {
-        std::path::absolute(p).map_err(|err| format!("resolve {}: {err}", normalize_path(p)))
-    };
-    Ok((absolute(&work)?, absolute(&diff_path)?))
+    Ok(work.join(&case.anchor.file))
 }
 
 fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<String>), String> {
@@ -1682,11 +2282,20 @@ pub(crate) fn relativize_probe_files(check: &mut Value, root: &Path) {
     }
 }
 
+/// Run `ripr check` on each case in parallel. Every case owns its work and
+/// cache directories, so runs share nothing; rows keep the corpus order.
 fn run_corpus(dir: &Path, corpus: &Corpus, work_root: &Path) -> Result<Report, String> {
+    // Build once before fanning out so no case waits on the package lock.
+    ripr_fixture_binary()?;
+    let results: Vec<Result<(Value, Option<String>), String>> = corpus
+        .cases
+        .par_iter()
+        .map(|case| run_case(dir, case, work_root))
+        .collect();
     let mut checks = Vec::new();
     let mut anchor_lines = BTreeMap::new();
-    for case in &corpus.cases {
-        let (check, anchor_line) = run_case(dir, case, work_root)?;
+    for (case, result) in corpus.cases.iter().zip(results) {
+        let (check, anchor_line) = result?;
         if let Some(line) = anchor_line {
             anchor_lines.insert(case.case_id.clone(), line);
         }
@@ -1695,7 +2304,65 @@ fn run_corpus(dir: &Path, corpus: &Corpus, work_root: &Path) -> Result<Report, S
     build_report(corpus, &checks, &anchor_lines)
 }
 
-fn validated_corpus(dir: &Path) -> Result<Corpus, String> {
+pub(crate) fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverage), String> {
+    let corpus = load_corpus(dir)?;
+    let ledger: Ledger = coverage::load_ledger(dir)?;
+    let specs: SpecExamples = coverage::scan_specs(Path::new(coverage::SPECS_DIR))?;
+    let mut violations = validate(&corpus, dir);
+    violations.extend(coverage::coverage_violations(&corpus, &ledger, &specs));
+    if violations.is_empty() {
+        let coverage = coverage::spec_example_coverage(&corpus, &ledger, &specs);
+        Ok((corpus, coverage))
+    } else {
+        Err(format!(
+            "verdict corpus is invalid:\n- {}",
+            violations.join("\n- ")
+        ))
+    }
+}
+
+/// Whether `check-all` gates a corpus on spec-example coverage. Scoring is
+/// universal — every discovered corpus compares its rows — but coverage is
+/// declared per corpus: a language without a ledger scores rows only, loudly,
+/// until it opts in. A present-but-invalid ledger still fails.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CorpusCoverage {
+    Gated,
+    Ungated,
+}
+
+fn corpus_coverage_mode(dir: &Path) -> CorpusCoverage {
+    if dir.join(coverage::LEDGER_FILE).is_file() {
+        CorpusCoverage::Gated
+    } else {
+        CorpusCoverage::Ungated
+    }
+}
+
+/// Validate one corpus honoring its coverage declaration: a ledgered corpus
+/// gates coverage, a ledgerless one validates structurally with disclosure.
+/// Every subcommand funnels through here so `--language` behaves the same
+/// for `validate`, `report`, `check` and `bless`. The Rust corpus is the
+/// exception: its spec-example ledger is mandatory (#6686 review), so a
+/// deleted or renamed ledger fails instead of silently dropping the
+/// coverage floor. Ledgerless operation is reserved for the non-Rust
+/// corpora that have not opted in yet.
+fn validated_corpus_declared(dir: &Path) -> Result<(Corpus, Option<SpecExampleCoverage>), String> {
+    if is_rust_corpus(dir) || corpus_coverage_mode(dir) == CorpusCoverage::Gated {
+        return validated_corpus(dir).map(|(corpus, coverage)| (corpus, Some(coverage)));
+    }
+    println!(
+        "verdict-corpus: {} has no {}; scoring rows without the spec-example coverage gate",
+        normalize_path(dir),
+        coverage::LEDGER_FILE
+    );
+    validated_corpus_without_coverage(dir).map(|corpus| (corpus, None))
+}
+
+/// `validated_corpus` without the coverage half, for a corpus that declares
+/// no ledger. Structural validation still applies; only the spec-example
+/// gate is skipped.
+fn validated_corpus_without_coverage(dir: &Path) -> Result<Corpus, String> {
     let corpus = load_corpus(dir)?;
     let violations = validate(&corpus, dir);
     if violations.is_empty() {
@@ -1708,6 +2375,31 @@ fn validated_corpus(dir: &Path) -> Result<Corpus, String> {
     }
 }
 
+/// Keep only the named cases. Validation still covers the whole corpus.
+pub(crate) fn select_cases(corpus: &mut Corpus, ids: &[String]) -> Result<(), String> {
+    // An empty selection would score zero cases and pass.
+    if ids.is_empty() {
+        return Err("verdict-corpus: --cases names no case".to_string());
+    }
+    let known: BTreeSet<&str> = corpus.cases.iter().map(|c| c.case_id.as_str()).collect();
+    let unknown: Vec<&str> = ids
+        .iter()
+        .map(String::as_str)
+        .filter(|id| !known.contains(id))
+        .collect();
+    if !unknown.is_empty() {
+        return Err(format!(
+            "verdict-corpus: unknown case `{}`",
+            unknown.join("`, `")
+        ));
+    }
+    let wanted: BTreeSet<&str> = ids.iter().map(String::as_str).collect();
+    corpus
+        .cases
+        .retain(|case| wanted.contains(case.case_id.as_str()));
+    Ok(())
+}
+
 fn first_differing_line(expected: &str, actual: &str) -> String {
     for (index, (e, a)) in expected.lines().zip(actual.lines()).enumerate() {
         if e != a {
@@ -1717,107 +2409,575 @@ fn first_differing_line(expected: &str, actual: &str) -> String {
     "length differs".to_string()
 }
 
-pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
-    let dir = Path::new(CORPUS_DIR);
+/// The committed expected state: one `rows/<case_id>.json` per case and
+/// nothing else. A PR that adds a case adds one row file. The aggregate rates
+/// are derived from the rows (`expected_report`), so no line is shared between
+/// case PRs.
+pub(crate) const ROWS_DIR: &str = "rows";
+
+pub(crate) fn render_row_json(row: &CaseRow) -> Result<String, String> {
+    pretty(row, "verdict corpus row")
+}
+
+/// Every difference between `report` and the committed expected state. With
+/// `whole_corpus` false (a `--cases` run) only the selected rows are
+/// compared; the stale-file check needs every case.
+pub(crate) fn expected_drift(
+    expected_dir: &Path,
+    report: &Report,
+    whole_corpus: bool,
+) -> Result<Vec<String>, String> {
+    let mut drift = Vec::new();
+    let rows_dir = expected_dir.join(ROWS_DIR);
+    for row in &report.rows {
+        let path = rows_dir.join(format!("{}.json", row.case_id));
+        let actual = render_row_json(row)?;
+        match fs::read_to_string(&path) {
+            Ok(expected) if expected == actual => {}
+            Ok(expected) => drift.push(format!(
+                "case `{}`: {} ({})",
+                row.case_id,
+                if row.changed_since_labeling {
+                    "verdict moved; changed since labeling"
+                } else {
+                    "row moved"
+                },
+                first_differing_line(&expected, &actual)
+            )),
+            Err(_) => drift.push(format!(
+                "case `{}`: no expected row at {}",
+                row.case_id,
+                normalize_path(&path)
+            )),
+        }
+    }
+    if !whole_corpus {
+        return Ok(drift);
+    }
+    let ids: BTreeSet<&str> = report.rows.iter().map(|r| r.case_id.as_str()).collect();
+    for entry in files_under(expected_dir)? {
+        // A `summary.json` left from the old layout is stale too: the
+        // summary is derived from the rows, never committed.
+        let stale = entry
+            .strip_prefix("rows/")
+            .and_then(|name| name.strip_suffix(".json"))
+            .is_none_or(|id| !ids.contains(id));
+        if stale {
+            drift.push(format!(
+                "{} is not part of the expected state; remove it",
+                normalize_path(&expected_dir.join(&entry))
+            ));
+        }
+    }
+    Ok(drift)
+}
+
+/// Replace the expected state with `report`, removing rows of cases that no
+/// longer exist.
+fn bless(expected_dir: &Path, report: &Report) -> Result<(), String> {
+    let rows_dir = expected_dir.join(ROWS_DIR);
+    match fs::remove_dir_all(expected_dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("clear {}: {err}", normalize_path(expected_dir))),
+    }
+    fs::create_dir_all(&rows_dir)
+        .map_err(|err| format!("create {}: {err}", normalize_path(&rows_dir)))?;
+    let write = |path: PathBuf, text: String| {
+        fs::write(&path, text).map_err(|err| format!("write {}: {err}", normalize_path(&path)))
+    };
+    for row in &report.rows {
+        write(
+            rows_dir.join(format!("{}.json", row.case_id)),
+            render_row_json(row)?,
+        )?;
+    }
+    Ok(())
+}
+
+/// How a report heading names a corpus language.
+fn language_title(language: &str) -> &str {
+    match language {
+        "rust" => "Rust",
+        "typescript" => "TypeScript",
+        "python" => "Python",
+        "perl" => "Perl",
+        other => other,
+    }
+}
+
+fn write_report(out: &Path, report: &Report, language: &str) -> Result<(), String> {
+    fs::create_dir_all(out).map_err(|err| format!("create {}: {err}", normalize_path(out)))?;
+    fs::write(out.join("report.json"), render_report_json(report)?)
+        .map_err(|err| format!("write report.json: {err}"))?;
+    fs::write(
+        out.join("report.md"),
+        render_report_markdown(report, language),
+    )
+    .map_err(|err| format!("write report.md: {err}"))?;
+    Ok(())
+}
+
+/// Refuse an `--out` that is, or sits inside, the expected directory, in any
+/// spelling: only `bless` writes there.
+fn refuse_expected_out(out: &Path, expected_dir: &Path, language: &str) -> Result<(), String> {
+    // Canonicalize the deepest existing ancestor and re-append the rest, so
+    // the guard creates nothing before it decides.
+    let resolve = |p: &Path| {
+        let absolute = std::path::absolute(p)
+            .map_err(|err| format!("resolve {}: {err}", normalize_path(p)))?;
+        let mut existing = absolute.as_path();
+        let mut rest = Vec::new();
+        while !existing.exists() {
+            let (Some(parent), Some(name)) = (existing.parent(), existing.file_name()) else {
+                break;
+            };
+            rest.push(name.to_os_string());
+            existing = parent;
+        }
+        let mut resolved = fs::canonicalize(existing)
+            .map_err(|err| format!("resolve {}: {err}", normalize_path(existing)))?;
+        resolved.extend(rest.iter().rev());
+        Ok::<PathBuf, String>(resolved)
+    };
+    if resolve(out)?.starts_with(resolve(expected_dir)?) {
+        return Err(format!(
+            "verdict-corpus: --out {} is inside the expected directory; run `cargo xtask verdict-corpus bless{}` to re-bless deliberately when a verdict change is intended",
+            normalize_path(out),
+            language_flag(language)
+        ));
+    }
+    Ok(())
+}
+
+/// Refuse an `--out` inside ANY discovered corpus's expected directory, not
+/// just the selected one: with sibling corpora, `--language typescript
+/// --out fixtures/rust-verdict-corpus/expected` would otherwise pass the
+/// selected guard and let `write_report` pollute the sibling's blessed
+/// state, failing the next run on files only `bless` should write.
+fn refuse_any_expected_out(out: &Path, dir: &Path) -> Result<(), String> {
+    // The selected corpus is always guarded, even when sibling discovery
+    // fails or this corpus lives outside a fixtures tree.
+    refuse_expected_out(out, &dir.join("expected"), &corpus_language(dir)?)?;
+    let Some(fixtures) = dir.parent() else {
+        return Ok(());
+    };
+    let Ok(discovered) = corpus_dirs(fixtures) else {
+        return Ok(());
+    };
+    for sibling in discovered.into_iter().flatten() {
+        // A sibling that names no usable language cannot be checked,
+        // reported, or blessed, so there is no blessed state of its to
+        // protect; its error still fails check-all through corpus_dirs.
+        // Skipping it here keeps one malformed sibling from aborting every
+        // other corpus's run through this shared guard.
+        let Ok(language) = corpus_language(&sibling) else {
+            continue;
+        };
+        refuse_expected_out(out, &sibling.join("expected"), &language)?;
+    }
+    Ok(())
+}
+
+const DRIFT_SHOWN: usize = 20;
+
+const FIXTURES_DIR: &str = "fixtures";
+const CORPUS_SUFFIX: &str = "-verdict-corpus";
+
+/// The language prefix of a corpus directory: `rust` for
+/// `fixtures/rust-verdict-corpus`.
+/// The language a corpus directory names. It becomes a path component of
+/// the run workspace, which `materialize` deletes and recreates per case, so
+/// a name such as `..` or `.cache` that would leave that workspace is refused.
+fn corpus_language(dir: &Path) -> Result<String, String> {
+    let name = dir
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let language = name.strip_suffix(CORPUS_SUFFIX).unwrap_or(&name);
+    if language_name(language) {
+        Ok(language.to_string())
+    } else {
+        Err(format!(
+            "{} names no usable language; use `<language>{CORPUS_SUFFIX}`",
+            normalize_path(dir)
+        ))
+    }
+}
+
+/// Run-owned workspaces live under one directory per language, so corpora
+/// for other languages never share a case work or cache directory.
+pub(crate) fn work_root(dir: &Path) -> Result<PathBuf, String> {
+    Ok(Path::new(WORK_ROOT).join(corpus_language(dir)?))
+}
+
+/// Rust keeps the report path it always had; other languages nest under
+/// their name.
+pub(crate) fn default_out(dir: &Path) -> Result<PathBuf, String> {
+    let language = corpus_language(dir)?;
+    Ok(if language == "rust" {
+        PathBuf::from(DEFAULT_OUT)
+    } else {
+        Path::new(DEFAULT_OUT).join(language)
+    })
+}
+
+/// Every `<language>-verdict-corpus` entry under `fixtures`, sorted. An
+/// entry that cannot be a corpus (no `corpus.json`, a symlink, a file, an
+/// empty language) is an `Err` in place, so it fails the gate without
+/// stopping the other corpora from being checked.
+pub(crate) fn corpus_dirs(fixtures: &Path) -> Result<Vec<Result<PathBuf, String>>, String> {
+    let entries = fs::read_dir(fixtures)
+        .map_err(|err| format!("read {}: {err}", normalize_path(fixtures)))?;
+    let mut found = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(|err| format!("read {}: {err}", normalize_path(fixtures)))?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(language) = name.strip_suffix(CORPUS_SUFFIX) else {
+            continue;
+        };
+        let shown = normalize_path(&path);
+        let is_symlink = fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_symlink());
+        let problem = if !safe_id(language) {
+            Some(format!(
+                "{shown} names no usable language; use `<language>{CORPUS_SUFFIX}`"
+            ))
+        } else if is_symlink {
+            Some(format!(
+                "{shown} is a symlink; a corpus is one real directory"
+            ))
+        } else if !path.is_dir() {
+            Some(format!("{shown} is not a directory"))
+        } else if !path.join("corpus.json").is_file() {
+            Some(format!(
+                "{shown} has no corpus.json; restore it or rename the directory"
+            ))
+        } else {
+            None
+        };
+        found.push((path.clone(), problem.map_or(Ok(path), Err)));
+    }
+    if found.is_empty() {
+        return Err(format!(
+            "no *{CORPUS_SUFFIX} directory under {}",
+            normalize_path(fixtures)
+        ));
+    }
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(found.into_iter().map(|(_, entry)| entry).collect())
+}
+
+/// Check each corpus with `check`, continuing past failures so one run
+/// reports every drifted or broken corpus. Returns how many were checked.
+pub(crate) fn check_each(
+    corpora: Vec<Result<PathBuf, String>>,
+    check: impl Fn(&Path) -> Result<(), String>,
+) -> Result<usize, String> {
+    let mut failures = Vec::new();
+    let mut checked = 0;
+    for corpus in corpora {
+        match corpus {
+            Ok(dir) => {
+                println!("verdict-corpus: checking {}", normalize_path(&dir));
+                checked += 1;
+                if let Err(err) = check(&dir) {
+                    failures.push(err);
+                }
+            }
+            Err(err) => failures.push(err),
+        }
+    }
+    if failures.is_empty() {
+        Ok(checked)
+    } else {
+        Err(failures.join("\n\n"))
+    }
+}
+
+/// `report`, or with `check` also the comparison with the expected state.
+fn score_corpus(
+    dir: &Path,
+    check: bool,
+    cases: Option<&[String]>,
+    out: Option<PathBuf>,
+) -> Result<(), String> {
+    let (corpus, coverage) = validated_corpus_declared(dir)?;
+    score_loaded_corpus(dir, corpus, coverage, check, cases, out)
+}
+
+fn score_loaded_corpus(
+    dir: &Path,
+    mut corpus: Corpus,
+    coverage: Option<SpecExampleCoverage>,
+    check: bool,
+    cases: Option<&[String]>,
+    out: Option<PathBuf>,
+) -> Result<(), String> {
+    let expected_dir = dir.join("expected");
+    // The floor gate needs no ripr runs, so fail fast before scoring.
+    let floor_note = match (&coverage, check) {
+        (Some(coverage), true) => coverage::floor_gate(coverage)?,
+        _ => None,
+    };
+    if let Some(ids) = cases {
+        select_cases(&mut corpus, ids)?;
+    }
+    let out = match out {
+        Some(out) => out,
+        None => default_out(dir)?,
+    };
+    refuse_any_expected_out(&out, dir)?;
+    let mut report = run_corpus(dir, &corpus, &work_root(dir)?)?;
+    report.spec_example_coverage = coverage;
+    write_report(&out, &report, &corpus_language(dir)?)?;
+    println!(
+        "verdict-corpus: {} cases; false verdicts {} ({}/{}), contradictions {} ({}/{}); wrote {}",
+        report.cases_total,
+        report.false_verdict_rate.rate,
+        report.false_verdict_rate.numerator,
+        report.false_verdict_rate.denominator,
+        report.contradiction_rate.rate,
+        report.contradiction_rate.numerator,
+        report.contradiction_rate.denominator,
+        normalize_path(&out)
+    );
+    if let Some(coverage) = &report.spec_example_coverage {
+        println!(
+            "verdict-corpus: spec examples covered {} ({}/{}), floor {}",
+            coverage.coverage.rate,
+            coverage.coverage.numerator,
+            coverage.coverage.denominator,
+            coverage.floor
+        );
+    }
+    if let Some(note) = &floor_note {
+        println!("{note}");
+    }
+    if !check {
+        return Ok(());
+    }
+    let drift = expected_drift(&expected_dir, &report, cases.is_none())?;
+    if drift.is_empty() {
+        return Ok(());
+    }
+    let mut shown: Vec<String> = drift.iter().take(DRIFT_SHOWN).cloned().collect();
+    if drift.len() > DRIFT_SHOWN {
+        shown.push(format!("... and {} more", drift.len() - DRIFT_SHOWN));
+    }
+    Err(format!(
+        "verdict-corpus: the report drifted from {}:\n- {}\nRead {}. If the change is intended, re-bless {} (`cargo xtask verdict-corpus bless{}`) and state why each moved row changed in the PR.",
+        normalize_path(&expected_dir),
+        shown.join("\n- "),
+        normalize_path(&out.join("report.md")),
+        normalize_path(&expected_dir),
+        language_flag(&corpus_language(dir)?)
+    ))
+}
+
+/// The `--language` argument a command for this corpus needs; empty for
+/// Rust, the default corpus.
+fn language_flag(language: &str) -> String {
+    if language == "rust" {
+        String::new()
+    } else {
+        format!(" --language {language}")
+    }
+}
+
+/// A corpus language name: lowercase ASCII letters, digits, `-` and `_`.
+/// The name is pasted into re-bless commands, so it must need no shell
+/// quoting, and it is a directory component.
+fn language_name(language: &str) -> bool {
+    !language.is_empty()
+        && !language.starts_with('-')
+        && language
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'_')
+}
+
+/// The corpus `--language <language>` names: `fixtures/<language>-verdict-corpus`.
+/// The name must be usable as a directory component and the corpus must
+/// exist, so a typo fails here instead of as a missing `corpus.json`.
+pub(crate) fn language_corpus_dir(language: &str) -> Result<PathBuf, String> {
+    language_corpus_dir_in(Path::new(FIXTURES_DIR), language)
+}
+
+pub(crate) fn language_corpus_dir_in(fixtures: &Path, language: &str) -> Result<PathBuf, String> {
+    if !language_name(language) {
+        return Err(format!(
+            "verdict-corpus: --language `{language}` is not a usable language name"
+        ));
+    }
+    let dir = fixtures.join(format!("{language}{CORPUS_SUFFIX}"));
+    // bless and split rewrite files under this directory, so a symlink would
+    // let them write outside fixtures/; check-all refuses one the same way.
+    if fs::symlink_metadata(&dir).is_ok_and(|meta| meta.is_symlink()) {
+        return Err(format!(
+            "verdict-corpus: --language `{language}`: {} is a symlink; a corpus is one real directory",
+            normalize_path(&dir)
+        ));
+    }
+    if !dir.join("corpus.json").is_file() {
+        return Err(format!(
+            "verdict-corpus: --language `{language}` names no corpus; {} has no corpus.json",
+            normalize_path(&dir)
+        ));
+    }
+    Ok(dir)
+}
+
+/// The parsed arguments of a `verdict-corpus` command other than `relabel`.
+#[derive(Debug, PartialEq)]
+pub(crate) struct CorpusArgs {
+    pub(crate) sub: String,
+    pub(crate) language: Option<String>,
+    pub(crate) out: Option<PathBuf>,
+    pub(crate) cases: Option<Vec<String>>,
+}
+
+/// Parse `verdict-corpus` arguments without touching the filesystem. The
+/// subcommand may come before or after the options; with none, it is `check`.
+pub(crate) fn parse_corpus_args(args: &[String]) -> Result<CorpusArgs, String> {
     let mut iter = args.iter();
-    let sub = iter.next().map(String::as_str).unwrap_or("check");
-    let mut out = PathBuf::from(DEFAULT_OUT);
+    let mut sub: Option<String> = None;
+    let mut parsed = CorpusArgs {
+        sub: String::new(),
+        language: None,
+        out: None,
+        cases: None,
+    };
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--out" => {
-                out = PathBuf::from(iter.next().ok_or("--out needs a directory")?);
+            "--language" => {
+                let language = iter
+                    .next()
+                    .ok_or("--language needs a corpus language, such as typescript")?;
+                if parsed.language.is_some() {
+                    return Err(
+                        "verdict-corpus: --language is given twice; name one corpus".to_string()
+                    );
+                }
+                parsed.language = Some(language.clone());
             }
+            "--out" => {
+                parsed.out = Some(PathBuf::from(iter.next().ok_or("--out needs a directory")?));
+            }
+            "--cases" => {
+                let list = iter
+                    .next()
+                    .ok_or("--cases needs comma-separated case ids")?;
+                parsed.cases = Some(
+                    list.split(',')
+                        .map(str::trim)
+                        .filter(|id| !id.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                );
+            }
+            other if !other.starts_with("--") && sub.is_none() => sub = Some(other.to_string()),
             other => return Err(format!("verdict-corpus: unknown argument `{other}`")),
         }
     }
+    parsed.sub = sub.unwrap_or_else(|| "check".to_string());
+    let sub = parsed.sub.as_str();
+    if sub == "check-all" && parsed.language.is_some() {
+        return Err("verdict-corpus check-all checks every corpus; drop --language".to_string());
+    }
+    let takes_options = matches!(sub, "report" | "check");
+    if !takes_options && (parsed.out.is_some() || parsed.cases.is_some()) {
+        return Err(format!(
+            "verdict-corpus {sub} takes only --language; `--out` and `--cases` apply to report and check"
+        ));
+    }
+    Ok(parsed)
+}
+
+pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
+    if args.first().map(String::as_str) == Some("relabel") {
+        return super::verdict_corpus_relabel::relabel(&args[1..]);
+    }
+    let CorpusArgs {
+        sub,
+        language,
+        out,
+        cases,
+    } = parse_corpus_args(args)?;
+    let sub = sub.as_str();
+    let dir_buf = match &language {
+        Some(language) => language_corpus_dir(language)?,
+        // The default corpus resolves through the same checks as a named
+        // one, so a symlinked rust-verdict-corpus is refused here too
+        // (#6686 review), not only an explicitly named corpus.
+        None => language_corpus_dir("rust")?,
+    };
+    let dir = dir_buf.as_path();
+    let expected_dir = dir.join("expected");
     match sub {
         "validate" => {
-            if args.len() > 1 {
-                return Err(
-                    "verdict-corpus validate takes no options; `--out` applies to report and check"
-                        .to_string(),
-                );
+            // Option shape is the parser's contract (`parse_corpus_args`
+            // already refuses `--out`/`--cases` here); only the coverage
+            // declaration branches.
+            let (corpus, coverage) = validated_corpus_declared(dir)?;
+            match coverage {
+                Some(coverage) => {
+                    // The floor gate needs no ripr runs, so the cheap CI step
+                    // that calls `validate` enforces it too.
+                    let floor_note = coverage::floor_gate(&coverage)?;
+                    println!(
+                        "verdict-corpus: {} cases across {} subjects are valid; spec examples covered {}/{} (floor {})",
+                        corpus.cases.len(),
+                        corpus.subjects.len(),
+                        coverage.coverage.numerator,
+                        coverage.coverage.denominator,
+                        coverage.floor
+                    );
+                    if let Some(note) = floor_note {
+                        println!("{note}");
+                    }
+                }
+                None => {
+                    println!(
+                        "verdict-corpus: {} cases across {} subjects are valid",
+                        corpus.cases.len(),
+                        corpus.subjects.len()
+                    );
+                }
             }
-            let corpus = validated_corpus(dir)?;
+            Ok(())
+        }
+        "split" => split(dir),
+        "bless" => {
+            let (corpus, _coverage) = validated_corpus_declared(dir)?;
+            let report = run_corpus(dir, &corpus, &work_root(dir)?)?;
+            bless(&expected_dir, &report)?;
             println!(
-                "verdict-corpus: {} cases across {} subjects are valid",
-                corpus.cases.len(),
-                corpus.subjects.len()
+                "verdict-corpus: blessed {} rows into {}; state why each moved row changed in the PR",
+                report.rows.len(),
+                normalize_path(&expected_dir)
             );
             Ok(())
         }
-        "report" | "check" => {
-            let corpus = validated_corpus(dir)?;
-            // Read the golden before writing anything, so an `--out` that
-            // aliases the expected directory cannot make the check pass.
-            let expected_path = dir.join("expected").join("report.json");
-            let expected_md_path = dir.join("expected").join("report.md");
-            let expected = if sub == "check" {
-                Some((read(&expected_path)?, read(&expected_md_path)?))
-            } else {
-                None
-            };
-            // Canonical paths collapse `..` and symlinks, so no spelling of
-            // the expected directory slips past the guard.
-            let canonical = |p: &Path| {
-                fs::canonicalize(p).map_err(|err| format!("resolve {}: {err}", normalize_path(p)))
-            };
-            if sub == "check" {
-                fs::create_dir_all(&out)
-                    .map_err(|err| format!("create {}: {err}", normalize_path(&out)))?;
-            }
-            if sub == "check" && canonical(&out)? == canonical(&dir.join("expected"))? {
-                return Err(format!(
-                    "verdict-corpus: --out {} is the expected-report directory; use `report --out` there to re-bless deliberately when a verdict change is intended",
-                    normalize_path(&out)
-                ));
-            }
-            let report = run_corpus(dir, &corpus, Path::new("target/ripr/verdict-corpus"))?;
-            let json = render_report_json(&report)?;
-            let markdown = render_report_markdown(&report);
-            fs::create_dir_all(&out)
-                .map_err(|err| format!("create {}: {err}", normalize_path(&out)))?;
-            fs::write(out.join("report.json"), &json)
-                .map_err(|err| format!("write report.json: {err}"))?;
-            fs::write(out.join("report.md"), &markdown)
-                .map_err(|err| format!("write report.md: {err}"))?;
-            println!(
-                "verdict-corpus: false verdicts {} ({}/{}), contradictions {} ({}/{}); wrote {}",
-                report.false_verdict_rate.rate,
-                report.false_verdict_rate.numerator,
-                report.false_verdict_rate.denominator,
-                report.contradiction_rate.rate,
-                report.contradiction_rate.numerator,
-                report.contradiction_rate.denominator,
-                normalize_path(&out)
-            );
-            if let Some((_, expected_md)) = &expected
-                && *expected_md != markdown
-            {
-                return Err(format!(
-                    "verdict-corpus: {} drifted from the rendered report ({}); re-bless both expected files with `report --out {}`",
-                    normalize_path(&expected_md_path),
-                    first_differing_line(expected_md, &markdown),
-                    normalize_path(&dir.join("expected"))
-                ));
-            }
-            if let Some((expected, _)) = expected
-                && expected != json
-            {
-                return Err(format!(
-                    "verdict-corpus: report drifted from {} ({}). A verdict changed; read {} and, if the change is intended, copy it over the expected report with the reason in the PR.",
-                    normalize_path(&expected_path),
-                    first_differing_line(&expected, &json),
-                    normalize_path(&out.join("report.md"))
-                ));
-            }
+        "report" | "check" => score_corpus(dir, sub == "check", cases.as_deref(), out),
+        "check-all" => {
+            // Every language's corpus scores its rows, found by name so a
+            // new corpus is checked without a workflow change. Coverage is
+            // declared per corpus inside `score_corpus`: a language without
+            // a ledger scores rows only, loudly, until it opts in.
+            let checked = check_each(corpus_dirs(Path::new(FIXTURES_DIR))?, |dir| {
+                score_corpus(dir, true, None, None)
+            })?;
+            println!("verdict-corpus: {checked} corpora checked");
             Ok(())
         }
         other => Err(format!(
-            "verdict-corpus: unknown subcommand `{other}` (expected validate, check, or report)"
+            "verdict-corpus: unknown subcommand `{other}` (expected validate, check, check-all, report, bless, split, or relabel)"
         )),
     }
 }
+
+#[path = "verdict_corpus_coverage.rs"]
+pub(crate) mod coverage;
 
 #[cfg(test)]
 #[path = "verdict_corpus_tests.rs"]

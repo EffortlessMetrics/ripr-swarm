@@ -1,0 +1,3 @@
+pub fn charge(base: u32) -> u32 {
+    base * 13
+}

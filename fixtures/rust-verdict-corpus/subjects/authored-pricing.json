@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-pricing",
+  "origin": "authored",
+  "version_label": "authored@75e23f2",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "d3b1d593787498f0459a35ecdbc917d9ed7fd0e487f3145ae7c23b22fb500e0b"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "4b194ab15c7451f7268c7a7e875be7ce154413793614da6d969aabfef98b6a58"
+    }
+  ]
+}

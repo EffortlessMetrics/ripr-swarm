@@ -1,0 +1,11 @@
+diff --git a/src/price.ts b/src/price.ts
+index 0000000..1111111 100644
+--- a/src/price.ts
++++ b/src/price.ts
+@@ -2,5 +2,5 @@
+ 
+ export async function priceOf(sku: string): Promise<number> {
+   const base = BASE[sku] ?? 0;
+-  return base * 2;
++  return 2 * base;
+ }

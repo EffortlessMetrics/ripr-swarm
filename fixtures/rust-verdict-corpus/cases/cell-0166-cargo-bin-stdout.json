@@ -1,0 +1,52 @@
+{
+  "case_id": "cell-0166-cargo-bin-stdout",
+  "subject_id": "authored-spec-harness",
+  "diff": "cases/cell-0166-cargo-bin-stdout.diff",
+  "anchor": {
+    "file": "src/bin/tool.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_cmd_cargo_bin_stdout",
+  "hard_case": "The edited function is in a binary target; the only test runs it as a subprocess through assert_cmd's Command::cargo_bin and asserts its exact stdout.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --workspace",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "format!(\"{}\", 2 + n)",
+        "mutated_line": "format!(\"{}\", 2 + n)",
+        "outcome": "tests_failed",
+        "failing_test": "tool_prints_the_doubled_value",
+        "equivalence_review": "not equivalent: tool 6 prints 8"
+      },
+      {
+        "replacement": "format!(\"{}\", 2 * n + 1)",
+        "mutated_line": "format!(\"{}\", 2 * n + 1)",
+        "outcome": "tests_failed",
+        "failing_test": "tool_prints_the_doubled_value",
+        "equivalence_review": "not equivalent: tool 6 prints 13"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "tool_prints_the_doubled_value requires stdout \"12\\n\" for argument 6, and both mutants change it. Spec cells: RIPR-SPEC-0166 assert_cmd cargo_bin subprocess reach.",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

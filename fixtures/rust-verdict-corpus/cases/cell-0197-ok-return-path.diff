@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..6a82f14 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -181,7 +181,7 @@ pub fn checked_half(x: i32) -> Result<i32, HalfError> {
+ 
+ /// Same shape; the test takes the `Ok(..)` exit.
+ pub fn checked_third(x: i32) -> Result<i32, HalfError> {
+-    Ok(validate(x)? / 3)
++    Ok((validate(x)?) / 3)
+ }
+ 
+ #[cfg(test)]

@@ -1,0 +1,7 @@
+use std::process::Command;
+
+#[test]
+fn no_arguments_exits_two() {
+    let status = Command::new(env!("CARGO_BIN_EXE_tally")).status().unwrap();
+    assert_eq!(status.code(), Some(2));
+}

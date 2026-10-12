@@ -1,0 +1,52 @@
+{
+  "case_id": "old-title-through-format-macro",
+  "subject_id": "authored-old-errors",
+  "diff": "cases/old-title-through-format-macro.diff",
+  "anchor": {
+    "file": "src/macros.rs",
+    "line": 19
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "owner_called_inside_std_format_macro",
+  "hard_case": "The owner is reached through format!, a macro defined outside the repository.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "\"ripR\"",
+        "mutated_line": "\"ripR\"",
+        "outcome": "tests_failed",
+        "failing_test": "macros::tests::banner_brackets_the_title",
+        "equivalence_review": "not equivalent: the banner reads [ripR]"
+      },
+      {
+        "replacement": "\"\"",
+        "mutated_line": "\"\"",
+        "outcome": "tests_failed",
+        "failing_test": "macros::tests::banner_brackets_the_title",
+        "equivalence_review": "not equivalent: the banner reads []"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "banner_brackets_the_title pins the full banner, which embeds title(), so any other title fails it. Spec cells: RIPR-SPEC-0117 (external macro).",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

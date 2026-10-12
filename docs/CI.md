@@ -4,6 +4,40 @@ CI should protect correctness without making ordinary contribution slow or
 noisy. Default CI is advisory for static exposure findings until calibration and
 configuration are mature enough to support opt-in failure policies.
 
+## Python wheel applicability (#4987)
+
+The Python wheel workflow retains its broad PR paths and ordinary manual
+qualification. Its lightweight `applicability` job independently runs the
+product-free `cargo policy check-workflows` before selecting expensive work.
+Only a diff confined to `policy/workflow_allowlist.txt`, with a unique unchanged
+wheel-owned record and unambiguous parsed records at both endpoints, can skip
+`build-wheel` and its two pip/uv consumers. Record comparison uses
+`merge-base(event base, event head)` to event head, matching three-dot selection.
+The validator keeps its existing duplicate-record policy; applicability retains
+all records and treats duplicate normalized keys as uncertainty.
+
+Wheel record additions, deletions, renames or changes, mixed diffs, other ledgers,
+product/package/xtask changes, workflow/selector edits and unavailable or malformed
+history retain qualification. Failed/skipped applicability or missing outputs
+also retain qualification, while cancellation still stops expensive work.
+Consumers explicitly require a successful wheel build and a non-cancelled run,
+including after an applicability failure; that failure remains visible.
+A source-identical pre-#7411 policy dispatcher is recognized by its Git blob
+identity and conservatively qualifies with a diagnostic. Other dispatcher
+versions execute the selector normally; source inspection, candidate identity,
+command or malformed-output failures stay failures. Selector output is validated
+before publishing the decision. The separate `mcp_evidence_pair` manual dispatch
+has no applicability dependency and remains independently reachable. Distribution
+source checks remain inside qualifying wheel work; Windows and the broader
+#4633/#4493 programme retain their existing contracts.
+
+The expected avoidance for an eligible unrelated-ledger event is one release
+wheel build and two consumers, offset by the lightweight policy/selection job.
+No measured runner-time savings are claimed. Local controls execute the actual
+workflow shell with the production policy binary and real Git histories, and
+exercise the checked-in job predicates and dependency wiring; they do not claim
+hosted Actions or wheel qualification.
+
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it
@@ -144,8 +178,8 @@ Every CI-efficiency PR should show evidence appropriate to the edited surface:
 
 ### PR Planning
 
-Every pull request should eventually get a cheap CI forecast before heavier
-lanes run. The planned `target/ci/ci-plan.json` artifact should record:
+A future CI forecast must establish qualification decision value before it
+earns automatic execution. The planned `target/ci/ci-plan.json` artifact should record:
 
 - changed files;
 - detected risk packs;
@@ -166,13 +200,13 @@ PR Plan
 - To run all: add full-ci
 ```
 
-The active PR Plan workflow is structural advisory today: it runs on opened,
-synchronized, reopened, labeled, and unlabeled pull requests, writes the
-changed-file list locally, and writes a placeholder step summary. To avoid
-routine artifact churn, it uploads the changed-file list only on failure or
-when the PR is labeled `full-ci`. Until the numeric planner exists, authors
-should still fill the PR template's CI economics section for CI-affecting
-changes.
+The automatic PR Plan placeholder is retired under #4987. It had no decision
+output or downstream qualification consumer. Its changed-file and ledger-presence
+diagnostic remains an optional [local recipe](ci/pr-plan.md#local-advisory-diagnostic).
+Candidate shaping uses the existing `pr-ready`, `check-fast`, `precommit`, and
+`check-pr` owners; no planner or new Ready advisory lane is installed.
+`cargo xtask ci plan` and the numeric forecast remain planned. Authors should
+still fill the PR template's CI economics section for CI-affecting changes.
 
 ### Risk Packs
 
@@ -226,7 +260,7 @@ artifacts are grouped by family:
 
 | Family | Expected paths |
 | --- | --- |
-| `ci-plan` | `target/ripr/reports/pr-plan-changes.txt`, `target/ci/ci-plan.json`, `target/ci/ci-actuals.json` |
+| `ci-plan` | `target/ci/ci-plan.json`, `target/ci/ci-actuals.json` (planned) |
 | `ripr-evidence` | `target/ripr/reports/index.md`, `target/ripr/reports/repo-exposure.json`, `target/ripr/reports/repo-sarif.json` |
 | `editor-agent-loop` | `target/ripr/reports/operator-cockpit.{json,md}`, `target/ripr/reports/agent-receipt.json`, `target/ripr/workflow/agent-seam-packets.json`, `target/ripr/workflow/workflow.json`, `target/ripr/workflow/commands.md`, `target/ripr/workflow/agent-status.{json,md}`, `target/ripr/workflow/agent-review-summary.{json,md}`, `target/ripr/workflow/agent-packet.json`, `target/ripr/workflow/agent-brief.json`, `target/ripr/workflow/agent-verify.json`, plus compatibility copies under `target/ripr/agent/` |
 | `release-readiness` | package lists, publish dry-run transcript, VSIX package proof, server archive proof |
@@ -252,8 +286,8 @@ Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) when watching a
 specific PR through hosted checks, branch freshness, Droid/advisory status, and
 merge execution.
 
-The `pr-plan-changes.txt` file is the current structural advisory artifact;
-the `target/ci/ci-plan.json` forecast remains planned. The `editor-agent-loop`
+PR Plan has no hosted artifact producer after retirement; the optional local
+diagnostic is not a qualification artifact. The `editor-agent-loop`
 paths reflect the current split between the local bulk packet envelope
 (`agent-seam-packets.json`) and generated CI's focused agent artifacts under
 `target/ripr/agent/`.
@@ -568,7 +602,7 @@ allocate the heavy required gate (#4986):
 
 ```text
 opened / reopened / synchronize while Draft:
-  no Routed Rust Small run; cheap feedback only
+  no Routed Rust Small run; existing early advisory events remain separate
 
 ready_for_review (Draft -> Ready):
   the sole pull-request qualification request; validates the exact Ready head
@@ -592,6 +626,29 @@ on the branch head, without the `pull_request`-scoped PR-evidence steps.
 Do not dispatch on PR branches; #5394 tracks enforcing this.
 
 What this means for authors and agents:
+
+UB and Droid retain early review on `opened`, `synchronize`, and `reopened`,
+including Drafts; Droid also retains `labeled` and `unlabeled`. They do not
+subscribe to `ready_for_review` (#4987). Ready therefore neither cancels an
+active UB review nor queues another Droid review, and does not repeat completed
+advisory work. Their existing trust/title/release guards and concurrency remain
+unchanged. UB explicitly lists all three early passes in
+`.ub-review.toml`'s `gate.post_review_on`: action pin
+`55e4fbab879b3a83c31f35cdc9f7e5cd99f0a6c8` otherwise permits publication only on
+opened and Ready. Removing Ready admission alone would leave repaired-head
+reviews unable to publish. This does not suppress repeated Draft synchronize
+review or complete the broader #4987 acceptance.
+
+Retain advisory run IDs, candidate head, observed base and synthetic merge SHA,
+action/config identity, and review receipts. The same PR head with a changed
+base or merge tree is a different review identity; this event change supplies
+no cache hit or integration re-review. Before merge, inspect material integration
+changes and obtain applicable fresh review through the existing review route.
+Material findings return the candidate to Draft for repair. An unavailable,
+failed, or skipped provider remains missing review evidence after Ready; no
+synthetic success replaces it. Runner-minute savings remain unmeasured until a
+natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
+checks parsed event/config contracts, not hosted provider execution.
 
 - Open PRs as Draft (`gh pr create --draft`), then mark them Ready. A PR opened
   directly as Ready never receives a `ready_for_review` event and never gets
@@ -677,6 +734,13 @@ request `opened`, `synchronize`, and `reopened` events whose diff touches
 `crates/`, `fixtures/`, `Cargo.toml`, `Cargo.lock`, `rust-toolchain*`, or
 `.cargo/`. Label events and other pull requests skip the compile. It is not
 a required check. The Windows advisory lane runs the same command on Windows.
+The selector compares the immutable pull-request event base and head commits,
+not the synthetic merge checkout, so unrelated main-branch Rust changes do not
+select a docs-only candidate. Tests still run on the integration checkout.
+Filename records are NUL-delimited, and both sides of renames plus deletions
+participate. Invalid or unavailable identities/history, ambiguous ancestry,
+failed comparisons, and empty diffs conservatively run the lane; the job summary
+records the routing reason. Push and manual runs remain unconditional.
 The CI workflow also has an explicit MSRV job that pins Rust `1.95.0` and runs:
 
 ```bash
@@ -913,14 +977,20 @@ same-repo, non-draft PR heads with no `Ripr Rust Small Result` check run on the
 head SHA, and reports them (step-summary row plus a workflow warning). It is
 alert-only (#4986; issue #4937 option ii): it never dispatches
 `routed-rust.yml` and holds no `actions: write` permission. With Ready-only
-admission, a Ready head without the required check is either a dropped
-Ready-triggered delivery or a push made after Ready, and the watchdog cannot
-tell the two apart. A head mutated after Ready has revoked its own admission
+admission, a Ready head without the required check is a dropped
+Ready-triggered delivery, a push made after Ready, or a conflicting head with
+no merge ref (#7079). A conflicting (`dirty`) PR silently gets zero
+`pull_request` runs because `routed-rust.yml` evaluates from the merge ref,
+which does not exist while the PR conflicts. The watchdog cannot tell a
+dropped delivery from a post-Ready push, but its summary row carries each PR's
+`mergeable_state`, so the conflicted dark mode is distinguishable from both at
+a glance. A head mutated after Ready has revoked its own admission
 and must not be qualified by a lighter branch-head dispatch (which skips the
-`pull_request`-scoped PR-evidence steps). The remedy for every reported head
-is the same: convert the PR to Draft and mark it Ready for review again, which
-runs the full Ready-triggered qualification on the exact head and also
-recovers a dropped delivery. The required check, not run existence, is the
+`pull_request`-scoped PR-evidence steps). Before re-toggling, check merge
+conflicts first: query the PR's `mergeable_state`; `dirty` means merge `main`
+into the branch first, and only then convert the PR to Draft and mark it Ready
+for review again, which runs the full Ready-triggered qualification on the
+exact head and also recovers a dropped delivery. The required check, not run existence, is the
 discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
 real qualification attempt on that exact head. That check run is created only
 when the `result` job starts, after every implementation job (up to 120
@@ -931,7 +1001,8 @@ head would cancel the real run, so the watchdog never recommends it. This uses
 `actions: read` only. Drafts and fork heads are
 skipped. No PR comments are posted; each sweep's summary table is the audit
 trail. `xtask/tests/pr_readiness_workflow_contract.rs` pins the alert-only
-shape (no dispatch command, no `actions: write`) and the in-flight check.
+shape (no dispatch command, no `actions: write`), the in-flight check, and
+the `mergeable_state` column.
 
 ### Self-Hosted Runner Placement
 
@@ -961,7 +1032,6 @@ EM self-hosted runners.
 | `security.yml` `cargo-deny` | `em-ci-tiny` | `rust-tiny` |
 | `source-of-truth.yml`, `badge-endpoints.yml` | `em-ci-tiny` | `rust-tiny` |
 | `security.yml` `dependency-review` | `em-ci-nano` | `policy-nano` |
-| `pr-plan.yml` | `em-ci-nano` | `workflow-nano` |
 | `droid-review`, `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
 
 All self-hosted lanes carry the `trusted-pr` label and keep their existing
@@ -1204,11 +1274,12 @@ See [PR inline comment publisher workflow](PR_INLINE_COMMENT_PUBLISHER_WORKFLOW.
 for rollout guidance, publish-plan review, fork and permission behavior,
 dedupe/upsert expectations, and rollback.
 
-The generated workflow also captures existing RIPR inline-comment metadata,
-checks the publish plan's `safe_to_publish` result, and only calls GitHub for
-safe create/update operations in explicit `inline` mode. Read those steps in
-the output of `ripr init --ci github --dry-run`; this page does not keep a copy
-because a copy drifts from what the command writes.
+The generated workflow also captures existing RIPR inline-comment metadata
+(`ripr pr-comments existing`), turns the publish plan into GitHub API requests
+(`ripr pr-comments requests`, which writes none unless the plan is safe to
+publish), and only calls GitHub for them in explicit `inline` mode. Read those
+steps in the output of `ripr init --ci github --dry-run`; this page does not
+keep a copy because a copy drifts from what the command writes.
 
 One step is kept here because a test holds it byte-equal to the template: the
 step that runs the analysis and report steps with one command. The token-holding
@@ -1225,6 +1296,103 @@ failure rules, and `--step NAME` reruns one step locally.
         run: ripr reports ci-packet --root .
 ```
 
+#### Generated workflow settings and steps
+
+The generated file keeps one-line comments and points here for the reasons
+behind each setting (#5409). Each entry below is what the file used to say
+inline.
+
+Repository variables (Settings > Secrets and variables > Actions > Variables)
+configure the workflow, so changing a mode never means editing the file:
+
+- `RIPR_GATE_MODE` is the gate authority. Empty (the default) is advisory only
+  and the job never fails. `visible-only` runs the gate and prints its result
+  without blocking the job. `acknowledgeable` runs the gate and lets the PR
+  author acknowledge a finding to merge. `baseline-check` fails when exposure
+  is worse than the baseline. `calibrated-gate` fails only on new,
+  high-confidence, policy-eligible gaps and needs baseline and calibration
+  inputs. See [calibrated gate policy](CALIBRATED_GATE_POLICY.md).
+- `RIPR_GATE_BASELINE` is an optional path to a reviewed baseline ledger file,
+  such as `.ripr/gate-baseline.json`, that `baseline-check` and
+  `calibrated-gate` compare current evidence against. Empty by default.
+- `RIPR_COMMENT_MODE` controls PR review comments. `off` (the default) posts
+  nothing and leaves findings in artifacts; `plan` computes and uploads a
+  comment plan without posting; `inline` publishes inline review comments on
+  changed lines.
+- `RIPR_UPLOAD_SARIF` is set in the file, not as a variable. `"true"` uploads
+  SARIF to the Security tab; set `"false"` if the repository does not use code
+  scanning.
+
+Permissions and job settings:
+
+- `pull-requests: write` is used only when `RIPR_COMMENT_MODE` is `inline`.
+  With `off`, nothing writes to the pull request; set it to `read` if you keep
+  comments off.
+- `security-events: write` is used only for the SARIF upload. Remove it and set
+  `RIPR_UPLOAD_SARIF` to `"false"` if the repository does not use code
+  scanning.
+- `labeled` and `unlabeled` re-run the gate when a waiver label such as
+  `ripr-waive` is added or removed, since the gate reads labels from the event.
+  Any label change re-runs the job, and the concurrency group cancels the
+  superseded run.
+- Every run step is bash (`$'\t'` in the publish loop), so `defaults.run.shell`
+  pins bash; the steps still parse if the job moves to `windows-latest`, whose
+  default shell is PowerShell.
+- One run per pull request: a newer push cancels the older run. Only the
+  newest head's placements are valid, and two overlapping runs would each
+  snapshot the existing inline comments before either publishes, then both
+  create the same cards.
+- The job is `continue-on-error` unless `RIPR_GATE_MODE` names a blocking mode,
+  so with the default empty or `visible-only` mode a failure never fails the
+  PR.
+
+Steps:
+
+- **Checkout** analyzes the PR head, not GitHub's `refs/pull/N/merge` commit.
+  Review comments and `::warning` annotations are placed on the PR head's
+  lines; when the base branch has moved lines in a changed file, merge-commit
+  line numbers point at the wrong line, and GitHub rejects the whole review when
+  a line falls outside the PR diff. `upload-sarif` detects the head checkout and
+  reports it as `refs/pull/N/head`. A manual run keeps the dispatched commit.
+  `persist-credentials: false` leaves no token in `.git/config`, where
+  PR-controlled code (build scripts, analyzed sources) could read it; no step
+  pushes or fetches after checkout.
+- **Remove checked-in RIPR artifacts** deletes `target/ripr` and `target/ci`
+  before the first RIPR step. The gate, ledger, and policy steps read several
+  files there only when present (sarif-policy, agent-verify, agent-receipt,
+  calibration, coverage), and nothing in the workflow writes some of them, so a
+  pull request could commit forged copies (`git add -f`). Steps you add later
+  that write there still work. ripr's analysis cache lives outside the
+  checkout, so the cleanup never discards it.
+- **Install ripr** pins the version whose commands the steps use; an unpinned
+  install takes the newest release, whose CLI may not match. It downloads that
+  release's prebuilt binary and checks it against the published SHA-256, falls
+  back to `cargo install` where there is no prebuilt binary, and fails with the
+  fix when the runner has no cargo. The summary step reads this step's outcome
+  by its id.
+- **actions/cache** restores ripr's analysis cache. Entries are keyed on file
+  contents, configuration, and the ripr version, so an entry that no longer
+  matches is a miss, never stale evidence. GitHub scopes a cache a pull request
+  saves to that pull request, and the cache lives outside the checkout, so a
+  pull request cannot commit one. The action is pinned to a commit SHA because
+  the job holds a token with write scopes.
+- **Capture existing RIPR inline comments** pipes the pull request's review
+  comments into `ripr pr-comments existing`, which keeps only comments the
+  workflow posted (author `github-actions[bot]`, type `Bot`) that carry a
+  `ripr:dedupe` marker. Anyone can write the marker; a marked comment from
+  another author must not suppress a RIPR card or be PATCHed by this job.
+- **Run RIPR** is the one command above. It reads no token; the comment steps
+  around it hold that.
+- **Publish RIPR inline comments** runs `ripr pr-comments requests`, which turns
+  the publish plan into an ordered list of GitHub API requests (updates first,
+  then one review for new cards), and the step sends each one with `gh api`.
+  ripr writes no request when the plan is not safe to publish, and folds CR/LF
+  in every message it prints so a repository path cannot start a line GitHub
+  reads as a workflow command.
+- **Upload RIPR diff findings** stays `continue-on-error`: upload infrastructure
+  is not analysis authority (#2009), so a code-scanning outage must not fail a
+  gate the analysis passed.
+
 For a first rollout, treat code-scanning annotations as review guidance. Do not
 make the job blocking until the repository has reviewed its initial SARIF
 baseline, tuned `ripr.toml`, and decided which configured-warning results should
@@ -1232,10 +1400,8 @@ fail CI. The `cargo xtask sarif-policy` baseline modes shown above are
 repo-local automation today; a public package-level policy command is a future
 adoption surface.
 
-The generated workflow always uploads `target/ripr/pilot`,
-`target/ripr/workflow`, `target/ripr/agent`, `target/ripr/reports`,
-`target/ripr/review`, and `target/ci` as a `ripr-reports` artifact when files
-exist. When `RIPR_GATE_BASELINE` is set and gate evaluation writes
+The generated workflow always uploads `target/ripr` and `target/ci` as a
+`ripr-reports` artifact when files exist. When `RIPR_GATE_BASELINE` is set and gate evaluation writes
 `target/ripr/reports/gate-decision.json`, the workflow also runs
 `ripr baseline diff`, then `ripr zero status`, and includes:
 
@@ -1860,9 +2026,16 @@ current workspace can produce coverage and JUnit artifacts. The jobs still run
 only on pull requests, pushes to `main`/`master`, and manual dispatches, and
 Codecov upload remains non-blocking.
 
-Future Clippy also runs on `ubuntu-latest`. It remains advisory and never fails
-the branch; the hosted runner keeps deferred-lint readiness visible without
-blocking release proof on self-hosted runner availability.
+Future Clippy also runs on `ubuntu-latest` with installation and invocation
+pinned to Rust `1.95.0`. Selected lint findings remain advisory warnings. A
+missing component, compilation failure, failed log capture, or absent Cargo
+artifact/completion evidence fails that job instead of appearing as a completed
+scan. Its always-run summary and artifact retain the source SHA, run ID and
+attempt, requested toolchain, native Cargo and log-capture exits, and successful
+scan completion. The summary rejects evidence from another SHA, run, or attempt.
+This advisory lane has no new branch-protection requirement. Completion shows
+that the scan ran; planned lints still have the support/configuration limits
+recorded in [Clippy policy](CLIPPY_POLICY.md).
 
 It installs `cargo-deny` as a normal command-line binary before running the
 check, so self-hosted runners do not need Docker just to execute the security

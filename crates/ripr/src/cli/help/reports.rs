@@ -28,10 +28,10 @@ CI packet options:
 
 CI summary options:
   --root PATH           Checkout whose target/ripr and target/ci artifacts to read. Defaults to current directory.
-  --base-ref REF        PR base branch named in the regeneration route. Defaults to main.
-  --upload-sarif VALUE  `true` reports SARIF generation; anything else reports the upload as disabled.
-  --gate-baseline VALUE Non-empty when a gate baseline is configured.
-  --comment-mode MODE   Inline comment mode to report. Empty means off.
+  --base-ref REF        PR base branch named in the regeneration route. Defaults to GITHUB_BASE_REF, then the event's default branch, then main.
+  --upload-sarif VALUE  `true` reports SARIF generation; anything else reports the upload as disabled. Defaults to RIPR_UPLOAD_SARIF.
+  --gate-baseline VALUE Non-empty when a gate baseline is configured. Defaults to RIPR_GATE_BASELINE.
+  --comment-mode MODE   Inline comment mode to report. Empty means off. Defaults to RIPR_COMMENT_MODE.
 
 Gap ledger options:
   --records PATH        Explicit GapRecord JSON, gap_records JSON, or fixture corpus JSON.
@@ -202,6 +202,8 @@ Options:
 
 The calibration report is advisory. It imports already-produced runtime
 mutation data and joins it to static seam evidence by seam_id first, then by
-unambiguous file/line. It does not run mutation testing, alter static
-classifications, or configure CI policy.
+the unique innermost seam span that contains the mutant's span, then by
+unambiguous file/line where no span decides. Equal or crossing spans stay
+ambiguous. It does not run mutation testing, alter static classifications, or
+configure CI policy.
 "#;

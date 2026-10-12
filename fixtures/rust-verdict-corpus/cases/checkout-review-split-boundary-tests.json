@@ -1,0 +1,51 @@
+{
+  "case_id": "checkout-review-split-boundary-tests",
+  "subject_id": "authored-checkout",
+  "diff": "cases/checkout-review-split-boundary-tests.diff",
+  "anchor": {
+    "file": "src/limits.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "split_test_boundary_oracle",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "total > 1000",
+        "mutated_line": "total > 1000",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: exactly 1000 no longer needs review"
+      },
+      {
+        "replacement": "total >= 999",
+        "mutated_line": "total >= 999",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 999 starts needing review"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "One test calls needs_review(1000) and discards the result; the asserting test uses 5000, far from the boundary. Spec cells: RIPR-SPEC-0186, RIPR-SPEC-0001.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

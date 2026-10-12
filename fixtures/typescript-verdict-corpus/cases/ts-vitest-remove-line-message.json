@@ -1,0 +1,44 @@
+{
+  "case_id": "ts-vitest-remove-line-message",
+  "subject_id": "authored-ts-vitest-cart",
+  "diff": "cases/ts-vitest-remove-line-message.diff",
+  "anchor": {
+    "file": "src/cart.ts",
+    "line": 32
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_message",
+  "test_shape": "vitest_bare_to_throw",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 3.2.7, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "throw new Error(`missing line ${sku}`);",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the error message is \"missing line pear\" instead of \"no line for pear\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "\"refuses to remove a missing line\" uses a bare toThrow(), a broad error-path oracle under RIPR-SPEC-0027, so a new message passes. ripr's weakly_exposed is the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

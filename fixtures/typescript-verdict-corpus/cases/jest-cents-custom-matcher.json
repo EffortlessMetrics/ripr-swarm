@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-cents-custom-matcher",
+  "subject_id": "authored-ts-jest-checkout",
+  "diff": "cases/jest-cents-custom-matcher.diff",
+  "anchor": {
+    "file": "src/cents.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "jest_expect_extend_custom_matcher",
+  "hard_case": "custom matcher registered with expect.extend (#5506)",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "return Math.round(100 / amount);",
+        "mutated_line": "return Math.round(100 / amount);",
+        "outcome": "tests_failed",
+        "failing_test": "dollars convert to whole cents",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The custom toBeCents matcher compares exactly, so the 100 / amount mutant fails it. ripr reports weakly_exposed on the anchor, a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 64843a2..3a8948e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,7 +4,7 @@
+ 
+ /// Reached only through a bare-identifier `Trial::test` callback.
+ pub fn shipping(weight: u32) -> u32 {
+-    weight * 4
++    4 * weight
+ }
+ 
+ /// Reached by a trial whose only oracle is `.unwrap()`.

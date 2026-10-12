@@ -1473,6 +1473,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "repo-policy"
+version = "0.1.0"
+dependencies = [
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "ripr"
 version = "0.11.0"
 dependencies = [
@@ -2547,6 +2555,7 @@ dependencies = [
  "flate2",
  "ra_ap_syntax",
  "rayon",
+ "repo-policy",
  "ripr",
  "serde",
  "serde_json",

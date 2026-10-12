@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:error_path:99b06ce7",
+      "canonical_gap_id": "gap:rust:src/lib.rs:authenticate:error_variant:error_path:err_autherror_revokedtoken",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:authenticate:error_variant:error_path:err_autherror_revokedtoken",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "authenticate",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "err_autherror_revokedtoken"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:error_path:99b06ce7",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/weak_error_oracle_assert_matches/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 7,
         "expression": "return Err(AuthError::RevokedToken);"
        },
@@ -91,6 +103,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:e21dcccc",
+      "canonical_gap_id": "gap:rust:src/lib.rs:authenticate:return_value:return_value:err_autherror_revokedtoken",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:authenticate:return_value:return_value:err_autherror_revokedtoken",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "authenticate",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "err_autherror_revokedtoken"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -98,7 +122,7 @@
         "id": "probe:src_lib.rs:return_value:e21dcccc",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/weak_error_oracle_assert_matches/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 7,
         "expression": "return Err(AuthError::RevokedToken);"
        },

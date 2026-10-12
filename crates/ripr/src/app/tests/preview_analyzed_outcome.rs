@@ -74,6 +74,7 @@ fn shared_preview_completion_predicate_fails_closed_for_every_non_success_status
         crate::analysis::LanguageRunStatus::Unavailable,
         crate::analysis::LanguageRunStatus::Partial,
         crate::analysis::LanguageRunStatus::Invalid,
+        crate::analysis::LanguageRunStatus::Failed,
     ] {
         let runs = vec![crate::analysis::LanguageRun {
             language: "python".to_string(),
@@ -201,6 +202,197 @@ fn missing_perl_fact_packet_reason_is_user_facing() -> Result<(), String> {
         if !human.contains("--perl-facts <packet.json>") || human.contains("Campaign") {
             return Err(format!(
                 "reason must name the flag, not a campaign: {human}"
+            ));
+        }
+        Ok(())
+    })();
+    let cleanup =
+        fs::remove_dir_all(&root).map_err(|error| format!("remove {}: {error}", root.display()));
+    proof?;
+    cleanup
+}
+
+/// #6828: a *configured* managed Perl facts producer whose invocation fails
+/// must not be reported as the generic "requires a fact packet" state the
+/// user already satisfied. The typed limitation is `producer_failure` with
+/// `inspect_failure` recovery and the `language_runs[]` reason carries the
+/// real exporter failure — the funnel stays fail-closed (no Perl findings,
+/// other languages unaffected).
+///
+/// The failure is made deterministic without spawning anything: the
+/// configured `[perl].cache_dir` points under an existing *file*, so the
+/// exporter cache directory cannot be created and the managed invocation
+/// fails before any process is spawned.
+#[cfg(feature = "lang-perl")]
+#[test]
+fn configured_producer_failure_is_typed_not_misattributed_to_missing_packet() -> Result<(), String>
+{
+    let root = temp_root("preview-perl-producer-failed")?;
+    let proof = (|| -> Result<(), String> {
+        // An existing file that the configured cache_dir tries to traverse
+        // through, so `create_dir_all` fails deterministically on every host.
+        write(&root.join("blocker.txt"), "not a directory")?;
+        let diff = root.join("perl.diff");
+        write(
+            &diff,
+            "diff --git a/lib/App.pm b/lib/App.pm\n--- /dev/null\n+++ b/lib/App.pm\n@@ -0,0 +1 @@\n+sub discount { return 0 }\n",
+        )?;
+        let config = crate::config::tests_only_parse(
+            "[languages]\nenabled = [\"rust\", \"perl\"]\n\n[perl]\nproducer = \"perl-ripr-facts\"\ncache_dir = \"blocker.txt/cache\"\n",
+        )?;
+        let output = crate::app::check_workspace_with_config(
+            crate::CheckInput {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff),
+                mode: crate::Mode::Draft,
+                format: crate::OutputFormat::Json,
+                include_unchanged_tests: false,
+                perl_facts_path: None,
+                suppression_policy: None,
+                git_timeout: None,
+                git_candidate: None,
+            },
+            &config,
+        )?;
+
+        // language_runs: the run is `failed` and its reason names the real
+        // producer failure, not the already-followed configuration advice.
+        let perl_run = output
+            .language_runs
+            .iter()
+            .find(|run| run.language == "perl")
+            .ok_or_else(|| "missing failed Perl language_run".to_string())?;
+        if perl_run.status != crate::analysis::LanguageRunStatus::Failed {
+            return Err(format!("expected failed Perl run, got {perl_run:?}"));
+        }
+        let reason = perl_run
+            .reason
+            .as_deref()
+            .ok_or_else(|| "failed Perl run must carry a reason".to_string())?;
+        if !reason.contains("failed to create Perl facts cache dir") {
+            return Err(format!(
+                "language_runs reason must carry the real producer failure: {reason}"
+            ));
+        }
+        if reason.contains("requires a fact packet") {
+            return Err(format!(
+                "language_runs reason must not re-advise the configuration the user already \
+                 made: {reason}"
+            ));
+        }
+
+        // Typed outcome limitation: producer_failure + inspect_failure, with
+        // the cause in the bounded detail.
+        let outcome = output
+            .analysis_outcome
+            .as_ref()
+            .ok_or_else(|| "diff pipeline must project an analysis outcome".to_string())?;
+        let limitation = outcome
+            .limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == crate::analysis_outcome::AnalysisLimitationKind::ProducerFailure
+            })
+            .ok_or_else(|| {
+                format!(
+                    "expected a producer_failure limitation, got {:?}",
+                    outcome.limitations
+                )
+            })?;
+        if limitation.recovery.kind != crate::analysis_outcome::AnalysisRecoveryKind::InspectFailure
+        {
+            return Err(format!(
+                "producer_failure recovery must be inspect_failure, got {:?}",
+                limitation.recovery
+            ));
+        }
+        let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+        if !detail.contains("failed to create Perl facts cache dir") {
+            return Err(format!(
+                "producer_failure limitation detail must carry the exporter failure: {detail}"
+            ));
+        }
+
+        // Fail-closed shape: partial outcome, no Perl findings, Rust intact.
+        if outcome.kind != crate::analysis_outcome::AnalysisOutcomeKind::PartialWithLimitations {
+            return Err(format!(
+                "a failed producer must keep the run partial_with_limitations, got {:?}",
+                outcome.kind
+            ));
+        }
+        if output
+            .findings
+            .iter()
+            .any(|finding| finding.language == Some(crate::domain::LanguageId::Perl))
+        {
+            return Err("a failed producer must not emit Perl findings".to_string());
+        }
+        assert_renderer_agreement(&output, true, false)?;
+        Ok(())
+    })();
+    let cleanup =
+        fs::remove_dir_all(&root).map_err(|error| format!("remove {}: {error}", root.display()));
+    proof?;
+    cleanup
+}
+
+/// #6828 review follow-up: a configured producer whose invocation fails must
+/// reach the typed record even when `[languages].enabled` does NOT name perl.
+/// On success the produced packet adds Perl to the dispatched languages, so a
+/// failed exporter must not make the failure vanish — the run is recorded as
+/// `failed` with the real cause, not silently absent.
+#[cfg(feature = "lang-perl")]
+#[test]
+fn producer_failure_is_recorded_even_when_perl_is_not_enabled() -> Result<(), String> {
+    let root = temp_root("preview-perl-producer-failed-not-enabled")?;
+    let proof = (|| -> Result<(), String> {
+        write(&root.join("blocker.txt"), "not a directory")?;
+        let diff = root.join("perl.diff");
+        write(
+            &diff,
+            "diff --git a/lib/App.pm b/lib/App.pm\n--- /dev/null\n+++ b/lib/App.pm\n@@ -0,0 +1 @@\n+sub discount { return 0 }\n",
+        )?;
+        // Default [languages] (rust only): no perl enablement at all.
+        let config = crate::config::tests_only_parse(
+            "[perl]\nproducer = \"perl-ripr-facts\"\ncache_dir = \"blocker.txt/cache\"\n",
+        )?;
+        let output = crate::app::check_workspace_with_config(
+            crate::CheckInput {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff),
+                mode: crate::Mode::Draft,
+                format: crate::OutputFormat::Json,
+                include_unchanged_tests: false,
+                perl_facts_path: None,
+                suppression_policy: None,
+                git_timeout: None,
+                git_candidate: None,
+            },
+            &config,
+        )?;
+        let perl_run = output
+            .language_runs
+            .iter()
+            .find(|run| run.language == "perl")
+            .ok_or_else(|| {
+                format!(
+                    "a configured producer's failure must be recorded in language_runs even \
+                     without [languages] perl; runs: {:?}",
+                    output.language_runs
+                )
+            })?;
+        if perl_run.status != crate::analysis::LanguageRunStatus::Failed {
+            return Err(format!("expected failed Perl run, got {perl_run:?}"));
+        }
+        let reason = perl_run.reason.as_deref().unwrap_or_default();
+        if !reason.contains("failed to create Perl facts cache dir") {
+            return Err(format!("reason must carry the real failure: {reason}"));
+        }
+        if reason.contains("requires a fact packet") {
+            return Err(format!(
+                "reason must not re-advise the configuration the user already made: {reason}"
             ));
         }
         Ok(())
@@ -398,7 +590,7 @@ fn mixed_typescript_diff_counts_only_accepted_files_and_discloses_the_skipped() 
 /// degrade the outcome; the same refusal must still surface when the diff
 /// does touch Python.
 #[cfg(feature = "lang-python")]
-fn limitation_kinds_for_diff(name: &str, changed: &[&str]) -> Result<Vec<String>, String> {
+fn python_refusal_limitation_kinds(name: &str, changed: &[&str]) -> Result<Vec<String>, String> {
     let nested = format!("x = {}1{}\n", "(".repeat(200), ")".repeat(200));
     limitation_kinds_for_preview_diff(name, "python", ("fixture.py", &nested), changed)
 }
@@ -472,13 +664,13 @@ fn limitation_kinds_for_preview_diff(
 #[cfg(feature = "lang-python")]
 #[test]
 fn unrelated_python_refusal_does_not_degrade_a_rust_only_diff() -> Result<(), String> {
-    let rust_only = limitation_kinds_for_diff("python-refusal-rust-only", &["src/lib.rs"])?;
+    let rust_only = python_refusal_limitation_kinds("python-refusal-rust-only", &["src/lib.rs"])?;
     assert!(
         rust_only.is_empty(),
         "a Python file the diff does not touch must not add limitations: {rust_only:?}"
     );
     let touches_python =
-        limitation_kinds_for_diff("python-refusal-touched", &["src/lib.rs", "fixture.py"])?;
+        python_refusal_limitation_kinds("python-refusal-touched", &["src/lib.rs", "fixture.py"])?;
     assert!(
         touches_python
             .iter()

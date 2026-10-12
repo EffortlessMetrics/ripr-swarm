@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-roles",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for spec-defined cells",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "bb0f7b318c587f025e675f04e394c3a0908d1428e51eee460e7b3d05e593d38a"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "53f26e973bc9ea2673d7956adb14fa67c5b6cf2e013edcb0ec2c1c566a50efd3"
+    }
+  ]
+}

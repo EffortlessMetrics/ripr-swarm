@@ -49,9 +49,10 @@ and on the `ripr` workspace itself, a large Rust workspace, it took about 5% lon
 10.0 s) with an 11% larger binary. The release profile was not changed, since it
 also builds the prebuilt archives. `cargo xtask first-run --install-published`
 times the source route and the scoreboard records it as
-`first_run.install_seconds`. The metric has a regression rule but no committed
-baseline sample and no nightly ingest yet, so nothing fails on a slower install
-until both exist; the prebuilt route is not timed by the walk.
+`first_run.install_seconds`. The nightly `first-run-install.yml` workflow runs
+that walk and ingests it, but the metric has no committed baseline sample yet,
+so nothing fails on a slower install until one is committed from that
+workflow's report; the prebuilt route is not timed by the walk.
 
 ## What blocks a developer who is not us
 

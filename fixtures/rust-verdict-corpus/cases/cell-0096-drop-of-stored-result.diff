@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..d5efb82 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -65,7 +65,7 @@ impl Ledger {
+ 
+     /// Drops the persist result, but persist has already stored the value.
+     pub fn record(&mut self, amount: u32) {
+-        drop(self.persist(amount * 9));
++        drop(self.persist(9 * amount));
+     }
+ }
+ 

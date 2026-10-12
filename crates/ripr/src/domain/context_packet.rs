@@ -40,10 +40,14 @@ pub struct ContextPacketRipr {
 }
 
 impl ContextPacket {
+    /// `root` is the analyzed workspace root: the packet's location renders
+    /// through the shared finding-location owner (#5996) so every surface
+    /// names the finding's file with one string.
     pub fn from_finding(
         finding: &Finding,
         max_related_tests: usize,
         stop_reasons: Vec<String>,
+        root: &std::path::Path,
     ) -> Self {
         Self {
             version: "1.0",
@@ -53,7 +57,7 @@ impl ContextPacket {
                 id: finding.probe.id.0.clone(),
                 family: finding.probe.family.as_str().to_string(),
                 delta: finding.probe.delta.as_str().to_string(),
-                file: finding.probe.location.file.display().to_string(),
+                file: crate::analysis::finding_location_text(root, &finding.probe.location.file),
                 line: finding.probe.location.line,
                 changed_expression: finding.probe.expression.clone(),
             },
@@ -90,7 +94,7 @@ mod tests {
         RevealEvidence, RiprEvidence, SourceLocation, StageEvidence, StageState, SymbolId,
         ValueContext, ValueFact,
     };
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     #[test]
     fn context_packet_from_finding_carries_probe_and_ripr_shape() {
@@ -98,6 +102,7 @@ mod tests {
             &sample_finding(),
             5,
             vec!["missing related test".to_string()],
+            Path::new("."),
         );
 
         assert_eq!(packet.version, "1.0");
@@ -138,7 +143,7 @@ mod tests {
         finding.missing.push("exact boundary assertion".to_string());
         finding.recommended_next_step = Some("add exact boundary assertion".to_string());
 
-        let packet = ContextPacket::from_finding(&finding, 2, Vec::new());
+        let packet = ContextPacket::from_finding(&finding, 2, Vec::new(), Path::new("."));
 
         assert_eq!(packet.related_tests.len(), 2);
         assert_eq!(packet.related_tests[0].name, "t1");
@@ -169,7 +174,7 @@ mod tests {
             normalized_discriminator: "amount>=threshold".to_string(),
         });
 
-        let packet = ContextPacket::from_finding(&finding, 2, Vec::new());
+        let packet = ContextPacket::from_finding(&finding, 2, Vec::new(), Path::new("."));
 
         assert_eq!(
             packet.canonical_gap_id.as_deref(),
@@ -177,6 +182,22 @@ mod tests {
                 "gap:python:src/pricing.py:discount:predicate_boundary:predicate:amount>=threshold"
             )
         );
+    }
+
+    /// #5996: a session whose analyzed root is an absolute verbatim Windows
+    /// path (the MCP server's root spelling) must render the packet location
+    /// as the same workspace-relative string every other surface emits, not
+    /// the raw `//?/` producer join.
+    #[test]
+    fn context_packet_renders_a_verbatim_root_location_workspace_relatively() {
+        let mut finding = sample_finding();
+        let verbatim_root = PathBuf::from(r"\\?\F:\repo");
+        finding.probe.location =
+            SourceLocation::new(verbatim_root.join("src").join("main.rs"), 4, 1);
+
+        let packet = ContextPacket::from_finding(&finding, 2, Vec::new(), &verbatim_root);
+
+        assert_eq!(packet.probe.file, "./src/main.rs");
     }
 
     fn sample_finding() -> Finding {

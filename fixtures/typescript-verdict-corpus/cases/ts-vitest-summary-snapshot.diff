@@ -1,0 +1,10 @@
+diff --git a/src/cart.ts b/src/cart.ts
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -50,5 +50,5 @@ export async function fetchUnitPrice(sku: string): Promise<number> {
+ }
+ 
+ export function summary(lines: Line[]): string {
+-  return `${lines.length} items`;
++  return `${lines.length} item(s)`;
+ }

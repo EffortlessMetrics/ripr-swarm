@@ -1,0 +1,59 @@
+{
+  "case_id": "grid-early-exact",
+  "subject_id": "authored-grid-early",
+  "diff": "cases/grid-early-exact.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "early_return_guard",
+  "test_shape": "exact_pin_assert",
+  "hard_case": "The empty-slice input is not seen as reaching the len() == 0 guard (#6501).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if xs.len() != 0 {",
+        "mutated_line": "if xs.len() != 0 {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::average_of_nothing_is_zero",
+        "equivalence_review": "not equivalent: average_of_nothing_is_zero fails on it"
+      },
+      {
+        "replacement": "if true {",
+        "mutated_line": "if true {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::average_of_nothing_is_zero",
+        "equivalence_review": "not equivalent: average_of_nothing_is_zero fails on it"
+      },
+      {
+        "replacement": "if false {",
+        "mutated_line": "if false {",
+        "outcome": "tests_failed",
+        "failing_test": "tests::average_of_nothing_is_zero",
+        "equivalence_review": "not equivalent: average_of_nothing_is_zero fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: early-return guard (condition respelled; mutants negate it or force it true/false) x exact_pin_assert. The test pins the result at concrete inputs with assert/assert_eq; 3 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

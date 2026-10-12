@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 97eae71..2642805 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,7 +8,7 @@ pub fn encode3(input: &[u8]) -> Vec<u8> {
+     for &b in input {
+         let index = (b & 0x07) as usize;
+         debug_assert!(index < ALPHABET.len());
+-        out.push(ALPHABET[index % ALPHABET.len()]);
++        out.push(ALPHABET[index % 8]);
+     }
+     out
+ }
