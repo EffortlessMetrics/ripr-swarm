@@ -179,6 +179,88 @@ pub(crate) fn attribute_test_build_availability(attr_text: &str) -> Option<bool>
     availability_attribute(body, 0).ok().flatten()
 }
 
+/// Whether an attribute can only preserve the source items it annotates.
+/// This is narrower than configuration availability: a proc attribute may be
+/// configuration-inert while replacing a module and its bindings entirely.
+/// Only known built-ins and recursively inert cfg_attr introductions qualify.
+pub(crate) fn attribute_preserves_source_items(attr_text: &str) -> bool {
+    let Some(positioned) = positioned_tokens(attr_text) else {
+        return false;
+    };
+    let tokens: Vec<_> = positioned.into_iter().map(|token| token.token).collect();
+    let body = match tokens.as_slice() {
+        [
+            Token::Punct('#'),
+            Token::Punct('['),
+            body @ ..,
+            Token::Punct(']'),
+        ]
+        | [
+            Token::Punct('#'),
+            Token::Punct('!'),
+            Token::Punct('['),
+            body @ ..,
+            Token::Punct(']'),
+        ] => body,
+        _ => return false,
+    };
+    preserving_attribute(body, 0)
+}
+
+fn preserving_attribute(tokens: &[Token], depth: usize) -> bool {
+    if depth > MAX_PREDICATE_NESTING || !body_is_balanced(tokens) {
+        return false;
+    }
+    match tokens {
+        [
+            Token::Word(name),
+            Token::Punct('('),
+            inner @ ..,
+            Token::Punct(')'),
+        ] if name == "cfg" => {
+            matches!(availability_predicate(inner, depth + 1), Ok(Some(true)))
+        }
+        [
+            Token::Word(name),
+            Token::Punct('('),
+            inner @ ..,
+            Token::Punct(')'),
+        ] if name == "cfg_attr" => {
+            let Ok(parts) = availability_arguments(inner) else {
+                return false;
+            };
+            let Some((condition, introduced)) = parts.split_first() else {
+                return false;
+            };
+            if introduced.is_empty() {
+                return false;
+            }
+            match availability_predicate(condition, depth + 1) {
+                Ok(Some(false)) => true,
+                Ok(_) => introduced
+                    .iter()
+                    .all(|attribute| preserving_attribute(attribute, depth + 1)),
+                Err(()) => false,
+            }
+        }
+        [Token::Word(name)]
+        | [Token::Word(name), Token::Punct('='), ..]
+        | [Token::Word(name), Token::Punct('('), .., Token::Punct(')')] => matches!(
+            name.as_str(),
+            "allow"
+                | "warn"
+                | "deny"
+                | "forbid"
+                | "expect"
+                | "doc"
+                | "path"
+                | "macro_use"
+                | "deprecated"
+        ),
+        _ => false,
+    }
+}
+
 fn availability_attribute(tokens: &[Token], depth: usize) -> Result<Option<bool>, ()> {
     if depth > MAX_PREDICATE_NESTING || !body_is_balanced(tokens) {
         return Err(());

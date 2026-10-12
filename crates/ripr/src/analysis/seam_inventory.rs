@@ -8749,7 +8749,53 @@ fn selected() {
             ("plain", "mod selected;", true),
             ("test-cfg", "#[cfg(test)] mod selected;", true),
             ("false-cfg", "#[cfg(any())] mod selected;", false),
+            ("lint", "#[allow(dead_code)] mod selected;", true),
+            (
+                "inert-cfg-attr",
+                "#[cfg_attr(test, allow(dead_code))] mod selected;",
+                true,
+            ),
+            (
+                "nested-inert-cfg-attr",
+                "#[cfg_attr(test, cfg_attr(test, allow(dead_code)))] mod selected;",
+                true,
+            ),
+            (
+                "inactive-opaque",
+                "#[cfg_attr(not(test), opaque_attr)] mod selected;",
+                true,
+            ),
+            (
+                "active-opaque",
+                "#[cfg_attr(test, opaque_attr)] mod selected;",
+                false,
+            ),
+            (
+                "qualified-lookalike",
+                "#[foreign::allow(dead_code)] mod selected;",
+                false,
+            ),
             ("opaque", "#[opaque_attr] mod selected;", false),
+            (
+                "nested-active-opaque",
+                "#[cfg_attr(test, cfg_attr(test, opaque_attr))] mod selected;",
+                false,
+            ),
+            (
+                "nested-inactive-opaque",
+                "#[cfg_attr(test, cfg_attr(not(test), opaque_attr))] mod selected;",
+                true,
+            ),
+            (
+                "unknown-inert",
+                "#[cfg_attr(feature = \"maybe\", allow(dead_code))] mod selected;",
+                true,
+            ),
+            (
+                "unknown-opaque",
+                "#[cfg_attr(feature = \"maybe\", opaque_attr)] mod selected;",
+                false,
+            ),
             ("include", "include!(\"selected.rs\");", false),
         ] {
             for (layout, call) in [
@@ -8852,7 +8898,56 @@ fn selected() {
             ("plain", "", "", true),
             ("test-cfg", "#[cfg(test)] mod available {", "}", true),
             ("false-cfg", "#[cfg(any())] mod unavailable {", "}", false),
+            ("lint", "#[allow(dead_code)] mod available {", "}", true),
+            (
+                "inert-cfg-attr",
+                "#[cfg_attr(test, allow(dead_code))] mod available {",
+                "}",
+                true,
+            ),
+            (
+                "inactive-opaque",
+                "#[cfg_attr(not(test), opaque_attr)] mod available {",
+                "}",
+                true,
+            ),
+            (
+                "active-opaque",
+                "#[cfg_attr(test, opaque_attr)] mod unavailable {",
+                "}",
+                false,
+            ),
+            (
+                "qualified-lookalike",
+                "#[foreign::allow(dead_code)] mod unavailable {",
+                "}",
+                false,
+            ),
             ("opaque", "#[opaque_attr] mod unavailable {", "}", false),
+            (
+                "nested-active-opaque",
+                "#[cfg_attr(test, cfg_attr(test, opaque_attr))] mod unavailable {",
+                "}",
+                false,
+            ),
+            (
+                "nested-inactive-opaque",
+                "#[cfg_attr(test, cfg_attr(not(test), opaque_attr))] mod available {",
+                "}",
+                true,
+            ),
+            (
+                "unknown-inert",
+                "#[cfg_attr(feature = \"maybe\", allow(dead_code))] mod available {",
+                "}",
+                true,
+            ),
+            (
+                "unknown-opaque",
+                "#[cfg_attr(feature = \"maybe\", opaque_attr)] mod unavailable {",
+                "}",
+                false,
+            ),
             ("dormant", "fn dormant() {", "}", false),
         ] {
             for shape in ["assertion", "body", "parameter"] {

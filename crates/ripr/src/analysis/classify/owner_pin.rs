@@ -556,7 +556,22 @@ impl OwnerPinSyntax {
         test: &TestSummary,
         index: &RustIndex,
     ) -> bool {
-        self.source_provenance_refusal(test, index).is_none()
+        if self.source_provenance_refusal(test, index).is_some() {
+            return false;
+        }
+        let Some(facts) = index.files().get(&test.file) else {
+            return false;
+        };
+        let mut by_file = self.by_file.borrow_mut();
+        facts.role_provenance.edges.iter().all(|edge| {
+            let Some(parent) = index.files().get(&edge.parent) else {
+                return false;
+            };
+            by_file
+                .entry(edge.parent.clone())
+                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+                .admits_targeted_module_declaration(edge.line, &edge.declaration)
+        })
     }
 
     /// Call occurrence parsing borrows binding authority only. It does not
@@ -568,7 +583,7 @@ impl OwnerPinSyntax {
         name: &str,
         index: &RustIndex,
     ) -> bool {
-        self.source_provenance_refusal(test, index).is_none()
+        self.targeted_source_provenance_is_admitted(test, index)
             && !self.trusted_macro_ambiguities(index).contains(name)
             && !self
                 .scoped_names_for(test, line)
