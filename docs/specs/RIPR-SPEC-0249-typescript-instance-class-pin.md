@@ -137,8 +137,10 @@ ladder and in its related-test row, when all of these hold:
   - `globalThis`, `window`, `global`, `self`, `eval`, `Function`,
     `Object`, `Reflect`, `Symbol` or `Proxy`;
   - a namespace or dynamic import (`import * as`, `import(`);
-  - a `.constructor` or `.prototype` member, or a computed member access
-    (`x[key]`; an empty `T[]` type is fine);
+  - a `.constructor` or `.prototype` member, a `prototype` name, a
+    `constructor` name other than a class-member header `constructor(`
+    (destructuring `{ constructor: O } = {}` reaches `Object`), or a
+    computed member access (`x[key]`; an empty `T[]` type is fine);
   - a backslash in code, since an escaped identifier (`\u0046orbidden`)
     names the same binding;
   - `hasInstance`, `setPrototypeOf`, `__proto__` or a quoted

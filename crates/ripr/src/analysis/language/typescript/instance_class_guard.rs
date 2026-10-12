@@ -170,7 +170,9 @@ fn module_rebinds(masked_module: &str, name: &str) -> bool {
 ///   `Proxy`;
 /// - a namespace or dynamic import, which can reach the module's own
 ///   exports;
-/// - a `.constructor` or `.prototype` member, or a computed member access
+/// - a `.constructor` or `.prototype` member, a `prototype` name, a
+///   `constructor` name other than a class-member header (destructuring
+///   `{ constructor: O }` reaches `Object`), or a computed member access
 ///   (`x[key]`; an empty `string[]` type is fine);
 /// - a backslash in code, since `\u0046orbidden` is `Forbidden`;
 /// - a hook, prototype or constructor name spelled in string text.
@@ -190,7 +192,17 @@ fn module_escapes_name_scan(raw_module: &str, masked_module: &str) -> bool {
             let rest = masked_module[at + "import".len()..].trim_start();
             rest.starts_with('*') || rest.starts_with('(')
         });
+    // `constructor` only as a class-member header (`constructor(`): a
+    // destructured `{ constructor: O } = {}` reaches `Object` unnamed.
+    let constructor_handle = identifier_offsets(masked_module, "constructor")
+        .into_iter()
+        .any(|at| {
+            let before = masked_module[..at].trim_end();
+            let after = masked_module[at + "constructor".len()..].trim_start();
+            !(before.ends_with(['{', '}', ';']) && after.starts_with('('))
+        });
     masked_module.contains(['@', '\\'])
+        || constructor_handle
         || computed_access
         || namespace_import
         || [".constructor", ".prototype"]
@@ -199,6 +211,7 @@ fn module_escapes_name_scan(raw_module: &str, masked_module: &str) -> bool {
         || [
             "declare",
             "static",
+            "prototype",
             "globalThis",
             "window",
             "global",

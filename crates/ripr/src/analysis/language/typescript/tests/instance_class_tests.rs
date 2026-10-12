@@ -28,6 +28,14 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
     assert!(ts_owner_branches_split_class(
         OWNER, &reads, CHANGED, "NotFound"
     ));
+    // A plain constructor that only calls `super` is fine.
+    let built = ERRORS.replace(
+        "class NotFound extends Error {}",
+        "class NotFound extends Error {\n  constructor(message: string) {\n    super(message);\n  }\n}",
+    );
+    assert!(ts_owner_branches_split_class(
+        OWNER, &built, CHANGED, "NotFound"
+    ));
     // An empty `[]` type is not a computed access.
     let typed = format!("{ERRORS}export const codes: number[] = [404, 403];\n");
     assert!(ts_owner_branches_split_class(
@@ -243,6 +251,24 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
             "a constructor reached through a member",
             OWNER.to_string(),
             format!("{ERRORS}const make = (1).constructor;\n"),
+            "NotFound",
+        ),
+        (
+            "a destructured constructor reaches Object",
+            OWNER.to_string(),
+            format!(
+                "const {{ constructor: O }} = {{}};\nconst {{ getPrototypeOf: gp, defineProperty: dp }} = O;\n{}",
+                ERRORS.replace(
+                    "class NotFound extends Error {}",
+                    "class NotFound extends Error {\n  install() {\n    const { constructor: K } = this;\n    dp(K, gp(O), {});\n  }\n}",
+                )
+            ),
+            "NotFound",
+        ),
+        (
+            "a destructured prototype",
+            OWNER.to_string(),
+            format!("{ERRORS}const {{ prototype: p }} = x;\n"),
             "NotFound",
         ),
         (
