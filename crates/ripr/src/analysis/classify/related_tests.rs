@@ -1751,7 +1751,7 @@ pub(in crate::analysis) fn module_stem(path: &Path) -> Option<String> {
             let _file = parts.next();
             parts
                 .next()
-                .filter(|dir| !dir.is_empty() && *dir != "." && *dir != "src")
+                .filter(|dir| !dir.is_empty() && *dir != "." && *dir != ".." && *dir != "src")
                 .map(str::to_string)
         }
         _ => Some(stem),
@@ -7757,6 +7757,8 @@ fn crate_c_score_test() {
         // A root-relative probe never claims a member crate's crate root.
         assert!(!same("src/lib.rs", "crates/a/src/lib.rs"));
         assert!(!same("src/main.rs", "crates/x/src/main.rs"));
+        // An unnormalized `..` parent names no module.
+        assert!(!same("a/../mod.rs", "b/../mod.rs"));
     }
 
     #[test]
@@ -7777,6 +7779,15 @@ fn crate_c_score_test() {
                     "escapes_text",
                     "assert!(true);",
                 ),
+                // The module's companion file relates by module identity,
+                // which only the candidate index's module-stem buckets
+                // select; the cfg(test) full-scan parity check fails if
+                // they are missing.
+                test(
+                    "html5ever/tests/serialize.rs",
+                    "companion_smoke",
+                    "assert!(true);",
+                ),
             ],
             ..Default::default()
         });
@@ -7784,9 +7795,14 @@ fn crate_c_score_test() {
 
         let related = find_related_tests(&probe, Some(&owner), &index, true, None, None);
 
-        let names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
-        assert_eq!(names, ["escapes_text"]);
-        assert_eq!(related[0].1, RelationReason::SameTestFile);
+        let mut names: Vec<&str> = related.iter().map(|(test, _)| test.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["companion_smoke", "escapes_text"]);
+        assert!(
+            related
+                .iter()
+                .all(|(_, reason)| *reason == RelationReason::SameTestFile)
+        );
     }
 
     #[test]

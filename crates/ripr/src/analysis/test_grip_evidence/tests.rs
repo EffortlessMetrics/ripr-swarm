@@ -12085,6 +12085,16 @@ fn given_non_utf8_stems_when_grip_associates_then_lossy_collision_fails_closed()
     assert_eq!(normalized_file_stem(second), "");
     assert_eq!(crate::analysis::classify::module_stem(first), None);
     assert_eq!(crate::analysis::classify::module_stem(second), None);
+    // A file with no module stem falls back to an exact-path key, which
+    // must fail closed the same way.
+    assert_eq!(
+        super::related_tests::context::crate_root_file_key(first),
+        None
+    );
+    assert_eq!(
+        super::related_tests::context::crate_root_file_key(second),
+        None
+    );
 }
 
 // -- helper coverage ---------------------------------------------
@@ -18264,12 +18274,15 @@ fn given_crate_root_owner_when_grip_associates_then_only_its_own_inline_tests_re
                        { if amount >= threshold { amount - 10 } else { amount } }\n\
                    #[cfg(test)] mod tests { #[test] fn own_smoke() { assert_eq!(1, 1); } }\n";
     let other_src = "#[cfg(test)] mod tests { #[test] fn other_smoke() { assert_eq!(2, 2); } }\n";
+    // The owner is the workspace-root crate, so no package prefix scopes
+    // the candidates: only module identity keeps the member crate's
+    // `lib.rs` tests out.
     let files: Vec<(PathBuf, &str)> = vec![
-        (PathBuf::from("crates/a/src/lib.rs"), own_src),
+        (PathBuf::from("src/lib.rs"), own_src),
         (PathBuf::from("crates/b/src/lib.rs"), other_src),
     ];
     let index = index_from_files(&files)?;
-    let seams = inventory_seams_from_index(&[PathBuf::from("crates/a/src/lib.rs")], &index);
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
     let predicate = seams
         .iter()
         .find(|s| s.kind() == SeamKind::PredicateBoundary)
@@ -18284,6 +18297,43 @@ fn given_crate_root_owner_when_grip_associates_then_only_its_own_inline_tests_re
     if same_file != ["own_smoke"] {
         return Err(format!(
             "expected only own_smoke by SameTestFile; got {same_file:?}"
+        ));
+    }
+    Ok(())
+}
+
+#[test]
+fn given_mod_rs_owner_when_grip_associates_then_module_identity_decides_same_test_file()
+-> Result<(), String> {
+    // #5395: `serialize/mod.rs` is module `serialize`. Its companion
+    // `tests/serialize.rs` relates; another module's `tokenizer/mod.rs`
+    // inline tests do not, although both files are named `mod.rs`.
+    let owner_src = "pub fn apply_discount(amount: i32, threshold: i32) -> i32 \
+                         { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let tokenizer_src =
+        "#[cfg(test)] mod tests { #[test] fn tokenizer_smoke() { assert_eq!(2, 2); } }\n";
+    let companion_src = "#[test] fn companion_smoke() { assert_eq!(3, 3); }\n";
+    let files: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("src/serialize/mod.rs"), owner_src),
+        (PathBuf::from("src/tokenizer/mod.rs"), tokenizer_src),
+        (PathBuf::from("tests/serialize.rs"), companion_src),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/serialize/mod.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+    let same_file: Vec<&str> = evidence
+        .related_tests
+        .iter()
+        .filter(|grip| grip.relation_reason == RelationReason::SameTestFile)
+        .map(|grip| grip.test_name.as_str())
+        .collect();
+    if same_file != ["companion_smoke"] {
+        return Err(format!(
+            "expected only companion_smoke by SameTestFile; got {same_file:?}"
         ));
     }
     Ok(())
