@@ -12,9 +12,10 @@ a polyglot git root failing, and could pass a pnpm/uv root that has no Cargo
 manifest. Doctor keeps the selected-root `exists()` check, then a cargo-only
 ancestor walk bounded by `.git`, then a breadth-first nested walk (depth 8,
 512 directories) that skips `target/`, `.git`, `node_modules`, `.direnv`,
-`.venv`, and `vendor`, and that skips every symlink fail-closed. Do not
-rebind doctor's `--root` to the nested workspace (that is which `ripr.toml`
-applies). Empty roots and Rust sources with no manifest must still fail.
+`.venv`, `vendor`, `fixtures/`, and `.ripr/`, and that skips every symlink
+fail-closed. Do not rebind doctor's `--root` to the nested workspace (that
+is which `ripr.toml` applies). Empty roots and Rust sources with no
+manifest must still fail.
 A TypeScript marker at the git root can still skip `cargo_toml` before the
 locator runs (`detect_languages` is shallow); that is a separate claim.
 

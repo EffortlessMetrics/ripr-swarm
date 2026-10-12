@@ -1225,6 +1225,8 @@ const NESTED_CARGO_TOML_SKIP_DIRS: &[&str] = &[
     ".direnv",
     ".venv",
     "vendor",
+    "fixtures",
+    ".ripr",
 ];
 const NESTED_CARGO_TOML_MAX_DEPTH: usize = 8;
 /// Cap on directories visited during the nested walk so doctor cannot stall
@@ -3682,6 +3684,66 @@ mod tests {
         {
             return Err(format!(
                 "a .venv/ manifest must not pass cargo_toml: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// `fixtures/` is analysis evidence, not a project root. Same skip as
+    /// `target/` (`analysis/workspace/discover.rs`).
+    #[test]
+    fn cargo_toml_inside_fixtures_does_not_pass() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-fixtures-manifest",
+            &[
+                ("src/lib.rs", "pub fn f() {}\n"),
+                (
+                    "fixtures/example/Cargo.toml",
+                    "[package]\nname = \"example\"\nversion = \"0.1.0\"\n",
+                ),
+            ],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        if cargo_toml.status != DoctorCheckStatus::Fail
+            || !cargo_toml
+                .evidence
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("no Cargo.toml found")
+        {
+            return Err(format!(
+                "a fixtures/ manifest must not pass cargo_toml: {cargo_toml:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// `.ripr/` is generated/receipt storage, not a project root.
+    #[test]
+    fn cargo_toml_inside_ripr_dir_does_not_pass() -> Result<(), String> {
+        let root = doctor_scope_root(
+            "scope-ripr-dir-manifest",
+            &[(
+                ".ripr/Cargo.toml",
+                "[package]\nname = \"scratch\"\nversion = \"0.1.0\"\n",
+            )],
+        )?;
+        std::fs::create_dir(root.join(".git")).map_err(|err| format!("mkdir .git: {err}"))?;
+        let (report, _probed) = evaluate_without_rust_toolchain(&root, &[]);
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo_toml = check(&report, "cargo_toml")?;
+        if cargo_toml.status != DoctorCheckStatus::Fail
+            || !cargo_toml
+                .evidence
+                .as_deref()
+                .unwrap_or_default()
+                .starts_with("no Cargo.toml found")
+        {
+            return Err(format!(
+                "a .ripr/ manifest must not pass cargo_toml: {cargo_toml:?}"
             ));
         }
         Ok(())

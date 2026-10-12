@@ -884,6 +884,8 @@ tests = [
   "crates/ripr/src/output/doctor.rs::tests::nested_package_under_git_root_passes_cargo_toml",
   "crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_target_does_not_pass",
   "crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_venv_does_not_pass",
+  "crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_fixtures_does_not_pass",
+  "crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_ripr_dir_does_not_pass",
   "crates/ripr/src/output/doctor.rs::tests::sibling_nested_workspaces_pass_naming_one",
   "crates/ripr/src/output/doctor.rs::tests::ancestor_workspace_from_member_src_passes_cargo_toml",
   "crates/ripr/src/output/doctor.rs::tests::ancestor_package_from_src_passes_cargo_toml",
