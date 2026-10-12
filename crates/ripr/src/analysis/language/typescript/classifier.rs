@@ -4372,11 +4372,16 @@ pub(crate) fn ts_dropped_term_witness(
                         .and_then(|rest| rest.strip_prefix(owner.name.as_str()))
                         .is_some_and(ts_is_one_argument_list)
                 });
+            // One call only: in `price(price(6000, 7), 0)` the inner call's
+            // `fee` is not the asserted result's.
             let mut argument_lists = if bare {
                 owner_call_arguments(observed, &owner.name, &receivers)
             } else {
                 Vec::new()
             };
+            if argument_lists.len() != 1 {
+                argument_lists.clear();
+            }
             if argument_lists.is_empty()
                 && let Some(arguments) = ts_observed_local_owner_call_arguments(
                     candidate.test,

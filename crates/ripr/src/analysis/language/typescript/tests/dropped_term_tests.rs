@@ -193,7 +193,8 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
 
     // A non-zero call the assertion sees only through another expression
     // does not count: `Math.sign` hides the dropped `fee`.
-    // Nor does an error matcher, which never sees the returned value.
+    // Nor does an error matcher, which never sees the returned value, or
+    // an inner call whose `fee` is not the asserted result's.
     for (label, other, kind) in [
         (
             "dropped-term-hidden",
@@ -204,6 +205,11 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
             "dropped-term-rejects",
             "  await expect(price(0, 7)).rejects.toThrow(\"bad\");",
             OracleKind::ExactErrorVariant,
+        ),
+        (
+            "dropped-term-nested",
+            "  expect(price(price(6000, 7), 0)).toBe(13006);",
+            OracleKind::ExactValue,
         ),
     ] {
         let test = format!(
