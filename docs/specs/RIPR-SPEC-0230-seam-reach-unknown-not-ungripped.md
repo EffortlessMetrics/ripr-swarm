@@ -267,17 +267,14 @@ and every unknown class (rank 4). Its LSP severity is set by
 
 ### Trait gate (#5577)
 
-Against the same checkouts and cargo-mutants outputs, after #5946:
+Against the same checkouts and cargo-mutants outputs, main `38b0eaeb`
+before and after the gate, with caches removed:
 
 | Repository | `ungripped` | `opaque` | Moved seams |
 | --- | --- | --- | --- |
-| semver `280ebcb6edac` | 1 → 32 | 504 → 473 | 13 `Debug::fmt` (`Version`, `Error`), 18 serde `Serialize`/`Deserialize`/`Visitor` |
-| bytesize `66a3715e` | 3 → 5 | 2 → 0 | 2 `Arbitrary` |
-| humantime, rust-hex, strsim-rs, atuin `90f590b9` | unchanged | unchanged | none |
+| semver `280ebcb6edac` | 0 → 14 | 231 → 217 | 8 `Debug::fmt` (`Version`, `Error`), 6 serde `Serialize`/`Deserialize` |
+| bytesize, humantime, rust-hex, strsim-rs, atuin `90f590b9` | unchanged | unchanged | none |
 
-cargo-mutants missed every mutant in the functions that own the 33 moved
-seams (16 on semver, 7 on bytesize) and caught none. The 12 spot-check
-false-gap seams stay `opaque`. Of semver's trait-dispatch `opaque` seams,
-those in functions where every mutant was missed drop from 32 to 1
-(`FromIterator`, an ungated trait); those in functions where every mutant was
-caught stay at 128. No other grip class moves.
+cargo-mutants missed all 18 mutants in the functions that own the moved
+seams and caught none. The 12 spot-check false-gap seams do not move. No
+other grip class moves.

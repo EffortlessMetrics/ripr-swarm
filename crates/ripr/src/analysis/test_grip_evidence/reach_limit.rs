@@ -1028,11 +1028,8 @@ fn is_failure_message(before: &str) -> bool {
             b')' => depth += 1,
             b'(' if depth == 0 => {
                 let name = before[..i].trim_end().trim_end_matches('!');
-                let start = name
-                    .rfind(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-                    .map_or(0, |at| at + 1);
                 return matches!(
-                    &name[start..],
+                    last_ident(name).1,
                     "assert"
                         | "assert_eq"
                         | "assert_ne"
@@ -1515,6 +1512,11 @@ mod tests {
         assert_eq!(
             gated_trait_uses("let n = parse(s).unwrap();", false),
             vec![(GatedTrait::FromStr, "parse")]
+        );
+        // #6662 review: a multi-byte character before the call name.
+        assert_eq!(
+            format_placeholders("x→assert!(ok, \"{:?}\", v);", false),
+            (false, false)
         );
         assert_eq!(
             format_placeholders("panic!(\"{:?}\", v);", true),
