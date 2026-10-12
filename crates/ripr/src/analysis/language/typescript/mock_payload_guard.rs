@@ -47,7 +47,8 @@ impl MockCallFacts {
         owner_name: &str,
         owner_params: &[String],
     ) -> Self {
-        let Some(owner_body) = owner_body.filter(|body| runs_each_statement_once(body, owner_name))
+        let Some(owner_body) =
+            owner_body.filter(|body| runs_changed_line_once(body, owner_name, line_text))
         else {
             return Self::default();
         };
@@ -89,6 +90,11 @@ impl MockCallFacts {
             return false;
         }
         let segments: Vec<&str> = payload.target.split('.').collect();
+        if let [local] = segments.as_slice()
+            && self.credits_object_argument(local, test_body)
+        {
+            return true;
+        }
         let Some(call) = self
             .calls
             .iter()
@@ -118,6 +124,59 @@ impl MockCallFacts {
             && identifier_mentions_outside_expect(test_body, local) == 2
             && owner_call_passes_at(test_body, &self.owner_name, local, call.index)
     }
+}
+
+impl MockCallFacts {
+    /// RIPR-SPEC-0255 rule 2: the asserted `local` is a test-local mock the
+    /// test passes as the method of an inline object literal at the
+    /// parameter's position (`checkout("ann", lines, { send })` for a
+    /// changed `notifier.send(...)`), and mentions nowhere else but
+    /// `expect(local)`.
+    fn credits_object_argument(&self, local: &str, test_body: &str) -> bool {
+        let masked_body = ts_mask_literals_and_comments(test_body);
+        let Some(scope) = callback_scope(&masked_body) else {
+            return false;
+        };
+        if !test_local_mock_binding(scope, local)
+            || identifier_mentions_outside_expect(test_body, local) != 2
+        {
+            return false;
+        }
+        self.calls.iter().any(|call| {
+            call.method.as_deref().is_some_and(|method| {
+                owner_call_argument_at(test_body, &self.owner_name, call.index)
+                    .is_some_and(|argument| object_literal_binds(&argument, method, local))
+            })
+        })
+    }
+}
+
+/// `true` when `argument` is a flat object literal whose entries are all
+/// `key: value` or shorthand `key` with plain keys, `method` is keyed once,
+/// and its value is exactly `local`. A spread, a method or accessor, a
+/// quoted or computed key, or a second `method` key refuses.
+fn object_literal_binds(argument: &str, method: &str, local: &str) -> bool {
+    let Some(rest) = argument.trim().strip_prefix('{') else {
+        return false;
+    };
+    let Some(literal) = literal_body(rest) else {
+        return false;
+    };
+    if rest[literal.len() + 1..].trim() != "" {
+        return false;
+    }
+    let mut bound = Vec::new();
+    for entry in top_level_entries(literal) {
+        let (key, value) = entry
+            .split_once(':')
+            .map_or((entry, entry), |(key, value)| (key.trim(), value.trim()));
+        if !key.starts_with(is_identifier_start) || !key.chars().all(is_identifier_part) {
+            return false;
+        }
+        bound.push((key, value));
+    }
+    let mut keyed = bound.iter().filter(|(key, _)| *key == method);
+    matches!((keyed.next(), keyed.next()), (Some((_, value)), None) if *value == local)
 }
 
 /// One call outside literals and comments: the called name, the first
@@ -249,6 +308,15 @@ fn closes_expect_subject(rest: &str) -> bool {
 /// and that call passes `local` as a whole argument at `index`, with no
 /// spread before it.
 fn owner_call_passes_at(test_body: &str, owner_name: &str, local: &str, index: usize) -> bool {
+    owner_call_argument_at(test_body, owner_name, index)
+        .is_some_and(|argument| argument.trim() == local)
+}
+
+/// The masked argument at `index` of the test's one owner call (bare or as
+/// a method), or `None` when the test calls the owner other than exactly
+/// once, passes fewer arguments, or spreads an argument at or before
+/// `index`.
+fn owner_call_argument_at(test_body: &str, owner_name: &str, index: usize) -> Option<String> {
     let masked = ts_mask_literals_and_comments(test_body);
     let mut calls = masked.match_indices(owner_name).filter_map(|(at, _)| {
         if !(word_boundary_before(&masked, at) || masked[..at].ends_with('.')) {
@@ -258,17 +326,16 @@ fn owner_call_passes_at(test_body: &str, owner_name: &str, local: &str, index: u
         top_level_arguments(rest.strip_prefix('(')?)
     });
     let (Some(arguments), None) = (calls.next(), calls.next()) else {
-        return false;
+        return None;
     };
-    arguments
+    if arguments
         .iter()
-        .position(|argument| argument.trim() == local)
-        .is_some_and(|at| {
-            at == index
-                && !arguments[..at]
-                    .iter()
-                    .any(|argument| argument.trim_start().starts_with("..."))
-        })
+        .take(index + 1)
+        .any(|argument| argument.trim_start().starts_with("..."))
+    {
+        return None;
+    }
+    arguments.get(index).map(|argument| (*argument).to_string())
 }
 
 /// The comma-separated top-level arguments of a call whose `(` was just
@@ -452,17 +519,126 @@ pub(super) fn masked_owner_body(owner_source: &str) -> Option<String> {
     None
 }
 
-/// `true` when the owner's body has no loop, no nested function and no call
-/// back into the owner, so the changed line runs at most once per owner
-/// call.
-fn runs_each_statement_once(owner_source: &str, owner_name: &str) -> bool {
+/// `true` when the changed line runs at most once per owner call: the
+/// owner's body has no loop and no call back into the owner, and either it
+/// has no nested function at all (no arrow, `function`, method shorthand or
+/// class member), or (RIPR-SPEC-0255 rule 1) the changed
+/// line is a whole top-level statement of the body with no function on it,
+/// so a nested function elsewhere (`lines.reduce((sum, l) => ...)`) cannot
+/// run it.
+fn runs_changed_line_once(owner_source: &str, owner_name: &str, line_text: &str) -> bool {
     let Some(body) = masked_owner_body(owner_source) else {
         return false;
     };
-    !body.contains("=>")
-        && ["for", "while", "do", "function", owner_name]
-            .iter()
-            .all(|word| identifier_offsets(&body, word).is_empty())
+    if !["for", "while", "do", owner_name]
+        .iter()
+        .all(|word| identifier_offsets(&body, word).is_empty())
+    {
+        return false;
+    }
+    let no_nested_function = !body.contains("=>")
+        && identifier_offsets(&body, "function").is_empty()
+        && !has_method_like_block(&body);
+    no_nested_function || changed_line_is_top_level_statement(&body, line_text)
+}
+
+/// `true` when some `{` in the masked `body` may open a function body that
+/// is not an arrow or `function`: method shorthand or a class member
+/// (`run(x) {`, `get total() {`), a typed method (`run(): string {`) or a
+/// class body. A `{` after a control keyword's `(...)`, after `else`,
+/// `try`, `finally`, `do` or `return`, after an operator or opening
+/// punctuation (an object literal or a bare block), or opening a template
+/// literal's `${` does not count; any
+/// other `{` does, so an unfamiliar shape refuses.
+fn has_method_like_block(body: &str) -> bool {
+    const CONTROL: [&str; 6] = ["if", "for", "while", "switch", "catch", "with"];
+    const BLOCK_WORDS: [&str; 5] = ["else", "try", "finally", "do", "return"];
+    body.char_indices()
+        .filter(|(_, c)| *c == '{')
+        .any(|(at, _)| {
+            // A template literal's `${` opens an expression, not a block.
+            if body[..at].ends_with('$') {
+                return false;
+            }
+            let before = body[..at].trim_end();
+            let Some(last) = before.chars().next_back() else {
+                return false;
+            };
+            if last == ')' {
+                let Some(open) = matching_open_paren(before) else {
+                    return true;
+                };
+                let word = trailing_identifier(before[..open].trim_end());
+                return !CONTROL.contains(&word);
+            }
+            if is_identifier_part(last) {
+                return !BLOCK_WORDS.contains(&trailing_identifier(before));
+            }
+            matches!(last, '>' | ']')
+        })
+}
+
+/// The byte offset of the `(` matching the `)` that ends `text`.
+fn matching_open_paren(text: &str) -> Option<usize> {
+    let mut depth = 0usize;
+    for (at, c) in text.char_indices().rev() {
+        match c {
+            ')' => depth += 1,
+            '(' => {
+                depth = depth.checked_sub(1)?;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// The identifier `text` ends with, or `""`.
+fn trailing_identifier(text: &str) -> &str {
+    let start = text
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| is_identifier_part(*c))
+        .last()
+        .map_or(text.len(), |(at, _)| at);
+    &text[start..]
+}
+
+/// RIPR-SPEC-0255 rule 1: the masked changed line occurs once in the masked
+/// owner `body`, outside every brace, parenthesis and bracket, right after
+/// the start of the body, a `;` or a `}`, and holds no `=>` or `function`.
+/// A line after `=>` (an expression-bodied arrow), after `if (...)` or
+/// `else` without a block, or inside a callback refuses.
+fn changed_line_is_top_level_statement(body: &str, line_text: &str) -> bool {
+    let masked_line = ts_mask_literals_and_comments(line_text);
+    let statement = masked_line.trim();
+    if statement.is_empty()
+        || statement.contains("=>")
+        || !identifier_offsets(statement, "function").is_empty()
+    {
+        return false;
+    }
+    let mut found = body.match_indices(statement);
+    let (Some((at, _)), None) = (found.next(), found.next()) else {
+        return false;
+    };
+    let mut depth = 0usize;
+    for c in body[..at].chars() {
+        match c {
+            '{' | '(' | '[' => depth += 1,
+            '}' | ')' | ']' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    depth == 0
+        && body[..at]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_none_or(|c| matches!(c, ';' | '}'))
 }
 
 /// `true` when `at` sits outside every brace block of `masked`.
