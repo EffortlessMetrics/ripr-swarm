@@ -453,9 +453,11 @@ as a whole identifier, the `local` of an `import { owner as local }` that
 gives the same test its `ImportAliasOwnerCall` relation. The one-hop
 initializer accepts the same local. This makes RIPR-SPEC-0102's stated
 `exposed` class hold. RIPR-SPEC-0251 extends this to a renamed default
-import of a default-exported owner, and its rule 2 drops the local (and so
-the relation) when a body-local destructuring names it
-(`const { p } = helpers`).
+import of a default-exported owner, and its rule 2 drops either local
+from owner credit when a body-local destructuring names it
+(`const { p } = helpers`). For the alias rename this also drops the
+`ImportAliasOwnerCall` relation; a default import keeps its
+`ImportedOwnerCall` relation, which the import record proves.
 
 ### Static limits
 

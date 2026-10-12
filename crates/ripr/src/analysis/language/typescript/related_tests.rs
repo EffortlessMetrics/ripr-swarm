@@ -1691,25 +1691,41 @@ pub(crate) fn import_alias_owner_locals<'t>(
 
 /// Whether a body-local destructuring declaration (`const { cost } = h`,
 /// `const { a: cost } = h`, `let [cost] = fns`) names `local` anywhere in
-/// its pattern. Any mention counts as a shadow: a renamed import local
+/// its pattern, read from the opening bracket to its match so a pattern
+/// spread over several lines or holding a default initializer
+/// (`const { cost = fallback } = h`) is read whole. Any mention counts as a shadow: a renamed import local
 /// (`import { owner as local }`, `import local from`) has no destructuring
 /// that could re-anchor it to the owner, so this reads more widely than the
 /// owner-name check and fails closed.
 fn local_destructured_in_test_body(body: &str, local: &str) -> bool {
     let masked = ts_mask_literals_and_comments(body);
-    masked.lines().any(|line| {
-        let Some(after_keyword) = ["const ", "let ", "var "]
-            .into_iter()
-            .find_map(|keyword| line.trim_start().strip_prefix(keyword))
-        else {
-            return false;
-        };
-        let pattern = after_keyword.trim_start();
-        if !pattern.starts_with(['{', '[']) {
-            return false;
-        }
-        let pattern = pattern.split_once('=').map_or(pattern, |(lhs, _)| lhs);
-        ts_references_identifier(pattern, local)
+    ["const", "let", "var"].into_iter().any(|keyword| {
+        identifier_offsets(&masked, keyword).into_iter().any(|at| {
+            let after_keyword = &masked[at + keyword.len()..];
+            let pattern = after_keyword.trim_start();
+            // The binding pattern runs from its opening `{` or `[` to the
+            // matching close, across lines, so a default initializer
+            // (`{ cost = fallback }`) and a multi-line pattern stay inside it.
+            if !pattern.starts_with(['{', '[']) {
+                return false;
+            }
+            let mut depth = 0usize;
+            let mut end = pattern.len();
+            for (offset, c) in pattern.char_indices() {
+                match c {
+                    '{' | '[' | '(' => depth += 1,
+                    '}' | ']' | ')' => {
+                        depth = depth.saturating_sub(1);
+                        if depth == 0 {
+                            end = offset + 1;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            ts_references_identifier(&pattern[..end], local)
+        })
     })
 }
 

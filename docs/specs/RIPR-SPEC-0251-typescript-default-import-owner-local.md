@@ -104,11 +104,15 @@ alias rename. The relation itself is unchanged: the related-test row keeps
 **Rule 2. A destructured local is shadowed.** A body-local destructuring
 declaration whose pattern names a renamed import local
 (`const { cost } = helpers`, `const { price: cost } = helpers`,
-`const [cost] = fns`) rebinds it, so the local earns no owner credit. This
+`const [cost] = fns`, a pattern spread over several lines, or one with a
+default initializer such as `const { cost = fallback } = helpers`)
+rebinds it, so the local earns no owner credit. This
 applies to the rule 1 default-import local and to the RIPR-SPEC-0243
 rule 7 alias-rename local. Any mention in the pattern counts: a renamed
 local has no destructuring that re-anchors it to the owner, unlike the
-owner's own name (#4103 shape 1).
+owner's own name (#4103 shape 1). A property key that only names the
+local (`const { cost: other } = helpers`) or a destructuring inside a
+nested block also counts, which under-credits and fails closed.
 
 ### Decisions
 

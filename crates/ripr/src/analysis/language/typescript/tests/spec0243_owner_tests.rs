@@ -578,7 +578,7 @@ fn default_import_owner_locals_keeps_only_the_owner_binding() -> Result<(), Stri
     let body = |imports: &str, lines: &str| {
         format!("{imports}\n\ntest(\"price\", () => {{\n{lines}\n}});\n")
     };
-    let cases: [(&str, &TypeScriptOwner, String, Vec<&str>); 13] = [
+    let cases: [(&str, &TypeScriptOwner, String, Vec<&str>); 15] = [
         (
             "renamed default import of the owner",
             default_owner,
@@ -646,6 +646,24 @@ fn default_import_owner_locals_keeps_only_the_owner_binding() -> Result<(), Stri
             Vec::new(),
         ),
         (
+            "test body destructures the local over several lines",
+            default_owner,
+            body(
+                "import cost from \"../src/lib\";",
+                "  const {\n    cost\n  } = helpers;\n  expect(cost(150)).toBe(130);",
+            ),
+            Vec::new(),
+        ),
+        (
+            "test body destructures the local with a default initializer",
+            default_owner,
+            body(
+                "import cost from \"../src/lib\";",
+                "  const { cost = fallback } = helpers;\n  expect(cost(150)).toBe(130);",
+            ),
+            Vec::new(),
+        ),
+        (
             "top-level require binds the module, not the default",
             default_owner,
             body("const cost = require(\"../src/lib\");", "  expect(cost(150)).toBe(130);"),
@@ -696,6 +714,16 @@ fn rule7_alias_local_destructured_in_the_body_is_not_the_owner() -> Result<(), S
         ("shorthand", "const { p } = helpers;"),
         ("renamed key", "const { price: p } = helpers;"),
         ("array", "const [p] = fns;"),
+        ("multi-line", "const {\n    p\n  } = helpers;"),
+        ("default initializer", "const { p = fallback } = helpers;"),
+        (
+            "earlier default initializer",
+            "const { a = 1, p } = helpers;",
+        ),
+        (
+            "multi-line renamed key",
+            "let {\n    price: p,\n  } = helpers;",
+        ),
     ] {
         let tests = tests_of(&format!(
             "import {{ price as p }} from \"../src/lib\";\n\ntest(\"price\", () => {{\n  {pattern}\n  expect(p(150)).toBe(140);\n}});\n"
