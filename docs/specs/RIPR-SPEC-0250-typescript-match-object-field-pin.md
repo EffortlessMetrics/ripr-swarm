@@ -101,7 +101,9 @@ these hold:
   exactly one names `key`: the only entry on the changed line, which
   opens at the start of that line and ends on it (a quoted or computed key, a spread, an accessor
   or a second `key` entry fails);
-- `o` lists `key` at its top level.
+- `o` lists `key` at its top level, and its string values hold only ASCII
+  text (an object holding a non-ASCII string keeps the weak reading; see
+  Known limits).
 
 ### Decisions
 
