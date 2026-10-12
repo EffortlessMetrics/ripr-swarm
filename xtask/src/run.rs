@@ -2112,6 +2112,27 @@ mod tests {
         )?;
 
         assert!(output.timed_out, "long-running command should time out");
+        let diagnostic = super::CommandDiagnostic::captured(
+            &program,
+            &args,
+            &Ok(super::TimedOutput {
+                status: output.status,
+                stdout: output.stdout.clone(),
+                stderr: output.stderr.clone(),
+                duration: output.duration,
+                timed_out: output.timed_out,
+            }),
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            diagnostic.elapsed_scope,
+            "runner_start_through_timeout_termination_and_group_confirmation_excluding_pipe_drain"
+        );
+        #[cfg(not(unix))]
+        assert_eq!(
+            diagnostic.elapsed_scope,
+            "runner_start_through_timeout_termination_excluding_pipe_drain"
+        );
         #[cfg(unix)]
         assert!(
             output.status.is_some(),

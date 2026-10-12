@@ -46,7 +46,18 @@ impl CommandDiagnostic {
                 },
                 status: output.status.map(|status| status.to_string()),
                 elapsed_ms: Some(output.duration.as_millis()),
-                elapsed_scope: "runner_start_to_observed_exit_excluding_pipe_drain",
+                elapsed_scope: if output.timed_out {
+                    #[cfg(unix)]
+                    {
+                        "runner_start_through_timeout_termination_and_group_confirmation_excluding_pipe_drain"
+                    }
+                    #[cfg(not(unix))]
+                    {
+                        "runner_start_through_timeout_termination_excluding_pipe_drain"
+                    }
+                } else {
+                    "runner_start_to_observed_exit_excluding_pipe_drain"
+                },
                 cargo_progress: (program == "cargo")
                     .then(|| CargoProgress::from_stderr(&output.stderr))
                     .flatten(),
@@ -123,7 +134,11 @@ impl CargoProgress {
         let count = |prefix| {
             let count = stderr
                 .lines()
-                .filter(|line| line.trim_start().starts_with(prefix))
+                .filter(|line| {
+                    crate::windows_advisory::strip_ansi(line)
+                        .trim_start()
+                        .starts_with(prefix)
+                })
                 .count();
             (count > 0).then_some(count)
         };
@@ -139,11 +154,66 @@ impl CargoProgress {
     }
 }
 
-pub(crate) const DISCLOSURE: &str = "Diagnostic observations of existing child calls in this invocation only. Missing rows/values are unavailable evidence, never zero compilation or completed work. Elapsed scopes differ; the captured runner polls exit and excludes pipe draining. Cargo progress counts recognize stderr lines only, not compiler-unit identities, completed artifacts, reuse proof or redundant compilation. These diagnostics waive no gate.";
+pub(crate) const DISCLOSURE: &str = "Diagnostic observations of existing child calls in this invocation only. Missing rows/values are unavailable evidence, never zero compilation or completed work. Elapsed scopes differ; the captured runner polls exit and excludes pipe draining; enforced timeout duration includes termination/reaping and Unix process-group confirmation where applicable. Cargo progress counts recognize stderr lines only, not compiler-unit identities, completed artifacts, reuse proof or redundant compilation. These diagnostics waive no gate.";
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn colored_cargo_progress_matches_verified_cargo_capture() -> Result<(), String> {
+        // Cargo 1.95.0, CARGO_TERM_COLOR=always, build/check/build -v:
+        // reset is between the keyword and its separating space.
+        let stderr = concat!(
+            "\u{1b}[1m\u{1b}[92m   Compiling\u{1b}[0m diagnostic-color-probe v0.1.0\r\n",
+            "\u{1b}[1m\u{1b}[92m    Checking\u{1b}[0m diagnostic-color-probe v0.1.0\n",
+            "\u{1b}[1m\u{1b}[92m       Fresh\u{1b}[0m diagnostic-color-probe v0.1.0\n",
+            " Compiling plain v1\nnot Fresh false\nCheckingish false\n",
+        );
+        let progress = CargoProgress::from_stderr(stderr).ok_or("colored progress lost")?;
+        assert_eq!(progress.compiling_lines, Some(2));
+        assert_eq!(progress.checking_lines, Some(1));
+        assert_eq!(progress.fresh_lines, Some(1));
+        Ok(())
+    }
+
+    #[test]
+    fn captured_scope_distinguishes_timeout_cleanup_and_unavailable_capture() {
+        let args = vec!["test".to_string()];
+        let row = |timed_out| {
+            CommandDiagnostic::captured(
+                "cargo",
+                &args,
+                &Ok(TimedOutput {
+                    status: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    duration: Duration::from_millis(125),
+                    timed_out,
+                }),
+            )
+        };
+        let normal = row(false);
+        let timeout = row(true);
+        assert_eq!(normal.elapsed_ms, timeout.elapsed_ms);
+        assert_eq!(
+            normal.elapsed_scope,
+            "runner_start_to_observed_exit_excluding_pipe_drain"
+        );
+        assert_ne!(normal.elapsed_scope, timeout.elapsed_scope);
+        assert!(timeout.elapsed_scope.contains("timeout_termination"));
+        assert!(timeout.elapsed_scope.ends_with("excluding_pipe_drain"));
+        #[cfg(not(unix))]
+        assert!(!timeout.elapsed_scope.contains("group_confirmation"));
+        let unavailable = CommandDiagnostic::captured(
+            "cargo",
+            &args,
+            &Err("group confirmation failed".to_string()),
+        );
+        assert_eq!(unavailable.outcome, "capture_unavailable");
+        assert_eq!(unavailable.elapsed_scope, "unavailable");
+        assert_eq!(unavailable.elapsed_ms, None);
+    }
 
     #[test]
     fn unavailable_capture_and_zero_duration_do_not_claim_compilation() -> Result<(), String> {

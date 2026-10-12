@@ -247,10 +247,12 @@ selectors and skipped warmups create no execution rows. Precommit diagnostics
 remain bound by its report digest; they add no acceptance or waiver authority.
 Structured argv preserves argument boundaries (`$REPO` substitutes the repository
 root in precommit). Captured elapsed time runs from runner start through observed
-exit, with polling, and excludes post-exit pipe drain; inherited-status elapsed
+exit, with polling. Enforced timeout duration includes termination and reaping,
+and Unix process-group confirmation where applicable; its distinct scope records
+this cleanup. Both captured scopes exclude pipe drain. Inherited-status elapsed
 includes the launch/status call and preserves inherited streams. Missing values
-are unavailable evidence. Cargo counts recognize `Compiling`, `Checking` and
-`Fresh` stderr progress lines only; they do not identify compiler units, prove
+are unavailable evidence. Cargo counts normalize existing ANSI color sequences
+and recognize `Compiling`, `Checking` and `Fresh` stderr progress lines only; they do not identify compiler units, prove
 artifact reuse or justify removing either Clippy obligation. Dirty-source HEAD,
 base and paths supply invocation context rather than immutable source identity.
 Successful report-write failures still return an I/O error; interrupted execution
