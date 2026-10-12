@@ -225,6 +225,11 @@ fn assertion_from_expression_any(
                 .receiver
                 .and_then(|r| ava_assertion_from_expression(expr, source, r))
         })
+        .or_else(|| {
+            context
+                .receiver
+                .and_then(|r| node_test_context_assert_assertion(expr, source, r, context.bindings))
+        })
         .or_else(|| module_assert_assertion_from_expression(expr, source, context.bindings))
 }
 
@@ -786,6 +791,9 @@ pub(crate) struct TypeScriptAssertionBindings {
     chai_modules: Vec<String>,
     /// What the bare name `expect` reaches (RIPR-SPEC-0243 rule 3).
     expect_binding: ExpectBinding,
+    /// Whether the file imports from `node:test`, whose test context
+    /// carries `t.assert` (RIPR-SPEC-0252).
+    node_test_runner: bool,
 }
 
 /// What the identifier `expect` names in a test body (RIPR-SPEC-0243 rule 3).
@@ -864,6 +872,9 @@ impl TypeScriptAssertionBindings {
     /// namespace import) of `module`.
     fn bind(&mut self, module: &str, imported: Option<&str>, namespace: bool, local: &str) {
         let local = local.to_string();
+        if module == "node:test" {
+            self.node_test_runner = true;
+        }
         if NODE_ASSERT_MODULES.contains(&module) {
             let flavor = if module.ends_with("/strict") {
                 AssertFlavor::NodeStrict
@@ -933,6 +944,7 @@ impl TypeScriptAssertionBindings {
             } else {
                 self.expect_binding
             },
+            node_test_runner: self.node_test_runner,
         }
     }
 
@@ -1082,6 +1094,49 @@ fn assert_method_is_recognized(method: &str, flavor: AssertFlavor) -> bool {
 /// expected)`, or the callable `assert(value)` (smoke). The receiver or callee
 /// must be a binding [`TypeScriptAssertionBindings`] recorded from an import,
 /// so a same-named local helper is not credited.
+/// RIPR-SPEC-0252 rule 1: `t.assert.<method>(...)` on a `node:test` test
+/// context. `t.assert` exposes the top-level `node:assert` functions, so the
+/// call reads as legacy `node:assert` does (`equal` is loose `==`). Only a
+/// file that imports from `node:test` has this receiver shape; AVA's
+/// `t.assert(value)` is a call, not a member object, and is read elsewhere.
+fn node_test_context_assert_assertion(
+    expr: &Expression<'_>,
+    source: &SourceText<'_>,
+    receiver: &str,
+    bindings: &TypeScriptAssertionBindings,
+) -> Option<TypeScriptAssertion> {
+    if !bindings.node_test_runner {
+        return None;
+    }
+    let expr = match expr {
+        Expression::AwaitExpression(await_expr) => &await_expr.argument,
+        _ => expr,
+    };
+    let Expression::CallExpression(call) = expr else {
+        return None;
+    };
+    let Expression::StaticMemberExpression(member) = &call.callee else {
+        return None;
+    };
+    let Expression::StaticMemberExpression(assert_member) = &member.object else {
+        return None;
+    };
+    let Expression::Identifier(object) = &assert_member.object else {
+        return None;
+    };
+    if object.name.as_str() != receiver || assert_member.property.name.as_str() != "assert" {
+        return None;
+    }
+    let method = member.property.name.as_str();
+    assert_call_assertion(
+        call,
+        source,
+        method,
+        AssertFlavor::NodeLegacy,
+        format!("{receiver}.assert.{method}"),
+    )
+}
+
 pub(crate) fn module_assert_assertion_from_expression(
     expr: &Expression<'_>,
     source: &SourceText<'_>,
@@ -1115,6 +1170,19 @@ pub(crate) fn module_assert_assertion_from_expression(
         }
         _ => return None,
     };
+    assert_call_assertion(call, source, method, flavor, callee_text)
+}
+
+/// The assertion an `assert`-style call reads as once its method and API
+/// flavor are known: shared by imported `node:assert` / chai bindings and
+/// the `node:test` context's `t.assert`.
+fn assert_call_assertion(
+    call: &oxc_ast::ast::CallExpression<'_>,
+    source: &SourceText<'_>,
+    method: &str,
+    flavor: AssertFlavor,
+    callee_text: String,
+) -> Option<TypeScriptAssertion> {
     let (mut oracle_kind, mut oracle_strength) = oracle_for_assert_method(method, flavor);
     if matches!(oracle_kind, OracleKind::Unknown) {
         return None;

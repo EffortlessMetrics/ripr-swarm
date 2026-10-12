@@ -790,3 +790,115 @@ fn only_a_test_runner_expect_reads_jest_matchers() {
         0
     );
 }
+
+/// RIPR-SPEC-0252 rule 1: `t.assert.<method>` on a `node:test` context reads
+/// as legacy `node:assert`. `equal` is loose, so it is strong only against a
+/// literal coercion cannot reach (RIPR-SPEC-0247 rule 2).
+#[test]
+fn node_test_context_assert_reads_as_legacy_node_assert() {
+    let cases: [(&str, &str, OracleKind, OracleStrength, &str); 6] = [
+        (
+            "loose equal against a number",
+            "t.assert.equal(lateFee(10), 20);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t.assert.equal(...)",
+        ),
+        (
+            "strictEqual",
+            "t.assert.strictEqual(lateFee(10), 20);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t.assert.strictEqual(...)",
+        ),
+        (
+            "deepStrictEqual",
+            "t.assert.deepStrictEqual(lateFee(10), 20);",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t.assert.deepStrictEqual(...)",
+        ),
+        (
+            "loose equal against a variable stays weak",
+            "const want = 20;\n  t.assert.equal(lateFee(10), want);",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+            "t.assert.equal(...)",
+        ),
+        (
+            "anchored throws pins the error",
+            "t.assert.throws(() => lateFee(-1), /^Error: days must be positive$/);",
+            OracleKind::ExactErrorVariant,
+            OracleStrength::Strong,
+            "t.assert.throws(..., /^Error: days must be positive$/)",
+        ),
+        (
+            "awaited subtest receiver",
+            "await t.test(\"sub\", (t2) => {\n    t2.assert.strictEqual(lateFee(10), 20);\n  });",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+            "t2.assert.strictEqual(...)",
+        ),
+    ];
+    for (label, body, kind, strength, rendered) in cases {
+        let source = format!(
+            "import test from \"node:test\";\nimport {{ lateFee }} from \"../src/latefee\";\n\ntest(\"late fee\", async (t) => {{\n  {body}\n}});\n"
+        );
+        let assertions = only_assertions("test/latefee.test.ts", &source);
+        let [assertion] = assertions.as_slice() else {
+            panic!("{label}: expected one assertion, got {assertions:?}");
+        };
+        assert_oracle(assertion, kind, strength, rendered);
+        let observed = assertion.observed_expression.as_deref();
+        assert!(
+            observed.is_some_and(|observed| observed.contains("lateFee(")),
+            "{label}: {observed:?}"
+        );
+    }
+}
+
+/// RIPR-SPEC-0252 negatives: without a `node:test` import, on a receiver
+/// that is not the callback's first parameter, or for a method outside the
+/// `node:assert` table, `x.assert.<method>` yields no assertion.
+#[test]
+fn node_test_context_assert_needs_the_runner_receiver_and_a_known_method() {
+    for (label, imports, body) in [
+        (
+            "AVA file",
+            "import test from \"ava\";",
+            "t.assert.equal(lateFee(10), 20);",
+        ),
+        ("no runner import", "", "t.assert.equal(lateFee(10), 20);"),
+        (
+            "another receiver",
+            "import test from \"node:test\";\nconst helper = { assert: { equal: () => {} } };",
+            "helper.assert.equal(lateFee(10), 20);",
+        ),
+        (
+            "another member of the context",
+            "import test from \"node:test\";",
+            "t.check.equal(lateFee(10), 20);",
+        ),
+        (
+            "unknown method",
+            "import test from \"node:test\";",
+            "t.assert.verifies(lateFee(10), 20);",
+        ),
+        (
+            "computed member",
+            "import test from \"node:test\";",
+            "t[\"assert\"].equal(lateFee(10), 20);",
+        ),
+    ] {
+        let source = format!(
+            "{imports}\nimport {{ lateFee }} from \"../src/latefee\";\n\ntest(\"late fee\", (t) => {{\n  {body}\n}});\n"
+        );
+        let tests = extract_tests(Path::new("test/latefee.test.ts"), &source);
+        assert_eq!(tests.len(), 1, "{label}: {tests:?}");
+        assert!(
+            tests[0].assertions.is_empty(),
+            "{label}: {:?}",
+            tests[0].assertions
+        );
+    }
+}
