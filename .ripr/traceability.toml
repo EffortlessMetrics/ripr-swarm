@@ -13937,6 +13937,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_leaves_an_error_seam_alone",
 ]
 fixtures = [
+  "fixtures/ts_dropped_term_zero_input",
   "fixtures/typescript-verdict-corpus",
 ]
 code = [
