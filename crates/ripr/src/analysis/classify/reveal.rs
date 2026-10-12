@@ -4951,6 +4951,15 @@ return Err(\"typed pin\".into());
             ),
             (
                 ProbeFamily::ErrorPath,
+                oracle(
+                    "exact",
+                    OracleKind::ExactErrorVariant,
+                    OracleStrength::Medium,
+                ),
+                OracleStrength::Medium,
+            ),
+            (
+                ProbeFamily::ErrorPath,
                 oracle("broad", OracleKind::BroadError, OracleStrength::Weak),
                 OracleStrength::Weak,
             ),
@@ -4968,6 +4977,11 @@ return Err(\"typed pin\".into());
                 ProbeFamily::ReturnValue,
                 oracle("exact", OracleKind::ExactValue, OracleStrength::Weak),
                 OracleStrength::Weak,
+            ),
+            (
+                ProbeFamily::ReturnValue,
+                oracle("exact", OracleKind::ExactValue, OracleStrength::Medium),
+                OracleStrength::Medium,
             ),
             (
                 ProbeFamily::Predicate,
