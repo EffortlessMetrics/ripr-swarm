@@ -880,6 +880,16 @@ fn node_test_context_assert_needs_the_runner_receiver_and_a_known_method() {
             "t.check.equal(lateFee(10), 20);",
         ),
         (
+            "no strict member on the context assert",
+            "import test from \"node:test\";",
+            "t.assert.strict.equal(lateFee(10), 20);",
+        ),
+        (
+            "snapshot is outside the table",
+            "import test from \"node:test\";",
+            "t.assert.snapshot(lateFee(10));",
+        ),
+        (
             "unknown method",
             "import test from \"node:test\";",
             "t.assert.verifies(lateFee(10), 20);",

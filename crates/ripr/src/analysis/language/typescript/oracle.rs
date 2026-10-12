@@ -1088,12 +1088,6 @@ fn assert_method_is_recognized(method: &str, flavor: AssertFlavor) -> bool {
     )
 }
 
-/// Match a `node:assert` / chai `assert` call made through an imported
-/// binding (#4547): `assert.strictEqual(actual, expected)`,
-/// `chai.assert.equal(...)`, a bare named method `strictEqual(actual,
-/// expected)`, or the callable `assert(value)` (smoke). The receiver or callee
-/// must be a binding [`TypeScriptAssertionBindings`] recorded from an import,
-/// so a same-named local helper is not credited.
 /// RIPR-SPEC-0252 rule 1: `t.assert.<method>(...)` on a `node:test` test
 /// context. `t.assert` exposes the top-level `node:assert` functions, so the
 /// call reads as legacy `node:assert` does (`equal` is loose `==`). Only a
@@ -1137,6 +1131,12 @@ fn node_test_context_assert_assertion(
     )
 }
 
+/// Match a `node:assert` / chai `assert` call made through an imported
+/// binding (#4547): `assert.strictEqual(actual, expected)`,
+/// `chai.assert.equal(...)`, a bare named method `strictEqual(actual,
+/// expected)`, or the callable `assert(value)` (smoke). The receiver or callee
+/// must be a binding [`TypeScriptAssertionBindings`] recorded from an import,
+/// so a same-named local helper is not credited.
 pub(crate) fn module_assert_assertion_from_expression(
     expr: &Expression<'_>,
     source: &SourceText<'_>,

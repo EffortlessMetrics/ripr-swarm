@@ -63,9 +63,11 @@ test("late fee is two per day", (t) => {
 });
 ```
 
-Node 22's `node:test` gives each test context an `assert` object that
-exposes the top-level `node:assert` functions. `t.assert.equal(lateFee(10),
-20)` fails for the mutant `return 2 / days;`. RIPR-SPEC-0243 reads the
+The diff itself is a behavior-preserving rewrite; the corpus truth comes
+from the mutant `return 2 / days;` on that line. Node 22's `node:test`
+gives each test context an `assert` object that exposes the top-level
+`node:assert` functions, and `t.assert.equal(lateFee(10), 20)` fails for
+that mutant. RIPR-SPEC-0243 reads the
 callback's first parameter through the RIPR-SPEC-0085 receiver table
 (`t.is`, `t.deepEqual`, ...), where `t.assert.equal` is not a method, so the
 test has no assertion, its oracle is unknown and the finding is
@@ -113,8 +115,14 @@ documented decisions and proceed"). Recorded on #6654.
 
 - A file that runs under `node --test` without importing `node:test`
   (globals only) is not read.
-- `const { assert } = t;` and `t.assert` passed to a helper are not
-  followed.
+- `const { assert } = t;`, `t.assert` passed to a helper, optional or
+  parenthesized forms (`t.assert?.equal`, `(t).assert`), and `t.assert`
+  inside a `forEach` or `.then` callback or on an outer `t` inside a
+  subtest are not read (under-credit).
+- Shared with the AVA receiver path: a body block that redeclares the
+  receiver (`{ const t = fake; t.assert.equal(...) }`), a `t.todo()` call
+  in the body, and an un-awaited `t.assert.rejects(...)` keep their
+  assertion reading (#7507).
 
 ## Required Evidence
 
@@ -143,7 +151,8 @@ documented decisions and proceed"). Recorded on #6654.
    the subtest's receiver.
 6. The same calls in an AVA file, a file with no runner import, on
    `helper.assert`, on another context member (`t.check.equal`), through
-   `t["assert"]`, or with an unknown method: no assertion.
+   `t["assert"]` or `t.assert.strict`, or with a method outside the table
+   (`snapshot`, an unknown name): no assertion.
 
 ## Test Mapping
 
