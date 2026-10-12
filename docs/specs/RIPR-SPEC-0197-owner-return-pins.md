@@ -780,7 +780,10 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    it does not certify arbitrary cached or vendored crate bytes.
 4. Helper-local observation. The helper's entire statement list is exactly
    one immutable simple `let actual = super::owner();`, followed by one
-   `ensure!(actual == <decimal u8 literal>);`, followed by tail `Ok(())`.
+   message-free `ensure!(actual == <decimal u8 literal>);`, followed by tail
+   `Ok(())`. The macro has exactly one condition argument and no message/format
+   arguments: `ensure!(actual == 7, { return Ok(()); "ignored" })` can absorb
+   the failure inside genuine anyhow and is refused, not analyzed as a guard.
    The expected literal is fixed independently of the owner. The local's only
    references are its declaration and the whole left comparison operand.
    Parser identities bind the call, let, comparison and oracle line/text to
@@ -791,8 +794,17 @@ snapshot; a strong related oracle never substitutes for a missing premise.
 5. Error forwarding/execution. The helper and test both return the verified
    imported `Result<()>`. The test's entire body is the sole tail expression
    `check_answer()`; it passes existing collected-test ancestry, availability,
-   standard libtest and outcome-attribute gates. Thus a false comparison returns
-   the helper's Err unchanged to the test harness. Calls used as statements,
+   standard libtest and outcome-attribute gates. Cargo's target inventory must
+   identify the declaring root as the owning library target with test collection
+   enabled, and its parsed manifest must retain the default/explicit standard
+   harness; `test = false`, `harness = false`, custom test frameworks and unknown
+   target/harness identities refuse. Imported `anyhow::Result<()>` resolves to
+   `core::result::Result<(), anyhow::Error>` in the verified package: ordinary
+   libtest uses the standard Result Termination implementation, where unit Ok
+   succeeds and a Debug Error fails. Neither a custom Result type nor a custom
+   Termination implementation can supply this receipt. Thus a false comparison
+   returns the helper's Err unchanged to that admitted test harness. Calls used
+   as statements,
    dropped/bound Results, `.ok()`, `.is_ok()`, catches, conversions, `unwrap`,
    `?`, `return`, wrappers and additional statements are refused initially.
    Helpers classified Production remain refused even if a filename or local
@@ -824,11 +836,11 @@ not observations on the current source):
 | Frozen helper-no-oracle | one test passes | retains `reachable_unrevealed` |
 | Frozen helper-self-expected | one test passes | no new receipt, retains non-exposed |
 | Frozen production-lookalike | one test fails | answer retains `reachable_unrevealed`; production subjects retained |
-| Shadowed ensure or swallowed helper Result | one test passes | no new receipt or exposure |
+| Shadowed ensure, an ensure message with `return Ok(())`, skipped/helper-local closure assertion, or swallowed helper Result | one test passes | no new receipt or exposure |
 | Shadowed owner, rebound actual, unrelated equal numeric local/sink | one test passes | no new receipt or exposure |
 | Aliased/unresolved owner or macro/import/dependency identity | may fail | no new receipt or exposure |
 | Workspace/ancestor/CARGO_HOME/env source replacement, unreadable config or warm-cache config mutation | may pass | no new receipt or exposure, including canonical-looking metadata/lock identities |
-| Refused/ambiguous out-of-line parent, disabled/ignored/panic-expected test | not reliable | no new receipt or exposure |
+| Refused/ambiguous out-of-line parent, disabled/ignored/panic-expected test, custom Result/Termination or non-libtest target | not reliable | no new receipt or exposure |
 | Existing rule-7 assert_eq helpers and numeric assert_eq control | matched controls retained | accepted admission unchanged; no generic numeric propagation change |
 
 Implementation sequence after independent design review:
