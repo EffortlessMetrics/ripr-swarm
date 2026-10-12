@@ -97,9 +97,9 @@ gate: an `Outer` `Display` that calls `self.0.fmt(f)` reaches `Inner`'s
 when the test fails. `assert_eq!` does not run `Debug` for the same reason.
 A test that expects a panic (`#[should_panic]`, or a body that calls
 `catch_unwind`) passes by taking that path, so its failure messages count,
-and its `assert_eq!`, `assert_ne!`, `unwrap` and `expect` count for `Debug`.
-While any test expects a panic, failure messages in test-reached production
-code count too.
+and its `assert_eq!`, `assert_ne!`, `debug_assert_eq!`, `debug_assert_ne!`,
+`unwrap`, `unwrap_err`, `expect` and `expect_err` count for `Debug`. While any
+test expects a panic, the same holds for test-reached production code.
 
 Every other trait (`Drop`, `From`, `Iterator`, operator traits, a crate's own
 traits) runs from syntax too common or implicit to gate, so the self-type
@@ -141,11 +141,18 @@ may run, so each is named here:
 - Narrows: production code that uses the syntax on a value whose type its
   body never names, outside `self` and its fields (a local bound from a
   call's return value in a free function), does not count for that type.
-- Narrows: a `<` right after a capitalized name reads as generics, so
-  `T<x` with a one-letter constant `T` is not a comparison.
+- Narrows: an unspaced `<` right after a capitalized name reads as generics,
+  so `T<x` with a one-letter constant `T` and `Level::Low<p` are not
+  comparisons, nor is `'a'<c`, and a later unspaced `>` closes the misread
+  generics instead of comparing. Spaced operators always count.
+- Narrows: a panic a test observes another way than `#[should_panic]` or
+  `catch_unwind` (`thread::spawn(..).join().is_err()`, an async task's
+  `JoinError`) does not make failure messages count.
 - Narrows: a gated callee still waiting for its trait's syntax when the
   rounds reach `MAX_TRANSITIVE_DEPTH` is not reached.
 - Widens: a test file's unused `use` item counts as syntax.
+- Widens: one test that expects a panic makes failure paths count in every
+  test-reached production function.
 - Widens: identifiers match as bare words, so a binding named `clone` or a
   field named `hash` counts as that trait's syntax.
 - Widens: a placeholder counts in any string literal outside a failure

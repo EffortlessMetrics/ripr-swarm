@@ -790,7 +790,11 @@ const FAILURE_DEBUG: &[&str] = &[
 /// panic it causes (`catch_unwind`).
 fn expects_panic(test: &TestSummary) -> bool {
     test.attrs.iter().any(|attr| attr.contains("should_panic"))
-        || words(&strip_comments_and_strings(&test.body)).contains("catch_unwind")
+        || test
+            .body
+            .lines()
+            .map(strip_comments_and_strings)
+            .any(|line| words(&line).contains("catch_unwind"))
 }
 
 /// The first comparison operator (`<`, `>`, `<=`, `>=`) in `code`, with
@@ -799,6 +803,14 @@ fn expects_panic(test: &TestSummary) -> bool {
 /// item declares (`fn f<T>`) or in a qualified path (`<T as Trait>`); its
 /// `>` closes them. `->`, `=>`, `<<` and `>>` are not comparisons.
 fn comparison_operator(code: &str) -> Option<&'static str> {
+    // A spaced operator is never generics; checking it first keeps an
+    // earlier unspaced `Low<High` read as generics from hiding it.
+    if let Some(op) = [" < ", " > ", "<=", ">="]
+        .into_iter()
+        .find(|op| code.contains(op))
+    {
+        return Some(op.trim());
+    }
     let bytes = code.as_bytes();
     let mut generic_depth = 0usize;
     let mut i = 0;
@@ -837,9 +849,9 @@ fn opens_generics(before: &str) -> bool {
     }
     let (ident_start, ident) = last_ident(trimmed);
     let Some(first) = ident.chars().next() else {
-        // `(x)<y` and `v[0]<y` compare; `<T as Trait>` after `(`, `=` or a
-        // space opens a qualified path.
-        return !trimmed.ends_with([')', ']']);
+        // `(x)<y`, `v[0]<y`, `f()?<y` and `"a"<s` compare; `<T as Trait>`
+        // after `(`, `=` or a space opens a qualified path.
+        return !trimmed.ends_with([')', ']', '?', '"']);
     };
     if first.is_ascii_digit() {
         return false;
@@ -1457,6 +1469,11 @@ mod tests {
             ("if n>=MAX { }", ">="),
             ("if LIMIT<n { }", "<"),
             ("let v: Vec<u8> = f(); if v.len()>3 { }", ">"),
+            // An unclosed `Low<High` must not swallow a later spaced `>`.
+            ("assert!(Low<High); assert!(b > a);", ">"),
+            ("if f()?<3 { }", "<"),
+            ("if \"\"<s { }", "<"),
+            ("assert!(Low<High); if x >= y { }", ">="),
         ] {
             assert_eq!(comparison_operator(code), Some(op), "{code}");
         }
@@ -1487,6 +1504,17 @@ mod tests {
                 (GatedTrait::Debug, "assert_eq"),
                 (GatedTrait::PartialEq, "assert_eq"),
             ]
+        );
+        assert_eq!(
+            gated_trait_uses("let n = parse(s).unwrap();", true),
+            vec![
+                (GatedTrait::Debug, "unwrap"),
+                (GatedTrait::FromStr, "parse")
+            ]
+        );
+        assert_eq!(
+            gated_trait_uses("let n = parse(s).unwrap();", false),
+            vec![(GatedTrait::FromStr, "parse")]
         );
         assert_eq!(
             format_placeholders("panic!(\"{:?}\", v);", true),

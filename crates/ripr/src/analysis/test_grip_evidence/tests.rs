@@ -18716,3 +18716,64 @@ fn debug_impl_a_passing_test_formats_only_in_its_panic_stays_ungripped() -> Resu
     assert_eq!(class, SeamGripClass::Ungripped);
     Ok(())
 }
+
+#[test]
+fn debug_impl_a_catch_unwind_test_formats_in_its_panic_is_opaque() -> Result<(), String> {
+    // #6662 review: a comment line above `catch_unwind` must not hide it,
+    // and the caught panic formats `Amount` with `Debug`.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             #[test]\n\
+             fn reports() {\n\
+                 // the panic below is expected\n\
+                 let caught = std::panic::catch_unwind(|| panic!(\"{:?}\", Amount(150)));\n\
+                 assert!(caught.is_err());\n\
+             }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_production_code_a_should_panic_test_reaches_formats_is_opaque() -> Result<(), String>
+{
+    // A `#[should_panic]` test passes through `check`'s panic, whose message
+    // formats `Amount` with `Debug`; the test's own body formats nothing.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             pub fn check(value: &Amount) { if value.0 != 0 { panic!(\"bad {:?}\", value as &Amount); } }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::{check, Amount};\n\
+             #[test]\n\
+             #[should_panic]\n\
+             fn rejects() { check(&Amount(150)); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
