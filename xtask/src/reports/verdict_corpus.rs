@@ -2283,7 +2283,8 @@ pub(crate) fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverag
     let mut violations = validate(&corpus, dir);
     violations.extend(coverage::coverage_violations(&corpus, &ledger, &specs));
     if violations.is_empty() {
-        let coverage = coverage::spec_example_coverage(&corpus, &ledger, &specs);
+        let mut coverage = coverage::spec_example_coverage(&corpus, &ledger, &specs);
+        coverage.ledger = coverage::ledger_label(dir);
         Ok((corpus, coverage))
     } else {
         Err(format!(

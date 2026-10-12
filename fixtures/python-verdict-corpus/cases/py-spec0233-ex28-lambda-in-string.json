@@ -41,5 +41,8 @@
       "static_unknown"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#28"
+  ]
 }
