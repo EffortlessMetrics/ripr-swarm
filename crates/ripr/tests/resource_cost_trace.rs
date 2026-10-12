@@ -76,8 +76,8 @@ const CHECK_ARGS: &[&str] = &[
 /// the two runs are compared; everything else stays byte-compared via the
 /// canonical JSON forms.
 fn mask_volatile_identity(stdout: &[u8]) -> Result<serde_json::Value, String> {
-    let mut value: serde_json::Value = serde_json::from_slice(stdout)
-        .map_err(|error| format!("stdout is not JSON: {error}"))?;
+    let mut value: serde_json::Value =
+        serde_json::from_slice(stdout).map_err(|error| format!("stdout is not JSON: {error}"))?;
     fn strip(part: &mut serde_json::Value) {
         if let serde_json::Value::Object(map) = part {
             map.remove("generated_at");

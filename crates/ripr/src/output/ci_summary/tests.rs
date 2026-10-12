@@ -108,7 +108,13 @@ impl Fixture {
         gate_baseline: &str,
         comment_mode: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        self.render_with_base(languages, upload_sarif, gate_baseline, comment_mode, "trunk")
+        self.render_with_base(
+            languages,
+            upload_sarif,
+            gate_baseline,
+            comment_mode,
+            "trunk",
+        )
     }
 
     fn render_with_base(

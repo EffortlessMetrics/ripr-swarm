@@ -14865,7 +14865,10 @@ fn pilot_withholds_static_limitations_and_keeps_a_true_gap()
 /// the content commitment covers those bytes). Cross-run equality checks drop
 /// the volatile artifact identity fields and keep comparing everything else.
 fn without_volatile_repo_artifact_fields(mut value: serde_json::Value) -> serde_json::Value {
-    if let Some(artifact) = value.get_mut("artifact").and_then(|part| part.as_object_mut()) {
+    if let Some(artifact) = value
+        .get_mut("artifact")
+        .and_then(|part| part.as_object_mut())
+    {
         artifact.remove("generated_at");
         artifact.remove("content_sha256");
     }

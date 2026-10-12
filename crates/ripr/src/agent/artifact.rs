@@ -2137,21 +2137,22 @@ mod tests {
                 format!("generated_at must use the unix_ms: shape, got {generated_at}")
             })?;
             if millis.parse::<u128>().is_err() {
-                return Err(format!("generated_at millis must parse, got {generated_at}"));
+                return Err(format!(
+                    "generated_at millis must parse, got {generated_at}"
+                ));
             }
 
             // The two-pass content commitment must keep the stamp fixed:
             // the spliced document carries the same generated_at the hash
             // pass committed.
-            let raw_with_placeholder =
-                serde_json::to_string_pretty(&json!({
-                    "schema_version": crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION,
-                    "scope": "repo",
-                    "run_status": "complete",
-                    "artifact": metadata,
-                    "seams": [],
-                }))
-                .map_err(|error| format!("render artifact document: {error}"))?;
+            let raw_with_placeholder = serde_json::to_string_pretty(&json!({
+                "schema_version": crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION,
+                "scope": "repo",
+                "run_status": "complete",
+                "artifact": metadata,
+                "seams": [],
+            }))
+            .map_err(|error| format!("render artifact document: {error}"))?;
             let digest = content_sha256_with_placeholder(&raw_with_placeholder)
                 .map_err(|error| error.to_string())?;
             let committed = replace_content_commitment(&raw_with_placeholder, &digest)
@@ -2159,9 +2160,7 @@ mod tests {
             let committed_value: Value = serde_json::from_str(&committed)
                 .map_err(|error| format!("parse committed document: {error}"))?;
             if committed_value["artifact"]["generated_at"] != metadata["generated_at"] {
-                return Err(
-                    "content commitment changed generated_at across passes".to_string()
-                );
+                return Err("content commitment changed generated_at across passes".to_string());
             }
             // And a fresh metadata stamp must land within the same run.
             let seams_metadata =

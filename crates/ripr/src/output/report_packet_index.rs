@@ -2891,7 +2891,11 @@ mod tests {
         let Some(entry) = entry else {
             return Err(format!(
                 "expected scanned receipt entry, got {:?}",
-                group.entries.iter().map(|entry| &entry.id).collect::<Vec<_>>()
+                group
+                    .entries
+                    .iter()
+                    .map(|entry| &entry.id)
+                    .collect::<Vec<_>>()
             ));
         };
         assert!(entry.available);

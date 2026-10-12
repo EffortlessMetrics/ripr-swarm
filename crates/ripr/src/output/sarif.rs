@@ -2059,10 +2059,7 @@ weakly_gripped = "note"
             let id = rule["id"]
                 .as_str()
                 .ok_or_else(|| "rule missing id".to_string())?;
-            if rule["shortDescription"]["text"]
-                .as_str()
-                .is_none()
-            {
+            if rule["shortDescription"]["text"].as_str().is_none() {
                 return Err(format!("rule {id} missing shortDescription"));
             }
             let full = rule["fullDescription"]["text"]
@@ -2074,7 +2071,9 @@ weakly_gripped = "note"
             let help_uri = rule["helpUri"]
                 .as_str()
                 .ok_or_else(|| format!("rule {id} missing helpUri"))?;
-            let class = id.strip_prefix("ripr.finding.").or_else(|| id.strip_prefix("ripr.seam."));
+            let class = id
+                .strip_prefix("ripr.finding.")
+                .or_else(|| id.strip_prefix("ripr.seam."));
             let Some(class) = class else {
                 return Err(format!("rule id {id} does not name its class"));
             };
