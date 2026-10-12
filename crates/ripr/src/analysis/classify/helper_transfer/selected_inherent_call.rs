@@ -256,12 +256,20 @@ fn sole_top_level_initializer_call(
     root: &SyntaxNode,
 ) -> Option<ast::CallExpr> {
     let body = function.body()?;
-    // Type-qualified paths need a separate resolver; do not hide a competing
-    // reference behind an unsupported `<Type>::method` spelling.
+    // Closed bodies require declaration-bound static calls. Type anchors and
+    // instance-method calls would need a separate callable resolver.
+    if body.syntax().descendants().any(|node| {
+        ast::TypeAnchor::can_cast(node.kind()) || ast::MethodCallExpr::can_cast(node.kind())
+    }) {
+        return None;
+    }
+    // Every direct invocation needs a declaration-bound callee. Computed,
+    // external and value-bound calls can hide aliases of any name.
     if body
         .syntax()
         .descendants()
-        .any(|node| ast::TypeAnchor::can_cast(node.kind()))
+        .filter_map(ast::CallExpr::cast)
+        .any(|call| !matches!(call.expr(), Some(ast::Expr::PathExpr(_))))
     {
         return None;
     }
@@ -282,20 +290,18 @@ fn sole_top_level_initializer_call(
             if selected.replace(expression).is_some() {
                 return None;
             }
-        } else if names.len() > 1
-            && (names.last().map(String::as_str) == expected.last().copied()
-                || matches!(
-                    names.first().map(String::as_str),
-                    Some("super" | "self" | "crate")
-                ))
-            && !(expected.len() == 2
-                && names.len() == 2
-                && distinct_root_inherent_function(root, &names[0], &names[1], expected[0]))
-        {
-            // A parent re-export can make `super::helper` the same function.
-            // Unknown qualifications must not disappear from uniqueness;
-            // only a bound distinct inherent function declaration is noncompeting.
-            return None;
+        } else {
+            let direct_call = expression
+                .syntax()
+                .parent()
+                .and_then(ast::CallExpr::cast)
+                .is_some_and(|call| {
+                    call.expr()
+                        .is_some_and(|callee| callee.syntax() == expression.syntax())
+                });
+            if (names.len() > 1 || direct_call) && !source_bound_root_callable(root, &names) {
+                return None;
+            }
         }
     }
     // Count equivalent root spellings and function-value escapes before
@@ -354,14 +360,29 @@ fn sole_top_level_initializer_call(
     .then_some(call)
 }
 
-fn distinct_root_inherent_function(
-    root: &SyntaxNode,
-    receiver: &str,
-    method: &str,
-    selected_receiver: &str,
-) -> bool {
-    if receiver == selected_receiver
-        || name_count(root, receiver) != 1
+fn source_bound_root_callable(root: &SyntaxNode, names: &[String]) -> bool {
+    match names {
+        [name] => {
+            if name_count(root, name) != 1 {
+                return false;
+            }
+            root.children().filter_map(ast::Fn::cast).any(|function| {
+                function
+                    .name()
+                    .is_some_and(|declared| declared.text() == name.as_str())
+                    && plain_sync(&function)
+                    && !function
+                        .attrs()
+                        .any(|attr| attr.simple_name().as_deref() == Some("test"))
+            })
+        }
+        [receiver, method] => root_inherent_function(root, receiver, method),
+        _ => false,
+    }
+}
+
+fn root_inherent_function(root: &SyntaxNode, receiver: &str, method: &str) -> bool {
+    if name_count(root, receiver) != 1
         || !root.children().filter_map(ast::Struct::cast).any(|item| {
             item.generic_param_list().is_none()
                 && item.name().is_some_and(|name| name.text() == receiver)
@@ -424,7 +445,7 @@ mod tests {
     use crate::analysis::facts::OwnedRustIndex;
     use std::path::Path;
 
-    const SOURCE: &str = "struct Config { errors: Vec<String> }\nfn collect(flag: bool) -> Vec<String> { Vec::new() }\nimpl Config { fn parse(flag: bool) -> Self { let errors = collect(flag); Self { errors } } }\nfn sibling() { let ignored = collect(false); }\n#[test]\nfn direct_test() { let ignored = collect(false); }\n#[test]\nfn observes() { let malformed = Config::parse(true); if malformed.errors.len() != 0 { std::process::abort(); } }\n";
+    const SOURCE: &str = "struct Config { errors: Vec<String> }\nfn collect(flag: bool) -> Vec<String> { Vec::new() }\nimpl Config { fn parse(flag: bool) -> Self { let errors = collect(flag); Self { errors } } }\nfn sibling() { let ignored = collect(false); }\n#[test]\nfn direct_test() { let ignored = collect(false); }\n#[test]\nfn observes() { let malformed = Config::parse(true); check(&malformed); }\nfn check(config: &Config) { if config.errors.len() != 0 { std::process::abort(); } }\n";
 
     fn index(source: &str) -> Result<RustIndex, String> {
         let facts = crate::analysis::syntax::ra::summarize_file_with_parser(
@@ -656,6 +677,52 @@ mod tests {
     }
 
     #[test]
+    fn refuses_unknown_callable_references_regardless_of_name() -> Result<(), String> {
+        for (declaration, call) in [
+            (
+                "struct Other; impl Other { const alias: fn(bool) -> Config = Config::parse; }",
+                "Other::alias(false)",
+            ),
+            (
+                "struct Other; trait Callable { const alias: fn(bool) -> Config; } impl Callable for Other { const alias: fn(bool) -> Config = Config::parse; }",
+                "Other::alias(false)",
+            ),
+            (
+                "const ALIAS: fn(bool) -> Config = Config::parse;",
+                "ALIAS(false)",
+            ),
+        ] {
+            let source = format!(
+                "{declaration}\n{}",
+                SOURCE.replace(
+                    "let malformed",
+                    &format!("let other = {call}; let malformed")
+                )
+            );
+            assert!(receipts(&source)?.is_empty(), "unknown {call}");
+        }
+        let original_observer = SOURCE.replace(
+            "check(&malformed);",
+            "if malformed.errors.len() != 0 { std::process::abort(); }",
+        );
+        assert!(
+            receipts(&original_observer)?.is_empty(),
+            "original opaque observer scope"
+        );
+        let opaque_call =
+            SOURCE.replace("check(&malformed);", "if false { std::process::abort(); }");
+        assert!(
+            receipts(&opaque_call)?.is_empty(),
+            "opaque call independently of method syntax"
+        );
+        for call in ["std::process::abort()", "malformed.errors.len()"] {
+            let source = SOURCE.replace("check(&malformed);", &format!("let ignored = {call};"));
+            assert!(receipts(&source)?.is_empty(), "opaque {call}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn refuses_unsupported_unique_path_spellings() -> Result<(), String> {
         for spelling in [
             "Config::r#parse(true)",
@@ -827,13 +894,13 @@ mod tests {
                 "fn parse(flag: bool) -> Self",
                 "fn parse(flag: bool) -> Result<Self, ()>",
             )
-            .replace("Self { errors }", "Ok(Self { errors })")
+            .replace("Self { errors }", "wrap(errors)")
             .replace("fn observes() {", "fn observes() -> Result<(), ()> {")
             .replace("Config::parse(true);", "Config::parse(true)?;")
-            .replace(
-                "std::process::abort(); } }",
-                "std::process::abort(); } Ok(()) }",
-            );
+            .replace("check(&malformed); }", "check(&malformed); success() }");
+        let source = format!(
+            "{source}\nfn wrap(errors: Vec<String>) -> Result<Config, ()> {{ Ok(Config {{ errors }}) }}\nfn success() -> Result<(), ()> {{ Ok(()) }}\n"
+        );
         let proofs = receipts(&source)?;
         assert_eq!(proofs.len(), 1);
         assert_eq!(

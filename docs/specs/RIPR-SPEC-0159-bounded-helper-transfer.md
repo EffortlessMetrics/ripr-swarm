@@ -33,7 +33,13 @@ can only hint that a caller "may lead here" without changing anything.
   path on another root struct is noncompeting only when its member binds to one
   plain inherent function declaration. Associated constants, trait items and
   unresolved or ambiguous member declarations refuse; nominal type identity
-  alone does not establish callable identity. Receipts may
+  alone does not establish callable identity. Selected test/caller bodies form
+  a closed direct-call scope: every nonselected direct call and qualified value
+  reference must bind to a plain root function or inherent function declaration,
+  regardless of its name. Unknown constants, trait members, external paths,
+  computed callees and instance-method calls refuse. This deliberately narrows
+  acceptance; checks may live in declared root functions, but their invocation,
+  value flow and oracle ownership are not established here. Receipts may
   accompany a Partial returned-ledger witness; they add no propagation edge,
   activation, collection element/index, Config/Result payload or oracle credit.
   Wrapper-local collection/field propagation remains refused.
