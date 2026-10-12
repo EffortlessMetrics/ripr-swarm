@@ -2182,10 +2182,10 @@ const METADATA: &[CommandMetadata] = &[
         state_target: None,
         json_support: false,
         example: "ripr cache",
-        next_routes: &["cache status", "cache clear"],
+        next_routes: &["cache status", "cache export", "cache clear"],
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
-        limitations: "prints the cache surface; status and clear carry the behavior.",
+        limitations: "prints the cache surface; status, export and clear carry the behavior.",
         not_applicable_reason: None,
     },
     CommandMetadata {
@@ -2208,6 +2208,38 @@ const METADATA: &[CommandMetadata] = &[
         stop_states: &[],
         exit: EXIT_COMPLETED_OR_FAILED,
         limitations: "read-only; it does not evict entries.",
+        not_applicable_reason: None,
+    },
+    CommandMetadata {
+        id: "cmd:cache.export",
+        summary: "Copy a validated current-input cache snapshot without historical generations.",
+        task: "Diagnose setup",
+        workflows: &["setup", "reports"],
+        operation: CommandOperation::WritesArtifacts,
+        cost: CommandCost::Workspace,
+        effects: CommandEffects {
+            may_start_child_process: true,
+            ..READS_ONLY
+        },
+        primary_inputs: &[
+            "current workspace bytes and configuration",
+            "the live workspace cache",
+        ],
+        outputs: CommandOutputs {
+            default: Some("current-input cache snapshot and JSON export report"),
+            optional: &[],
+        },
+        state_target: None,
+        json_support: true,
+        example: "ripr cache export --out NEW_DIRECTORY",
+        next_routes: &["cache status"],
+        stop_states: &[
+            "missing current classified cache",
+            "invalid present cache or changed inputs",
+            "existing, overlapping or linked output",
+        ],
+        exit: EXIT_COMPLETED_OR_FAILED,
+        limitations: "reads the live cache without modifying it; hashes workspace bytes and validates copied entries. Output is independent files in a fresh directory. Require exit zero before restoration; failure retains a named incomplete output. No fixed byte or memory bound.",
         not_applicable_reason: None,
     },
     CommandMetadata {

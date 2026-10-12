@@ -14422,11 +14422,14 @@ tests = [
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_refuses_missing_corrupt_wrong_key_and_escaping_shards",
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_counts_missing_optional_facts_and_refuses_corrupt_present_facts",
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::normalized_source_layout_preserves_relative_and_parent_component_spellings",
+  "crates/ripr/src/cli/command_metadata.rs::tests::production_table_is_complete_and_consistent",
+  "crates/ripr/src/cli/help_json.rs::tests::production_document_is_valid_and_nonempty",
 ]
 code = [
   "crates/ripr/src/analysis/seam_cache/export.rs",
   "crates/ripr/src/analysis/seam_inventory.rs",
   "crates/ripr/src/cli/commands/cache.rs",
+  "crates/ripr/src/cli/command_metadata.rs",
 ]
 outputs = ["docs/OUTPUT_SCHEMA.md"]
 metrics = ["unit_test_pass_rate"]

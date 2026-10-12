@@ -11,8 +11,9 @@ Linked issues: [#7517](https://github.com/EffortlessMetrics/ripr-swarm/issues/75
 Support-tier impact: none. Selection changes retained cache membership, not
 analysis coverage, evidence classes or support tiers.
 
-Policy impact: none. No dependencies, process spawns, network, workflow or
-security-policy changes.
+Policy impact: no dependency, network, workflow or security-policy changes.
+Implicit root resolution retains the existing bounded Git child probe; export
+does not introduce a new resolver or analysis process.
 
 ## Problem
 
@@ -108,6 +109,9 @@ against hostile directory replacement, or change releases and dependencies.
   binds the ordinary relative-root key rather than a canonicalized substitute.
 - `cli::commands::cache::tests::export_parser_requires_one_destination_and_keeps_its_flags_separate`
   covers the public argument boundary.
+- `cli::command_metadata::tests::production_table_is_complete_and_consistent`
+  and `cli::help_json::tests::production_document_is_valid_and_nonempty` cover
+  the command's governed machine-help registration.
 - `analysis::seam_cache::export::tests::snapshot_keeps_current_manifest_references_and_file_facts_without_history`
   covers both classified families, shard references and historical exclusion.
 - `analysis::seam_cache::export::tests::snapshot_refuses_missing_corrupt_wrong_key_and_escaping_shards`
@@ -121,6 +125,8 @@ against hostile directory replacement, or change releases and dependencies.
 - `crates/ripr/src/analysis/seam_cache/export.rs::export_current` owns confinement,
   selection, independent copying, loader validation and the final identity check.
 - `crates/ripr/src/cli/commands/cache.rs` owns argument parsing and success JSON.
+- `crates/ripr/src/cli/command_metadata.rs` registers the command's machine-help
+  effects, output role, cost and exit contract.
 - `docs/OUTPUT_SCHEMA.md` defines logical-byte and entry-count report semantics.
 
 ## Metrics
