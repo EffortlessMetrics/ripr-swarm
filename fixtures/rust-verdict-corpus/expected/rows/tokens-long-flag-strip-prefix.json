@@ -1,0 +1,23 @@
+{
+  "case_id": "tokens-long-flag-strip-prefix",
+  "subject_id": "authored-tokens",
+  "origin": "authored",
+  "anchor": "src/flow.rs:15",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "literal_through_strip_prefix_boundary",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed",
+    "infection_unknown"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1,0 +1,45 @@
+{
+  "case_id": "vitest-orders-user-rejects-to-throw",
+  "subject_id": "authored-ts-vitest-orders",
+  "diff": "cases/vitest-orders-user-rejects-to-throw.diff",
+  "anchor": {
+    "file": "src/user.ts",
+    "line": 8
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "vitest_await_expect_rejects_tothrow_message",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "node 22.22.0; vitest 5.0.3; typescript 5.9; @stryker-mutator/core 10.0.0 (vitest runner)",
+    "mutants": [
+      {
+        "replacement": "throw new Error(``);",
+        "mutated_line": "throw new Error(``);",
+        "outcome": "tests_failed",
+        "failing_test": "rejects a non-positive id",
+        "equivalence_review": "not equivalent: the rejection message becomes empty"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The async owner throws on a non-positive id; the rewrite turns the message string into a template literal. await expect(loadUser(-1)).rejects.toThrow(\"user id must be positive\") checks the message substring, so the empty-message mutant fails. ripr reports exposed with exact_error_variant/strong.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

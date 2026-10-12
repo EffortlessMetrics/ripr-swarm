@@ -1,0 +1,35 @@
+//! A settlement that reports through a sink, tested with a hand-rolled mock.
+
+pub trait Sink {
+    fn send(&mut self, order: u32, amount: u64);
+}
+
+/// Sends the order total with a one percent fee.
+pub fn settle(sink: &mut dyn Sink, order: u32, amount: u64) {
+    let fee = amount / 100;
+    sink.send(order, amount + fee);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Default)]
+    struct Recorder {
+        calls: Vec<(u32, u64)>,
+    }
+
+    impl Sink for Recorder {
+        fn send(&mut self, order: u32, amount: u64) {
+            self.calls.push((order, amount));
+        }
+    }
+
+    #[test]
+    fn settle_sends_once_for_the_order() {
+        let mut recorder = Recorder::default();
+        settle(&mut recorder, 7, 1_000);
+        assert_eq!(recorder.calls.len(), 1);
+        assert_eq!(recorder.calls[0].0, 7);
+    }
+}

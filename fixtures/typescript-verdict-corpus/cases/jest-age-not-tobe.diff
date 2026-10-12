@@ -1,0 +1,9 @@
+diff --git a/src/age.ts b/src/age.ts
+index 0000000..1111111 100644
+--- a/src/age.ts
++++ b/src/age.ts
+@@ -1,3 +1,3 @@
+ export function isAdult(age: number): boolean {
+-  return age >= 18;
++  return 18 <= age;
+ }

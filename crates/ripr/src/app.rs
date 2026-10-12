@@ -11,6 +11,7 @@ pub(crate) mod causal_projection;
 mod check;
 pub(crate) mod check_artifact;
 mod context;
+pub(crate) mod diff_source;
 mod explain;
 pub(crate) mod impacted_evidence;
 mod navigation;
@@ -36,6 +37,11 @@ pub(crate) mod repair_card_handoff;
 /// real-opportunity accounting that back the versioned decision receipt.
 pub mod repair_card_usability;
 pub(crate) mod ripr_plus;
+/// Task-first repair selection services behind `ripr repair` and
+/// `ripr continue` (#6305). The CLI adapter parses and renders; the
+/// decisions here reuse the inventory, eligibility, selector, and attempt
+/// authorities.
+pub(crate) mod task_first;
 
 /// Shared final qualification boundary for legacy RIPR+ receipt composition.
 /// Exposure summaries and gap ledgers preserve useful observed counts, but
@@ -74,7 +80,7 @@ pub(crate) const PERL_FACT_PACKET_SCHEMA: &str = "ripr-perl-facts-v1";
 /// version string moves.
 pub(crate) const AGENT_SEAM_PACKET_SCHEMA_VERSION: &str = "0.5";
 pub(crate) use crate::analysis::repair_route::repair_route_readiness;
-pub(crate) use check::check_with_progress;
+pub(crate) use check::check_with_progress_core;
 #[cfg(test)]
 pub(crate) use check::check_workspace_repo_with_origins;
 #[cfg(test)]
@@ -98,7 +104,8 @@ pub(crate) use explain::{
     explain_finding_with_config_and_navigation_mode,
 };
 pub(crate) use navigation::{
-    FindingDrillIn, FindingNavigation, finding_navigation, finding_navigation_with_worktree,
+    CheckDiffProvenance, FindingDrillIn, FindingNavigation, finding_navigation,
+    finding_navigation_with_worktree,
 };
 pub(crate) use progress::{
     AnalysisProgressEvent, AnalysisProgressScope, AnalysisProgressSink, AnalysisProgressStage,
@@ -293,6 +300,11 @@ pub struct CheckOutput {
     /// `--worktree` for files it cannot see. Cleared together with
     /// `unanalyzed_working_tree` for every non-committed-history mode.
     pub(crate) untracked_working_tree_source_paths: Vec<String>,
+    /// Python test files in the repository, set only when a changed Rust file
+    /// has a `no_static_path` finding (#6340). Human-output context only: ripr
+    /// does not link Python tests to Rust changes. Never serialized; no
+    /// verdict, class or gate reads it.
+    pub(crate) unlinked_python_tests: Option<crate::analysis::UnlinkedPythonTests>,
     /// Suppression-policy application outcome (#1441). `Some` only when the
     /// caller passed `--suppression-policy`; findings named here stay in
     /// `findings` (visible, marked suppressed by renderers) while the
@@ -306,6 +318,11 @@ pub struct CheckOutput {
     /// lower bound, and the result is never a gate, baseline, badge, or RIPR
     /// Zero input (`gate_eligibility: ineligible`).
     pub partial_scope: Option<crate::analysis::PartialDiffScope>,
+    /// The base and head a live-repository diff analyzed (ref and commits,
+    /// and whether the diff ended at `HEAD` or at the working tree), named in
+    /// every diff-scoped check header. `None` when the input was a diff file,
+    /// stdin, a candidate tree, or a repo-scope run.
+    pub(crate) analyzed_revisions: Option<crate::analysis::AnalyzedRevisions>,
 }
 
 /// Renders a previously computed [`CheckOutput`] in the requested format.
@@ -340,9 +357,10 @@ pub(crate) fn render_check_with_config_and_navigation_and_progress(
     config: &RiprConfig,
     drill_in: Option<&FindingDrillIn>,
     progress: Option<&dyn AnalysisProgressSink>,
+    provenance: CheckDiffProvenance,
 ) -> Result<String, String> {
     output::render::render_check_with_config_and_navigation_and_progress(
-        output, format, config, drill_in, progress,
+        output, format, config, drill_in, progress, provenance,
     )
 }
 

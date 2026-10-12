@@ -47,6 +47,29 @@ One coherent claim has one current candidate, current proof and review for the a
 13. Only a current `REVIEW_READY` PR head may enter `finish-pr` merge convergence. Explicit incomplete or blocking review states remain draft or durably in flight.
 14. After merge or deliberate closure, verify current `main`, update delivered versus remaining acceptance, update parents, and release the candidate worktree.
 
+# Continuation handoff
+
+At a phase change or bounded worker return, confirm the current user scope and
+surviving limits before selecting the next transition.
+
+A bounded worker finishing its phase returns an obligation, not parent
+completion. The delivery owner verifies its evidence and takes the next useful
+authorized transition, or assigns it through an available worker. Before handback
+or a remote-owned wait, retain in the existing issue/PR: claim and exact head,
+observed proof/review with artifact links, unmet acceptance, next action and its
+owner, and the actual prerequisite/capability/authorization boundary if any.
+For pending commands, include the original task/driver handle and exact log/report
+paths; keep an unobserved native terminal result distinct from a pass report.
+When native writes are unavailable, use the existing task return and name the
+capable owner needed to mirror it; do not invent access or stop available proof.
+Keep that record current instead of relying on the long briefing or adding a
+tracker. A fresh worker reads those native objects and enters the earliest
+missing judgment. If no executable transition remains, name who/what can resume;
+do not imply an unarranged worker or background watch will do it.
+
+Use the [paired continuation scenarios](../../../docs/agent-context/delivery-continuation-scenarios.md)
+for changes to these boundaries; scenario decisions do not establish real delivery.
+
 # Candidate law
 
 - One coherent claim normally has one branch, worktree, candidate, and PR.

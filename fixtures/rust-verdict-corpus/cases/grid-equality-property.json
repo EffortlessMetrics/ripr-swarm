@@ -1,0 +1,59 @@
+{
+  "case_id": "grid-equality-property",
+  "subject_id": "authored-grid-equality",
+  "diff": "cases/grid-equality-property.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_equality",
+  "test_shape": "property_invariant_loop",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "b != a",
+        "mutated_line": "b != a",
+        "outcome": "tests_failed",
+        "failing_test": "tests::same_currency_is_reflexive",
+        "equivalence_review": "not equivalent: same_currency_is_reflexive fails on it"
+      },
+      {
+        "replacement": "true",
+        "mutated_line": "true",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: same_currency(\"USD\", \"EUR\") becomes true; reflexivity only checks equal pairs"
+      },
+      {
+        "replacement": "false",
+        "mutated_line": "false",
+        "outcome": "tests_failed",
+        "failing_test": "tests::same_currency_is_reflexive",
+        "equivalence_review": "not equivalent: same_currency_is_reflexive fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: equality (`==` operands swapped; mutants flip to `!=` or replace the body with a constant bool) x property_invariant_loop. The test checks an invariant over a loop of inputs, not exact outputs; 2 of 3 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0186, RIPR-SPEC-0197, RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown",
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

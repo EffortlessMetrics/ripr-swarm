@@ -1,0 +1,44 @@
+{
+  "case_id": "jest-spec0234-ex16",
+  "subject_id": "authored-ts-jest-oracles",
+  "diff": "cases/jest-spec0234-ex16.diff",
+  "anchor": {
+    "file": "src/priceEx16.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_default_import_binds_other_function",
+  "hard_case": "the default import binds roundEx16, not the owner, though the local name equals the owner name",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2; ts-jest 29.4.14; typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the edit is the spec's behavior change (140 becomes 130 for amount 150)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Adapted: priceEx16.ts adds `export default function roundEx16`, and test/otherEx16.test.ts does `import priceEx16 from \"../src/priceEx16\"`, so the call is Math.round(150); the stored expectation is toBe(150) instead of the spec's toBe(130) so the suite is green, and the edit survives because the owner is never called. ripr reports exposed with direct_owner_call and exact_value / strong: false exposure on a not_discriminated case. (spec says today exposed, direct_owner_call; ripr matches it) Spec cells: RIPR-SPEC-0243 example 16",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

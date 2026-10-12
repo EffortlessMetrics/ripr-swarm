@@ -36,7 +36,7 @@ export function getConfig(resource?: vscode.Uri): RiprConfig {
     serverVersion: config.get<string>('server.version', ''),
     downloadBaseUrl: config.get<string>('server.downloadBaseUrl', ''),
     checkMode: config.get<'instant' | 'draft' | 'fast' | 'deep' | 'ready'>('check.mode', 'draft'),
-    baseRef: config.get<string>('baseRef', 'origin/main'),
+    baseRef: config.get<string>('baseRef', ''),
     includeUnchangedTests: config.get<boolean>('includeUnchangedTests', true),
     seamDiagnostics: explicitSetting<boolean>(config, 'seamDiagnostics'),
     diagnosticProfile: explicitSetting<DiagnosticProfile>(config, 'diagnosticProfile'),

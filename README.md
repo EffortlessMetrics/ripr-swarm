@@ -51,7 +51,7 @@ Selected lines from the development [boundary example's checked output](fixtures
 ```text
   Changed behavior: amount >= discount_threshold
   Missing discriminator: amount == discount_threshold
-  Related test: tests/pricing.rs:4 below_threshold_has_no_discount
+  Related test (1 of 2 matched rows): tests/pricing.rs:4 below_threshold_has_no_discount (no test input reaches `amount == discount_threshold`)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
 ```
 
@@ -106,6 +106,19 @@ shown above, `--worktree`, and the repair steps below need a development build:
 cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm ripr
 ```
 
+This compiles from source in the workspace, with its fat-LTO release profile.
+A `cargo build --release` there took about 12 minutes (751 s) on a cold 4-core
+Linux container in October 2026 (`cargo install ripr` for 0.10.0 took about 2
+minutes on an earlier run). The packaged 0.11.0 crate drops that profile, so
+`cargo install ripr --locked` should build in about 4.6 minutes (275 s) once
+0.11.0 is on crates.io (measured by building the packaged crate with
+`cargo build --release` on a 4-core container, not a download). The
+walk's `doctor` and `check` runs after that each took under 3 seconds on small
+crates; `ripr pilot` takes longer on large repositories. There is no prebuilt 0.11
+download until 0.11.0 is published; the
+[first-run scoreboard](benchmarks/dx_scoreboard/README.md) tracks the install
+time so a rise shows.
+
 <a id="start-from-the-surface-you-already-use"></a>
 
 ## What you get
@@ -118,8 +131,10 @@ cargo install --locked --git https://github.com/EffortlessMetrics/ripr-swarm rip
 | Review in GitHub | Run `ripr init --ci github` to generate an advisory PR workflow with a summary and downloadable evidence. | [CI quickstart](docs/QUICKSTART.md#ci-first-hour) |
 
 `ripr check` inspects a change. `ripr pilot` explores the repository more broadly.
-`ripr agent repair` records a supported before/edit/after attempt; you or your
-agent write the test. `ripr first-pr` composes existing PR evidence rather than
+`ripr repair` records a supported before/edit/after attempt, continued with
+`ripr continue` and inspected with `ripr status` (`ripr agent repair` and
+`ripr agent status` are the advanced spellings of the same transaction); you or
+your agent write the test. `ripr first-pr` composes existing PR evidence rather than
 running analysis. See the [command guide](docs/COMMAND_HIERARCHY.md) for the
 complete paths, including read-only [MCP status](docs/interop/mcp.md).
 
@@ -132,15 +147,26 @@ ripr pilot --root .
 
 `check` reports gaps in the current change and prints the `ripr explain` and
 `ripr context` commands for the top finding; add `--format json` for
-machine-readable results, which omit those commands. `pilot` names one supported
-repair or explains why none is ready. Run the follow-up commands ripr prints
+machine-readable results that embed the same bounded `canonical_next_action`
+(class, selected item, root, diff source, and followable route). `pilot`
+names one supported repair or explains why none is ready. Run the follow-up
+commands ripr prints
 (`ripr explain`, `ripr context`, `ripr agent repair ...`) exactly as printed:
 their IDs belong to that run and cannot be copied from documentation.
 `agent repair --seam-id` takes the seam ID that `pilot` prints; the `probe:...`
 IDs from `check` are rejected there.
 
+When the follow-up is a repair you hand to a coding agent, the compact repair
+card is the default bounded handoff: `ripr agent card --root . --seam-id <seam-id> --json`
+projects the fix-instruction summary, repair-route readiness, and canonical
+next action, with the full packet behind the card's explicit detail route —
+a successful `ripr repair` start prints the same card.
+
 Between the repair phases, the attempt refuses any new file outside the allowed
-test files, whether Git ignores it or not. Build output under a gitignored
+test files, whether Git ignores it or not. When your tests live in an inline
+`#[cfg(test)] mod tests` inside the source file (the `cargo new --lib` layout),
+the repair edits that file, but only by adding new test functions inside that
+one module; any other change to the file fails the attempt. Build output under a gitignored
 `target/` is the exception. Before starting a repair, make sure `target/` is in
 a committed `.gitignore`; changing `.gitignore` mid-attempt is itself refused.
 Redirect ripr output under `target/ripr/` or outside the repository.
@@ -188,8 +214,8 @@ TypeScript/JavaScript is enabled only through `[languages] enabled` in
 
 Findings are static and advisory. An empty result does not establish test
 adequacy, and a before/after receipt is not runtime mutation confirmation.
-Generated CI is non-blocking by default. The editor analyzes saved files, not
-unsaved buffers, by default.
+Generated CI is non-blocking by default. The editor analyzes saved files only;
+unsaved buffer content is never analyzed.
 
 [Support tiers](docs/status/SUPPORT_TIERS.md) describe the supported workflows
 and limits; the [capability matrix](docs/CAPABILITY_MATRIX.md) and
@@ -199,7 +225,8 @@ and limits; the [capability matrix](docs/CAPABILITY_MATRIX.md) and
 
 [Quickstart](docs/QUICKSTART.md) · [Configuration](docs/CONFIGURATION.md) ·
 [Editor extension](docs/EDITOR_EXTENSION.md) · [Agent guide](docs/LLM_OPERATOR_GUIDE.md) ·
-[Output formats](docs/OUTPUT_SCHEMA.md) · [All documentation](docs/README.md)
+[Output formats](docs/OUTPUT_SCHEMA.md) · [Proof and limits](docs/PUBLIC_PROOF.md) ·
+[All documentation](docs/README.md)
 
 For the full test-and-evidence walkthrough, see [Targeted tests](docs/TARGETED_TEST_WORKFLOW.md),
 [First PR workflow](docs/FIRST_PR_WORKFLOW.md), and [repair recovery](docs/REPAIR_ATTEMPT.md).

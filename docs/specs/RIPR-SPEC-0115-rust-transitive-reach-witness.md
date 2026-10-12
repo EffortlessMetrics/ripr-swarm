@@ -78,9 +78,43 @@ the first hop that produced the successful walk:
 ### Determinism
 
 When more than one test witnesses a path, the witness is selected **deterministically**: candidate
-witnesses are ordered by `(test_file, test_line, test_name, entry_symbol)` and the first is chosen.
-This keeps goldens stable regardless of index iteration order. If `N > 1` witnesses exist, the
-rendered message notes the count ("and N other tests") without enumerating them.
+witnesses are ordered by `(rank, test_file, test_line, test_name, entry_symbol)` and the first is
+chosen, where rank is 0 for a corroborated call entry, 1 for an uncorroborated one and 2 for a derive
+entry (see **Derive entries** below). This keeps goldens stable regardless of index iteration order. If `N > 1`
+witnesses exist, the rendered message notes the count ("and N other tests") without enumerating
+them.
+
+A candidate is **corroborated** when its entry symbol names a production function that calls toward
+the owner and that function is either a free function, or an associated function the test calls on
+a receiver resolved to its `impl` self type (a constructor, type annotation, UFCS `Type::method`,
+struct literal, or a suffixed numeric literal such as `1.5f64` or `(-0.0f64)` for a primitive self type,
+while unsuffixed literals fail closed; a binding's type is its annotation or initializer head, so `Cache::new(Site::default())`
+binds a `Cache`; only associated calls named `new`, `default`, `from`, `new_*`, `from_*` or `with_*`, or an enum tuple
+variant, count as an initializer head; a bracketed receiver such as `(site).build()`, `Site::new().build()`
+or `Site { .. }.build()` is resolved from that whole expression, while method chains, calls of other
+functions or macros, and types named in argument lists fail closed; an unresolved receiver is not corroborated). Name-only facts cannot tell
+`Site::build` from `Cache::build`, so without this rank a unit test calling an unrelated type's
+same-named method could win on file order alone (#5481). A function's declaration line, which call
+facts record under the function's own name, does not count as a call onward; a real call to a
+same-named function on another type (`self.queue.build()`) does.
+Corroboration only ranks candidates: it never removes one, never changes the count, and never
+changes classification. Within one test, a corroborated entry symbol is preferred over a bare
+name match before the lexicographic tiebreak.
+
+**Derive entries (#6924).** Attribute arguments are not calls: `#[derive(Error)]` records no call
+to a function named `derive` (parameter attributes that run their arguments, such as rstest's
+`#[values(..)]`, `#[with(..)]`, `#[case(..)]`, `#[future(..)]`, `#[test_case(..)]` and
+`#[strategy(..)]`, still do). A test with no call
+entry instead witnesses through a derive when its file applies `#[derive(Name)]` (not under
+`cfg_attr`) and the in-workspace function a `#[proc_macro_derive(Name)]` attribute annotates itself
+calls the owner or a reaching name (a same-named function elsewhere lends it nothing). The derive is matched by its last path
+segment and is file-wide, so it ranks after every call witness (rank 2, after corroborated 0 and
+uncorroborated 1), and every test in such a file counts toward "and N other tests". The pointer then reads "the test `t` (file:line) is in a file that applies
+`#[derive(Name)]`, expanded by `fn`" and the last established edge is
+`test (file:line) in a file applying #[derive(Name)] -> entry fn`, since the derive may sit on
+another item in that file. The annotated function is the first same-named function at or after the
+attribute's line, and its own declaration fact is not a call onward. ripr does not check that the test's crate depends on that
+proc-macro crate, or expand the macro; classification stays `no_static_path`.
 
 ### When found
 
@@ -173,6 +207,13 @@ requirements in this spec remain unchanged.
    reach the owner. The named witness is `test_a` (sorts first by file), and the message notes "and
    1 other test".
 
+4a. **Same-named method on another type**: a unit test in `src/render.rs` calls `cache.build()` on
+   an unrelated `Cache`, while `Site::build` leads to the changed owner and an integration test
+   helper calls `site.build()`. The named witness is the integration test, not the unit test that
+   sorts first by file, so RIPR-SPEC-0118 selects
+   `rust_integration_public_api_path_unresolved`. Fixture:
+   `fixtures/rust_transitive_reach_same_name_other_type/`.
+
 5. **Honest language**: the witness pointer contains "may lead here" and does NOT contain
    "reaches", "covers", "tests", or "exercises".
 
@@ -187,7 +228,8 @@ requirements in this spec remain unchanged.
 
 - `has_transitive_candidate` changed to return `Option<TransitiveWitness>` in
   `analysis/classify/transitive_reach.rs`; `TransitiveWitness` struct defined there.
-- Deterministic witness ordering by `(test_file, test_line, test_name, entry_symbol)`.
+- Deterministic witness ordering by `(uncorroborated, test_file, test_line, test_name,
+  entry_symbol)`.
 - Concrete witness-pointer message builder (reuses "may" language; no coverage claim).
 - Wired in `analysis/language/rust/mod.rs` `analyze_diff` and `analyze_repo` (the existing
   post-classify guards now consume the witness to build the evidence string).
@@ -204,12 +246,32 @@ requirements in this spec remain unchanged.
 
 ## Test Mapping
 
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::derive_applied_in_test_file_witnesses_its_proc_macro_function`,
+  `path_qualified_derive_is_matched_by_its_last_segment`, `unapplied_or_conditional_derive_gives_no_witness`,
+  `derive_whose_function_does_not_reach_the_owner_gives_no_witness`, `a_call_witness_outranks_a_derive_witness`,
+  `a_same_named_function_elsewhere_does_not_lend_the_derive_reach`,
+  `proc_macro_derive_entries_skip_a_non_ascii_identifier`, `derive_witness_through_the_real_syntax_adapter`,
+  `proc_macro_derive_entries_pair_each_derive_with_its_function`
+  — derive entries (#6924): positive, path-qualified, negatives, and rank below call witnesses
+- `crates/ripr/src/analysis/extract/calls.rs::tests::attribute_arguments_are_not_calls_but_code_after_them_is`,
+  `parameter_attributes_that_run_their_arguments_stay_calls`, `an_unclosed_attribute_keeps_the_plain_call_reading`
+  — attribute arguments are not call facts, except argument-running parameter attributes
+- `crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs::tests::transitive_summary_names_a_derive_entry_without_claiming_a_call`
+  — the grip summary does not say the test calls a derive entry
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_test_calls_outer_which_calls_owner_then_witness_is_captured`
   — positive path returns `Some(witness)` naming the test and entry symbol
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_no_path_to_owner_then_witness_is_none`
   — no path returns `None`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_two_witnesses_then_first_by_file_line_is_selected`
   — deterministic witness ordering
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_same_named_method_on_other_type_then_corroborated_witness_is_named`
+  — a test calling the reaching type's method outranks an unrelated same-named method call
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_type_named_away_from_the_call_then_the_test_is_not_corroborated`
+  — naming the type away from the call does not corroborate
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_type_only_in_constructor_argument_then_the_receiver_is_not_that_type`
+  — a type named only in a constructor argument is not the binding's type
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_cross_type_same_named_call_then_the_caller_still_reaches`
+  — a real same-named call on another type still counts as a path onward
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::witness_pointer_uses_may_language_and_no_coverage_claim`
   — message honesty (contains "may lead here"; excludes reaches/covers/tests/exercises)
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::given_path_at_depth_5_then_witness_is_captured`
@@ -254,6 +316,7 @@ requirements in this spec remain unchanged.
 | Human renderer (`Where to look` section) | `crates/ripr/src/output/human/sections.rs` |
 | Positive fixture (re-blessed) | `fixtures/rust_transitive_reach_positive/` |
 | Test-helper public API fixture | `fixtures/rust_transitive_reach_test_helper_chain/` |
+| Same-named method on another type | `fixtures/rust_transitive_reach_same_name_other_type/` |
 | Negative fixture (unchanged) | `fixtures/rust_transitive_reach_negative/` |
 
 ## CI Proof

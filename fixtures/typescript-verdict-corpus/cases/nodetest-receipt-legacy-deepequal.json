@@ -1,0 +1,45 @@
+{
+  "case_id": "nodetest-receipt-legacy-deepequal",
+  "subject_id": "authored-ts-nodetest-billing",
+  "diff": "cases/nodetest-receipt-legacy-deepequal.diff",
+  "anchor": {
+    "file": "src/receipt.ts",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "nodetest_legacy_assert_deepequal_object",
+  "hard_case": "legacy `node:assert` deepEqual compares primitive strings with ==, which still pins the label",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "node 22.22.0; tsx 4.23.15; node:test + node:assert (built in); @stryker-mutator/core 10.0.0 (command runner)",
+    "mutants": [
+      {
+        "replacement": "label: ``,",
+        "mutated_line": "label: ``,",
+        "outcome": "tests_failed",
+        "failing_test": "receipt line labels the count",
+        "equivalence_review": "not equivalent: label becomes empty"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The `label: \"items: \" + count` field line is rewritten to the template literal `label: `items: ${count}``. Legacy `node:assert` `assert.deepEqual` on the returned object still pins the label string, so the only mutant (empty template) failed. ripr reads legacy deepEqual as relational_check/weak and reports `weakly_exposed` with `gap_state: actionable` / `complete_repair_packet`, a false actionable gap against a discriminated truth.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

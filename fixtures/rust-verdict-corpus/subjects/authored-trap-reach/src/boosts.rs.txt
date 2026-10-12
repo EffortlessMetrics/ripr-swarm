@@ -1,0 +1,13 @@
+pub fn boost(base: u32) -> u32 {
+    base * 17
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn boost_runs_in_a_worker() {
+        std::thread::spawn(|| assert_eq!(boost(2), 34));
+    }
+}

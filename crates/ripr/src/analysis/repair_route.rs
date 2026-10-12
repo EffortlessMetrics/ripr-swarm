@@ -17,6 +17,7 @@ use super::seams::{ExpectedSink, RepoSeam, RequiredDiscriminator, SeamGripClass,
 use super::test_grip_evidence::{RelatedTestGrip, TestGripEvidence, TestTargetEvidence};
 use crate::analysis::canonical_gap::canonical_gap_identity;
 use crate::domain::{OracleKind, OracleStrength, RelationReason, StageState};
+use std::sync::Arc;
 
 pub(crate) use super::new_test_target::{
     NewTestKind, NewTestProposalProvenance, NewTestTargetProposal,
@@ -548,19 +549,24 @@ fn direct_owner_related_test(evidence: &TestGripEvidence) -> Option<&RelatedTest
         .related_tests
         .iter()
         .find(|test| test.relation_reason == crate::domain::RelationReason::DirectOwnerCall)
+        .map(Arc::as_ref)
 }
 
 fn direct_owner_related_test_with_target(evidence: &TestGripEvidence) -> Option<&RelatedTestGrip> {
-    evidence.related_tests.iter().find(|test| {
-        test.relation_reason == crate::domain::RelationReason::DirectOwnerCall
-            && test.test_target.is_some()
-    })
+    evidence
+        .related_tests
+        .iter()
+        .find(|test| {
+            test.relation_reason == crate::domain::RelationReason::DirectOwnerCall
+                && test.test_target.is_some()
+        })
+        .map(Arc::as_ref)
 }
 
 fn value_target_selection(
     existing: Option<&TestTargetEvidence>,
     admission: Option<&NewTestTargetAdmission>,
-    related_tests: &[RelatedTestGrip],
+    related_tests: &[Arc<RelatedTestGrip>],
 ) -> RepairTargetSelection {
     if let Some(existing) = existing {
         return RepairTargetSelection::Existing(existing.clone());
@@ -661,7 +667,7 @@ fn has_rust_related_test(entry: &ClassifiedSeam) -> bool {
         .evidence
         .related_tests
         .iter()
-        .any(related_test_is_rust)
+        .any(|test| related_test_is_rust(test))
 }
 
 fn has_rust_side_target_context(entry: &ClassifiedSeam) -> bool {
@@ -876,7 +882,7 @@ mod tests {
             seam,
             evidence: TestGripEvidence {
                 seam_id,
-                related_tests,
+                related_tests: related_tests.into_iter().map(std::sync::Arc::new).collect(),
                 reach: stage(StageState::Yes),
                 activate: stage(StageState::Yes),
                 propagate: stage(StageState::Yes),
@@ -889,6 +895,7 @@ mod tests {
                     flow_sink: None,
                 }],
                 new_test_target: None,
+                statically_contradicted_related_tests: 0,
             },
             class,
         }
@@ -904,6 +911,7 @@ mod tests {
             }),
             region: None,
             blocker: None,
+            owner_inline_region: None,
         }
     }
 

@@ -1,0 +1,23 @@
+#[derive(Debug, PartialEq)]
+pub enum E {
+    Bad,
+    Big,
+}
+
+pub fn check(x: u32) -> Result<u32, E> {
+    if x > 10 {
+        return Err(E::Big);
+    }
+    Ok(x)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_five_is_a_result() {
+        let r = check(5);
+        assert!(r.is_ok() || r.is_err());
+    }
+}

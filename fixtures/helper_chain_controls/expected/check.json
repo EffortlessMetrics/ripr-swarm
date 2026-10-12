@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:ac178c7f",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/helper_chain_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 4,
         "expression": "c == ' '"
        },
@@ -74,7 +74,7 @@
         "id": "probe:src_other.rs:predicate:e1711426",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/helper_chain_controls/input/src/other.rs",
+        "file": "./src/other.rs",
         "line": 2,
         "expression": "c == ' '"
        },

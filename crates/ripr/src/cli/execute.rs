@@ -68,6 +68,10 @@ pub(super) fn execute(command: CliCommand) -> Result<(), CommandError> {
         CliCommand::Cache(args) => commands::cache(&args).map_err(CommandError::from),
         CliCommand::Rerun(args) => rerun::run(&args).map_err(CommandError::from),
         CliCommand::Mcp(args) => crate::mcp::run(&args).map_err(CommandError::from),
+        // Task-first façade typed outcomes carry the Decision variant (exit 3).
+        CliCommand::Repair(args) => commands::repair(&args),
+        CliCommand::Continue(args) => commands::continue_repair(&args),
+        CliCommand::Status(args) => commands::status(&args),
     }
 }
 

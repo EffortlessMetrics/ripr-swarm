@@ -1,0 +1,12 @@
+#[derive(Clone, Copy)]
+pub enum Mode {
+    Warm,
+    Cold,
+}
+
+pub fn delay(mode: Mode) -> u32 {
+    match mode {
+        Mode::Warm => 5,
+        Mode::Cold => 50,
+    }
+}

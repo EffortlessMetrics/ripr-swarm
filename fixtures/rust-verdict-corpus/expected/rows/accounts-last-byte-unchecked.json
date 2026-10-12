@@ -1,0 +1,22 @@
+{
+  "case_id": "accounts-last-byte-unchecked",
+  "subject_id": "authored-accounts",
+  "origin": "authored",
+  "anchor": "src/bytes.rs:20",
+  "behavior_family": "static_unknown_unsafe_block",
+  "test_shape": "smoke_call_discards_result",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1,0 +1,4 @@
+[package]
+name = "where-bound-declarations"
+version = "0.1.0"
+edition = "2024"

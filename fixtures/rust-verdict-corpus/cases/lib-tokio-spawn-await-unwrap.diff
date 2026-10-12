@@ -7,7 +7,7 @@ index 008cf8f..3cb78a1 100644
  
  pub async fn tax(p: u32) -> u32 {
 -    p * 8 / 100
-+    (p << 3) / 100
++    8 * p / 100
  }
  
  pub async fn backoff_total(n: u32) -> u64 {

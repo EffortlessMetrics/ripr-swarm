@@ -1,0 +1,7 @@
+//! Shapes behind pilot picks that real mutant runs refuted: pure query calls
+//! whose values the tests pin, a hand-written `Clone` checked by whole-value
+//! equality, and boundaries the tests reach through a wrapper or a local.
+
+pub mod copy;
+pub mod parse;
+pub mod score;

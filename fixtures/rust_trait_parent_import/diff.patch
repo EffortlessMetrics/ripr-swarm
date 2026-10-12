@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -4,6 +4,6 @@
+ 
+ impl Render for Sample {
+     fn render(&self) -> String {
+-        String::from("0")
++        String::from("")
+     }
+ }

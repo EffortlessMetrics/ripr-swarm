@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-assert-matches-ok-wildcard-side-only",
+  "subject_id": "authored-lib-assert-matches",
+  "diff": "cases/lib-assert-matches-ok-wildcard-side-only.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_matches_ok_wildcard",
+  "hard_case": "ripr labels `assert_matches!(r, Ok(_))` as exact_value (strength unknown) and lands static_unknown instead of a gap.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "acc * 10",
+        "mutated_line": "acc = acc * 10;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: parse_num(\"42\") returns Ok(0) instead of Ok(42)"
+      },
+      {
+        "replacement": "acc + d",
+        "mutated_line": "acc = acc + d;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: parse_num(\"42\") returns Ok(6) instead of Ok(42)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "assert_matches!(parse_num(\"42\"), Ok(_)) only checks the Ok side; any accumulated value matches the wildcard, and the Err tests never reach the changed line's value.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

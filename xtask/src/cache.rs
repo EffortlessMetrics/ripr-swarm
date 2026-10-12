@@ -600,7 +600,7 @@ fn build_gc_plan_from_env(
         let ttl = Duration::from_secs(ttl_days.saturating_mul(SECONDS_PER_DAY));
         if let Some(cutoff) = SystemTime::now().checked_sub(ttl) {
             for (index, file) in files.iter().enumerate() {
-                if is_current_run_file(file, started_at) {
+                if is_current_run_file(file, started_at) || is_seam_publication_lock(file) {
                     continue;
                 }
                 if file.modified.is_some_and(|modified| modified < cutoff) {
@@ -625,7 +625,9 @@ fn build_gc_plan_from_env(
             .iter()
             .enumerate()
             .filter(|(index, file)| {
-                !selected.contains_key(index) && !is_current_run_file(file, started_at)
+                !selected.contains_key(index)
+                    && !is_current_run_file(file, started_at)
+                    && !is_seam_publication_lock(file)
             })
             .collect::<Vec<_>>();
         candidates.sort_by(|(left_index, left), (right_index, right)| {
@@ -678,6 +680,18 @@ fn build_gc_plan_from_env(
 
 fn is_current_run_file(file: &CacheFile, started_at: SystemTime) -> bool {
     file.modified.is_some_and(|modified| modified >= started_at)
+}
+
+/// Per-key publication locks are live serialization state, not cache
+/// payload: `cache gc` must never delete one, because unlinking a held
+/// lock file lets a second writer lock a fresh inode at the same path and
+/// publish concurrently (#5350). Either sharded layer can hold locks, so
+/// the layer half of the match comes from the shared producer inventory
+/// rather than one hardcoded name.
+fn is_seam_publication_lock(file: &CacheFile) -> bool {
+    file.path.extension() == Some(OsStr::new("lock"))
+        && cache_layer_names().contains(&file.family.as_str())
+        && file.family.ends_with("-sharded")
 }
 
 fn modified_sort_key(file: &CacheFile) -> (u64, u32) {
@@ -1377,6 +1391,49 @@ mod tests {
         assert!(markdown.contains("Mode: dry-run"));
         assert!(markdown.contains("target/ripr/cache/repo-seam-facts/v1/a.json"));
         assert!(!markdown.contains("current-run.json"));
+
+        cleanup(root)?;
+        Ok(())
+    }
+
+    #[test]
+    fn cache_gc_never_selects_publication_lock_files() -> Result<(), String> {
+        // Per-key publication locks are live serialization state: deleting
+        // one while a writer holds its inode lets a second writer lock a
+        // fresh file at the same path and publish concurrently (#5350).
+        // Either sharded layer can hold locks, so both are pinned here.
+        let root = temp_root("gc-lock-exclusion")?;
+        let seam_lock = root.join("target/ripr/cache/repo-seam-facts-sharded/abc123.lock");
+        let compact_lock =
+            root.join("target/ripr/cache/repo-compact-classified-seams-sharded/def456.lock");
+        let payload = root.join("target/ripr/cache/repo-seam-facts-sharded/shard-00000.json");
+        write_bytes(&seam_lock, 0)?;
+        write_bytes(&compact_lock, 0)?;
+        write_bytes(&payload, 11)?;
+
+        let plan = build_gc_plan(
+            &root,
+            &GcOptions {
+                dry_run: true,
+                max_size_bytes: Some(0),
+                ttl_days: None,
+            },
+            SystemTime::now() + Duration::from_secs(1),
+        )?;
+
+        assert_eq!(plan.selected_files, 1);
+        assert_eq!(
+            plan.deletions[0].relative_path,
+            rel(&[
+                "target",
+                "ripr",
+                "cache",
+                "repo-seam-facts-sharded",
+                "shard-00000.json"
+            ])
+        );
+        assert!(seam_lock.exists());
+        assert!(compact_lock.exists());
 
         cleanup(root)?;
         Ok(())

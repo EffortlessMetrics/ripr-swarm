@@ -1,0 +1,45 @@
+{
+  "case_id": "ts-vitest-summary-snapshot",
+  "subject_id": "authored-ts-vitest-cart",
+  "diff": "cases/ts-vitest-summary-snapshot.diff",
+  "anchor": {
+    "file": "src/cart.ts",
+    "line": 53
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_inline_snapshot",
+  "hard_case": "the spec reads snapshots as weak, yet an inline snapshot pins the exact value",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 3.2.7, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return `${lines.length} item(s)`;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/cart.test.ts > cart > summarizes the cart",
+        "equivalence_review": "not equivalent: the summary reads \"2 item(s)\" instead of \"2 items\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0027 reads toMatchInlineSnapshot as a weak snapshot oracle, but this inline snapshot holds the exact text, so \"2 item(s)\" fails it. ripr's weakly_exposed follows the spec and scores false actionable.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

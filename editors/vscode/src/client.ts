@@ -113,7 +113,34 @@ export const RIPR_DOCUMENT_SELECTORS: Array<{ language: string; scheme: 'file' }
 const SHOW_OUTPUT_ACTION = 'Show Output';
 const SELECT_WORKSPACE_ROOT_ACTION = 'Select Workspace Root';
 
+// Palette invocations of diagnostic-scoped commands arrive without the
+// payload a code action carries. Say how to invoke them with a target
+// instead of reporting evidence the handler never evaluated (#2083, #7341).
+// Platform-neutral: Quick Fix is Ctrl+. on Windows/Linux and Cmd+. on macOS.
+const DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE =
+  'ripr targeted-test commands run from a ripr diagnostic: open a file with ripr diagnostics, use Quick Fix (Ctrl+. or Cmd+.) on one, and pick the targeted-test command from there.';
+
 const RIPR_FILE_LANGUAGES = new Set(RIPR_DOCUMENT_SELECTORS.map((selector) => selector.language));
+// Editor selector language -> ripr.toml [languages] enablement name. The
+// server's `typescript` entry covers the JavaScript variants
+// (docs/CONFIGURATION.md, `[languages]`).
+const RIPR_ENABLEMENT_LANGUAGE_BY_SELECTOR_LANGUAGE: Readonly<Record<string, string>> = {
+  rust: 'rust',
+  typescript: 'typescript',
+  typescriptreact: 'typescript',
+  javascript: 'typescript',
+  javascriptreact: 'typescript',
+  python: 'python'
+};
+// Preview languages the editor routes but the server analyzes only once they
+// are listed in ripr.toml [languages] enabled (#6846).
+const ROUTED_PREVIEW_ENABLEMENT_LANGUAGES: ReadonlyArray<string> = [
+  ...new Set(
+    RIPR_DOCUMENT_SELECTORS.map((selector) => RIPR_ENABLEMENT_LANGUAGE_BY_SELECTOR_LANGUAGE[selector.language]).filter(
+      (language) => language !== undefined && language !== 'rust'
+    )
+  )
+];
 const RIPR_RELATED_TEST_LANGUAGE_BY_EXTENSION = new Map<string, 'rust' | 'typescript' | 'python'>([
   ['.rs', 'rust'],
   ['.ts', 'typescript'],
@@ -429,6 +456,14 @@ export class RiprClientController {
     detail: 'Open a workspace or run ripr: Restart Server.',
     nextStep: 'Open a workspace folder, then run ripr: Restart Server.'
   };
+  /**
+   * The last refresh-completed status observed with no unsaved routed
+   * documents (#7340). Closing an unsaved buffer without saving starts no
+   * refresh — the on-disk file is unchanged — so the close path restores
+   * this state instead of claiming a queued analysis that nothing will
+   * start. Reset whenever the session stops.
+   */
+  private lastCompletedStatus: RiprStatusState | undefined;
   private workspaceRoot: string | undefined;
   /**
    * Session-scoped workspace folder picked through `ripr: Select Workspace
@@ -572,9 +607,9 @@ export class RiprClientController {
         kind: 'serverUnavailable',
         summary: 'ripr server is not available.',
         detail: server.detail,
-        nextStep: `${missingServerRemedy(config.autoDownload)} Then run ripr: Restart Server.`
+        nextStep: `${server.remedy ?? missingServerRemedy(config.autoDownload)} Then run ripr: Restart Server.`
       });
-      await this.showMissingServerMessage(server.message, server.detail);
+      await this.showMissingServerMessage(server.message, server.detail, server.remedy);
       return;
     }
     this.server = server;
@@ -895,6 +930,7 @@ export class RiprClientController {
     this.typedAnalysisStatusState = undefined;
     this.firstUsefulAction = undefined;
     this.dirtyRiprDocuments.clear();
+    this.lastCompletedStatus = undefined;
     this.clearAttemptStatusBar();
     this.updateStatus({
       kind: 'stopped',
@@ -937,14 +973,34 @@ export class RiprClientController {
     if (!isRiprFileDocument(document)) {
       return;
     }
-    this.dirtyRiprDocuments.delete(document.uri.toString());
-    if (this.client && this.dirtyRiprDocuments.size === 0 && this.status.kind === 'stale') {
-      this.updateStatus({
-        kind: 'analysisQueued',
-        summary: 'ripr saved-workspace analysis is queued after close.',
-        detail: `Closed unsaved ${document.languageId} buffer: ${document.uri.fsPath}`,
-        nextStep: 'Wait for ripr to refresh diagnostics.'
-      });
+    const closedWasDirty = this.dirtyRiprDocuments.delete(document.uri.toString());
+    if (this.client && closedWasDirty && this.dirtyRiprDocuments.size === 0 && this.status.kind === 'stale') {
+      // #7340: for a no-save close the on-disk file is byte-identical to the
+      // analyzed snapshot, so the last completed state still describes current
+      // diagnostics. Restore it instead of claiming a queued analysis: the
+      // did_close-triggered refresh is debounced and can silently no-op (no
+      // configured root, configuration failure), in which case a 'queued'
+      // claim would spin until an unrelated event overwrote it — the defect
+      // this fixes. A typed cancelled or superseded refresh can also leave
+      // 'stale' with no dirty buffer, so only a close that actually discards
+      // a dirty buffer restores the completed state. When the close-triggered
+      // refresh does run, its started/completed log lines supersede this
+      // restored status. Before the first completed refresh there is nothing
+      // to restore, so report the paused state with the real refresh
+      // triggers.
+      const closedUnsaved = `Closed unsaved ${document.languageId} buffer without saving: ${document.uri.fsPath}`;
+      const restored = this.lastCompletedStatus;
+      this.updateStatus(restored
+        ? {
+            ...restored,
+            detail: [restored.detail, closedUnsaved].filter((line): line is string => Boolean(line)).join('\n')
+          }
+        : {
+            kind: 'ready',
+            summary: 'ripr diagnostics describe the saved workspace.',
+            detail: closedUnsaved,
+            nextStep: 'Open or save a Rust or enabled preview-language file to refresh diagnostics.'
+          });
     }
   }
 
@@ -1054,12 +1110,14 @@ export class RiprClientController {
     const activeLine = editor ? editor.selection.active.line + 1 : undefined;
     const line = lineFromTarget(target) ?? activeLine ?? 1;
     const selector = `${relativePath}:${line}`;
+    // An empty base lets `ripr context` resolve the repository's default
+    // branch the same way the language server does.
+    const baseRef = config.baseRef.trim();
     const args = [
       'context',
       '--root',
       workspaceFolder.uri.fsPath,
-      '--base',
-      config.baseRef,
+      ...(baseRef ? ['--base', baseRef] : []),
       '--at',
       selector,
       '--json'
@@ -1137,6 +1195,10 @@ export class RiprClientController {
   }
 
   async copySuggestedAssertion(target?: RiprSuggestedAssertionTarget): Promise<void> {
+    if (!target) {
+      this.runtime.showInformationMessage(DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE);
+      return;
+    }
     const assertion = typeof target?.assertion === 'string' ? target.assertion.trim() : '';
     if (!assertion) {
       this.runtime.showInformationMessage('No ripr suggested assertion is available for this diagnostic.');
@@ -1153,6 +1215,10 @@ export class RiprClientController {
   }
 
   async copyTargetedTestBrief(target?: RiprTargetedTestBriefTarget): Promise<void> {
+    if (!target) {
+      this.runtime.showInformationMessage(DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE);
+      return;
+    }
     const brief = typeof target?.brief === 'string' ? target.brief.trim() : '';
     if (!brief) {
       this.runtime.showInformationMessage('No ripr targeted test brief is available for this diagnostic.');
@@ -1359,6 +1425,10 @@ export class RiprClientController {
   }
 
   async openRelatedTest(target?: RiprRelatedTestTarget): Promise<void> {
+    if (!target) {
+      this.runtime.showInformationMessage(DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE);
+      return;
+    }
     const uri = uriFromTarget(target);
     if (!uri) {
       this.runtime.showInformationMessage('No ripr related test location is available for this diagnostic.');
@@ -1555,7 +1625,16 @@ export class RiprClientController {
       return;
     }
     if (message.startsWith('ripr analysis refresh completed')) {
-      this.updateStatus(this.statusAfterRefreshCompleted(message));
+      const completed = this.statusAfterRefreshCompleted(message);
+      // Remember the saved-workspace result so closing an unsaved buffer
+      // without saving can restore it instead of inventing a queue that no
+      // close-path refresh may resolve (#7340). A completed refresh always
+      // describes the saved workspace — dirty buffers are unsaved client-side
+      // state — so store the clean completion form even while documents are
+      // dirty; the dirty-buffer overlay applies to the visible status only
+      // and must not survive into the restored close-path status.
+      this.lastCompletedStatus = statusFromRefreshCompletedMessage(message);
+      this.updateStatus(completed);
       void this.refreshFirstUsefulActionStatus();
       return;
     }
@@ -1653,6 +1732,13 @@ export class RiprClientController {
         this.updateStatus(statusForRunStatus(status.run_status, {
           detail: analysisStatusDetail(status),
           retryCommand: typeof status.retry_command === 'string' ? status.retry_command : undefined,
+          // #5999: the server's budget-bound recovery replaces the canned
+          // refresh tail — refreshing a running sidecar cannot read a raised
+          // process environment.
+          retryRecovery: typeof status.retry_recovery?.detail === 'string'
+            && status.retry_recovery.detail.trim()
+            ? status.retry_recovery.detail
+            : undefined,
           dirtyRoutedDocuments: Array.from(this.dirtyRiprDocuments),
           components: status.components
         }));
@@ -2375,11 +2461,11 @@ export class RiprClientController {
       this.server = server;
       return server;
     }
-    await this.showMissingServerMessage(server.message, server.detail);
+    await this.showMissingServerMessage(server.message, server.detail, server.remedy);
     return undefined;
   }
 
-  private async showMissingServerMessage(summary: string, detail: string): Promise<void> {
+  private async showMissingServerMessage(summary: string, detail: string, remedy?: string): Promise<void> {
     this.output.appendLine(summary);
     this.output.appendLine(detail);
     // Name the actual failure (HTTP/checksum/manifest) in the popup body —
@@ -2392,8 +2478,9 @@ export class RiprClientController {
       ? detail.split('\n')[0] || summary
       : summary;
     const separator = cause.endsWith('.') ? '' : '.';
+    const guidance = remedy ?? missingServerRemedy(this.runtime.getConfig().autoDownload);
     const selection = await this.runtime.showErrorMessage(
-      `ripr server is not available: ${cause}${separator} ${missingServerRemedy(this.runtime.getConfig().autoDownload)}`,
+      `ripr server is not available: ${cause}${separator} ${guidance}`,
       'Open Settings',
       'Copy Diagnostic',
       'Copy Install Command',
@@ -3588,8 +3675,11 @@ function serverLogMessage(params: unknown): string | undefined {
   return typeof message === 'string' ? message : undefined;
 }
 
+// Both the explicit-ref failure and the default-branch failure (an empty
+// ripr.baseRef in a repository without origin/HEAD, main or master) are fixed
+// by setting ripr.baseRef; the server's own wording names CLI flags instead.
 function isUnresolvableBaseRefFailure(message: string): boolean {
-  return /the base `[^`]+` does not resolve to a commit/.test(message);
+  return /the base `[^`]+` does not resolve to a commit|could not resolve a default base/.test(message);
 }
 
 /**
@@ -3615,7 +3705,10 @@ interface RiprAnalysisStatusPayload {
   run_status?: string;
   attempt_id?: string | null;
   snapshot_id?: string | null;
-  retry_command?: string;
+  /** #5999: null exactly when refresh cannot lift the run (budget-bound
+   * partial scope); the recovery object then names the actual route. */
+  retry_command?: string | null;
+  retry_recovery?: { kind?: string | null; detail?: string | null } | null;
   failure?: unknown;
   pending?: boolean;
   root_state?: string;
@@ -3773,6 +3866,7 @@ export function statusForRunStatus(
   input: {
     detail?: string;
     retryCommand?: string;
+    retryRecovery?: string;
     dirtyRoutedDocuments?: readonly string[];
     components?: readonly AnalysisStatusComponent[];
   } = {}
@@ -3841,11 +3935,12 @@ export function statusForRunStatus(
       // names the budget remedy, which no component recovery addresses (the
       // scope budget is snapshot-level, not a component outcome), so the
       // recovery is composed after it instead of dropping the budget action.
-      nextStep: recoveries.length === 0
-        ? limited.nextStep
-        : runStatus === 'limited_partial_scope'
-          ? `${limited.nextStep} ${recoveryStep}`
-          : recoveryStep
+      // When the server itself declares the run retry-unlifted (#5999), its
+      // `retry_recovery` replaces the canned tail instead of composing after
+      // it: the canned tail ends in a same-process refresh that provably
+      // re-runs the identical partition, and the server detail names the
+      // raise + restart route that actually widens it.
+      nextStep: composeLimitedNextStep(runStatus ?? '', limited.nextStep, recoveryStep, input.retryRecovery)
     };
   }
   return {
@@ -3854,6 +3949,36 @@ export function statusForRunStatus(
     detail: input.detail,
     nextStep: 'Inspect diagnostics, then use bounded ripr hover and code actions for one focused test.'
   };
+}
+
+/**
+ * Compose the next safe action for a limited-family run (#5004, #5999).
+ * Without a server recovery the canned step stands (component recoveries
+ * compose after the partial-scope budget remedy). With a server
+ * `retry_recovery` on the retry-unlifted partial state, that detail replaces
+ * the canned tail verbatim — it is already a complete sentence naming the
+ * `ripr.refresh` command, so capitalizing it would mangle the command name —
+ * because the server, not the editor, owns which actions can widen the
+ * partition, and its detail names the restart route a same-process refresh
+ * cannot substitute for.
+ */
+function composeLimitedNextStep(
+  runStatus: string,
+  cannedStep: string,
+  componentRecoveryStep: string,
+  retryRecovery?: string
+): string {
+  if (retryRecovery && runStatus === 'limited_partial_scope') {
+    return componentRecoveryStep
+      ? `${retryRecovery}; ${componentRecoveryStep}`
+      : retryRecovery;
+  }
+  if (componentRecoveryStep) {
+    return runStatus === 'limited_partial_scope'
+      ? `${cannedStep} ${componentRecoveryStep}`
+      : componentRecoveryStep;
+  }
+  return cannedStep;
 }
 
 function analysisRootStatusDetail(status: RiprAnalysisStatusPayload): string {
@@ -3872,6 +3997,24 @@ function isRefreshLifecycleLog(message: string): boolean {
     || message.startsWith('ripr analysis refresh started')
     || message.startsWith('ripr analysis refresh completed')
     || message.startsWith('ripr analysis refresh failed');
+}
+
+function routedPreviewLanguagesNotEnabled(enabledLanguageNames: string[] | undefined): string[] {
+  if (!enabledLanguageNames) {
+    return [];
+  }
+  return ROUTED_PREVIEW_ENABLEMENT_LANGUAGES.filter((language) => !enabledLanguageNames.includes(language));
+}
+
+// Names the ripr.toml [languages] enablement mechanism for a zero-diagnostics
+// refresh, mirroring the no-enabled-languages branch (#6846).
+function routedPreviewEnablementLine(enabledLanguageNames: string[] | undefined): string {
+  const notEnabled = routedPreviewLanguagesNotEnabled(enabledLanguageNames);
+  if (notEnabled.length === 0) {
+    return 'If a preview language routed by the editor stays silent, confirm it is listed in ripr.toml [languages] enabled, then run ripr: Restart Server.';
+  }
+  const names = notEnabled.join(' and ');
+  return `${names} ${notEnabled.length === 1 ? 'is' : 'are'} routed by the editor but missing from ripr.toml [languages] enabled, so such files produce no diagnostics; add the language to [languages] enabled (for example enabled = ["rust", "typescript"]), then run ripr: Restart Server.`;
 }
 
 function statusFromRefreshCompletedMessage(message: string): RiprStatusState {
@@ -3992,11 +4135,12 @@ function statusFromRefreshCompletedMessage(message: string): RiprStatusState {
       kind: 'noActionableSeams',
       summary: 'ripr analysis completed with no actionable seam diagnostics.',
       enabledLanguages: enabledLanguageNames,
-      nextStep: 'If this is unexpected, save files, confirm the workspace root and enabled languages, then run ripr: Show Output.',
+      nextStep: 'If this is unexpected, save files, confirm the workspace root, and check ripr.toml [languages] enabled for the open file, then run ripr: Show Output.',
       detail: [
         message,
         'No ripr seam diagnostics were published for the last saved workspace state.',
         'Enabled languages determine which saved files can produce diagnostics; disabled or unavailable preview languages stay silent.',
+        routedPreviewEnablementLine(enabledLanguageNames),
         'If you expected diagnostics, confirm the file is saved, the workspace root is correct, and the language is enabled and available in this ripr build.'
       ].join('\n')
     };
@@ -4793,8 +4937,10 @@ interface AgentLoopCommandContract {
   // payload cannot have produced one. Equality leaves no room for an extra
   // token such as `$(cmd)` (#4225).
   expectedBody?: (target: RiprAgentLoopCommandTarget, commandRoot: string) => string | undefined;
-  // Labels the payload does not pin down are checked by prefix and substrings.
-  startsWith?: string;
+  // Labels the payload does not pin down are checked by `<rootedPrefix> --root
+  // <root>` and substrings, where `<root>` is `.` or a selected workspace
+  // spelling (#4001).
+  rootedPrefix?: string;
   includes?: string[];
   // The command ends in `> <targetArtifact>`. Since #3938 the server anchors
   // that redirect at the resolved `--root`, so the tail is checked by
@@ -4838,11 +4984,11 @@ const AGENT_LOOP_COMMAND_CONTRACTS: Record<string, AgentLoopCommandContract> = {
     )
   },
   gap_verify: {
-    startsWith: 'ripr agent verify --root .',
+    rootedPrefix: 'ripr agent verify',
     includes: ['--json']
   },
   gap_receipt: {
-    startsWith: 'ripr agent receipt --root .',
+    rootedPrefix: 'ripr agent receipt',
     includes: ['--json']
   }
 };
@@ -4900,17 +5046,7 @@ export function validatedAgentLoopCommand(
     // entire server-rendered body and, when present, its redirect against the
     // SAME selected spelling. An absolute command with a relative or other-root
     // redirect is never equivalent (#4396).
-    for (const root of redirectRoots) {
-      if (!path.isAbsolute(root) || (process.platform !== 'win32' && root.includes('\\'))) {
-        continue;
-      }
-      const displayRoot = path.normalize(root).replace(/\\/g, '/');
-      // Apostrophe/backslash quoting is not portable across supported shells;
-      // likewise refuse characters that can end or alter a quoted span.
-      if (/[\r\n\0`\\"'\u2018-\u201f]/.test(displayRoot)) {
-        continue;
-      }
-      const commandRoot = serverShellArg(displayRoot);
+    for (const { displayRoot, commandRoot } of selectedCommandRoots(redirectRoots)) {
       let body = command;
       if (contract.redirectsToTargetArtifact && contract.targetArtifact !== undefined) {
         const expectedTail = serverShellArg(
@@ -4946,18 +5082,54 @@ export function validatedAgentLoopCommand(
     }
     body = command.slice(0, redirectAt);
   }
-  if (hasUnsafeShellMetacharacter(body)) {
+  // Since #4001 the server binds the gap route's `--root .` to the selected
+  // workspace; the legacy portable form is still accepted. The root token is
+  // replaced by `.` before the metacharacter check, as for exact bodies, so a
+  // workspace path's quoted `&` or `;` is not read as an operator.
+  const rootArgs = ['.', ...selectedCommandRoots(redirectRoots).map(({ commandRoot }) => commandRoot)];
+  const rootArg = rootArgs.find((candidate) => {
+    const prefix = `${contract.rootedPrefix ?? ''} --root ${candidate}`;
+    return body === prefix || body.startsWith(`${prefix} `);
+  });
+  if (rootArg === undefined) {
+    return undefined;
+  }
+  const portableBody = body.replace(`--root ${rootArg}`, '--root .');
+  if (hasUnsafeShellMetacharacter(portableBody)) {
     return undefined;
   }
   // One redirect only: a `>` here would truncate some other file.
   if (
-    body.includes('>') ||
-    !body.startsWith(contract.startsWith ?? '') ||
-    !(contract.includes ?? []).every((expected) => body.includes(expected))
+    portableBody.includes('>') ||
+    !(contract.includes ?? []).every((expected) => portableBody.includes(expected))
   ) {
     return undefined;
   }
   return command;
+}
+
+/**
+ * The selected workspace spellings a bound command may name, each with the
+ * `shell_arg` rendering the server writes after `--root`. Apostrophe and
+ * backslash quoting is not portable across supported shells, so roots that
+ * would need it, or that carry characters able to end or alter a quoted span,
+ * are skipped.
+ */
+function selectedCommandRoots(
+  redirectRoots: readonly string[]
+): { displayRoot: string; commandRoot: string }[] {
+  const roots: { displayRoot: string; commandRoot: string }[] = [];
+  for (const root of redirectRoots) {
+    if (!path.isAbsolute(root) || (process.platform !== 'win32' && root.includes('\\'))) {
+      continue;
+    }
+    const displayRoot = path.normalize(root).replace(/\\/g, '/');
+    if (/[\r\n\0`\\"'\u2018-\u201f]/.test(displayRoot)) {
+      continue;
+    }
+    roots.push({ displayRoot, commandRoot: serverShellArg(displayRoot) });
+  }
+  return roots;
 }
 
 /**

@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0225-wv-non-owner-call",
+  "subject_id": "authored-spec0225-8",
+  "diff": "cases/spec0225-wv-non-owner-call.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction_non_owner",
+  "test_shape": "assert_eq_on_non_owner_call",
+  "hard_case": "build(3) is called and discarded so the test is related to the owner.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "retries: n + 2,",
+        "mutated_line": "retries: n + 2,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: build(3) yields retries 5 instead of 4"
+      },
+      {
+        "replacement": "retries: n,",
+        "mutated_line": "retries: n,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: build(3) yields retries 3 instead of 4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test calls build(3) but discards it and only compares other(), which does not call build. Spec cells: RIPR-SPEC-0225 example 8.",
+  "labeling_observation": {
+    "ripr_commit": "7b3deeb",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0225#8"
+  ]
+}

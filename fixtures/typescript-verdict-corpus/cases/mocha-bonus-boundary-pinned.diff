@@ -1,0 +1,11 @@
+diff --git a/src/bonus.ts b/src/bonus.ts
+index 0000000..1111111 100644
+--- a/src/bonus.ts
++++ b/src/bonus.ts
+@@ -1,5 +1,5 @@
+ export function bonusPoints(spend: number): number {
+-  if (spend > 500) {
++  if (500 < spend) {
+     return 25;
+   }
+   return 0;

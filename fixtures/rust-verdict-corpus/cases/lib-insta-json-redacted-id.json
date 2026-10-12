@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-insta-json-redacted-id",
+  "subject_id": "authored-lib-insta",
+  "diff": "cases/lib-insta-json-redacted-id.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 44
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "insta_json_snapshot_redacted_field",
+  "hard_case": "The changed field is exactly the one the `{\".id\" => \"[id]\"}` redaction replaces, so the snapshot cannot see it, yet ripr grades it the same as an unredacted field.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "seq",
+        "mutated_line": "id: format!(\"{}-{:04}\", prefix, seq),",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: seq=41 gives id ord-0041 not ord-0042"
+      },
+      {
+        "replacement": "seq + 2",
+        "mutated_line": "id: format!(\"{}-{:04}\", prefix, seq + 2),",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: seq=41 gives id ord-0043 not ord-0042"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`assert_json_snapshot!(record, {\".id\" => \"[id]\"})` replaces `id` with a placeholder before comparing, so any change to the id format goes undetected; the other fields stay pinned.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

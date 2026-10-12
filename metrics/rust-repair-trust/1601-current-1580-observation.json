@@ -1,0 +1,920 @@
+{
+  "schema_version": "0.1",
+  "kind": "rust_selected_acceptance_observation",
+  "issue": 1601,
+  "observed_at_utc": "2026-10-11",
+  "observation_id": "post-2933-ripr-1580",
+  "exclusion_id": "ripr-1580-static-limitation",
+  "canonical_candidate_id": "EffortlessMetrics/ripr-swarm#1580",
+  "prior_current_issue_receipt": "https://github.com/EffortlessMetrics/ripr-swarm/issues/1601#issuecomment-6113279239",
+  "reason_for_local_verification": "Current issue already records the same source replay, but its raw retained paths and toolchain were absent in this saved environment. This pass independently verifies one ordinary replay and the bounded static selector refusal; it does not add an observation row or opportunity.",
+  "analyzer": {
+    "source_sha": "20be462ca537a212ad91bb4a8a97e03846d4468f",
+    "source_tree": "110bd559d87e81ff138916f89601a0f4b2f85403",
+    "version": "ripr 0.11.0 (20be462ca537a212ad91bb4a8a97e03846d4468f)",
+    "binary_sha256": "c0c6606855e2ae815cf52990ea831e872ef05164454597b0bf6f86232fcddf5c",
+    "compiler_artifact": {
+      "reason": "compiler-artifact",
+      "package_id": "path+file:///workspace/ripr-swarm/crates/ripr#0.11.0",
+      "manifest_path": "/workspace/ripr-swarm/crates/ripr/Cargo.toml",
+      "target": {
+        "kind": [
+          "bin"
+        ],
+        "crate_types": [
+          "bin"
+        ],
+        "name": "ripr",
+        "src_path": "/workspace/ripr-swarm/crates/ripr/src/main.rs",
+        "edition": "2024",
+        "doc": true,
+        "doctest": false,
+        "test": true
+      },
+      "profile": {
+        "opt_level": "0",
+        "debuginfo": "line-tables-only",
+        "debug_assertions": true,
+        "overflow_checks": true,
+        "test": false
+      },
+      "features": [
+        "default",
+        "lang-python",
+        "lang-rust",
+        "lang-typescript"
+      ],
+      "filenames": [
+        "/workspace/1601-tools/build/debug/ripr"
+      ],
+      "executable": "/workspace/1601-tools/build/debug/ripr",
+      "fresh": false
+    },
+    "frozen_binary_path": "/workspace/1601-continuation-evidence/ripr",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14)\nbinary: rustc\ncommit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860\ncommit-date: 2026-04-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.95.0\nLLVM version: 22.1.2\n",
+    "cargo_version": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+    "build_command": [
+      "/workspace/1601-tools/pinned/bin/cargo",
+      "build",
+      "--locked",
+      "-p",
+      "ripr",
+      "--bin",
+      "ripr",
+      "--jobs",
+      "1",
+      "--message-format=json"
+    ],
+    "cargo_home": "/workspace/1601-tools/cargo-home",
+    "cargo_target_dir": "/workspace/1601-tools/build",
+    "build_exit": 0,
+    "build_terminal": "Finished dev profile in 3m 20s",
+    "inputs": {
+      "Cargo.toml": "71a386f6a70f8d0124270b7db0d02ea6466be05b7a1b97cd34c210b37277dd64",
+      "Cargo.lock": "646c5b301c99cd3e0c88c5a7b767fb91fb8a80a67a243365299d69b563eecc16",
+      "rust-toolchain.toml": "12dc5d64dbd96c1b07be2943241d52d9f6127a79ba47a820455ba7b873fc896a",
+      ".cargo/config.toml": "e5bdb9055b7cdd689030fca3b94b244cca1da9c0cc8142e9180cd8c95c18e341"
+    },
+    "capacity": {
+      "memory_limit_bytes": 17179869184,
+      "cpu_shares": 4,
+      "initial_free_workspace_gib": 30,
+      "peak_additional_budget_gib": 10,
+      "reserve_gib": 12,
+      "build_jobs": 1,
+      "analysis_workers": 1
+    },
+    "release_qualification": false
+  },
+  "consumer": {
+    "repository": "EffortlessMetrics/ripr-swarm",
+    "base": "91a720f390cb96c2e6c52d08e4215f2cb30942a3",
+    "head": "2f71673f9c2da4532a1c1fb8e011dc6fd586ad2f",
+    "tree": "1f5c1c58147fcc1d26de72ba5b5ea06873affa91",
+    "raw_commit_sha256": "9410932f1512280ba3ff77ea576112f3059e78a9aedab94bb18991609882370b",
+    "materialization": "exact parent plus connected GitHub PR patches; reconstructed original commit bytes verified against exact Git object SHA",
+    "original_timezone": "-0400"
+  },
+  "configuration": {
+    "root_config_file": null,
+    "mode": "draft",
+    "binary_features": [
+      "default",
+      "lang-python",
+      "lang-rust",
+      "lang-typescript"
+    ],
+    "analysis_workers": 1,
+    "ripr_environment_overrides": [],
+    "cooperative_timeout_ms": 120000,
+    "outer_bound_seconds": 180
+  },
+  "ordinary_replay": {
+    "process_receipt": {
+      "command": [
+        "/workspace/1601-continuation-evidence/ripr",
+        "review-comments",
+        "--root",
+        "/workspace/1601-observed-consumer",
+        "--base",
+        "91a720f390cb96c2e6c52d08e4215f2cb30942a3",
+        "--head",
+        "2f71673f9c2da4532a1c1fb8e011dc6fd586ad2f",
+        "--out",
+        "/workspace/1601-observed-consumer/target/ripr/1601-current-replay/comments.json"
+      ],
+      "cwd": "/workspace/1601-observed-consumer",
+      "outer_bound_seconds": 180,
+      "analysis_workers": 1,
+      "native_exit": 0,
+      "elapsed_seconds": 100.79222923600003,
+      "timed_out": false,
+      "primary_reaped": true,
+      "owned_process_group_empty": true,
+      "pid": 7934,
+      "before": {
+        "head": "2f71673f9c2da4532a1c1fb8e011dc6fd586ad2f",
+        "tree": "1f5c1c58147fcc1d26de72ba5b5ea06873affa91",
+        "tracked_bytes_sha256": "97c9f0390f3efdce825629a0287fa82e0a4ed22a8aa2b9c305ec683459ab4318",
+        "base_head_diff_sha256": "6c69741d40f810ef36cce984b2e83426385e166e41ad317c440e798421eb4b3a",
+        "status": "",
+        "root_config": null,
+        "binary_sha256": "c0c6606855e2ae815cf52990ea831e872ef05164454597b0bf6f86232fcddf5c"
+      },
+      "after": {
+        "head": "2f71673f9c2da4532a1c1fb8e011dc6fd586ad2f",
+        "tree": "1f5c1c58147fcc1d26de72ba5b5ea06873affa91",
+        "tracked_bytes_sha256": "97c9f0390f3efdce825629a0287fa82e0a4ed22a8aa2b9c305ec683459ab4318",
+        "base_head_diff_sha256": "6c69741d40f810ef36cce984b2e83426385e166e41ad317c440e798421eb4b3a",
+        "status": "",
+        "root_config": null,
+        "binary_sha256": "c0c6606855e2ae815cf52990ea831e872ef05164454597b0bf6f86232fcddf5c"
+      },
+      "unchanged": true,
+      "stdout_sha256": "650367b0fc6ecded2e82dbba195d77ed17a7692294cdbabf82f3d2753bd22b12",
+      "stderr_sha256": "d41cf6fad071c8fca30a890ac81f8e2d38448ba48c2058dd2f6e65dc9bfd7b38"
+    },
+    "run_receipt": {
+      "schema_version": "0.1",
+      "status": "complete",
+      "root_identity": "/workspace/1601-observed-consumer",
+      "base_sha": "91a720f390cb96c2e6c52d08e4215f2cb30942a3",
+      "head_sha": "2f71673f9c2da4532a1c1fb8e011dc6fd586ad2f",
+      "configured_timeout_ms": 120000,
+      "last_completed_phase": "artifact_io",
+      "active_phase": null,
+      "completed_artifacts": [
+        "/workspace/1601-observed-consumer/target/ripr/1601-current-replay/comments.json",
+        "/workspace/1601-observed-consumer/target/ripr/1601-current-replay/comments.md"
+      ],
+      "missing_artifacts": [],
+      "reusable_cache_identity": "sha256:3f2544a85b1be3f6406a2070e6b212833aae674762d6a2fc640fd8b8fc290f62",
+      "limitations": [],
+      "non_claims": [
+        "static review guidance is advisory evidence only",
+        "no complete route inventory is claimed until status is complete"
+      ],
+      "atomic_write_status": "committed"
+    },
+    "artifact_digests": {
+      "comments.json": "74f70c8547a66d1d610550edcb94d5b967bf0bd780e7268c996b52a455b69f3d",
+      "comments.md": "65081e8564d066536a0980d97f0b78bf0a75275ba9b5c83be18f745d9be39adb",
+      "run-receipt.json": "749c4b5a14659b5de9c9a40de6bb0516c01a16f775b4790338fcb5efe0f17c6e"
+    },
+    "comments_json_raw": "{\n  \"analysis_scope\": {\n    \"basis\": \"changed_production_files_plus_immediate_callers\",\n    \"changed_files\": [\n      \".ripr/traceability.toml\",\n      \"crates/ripr/src/lsp/backend.rs\",\n      \"crates/ripr/src/lsp/diagnostics.rs\",\n      \"crates/ripr/src/lsp/tests.rs\",\n      \"docs/specs/README.md\",\n      \"docs/specs/RIPR-SPEC-0124-lsp-diagnostic-delivery-stability.md\",\n      \"fixtures/boundary_gap/expected/lsp-diagnostics.json\",\n      \"fixtures/editor_adoption_assurance/first_pr_packet_ready/expected/lsp-diagnostics.json\",\n      \"fixtures/editor_first_pr_bridge/packet_found_repairable/expected/lsp-diagnostics.json\",\n      \"fixtures/editor_first_pr_bridge/receipt_improved_packet_ready/expected/lsp-diagnostics.json\",\n      \"fixtures/editor_first_pr_bridge/receipt_unchanged_packet_ready/expected/lsp-diagnostics.json\",\n      \"fixtures/editor_gap_cockpit/python_preview_static_limit/expected/lsp-diagnostics.json\",\n      \"fixtures/editor_gap_cockpit/rust_actionable/expected/lsp-diagnostics.json\",\n      \"fixtures/editor_gap_cockpit/typescript_preview_static_limit/expected/lsp-diagnostics.json\",\n      \"fixtures/editor_lsp_workflow/expected/lsp-diagnostics.json\",\n      \"fixtures/python_missing_import_graph_limit/expected/lsp-diagnostics.json\",\n      \"fixtures/typescript_mocked_module_limit/expected/lsp-diagnostics.json\",\n      \"policy/doc-artifacts.toml\"\n    ],\n    \"changed_lines\": 596,\n    \"changed_owner_functions\": 394,\n    \"changed_production_files\": [\n      \"crates/ripr/src/lsp/backend.rs\",\n      \"crates/ripr/src/lsp/diagnostics.rs\"\n    ],\n    \"classified_seams_considered\": 715,\n    \"downstream_consumable\": true,\n    \"immediate_caller_files\": [],\n    \"limitation\": \"review_comments_diff_scope_only\",\n    \"production_files_considered\": 2,\n    \"repair_route\": \"analysis/diff-scoped-large-repo-review-fast-path\",\n    \"run_status\": \"limited_diff_scope\",\n    \"scope\": \"diff_scoped_changed_files\",\n    \"scoped_production_files\": [\n      \"crates/ripr/src/lsp/backend.rs\",\n      \"crates/ripr/src/lsp/diagnostics.rs\"\n    ],\n    \"total_production_files\": 287,\n    \"total_rust_files\": 366\n  },\n  \"base\": \"91a720f390cb96c2e6c52d08e4215f2cb30942a3\",\n  \"comments\": [\n    {\n      \"canonical_gap_id\": \"gap:2c07e7a949787210\",\n      \"dedupe_key\": \"ripr:1d5ef3d669d22f69:crates/ripr/src/lsp/diagnostics.rs:79\",\n      \"gap_state\": \"static_limitation\",\n      \"grip_class\": \"weakly_gripped\",\n      \"id\": \"ripr-review-1d5ef3d669d22f69\",\n      \"kind\": \"call_presence\",\n      \"llm_guidance\": {\n        \"command\": \"ripr agent brief --root /workspace/1601-observed-consumer --seam-id 1d5ef3d669d22f69 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json\",\n        \"prompt\": \"Do not write a repair test or infer an edit surface from this finding. Inspect static limitation `propagation_static_unknown`: Static propagation to `side_effect` sink is unknown. Route investigation through `analysis/static-limitation-taxonomy`.\"\n      },\n      \"missing_discriminator\": null,\n      \"non_claims\": {\n        \"authority_boundary\": \"advisory_static_evidence_only\",\n        \"language_status\": \"preview_advisory\"\n      },\n      \"oracle_kind\": \"exact_value\",\n      \"oracle_strength\": \"strong\",\n      \"owner\": \"crates/ripr/src/lsp/diagnostics.rs::diagnostic_refresh_plan\",\n      \"placement\": {\n        \"line\": 79,\n        \"mode\": \"exact_seam_line\",\n        \"path\": \"crates/ripr/src/lsp/diagnostics.rs\",\n        \"side\": \"RIGHT\"\n      },\n      \"reason\": \"Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\",\n      \"seam\": {\n        \"expression\": \"publish_batches.push(batch)\",\n        \"file\": \"crates/ripr/src/lsp/diagnostics.rs\",\n        \"line\": 79\n      },\n      \"seam_id\": \"1d5ef3d669d22f69\",\n      \"severity\": \"warning\",\n      \"source_location\": {\n        \"file\": \"crates/ripr/src/lsp/diagnostics.rs\",\n        \"limitation\": null,\n        \"line\": 79,\n        \"repair_route\": null,\n        \"span\": null,\n        \"status\": \"resolved\"\n      },\n      \"suggested_test\": {\n        \"assertion_guidance\": null,\n        \"assertion_kind\": null,\n        \"assertion_shape\": null,\n        \"candidate_values\": [],\n        \"intent\": \"Inspect the named static limitation.\",\n        \"near_test\": null,\n        \"recommended_file\": \"not_applicable\",\n        \"recommended_name\": \"not_applicable\",\n        \"related_test\": null\n      },\n      \"why_not_actionable\": \"Static propagation to `side_effect` sink is unknown\"\n    },\n    {\n      \"canonical_gap_id\": \"gap:0123270f1937017e\",\n      \"dedupe_key\": \"ripr:9027652af5f0d0da:crates/ripr/src/lsp/diagnostics.rs:79\",\n      \"gap_state\": \"static_limitation\",\n      \"grip_class\": \"weakly_gripped\",\n      \"id\": \"ripr-review-9027652af5f0d0da\",\n      \"kind\": \"side_effect\",\n      \"llm_guidance\": {\n        \"command\": \"ripr agent brief --root /workspace/1601-observed-consumer --seam-id 9027652af5f0d0da --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json\",\n        \"prompt\": \"Do not write a repair test or infer an edit surface from this finding. Inspect static limitation `propagation_static_unknown`: Static propagation to `side_effect` sink is unknown. Route investigation through `analysis/static-limitation-taxonomy`.\"\n      },\n      \"missing_discriminator\": null,\n      \"non_claims\": {\n        \"authority_boundary\": \"advisory_static_evidence_only\",\n        \"language_status\": \"preview_advisory\"\n      },\n      \"oracle_kind\": \"exact_value\",\n      \"oracle_strength\": \"strong\",\n      \"owner\": \"crates/ripr/src/lsp/diagnostics.rs::diagnostic_refresh_plan\",\n      \"placement\": {\n        \"line\": 79,\n        \"mode\": \"exact_seam_line\",\n        \"path\": \"crates/ripr/src/lsp/diagnostics.rs\",\n        \"side\": \"RIGHT\"\n      },\n      \"reason\": \"Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\",\n      \"seam\": {\n        \"expression\": \"publish_batches.push(batch)\",\n        \"file\": \"crates/ripr/src/lsp/diagnostics.rs\",\n        \"line\": 79\n      },\n      \"seam_id\": \"9027652af5f0d0da\",\n      \"severity\": \"warning\",\n      \"source_location\": {\n        \"file\": \"crates/ripr/src/lsp/diagnostics.rs\",\n        \"limitation\": null,\n        \"line\": 79,\n        \"repair_route\": null,\n        \"span\": null,\n        \"status\": \"resolved\"\n      },\n      \"suggested_test\": {\n        \"assertion_guidance\": null,\n        \"assertion_kind\": null,\n        \"assertion_shape\": null,\n        \"candidate_values\": [],\n        \"intent\": \"Inspect the named static limitation.\",\n        \"near_test\": null,\n        \"recommended_file\": \"not_applicable\",\n        \"recommended_name\": \"not_applicable\",\n        \"related_test\": null\n      },\n      \"why_not_actionable\": \"Static propagation to `side_effect` sink is unknown\"\n    },\n    {\n      \"canonical_gap_id\": \"gap:f333eeab8ea2d74d\",\n      \"dedupe_key\": \"ripr:2c6778aa4dfff4b7:crates/ripr/src/lsp/diagnostics.rs:87\",\n      \"gap_state\": \"unknown\",\n      \"grip_class\": \"weakly_gripped\",\n      \"id\": \"ripr-review-2c6778aa4dfff4b7\",\n      \"kind\": \"field_construction\",\n      \"llm_guidance\": {\n        \"command\": \"ripr agent brief --root /workspace/1601-observed-consumer --seam-id 2c6778aa4dfff4b7 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json\",\n        \"prompt\": \"No repair packet is available for this finding. Inspect the producer-owned evidence and policy state before taking action.\"\n      },\n      \"missing_discriminator\": \"published_payload_bytes\",\n      \"oracle_kind\": \"exact_value\",\n      \"oracle_strength\": \"strong\",\n      \"owner\": \"crates/ripr/src/lsp/diagnostics.rs::diagnostic_refresh_plan\",\n      \"placement\": {\n        \"line\": 87,\n        \"mode\": \"exact_seam_line\",\n        \"path\": \"crates/ripr/src/lsp/diagnostics.rs\",\n        \"side\": \"RIGHT\"\n      },\n      \"reason\": \"Static evidence state is unknown; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\",\n      \"seam\": {\n        \"expression\": \"published_payload_bytes\",\n        \"file\": \"crates/ripr/src/lsp/diagnostics.rs\",\n        \"line\": 87\n      },\n      \"seam_id\": \"2c6778aa4dfff4b7\",\n      \"severity\": \"warning\",\n      \"source_location\": {\n        \"file\": \"crates/ripr/src/lsp/diagnostics.rs\",\n        \"limitation\": null,\n        \"line\": 87,\n        \"repair_route\": null,\n        \"span\": null,\n        \"status\": \"resolved\"\n      },\n      \"suggested_test\": {\n        \"assertion_guidance\": null,\n        \"assertion_kind\": null,\n        \"assertion_shape\": null,\n        \"candidate_values\": [],\n        \"intent\": \"Inspect the named static limitation.\",\n        \"near_test\": null,\n        \"recommended_file\": \"not_applicable\",\n        \"recommended_name\": \"not_applicable\",\n        \"related_test\": null\n      }\n    }\n  ],\n  \"head\": \"2f71673f9c2da4532a1c1fb8e011dc6fd586ad2f\",\n  \"limits_note\": \"Advisory static evidence only; no automatic edits, generated tests, runtime mutation execution, or CI blocking.\",\n  \"mode\": \"draft\",\n  \"rendering_limits\": {\n    \"max_inline_comments\": 3,\n    \"max_summary_items\": 10\n  },\n  \"root\": \"/workspace/1601-observed-consumer\",\n  \"run_receipt\": {\n    \"active_phase\": null,\n    \"atomic_write_status\": \"committed\",\n    \"base_sha\": \"91a720f390cb96c2e6c52d08e4215f2cb30942a3\",\n    \"completed_artifacts\": [\n      \"/workspace/1601-observed-consumer/target/ripr/1601-current-replay/comments.json\",\n      \"/workspace/1601-observed-consumer/target/ripr/1601-current-replay/comments.md\"\n    ],\n    \"configured_timeout_ms\": 120000,\n    \"head_sha\": \"2f71673f9c2da4532a1c1fb8e011dc6fd586ad2f\",\n    \"last_completed_phase\": \"artifact_io\",\n    \"limitations\": [],\n    \"missing_artifacts\": [],\n    \"non_claims\": [\n      \"static review guidance is advisory evidence only\",\n      \"no complete route inventory is claimed until status is complete\"\n    ],\n    \"reusable_cache_identity\": \"sha256:3f2544a85b1be3f6406a2070e6b212833aae674762d6a2fc640fd8b8fc290f62\",\n    \"root_identity\": \"/workspace/1601-observed-consumer\",\n    \"schema_version\": \"0.1\",\n    \"status\": \"complete\"\n  },\n  \"schema_version\": \"0.1\",\n  \"status\": \"advisory\",\n  \"summary\": {\n    \"comments\": 3,\n    \"summary_only\": 7,\n    \"suppressed\": 0,\n    \"unchanged_tests\": true\n  },\n  \"summary_only\": [\n    {\n      \"canonical_gap_id\": \"gap:6a804bbbc8b3fffb\",\n      \"dedupe_key\": \"ripr:45df64aa5c475df8:crates/ripr/src/lsp/diagnostics.rs:88\",\n      \"gap_state\": \"unknown\",\n      \"grip_class\": \"weakly_gripped\",\n      \"id\": \"ripr-review-45df64aa5c475df8\",\n      \"kind\": \"field_construction\",\n      \"llm_guidance\": {\n        \"command\": \"ripr agent brief --root /workspace/1601-observed-consumer --seam-id 45df64aa5c475df8 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json\",\n        \"prompt\": \"No repair packet is available for this finding. Inspect the producer-owned evidence and policy state before taking action.\"\n      },\n      \"missing_discriminator\": \"suppressed_payload_bytes\",\n      \"oracle_kind\": \"exact_value\",\n      \"oracle_strength\": \"strong\",\n      \"owner\": \"crates/ripr/src/lsp/diagnostics.rs::diagnostic_refresh_plan\",\n      \"placement\": {\n        \"line\": 88,\n        \"mode\": \"exact_seam_line\",\n        \"path\": \"crates/ripr/src/lsp/diagnostics.rs\",\n        \"side\": \"RIGHT\"\n      },\n      \"reason\": \"Static evidence state is unknown; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\",\n      \"seam\": {\n        \"expression\": \"suppressed_payload_bytes\",\n        \"file\": \"crates/ripr/src/lsp/diagnostics.rs\",\n        \"line\": 88\n      },\n      \"seam_id\": \"45df64aa5c475df8\",\n      \"severity\": \"warning\",\n      \"source_location\": {\n        \"file\": \"crates/ripr/src/lsp/diagnostics.rs\",\n        \"limitation\": null,\n        \"line\": 88,\n        \"repair_route\": null,\n        \"span\": null,\n        \"status\": \"resolved\"\n      },\n      \"suggested_test\": {\n        \"assertion_guidance\": null,\n        \"assertion_kind\": null,\n        \"assertion_shape\": null,\n        \"candidate_values\": [],\n        \"intent\": \"Inspect the named static limitation.\",\n        \"near_test\": null,\n        \"recommended_file\": \"not_applicable\",\n        \"recommended_name\": \"not_applicable\",\n        \"related_test\": null\n      },\n      \"summary_reason\": \"inline_comment_cap_reached\"\n    },\n    {\n      \"canonical_gap_id\": \"gap:9ab7c41e7befbf3a\",\n      \"dedupe_key\": \"ripr:a6f52159a1421166:crates/ripr/src/lsp/backend.rs:62\",\n      \"gap_state\": \"static_limitation\",\n      \"grip_class\": \"weakly_gripped\",\n      \"id\": \"ripr-review-a6f52159a1421166\",\n      \"kind\": \"field_construction\",\n      \"llm_guidance\": {\n        \"command\": \"ripr agent brief --root /workspace/1601-observed-consumer --seam-id a6f52159a1421166 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json\",\n        \"prompt\": \"Do not write a repair test or infer an edit surface from this finding. Inspect static limitation `missing_discriminator_evidence`: the repair route is missing evidence: producer-owned missing discriminator fact: field_value. Route investigation through `analysis/producer-evidence-discriminator`.\"\n      },\n      \"missing_discriminator\": null,\n      \"non_claims\": {\n        \"authority_boundary\": \"advisory_static_evidence_only\",\n        \"language_status\": \"preview_advisory\"\n      },\n      \"oracle_kind\": \"exact_value\",\n      \"oracle_strength\": \"strong\",\n      \"owner\": \"crates/ripr/src/lsp/backend.rs::impl Backend::new\",\n      \"placement\": null,\n      \"reason\": \"Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\",\n      \"seam\": {\n        \"expression\": \"client\",\n        \"file\": \"crates/ripr/src/lsp/backend.rs\",\n        \"line\": 62\n      },\n      \"seam_id\": \"a6f52159a1421166\",\n      \"severity\": \"warning\",\n      \"source_location\": {\n        \"file\": \"crates/ripr/src/lsp/backend.rs\",\n        \"limitation\": null,\n        \"line\": 62,\n        \"repair_route\": null,\n        \"span\": null,\n        \"status\": \"resolved\"\n      },\n      \"suggested_test\": {\n        \"assertion_guidance\": null,\n        \"assertion_kind\": null,\n        \"assertion_shape\": null,\n        \"candidate_values\": [],\n        \"intent\": \"Inspect the named static limitation.\",\n        \"near_test\": null,\n        \"recommended_file\": \"not_applicable\",\n        \"recommended_name\": \"not_applicable\",\n        \"related_test\": null\n      },\n      \"summary_reason\": \"no_safe_changed_line_placement\",\n      \"why_not_actionable\": \"the repair route is missing evidence: producer-owned missing discriminator fact: field_value\"\n    },\n    {\n      \"canonical_gap_id\": \"gap:c8a93692cb84f679\",\n      \"dedupe_key\": \"ripr:9e0104599c1ac6fb:crates/ripr/src/lsp/backend.rs:64\",\n      \"gap_state\": \"static_limitation\",\n      \"grip_class\": \"weakly_gripped\",\n      \"id\": \"ripr-review-9e0104599c1ac6fb\",\n      \"kind\": \"field_construction\",\n      \"llm_guidance\": {\n        \"command\": \"ripr agent brief --root /workspace/1601-observed-consumer --seam-id 9e0104599c1ac6fb --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json\",\n        \"prompt\": \"Do not write a repair test or infer an edit surface from this finding. Inspect static limitation `missing_discriminator_evidence`: the repair route is missing evidence: producer-owned missing discriminator fact: field_value. Route investigation through `analysis/producer-evidence-discriminator`.\"\n      },\n      \"missing_discriminator\": null,\n      \"non_claims\": {\n        \"authority_boundary\": \"advisory_static_evidence_only\",\n        \"language_status\": \"preview_advisory\"\n      },\n      \"oracle_kind\": \"exact_value\",\n      \"oracle_strength\": \"strong\",\n      \"owner\": \"crates/ripr/src/lsp/backend.rs::impl Backend::new\",\n      \"placement\": null,\n      \"reason\": \"Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\",\n      \"seam\": {\n        \"expression\": \"documents: Mutex::new(DocumentStore::default())\",\n        \"file\": \"crates/ripr/src/lsp/backend.rs\",\n        \"line\": 64\n      },\n      \"seam_id\": \"9e0104599c1ac6fb\",\n      \"severity\": \"warning\",\n      \"source_location\": {\n        \"file\": \"crates/ripr/src/lsp/backend.rs\",\n        \"limitation\": null,\n        \"line\": 64,\n        \"repair_route\": null,\n        \"span\": null,\n        \"status\": \"resolved\"\n      },\n      \"suggested_test\": {\n        \"assertion_guidance\": null,\n        \"assertion_kind\": null,\n        \"assertion_shape\": null,\n        \"candidate_values\": [],\n        \"intent\": \"Inspect the named static limitation.\",\n        \"near_test\": null,\n        \"recommended_file\": \"not_applicable\",\n        \"recommended_name\": \"not_applicable\",\n        \"related_test\": null\n      },\n      \"summary_reason\": \"no_safe_changed_line_placement\",\n      \"why_not_actionable\": \"the repair route is missing evidence: producer-owned missing discriminator fact: field_value\"\n    },\n    {\n      \"canonical_gap_id\": \"gap:a04052f511a432b3\",\n      \"dedupe_key\": \"ripr:94e3e25996d06efd:crates/ripr/src/lsp/backend.rs:65\",\n      \"gap_state\": \"static_limitation\",\n      \"grip_class\": \"weakly_gripped\",\n      \"id\": \"ripr-review-94e3e25996d06efd\",\n      \"kind\": \"field_construction\",\n      \"llm_guidance\": {\n        \"command\": \"ripr agent brief --root /workspace/1601-observed-consumer --seam-id 94e3e25996d06efd --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json\",\n        \"prompt\": \"Do not write a repair test or infer an edit surface from this finding. Inspect static limitation `missing_discriminator_evidence`: the repair route is missing evidence: producer-owned missing discriminator fact: field_value. Route investigation through `analysis/producer-evidence-discriminator`.\"\n      },\n      \"missing_discriminator\": null,\n      \"non_claims\": {\n        \"authority_boundary\": \"advisory_static_evidence_only\",\n        \"language_status\": \"preview_advisory\"\n      },\n      \"oracle_kind\": \"exact_value\",\n      \"oracle_strength\": \"strong\",\n      \"owner\": \"crates/ripr/src/lsp/backend.rs::impl Backend::new\",\n      \"placement\": null,\n      \"reason\": \"Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\",\n      \"seam\": {\n        \"expression\": \"analysis_config: Mutex::new(LspAnalysisConfig::default())\",\n        \"file\": \"crates/ripr/src/lsp/backend.rs\",\n        \"line\": 65\n      },\n      \"seam_id\": \"94e3e25996d06efd\",\n      \"severity\": \"warning\",\n      \"source_location\": {\n        \"file\": \"crates/ripr/src/lsp/backend.rs\",\n        \"limitation\": null,\n        \"line\": 65,\n        \"repair_route\": null,\n        \"span\": null,\n        \"status\": \"resolved\"\n      },\n      \"suggested_test\": {\n        \"assertion_guidance\": null,\n        \"assertion_kind\": null,\n        \"assertion_shape\": null,\n        \"candidate_values\": [],\n        \"intent\": \"Inspect the named static limitation.\",\n        \"near_test\": null,\n        \"recommended_file\": \"not_applicable\",\n        \"recommended_name\": \"not_applicable\",\n        \"related_test\": null\n      },\n      \"summary_reason\": \"no_safe_changed_line_placement\",\n      \"why_not_actionable\": \"the repair route is missing evidence: producer-owned missing discriminator fact: field_value\"\n    },\n    {\n      \"canonical_gap_id\": \"gap:0c193cfc2f44a298\",\n      \"dedupe_key\": \"ripr:94c54d5996b6743f:crates/ripr/src/lsp/backend.rs:66\",\n      \"gap_state\": \"static_limitation\",\n      \"grip_class\": \"weakly_gripped\",\n      \"id\": \"ripr-review-94c54d5996b6743f\",\n      \"kind\": \"field_construction\",\n      \"llm_guidance\": {\n        \"command\": \"ripr agent brief --root /workspace/1601-observed-consumer --seam-id 94c54d5996b6743f --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json\",\n        \"prompt\": \"Do not write a repair test or infer an edit surface from this finding. Inspect static limitation `missing_discriminator_evidence`: the repair route is missing evidence: producer-owned missing discriminator fact: field_value. Route investigation through `analysis/producer-evidence-discriminator`.\"\n      },\n      \"missing_discriminator\": null,\n      \"non_claims\": {\n        \"authority_boundary\": \"advisory_static_evidence_only\",\n        \"language_status\": \"preview_advisory\"\n      },\n      \"oracle_kind\": \"exact_value\",\n      \"oracle_strength\": \"strong\",\n      \"owner\": \"crates/ripr/src/lsp/backend.rs::impl Backend::new\",\n      \"placement\": null,\n      \"reason\": \"Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\",\n      \"seam\": {\n        \"expression\": \"last_diagnostic_uris: Mutex::new(BTreeSet::new())\",\n        \"file\": \"crates/ripr/src/lsp/backend.rs\",\n        \"line\": 66\n      },\n      \"seam_id\": \"94c54d5996b6743f\",\n      \"severity\": \"warning\",\n      \"source_location\": {\n        \"file\": \"crates/ripr/src/lsp/backend.rs\",\n        \"limitation\": null,\n        \"line\": 66,\n        \"repair_route\": null,\n        \"span\": null,\n        \"status\": \"resolved\"\n      },\n      \"suggested_test\": {\n        \"assertion_guidance\": null,\n        \"assertion_kind\": null,\n        \"assertion_shape\": null,\n        \"candidate_values\": [],\n        \"intent\": \"Inspect the named static limitation.\",\n        \"near_test\": null,\n        \"recommended_file\": \"not_applicable\",\n        \"recommended_name\": \"not_applicable\",\n        \"related_test\": null\n      },\n      \"summary_reason\": \"no_safe_changed_line_placement\",\n      \"why_not_actionable\": \"the repair route is missing evidence: producer-owned missing discriminator fact: field_value\"\n    },\n    {\n      \"canonical_gap_id\": \"gap:c1ee50ac92e6310f\",\n      \"dedupe_key\": \"ripr:8bbcad59917da231:crates/ripr/src/lsp/backend.rs:67\",\n      \"gap_state\": \"static_limitation\",\n      \"grip_class\": \"weakly_gripped\",\n      \"id\": \"ripr-review-8bbcad59917da231\",\n      \"kind\": \"field_construction\",\n      \"llm_guidance\": {\n        \"command\": \"ripr agent brief --root /workspace/1601-observed-consumer --seam-id 8bbcad59917da231 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json\",\n        \"prompt\": \"Do not write a repair test or infer an edit surface from this finding. Inspect static limitation `missing_discriminator_evidence`: the repair route is missing evidence: producer-owned missing discriminator fact: field_value. Route investigation through `analysis/producer-evidence-discriminator`.\"\n      },\n      \"missing_discriminator\": null,\n      \"non_claims\": {\n        \"authority_boundary\": \"advisory_static_evidence_only\",\n        \"language_status\": \"preview_advisory\"\n      },\n      \"oracle_kind\": \"exact_value\",\n      \"oracle_strength\": \"strong\",\n      \"owner\": \"crates/ripr/src/lsp/backend.rs::impl Backend::new\",\n      \"placement\": null,\n      \"reason\": \"Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\",\n      \"seam\": {\n        \"expression\": \"last_diagnostics: Mutex::new(BTreeMap::new())\",\n        \"file\": \"crates/ripr/src/lsp/backend.rs\",\n        \"line\": 67\n      },\n      \"seam_id\": \"8bbcad59917da231\",\n      \"severity\": \"warning\",\n      \"source_location\": {\n        \"file\": \"crates/ripr/src/lsp/backend.rs\",\n        \"limitation\": null,\n        \"line\": 67,\n        \"repair_route\": null,\n        \"span\": null,\n        \"status\": \"resolved\"\n      },\n      \"suggested_test\": {\n        \"assertion_guidance\": null,\n        \"assertion_kind\": null,\n        \"assertion_shape\": null,\n        \"candidate_values\": [],\n        \"intent\": \"Inspect the named static limitation.\",\n        \"near_test\": null,\n        \"recommended_file\": \"not_applicable\",\n        \"recommended_name\": \"not_applicable\",\n        \"related_test\": null\n      },\n      \"summary_reason\": \"no_safe_changed_line_placement\",\n      \"why_not_actionable\": \"the repair route is missing evidence: producer-owned missing discriminator fact: field_value\"\n    },\n    {\n      \"canonical_gap_id\": \"gap:dbb2a19d66afb143\",\n      \"dedupe_key\": \"ripr:8466fd598db64973:crates/ripr/src/lsp/backend.rs:68\",\n      \"gap_state\": \"static_limitation\",\n      \"grip_class\": \"weakly_gripped\",\n      \"id\": \"ripr-review-8466fd598db64973\",\n      \"kind\": \"field_construction\",\n      \"llm_guidance\": {\n        \"command\": \"ripr agent brief --root /workspace/1601-observed-consumer --seam-id 8466fd598db64973 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json\",\n        \"prompt\": \"Do not write a repair test or infer an edit surface from this finding. Inspect static limitation `missing_discriminator_evidence`: the repair route is missing evidence: producer-owned missing discriminator fact: field_value. Route investigation through `analysis/producer-evidence-discriminator`.\"\n      },\n      \"missing_discriminator\": null,\n      \"non_claims\": {\n        \"authority_boundary\": \"advisory_static_evidence_only\",\n        \"language_status\": \"preview_advisory\"\n      },\n      \"oracle_kind\": \"exact_value\",\n      \"oracle_strength\": \"strong\",\n      \"owner\": \"crates/ripr/src/lsp/backend.rs::impl Backend::new\",\n      \"placement\": null,\n      \"reason\": \"Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\",\n      \"seam\": {\n        \"expression\": \"latest_analysis: Mutex::new(None)\",\n        \"file\": \"crates/ripr/src/lsp/backend.rs\",\n        \"line\": 68\n      },\n      \"seam_id\": \"8466fd598db64973\",\n      \"severity\": \"warning\",\n      \"source_location\": {\n        \"file\": \"crates/ripr/src/lsp/backend.rs\",\n        \"limitation\": null,\n        \"line\": 68,\n        \"repair_route\": null,\n        \"span\": null,\n        \"status\": \"resolved\"\n      },\n      \"suggested_test\": {\n        \"assertion_guidance\": null,\n        \"assertion_kind\": null,\n        \"assertion_shape\": null,\n        \"candidate_values\": [],\n        \"intent\": \"Inspect the named static limitation.\",\n        \"near_test\": null,\n        \"recommended_file\": \"not_applicable\",\n        \"recommended_name\": \"not_applicable\",\n        \"related_test\": null\n      },\n      \"summary_reason\": \"no_safe_changed_line_placement\",\n      \"why_not_actionable\": \"the repair route is missing evidence: producer-owned missing discriminator fact: field_value\"\n    }\n  ],\n  \"suppressed\": [],\n  \"tool\": \"ripr\",\n  \"warnings\": [\n    {\n      \"kind\": \"other\",\n      \"message\": \"seam 4752f9b833fae8cd at crates/ripr/src/lsp/backend.rs:61 is configured off for strongly_gripped seams and is not included in agent brief results\"\n    },\n    {\n      \"kind\": \"other\",\n      \"message\": \"seam 9df388599c0f69eb at crates/ripr/src/lsp/backend.rs:63 is configured off for strongly_gripped seams and is not included in agent brief results\"\n    },\n    {\n      \"kind\": \"other\",\n      \"message\": \"seam e0298bb7f9c50878 at crates/ripr/src/lsp/backend.rs:68 is configured off for strongly_gripped seams and is not included in agent brief results\"\n    },\n    {\n      \"kind\": \"other\",\n      \"message\": \"seam b8200159aa0230e7 at crates/ripr/src/lsp/backend.rs:92 is configured off for strongly_gripped seams and is not included in agent brief results\"\n    },\n    {\n      \"kind\": \"other\",\n      \"message\": \"seam 733e1d3f2eed6c59 at crates/ripr/src/lsp/backend.rs:94 is activation_unknown and is not included in agent brief results\"\n    },\n    {\n      \"kind\": \"other\",\n      \"message\": \"seam 6bd77a3f2b17b67f at crates/ripr/src/lsp/backend.rs:95 is activation_unknown and is not included in agent brief results\"\n    },\n    {\n      \"kind\": \"other\",\n      \"message\": \"seam 86d24d3ef23b8052 at crates/ripr/src/lsp/backend.rs:96 is activation_unknown and is not included in agent brief results\"\n    },\n    {\n      \"kind\": \"other\",\n      \"message\": \"seam a64f2c599fc72691 at crates/ripr/src/lsp/backend.rs:97 is configured off for strongly_gripped seams and is not included in agent brief results\"\n    },\n    {\n      \"kind\": \"other\",\n      \"message\": \"seam 9ef607599bfcd12d at crates/ripr/src/lsp/backend.rs:100 is configured off for strongly_gripped seams and is not included in agent brief results\"\n    },\n    {\n      \"kind\": \"other\",\n      \"message\": \"seam 9ede79599be90102 at crates/ripr/src/lsp/backend.rs:103 is configured off for strongly_gripped seams and is not included in agent brief results\"\n    },\n    {\n      \"kind\": \"other\",\n      \"message\": \"290 more matching seams are activation_unknown and not included in agent brief results\"\n    },\n    {\n      \"kind\": \"other\",\n      \"message\": \"375 more matching seams are configured off for strongly_gripped seams and not included in agent brief results\"\n    },\n    {\n      \"kind\": \"other\",\n      \"message\": \"30 additional visible seams were omitted by the brief cap\"\n    }\n  ]\n}",
+    "comments_markdown_raw": "# RIPR PR Guidance\n\n- root: /workspace/1601-observed-consumer\n- base: 91a720f390cb96c2e6c52d08e4215f2cb30942a3\n- head: 2f71673f9c2da4532a1c1fb8e011dc6fd586ad2f\n- mode: draft\n- line annotations: 3\n- summary-only recommendations: 7\n- suppressed recommendations: 0\n- analysis scope: `diff_scoped_changed_files`\n- run status: `limited_diff_scope`\n- scoped production files: 2/287\n- classified seams considered: 715\n- limitation: `review_comments_diff_scope_only`; repair_route: `analysis/diff-scoped-large-repo-review-fast-path`\n\nAdvisory static evidence only. RIPR does not edit source, generate tests, run mutation testing, or make CI blocking by default.\n\n## Line Annotations\n\n- `1d5ef3d669d22f69` @ `crates/ripr/src/lsp/diagnostics.rs:79`: Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\n  - canonical_gap_id: `gap:2c07e7a949787210`\n  - state: `static_limitation`\n  - command: `ripr agent brief --root /workspace/1601-observed-consumer --seam-id 1d5ef3d669d22f69 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json`\n- `9027652af5f0d0da` @ `crates/ripr/src/lsp/diagnostics.rs:79`: Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\n  - canonical_gap_id: `gap:0123270f1937017e`\n  - state: `static_limitation`\n  - command: `ripr agent brief --root /workspace/1601-observed-consumer --seam-id 9027652af5f0d0da --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json`\n- `2c6778aa4dfff4b7` @ `crates/ripr/src/lsp/diagnostics.rs:87`: Static evidence state is unknown; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\n  - canonical_gap_id: `gap:f333eeab8ea2d74d`\n  - state: `unknown`\n  - command: `ripr agent brief --root /workspace/1601-observed-consumer --seam-id 2c6778aa4dfff4b7 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json`\n\n## Summary-Only Recommendations\n\n- `45df64aa5c475df8` @ `crates/ripr/src/lsp/diagnostics.rs:88`: Static evidence state is unknown; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\n  - canonical_gap_id: `gap:6a804bbbc8b3fffb`\n  - state: `unknown`\n  - command: `ripr agent brief --root /workspace/1601-observed-consumer --seam-id 45df64aa5c475df8 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json`\n- `a6f52159a1421166` @ `crates/ripr/src/lsp/backend.rs:62`: Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\n  - canonical_gap_id: `gap:9ab7c41e7befbf3a`\n  - state: `static_limitation`\n  - command: `ripr agent brief --root /workspace/1601-observed-consumer --seam-id a6f52159a1421166 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json`\n- `9e0104599c1ac6fb` @ `crates/ripr/src/lsp/backend.rs:64`: Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\n  - canonical_gap_id: `gap:c8a93692cb84f679`\n  - state: `static_limitation`\n  - command: `ripr agent brief --root /workspace/1601-observed-consumer --seam-id 9e0104599c1ac6fb --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json`\n- `94e3e25996d06efd` @ `crates/ripr/src/lsp/backend.rs:65`: Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\n  - canonical_gap_id: `gap:a04052f511a432b3`\n  - state: `static_limitation`\n  - command: `ripr agent brief --root /workspace/1601-observed-consumer --seam-id 94e3e25996d06efd --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json`\n- `94c54d5996b6743f` @ `crates/ripr/src/lsp/backend.rs:66`: Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\n  - canonical_gap_id: `gap:0c193cfc2f44a298`\n  - state: `static_limitation`\n  - command: `ripr agent brief --root /workspace/1601-observed-consumer --seam-id 94c54d5996b6743f --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json`\n- `8bbcad59917da231` @ `crates/ripr/src/lsp/backend.rs:67`: Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\n  - canonical_gap_id: `gap:c1ee50ac92e6310f`\n  - state: `static_limitation`\n  - command: `ripr agent brief --root /workspace/1601-observed-consumer --seam-id 8bbcad59917da231 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json`\n- `8466fd598db64973` @ `crates/ripr/src/lsp/backend.rs:68`: Static evidence state is static_limitation; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.\n  - canonical_gap_id: `gap:dbb2a19d66afb143`\n  - state: `static_limitation`\n  - command: `ripr agent brief --root /workspace/1601-observed-consumer --seam-id 8466fd598db64973 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json`\n\n## Suppressed\n\n- None.\n",
+    "stdout_raw": "Wrote /workspace/1601-observed-consumer/target/ripr/1601-current-replay/comments.json\nWrote /workspace/1601-observed-consumer/target/ripr/1601-current-replay/comments.md\n",
+    "stderr_raw": "ripr: 1 Rust module composition limitation(s): crates/ripr/src/agent/loop_commands.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed. This is an analysis-limit note about indexed context, not a finding: no action is needed unless evidence you expected from a listed file is missing. To resolve rust_module_ambiguous_parent, give each listed file one owner: declare it from a single parent `mod` item (drop duplicate `#[path]` declarations and keep only one of `<name>.rs` or `<name>/mod.rs`); a shared `tests/<name>/mod.rs` helper needs the same `mod <name>;` declaration, with the same `#[cfg(test)]` gating, in every integration test.\n"
+  },
+  "selected_cards": [
+    {
+      "projection": "comments",
+      "card": {
+        "canonical_gap_id": "gap:f333eeab8ea2d74d",
+        "dedupe_key": "ripr:2c6778aa4dfff4b7:crates/ripr/src/lsp/diagnostics.rs:87",
+        "gap_state": "unknown",
+        "grip_class": "weakly_gripped",
+        "id": "ripr-review-2c6778aa4dfff4b7",
+        "kind": "field_construction",
+        "llm_guidance": {
+          "command": "ripr agent brief --root /workspace/1601-observed-consumer --seam-id 2c6778aa4dfff4b7 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json",
+          "prompt": "No repair packet is available for this finding. Inspect the producer-owned evidence and policy state before taking action."
+        },
+        "missing_discriminator": "published_payload_bytes",
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "crates/ripr/src/lsp/diagnostics.rs::diagnostic_refresh_plan",
+        "placement": {
+          "line": 87,
+          "mode": "exact_seam_line",
+          "path": "crates/ripr/src/lsp/diagnostics.rs",
+          "side": "RIGHT"
+        },
+        "reason": "Static evidence state is unknown; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.",
+        "seam": {
+          "expression": "published_payload_bytes",
+          "file": "crates/ripr/src/lsp/diagnostics.rs",
+          "line": 87
+        },
+        "seam_id": "2c6778aa4dfff4b7",
+        "severity": "warning",
+        "source_location": {
+          "file": "crates/ripr/src/lsp/diagnostics.rs",
+          "limitation": null,
+          "line": 87,
+          "repair_route": null,
+          "span": null,
+          "status": "resolved"
+        },
+        "suggested_test": {
+          "assertion_guidance": null,
+          "assertion_kind": null,
+          "assertion_shape": null,
+          "candidate_values": [],
+          "intent": "Inspect the named static limitation.",
+          "near_test": null,
+          "recommended_file": "not_applicable",
+          "recommended_name": "not_applicable",
+          "related_test": null
+        }
+      }
+    },
+    {
+      "projection": "summary_only",
+      "card": {
+        "canonical_gap_id": "gap:6a804bbbc8b3fffb",
+        "dedupe_key": "ripr:45df64aa5c475df8:crates/ripr/src/lsp/diagnostics.rs:88",
+        "gap_state": "unknown",
+        "grip_class": "weakly_gripped",
+        "id": "ripr-review-45df64aa5c475df8",
+        "kind": "field_construction",
+        "llm_guidance": {
+          "command": "ripr agent brief --root /workspace/1601-observed-consumer --seam-id 45df64aa5c475df8 --json > /workspace/1601-observed-consumer/target/ripr/workflow/agent-brief.json",
+          "prompt": "No repair packet is available for this finding. Inspect the producer-owned evidence and policy state before taking action."
+        },
+        "missing_discriminator": "suppressed_payload_bytes",
+        "oracle_kind": "exact_value",
+        "oracle_strength": "strong",
+        "owner": "crates/ripr/src/lsp/diagnostics.rs::diagnostic_refresh_plan",
+        "placement": {
+          "line": 88,
+          "mode": "exact_seam_line",
+          "path": "crates/ripr/src/lsp/diagnostics.rs",
+          "side": "RIGHT"
+        },
+        "reason": "Static evidence state is unknown; no repair test is offered by this card. Inspect the producer-owned evidence and policy state.",
+        "seam": {
+          "expression": "suppressed_payload_bytes",
+          "file": "crates/ripr/src/lsp/diagnostics.rs",
+          "line": 88
+        },
+        "seam_id": "45df64aa5c475df8",
+        "severity": "warning",
+        "source_location": {
+          "file": "crates/ripr/src/lsp/diagnostics.rs",
+          "limitation": null,
+          "line": 88,
+          "repair_route": null,
+          "span": null,
+          "status": "resolved"
+        },
+        "suggested_test": {
+          "assertion_guidance": null,
+          "assertion_kind": null,
+          "assertion_shape": null,
+          "candidate_values": [],
+          "intent": "Inspect the named static limitation.",
+          "near_test": null,
+          "recommended_file": "not_applicable",
+          "recommended_name": "not_applicable",
+          "related_test": null
+        },
+        "summary_reason": "inline_comment_cap_reached"
+      }
+    }
+  ],
+  "selected_static_rerun": {
+    "process_receipt": {
+      "command": [
+        "/workspace/1601-continuation-evidence/ripr",
+        "rerun",
+        "--changed-test",
+        "crates/ripr/src/lsp/tests.rs::diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri",
+        "--root",
+        "/workspace/1601-observed-consumer",
+        "--json"
+      ],
+      "cwd": "/workspace/1601-observed-consumer",
+      "outer_bound_seconds": 180,
+      "analysis_workers": 1,
+      "native_exit": 0,
+      "elapsed_seconds": 8.483731553999974,
+      "timed_out": false,
+      "primary_reaped": true,
+      "owned_process_group_empty": true,
+      "pid": 8058,
+      "before": {
+        "head": "2f71673f9c2da4532a1c1fb8e011dc6fd586ad2f",
+        "tree": "1f5c1c58147fcc1d26de72ba5b5ea06873affa91",
+        "tracked_bytes_sha256": "97c9f0390f3efdce825629a0287fa82e0a4ed22a8aa2b9c305ec683459ab4318",
+        "base_head_diff_sha256": "6c69741d40f810ef36cce984b2e83426385e166e41ad317c440e798421eb4b3a",
+        "status": "",
+        "root_config": null,
+        "binary_sha256": "c0c6606855e2ae815cf52990ea831e872ef05164454597b0bf6f86232fcddf5c"
+      },
+      "after": {
+        "head": "2f71673f9c2da4532a1c1fb8e011dc6fd586ad2f",
+        "tree": "1f5c1c58147fcc1d26de72ba5b5ea06873affa91",
+        "tracked_bytes_sha256": "97c9f0390f3efdce825629a0287fa82e0a4ed22a8aa2b9c305ec683459ab4318",
+        "base_head_diff_sha256": "6c69741d40f810ef36cce984b2e83426385e166e41ad317c440e798421eb4b3a",
+        "status": "",
+        "root_config": null,
+        "binary_sha256": "c0c6606855e2ae815cf52990ea831e872ef05164454597b0bf6f86232fcddf5c"
+      },
+      "unchanged": true,
+      "stdout_sha256": "e47ce54eabe6d02b87cc55f1aa6211a4c13531cbe4281667fad5ebbbee1f06c4",
+      "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    "stdout_raw": "{\n  \"schema_version\": \"ripr-targeted-rerun-v1\",\n  \"state\": \"limited\",\n  \"selector\": {\n    \"kind\": \"changed_test\",\n    \"changed_test\": \"crates/ripr/src/lsp/tests.rs::diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri\",\n    \"selected_test_count\": 1,\n    \"direct_call_names\": []\n  },\n  \"cache\": {\n    \"schema_version\": \"1.34\",\n    \"reuse_state\": \"reused_file_facts\",\n    \"file_fact_status\": \"hits_366_misses_0_corrupt_0_store_errors_0\",\n    \"hits\": 366,\n    \"misses\": 0,\n    \"corrupt_ignored\": 0,\n    \"stores\": 0,\n    \"store_errors\": 0,\n    \"recomputation_reasons\": [],\n    \"invalidation_status\": \"not_available\",\n    \"input_fingerprint\": {\n      \"schema_version\": \"1.62\",\n      \"analyzer_version\": \"0.11.0+20be462ca537a212ad91bb4a8a97e03846d4468f\",\n      \"workspace_root_hash\": \"d01c46ccc7cf688a\",\n      \"files_content_hash\": \"e276689eb7ce2a74\",\n      \"cfg_features_hash\": \"cbf29ce484222325\",\n      \"config_hash\": \"cbf29ce484222325\",\n      \"test_intent_hash\": \"b0bcff318f4a30af\",\n      \"suppressions_hash\": \"cbf29ce484222325\",\n      \"workspace_manifests_hash\": \"d820c388a93ecb21\",\n      \"lockfile_hash\": \"f981dd9441250b97\",\n      \"toolchain_hash\": \"833996a486514c49\",\n      \"seam_limit_key\": \"limit_10000\",\n      \"selector_ledger_hash\": \"not_applicable\",\n      \"graph_provenance\": {\n        \"package_graph_status\": \"complete\",\n        \"package_graph_hash\": \"d298c18dd3c12335\",\n        \"package_graph_detail\": null,\n        \"feature_graph_status\": \"complete\",\n        \"feature_graph_hash\": \"d30fa91f66600cf7\",\n        \"feature_graph_detail\": null,\n        \"external_dependency_graph_status\": \"unavailable\",\n        \"external_dependency_graph_detail\": \"external dependency metadata is not resolved; no network access was used\",\n        \"path_dependency_graph\": {\n          \"status\": \"complete\",\n          \"detail\": null,\n          \"edge_count\": 1,\n          \"connected_edge_count\": 1,\n          \"adjacency\": {\n            \"crates/ripr/Cargo.toml\": {\n              \"forward\": [],\n              \"reverse\": [\n                \"xtask/Cargo.toml\"\n              ]\n            },\n            \"xtask/Cargo.toml\": {\n              \"forward\": [\n                \"crates/ripr/Cargo.toml\"\n              ],\n              \"reverse\": []\n            }\n          }\n        }\n      }\n    }\n  },\n  \"seams\": [],\n  \"limitation\": {\n    \"kind\": \"changed_test_owner_ambiguous\",\n    \"message\": \"targeted rerun changed test `crates/ripr/src/lsp/tests.rs` has ambiguous direct production owner `new`\"\n  },\n  \"authority_boundary\": \"static evidence only; no before snapshot was supplied, so gap movement is not inferred\"\n}\n",
+    "stderr_raw": ""
+  },
+  "minimal_controls": [
+    {
+      "id": "collision-repro",
+      "synthetic": true,
+      "inputs": {
+        "Cargo.toml": "[package]\nname = \"selector-repro\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        "src/lib.rs": "pub struct DiagnosticRefreshPlan { pub published_payload_bytes: usize, pub suppressed_payload_bytes: usize }\npub fn diagnostic_refresh_plan(previous: &std::collections::BTreeMap<usize, usize>, bytes: usize) -> DiagnosticRefreshPlan {\n    let published_payload_bytes = if previous.is_empty() { bytes } else { 0 };\n    let suppressed_payload_bytes = if previous.is_empty() { 0 } else { bytes };\n    DiagnosticRefreshPlan { published_payload_bytes, suppressed_payload_bytes }\n}\npub struct Alpha;\nimpl Alpha { pub fn new() -> usize { 1 } }\npub struct Beta;\nimpl Beta { pub fn new() -> usize { 2 } }\n",
+        "tests/refresh.rs": "use selector_repro::diagnostic_refresh_plan;\n#[test]\nfn diagnostic_refresh_plan_case() {\n    let previous = std::collections::BTreeMap::<usize, usize>::new();\n    let plan = diagnostic_refresh_plan(&previous, 42);\n    assert!(plan.published_payload_bytes > 0);\n}\n"
+      },
+      "process_receipt": {
+        "command": [
+          "/workspace/1601-continuation-evidence/ripr",
+          "rerun",
+          "--changed-test",
+          "tests/refresh.rs::diagnostic_refresh_plan_case",
+          "--root",
+          "/workspace/1601-continuation-evidence/selector-repro/foreign-constructor",
+          "--json"
+        ],
+        "cwd": "/workspace/1601-continuation-evidence/selector-repro/foreign-constructor",
+        "outer_bound_seconds": 180,
+        "analysis_workers": 1,
+        "native_exit": 0,
+        "elapsed_seconds": 0.015743684000085523,
+        "timed_out": false,
+        "primary_reaped": true,
+        "owned_process_group_empty": true,
+        "pid": 8101,
+        "before": {
+          "head": "a33b347766968a6720c4bbbdb7dbd821cb4ac0fd",
+          "tree": "424240d5b062ec5620f213ca3ecb0672ca366221",
+          "tracked_bytes_sha256": "c7f19981114232f3a66e28f019e5a6228a50a62211d26dd7de3abceb7a284bf4",
+          "base_head_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "status": "",
+          "root_config": null,
+          "binary_sha256": "c0c6606855e2ae815cf52990ea831e872ef05164454597b0bf6f86232fcddf5c"
+        },
+        "after": {
+          "head": "a33b347766968a6720c4bbbdb7dbd821cb4ac0fd",
+          "tree": "424240d5b062ec5620f213ca3ecb0672ca366221",
+          "tracked_bytes_sha256": "c7f19981114232f3a66e28f019e5a6228a50a62211d26dd7de3abceb7a284bf4",
+          "base_head_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "status": "?? target/",
+          "root_config": null,
+          "binary_sha256": "c0c6606855e2ae815cf52990ea831e872ef05164454597b0bf6f86232fcddf5c"
+        },
+        "unchanged": false,
+        "stdout_sha256": "7f0f944db87f7c06221c10a25ab4ad62e41fa3c90f6aeb14e590a62ac0d78bb7",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stdout_raw": "{\n  \"schema_version\": \"ripr-targeted-rerun-v1\",\n  \"state\": \"limited\",\n  \"selector\": {\n    \"kind\": \"changed_test\",\n    \"changed_test\": \"tests/refresh.rs::diagnostic_refresh_plan_case\",\n    \"selected_test_count\": 1,\n    \"direct_call_names\": []\n  },\n  \"cache\": {\n    \"schema_version\": \"1.34\",\n    \"reuse_state\": \"recomputed_file_facts\",\n    \"file_fact_status\": \"hits_0_misses_2_corrupt_0_store_errors_0\",\n    \"hits\": 0,\n    \"misses\": 2,\n    \"corrupt_ignored\": 0,\n    \"stores\": 2,\n    \"store_errors\": 0,\n    \"recomputation_reasons\": [],\n    \"invalidation_status\": \"not_available\",\n    \"input_fingerprint\": {\n      \"schema_version\": \"1.62\",\n      \"analyzer_version\": \"0.11.0+20be462ca537a212ad91bb4a8a97e03846d4468f\",\n      \"workspace_root_hash\": \"fccb4add54748a75\",\n      \"files_content_hash\": \"d0d1f1e6aeaf721e\",\n      \"cfg_features_hash\": \"cbf29ce484222325\",\n      \"config_hash\": \"cbf29ce484222325\",\n      \"test_intent_hash\": \"cbf29ce484222325\",\n      \"suppressions_hash\": \"cbf29ce484222325\",\n      \"workspace_manifests_hash\": \"67950c19e068f3a7\",\n      \"lockfile_hash\": \"0b74165b4cea4f09\",\n      \"toolchain_hash\": \"833996a486514c49\",\n      \"seam_limit_key\": \"limit_10000\",\n      \"selector_ledger_hash\": \"not_applicable\",\n      \"graph_provenance\": {\n        \"package_graph_status\": \"complete\",\n        \"package_graph_hash\": \"7db939c075753c38\",\n        \"package_graph_detail\": null,\n        \"feature_graph_status\": \"complete\",\n        \"feature_graph_hash\": \"e8a716fd68a93295\",\n        \"feature_graph_detail\": null,\n        \"external_dependency_graph_status\": \"unavailable\",\n        \"external_dependency_graph_detail\": \"external dependency metadata is not resolved; no network access was used\",\n        \"path_dependency_graph\": {\n          \"status\": \"complete\",\n          \"detail\": \"no path dependencies were declared in the scanned manifests; the adjacency has no nodes\",\n          \"edge_count\": 0,\n          \"connected_edge_count\": 0,\n          \"adjacency\": {}\n        }\n      }\n    }\n  },\n  \"seams\": [],\n  \"limitation\": {\n    \"kind\": \"changed_test_owner_ambiguous\",\n    \"message\": \"targeted rerun changed test `tests/refresh.rs` has ambiguous direct production owner `new`\"\n  },\n  \"authority_boundary\": \"static evidence only; no before snapshot was supplied, so gap movement is not inferred\"\n}\n",
+      "stderr_raw": "",
+      "wrapper_exit": 90,
+      "instrument_reconciliation": "Analyzer native exit is 0. The strict unchanged-status wrapper exited 90 because the fixture omitted .gitignore and normal analysis created untracked target/. Independent retained snapshots verify unchanged tracked bytes, tree, root configuration and binary. No input change occurred; the authorized cache output is not a consumer edit.",
+      "tracked_source_and_binary_unchanged": true
+    },
+    {
+      "id": "positive-control",
+      "synthetic": true,
+      "inputs": {
+        "Cargo.toml": "[package]\nname = \"selector-repro\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
+        "src/lib.rs": "pub struct DiagnosticRefreshPlan { pub published_payload_bytes: usize, pub suppressed_payload_bytes: usize }\npub fn diagnostic_refresh_plan(previous: &std::collections::BTreeMap<usize, usize>, bytes: usize) -> DiagnosticRefreshPlan {\n    let published_payload_bytes = if previous.is_empty() { bytes } else { 0 };\n    let suppressed_payload_bytes = if previous.is_empty() { 0 } else { bytes };\n    DiagnosticRefreshPlan { published_payload_bytes, suppressed_payload_bytes }\n}\npub struct Alpha;\nimpl Alpha { pub fn new() -> usize { 1 } }\npub struct Beta;\nimpl Beta { pub fn new() -> usize { 2 } }\n",
+        "tests/refresh.rs": "use selector_repro::diagnostic_refresh_plan;\n#[test]\nfn diagnostic_refresh_plan_case() {\n    let previous = std::collections::BTreeMap::<usize, usize>::default();\n    let plan = diagnostic_refresh_plan(&previous, 42);\n    assert!(plan.published_payload_bytes > 0);\n}\n"
+      },
+      "process_receipt": {
+        "command": [
+          "/workspace/1601-continuation-evidence/ripr",
+          "rerun",
+          "--changed-test",
+          "tests/refresh.rs::diagnostic_refresh_plan_case",
+          "--root",
+          "/workspace/1601-continuation-evidence/selector-repro/foreign-default-control",
+          "--json"
+        ],
+        "cwd": "/workspace/1601-continuation-evidence/selector-repro/foreign-default-control",
+        "outer_bound_seconds": 180,
+        "analysis_workers": 1,
+        "native_exit": 0,
+        "elapsed_seconds": 0.031898844000011195,
+        "timed_out": false,
+        "primary_reaped": true,
+        "owned_process_group_empty": true,
+        "pid": 8121,
+        "before": {
+          "head": "b8cd7d0a194faae8043fddeab276dbd956bc420f",
+          "tree": "37c5795d396e968ff0f7662b5b56c0b6629c3440",
+          "tracked_bytes_sha256": "17f7cb20e46b66238e8af77104b77ca87718d7b7eccb57745253b0c9fa54b34b",
+          "base_head_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "status": "",
+          "root_config": null,
+          "binary_sha256": "c0c6606855e2ae815cf52990ea831e872ef05164454597b0bf6f86232fcddf5c"
+        },
+        "after": {
+          "head": "b8cd7d0a194faae8043fddeab276dbd956bc420f",
+          "tree": "37c5795d396e968ff0f7662b5b56c0b6629c3440",
+          "tracked_bytes_sha256": "17f7cb20e46b66238e8af77104b77ca87718d7b7eccb57745253b0c9fa54b34b",
+          "base_head_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "status": "?? target/",
+          "root_config": null,
+          "binary_sha256": "c0c6606855e2ae815cf52990ea831e872ef05164454597b0bf6f86232fcddf5c"
+        },
+        "unchanged": false,
+        "stdout_sha256": "83e76f64accb2b3a066875e37349e897d538c72e9717916dc3b8fbcf3251e541",
+        "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stdout_raw": "{\n  \"schema_version\": \"ripr-targeted-rerun-v1\",\n  \"state\": \"current_state_only\",\n  \"selector\": {\n    \"kind\": \"changed_test\",\n    \"changed_test\": \"tests/refresh.rs::diagnostic_refresh_plan_case\",\n    \"selected_test_count\": 1,\n    \"direct_call_names\": [\n      \"diagnostic_refresh_plan\"\n    ]\n  },\n  \"cache\": {\n    \"schema_version\": \"1.34\",\n    \"reuse_state\": \"recomputed_file_facts\",\n    \"file_fact_status\": \"hits_0_misses_2_corrupt_0_store_errors_0\",\n    \"hits\": 0,\n    \"misses\": 2,\n    \"corrupt_ignored\": 0,\n    \"stores\": 2,\n    \"store_errors\": 0,\n    \"recomputation_reasons\": [\n      \"selected_test_scope_recomputed\"\n    ],\n    \"invalidation_status\": \"not_available\",\n    \"input_fingerprint\": {\n      \"schema_version\": \"1.62\",\n      \"analyzer_version\": \"0.11.0+20be462ca537a212ad91bb4a8a97e03846d4468f\",\n      \"workspace_root_hash\": \"c46865b6b1833080\",\n      \"files_content_hash\": \"e7b4ea77dfdf2342\",\n      \"cfg_features_hash\": \"cbf29ce484222325\",\n      \"config_hash\": \"cbf29ce484222325\",\n      \"test_intent_hash\": \"cbf29ce484222325\",\n      \"suppressions_hash\": \"cbf29ce484222325\",\n      \"workspace_manifests_hash\": \"67950c19e068f3a7\",\n      \"lockfile_hash\": \"0b74165b4cea4f09\",\n      \"toolchain_hash\": \"833996a486514c49\",\n      \"seam_limit_key\": \"limit_10000\",\n      \"selector_ledger_hash\": \"not_applicable\",\n      \"graph_provenance\": {\n        \"package_graph_status\": \"complete\",\n        \"package_graph_hash\": \"7db939c075753c38\",\n        \"package_graph_detail\": null,\n        \"feature_graph_status\": \"complete\",\n        \"feature_graph_hash\": \"e8a716fd68a93295\",\n        \"feature_graph_detail\": null,\n        \"external_dependency_graph_status\": \"unavailable\",\n        \"external_dependency_graph_detail\": \"external dependency metadata is not resolved; no network access was used\",\n        \"path_dependency_graph\": {\n          \"status\": \"complete\",\n          \"detail\": \"no path dependencies were declared in the scanned manifests; the adjacency has no nodes\",\n          \"edge_count\": 0,\n          \"connected_edge_count\": 0,\n          \"adjacency\": {}\n        }\n      }\n    }\n  },\n  \"seams\": [\n    {\n      \"canonical_gap_id\": \"gap:a658f64848aac695\",\n      \"seam_id\": \"42529bc7909f35c6\",\n      \"file\": \"src/lib.rs\",\n      \"line\": 3,\n      \"owner\": \"src/lib.rs::diagnostic_refresh_plan\",\n      \"static_class\": \"weakly_gripped\",\n      \"repair_route_readiness\": {\n        \"state\": \"static_limitation\",\n        \"seam_id\": \"42529bc7909f35c6\",\n        \"canonical_gap_id\": \"gap:a658f64848aac695\",\n        \"required_evidence\": [\n          \"producer-owned missing discriminator fact: boundary_value\",\n          \"safe test target\"\n        ],\n        \"present_evidence\": [\n          \"safe test target\"\n        ],\n        \"missing_evidence\": [\n          \"producer-owned missing discriminator fact: boundary_value\"\n        ],\n        \"target_selection\": {\n          \"existing\": {\n            \"symbol_id\": \"tests/refresh.rs::diagnostic_refresh_plan_case\",\n            \"file\": \"tests/refresh.rs\",\n            \"line\": 3,\n            \"test_kind\": \"integration\",\n            \"relation\": \"direct_owner_call\",\n            \"provenance\": \"rust_index_function\",\n            \"workspace_identity\": \"sha256:e58a987c400f578b476a8ebc46652e72e8fa9388ce2d23c6b3ffc302b8194d8c\",\n            \"currentness\": \"current\"\n          }\n        },\n        \"test_target\": {\n          \"symbol_id\": \"tests/refresh.rs::diagnostic_refresh_plan_case\",\n          \"file\": \"tests/refresh.rs\",\n          \"line\": 3,\n          \"test_kind\": \"integration\",\n          \"relation\": \"direct_owner_call\",\n          \"provenance\": \"rust_index_function\",\n          \"workspace_identity\": \"sha256:e58a987c400f578b476a8ebc46652e72e8fa9388ce2d23c6b3ffc302b8194d8c\",\n          \"currentness\": \"current\"\n        },\n        \"proposed_oracle\": \"ExactValue\",\n        \"current_oracle\": \"RelationalCheck\",\n        \"authority_boundary\": \"analysis/producer-owned-repair-route-readiness\"\n      },\n      \"related_tests\": [\n        {\n          \"test_name\": \"diagnostic_refresh_plan_case\",\n          \"file\": \"tests/refresh.rs\",\n          \"line\": 3,\n          \"oracle_kind\": \"relational_check\",\n          \"oracle_strength\": \"weak\",\n          \"evidence_summary\": \"relational check\",\n          \"relation_reason\": \"direct_owner_call\",\n          \"relation_confidence\": \"high\"\n        }\n      ],\n      \"missing_discriminators\": []\n    },\n    {\n      \"canonical_gap_id\": \"gap:a658f64848aac695\",\n      \"seam_id\": \"4b83c8c795fa497f\",\n      \"file\": \"src/lib.rs\",\n      \"line\": 4,\n      \"owner\": \"src/lib.rs::diagnostic_refresh_plan\",\n      \"static_class\": \"weakly_gripped\",\n      \"repair_route_readiness\": {\n        \"state\": \"static_limitation\",\n        \"seam_id\": \"4b83c8c795fa497f\",\n        \"canonical_gap_id\": \"gap:a658f64848aac695\",\n        \"required_evidence\": [\n          \"producer-owned missing discriminator fact: boundary_value\",\n          \"safe test target\"\n        ],\n        \"present_evidence\": [\n          \"safe test target\"\n        ],\n        \"missing_evidence\": [\n          \"producer-owned missing discriminator fact: boundary_value\"\n        ],\n        \"target_selection\": {\n          \"existing\": {\n            \"symbol_id\": \"tests/refresh.rs::diagnostic_refresh_plan_case\",\n            \"file\": \"tests/refresh.rs\",\n            \"line\": 3,\n            \"test_kind\": \"integration\",\n            \"relation\": \"direct_owner_call\",\n            \"provenance\": \"rust_index_function\",\n            \"workspace_identity\": \"sha256:e58a987c400f578b476a8ebc46652e72e8fa9388ce2d23c6b3ffc302b8194d8c\",\n            \"currentness\": \"current\"\n          }\n        },\n        \"test_target\": {\n          \"symbol_id\": \"tests/refresh.rs::diagnostic_refresh_plan_case\",\n          \"file\": \"tests/refresh.rs\",\n          \"line\": 3,\n          \"test_kind\": \"integration\",\n          \"relation\": \"direct_owner_call\",\n          \"provenance\": \"rust_index_function\",\n          \"workspace_identity\": \"sha256:e58a987c400f578b476a8ebc46652e72e8fa9388ce2d23c6b3ffc302b8194d8c\",\n          \"currentness\": \"current\"\n        },\n        \"proposed_oracle\": \"ExactValue\",\n        \"current_oracle\": \"RelationalCheck\",\n        \"authority_boundary\": \"analysis/producer-owned-repair-route-readiness\"\n      },\n      \"related_tests\": [\n        {\n          \"test_name\": \"diagnostic_refresh_plan_case\",\n          \"file\": \"tests/refresh.rs\",\n          \"line\": 3,\n          \"oracle_kind\": \"relational_check\",\n          \"oracle_strength\": \"weak\",\n          \"evidence_summary\": \"relational check\",\n          \"relation_reason\": \"direct_owner_call\",\n          \"relation_confidence\": \"high\"\n        }\n      ],\n      \"missing_discriminators\": []\n    },\n    {\n      \"canonical_gap_id\": \"gap:65259537624c903e\",\n      \"seam_id\": \"04de9d89453fc2dd\",\n      \"file\": \"src/lib.rs\",\n      \"line\": 5,\n      \"owner\": \"src/lib.rs::diagnostic_refresh_plan\",\n      \"static_class\": \"weakly_gripped\",\n      \"repair_route_readiness\": {\n        \"state\": \"static_limitation\",\n        \"seam_id\": \"04de9d89453fc2dd\",\n        \"canonical_gap_id\": \"gap:65259537624c903e\",\n        \"required_evidence\": [\n          \"producer-owned missing discriminator fact: return_value\",\n          \"safe test target\"\n        ],\n        \"present_evidence\": [\n          \"safe test target\"\n        ],\n        \"missing_evidence\": [\n          \"producer-owned missing discriminator fact: return_value\"\n        ],\n        \"target_selection\": {\n          \"existing\": {\n            \"symbol_id\": \"tests/refresh.rs::diagnostic_refresh_plan_case\",\n            \"file\": \"tests/refresh.rs\",\n            \"line\": 3,\n            \"test_kind\": \"integration\",\n            \"relation\": \"direct_owner_call\",\n            \"provenance\": \"rust_index_function\",\n            \"workspace_identity\": \"sha256:e58a987c400f578b476a8ebc46652e72e8fa9388ce2d23c6b3ffc302b8194d8c\",\n            \"currentness\": \"current\"\n          }\n        },\n        \"test_target\": {\n          \"symbol_id\": \"tests/refresh.rs::diagnostic_refresh_plan_case\",\n          \"file\": \"tests/refresh.rs\",\n          \"line\": 3,\n          \"test_kind\": \"integration\",\n          \"relation\": \"direct_owner_call\",\n          \"provenance\": \"rust_index_function\",\n          \"workspace_identity\": \"sha256:e58a987c400f578b476a8ebc46652e72e8fa9388ce2d23c6b3ffc302b8194d8c\",\n          \"currentness\": \"current\"\n        },\n        \"proposed_oracle\": \"ExactValue\",\n        \"current_oracle\": \"RelationalCheck\",\n        \"authority_boundary\": \"analysis/producer-owned-repair-route-readiness\"\n      },\n      \"related_tests\": [\n        {\n          \"test_name\": \"diagnostic_refresh_plan_case\",\n          \"file\": \"tests/refresh.rs\",\n          \"line\": 3,\n          \"oracle_kind\": \"relational_check\",\n          \"oracle_strength\": \"weak\",\n          \"evidence_summary\": \"relational check\",\n          \"relation_reason\": \"direct_owner_call\",\n          \"relation_confidence\": \"high\"\n        }\n      ],\n      \"missing_discriminators\": []\n    },\n    {\n      \"canonical_gap_id\": \"gap:dca9131774d4ba4b\",\n      \"seam_id\": \"dbb9178411fc6cc9\",\n      \"file\": \"src/lib.rs\",\n      \"line\": 5,\n      \"owner\": \"src/lib.rs::diagnostic_refresh_plan\",\n      \"static_class\": \"weakly_gripped\",\n      \"repair_route_readiness\": {\n        \"state\": \"static_limitation\",\n        \"seam_id\": \"dbb9178411fc6cc9\",\n        \"canonical_gap_id\": \"gap:dca9131774d4ba4b\",\n        \"required_evidence\": [\n          \"producer-owned missing discriminator fact: field_value\",\n          \"safe test target\"\n        ],\n        \"present_evidence\": [\n          \"safe test target\"\n        ],\n        \"missing_evidence\": [\n          \"producer-owned missing discriminator fact: field_value\"\n        ],\n        \"target_selection\": {\n          \"existing\": {\n            \"symbol_id\": \"tests/refresh.rs::diagnostic_refresh_plan_case\",\n            \"file\": \"tests/refresh.rs\",\n            \"line\": 3,\n            \"test_kind\": \"integration\",\n            \"relation\": \"direct_owner_call\",\n            \"provenance\": \"rust_index_function\",\n            \"workspace_identity\": \"sha256:e58a987c400f578b476a8ebc46652e72e8fa9388ce2d23c6b3ffc302b8194d8c\",\n            \"currentness\": \"current\"\n          }\n        },\n        \"test_target\": {\n          \"symbol_id\": \"tests/refresh.rs::diagnostic_refresh_plan_case\",\n          \"file\": \"tests/refresh.rs\",\n          \"line\": 3,\n          \"test_kind\": \"integration\",\n          \"relation\": \"direct_owner_call\",\n          \"provenance\": \"rust_index_function\",\n          \"workspace_identity\": \"sha256:e58a987c400f578b476a8ebc46652e72e8fa9388ce2d23c6b3ffc302b8194d8c\",\n          \"currentness\": \"current\"\n        },\n        \"proposed_oracle\": \"ExactValue\",\n        \"current_oracle\": \"RelationalCheck\",\n        \"authority_boundary\": \"analysis/producer-owned-repair-route-readiness\"\n      },\n      \"related_tests\": [\n        {\n          \"test_name\": \"diagnostic_refresh_plan_case\",\n          \"file\": \"tests/refresh.rs\",\n          \"line\": 3,\n          \"oracle_kind\": \"relational_check\",\n          \"oracle_strength\": \"weak\",\n          \"evidence_summary\": \"relational check\",\n          \"relation_reason\": \"direct_owner_call\",\n          \"relation_confidence\": \"high\"\n        }\n      ],\n      \"missing_discriminators\": []\n    },\n    {\n      \"canonical_gap_id\": \"gap:205ecedbd1f5721d\",\n      \"seam_id\": \"dba4988411eaebf2\",\n      \"file\": \"src/lib.rs\",\n      \"line\": 5,\n      \"owner\": \"src/lib.rs::diagnostic_refresh_plan\",\n      \"static_class\": \"weakly_gripped\",\n      \"repair_route_readiness\": {\n        \"state\": \"static_limitation\",\n        \"seam_id\": \"dba4988411eaebf2\",\n        \"canonical_gap_id\": \"gap:205ecedbd1f5721d\",\n        \"required_evidence\": [\n          \"producer-owned missing discriminator fact: field_value\",\n          \"safe test target\"\n        ],\n        \"present_evidence\": [\n          \"safe test target\"\n        ],\n        \"missing_evidence\": [\n          \"producer-owned missing discriminator fact: field_value\"\n        ],\n        \"target_selection\": {\n          \"existing\": {\n            \"symbol_id\": \"tests/refresh.rs::diagnostic_refresh_plan_case\",\n            \"file\": \"tests/refresh.rs\",\n            \"line\": 3,\n            \"test_kind\": \"integration\",\n            \"relation\": \"direct_owner_call\",\n            \"provenance\": \"rust_index_function\",\n            \"workspace_identity\": \"sha256:e58a987c400f578b476a8ebc46652e72e8fa9388ce2d23c6b3ffc302b8194d8c\",\n            \"currentness\": \"current\"\n          }\n        },\n        \"test_target\": {\n          \"symbol_id\": \"tests/refresh.rs::diagnostic_refresh_plan_case\",\n          \"file\": \"tests/refresh.rs\",\n          \"line\": 3,\n          \"test_kind\": \"integration\",\n          \"relation\": \"direct_owner_call\",\n          \"provenance\": \"rust_index_function\",\n          \"workspace_identity\": \"sha256:e58a987c400f578b476a8ebc46652e72e8fa9388ce2d23c6b3ffc302b8194d8c\",\n          \"currentness\": \"current\"\n        },\n        \"proposed_oracle\": \"ExactValue\",\n        \"current_oracle\": \"RelationalCheck\",\n        \"authority_boundary\": \"analysis/producer-owned-repair-route-readiness\"\n      },\n      \"related_tests\": [\n        {\n          \"test_name\": \"diagnostic_refresh_plan_case\",\n          \"file\": \"tests/refresh.rs\",\n          \"line\": 3,\n          \"oracle_kind\": \"relational_check\",\n          \"oracle_strength\": \"weak\",\n          \"evidence_summary\": \"relational check\",\n          \"relation_reason\": \"direct_owner_call\",\n          \"relation_confidence\": \"high\"\n        }\n      ],\n      \"missing_discriminators\": []\n    }\n  ],\n  \"authority_boundary\": \"static evidence only; no before snapshot was supplied, so gap movement is not inferred\"\n}\n",
+      "stderr_raw": "",
+      "wrapper_exit": 90,
+      "instrument_reconciliation": "Analyzer native exit is 0. The strict unchanged-status wrapper exited 90 because the fixture omitted .gitignore and normal analysis created untracked target/. Independent retained snapshots verify unchanged tracked bytes, tree, root configuration and binary. No input change occurred; the authorized cache output is not a consumer edit.",
+      "tracked_source_and_binary_unchanged": true
+    }
+  ],
+  "diagnosis": {
+    "classification": "verified_current",
+    "observed_boundary": "changed_test_owner_ambiguous for new; selected test count 1, zero scoped seams, all 366 file facts reused",
+    "semantic_owner": "crates/ripr/src/analysis/seam_inventory.rs::inventory_changed_test_classified_seams_at_with_config_node",
+    "source_sha": "20be462ca537a212ad91bb4a8a97e03846d4468f",
+    "cause": "Captured call identity is reduced to terminal names before counting all production definitions; BTreeMap::new collides with unrelated production constructors before the intended owner can be selected. Seam filtering also reduces owner IDs to terminal names.",
+    "repair_direction": "Retain qualified/receiver/entity identity and use existing call-resolution authority before counting owners; preserve exact owner through seam filtering and genuine ambiguity. No constructor whitelist, renderer reconstruction or scope fallback.",
+    "current_owner": "#1601 selected diagnosis; #5186 later shared-index migration",
+    "detailed_readiness": "NOT_ESTABLISHED",
+    "source_derived_guidance_lead": "FieldConstruction template uses result.field / expected with no consumed required-discriminator basis; assertion_guidance_for plus from_seam_facts therefore refuses concrete guidance as producer_fact_absent / inspect_fix_site. This is inspected source, not an emitted selected packet. Do not promote the placeholder or reopen delivered #1981/#4916.",
+    "remaining_inputs": [
+      "actual field access",
+      "concrete previous/batches activation arrangement",
+      "independently justified expected diagnostic byte value"
+    ]
+  },
+  "counting": {
+    "retained_counts_verified": {
+      "cases": 0,
+      "exclusions": 24,
+      "observations": 15
+    },
+    "added_cases": 0,
+    "added_attempts": 0,
+    "added_exclusions": 0,
+    "added_observation_rows": 0,
+    "denominators_changed": false
+  },
+  "controls_not_executed": "Original wrong-owner, sibling-field, unrelated-oracle, ambiguity, target-authority and stale-identity fixture controls remain unchanged; broader production regression controls were inspected, not executed because no analyzer repair is delivered.",
+  "non_claims": [
+    "No consumer edits or tests executed",
+    "No complete route admitted to #3075",
+    "No whole-inventory route-yield or absence claim from capped guidance",
+    "No support-tier promotion, mutation or release qualification",
+    "No new source fix, attempt ledger or successor issue"
+  ],
+  "selected_test_producer_facts": {
+    "name": "diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri",
+    "file": "crates/ripr/src/lsp/tests.rs",
+    "start_line": 3080,
+    "end_line": 3111,
+    "body": {
+      "start": 119050,
+      "len": 1068
+    },
+    "calls": [
+      {
+        "line": 3080,
+        "name": "diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri",
+        "text": "fn diagnostic_refresh_plan_suppresses_unchanged_uri_and_publishes_changed_uri() -> Result<(), String>"
+      },
+      {
+        "line": 3082,
+        "name": "test_uri",
+        "text": "let uri = test_uri(\"file:///workspace/src/current.rs\")?;"
+      },
+      {
+        "line": 3083,
+        "name": "gap_action_diagnostic",
+        "text": "let first = gap_action_diagnostic();"
+      },
+      {
+        "line": 3084,
+        "name": "new",
+        "text": "let mut previous = BTreeMap::new();"
+      },
+      {
+        "line": 3085,
+        "name": "clone",
+        "text": "previous.insert(uri.clone(), vec![first.clone()]);"
+      },
+      {
+        "line": 3085,
+        "name": "insert",
+        "text": "previous.insert(uri.clone(), vec![first.clone()]);"
+      },
+      {
+        "line": 3087,
+        "name": "diagnostic_refresh_plan",
+        "text": "let unchanged = diagnostic_refresh_plan("
+      },
+      {
+        "line": 3090,
+        "name": "clone",
+        "text": "uri: uri.clone(),"
+      },
+      {
+        "line": 3091,
+        "name": "clone",
+        "text": "diagnostics: vec![first.clone()],"
+      },
+      {
+        "line": 3094,
+        "name": "is_empty",
+        "text": "assert!(unchanged.publish_batches.is_empty());"
+      },
+      {
+        "line": 3099,
+        "name": "push_str",
+        "text": "changed.message.push_str(\"; changed\");"
+      },
+      {
+        "line": 3100,
+        "name": "diagnostic_refresh_plan",
+        "text": "let changed_plan = diagnostic_refresh_plan("
+      },
+      {
+        "line": 3107,
+        "name": "len",
+        "text": "assert_eq!(changed_plan.publish_batches.len(), 1);"
+      },
+      {
+        "line": 3110,
+        "name": "Ok",
+        "text": "Ok(())"
+      }
+    ],
+    "assertions": [
+      {
+        "line": 3094,
+        "text": "assert!(unchanged.publish_batches.is_empty());",
+        "kind": "RelationalCheck",
+        "strength": "Weak",
+        "observed_tokens": [
+          "is_empty",
+          "publish_batches",
+          "unchanged"
+        ],
+        "ok_value_observed": null
+      },
+      {
+        "line": 3095,
+        "text": "assert_eq!(unchanged.unchanged_uri_count, 1);",
+        "kind": "ExactValue",
+        "strength": "Strong",
+        "observed_tokens": [
+          "unchanged",
+          "unchanged_uri_count"
+        ],
+        "ok_value_observed": null
+      },
+      {
+        "line": 3096,
+        "text": "assert!(unchanged.suppressed_payload_bytes > 0);",
+        "kind": "RelationalCheck",
+        "strength": "Weak",
+        "observed_tokens": [
+          "suppressed_payload_bytes",
+          "unchanged"
+        ],
+        "ok_value_observed": null
+      },
+      {
+        "line": 3107,
+        "text": "assert_eq!(changed_plan.publish_batches.len(), 1);",
+        "kind": "ExactValue",
+        "strength": "Strong",
+        "observed_tokens": [
+          "changed_plan",
+          "len",
+          "publish_batches"
+        ],
+        "ok_value_observed": null
+      },
+      {
+        "line": 3108,
+        "text": "assert_eq!(changed_plan.unchanged_uri_count, 0);",
+        "kind": "ExactValue",
+        "strength": "Strong",
+        "observed_tokens": [
+          "changed_plan",
+          "unchanged_uri_count"
+        ],
+        "ok_value_observed": null
+      },
+      {
+        "line": 3109,
+        "text": "assert!(changed_plan.published_payload_bytes > 0);",
+        "kind": "RelationalCheck",
+        "strength": "Weak",
+        "observed_tokens": [
+          "changed_plan",
+          "published_payload_bytes"
+        ],
+        "ok_value_observed": null
+      }
+    ],
+    "literals": [
+      {
+        "line": 3095,
+        "value": "1"
+      },
+      {
+        "line": 3096,
+        "value": "0"
+      },
+      {
+        "line": 3107,
+        "value": "1"
+      },
+      {
+        "line": 3108,
+        "value": "0"
+      },
+      {
+        "line": 3109,
+        "value": "0"
+      }
+    ],
+    "attrs": [
+      "#[test]"
+    ],
+    "nested_fn_names": [],
+    "let_bindings": [
+      {
+        "line": 2,
+        "name": "uri"
+      },
+      {
+        "line": 3,
+        "name": "first"
+      },
+      {
+        "line": 4,
+        "name": "mut"
+      },
+      {
+        "line": 4,
+        "name": "previous"
+      },
+      {
+        "line": 7,
+        "name": "unchanged"
+      },
+      {
+        "line": 18,
+        "name": "changed"
+      },
+      {
+        "line": 18,
+        "name": "mut"
+      },
+      {
+        "line": 20,
+        "name": "changed_plan"
+      }
+    ]
+  },
+  "validation": {
+    "trust_report": {
+      "native_exit_code": 0,
+      "command": "cargo xtask rust-repair-trust-report",
+      "stdout": "",
+      "stderr": " Downloading crates ...\n  Downloaded simd-adler32 v0.3.10\n  Downloaded miniz_oxide v0.9.1\n  Downloaded bumpalo v3.20.3\n  Downloaded adler2 v2.0.1\n  Downloaded zopfli v0.8.3\n  Downloaded filetime v0.2.29\n  Downloaded flate2 v1.1.10\n  Downloaded tar v0.4.46\n  Downloaded typed-path v0.12.3\n  Downloaded crc32fast v1.5.2\n  Downloaded rustix v1.1.5\n  Downloaded zip v8.6.0\n  Downloaded linux-raw-sys v0.12.1\n  Downloaded xattr v1.6.1\n  Downloaded zlib-rs v0.6.8\n   Compiling bitflags v2.13.2\n   Compiling crc32fast v1.5.2\n   Compiling oxc_regular_expression v0.130.0\n   Compiling oxc_syntax v0.130.0\n   Compiling rustix v1.1.5\n   Compiling simd-adler32 v0.3.10\n   Compiling oxc_ast v0.130.0\n   Compiling adler2 v2.0.1\n   Compiling linux-raw-sys v0.12.1\n   Compiling miniz_oxide v0.9.1\n   Compiling oxc_ecmascript v0.130.0\n   Compiling ls-types v0.0.6\n   Compiling repo-policy v0.1.0 (/workspace/1601-replay-record/tools/repo-policy)\n   Compiling ripr v0.11.0 (/workspace/1601-replay-record/crates/ripr)\n   Compiling bumpalo v3.20.3\n   Compiling zlib-rs v0.6.8\n   Compiling flate2 v1.1.10\n   Compiling oxc_parser v0.130.0\n   Compiling zopfli v0.8.3\n   Compiling tower-lsp-server v0.23.0\n   Compiling xattr v1.6.1\n   Compiling filetime v0.2.29\n   Compiling typed-path v0.12.3\n   Compiling zip v8.6.0\n   Compiling tar v0.4.46\n   Compiling xtask v0.1.0 (/workspace/1601-replay-record/xtask)\n    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3m 28s\n     Running `/workspace/1601-tools/build/debug/xtask rust-repair-trust-report`\n",
+      "report": {
+        "attempt_count": 0,
+        "authorization_status": "complete",
+        "authorized_repository_count": 3,
+        "channel_observation_counts": {},
+        "claim_boundary": [
+          "This report measures route evidence, not developers or agents.",
+          "It is not runtime mutation evidence, coverage evidence, or a correctness proof.",
+          "Synthetic fixtures and preview-language cases do not satisfy the Rust corpus threshold.",
+          "A faster rerun without selected-scope parity is limited.",
+          "Observations are not attempts; zero eligible attempts makes repair success not_measurable."
+        ],
+        "cohort_count": 1,
+        "completion_without_hidden_help": {
+          "denominator": 0,
+          "display": "not_measurable",
+          "numerator": null,
+          "status": "not_measurable",
+          "unit": "completed_without_artifact_archaeology / complete_routes_with_observed_archaeology"
+        },
+        "correct_routes": {
+          "denominator": 0,
+          "display": "not_measurable",
+          "numerator": null,
+          "status": "not_measurable",
+          "unit": "independently_reviewed_correct / complete_routes"
+        },
+        "duplicate_observation_count": 4,
+        "earliest_stop_counts": {
+          "analysis_timeout": 3,
+          "not_observed": 9
+        },
+        "eligible_attempt_count": 0,
+        "exclusion_count": 24,
+        "exclusion_reason_counts": {
+          "analysis_timeout": 6,
+          "false_actionability": 1,
+          "no_current_behavior_change": 1,
+          "production_test_path_rejected": 1,
+          "static_limitation_no_repair_packet": 15
+        },
+        "focused_test_execution": {
+          "failed": 0,
+          "not_observed": 12,
+          "not_run": 0,
+          "passed": 0
+        },
+        "limitations": [
+          "fewer_than_twenty_eligible_attempts",
+          "no_real_rust_attempts_recorded"
+        ],
+        "movement_counts": {
+          "closed": 0,
+          "improved": 0,
+          "limited": 0,
+          "regressed": 0,
+          "unchanged": 0
+        },
+        "observation_classification_counts": {
+          "duplicate_observation": 4,
+          "new_exclusion": 11
+        },
+        "observation_count": 28,
+        "repair_success": {
+          "denominator": 0,
+          "display": "not_measurable",
+          "numerator": null,
+          "status": "not_measurable",
+          "unit": "improved_or_closed / eligible_attempts"
+        },
+        "report": "rust-repair-trust",
+        "repository_count": 3,
+        "requirements": {
+          "exact_revision_required": true,
+          "minimum_attempts": 20,
+          "minimum_repositories": 3,
+          "movement_vocabulary": [
+            "closed",
+            "improved",
+            "unchanged",
+            "regressed",
+            "limited"
+          ],
+          "selected_scope_parity_required": true,
+          "test_only_repairs_required": true
+        },
+        "route_ladder": {
+          "analysis_completed": 0,
+          "attempts_authorized_or_eligible": 0,
+          "attempts_finished": 0,
+          "attempts_started": 0,
+          "canonical_behavior_or_gap_identified": 0,
+          "complete_routes_admitted": 0,
+          "selected_opportunities": 12,
+          "static_improved_or_closed": 0
+        },
+        "route_yield": {
+          "denominator": 12,
+          "display": "0/12",
+          "numerator": 0,
+          "status": "measured",
+          "unit": "complete_routes / selected_opportunities"
+        },
+        "run_status": "limited_incomplete_input",
+        "schema_version": "0.1",
+        "scorecard": {
+          "artifact_archaeology_incidents": 0,
+          "attempts_to_first_improvement_average": null,
+          "attempts_to_first_improvement_denominator": 0,
+          "call_presence_limitation_frequency": null,
+          "call_presence_limitation_frequency_denominator": 0,
+          "call_presence_limitation_frequency_numerator": 0,
+          "false_actionability_incidents": 0,
+          "known_impossible_recommendations": 0,
+          "limitation_frequency": null,
+          "limitation_frequency_denominator": 0,
+          "limitation_frequency_numerator": 0,
+          "metric_attempt_denominator": 0,
+          "missing_route_fields": {},
+          "missing_route_fields_denominator": 0,
+          "one_attempt_improvement_denominator": 0,
+          "one_attempt_improvement_numerator": 0,
+          "one_attempt_improvement_rate": null,
+          "parity_failures": 0,
+          "repair_rounds_total": 0
+        },
+        "source_path": "metrics/rust-repair-trust/corpus.json",
+        "status": "limited",
+        "timeout_observation_count": 6,
+        "unique_exclusion_count": 24,
+        "unique_opportunity_count": 12,
+        "valid_exclusion_count": 24,
+        "valid_observation_count": 15,
+        "validation_errors": [
+          "at least 20 eligible attempts are required"
+        ]
+      },
+      "claim_boundary": "Report remains limited/incomplete at zero eligible attempts; aggregate observation_count is not the retained observation-row count."
+    },
+    "policy_and_docs": [
+      {
+        "command": [
+          "/workspace/1601-tools/build/debug/xtask",
+          "check-file-policy"
+        ],
+        "native_exit_code": 0,
+        "report": "# check-file-policy\n\nStatus: pass\n\n## Why This Matters\n\nRust and xtask are the default implementation surface so repo automation stays typed, tested, and reviewable.\n\n## Violations\n\nNone detected.\n\n## Test-valued coverage applicability\n\nApplicable selectors must enumerate nonzero tests. Enumeration is not test execution. Host-inapplicable selectors are not enumerated and confer no coverage on this host.\n\n- line 348; host=unix; declared=all; applicable; selected=1; tests=[tests::implementation_slices_validate_and_coexist]; `cargo test -p xtask implementation_slices_validate_and_coexist`\n- line 357; host=unix; declared=all; applicable; selected=1; tests=[tests::committed_spec_review_receipts_validate]; `cargo test -p xtask committed_spec_review_receipts_validate`\n- line 411; host=unix; declared=all; applicable; selected=14; tests=[rust_judged_panel::rolling_observation::tests::blocked_ledger_cannot_count_as_no_action, rust_judged_panel::rolling_observation::tests::canonical_ledger_no_action_record_is_observed, rust_judged_panel::rolling_observation::tests::canonical_ledger_repairable_record_is_observed_separately_from_class, rust_judged_panel::rolling_observation::tests::claimed_observed_no_action_without_ledger_is_rejected, rust_judged_panel::rolling_observation::tests::class_name_alone_does_not_observe_actionability, rust_judged_panel::rolling_observation::tests::empty_ledger_is_blocked_and_is_not_no_action, rust_judged_panel::rolling_observation::tests::governed_manifest_actionability_is_not_canonical_observation, rust_judged_panel::rolling_observation::tests::missing_adapter_is_not_observed_not_false_actionable_false, rust_judged_panel::rolling_observation::tests::missing_ledger_cannot_count_as_no_action, rust_judged_panel::rolling_observation::tests::packet_shaped_object_is_not_a_canonical_actionability_producer, rust_judged_panel::rolling_observation::tests::production_exposed_classification_comes_from_check_json, rust_judged_panel::rolling_observation::tests::retained_rolling_observation_packet_validates_against_current_panel, rust_judged_panel::rolling_observation::tests::test_only_quiet_cannot_satisfy_production_quiet_coverage, rust_judged_panel::rolling_observation::tests::zero_findings_check_json_is_not_production_quiet_stratum]; `cargo test -p xtask --locked --offline rust_judged_panel::rolling_observation`\n- line 411; host=unix; declared=all; applicable; selected=21; tests=[rust_judged_panel::calibration::tests::canonical_retained_scorecard_matches_fresh_derivation, rust_judged_panel::calibration::tests::caught_with_nonzero_subjects_is_caught, rust_judged_panel::calibration::tests::equivalent_mutant_is_excluded_from_caught_survived_rates, rust_judged_panel::calibration::tests::failed_calibration_does_not_write_a_successful_empty_scorecard, rust_judged_panel::calibration::tests::json_and_markdown_agree_on_every_count_and_row, rust_judged_panel::calibration::tests::matrix_keeps_required_static_runtime_pairs, rust_judged_panel::calibration::tests::neighboring_same_name_filter_cannot_substitute, rust_judged_panel::calibration::tests::no_denominator_is_not_measurable_not_zero_percent, rust_judged_panel::calibration::tests::no_focused_mutant_stays_ineligible_not_caught, rust_judged_panel::calibration::tests::owned_runner_binds_hashed_absolute_identity, rust_judged_panel::calibration::tests::path_or_command_name_is_not_runner_authority, rust_judged_panel::calibration::tests::removing_one_calibrated_row_changes_denominator_and_digest, rust_judged_panel::calibration::tests::reordered_cases_are_byte_stable, rust_judged_panel::calibration::tests::runtime_join_cannot_mutate_structural_judgment_bytes, rust_judged_panel::calibration::tests::stale_identity_rejects_caught_promotion, rust_judged_panel::calibration::tests::survived_is_retained_without_automatic_false_exposed, rust_judged_panel::calibration::tests::timeout_compile_and_process_failure_remain_separate, rust_judged_panel::calibration::tests::unauthorized_row_stays_not_run_and_cannot_be_caught, rust_judged_panel::calibration::tests::writing_scorecard_then_removing_a_row_is_visible_on_disk, rust_judged_panel::calibration::tests::wrong_selector_is_rejected_as_stale_not_caught, rust_judged_panel::calibration::tests::zero_subjects_with_exit_zero_is_not_caught_or_survived]; `cargo test -p xtask --locked --offline rust_judged_panel::calibration`\n- line 411; host=unix; declared=all; applicable; selected=36; tests=[rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_calibration_authority_stays_excluded, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_calibration_cannot_set_static_class, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_correct_limitation_is_not_an_analyzer_defect, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_defect_cannot_hide_as_owner_none, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_deleting_an_unfavorable_row_changes_the_denominator, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_duplicate_owner_is_detected, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_every_judged_case_needs_a_row, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_existing_owner_cannot_be_displaced_by_a_rival, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_existing_owner_cannot_be_left_unowned, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_expected_class_shortcut_is_rejected, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_extra_row_is_not_a_judged_case, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_false_exposed_is_not_false_actionable, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_fixture_hardcoded_to_case_id_is_rejected, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_fixture_must_resolve_to_a_repository_file, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_human_notes_cannot_strengthen_inconclusive_or_limitation, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_inconclusive_cannot_close_as_accepted_limitation, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_incorrect_limitation_cannot_close_as_accepted, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_json_and_markdown_agree_on_counts, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_judgment_packet_is_validated_by_its_owner, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_merged_repair_without_replay_cannot_stay_open, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_non_defect_cannot_enter_repair_lifecycle, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_out_and_check_parse_together, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_production_ledger_covers_every_judged_case, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_production_reports_carry_the_judged_denominator, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_recorded_calibration_belongs_to_4795, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_reordered_rows_make_byte_stable_reports, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_repaired_fixture_without_original_replay_stays_pending, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_row_calibration_status_is_bound_to_the_ledger_state, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_staging_is_deterministic_and_checked, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_staging_refuses_symlink_targets, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_stale_judgment_digest_invalidates_closure, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_under_credit_is_not_support_promotion, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_unknown_cli_flag_is_rejected, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_wrong_target_cannot_be_authored_without_judgment_evidence, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_wrong_target_cannot_close_on_a_nearby_target, rust_judged_panel::rust_analysis_feedback::tests::rust_analysis_feedback_wrong_target_requires_exact_identity]; `cargo test -p xtask --locked --offline rust_analysis_feedback`\n- line 420; host=unix; declared=all; applicable; selected=7; tests=[rust_judged_panel::subject::tests::canonical_check_reaches_subject_authority, rust_judged_panel::subject::tests::canonical_subjects_materialize_with_stable_identities_after_relocation, rust_judged_panel::subject::tests::changed_governed_byte_is_rejected_before_materialization, rust_judged_panel::subject::tests::complete_wrong_subject_substitution_fails_independent_binding, rust_judged_panel::subject::tests::executed_diff_identity_uses_the_analyzers_pinned_diff_bytes, rust_judged_panel::subject::tests::hostile_git_environment_cannot_change_subject_identity, rust_judged_panel::subject::tests::resealed_changed_byte_is_rejected_by_git_identity]; `cargo test -p xtask rust_judged_panel::subject`\n- line 429; host=unix; declared=all; applicable; selected=20; tests=[rust_judged_panel::packet::tests::judgment_sidecar_public_publish_end_to_end, rust_judged_panel::packet::tests::judgment_sidecar_public_publish_fails_closed_without_a_valid_host_run, rust_judged_panel::packet::tests::packet_build_identity_survives_staging_publication_and_checkout_relocation, rust_judged_panel::packet::tests::packet_build_membership_does_not_replace_retained_binary_confinement, rust_judged_panel::packet::tests::packet_publish_rejects_coherent_unowned_build_paths, rust_judged_panel::packet::tests::packet_publish_requires_rebuild_for_historical_host_recipe, rust_judged_panel::packet::tests::resolve_repository_gitdir_follows_relative_and_absolute_gitfiles, rust_judged_panel::packet::tests::rust_judged_panel_packet_binds_all_three_exact_direction_witnesses, rust_judged_panel::packet::tests::rust_judged_panel_packet_failed_current_replacement_preserves_previous_pointer, rust_judged_panel::packet::tests::rust_judged_panel_packet_public_publish_validates_disposable_host_run, rust_judged_panel::packet::tests::rust_judged_panel_packet_rejects_all_authority_family_reseals, rust_judged_panel::packet::tests::rust_judged_panel_packet_rejects_in_repo_sibling_symlink, rust_judged_panel::packet::tests::rust_judged_panel_packet_rejects_noncanonical_portable_spellings, rust_judged_panel::packet::tests::rust_judged_panel_packet_rejects_resealed_stale_generation_member_paths, rust_judged_panel::packet::tests::rust_judged_panel_packet_replaces_existing_current_on_second_publication, rust_judged_panel::packet::tests::rust_judged_panel_packet_retained_validator_reaches_committed_generation, rust_judged_panel::packet::tests::rust_judged_panel_packet_reuse_validates_every_member_before_current, rust_judged_panel::packet::tests::rust_judged_panel_packet_strict_nested_readback_rejects_duplicate_and_unknown_keys, rust_judged_panel::packet::tests::rust_judged_panel_packet_strict_outer_current_rejects_duplicate_and_unknown_keys, rust_judged_panel::packet::tests::rust_judged_panel_packet_validate_at_rejects_full_digest_chain_reseal]; `cargo test -p xtask --locked --offline rust_judged_panel::packet::tests`\n- line 661; host=unix; declared=all; applicable; selected=86; tests=[reports::dx_scoreboard::measure::check_admission::tests::empty_and_null_json_are_not_complete_work, reports::dx_scoreboard::measure::check_admission::tests::incomplete_and_contradictory_outcomes_are_rejected, reports::dx_scoreboard::measure::check_admission::tests::missing_envelope_fields_are_rejected, reports::dx_scoreboard::measure::check_admission::tests::missing_findings_cannot_yield_a_clean_zero, reports::dx_scoreboard::measure::check_admission::tests::omitted_object_and_kindless_limitations_cannot_admit_as_complete, reports::dx_scoreboard::measure::check_admission::tests::rendering_truncation_is_not_incomplete_analysis, reports::dx_scoreboard::measure::check_admission::tests::timeout_and_nonzero_exit_keep_rejection, reports::dx_scoreboard::measure::check_admission::tests::unknown_head_is_preserved, reports::dx_scoreboard::measure::check_admission::tests::valid_complete_output_is_admitted, reports::dx_scoreboard::measure::check_admission::tests::wrong_subject_is_rejected, reports::dx_scoreboard::tests::a_baseline_repo_missing_from_the_run_is_listed_not_passed, reports::dx_scoreboard::tests::a_checkout_whose_directory_name_ends_in_a_space_is_its_own_checkout, reports::dx_scoreboard::tests::a_complete_empty_workload_is_admitted, reports::dx_scoreboard::tests::a_corpus_dir_with_a_broken_git_dir_is_refused_instead_of_resolving_to_the_parent_repo, reports::dx_scoreboard::tests::a_corpus_repo_that_stops_analyzing_fails_the_gate, reports::dx_scoreboard::tests::a_corpus_repo_that_was_not_fetched_is_lost_completion_not_a_pass, reports::dx_scoreboard::tests::a_failed_warmup_does_not_establish_a_warm_population, reports::dx_scoreboard::tests::a_hostile_run_with_no_tests_is_not_zero_failures, reports::dx_scoreboard::tests::a_hung_bad_input_probe_is_not_a_refusal, reports::dx_scoreboard::tests::a_measured_capture_error_fails_both_warm_check_metrics_and_the_gate, reports::dx_scoreboard::tests::a_negative_first_run_duration_is_refused, reports::dx_scoreboard::tests::a_negative_ingested_value_is_refused, reports::dx_scoreboard::tests::a_non_draft_checkout_config_still_produces_a_draft_warm_check_sample, reports::dx_scoreboard::tests::a_probe_ended_by_a_signal_is_a_refusal_not_a_clean_exit, reports::dx_scoreboard::tests::a_recovery_is_listed_next_to_a_lost_completion_and_when_nothing_compares, reports::dx_scoreboard::tests::a_repo_new_to_the_corpus_is_listed_not_gated_unless_it_stops_short, reports::dx_scoreboard::tests::a_repo_that_starts_completing_again_is_not_a_time_regression, reports::dx_scoreboard::tests::a_review_only_count_that_moves_with_unchanged_evidence_is_listed, reports::dx_scoreboard::tests::a_slower_fail_closed_repo_is_not_a_time_regression, reports::dx_scoreboard::tests::a_slower_install_fails_the_gate_against_a_same_runner_baseline, reports::dx_scoreboard::tests::a_smoke_receipt_without_repos_is_refused, reports::dx_scoreboard::tests::a_status_flip_is_listed_next_to_a_lost_completion, reports::dx_scoreboard::tests::a_step_without_a_duration_leaves_the_walk_incomplete, reports::dx_scoreboard::tests::a_symlinked_target_is_never_cleared, reports::dx_scoreboard::tests::a_valid_complete_child_is_admitted_as_warm_success, reports::dx_scoreboard::tests::additive_margin_allows_pct_plus_floor, reports::dx_scoreboard::tests::an_analyzed_smoke_row_without_a_duration_is_refused, reports::dx_scoreboard::tests::an_incomplete_check_document_cannot_clean_trust, reports::dx_scoreboard::tests::an_injected_empty_json_child_cannot_beat_a_valid_warm_baseline, reports::dx_scoreboard::tests::an_unknown_ingested_metric_is_refused_with_where_to_declare_it, reports::dx_scoreboard::tests::baseline_must_be_a_scoreboard_report, reports::dx_scoreboard::tests::classify_replay_separates_bound_unbound_and_split_roots, reports::dx_scoreboard::tests::committed_scoreboards_config_parses_and_pins_full_shas, reports::dx_scoreboard::tests::config_rejects_short_sha_unknown_source_and_misprefixed_ids, reports::dx_scoreboard::tests::contradiction_rules_fire_only_on_self_inconsistent_rows, reports::dx_scoreboard::tests::contradictions_from_one_source_are_incomplete, reports::dx_scoreboard::tests::extract_commands_reads_spans_labels_and_bash_fences_but_not_powershell, reports::dx_scoreboard::tests::file_sources_point_at_committed_receipts, reports::dx_scoreboard::tests::first_run_receipt_counts_install_through_first_successful_check, reports::dx_scoreboard::tests::first_run_rows_fail_closed_on_malformed_or_cut_off_input, reports::dx_scoreboard::tests::first_run_rows_map_to_gates_and_list_verdicts, reports::dx_scoreboard::tests::first_useful_result_stops_at_the_first_check_that_exits_zero, reports::dx_scoreboard::tests::gate_compares_every_repository_not_just_the_worst, reports::dx_scoreboard::tests::gate_fails_on_a_broken_instrument_even_without_baseline, reports::dx_scoreboard::tests::gate_lists_baseline_metrics_it_could_not_compare, reports::dx_scoreboard::tests::gate_uses_the_larger_margin_and_skips_other_runner_classes, reports::dx_scoreboard::tests::hostile_repo_counts_come_from_the_libtest_summary, reports::dx_scoreboard::tests::ingest_accepts_its_own_source_and_refuses_measured_metrics, reports::dx_scoreboard::tests::libtest_summary_counts_are_read_by_label_not_position, reports::dx_scoreboard::tests::losing_completion_is_judged_per_repo, reports::dx_scoreboard::tests::losing_completion_regresses_on_any_runner_class, reports::dx_scoreboard::tests::malformed_mutation_and_generic_receipts_are_rejected, reports::dx_scoreboard::tests::manifest_corpus_entries_must_pin_full_shas_and_unique_ids, reports::dx_scoreboard::tests::metric_value_is_the_worst_repo_and_incomplete_never_meets_target, reports::dx_scoreboard::tests::missing_ingest_is_not_measured_and_counted_in_rollup, reports::dx_scoreboard::tests::mutation_spot_check_receipt_maps_agreement_and_join_coverage, reports::dx_scoreboard::tests::parse_options_rejects_unknown_boards, reports::dx_scoreboard::tests::pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete, reports::dx_scoreboard::tests::ranking_gate_fails_one_flipped_pick_and_one_lost_pick, reports::dx_scoreboard::tests::repeated_step_rows_pair_in_order_when_exits_come_last, reports::dx_scoreboard::tests::repo_view_groups_per_repo_samples, reports::dx_scoreboard::tests::restoring_the_permissive_predicate_admits_empty_json, reports::dx_scoreboard::tests::shared_corpus_manifest_maps_fast_tier_to_default_runs, reports::dx_scoreboard::tests::source_build_detection_ignores_comments, reports::dx_scoreboard::tests::spec_example_coverage_resolves_from_the_committed_fixtures, reports::dx_scoreboard::tests::the_gate_message_reports_the_compared_value_not_a_new_repos_worst, reports::dx_scoreboard::tests::the_nightly_row_receipt_gates_a_slower_walk_and_a_failed_step, reports::dx_scoreboard::tests::the_peak_of_an_incomplete_run_is_not_a_value, reports::dx_scoreboard::tests::the_runner_class_cpu_model_is_the_first_model_name_as_a_slug, reports::dx_scoreboard::tests::the_step_summary_keeps_earlier_steps_and_gains_the_scoreboard, reports::dx_scoreboard::tests::timeout_and_unmeasured_second_run_stay_incomplete, reports::dx_scoreboard::tests::truncated_findings_keep_speed_and_hold_trust, reports::dx_scoreboard::tests::verdict_corpus_sources_derive_each_rate_from_the_committed_rows, reports::dx_scoreboard::tests::vm_hwm_parses_kilobytes, reports::dx_scoreboard::tests::warm_check_args_and_subject_share_an_explicit_draft_mode, reports::dx_scoreboard::tests::zero_denominator_is_not_measured_not_a_perfect_rate]; `cargo test -p xtask --bin xtask dx_scoreboard`\n- line 697; host=unix; declared=all; applicable; selected=18; tests=[reports::dx_scoreboard::tests::pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete, reports::pilot_ranking::tests::committed_answer_key_is_valid_and_labels_every_pinned_repo, reports::pilot_ranking::tests::committed_baseline_carries_every_ranking_metric_completed, reports::pilot_ranking::tests::cuts_count_precision_and_distinct_functions_within_k, reports::pilot_ranking::tests::default_binary_follows_the_target_directory_cargo_reports, reports::pilot_ranking::tests::fetch_requires_explicit_network_opt_in, reports::pilot_ranking::tests::label_options_stay_on_label_and_selection_args_are_gone, reports::pilot_ranking::tests::label_refuses_a_run_narrower_than_the_pin_lists, reports::pilot_ranking::tests::label_validation_refuses_another_revision_unsorted_or_unknown_outcomes, reports::pilot_ranking::tests::labels_feed_the_shared_judge_line_then_owner_tier, reports::pilot_ranking::tests::labels_join_outcomes_by_name_and_count_unviable_and_timeout, reports::pilot_ranking::tests::labels_keep_the_name_and_column_the_seam_tier_reads, reports::pilot_ranking::tests::labels_refuse_a_mutant_without_an_outcome_or_an_orphan_outcome, reports::pilot_ranking::tests::manifest_validation_refuses_bad_cutoffs_pins_and_label_paths, reports::pilot_ranking::tests::refetch_refuses_local_work_at_any_revision, reports::pilot_ranking::tests::rendered_labels_parse_back_unchanged_one_mutant_per_line, reports::pilot_ranking::tests::report_pools_scored_repos_and_marks_an_unavailable_one_incomplete, reports::pilot_ranking::tests::same_named_functions_in_two_files_stay_two_functions]; `cargo test -p xtask --bin xtask pilot_ranking`\n- line 706; host=unix; declared=all; applicable; selected=18; tests=[reports::dx_scoreboard::tests::pilot_ranking_receipt_maps_pooled_cuts_and_marks_a_lost_crate_incomplete, reports::pilot_ranking::tests::committed_answer_key_is_valid_and_labels_every_pinned_repo, reports::pilot_ranking::tests::committed_baseline_carries_every_ranking_metric_completed, reports::pilot_ranking::tests::cuts_count_precision_and_distinct_functions_within_k, reports::pilot_ranking::tests::default_binary_follows_the_target_directory_cargo_reports, reports::pilot_ranking::tests::fetch_requires_explicit_network_opt_in, reports::pilot_ranking::tests::label_options_stay_on_label_and_selection_args_are_gone, reports::pilot_ranking::tests::label_refuses_a_run_narrower_than_the_pin_lists, reports::pilot_ranking::tests::label_validation_refuses_another_revision_unsorted_or_unknown_outcomes, reports::pilot_ranking::tests::labels_feed_the_shared_judge_line_then_owner_tier, reports::pilot_ranking::tests::labels_join_outcomes_by_name_and_count_unviable_and_timeout, reports::pilot_ranking::tests::labels_keep_the_name_and_column_the_seam_tier_reads, reports::pilot_ranking::tests::labels_refuse_a_mutant_without_an_outcome_or_an_orphan_outcome, reports::pilot_ranking::tests::manifest_validation_refuses_bad_cutoffs_pins_and_label_paths, reports::pilot_ranking::tests::refetch_refuses_local_work_at_any_revision, reports::pilot_ranking::tests::rendered_labels_parse_back_unchanged_one_mutant_per_line, reports::pilot_ranking::tests::report_pools_scored_repos_and_marks_an_unavailable_one_incomplete, reports::pilot_ranking::tests::same_named_functions_in_two_files_stay_two_functions]; `cargo test -p xtask --bin xtask pilot_ranking`\n- line 733; host=unix; declared=all; applicable; selected=1; tests=[comparison_rules_match_the_pr_a_fixture_corpus]; `cargo test -p ripr --test causal_delta_fixture`\n- line 746; host=unix; declared=all; applicable; selected=35; tests=[portable_consumer::tests::argv_template_must_start_with_the_allowlisted_operation, portable_consumer::tests::arm64_machine_names_match_rust_aarch64, portable_consumer::tests::complete_stub_packet_runs_the_packet_payload_not_a_path_decoy, portable_consumer::tests::consumer_script_digest_mismatch_fails_closed_before_launch, portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client, portable_consumer::tests::digest_mismatch_fails_closed_before_launch, portable_consumer::tests::empty_stdout_is_partial_product_output, portable_consumer::tests::existing_output_symlink_is_unwritable, portable_consumer::tests::foreign_cwd_still_passes_the_explicit_subject_root, portable_consumer::tests::incomplete_analysis_outcome_is_partial_product_output, portable_consumer::tests::malformed_product_json_fails_closed, portable_consumer::tests::missing_executable_fails_closed, portable_consumer::tests::missing_manifest_is_incompatible_payload, portable_consumer::tests::missing_pilot_summary_is_partial_product_output, portable_consumer::tests::nonzero_payload_exit_is_execution_failure, portable_consumer::tests::packet_digest_field_mismatch_fails_closed_before_launch, portable_consumer::tests::packet_digest_matches_the_producer_formula, portable_consumer::tests::payload_timeout_is_classified_not_as_a_semantic_failure, portable_consumer::tests::pilot_reads_the_summary_artifact_not_terminal_stdout, portable_consumer::tests::pilot_rejects_diff_before_launch, portable_consumer::tests::platform_mismatch_fails_closed_before_launch, portable_consumer::tests::product_json_classes_are_discriminated_without_launch, portable_consumer::tests::relative_path_escape_fails_closed_before_launch, portable_consumer::tests::run_py_compiles_with_stdlib_python, portable_consumer::tests::stale_pilot_summary_is_not_classified_as_complete, portable_consumer::tests::subject_digest_drift_fails_closed, portable_consumer::tests::subject_digest_is_rechecked_after_launch, portable_consumer::tests::subject_file_cap_is_environment_unavailable_not_drift, portable_consumer::tests::typed_product_limitation_is_not_complete, portable_consumer::tests::unknown_operation_fails_closed, portable_consumer::tests::unwritable_output_fails_closed, portable_consumer::tests::write_probe_symlink_is_unwritable, portable_consumer::tests::zero_subjects_are_complete_when_not_required, portable_consumer::tests::zero_subjects_fail_closed_when_required, tests::rust_conversion_candidates_retain_the_portable_consumer_python_runtime]; `cargo test -p xtask --locked --offline portable_consumer`\n- line 746; host=unix; declared=unix; applicable; selected=2; tests=[native_packet_analyzes_a_boundary_gap_without_path_or_compiler_fallback, native_packet_pilot_consumes_the_summary_artifact]; `cargo test -p ripr --locked --offline --test portable_consumer_packet`\n- line 794; host=unix; declared=all; applicable; selected=40; tests=[public_proof::tests::absent_baseline_stays_a_first_measurement, public_proof::tests::agreement_bars_show_their_scored_denominator, public_proof::tests::bar_status_follows_direction, public_proof::tests::changed_lines_reports_moved_and_duplicated_lines, public_proof::tests::committed_page_matches_its_receipts, public_proof::tests::corpus_fast_is_used_when_full_is_absent, public_proof::tests::cross_runner_baseline_is_disclosed_not_a_first_measurement, public_proof::tests::cross_runner_without_a_prior_value_still_names_the_class, public_proof::tests::drifted_receipt_is_reported, public_proof::tests::empty_walk_is_not_measured_not_zero_seconds, public_proof::tests::failed_instrument_keeps_its_sample_detail, public_proof::tests::failed_lane_instrument_stays_visible, public_proof::tests::failed_metric_without_failed_sample_uses_its_reason, public_proof::tests::failed_speed_instrument_reaches_the_rendered_shortfalls, public_proof::tests::formatting_keeps_units_readable, public_proof::tests::lane_check_time_discloses_its_cross_class_earlier_receipt, public_proof::tests::lane_revision_uses_the_receipt_revision_not_the_comparison_baseline, public_proof::tests::load_lane_prefers_full_and_falls_back_to_fast, public_proof::tests::missing_canonical_source_is_an_error, public_proof::tests::missing_lane_baseline_omits_the_unowned_board, public_proof::tests::missing_mutation_count_is_an_error_not_a_zero, public_proof::tests::missing_receipt_field_is_an_error_not_a_blank, public_proof::tests::mutation_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::page_names_its_shortfalls_before_its_detail, public_proof::tests::producer_status_outranks_a_recomputed_number, public_proof::tests::receipts_table_names_lane_revisions, public_proof::tests::scoreboard_header_does_not_call_unmeasured_rows_first_measurements, public_proof::tests::scoreboard_header_does_not_claim_cross_class_trends_compare, public_proof::tests::scoreboard_header_omits_first_measurement_when_only_unmeasured_rows_lack_a_prior, public_proof::tests::scoreboard_owned_measurement_outranks_a_lane_baseline, public_proof::tests::source_drift_previews_the_page_lines_that_would_change, public_proof::tests::stale_page_is_reported, public_proof::tests::thin_ground_truth_counts_scored_mutants_not_joins, public_proof::tests::unknown_arguments_are_refused, public_proof::tests::unowned_boards_use_lane_baselines_or_are_omitted, public_proof::tests::untimed_walk_step_is_not_measured_not_summed, public_proof::tests::verdict_rates_are_split_by_origin, public_proof::tests::verdict_receipt_derives_the_summary_from_rows_in_file_name_order, public_proof::tests::verdict_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::worst_sample_names_a_failed_instrument]; `cargo test -p xtask public_proof`\n- line 804; host=unix; declared=all; applicable; selected=40; tests=[public_proof::tests::absent_baseline_stays_a_first_measurement, public_proof::tests::agreement_bars_show_their_scored_denominator, public_proof::tests::bar_status_follows_direction, public_proof::tests::changed_lines_reports_moved_and_duplicated_lines, public_proof::tests::committed_page_matches_its_receipts, public_proof::tests::corpus_fast_is_used_when_full_is_absent, public_proof::tests::cross_runner_baseline_is_disclosed_not_a_first_measurement, public_proof::tests::cross_runner_without_a_prior_value_still_names_the_class, public_proof::tests::drifted_receipt_is_reported, public_proof::tests::empty_walk_is_not_measured_not_zero_seconds, public_proof::tests::failed_instrument_keeps_its_sample_detail, public_proof::tests::failed_lane_instrument_stays_visible, public_proof::tests::failed_metric_without_failed_sample_uses_its_reason, public_proof::tests::failed_speed_instrument_reaches_the_rendered_shortfalls, public_proof::tests::formatting_keeps_units_readable, public_proof::tests::lane_check_time_discloses_its_cross_class_earlier_receipt, public_proof::tests::lane_revision_uses_the_receipt_revision_not_the_comparison_baseline, public_proof::tests::load_lane_prefers_full_and_falls_back_to_fast, public_proof::tests::missing_canonical_source_is_an_error, public_proof::tests::missing_lane_baseline_omits_the_unowned_board, public_proof::tests::missing_mutation_count_is_an_error_not_a_zero, public_proof::tests::missing_receipt_field_is_an_error_not_a_blank, public_proof::tests::mutation_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::page_names_its_shortfalls_before_its_detail, public_proof::tests::producer_status_outranks_a_recomputed_number, public_proof::tests::receipts_table_names_lane_revisions, public_proof::tests::scoreboard_header_does_not_call_unmeasured_rows_first_measurements, public_proof::tests::scoreboard_header_does_not_claim_cross_class_trends_compare, public_proof::tests::scoreboard_header_omits_first_measurement_when_only_unmeasured_rows_lack_a_prior, public_proof::tests::scoreboard_owned_measurement_outranks_a_lane_baseline, public_proof::tests::source_drift_previews_the_page_lines_that_would_change, public_proof::tests::stale_page_is_reported, public_proof::tests::thin_ground_truth_counts_scored_mutants_not_joins, public_proof::tests::unknown_arguments_are_refused, public_proof::tests::unowned_boards_use_lane_baselines_or_are_omitted, public_proof::tests::untimed_walk_step_is_not_measured_not_summed, public_proof::tests::verdict_rates_are_split_by_origin, public_proof::tests::verdict_receipt_derives_the_summary_from_rows_in_file_name_order, public_proof::tests::verdict_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::worst_sample_names_a_failed_instrument]; `cargo test -p xtask public_proof`\n- line 814; host=unix; declared=all; applicable; selected=40; tests=[public_proof::tests::absent_baseline_stays_a_first_measurement, public_proof::tests::agreement_bars_show_their_scored_denominator, public_proof::tests::bar_status_follows_direction, public_proof::tests::changed_lines_reports_moved_and_duplicated_lines, public_proof::tests::committed_page_matches_its_receipts, public_proof::tests::corpus_fast_is_used_when_full_is_absent, public_proof::tests::cross_runner_baseline_is_disclosed_not_a_first_measurement, public_proof::tests::cross_runner_without_a_prior_value_still_names_the_class, public_proof::tests::drifted_receipt_is_reported, public_proof::tests::empty_walk_is_not_measured_not_zero_seconds, public_proof::tests::failed_instrument_keeps_its_sample_detail, public_proof::tests::failed_lane_instrument_stays_visible, public_proof::tests::failed_metric_without_failed_sample_uses_its_reason, public_proof::tests::failed_speed_instrument_reaches_the_rendered_shortfalls, public_proof::tests::formatting_keeps_units_readable, public_proof::tests::lane_check_time_discloses_its_cross_class_earlier_receipt, public_proof::tests::lane_revision_uses_the_receipt_revision_not_the_comparison_baseline, public_proof::tests::load_lane_prefers_full_and_falls_back_to_fast, public_proof::tests::missing_canonical_source_is_an_error, public_proof::tests::missing_lane_baseline_omits_the_unowned_board, public_proof::tests::missing_mutation_count_is_an_error_not_a_zero, public_proof::tests::missing_receipt_field_is_an_error_not_a_blank, public_proof::tests::mutation_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::page_names_its_shortfalls_before_its_detail, public_proof::tests::producer_status_outranks_a_recomputed_number, public_proof::tests::receipts_table_names_lane_revisions, public_proof::tests::scoreboard_header_does_not_call_unmeasured_rows_first_measurements, public_proof::tests::scoreboard_header_does_not_claim_cross_class_trends_compare, public_proof::tests::scoreboard_header_omits_first_measurement_when_only_unmeasured_rows_lack_a_prior, public_proof::tests::scoreboard_owned_measurement_outranks_a_lane_baseline, public_proof::tests::source_drift_previews_the_page_lines_that_would_change, public_proof::tests::stale_page_is_reported, public_proof::tests::thin_ground_truth_counts_scored_mutants_not_joins, public_proof::tests::unknown_arguments_are_refused, public_proof::tests::unowned_boards_use_lane_baselines_or_are_omitted, public_proof::tests::untimed_walk_step_is_not_measured_not_summed, public_proof::tests::verdict_rates_are_split_by_origin, public_proof::tests::verdict_receipt_derives_the_summary_from_rows_in_file_name_order, public_proof::tests::verdict_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::worst_sample_names_a_failed_instrument]; `cargo test -p xtask public_proof`\n- line 824; host=unix; declared=all; applicable; selected=40; tests=[public_proof::tests::absent_baseline_stays_a_first_measurement, public_proof::tests::agreement_bars_show_their_scored_denominator, public_proof::tests::bar_status_follows_direction, public_proof::tests::changed_lines_reports_moved_and_duplicated_lines, public_proof::tests::committed_page_matches_its_receipts, public_proof::tests::corpus_fast_is_used_when_full_is_absent, public_proof::tests::cross_runner_baseline_is_disclosed_not_a_first_measurement, public_proof::tests::cross_runner_without_a_prior_value_still_names_the_class, public_proof::tests::drifted_receipt_is_reported, public_proof::tests::empty_walk_is_not_measured_not_zero_seconds, public_proof::tests::failed_instrument_keeps_its_sample_detail, public_proof::tests::failed_lane_instrument_stays_visible, public_proof::tests::failed_metric_without_failed_sample_uses_its_reason, public_proof::tests::failed_speed_instrument_reaches_the_rendered_shortfalls, public_proof::tests::formatting_keeps_units_readable, public_proof::tests::lane_check_time_discloses_its_cross_class_earlier_receipt, public_proof::tests::lane_revision_uses_the_receipt_revision_not_the_comparison_baseline, public_proof::tests::load_lane_prefers_full_and_falls_back_to_fast, public_proof::tests::missing_canonical_source_is_an_error, public_proof::tests::missing_lane_baseline_omits_the_unowned_board, public_proof::tests::missing_mutation_count_is_an_error_not_a_zero, public_proof::tests::missing_receipt_field_is_an_error_not_a_blank, public_proof::tests::mutation_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::page_names_its_shortfalls_before_its_detail, public_proof::tests::producer_status_outranks_a_recomputed_number, public_proof::tests::receipts_table_names_lane_revisions, public_proof::tests::scoreboard_header_does_not_call_unmeasured_rows_first_measurements, public_proof::tests::scoreboard_header_does_not_claim_cross_class_trends_compare, public_proof::tests::scoreboard_header_omits_first_measurement_when_only_unmeasured_rows_lack_a_prior, public_proof::tests::scoreboard_owned_measurement_outranks_a_lane_baseline, public_proof::tests::source_drift_previews_the_page_lines_that_would_change, public_proof::tests::stale_page_is_reported, public_proof::tests::thin_ground_truth_counts_scored_mutants_not_joins, public_proof::tests::unknown_arguments_are_refused, public_proof::tests::unowned_boards_use_lane_baselines_or_are_omitted, public_proof::tests::untimed_walk_step_is_not_measured_not_summed, public_proof::tests::verdict_rates_are_split_by_origin, public_proof::tests::verdict_receipt_derives_the_summary_from_rows_in_file_name_order, public_proof::tests::verdict_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::worst_sample_names_a_failed_instrument]; `cargo test -p xtask public_proof`\n- line 833; host=unix; declared=all; applicable; selected=40; tests=[public_proof::tests::absent_baseline_stays_a_first_measurement, public_proof::tests::agreement_bars_show_their_scored_denominator, public_proof::tests::bar_status_follows_direction, public_proof::tests::changed_lines_reports_moved_and_duplicated_lines, public_proof::tests::committed_page_matches_its_receipts, public_proof::tests::corpus_fast_is_used_when_full_is_absent, public_proof::tests::cross_runner_baseline_is_disclosed_not_a_first_measurement, public_proof::tests::cross_runner_without_a_prior_value_still_names_the_class, public_proof::tests::drifted_receipt_is_reported, public_proof::tests::empty_walk_is_not_measured_not_zero_seconds, public_proof::tests::failed_instrument_keeps_its_sample_detail, public_proof::tests::failed_lane_instrument_stays_visible, public_proof::tests::failed_metric_without_failed_sample_uses_its_reason, public_proof::tests::failed_speed_instrument_reaches_the_rendered_shortfalls, public_proof::tests::formatting_keeps_units_readable, public_proof::tests::lane_check_time_discloses_its_cross_class_earlier_receipt, public_proof::tests::lane_revision_uses_the_receipt_revision_not_the_comparison_baseline, public_proof::tests::load_lane_prefers_full_and_falls_back_to_fast, public_proof::tests::missing_canonical_source_is_an_error, public_proof::tests::missing_lane_baseline_omits_the_unowned_board, public_proof::tests::missing_mutation_count_is_an_error_not_a_zero, public_proof::tests::missing_receipt_field_is_an_error_not_a_blank, public_proof::tests::mutation_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::page_names_its_shortfalls_before_its_detail, public_proof::tests::producer_status_outranks_a_recomputed_number, public_proof::tests::receipts_table_names_lane_revisions, public_proof::tests::scoreboard_header_does_not_call_unmeasured_rows_first_measurements, public_proof::tests::scoreboard_header_does_not_claim_cross_class_trends_compare, public_proof::tests::scoreboard_header_omits_first_measurement_when_only_unmeasured_rows_lack_a_prior, public_proof::tests::scoreboard_owned_measurement_outranks_a_lane_baseline, public_proof::tests::source_drift_previews_the_page_lines_that_would_change, public_proof::tests::stale_page_is_reported, public_proof::tests::thin_ground_truth_counts_scored_mutants_not_joins, public_proof::tests::unknown_arguments_are_refused, public_proof::tests::unowned_boards_use_lane_baselines_or_are_omitted, public_proof::tests::untimed_walk_step_is_not_measured_not_summed, public_proof::tests::verdict_rates_are_split_by_origin, public_proof::tests::verdict_receipt_derives_the_summary_from_rows_in_file_name_order, public_proof::tests::verdict_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::worst_sample_names_a_failed_instrument]; `cargo test -p xtask public_proof`\n- line 842; host=unix; declared=all; applicable; selected=40; tests=[public_proof::tests::absent_baseline_stays_a_first_measurement, public_proof::tests::agreement_bars_show_their_scored_denominator, public_proof::tests::bar_status_follows_direction, public_proof::tests::changed_lines_reports_moved_and_duplicated_lines, public_proof::tests::committed_page_matches_its_receipts, public_proof::tests::corpus_fast_is_used_when_full_is_absent, public_proof::tests::cross_runner_baseline_is_disclosed_not_a_first_measurement, public_proof::tests::cross_runner_without_a_prior_value_still_names_the_class, public_proof::tests::drifted_receipt_is_reported, public_proof::tests::empty_walk_is_not_measured_not_zero_seconds, public_proof::tests::failed_instrument_keeps_its_sample_detail, public_proof::tests::failed_lane_instrument_stays_visible, public_proof::tests::failed_metric_without_failed_sample_uses_its_reason, public_proof::tests::failed_speed_instrument_reaches_the_rendered_shortfalls, public_proof::tests::formatting_keeps_units_readable, public_proof::tests::lane_check_time_discloses_its_cross_class_earlier_receipt, public_proof::tests::lane_revision_uses_the_receipt_revision_not_the_comparison_baseline, public_proof::tests::load_lane_prefers_full_and_falls_back_to_fast, public_proof::tests::missing_canonical_source_is_an_error, public_proof::tests::missing_lane_baseline_omits_the_unowned_board, public_proof::tests::missing_mutation_count_is_an_error_not_a_zero, public_proof::tests::missing_receipt_field_is_an_error_not_a_blank, public_proof::tests::mutation_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::page_names_its_shortfalls_before_its_detail, public_proof::tests::producer_status_outranks_a_recomputed_number, public_proof::tests::receipts_table_names_lane_revisions, public_proof::tests::scoreboard_header_does_not_call_unmeasured_rows_first_measurements, public_proof::tests::scoreboard_header_does_not_claim_cross_class_trends_compare, public_proof::tests::scoreboard_header_omits_first_measurement_when_only_unmeasured_rows_lack_a_prior, public_proof::tests::scoreboard_owned_measurement_outranks_a_lane_baseline, public_proof::tests::source_drift_previews_the_page_lines_that_would_change, public_proof::tests::stale_page_is_reported, public_proof::tests::thin_ground_truth_counts_scored_mutants_not_joins, public_proof::tests::unknown_arguments_are_refused, public_proof::tests::unowned_boards_use_lane_baselines_or_are_omitted, public_proof::tests::untimed_walk_step_is_not_measured_not_summed, public_proof::tests::verdict_rates_are_split_by_origin, public_proof::tests::verdict_receipt_derives_the_summary_from_rows_in_file_name_order, public_proof::tests::verdict_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::worst_sample_names_a_failed_instrument]; `cargo test -p xtask public_proof`\n- line 851; host=unix; declared=all; applicable; selected=40; tests=[public_proof::tests::absent_baseline_stays_a_first_measurement, public_proof::tests::agreement_bars_show_their_scored_denominator, public_proof::tests::bar_status_follows_direction, public_proof::tests::changed_lines_reports_moved_and_duplicated_lines, public_proof::tests::committed_page_matches_its_receipts, public_proof::tests::corpus_fast_is_used_when_full_is_absent, public_proof::tests::cross_runner_baseline_is_disclosed_not_a_first_measurement, public_proof::tests::cross_runner_without_a_prior_value_still_names_the_class, public_proof::tests::drifted_receipt_is_reported, public_proof::tests::empty_walk_is_not_measured_not_zero_seconds, public_proof::tests::failed_instrument_keeps_its_sample_detail, public_proof::tests::failed_lane_instrument_stays_visible, public_proof::tests::failed_metric_without_failed_sample_uses_its_reason, public_proof::tests::failed_speed_instrument_reaches_the_rendered_shortfalls, public_proof::tests::formatting_keeps_units_readable, public_proof::tests::lane_check_time_discloses_its_cross_class_earlier_receipt, public_proof::tests::lane_revision_uses_the_receipt_revision_not_the_comparison_baseline, public_proof::tests::load_lane_prefers_full_and_falls_back_to_fast, public_proof::tests::missing_canonical_source_is_an_error, public_proof::tests::missing_lane_baseline_omits_the_unowned_board, public_proof::tests::missing_mutation_count_is_an_error_not_a_zero, public_proof::tests::missing_receipt_field_is_an_error_not_a_blank, public_proof::tests::mutation_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::page_names_its_shortfalls_before_its_detail, public_proof::tests::producer_status_outranks_a_recomputed_number, public_proof::tests::receipts_table_names_lane_revisions, public_proof::tests::scoreboard_header_does_not_call_unmeasured_rows_first_measurements, public_proof::tests::scoreboard_header_does_not_claim_cross_class_trends_compare, public_proof::tests::scoreboard_header_omits_first_measurement_when_only_unmeasured_rows_lack_a_prior, public_proof::tests::scoreboard_owned_measurement_outranks_a_lane_baseline, public_proof::tests::source_drift_previews_the_page_lines_that_would_change, public_proof::tests::stale_page_is_reported, public_proof::tests::thin_ground_truth_counts_scored_mutants_not_joins, public_proof::tests::unknown_arguments_are_refused, public_proof::tests::unowned_boards_use_lane_baselines_or_are_omitted, public_proof::tests::untimed_walk_step_is_not_measured_not_summed, public_proof::tests::verdict_rates_are_split_by_origin, public_proof::tests::verdict_receipt_derives_the_summary_from_rows_in_file_name_order, public_proof::tests::verdict_section_says_when_the_analyzer_build_is_unrecorded, public_proof::tests::worst_sample_names_a_failed_instrument]; `cargo test -p xtask public_proof`\n\n## Rerun\n\n```bash\ncargo xtask check-file-policy\n```\n",
+        "environment": {
+          "PATH": "/workspace/1601-tools/pinned/bin:$PATH",
+          "CARGO_HOME": "/workspace/1601-tools/cargo-home",
+          "CARGO_TARGET_DIR": "/workspace/1601-tools/build",
+          "CARGO_BUILD_JOBS": "1"
+        }
+      },
+      {
+        "command": [
+          "/workspace/1601-tools/build/debug/xtask",
+          "check-static-language"
+        ],
+        "native_exit_code": 0,
+        "report": "# check-static-language\n\nStatus: pass\n\n## Why This Matters\n\nStatic output must preserve the boundary between draft exposure evidence and real mutation results.\n\n## Violations\n\nNone detected.\n\n## Rerun\n\n```bash\ncargo xtask check-static-language\n```\n",
+        "environment": {
+          "PATH": "/workspace/1601-tools/pinned/bin:$PATH",
+          "CARGO_HOME": "/workspace/1601-tools/cargo-home",
+          "CARGO_TARGET_DIR": "/workspace/1601-tools/build",
+          "CARGO_BUILD_JOBS": "1"
+        }
+      },
+      {
+        "command": [
+          "/workspace/1601-tools/build/debug/xtask",
+          "check-doc-artifacts"
+        ],
+        "native_exit_code": 0,
+        "report": "# check-doc-artifacts\n\nStatus: pass\n\n## Why This Matters\n\nThe document artifact ledger is the machine-readable source-of-truth graph for proposals, specs, ADRs, plans, goals, support tiers, policy ledgers, and closeouts.\n\n## Violations\n\nNone detected.\n\n## Rerun\n\n```bash\ncargo xtask check-doc-artifacts\n```\n",
+        "environment": {
+          "PATH": "/workspace/1601-tools/pinned/bin:$PATH",
+          "CARGO_HOME": "/workspace/1601-tools/cargo-home",
+          "CARGO_TARGET_DIR": "/workspace/1601-tools/build",
+          "CARGO_BUILD_JOBS": "1"
+        }
+      },
+      {
+        "command": [
+          "/workspace/1601-tools/build/debug/xtask",
+          "check-doc-index"
+        ],
+        "native_exit_code": 0,
+        "report": "# check-doc-index\n\nStatus: pass\n\n## Why This Matters\n\nDocs are the durable context for humans and long-context agents; indexes must expose current specs, ADRs, and front-door process docs.\n\n## Violations\n\nNone detected.\n\n## Rerun\n\n```bash\ncargo xtask check-doc-index\n```\n",
+        "environment": {
+          "PATH": "/workspace/1601-tools/pinned/bin:$PATH",
+          "CARGO_HOME": "/workspace/1601-tools/cargo-home",
+          "CARGO_TARGET_DIR": "/workspace/1601-tools/build",
+          "CARGO_BUILD_JOBS": "1"
+        }
+      },
+      {
+        "command": [
+          "/workspace/1601-tools/build/debug/xtask",
+          "markdown-links"
+        ],
+        "native_exit_code": 0,
+        "report": "# markdown-links\n\nStatus: pass\n\n## Why This Matters\n\nMarkdown links are repo state for humans and long-context agents; links to deleted or renamed docs, and deep links to headings that have been renamed, should fail before review.\n\n## Violations\n\nNone detected.\n\n## Rerun\n\n```bash\ncargo xtask markdown-links\n```\n",
+        "environment": {
+          "PATH": "/workspace/1601-tools/pinned/bin:$PATH",
+          "CARGO_HOME": "/workspace/1601-tools/cargo-home",
+          "CARGO_TARGET_DIR": "/workspace/1601-tools/build",
+          "CARGO_BUILD_JOBS": "1"
+        }
+      }
+    ],
+    "policy_and_docs_claim_boundary": "Declared test selectors were enumerated by file policy, not executed. Metadata/document policy checks do not qualify a release or establish the blocked producer route."
+  }
+}

@@ -17,7 +17,22 @@ const MAX_RELATED_TESTS_SHOWN: usize = 5;
 /// unmarked cap can hide the one boundary value the reader needs.
 const MAX_OBSERVED_VALUES_SHOWN: usize = 8;
 
-pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
+/// #7476: which wording the evidence-window truncation pointers use for the
+/// fuller machine-readable list. `ripr check` accepts `--format json`, so its
+/// pointer names the flag; `ripr explain` rejects that flag, so its pointer
+/// names check in prose instead of a command the reader cannot run there.
+/// The wording is selected while the lines are built, so quoted source
+/// fragments and evidence text are never rewritten after rendering.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum JsonPointerWording {
+    /// `ripr check` / `human-full`: the pointer names the accepted flag.
+    CheckFlag,
+    /// `ripr explain`: the pointer names `ripr check` as prose, so a
+    /// printed-command paste does not try to run it under explain.
+    ExplainNamesCheck,
+}
+
+pub(super) fn evidence_path_lines(finding: &Finding, wording: JsonPointerWording) -> Vec<String> {
     let mut lines = vec![
         format!(
             "reach {}: {}",
@@ -61,10 +76,11 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
             // misses, then shows the assertion it was judged by, so the
             // claim can be checked in the source.
             let mut line = format!(
-                "related test {}:{} {} misses: {why}",
+                "related test {}:{} {} {}: {why}",
                 display_path(&test.file),
                 test.line,
                 test.name,
+                crate::output::related_test_miss::related_test_miss_label(test),
             );
             if let Some(oracle) = &test.oracle {
                 line.push_str(&format!(
@@ -92,7 +108,10 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
         if let Some(why) = why {
             let kept = line.trim_end_matches(';').len();
             line.truncate(kept);
-            line.push_str(&format!("; misses: {why}"));
+            line.push_str(&format!(
+                "; {}: {why}",
+                crate::output::related_test_miss::related_test_miss_label(test)
+            ));
         }
         lines.push(line);
     }
@@ -100,7 +119,12 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
     let related_tests_shown = finding.related_tests.len().min(MAX_RELATED_TESTS_SHOWN);
     if related_tests_total > related_tests_shown {
         let json_pointer = if finding.related_tests.len() > related_tests_shown {
-            "; more in --format json"
+            match wording {
+                JsonPointerWording::CheckFlag => "; more in --format json",
+                JsonPointerWording::ExplainNamesCheck => {
+                    "; more via ripr check, using its JSON format"
+                }
+            }
         } else {
             ""
         };
@@ -126,10 +150,21 @@ pub(super) fn evidence_path_lines(finding: &Finding) -> Vec<String> {
         // ranked cap of 32; beyond that, both formats are windows and the
         // wording says so instead of claiming a full list.
         let json_cap = crate::output::observed_values::MAX_OBSERVED_VALUES_PER_FINDING;
-        let json_window = if observed_values_total > json_cap {
-            format!("--format json keeps a ranked {json_cap}")
-        } else {
-            "full list in --format json".to_string()
+        let json_window = match wording {
+            JsonPointerWording::CheckFlag => {
+                if observed_values_total > json_cap {
+                    format!("--format json keeps a ranked {json_cap}")
+                } else {
+                    "full list in --format json".to_string()
+                }
+            }
+            JsonPointerWording::ExplainNamesCheck => {
+                if observed_values_total > json_cap {
+                    format!("ripr check, using its JSON format, keeps a ranked {json_cap}")
+                } else {
+                    "full list via ripr check, using its JSON format".to_string()
+                }
+            }
         };
         lines.push(format!(
             "source values (showing {MAX_OBSERVED_VALUES_SHOWN} of {observed_values_total}; {json_window})"

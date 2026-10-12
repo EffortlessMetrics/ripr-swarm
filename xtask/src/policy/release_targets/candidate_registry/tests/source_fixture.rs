@@ -16,12 +16,20 @@ use super::{
 struct OwnedFixture {
     root: PathBuf,
     finished: bool,
+    retain_for_proof_owner: bool,
 }
 
 impl OwnedFixture {
     fn finish(mut self) -> Result<(), String> {
-        fs::remove_dir_all(&self.root)
-            .map_err(|error| format!("owned fixture cleanup failed: {error}"))?;
+        if self.retain_for_proof_owner {
+            eprintln!(
+                "4510 proof fixture retained: {}",
+                json!({"root": self.root})
+            );
+        } else {
+            fs::remove_dir_all(&self.root)
+                .map_err(|error| format!("owned fixture cleanup failed: {error}"))?;
+        }
         self.finished = true;
         Ok(())
     }
@@ -30,7 +38,14 @@ impl OwnedFixture {
 impl Drop for OwnedFixture {
     fn drop(&mut self) {
         if !self.finished {
-            let _ = fs::remove_dir_all(&self.root);
+            if self.retain_for_proof_owner {
+                eprintln!(
+                    "4510 proof fixture retained after unfinished test: {}",
+                    json!({"root": self.root})
+                );
+            } else {
+                let _ = fs::remove_dir_all(&self.root);
+            }
         }
     }
 }
@@ -128,6 +143,14 @@ fn replace_row(
 }
 
 fn create_source_fixture() -> Result<SourceFixture, String> {
+    // Explicit local proof custody only. The root's compiler-bound driver owns
+    // namespace/identity, readers, archive/restore and final removal after exit.
+    // Ordinary CI retains the existing finish/drop cleanup.
+    let retain_for_proof_owner = match std::env::var("RIPR_4510_RETAIN_PROOF_FIXTURES") {
+        Ok(value) if value == "1" => true,
+        Err(std::env::VarError::NotPresent) => false,
+        _ => return Err("RIPR_4510_RETAIN_PROOF_FIXTURES must be unset or exactly 1".to_string()),
+    };
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("fixture clock: {error}"))?
@@ -138,6 +161,7 @@ fn create_source_fixture() -> Result<SourceFixture, String> {
     let guard = OwnedFixture {
         root: owned,
         finished: false,
+        retain_for_proof_owner,
     };
     let source = guard.root.join("source é");
     let controller = guard.root.join("controller with spaces");
@@ -571,3 +595,1556 @@ fn real_package_install_custody_rejects_ignored_foreign_and_changed_bytes() -> R
     }
     fixture.guard.finish()
 }
+
+// Real dependency-free Cargo package -> install -> retained selected artifact ->
+// witness -> the existing Qualified execution. This qualifies that harness
+// boundary, not a RIPR release. Setup/compile failures are not product RED.
+fn capture_fixture_input(
+    fixture: &SourceFixture,
+    label: &str,
+) -> Result<
+    (
+        crate::reports::release::candidate_harness::QualificationInput,
+        PathBuf,
+    ),
+    String,
+> {
+    use crate::reports::release::candidate_harness::QualificationInput;
+    let owned = fixture.guard.root.join(label);
+    fs::create_dir(&owned).map_err(|error| format!("capture fixture directory: {error}"))?;
+    let input = QualificationInput::new(
+        fixture.controller.clone(),
+        fixture.source.clone(),
+        PathBuf::from(PINNED_JSON),
+    )?;
+    Ok((
+        input,
+        owned.canonicalize().map_err(|error| error.to_string())?,
+    ))
+}
+
+fn capture_observed_verbose_version(program: &str, root: &Path) -> Result<String, String> {
+    let output = crate::run::capture_bytes_in_dir_with_timeout(
+        Path::new(program),
+        &["-vV".to_string()],
+        root,
+        &[],
+        &[
+            "CARGO_TARGET_DIR",
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+        ],
+        Duration::from_secs(30),
+        "4510 capture fixture actual verbose toolchain observation",
+    )?;
+    if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+        return Err(format!(
+            "SETUP: {program} verbose observation failed: timed_out={}, status={:?}",
+            output.timed_out, output.status
+        ));
+    }
+    String::from_utf8(output.stdout)
+        .map(|value| value.trim().to_string())
+        .map_err(|error| format!("SETUP: {program} verbose output is not UTF-8: {error}"))
+}
+
+fn capture_assert_real_install_identity(
+    custody: &Value,
+    installed_path: &Path,
+    installed_bytes: &[u8],
+    owned: &Path,
+    rustc: &str,
+    cargo: &str,
+) -> Result<PathBuf, String> {
+    assert_eq!(custody["capture_mode"], "installed_output");
+    assert_eq!(custody["executable"], json!(installed_path));
+    assert_eq!(custody["installed_executable"], json!(installed_path));
+    assert_eq!(custody["executable_sha256"], sha256_hex(installed_bytes));
+    let artifact = &custody["compiler_artifact"];
+    assert_eq!(artifact["reason"], "compiler-artifact");
+    assert_eq!(artifact["target"]["name"], "ripr");
+    assert_eq!(artifact["target"]["kind"], json!(["bin"]));
+    assert_eq!(artifact["profile"]["test"], false);
+    assert_eq!(artifact["features"], json!([]));
+    assert!(
+        artifact["package_id"]
+            .as_str()
+            .is_some_and(|value| { value.starts_with("path+file:") && value.ends_with("0.11.0") })
+    );
+    let selected = PathBuf::from(
+        artifact["executable"]
+            .as_str()
+            .ok_or_else(|| "SETUP: real Cargo message lacks selected executable".to_string())?,
+    );
+    let selected_canonical = selected.canonicalize().map_err(|error| error.to_string())?;
+    let owned_canonical = owned.canonicalize().map_err(|error| error.to_string())?;
+    assert!(selected_canonical.starts_with(&owned_canonical));
+    let manifest = PathBuf::from(
+        artifact["manifest_path"]
+            .as_str()
+            .ok_or_else(|| "SETUP: real Cargo message lacks manifest_path".to_string())?,
+    );
+    assert_eq!(
+        manifest.canonicalize().map_err(|error| error.to_string())?,
+        owned
+            .join("target/package/extracted/Cargo.toml")
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+    );
+    let selected_bytes = fs::read(&selected).map_err(|error| error.to_string())?;
+    assert!(!selected_bytes.is_empty());
+    if selected_bytes != installed_bytes {
+        return Err("SETUP: compiler-selected executable and installed bytes differ".to_string());
+    }
+    assert_eq!(
+        custody["rustc_verbose_version"].as_str().map(str::trim),
+        Some(rustc)
+    );
+    assert_eq!(
+        custody["cargo_verbose_version"].as_str().map(str::trim),
+        Some(cargo)
+    );
+    Ok(selected)
+}
+
+// 4510 successor proof: observed path metadata helper start.
+// Test observations use existing native metadata; this is not custody authority.
+#[derive(Debug, PartialEq, Eq)]
+struct CapturePathMetadata {
+    regular_file: bool,
+    directory: bool,
+    symlink: bool,
+    #[cfg(unix)]
+    device: u64,
+    #[cfg(unix)]
+    inode: u64,
+    #[cfg(unix)]
+    links: u64,
+}
+
+fn capture_path_metadata(path: &Path) -> Result<CapturePathMetadata, String> {
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        format!(
+            "witness path metadata unavailable at {}: {error}",
+            path.display()
+        )
+    })?;
+    #[cfg(unix)]
+    use std::os::unix::fs::MetadataExt;
+    let kind = metadata.file_type();
+    Ok(CapturePathMetadata {
+        regular_file: kind.is_file(),
+        directory: kind.is_dir(),
+        symlink: kind.is_symlink(),
+        #[cfg(unix)]
+        device: metadata.dev(),
+        #[cfg(unix)]
+        inode: metadata.ino(),
+        #[cfg(unix)]
+        links: metadata.nlink(),
+    })
+}
+// 4510 successor proof: observed path metadata helper end.
+
+#[test]
+fn real_compiler_bound_witness_consumes_frozen_reference_after_mutable_outputs_change()
+-> Result<(), String> {
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, CandidateExecution,
+    };
+    let fixture = create_source_fixture()?;
+    let (input, owned) = capture_fixture_input(&fixture, "actual frozen-reference producer")?;
+    let admitted = AdmittedSource::admit(&input, "0.11.0")?;
+    assert_eq!(admitted.source_sha()?, fixture.sha);
+    let rustc = capture_observed_verbose_version("rustc", &fixture.source)?;
+    let cargo = capture_observed_verbose_version("cargo", &fixture.source)?;
+    let mut installed = AttributedArchive::produce(admitted, &owned)?.install(&owned)?;
+    let installed_path = installed.binary().to_path_buf();
+    let installed_bytes = fs::read(&installed_path).map_err(|error| error.to_string())?;
+    let original_custody = installed.custody_json();
+    let selected = capture_assert_real_install_identity(
+        &original_custody,
+        &installed_path,
+        &installed_bytes,
+        &owned,
+        &rustc,
+        &cargo,
+    )?;
+    eprintln!("4510 real compiler/install binding before capture: {original_custody}");
+    let foreign = fixture.guard.root.join("foreign consumer cwd");
+    fs::create_dir(&foreign).map_err(|error| error.to_string())?;
+    let before = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &foreign,
+        "4510 real installed source positive before capture",
+    )?;
+    assert!(before.success && before.status == Some(0));
+    assert_eq!(before.stdout, "fixture source A\n");
+    let slot = owned.join(format!(
+        "source-{}-frozen{}",
+        fixture.sha,
+        std::env::consts::EXE_SUFFIX
+    ));
+    installed.freeze_into(&slot)?;
+    let captured = installed.custody_json();
+    assert_eq!(installed.binary(), slot.as_path());
+    assert_eq!(captured["capture_mode"], "exclusive_frozen_reference");
+    assert_eq!(captured["installed_executable"], json!(installed_path));
+    assert_eq!(
+        captured["compiler_artifact"],
+        original_custody["compiler_artifact"]
+    );
+    assert_eq!(
+        captured["rustc_verbose_version"],
+        original_custody["rustc_verbose_version"]
+    );
+    assert_eq!(
+        captured["cargo_verbose_version"],
+        original_custody["cargo_verbose_version"]
+    );
+    assert_eq!(captured["source"], original_custody["source"]);
+    assert_eq!(
+        captured["archive_sha256"],
+        original_custody["archive_sha256"]
+    );
+    assert_eq!(
+        captured["executable_sha256"],
+        original_custody["executable_sha256"]
+    );
+    assert_eq!(
+        fs::read(&slot).map_err(|error| error.to_string())?,
+        installed_bytes
+    );
+
+    // Both are owned real producer outputs, not archived original witnesses.
+    // The unchanged admitted source/archive and frozen execution stay binding.
+    assert_ne!(selected, slot);
+    assert_ne!(installed_path, slot);
+    fs::write(&selected, b"changed mutable compiler output\n")
+        .map_err(|error| error.to_string())?;
+    fs::write(&installed_path, b"changed mutable installed output\n")
+        .map_err(|error| error.to_string())?;
+    for _ in 0..2 {
+        let result = CandidateExecution::Qualified(&installed).run(
+            &[],
+            &foreign,
+            "4510 explicit frozen handle reuse",
+        )?;
+        assert!(result.success && result.status == Some(0));
+        assert_eq!(result.stdout, "fixture source A\n");
+        assert_eq!(installed.custody_json(), captured);
+        assert_eq!(
+            fs::read(&slot).map_err(|error| error.to_string())?,
+            installed_bytes
+        );
+    }
+    require_refusal(installed.freeze_into(&slot), "already frozen")?;
+    assert_eq!(
+        fs::read(&slot).map_err(|error| error.to_string())?,
+        installed_bytes
+    );
+    eprintln!("4510 compiler-bound frozen handle proof: {captured}");
+    fixture.guard.finish()
+}
+
+#[test]
+fn real_compiler_bound_capture_refuses_occupied_regular_and_link_canaries() -> Result<(), String> {
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, CandidateExecution,
+    };
+    let fixture = create_source_fixture()?;
+    let (input, owned) = capture_fixture_input(&fixture, "actual occupied-slot producer")?;
+    let mut installed =
+        AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &owned)?
+            .install(&owned)?;
+    let positive = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 actual installed positive before occupied slots",
+    )?;
+    assert!(positive.success && positive.status == Some(0));
+    assert_eq!(positive.stdout, "fixture source A\n");
+    let original_path = installed.binary().to_path_buf();
+    let original_custody = installed.custody_json();
+    eprintln!(
+        "4510 real occupied-slot setup: {}",
+        json!({"custody": original_custody, "native_success": positive.success,
+            "native_status": positive.status, "native_stdout": positive.stdout})
+    );
+    #[cfg(unix)]
+    {
+        let parent_alias = fixture.guard.root.join("producer-parent-alias");
+        std::os::unix::fs::symlink(&owned, &parent_alias).map_err(|error| error.to_string())?;
+        let alias_slot = parent_alias.join("must-not-be-created");
+        require_refusal(
+            installed.freeze_into(&alias_slot),
+            "capture destination must be an ordinary file in the owned producer root",
+        )?;
+        assert!(!owned.join("must-not-be-created").exists());
+    }
+    // 4510 successor proof: byte-equal occupied payload start.
+    // Initial capture refuses even an actual byte-equal payload. Only the
+    // already-published handle may reuse a frozen reference.
+    let actual_bytes = fs::read(&original_path).map_err(|error| error.to_string())?;
+    assert!(
+        !actual_bytes.is_empty(),
+        "real installed payload must be nonempty"
+    );
+    assert_eq!(
+        original_custody["executable_sha256"],
+        sha256_hex(&actual_bytes)
+    );
+    let byte_equal = owned.join(format!(
+        "occupied-byte-equal{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    fs::write(&byte_equal, &actual_bytes).map_err(|error| error.to_string())?;
+    let byte_equal_before = capture_path_metadata(&byte_equal)?;
+    let refused = installed.freeze_into(&byte_equal);
+    assert!(
+        fs::symlink_metadata(&byte_equal).is_ok(),
+        "byte-equal occupied payload must survive initial capture refusal"
+    );
+    assert_eq!(
+        fs::read(&byte_equal).map_err(|error| error.to_string())?,
+        actual_bytes,
+        "initial capture must not rewrite byte-equal occupied payload"
+    );
+    assert_eq!(
+        capture_path_metadata(&byte_equal)?,
+        byte_equal_before,
+        "byte-equal occupied payload must preserve native type and identity"
+    );
+    require_refusal(refused, "capture destination creation refused")?;
+    assert_eq!(installed.binary(), original_path.as_path());
+    assert_eq!(installed.custody_json(), original_custody);
+    // 4510 successor proof: byte-equal occupied payload end.
+
+    let canary = owned.join("protected-canary");
+    let canary_bytes = b"preserve this occupied witness canary\n";
+    fs::write(&canary, canary_bytes).map_err(|error| error.to_string())?;
+    let regular = owned.join("occupied-regular");
+    fs::write(&regular, canary_bytes).map_err(|error| error.to_string())?;
+    let hardlink = owned.join("occupied-hardlink");
+    fs::hard_link(&canary, &hardlink).map_err(|error| error.to_string())?;
+    let slots = vec![regular, hardlink];
+    #[cfg(unix)]
+    let slots = {
+        let mut slots = slots;
+        let symlink = owned.join("occupied-symlink");
+        std::os::unix::fs::symlink(&canary, &symlink).map_err(|error| error.to_string())?;
+        slots.push(symlink);
+        slots
+    };
+    for slot in slots {
+        // 4510 successor proof: occupied metadata before start.
+        let slot_before = capture_path_metadata(&slot)?;
+        let canary_before = capture_path_metadata(&canary)?;
+        // 4510 successor proof: occupied metadata before end.
+        let refused = installed.freeze_into(&slot);
+        // 4510 successor proof: occupied metadata after start.
+        assert!(
+            fs::symlink_metadata(&slot).is_ok(),
+            "occupied witness path must survive creation refusal: {}",
+            slot.display()
+        );
+        assert_eq!(
+            capture_path_metadata(&slot)?,
+            slot_before,
+            "occupied witness must preserve native type and identity: {}",
+            slot.display()
+        );
+        assert_eq!(
+            capture_path_metadata(&canary)?,
+            canary_before,
+            "creation refusal must preserve the canary target's native type and identity"
+        );
+        // 4510 successor proof: occupied metadata after end.
+        let slot_bytes = fs::read(&slot).map_err(|error| error.to_string())?;
+        if slot_bytes != canary_bytes
+            || fs::read(&canary).map_err(|error| error.to_string())? != canary_bytes
+        {
+            return Err(format!(
+                "capture truncated/replaced an occupied canary: {}; observed_len={}, observed_sha256={}; refusal={refused:?}",
+                slot.display(),
+                slot_bytes.len(),
+                sha256_hex(&slot_bytes)
+            ));
+        }
+        require_refusal(refused, "capture destination creation refused")?;
+        assert_eq!(installed.binary(), original_path.as_path());
+        assert_eq!(installed.custody_json(), original_custody);
+    }
+    let clean = owned.join(format!("exclusive-clean{}", std::env::consts::EXE_SUFFIX));
+    installed.freeze_into(&clean)?;
+    let consumed = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 actual clean slot after occupied refusals",
+    )?;
+    assert!(consumed.success && consumed.status == Some(0));
+    assert_eq!(consumed.stdout, "fixture source A\n");
+    assert_eq!(
+        fs::read(&canary).map_err(|error| error.to_string())?,
+        canary_bytes
+    );
+    eprintln!(
+        "4510 occupied canaries and genuine clean capture: {}",
+        installed.custody_json()
+    );
+    fixture.guard.finish()
+}
+
+#[test]
+fn real_compiler_bound_partial_capture_cleans_only_its_observed_owned_object() -> Result<(), String>
+{
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, CandidateExecution,
+    };
+    use std::io::Write;
+    let fixture = create_source_fixture()?;
+    let (input, owned) = capture_fixture_input(&fixture, "actual partial-capture producer")?;
+    let mut installed =
+        AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &owned)?
+            .install(&owned)?;
+    installed.revalidate()?;
+    let before = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 real installed positive before partial write",
+    )?;
+    assert!(before.success && before.status == Some(0));
+    assert_eq!(before.stdout, "fixture source A\n");
+    let actual_bytes = fs::read(installed.binary()).map_err(|error| error.to_string())?;
+    assert!(actual_bytes.len() > 16);
+    let original_path = installed.binary().to_path_buf();
+    let original_custody = installed.custody_json();
+    eprintln!(
+        "4510 real partial-write setup: {}",
+        json!({"custody": original_custody, "native_success": before.success,
+            "native_status": before.status, "native_stdout": before.stdout})
+    );
+    let partial = owned.join("owned-partial");
+    let mut writer_reached = false;
+    let refusal = installed.freeze_into_with_writer_for_test(&partial, |file, retained| {
+        writer_reached = true;
+        if retained != actual_bytes {
+            return Err(std::io::Error::other(
+                "wrong retained compiler-produced bytes",
+            ));
+        }
+        file.write_all(&retained[..16])?;
+        Err(std::io::Error::other("injected witness-copy failure"))
+    });
+    assert!(
+        writer_reached,
+        "must reach partial write after real exclusive creation"
+    );
+    require_refusal(refusal, "injected witness-copy failure")?;
+    assert_eq!(installed.binary(), original_path.as_path());
+    assert_eq!(installed.custody_json(), original_custody);
+    #[cfg(unix)]
+    assert!(
+        !partial.exists(),
+        "only this attempt's observed partial must be cleaned"
+    );
+    #[cfg(not(unix))]
+    assert_eq!(
+        fs::read(&partial).map_err(|error| error.to_string())?,
+        actual_bytes[..16]
+    );
+
+    // Even the failure hook must refuse an occupied slot before its writer.
+    let canary = owned.join("partial-protected-canary");
+    let canary_bytes = b"do not clean a pre-existing or replacement witness\n";
+    fs::write(&canary, canary_bytes).map_err(|error| error.to_string())?;
+    // 4510 successor proof: partial canary metadata before start.
+    let canary_before = capture_path_metadata(&canary)?;
+    // 4510 successor proof: partial canary metadata before end.
+    let mut occupied_writer_reached = false;
+    let refused = installed.freeze_into_with_writer_for_test(&canary, |_, _| {
+        occupied_writer_reached = true;
+        Err(std::io::Error::other("occupied writer must not run"))
+    });
+    assert!(!occupied_writer_reached);
+    // 4510 successor proof: partial canary metadata after start.
+    assert!(
+        fs::symlink_metadata(&canary).is_ok(),
+        "occupied failure hook must retain its pre-existing canary"
+    );
+    assert_eq!(
+        capture_path_metadata(&canary)?,
+        canary_before,
+        "occupied failure hook must preserve canary native type and identity"
+    );
+    // 4510 successor proof: partial canary metadata after end.
+    assert_eq!(
+        fs::read(&canary).map_err(|error| error.to_string())?,
+        canary_bytes
+    );
+    require_refusal(refused, "capture destination creation refused")?;
+
+    #[cfg(unix)]
+    {
+        let replaced = owned.join("partial-with-replacement");
+        let own_backup = owned.join("owned-partial-backup");
+        let refused = installed.freeze_into_with_writer_for_test(&replaced, |file, retained| {
+            file.write_all(&retained[..16])?;
+            fs::rename(&replaced, &own_backup)?;
+            fs::hard_link(&canary, &replaced)?;
+            Err(std::io::Error::other("injected replacement-path failure"))
+        });
+        require_refusal(refused, "injected replacement-path failure")?;
+        // 4510 successor proof: hardlink replacement presence start.
+        assert!(
+            fs::symlink_metadata(&replaced).is_ok(),
+            "failure cleanup must retain the hardlink replacement witness"
+        );
+        // 4510 successor proof: hardlink replacement presence end.
+        assert_eq!(
+            fs::read(&replaced).map_err(|error| error.to_string())?,
+            canary_bytes
+        );
+        assert_eq!(
+            fs::read(&canary).map_err(|error| error.to_string())?,
+            canary_bytes
+        );
+        assert_eq!(
+            fs::read(&own_backup).map_err(|error| error.to_string())?,
+            actual_bytes[..16]
+        );
+        assert_eq!(installed.binary(), original_path.as_path());
+    }
+    // 4510 successor proof: single-link inode replacement start.
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let replaced = owned.join("partial-with-single-link-replacement");
+        let own_backup = owned.join("owned-partial-single-link-backup");
+        let replacement_bytes = b"retain this different single-link regular witness\n";
+        let mut replacement_before = None;
+        let refused = installed.freeze_into_with_writer_for_test(&replaced, |file, retained| {
+            if retained != actual_bytes {
+                return Err(std::io::Error::other(
+                    "wrong retained compiler-produced bytes",
+                ));
+            }
+            file.write_all(&retained[..16])?;
+            fs::rename(&replaced, &own_backup)?;
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&replaced)?
+                .write_all(replacement_bytes)?;
+            let created = file.metadata()?;
+            let replacement = fs::symlink_metadata(&replaced)?;
+            if !replacement.file_type().is_file()
+                || replacement.nlink() != 1
+                || (replacement.dev(), replacement.ino()) == (created.dev(), created.ino())
+            {
+                return Err(std::io::Error::other(
+                    "SETUP: replacement must be a different single-link regular inode",
+                ));
+            }
+            replacement_before =
+                Some(capture_path_metadata(&replaced).map_err(std::io::Error::other)?);
+            Err(std::io::Error::other(
+                "injected single-link replacement failure",
+            ))
+        });
+        require_refusal(refused, "injected single-link replacement failure")?;
+        assert!(
+            fs::symlink_metadata(&replaced).is_ok(),
+            "failure cleanup must retain a different single-link regular replacement"
+        );
+        let expected = replacement_before.ok_or_else(|| {
+            "SETUP: writer did not observe the different single-link replacement".to_string()
+        })?;
+        assert_eq!(
+            capture_path_metadata(&replaced)?,
+            expected,
+            "failure cleanup must preserve replacement type, single link and different inode"
+        );
+        assert_eq!(
+            fs::read(&replaced).map_err(|error| error.to_string())?,
+            replacement_bytes,
+            "failure cleanup must not modify the single-link replacement bytes"
+        );
+        assert_eq!(
+            fs::read(&own_backup).map_err(|error| error.to_string())?,
+            actual_bytes[..16]
+        );
+        assert_eq!(installed.binary(), original_path.as_path());
+        assert_eq!(installed.custody_json(), original_custody);
+    }
+    // 4510 successor proof: single-link inode replacement end.
+
+    let retry = owned.join(format!(
+        "complete-after-failure{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    installed.freeze_into(&retry)?;
+    assert_eq!(
+        fs::read(&retry).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    installed.revalidate()?;
+    let consumed = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 real complete retry after partial failure",
+    )?;
+    assert!(consumed.success && consumed.status == Some(0));
+    assert_eq!(consumed.stdout, "fixture source A\n");
+    eprintln!(
+        "4510 partial cleanup and real complete retry: {}",
+        installed.custody_json()
+    );
+    fixture.guard.finish()
+}
+
+// 4510 successor proof: competing creators test start.
+#[test]
+fn real_compiler_bound_competing_capture_creators_leave_one_complete_witness() -> Result<(), String>
+{
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, CandidateExecution,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Condvar, Mutex};
+
+    let fixture = create_source_fixture()?;
+    let (input, owned) = capture_fixture_input(&fixture, "actual competing-capture producer")?;
+    let rustc = capture_observed_verbose_version("rustc", &fixture.source)?;
+    let cargo = capture_observed_verbose_version("cargo", &fixture.source)?;
+    let mut installed =
+        AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &owned)?
+            .install(&owned)?;
+    let original_path = installed.binary().to_path_buf();
+    let actual_bytes = fs::read(&original_path).map_err(|error| error.to_string())?;
+    let original_custody = installed.custody_json();
+    capture_assert_real_install_identity(
+        &original_custody,
+        &original_path,
+        &actual_bytes,
+        &owned,
+        &rustc,
+        &cargo,
+    )?;
+    let before = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 real installed positive before competing creators",
+    )?;
+    assert!(before.success && before.status == Some(0));
+    assert_eq!(before.stdout, "fixture source A\n");
+    eprintln!(
+        "4510 real competing-creator setup: {}",
+        json!({"custody": original_custody, "native_success": before.success,
+            "native_status": before.status, "native_stdout": before.stdout})
+    );
+    let slot = owned.join(format!(
+        "one-competing-witness{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    assert!(
+        !slot.exists(),
+        "SETUP: competing witness slot must be absent"
+    );
+    let gate = (Mutex::new(0_usize), Condvar::new());
+    let gate_deadline = std::time::Instant::now() + Duration::from_secs(30);
+    let reached = AtomicUsize::new(0);
+    let attempt = || {
+        // Both callbacks run after any precheck and immediately before the
+        // same native creation owner. The test never copies an executable.
+        let result = installed.capture_unpublished_with_gate_for_test(&slot, || {
+            let mut participants = gate.0.lock().map_err(|error| {
+                format!("INSTRUMENT: competing capture creation gate lock poisoned: {error}")
+            })?;
+            reached.fetch_add(1, Ordering::SeqCst);
+            *participants += 1;
+            gate.1.notify_all();
+            if std::time::Instant::now() >= gate_deadline {
+                return Err("INSTRUMENT: competing capture creation gate deadline expired before both creators arrived".to_string());
+            }
+            while *participants < 2 {
+                let remaining = gate_deadline
+                    .checked_duration_since(std::time::Instant::now())
+                    .filter(|remaining| !remaining.is_zero())
+                    .ok_or_else(|| {
+                        "INSTRUMENT: competing capture creation gate deadline expired before both creators arrived".to_string()
+                    })?;
+                let (observed, wait) = gate.1.wait_timeout(participants, remaining)
+                    .map_err(|error| {
+                        format!("INSTRUMENT: competing capture creation gate wait poisoned: {error}")
+                    })?;
+                participants = observed;
+                if wait.timed_out() && *participants < 2 {
+                    return Err("INSTRUMENT: competing capture creation gate deadline expired before both creators arrived".to_string());
+                }
+            }
+            Ok(())
+        });
+        let completed_metadata = result.is_ok().then(|| capture_path_metadata(&slot));
+        (result, completed_metadata)
+    };
+    let outcomes = std::thread::scope(|scope| {
+        let first = scope.spawn(attempt);
+        let second = scope.spawn(attempt);
+        // Reap both scoped workers before propagating either failure. A peer
+        // that fails before its gate cannot leave an unbounded arrival wait.
+        let first = first.join();
+        let second = second.join();
+        let first = first.map_err(|_panic_payload| {
+            "INSTRUMENT: competing capture first worker did not complete normally".to_string()
+        })?;
+        let second = second.map_err(|_panic_payload| {
+            "INSTRUMENT: competing capture second worker did not complete normally".to_string()
+        })?;
+        Ok::<_, String>([first, second])
+    })?;
+    for (result, _) in &outcomes {
+        if let Err(error) = result
+            && error.starts_with("INSTRUMENT:")
+        {
+            return Err(error.clone());
+        }
+    }
+    assert_eq!(
+        reached.load(Ordering::SeqCst),
+        2,
+        "both real capture attempts must reach the native-creation gate"
+    );
+    let mut winners = 0;
+    let mut refusals = Vec::new();
+    let mut winner_metadata = None;
+    for (result, completed_metadata) in outcomes {
+        match result {
+            Ok(()) => {
+                winners += 1;
+                winner_metadata = completed_metadata;
+            }
+            Err(error) => refusals.push(error),
+        }
+    }
+    assert_eq!(
+        winners, 1,
+        "competing creators must publish exactly one complete capture; refusals={refusals:?}"
+    );
+    assert_eq!(
+        refusals.len(),
+        1,
+        "competing creators must have exactly one loser"
+    );
+    require_refusal(
+        Err::<(), String>(refusals[0].clone()),
+        "capture destination creation refused",
+    )?;
+    assert!(
+        fs::symlink_metadata(&slot).is_ok(),
+        "losing creator must not remove the completed winning witness"
+    );
+    let winner_metadata = winner_metadata
+        .ok_or_else(|| "successful capture did not observe its completed native file".to_string())?
+        .map_err(|error| format!("completed winning witness was lost: {error}"))?;
+    assert!(winner_metadata.regular_file && !winner_metadata.symlink);
+    #[cfg(unix)]
+    assert_eq!(winner_metadata.links, 1);
+    assert_eq!(
+        capture_path_metadata(&slot)?,
+        winner_metadata,
+        "losing creator must preserve the winner's complete native file and inode"
+    );
+    assert_eq!(
+        fs::read(&slot).map_err(|error| error.to_string())?,
+        actual_bytes,
+        "winning witness must contain the complete real compiler-selected installed bytes"
+    );
+    assert_eq!(installed.binary(), original_path.as_path());
+    assert_eq!(installed.custody_json(), original_custody);
+
+    // The gate intentionally publishes no InstalledCandidate state. Reopening
+    // that completed slot is initial recapture, never implicit handle reuse.
+    require_refusal(
+        installed.freeze_into(&slot),
+        "capture destination creation refused",
+    )?;
+    assert_eq!(capture_path_metadata(&slot)?, winner_metadata);
+    assert_eq!(
+        fs::read(&slot).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(installed.binary(), original_path.as_path());
+    assert_eq!(installed.custody_json(), original_custody);
+    let clean = owned.join(format!(
+        "published-after-competing-capture{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    installed.freeze_into(&clean)?;
+    assert_eq!(
+        fs::read(&clean).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    let consumed = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 actual published capture after competing creators",
+    )?;
+    assert!(consumed.success && consumed.status == Some(0));
+    assert_eq!(consumed.stdout, "fixture source A\n");
+    eprintln!(
+        "4510 competing creation and genuine published consumer: {}",
+        json!({"custody": installed.custody_json(), "successful_creators": winners,
+            "refusals": refusals, "unpublished_witness": slot,
+            "unpublished_sha256": sha256_hex(&actual_bytes)})
+    );
+    fixture.guard.finish()
+}
+// 4510 successor proof: competing creators test end.
+
+// 4510 independent proof: actual consumer owned-root cleanup start.
+#[cfg(unix)]
+#[test]
+fn real_compiler_bound_consumer_retains_failed_capture_root_and_cleans_success()
+-> Result<(), String> {
+    use crate::reports::capture_with_owned_root_for_test;
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, CandidateExecution,
+    };
+    use std::io::Write;
+    use std::os::unix::fs::MetadataExt;
+
+    let fixture = create_source_fixture()?;
+    let (input, owned) = capture_fixture_input(&fixture, "actual consumer-guard producer")?;
+    let admitted = AdmittedSource::admit(&input, "0.11.0")?;
+    assert_eq!(admitted.source_sha()?, fixture.sha);
+    let rustc = capture_observed_verbose_version("rustc", &fixture.source)?;
+    let cargo = capture_observed_verbose_version("cargo", &fixture.source)?;
+    let mut installed = AttributedArchive::produce(admitted, &owned)?.install(&owned)?;
+    let original_path = installed.binary().to_path_buf();
+    let actual_bytes = fs::read(&original_path).map_err(|error| error.to_string())?;
+    assert!(
+        actual_bytes.len() > 16,
+        "real installed executable must supply a nonempty strict prefix"
+    );
+    let original_custody = installed.custody_json();
+    let selected = capture_assert_real_install_identity(
+        &original_custody,
+        &original_path,
+        &actual_bytes,
+        &owned,
+        &rustc,
+        &cargo,
+    )?;
+    let archive = PathBuf::from(original_custody["archive"].as_str().ok_or_else(|| {
+        "SETUP: actual package custody must name its emitted archive".to_string()
+    })?);
+    assert!(
+        archive
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+            .starts_with(&owned)
+    );
+    let actual_archive = fs::read(&archive).map_err(|error| error.to_string())?;
+    assert!(
+        !actual_archive.is_empty(),
+        "actual Cargo package archive must be nonempty"
+    );
+    assert_eq!(
+        original_custody["archive_sha256"],
+        sha256_hex(&actual_archive)
+    );
+    let root_before = capture_path_metadata(&owned)?;
+    let compiler_before = capture_path_metadata(&selected)?;
+    let installed_before = capture_path_metadata(&original_path)?;
+    let archive_before = capture_path_metadata(&archive)?;
+    let positive = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 actual installed positive before consumer cleanup control",
+    )?;
+    assert!(positive.success && positive.status == Some(0));
+    assert_eq!(positive.stdout, "fixture source A\n");
+
+    // This explicit destructive control needs pre-failure copies outside the
+    // producer root. These are observed bytes, never rebuilt originals or a
+    // replacement for the source/Cargo/toolchain custody authority.
+    let saved_executable = fixture.guard.root.join(format!(
+        "observed-compiler-executable{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    let mut saved_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&saved_executable)
+        .map_err(|error| format!("save observed compiler bytes: {error}"))?;
+    saved_file
+        .write_all(&actual_bytes)
+        .map_err(|error| error.to_string())?;
+    saved_file
+        .set_permissions(
+            fs::metadata(&selected)
+                .map_err(|error| error.to_string())?
+                .permissions(),
+        )
+        .map_err(|error| error.to_string())?;
+    saved_file.sync_all().map_err(|error| error.to_string())?;
+    drop(saved_file);
+    let saved_archive = fixture.guard.root.join("observed-cargo-package.crate");
+    let mut saved_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&saved_archive)
+        .map_err(|error| format!("save observed archive bytes: {error}"))?;
+    saved_file
+        .write_all(&actual_archive)
+        .map_err(|error| error.to_string())?;
+    saved_file.sync_all().map_err(|error| error.to_string())?;
+    drop(saved_file);
+    assert_eq!(
+        fs::read(&saved_executable).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(
+        fs::read(&saved_archive).map_err(|error| error.to_string())?,
+        actual_archive
+    );
+    let observations = json!({
+        "custody": original_custody, "producer_root": owned,
+        "compiler_selected": selected, "native_success": positive.success,
+        "native_status": positive.status, "native_stdout": positive.stdout,
+        "observed_executable_copy": saved_executable,
+        "observed_archive_copy": saved_archive,
+        "copies_claim": "exact pre-failure observed bytes; not rebuilt or reconstituted originals"
+    });
+    let observations_path = fixture.guard.root.join("observed-consumer-input.json");
+    let mut saved_file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&observations_path)
+        .map_err(|error| error.to_string())?;
+    saved_file
+        .write_all(&serde_json::to_vec_pretty(&observations).map_err(|error| error.to_string())?)
+        .map_err(|error| error.to_string())?;
+    saved_file.sync_all().map_err(|error| error.to_string())?;
+    drop(saved_file);
+    eprintln!("4510 actual consumer pre-failure observations: {observations}");
+
+    let slot = owned.join("consumer-failure-single-link-replacement");
+    let own_backup = owned.join("consumer-created-partial-backup");
+    let replacement_bytes = b"retain this single-link consumer failure witness\n";
+    let mut writer_reached = false;
+    let mut replacement_before = None;
+    let refused = capture_with_owned_root_for_test(&owned, || {
+        installed.freeze_into_with_writer_for_test(&slot, |file, retained| {
+            writer_reached = true;
+            if retained != actual_bytes {
+                return Err(std::io::Error::other(
+                    "SETUP: wrong retained compiler-produced bytes",
+                ));
+            }
+            file.write_all(&retained[..16])?;
+            fs::rename(&slot, &own_backup)?;
+            fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&slot)?
+                .write_all(replacement_bytes)?;
+            let created = file.metadata()?;
+            let replacement = fs::symlink_metadata(&slot)?;
+            if !replacement.file_type().is_file()
+                || replacement.nlink() != 1
+                || (replacement.dev(), replacement.ino()) == (created.dev(), created.ino())
+            {
+                return Err(std::io::Error::other(
+                    "SETUP: consumer replacement must be a different single-link regular inode",
+                ));
+            }
+            replacement_before = Some(capture_path_metadata(&slot).map_err(std::io::Error::other)?);
+            Err(std::io::Error::other(
+                "injected consumer-root capture failure",
+            ))
+        })
+    });
+    assert!(
+        writer_reached,
+        "SETUP: actual consumer must reach the retained-byte failure writer"
+    );
+    let refusal = refused
+        .err()
+        .ok_or_else(|| "consumer unexpectedly accepted injected capture failure".to_string())?;
+    require_refusal(
+        Err::<(), String>(refusal.clone()),
+        "injected consumer-root capture failure",
+    )?;
+    assert!(
+        owned.is_dir(),
+        "consumer Drop must retain the original producer root after capture failure"
+    );
+    assert!(
+        fs::symlink_metadata(&slot).is_ok(),
+        "consumer Drop must retain the single-link replacement witness"
+    );
+    assert!(
+        fs::symlink_metadata(&own_backup).is_ok(),
+        "consumer Drop must retain the original attempt-owned partial backup"
+    );
+    let replacement_before = replacement_before.ok_or_else(|| {
+        "SETUP: actual writer did not observe its single-link replacement".to_string()
+    })?;
+    assert_eq!(capture_path_metadata(&owned)?, root_before);
+    assert_eq!(capture_path_metadata(&slot)?, replacement_before);
+    assert_eq!(
+        fs::read(&slot).map_err(|error| error.to_string())?,
+        replacement_bytes
+    );
+    assert_eq!(
+        fs::read(&own_backup).map_err(|error| error.to_string())?,
+        actual_bytes[..16]
+    );
+    assert_eq!(capture_path_metadata(&selected)?, compiler_before);
+    assert_eq!(capture_path_metadata(&original_path)?, installed_before);
+    assert_eq!(capture_path_metadata(&archive)?, archive_before);
+    assert_eq!(
+        fs::read(&selected).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(
+        fs::read(&original_path).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(
+        fs::read(&archive).map_err(|error| error.to_string())?,
+        actual_archive
+    );
+    assert!(
+        refusal.contains(&owned.display().to_string()),
+        "consumer refusal must name its retained producer root: {refusal}"
+    );
+    assert_eq!(installed.binary(), original_path.as_path());
+    assert_eq!(installed.custody_json(), original_custody);
+    installed.revalidate()?;
+    eprintln!("4510 actual consumer retained capture-failure root: {refusal}");
+
+    let refused = capture_with_owned_root_for_test(&owned, || installed.freeze_into(&slot));
+    let refusal = refused.err().ok_or_else(|| {
+        "consumer unexpectedly reused an occupied initial capture slot".to_string()
+    })?;
+    require_refusal(
+        Err::<(), String>(refusal.clone()),
+        "capture destination creation refused",
+    )?;
+    assert!(
+        owned.is_dir(),
+        "consumer Drop must retain producer root after occupied capture refusal"
+    );
+    assert_eq!(capture_path_metadata(&owned)?, root_before);
+    assert_eq!(capture_path_metadata(&slot)?, replacement_before);
+    assert_eq!(
+        fs::read(&slot).map_err(|error| error.to_string())?,
+        replacement_bytes
+    );
+    assert_eq!(
+        fs::read(&own_backup).map_err(|error| error.to_string())?,
+        actual_bytes[..16]
+    );
+    assert_eq!(capture_path_metadata(&selected)?, compiler_before);
+    assert_eq!(capture_path_metadata(&original_path)?, installed_before);
+    assert_eq!(capture_path_metadata(&archive)?, archive_before);
+    assert_eq!(
+        fs::read(&selected).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(
+        fs::read(&original_path).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(
+        fs::read(&archive).map_err(|error| error.to_string())?,
+        actual_archive
+    );
+    assert!(
+        refusal.contains(&owned.display().to_string()),
+        "occupied capture refusal must name its retained producer root: {refusal}"
+    );
+    assert_eq!(installed.binary(), original_path.as_path());
+    assert_eq!(installed.custody_json(), original_custody);
+
+    // A fresh guard owns normal successful cleanup. A blanket keep-on-Drop
+    // cannot satisfy this actual capture and Qualified execution positive.
+    let clean = owned.join(format!(
+        "consumer-successful-capture{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    let mut successful_observations = None;
+    capture_with_owned_root_for_test(&owned, || {
+        installed.freeze_into(&clean)?;
+        assert_eq!(
+            fs::read(&clean).map_err(|error| error.to_string())?,
+            actual_bytes
+        );
+        let consumed = CandidateExecution::Qualified(&installed).run(
+            &[],
+            &fixture.controller,
+            "4510 actual consumer successful capture before normal cleanup",
+        )?;
+        assert!(consumed.success && consumed.status == Some(0));
+        assert_eq!(consumed.stdout, "fixture source A\n");
+        let captured = installed.custody_json();
+        assert_eq!(captured["capture_mode"], "exclusive_frozen_reference");
+        assert_eq!(
+            captured["compiler_artifact"],
+            original_custody["compiler_artifact"]
+        );
+        assert_eq!(
+            captured["executable_sha256"],
+            original_custody["executable_sha256"]
+        );
+        successful_observations = Some(json!({"custody": captured,
+            "native_success": consumed.success, "native_status": consumed.status,
+            "native_stdout": consumed.stdout}));
+        Ok(())
+    })?;
+    let successful_observations = successful_observations.ok_or_else(|| {
+        "SETUP: consumer must capture and execute before returning success".to_string()
+    })?;
+    assert!(
+        !owned.exists(),
+        "successful consumer guard must perform normal producer-root cleanup"
+    );
+    assert_eq!(
+        fs::read(&saved_executable).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    assert_eq!(
+        fs::read(&saved_archive).map_err(|error| error.to_string())?,
+        actual_archive
+    );
+    assert_eq!(
+        serde_json::from_slice::<Value>(
+            &fs::read(&observations_path).map_err(|error| error.to_string())?
+        )
+        .map_err(|error| error.to_string())?,
+        observations
+    );
+    eprintln!("4510 actual consumer successful cleanup observations: {successful_observations}");
+    fixture.guard.finish()
+}
+// 4510 independent proof: actual consumer owned-root cleanup end.
+
+// 4510 independent proof: install compiler invocation controls start.
+#[cfg(unix)]
+fn capture_compiler_shell_word(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(unix)]
+fn capture_compiler_path_entry() -> Result<PathBuf, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = std::env::var_os("PATH")
+        .ok_or_else(|| "SETUP: compiler control requires an existing PATH".to_string())?;
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    for directory in std::env::split_paths(&path) {
+        let directory = if directory.is_absolute() {
+            directory
+        } else {
+            cwd.join(directory)
+        };
+        let candidate = directory.join("rustc");
+        if let Ok(metadata) = fs::metadata(&candidate)
+            && metadata.is_file()
+            && metadata.permissions().mode() & 0o111 != 0
+        {
+            // Preserve the proxy's rustc basename, including a rustup symlink.
+            return Ok(directory
+                .canonicalize()
+                .map_err(|error| error.to_string())?
+                .join("rustc"));
+        }
+    }
+    Err("SETUP: compiler control cannot find an executable PATH rustc".to_string())
+}
+
+#[cfg(unix)]
+fn capture_compiler_forwarder(
+    program: &Path,
+    log: &Path,
+    label: &str,
+    real_compiler: Option<&Path>,
+) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    let log = log
+        .to_str()
+        .ok_or_else(|| "SETUP: forwarding log path must be UTF-8".to_string())?;
+    let execute = if let Some(compiler) = real_compiler {
+        let compiler = compiler
+            .to_str()
+            .ok_or_else(|| "SETUP: compiler path must be UTF-8".to_string())?;
+        format!("exec {} \"$@\"", capture_compiler_shell_word(compiler))
+    } else {
+        // Cargo wrappers receive the next wrapper/compiler as their first arg.
+        "exec \"$@\"".to_string()
+    };
+    let script = format!(
+        "#!/bin/sh\n{{\n  printf '%s\\t' {}\n  printf '%s\\t' \"$@\"\n  printf 'ENV:PATH=%s\\tENV:RUSTC=%s\\tENV:CARGO_BUILD_RUSTC=%s\\tENV:RUSTC_WRAPPER=%s\\tENV:CARGO_BUILD_RUSTC_WRAPPER=%s\\tENV:RUSTC_WORKSPACE_WRAPPER=%s\\tENV:CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=%s\\n' \"${{PATH-}}\" \"${{RUSTC-}}\" \"${{CARGO_BUILD_RUSTC-}}\" \"${{RUSTC_WRAPPER-}}\" \"${{CARGO_BUILD_RUSTC_WRAPPER-}}\" \"${{RUSTC_WORKSPACE_WRAPPER-}}\" \"${{CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER-}}\"\n}} >> {}\n{execute}\n",
+        capture_compiler_shell_word(label),
+        capture_compiler_shell_word(log)
+    );
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(program)
+        .map_err(|error| format!("SETUP: create actual forwarding script: {error}"))?;
+    file.write_all(script.as_bytes())
+        .map_err(|error| error.to_string())?;
+    file.set_permissions(fs::Permissions::from_mode(0o755))
+        .map_err(|error| error.to_string())?;
+    file.sync_all().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn capture_compiler_install_rows(log: &Path, target: &Path) -> Result<Vec<String>, String> {
+    let content =
+        fs::read_to_string(log).map_err(|error| format!("SETUP: read invocation log: {error}"))?;
+    Ok(content
+        .lines()
+        .filter(|line| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            fields
+                .windows(2)
+                .any(|pair| pair == ["--crate-name", "ripr"])
+                && fields
+                    .windows(2)
+                    .any(|pair| pair[0] == "--out-dir" && Path::new(pair[1]).starts_with(target))
+        })
+        .map(str::to_string)
+        .collect())
+}
+
+#[cfg(unix)]
+fn capture_compiler_install_child(
+    mode: &str,
+    control: &Path,
+    original_path: &str,
+) -> Result<(), String> {
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, CandidateExecution,
+    };
+    let selected = control.join("selected/rustc");
+    let contrary = control.join("contrary/rustc");
+    let wrapper = control.join("wrapper/forward");
+    let fixture = create_source_fixture()?;
+    let (input, owned) =
+        capture_fixture_input(&fixture, &format!("actual compiler {mode} producer"))?;
+    let admitted = AdmittedSource::admit(&input, "0.11.0")?;
+    assert_eq!(admitted.source_sha()?, fixture.sha);
+    let rustc = capture_observed_verbose_version("rustc", &fixture.source)?;
+    let cargo = capture_observed_verbose_version("cargo", &fixture.source)?;
+    let archive = AttributedArchive::produce(admitted, &owned)?;
+
+    // Package setup remains inherited. Add the ancestor only after genuine
+    // packaging; logs retain every call and install-target rows disambiguate.
+    if mode != "child_selectors" {
+        let config = if mode == "ancestor_build" {
+            let mut build = toml::map::Map::new();
+            build.insert(
+                "rustc".to_string(),
+                toml::Value::String(contrary.to_string_lossy().into_owned()),
+            );
+            build.insert(
+                "rustc-wrapper".to_string(),
+                toml::Value::String(wrapper.to_string_lossy().into_owned()),
+            );
+            build.insert(
+                "rustc-workspace-wrapper".to_string(),
+                toml::Value::String(wrapper.to_string_lossy().into_owned()),
+            );
+            let mut config = toml::map::Map::new();
+            config.insert("build".to_string(), toml::Value::Table(build));
+            toml::Value::Table(config)
+        } else {
+            // This case has no build.rustc or compiler-selector configuration.
+            let forced = std::env::join_paths(
+                std::iter::once(control.join("contrary"))
+                    .chain(std::env::split_paths(original_path)),
+            )
+            .map_err(|error| error.to_string())?
+            .into_string()
+            .map_err(|_non_utf8_path| "SETUP: forced PATH must be UTF-8".to_string())?;
+            let mut path = toml::map::Map::new();
+            path.insert("value".to_string(), toml::Value::String(forced));
+            path.insert("force".to_string(), toml::Value::Boolean(true));
+            let mut env = toml::map::Map::new();
+            env.insert("PATH".to_string(), toml::Value::Table(path));
+            let mut config = toml::map::Map::new();
+            config.insert("env".to_string(), toml::Value::Table(env));
+            toml::Value::Table(config)
+        };
+        fs::create_dir(owned.join(".cargo")).map_err(|error| error.to_string())?;
+        fs::write(
+            owned.join(".cargo/config.toml"),
+            toml::to_string(&config).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    let installed = archive.install(&owned)?;
+    let actual_bytes = fs::read(installed.binary()).map_err(|error| error.to_string())?;
+    let custody = installed.custody_json();
+    capture_assert_real_install_identity(
+        &custody,
+        installed.binary(),
+        &actual_bytes,
+        &owned,
+        &rustc,
+        &cargo,
+    )?;
+    let native = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 actual compiler control installed source positive",
+    )?;
+    assert!(native.success && native.status == Some(0));
+    assert_eq!(native.stdout, "fixture source A\n");
+    let target = owned.join("install-target");
+    let selected_rows =
+        capture_compiler_install_rows(&control.join("selected/invocations.log"), &target)?;
+    let contrary_rows =
+        capture_compiler_install_rows(&control.join("contrary/invocations.log"), &target)?;
+    let wrapper_rows =
+        capture_compiler_install_rows(&control.join("wrapper/invocations.log"), &target)?;
+    eprintln!(
+        "4510 actual compiler invocation/native observations: {}",
+        json!({
+            "mode": mode, "producer_root": owned, "custody": custody,
+            "native_success": native.success, "native_status": native.status,
+            "native_stdout": native.stdout, "selected_install_rows": selected_rows,
+            "contrary_install_rows": contrary_rows, "wrapper_install_rows": wrapper_rows,
+            "claim": "forwarding commands use the same actual compiler ABI; invocation provenance only"
+        })
+    );
+
+    // OLD must fail on observed runtime selection, before new metadata keys.
+    if selected_rows.is_empty() || !contrary_rows.is_empty() || !wrapper_rows.is_empty() {
+        return Err(format!(
+            "BEHAVIOR: {mode} actual install compilation must use selected PATH rustc only; selected={}, contrary={}, wrapper={}",
+            selected_rows.len(),
+            contrary_rows.len(),
+            wrapper_rows.len()
+        ));
+    }
+    let selected_text = selected
+        .to_str()
+        .ok_or_else(|| "SETUP: selected path must be UTF-8".to_string())?;
+    let expected_path = std::env::var("PATH").map_err(|error| error.to_string())?;
+    for row in &selected_rows {
+        for (name, expected) in [
+            ("PATH", expected_path.as_str()),
+            ("RUSTC", selected_text),
+            ("CARGO_BUILD_RUSTC", selected_text),
+            ("RUSTC_WRAPPER", ""),
+            ("CARGO_BUILD_RUSTC_WRAPPER", ""),
+            ("RUSTC_WORKSPACE_WRAPPER", ""),
+            ("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", ""),
+        ] {
+            let field = format!("ENV:{name}={expected}");
+            if !row.split('\t').any(|actual| actual == field) {
+                return Err(format!(
+                    "BEHAVIOR: {mode} actual selected compiler environment differs for {name}; expected {field}"
+                ));
+            }
+        }
+    }
+    assert_eq!(custody["rustc_command"], json!(selected));
+    fixture.guard.finish()
+}
+
+#[cfg(unix)]
+#[test]
+fn real_compiler_invocation_custody_pins_selected_command_against_overrides() -> Result<(), String>
+{
+    const MODE: &str = "RIPR_4510_COMPILER_CHILD_MODE";
+    const CONTROL: &str = "RIPR_4510_COMPILER_CONTROL_ROOT";
+    const ORIGINAL_PATH: &str = "RIPR_4510_COMPILER_ORIGINAL_PATH";
+    const MODES: [&str; 3] = ["child_selectors", "ancestor_build", "ancestor_forced_path"];
+    if let Ok(mode) = std::env::var(MODE) {
+        if !MODES.contains(&mode.as_str()) {
+            return Err(format!("SETUP: unknown compiler child mode {mode}"));
+        }
+        let control = PathBuf::from(
+            std::env::var(CONTROL)
+                .map_err(|error| format!("SETUP: compiler control root: {error}"))?,
+        );
+        if !control.is_absolute()
+            || control.canonicalize().map_err(|error| error.to_string())? != control
+        {
+            return Err("SETUP: compiler control root must be canonical absolute".to_string());
+        }
+        let original_path = std::env::var(ORIGINAL_PATH)
+            .map_err(|error| format!("SETUP: original child PATH: {error}"))?;
+        return capture_compiler_install_child(&mode, &control, &original_path);
+    }
+    if std::env::var_os(MODE).is_some() {
+        return Err("SETUP: compiler child mode must be UTF-8".to_string());
+    }
+    let fixture = create_source_fixture()?;
+    let original_path =
+        std::env::var("PATH").map_err(|error| format!("SETUP: parent PATH: {error}"))?;
+    if original_path.contains('\n') || original_path.contains('\t') {
+        return Err(
+            "SETUP: compiler invocation log requires PATH without tabs/newlines".to_string(),
+        );
+    }
+    let real_compiler = capture_compiler_path_entry()?;
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let (_, module) = module_path!()
+        .split_once("::")
+        .ok_or_else(|| "SETUP: compiler test module has no crate prefix".to_string())?;
+    let exact = format!(
+        "{module}::real_compiler_invocation_custody_pins_selected_command_against_overrides"
+    );
+    let root = fixture
+        .guard
+        .root
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let mut failures = Vec::new();
+    let mut outcomes = Vec::new();
+    for mode in MODES {
+        let control = root.join(mode);
+        fs::create_dir(&control).map_err(|error| error.to_string())?;
+        for (directory, label, compiler) in [
+            ("selected", "selected", Some(real_compiler.as_path())),
+            ("contrary", "contrary", Some(real_compiler.as_path())),
+            ("wrapper", "wrapper", None),
+        ] {
+            let directory = control.join(directory);
+            fs::create_dir(&directory).map_err(|error| error.to_string())?;
+            let log = directory.join("invocations.log");
+            let _log_file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&log)
+                .map_err(|error| error.to_string())?;
+            let program = directory.join(if compiler.is_some() {
+                "rustc"
+            } else {
+                "forward"
+            });
+            capture_compiler_forwarder(&program, &log, label, compiler)?;
+        }
+        let selected_path = std::env::join_paths(
+            std::iter::once(control.join("selected")).chain(std::env::split_paths(&original_path)),
+        )
+        .map_err(|error| error.to_string())?
+        .into_string()
+        .map_err(|_non_utf8_path| "SETUP: selected PATH must be UTF-8".to_string())?;
+        let control_text = control
+            .to_str()
+            .ok_or_else(|| "SETUP: control path must be UTF-8".to_string())?;
+        let contrary = control.join("contrary/rustc");
+        let contrary_text = contrary
+            .to_str()
+            .ok_or_else(|| "SETUP: contrary path must be UTF-8".to_string())?;
+        let wrapper = control.join("wrapper/forward");
+        let wrapper_text = wrapper
+            .to_str()
+            .ok_or_else(|| "SETUP: wrapper path must be UTF-8".to_string())?;
+        let mut overlay = vec![
+            (MODE, mode),
+            (CONTROL, control_text),
+            (ORIGINAL_PATH, original_path.as_str()),
+            ("PATH", selected_path.as_str()),
+            ("TMPDIR", control_text),
+        ];
+        if mode == "child_selectors" {
+            overlay.extend([
+                ("RUSTC", contrary_text),
+                ("CARGO_BUILD_RUSTC", contrary_text),
+                ("RUSTC_WRAPPER", wrapper_text),
+                ("CARGO_BUILD_RUSTC_WRAPPER", wrapper_text),
+                ("RUSTC_WORKSPACE_WRAPPER", wrapper_text),
+                ("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", wrapper_text),
+            ]);
+        }
+        // The actor waits for its inner owned command deadlines and cleanup.
+        // This helper applies removals after overlay, so preserve overlay keys.
+        let removals = [
+            MODE,
+            CONTROL,
+            ORIGINAL_PATH,
+            "RUSTC",
+            "CARGO_BUILD_RUSTC",
+            "RUSTC_WRAPPER",
+            "CARGO_BUILD_RUSTC_WRAPPER",
+            "RUSTC_WORKSPACE_WRAPPER",
+            "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
+            "CARGO_TARGET_DIR",
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+        ]
+        .into_iter()
+        .filter(|name| !overlay.iter().any(|(present, _)| present == name))
+        .collect::<Vec<_>>();
+        let executable_text = executable.to_str().ok_or_else(|| {
+            "INSTRUMENT: compiler actor executable path must be UTF-8".to_string()
+        })?;
+        let attempted = crate::run::capture_output_in_dir_with_envs(
+            executable_text,
+            &[
+                "--exact".to_string(),
+                exact.clone(),
+                "--nocapture".to_string(),
+                "--test-threads=1".to_string(),
+            ],
+            &fixture.controller,
+            "4510 actual compiler adversarial child test",
+            &overlay,
+            &removals,
+        );
+        let output = match attempted {
+            Ok(output) => output,
+            Err(error) => {
+                failures.push(format!(
+                    "INSTRUMENT: {mode} native child launch/capture failed: {error}"
+                ));
+                let observation =
+                    json!({"mode": mode, "native_status": null, "launcher_error": error});
+                eprintln!("4510 compiler child native disposition: {observation}");
+                outcomes.push(observation);
+                continue;
+            }
+        };
+        // Preserve child native output, including every retained-fixture line.
+        eprintln!("4510 compiler child {mode} stdout:\n{}", output.stdout);
+        eprintln!("4510 compiler child {mode} stderr:\n{}", output.stderr);
+        let status = output.status.code();
+        let observation = json!({"mode": mode, "native_status": status});
+        eprintln!("4510 compiler child native disposition: {observation}");
+        outcomes.push(observation);
+        if !output.status.success() {
+            let behavior = [&output.stderr, &output.stdout]
+                .iter()
+                .any(|stream| stream.contains("BEHAVIOR:"));
+            failures.push(format!("{}: {mode} native child status {status:?}; retained stdout/stderr identify the exact failure",
+                if behavior { "BEHAVIOR" } else { "SETUP/INSTRUMENT" }));
+        } else if !output
+            .stderr
+            .contains("4510 actual compiler invocation/native observations:")
+        {
+            failures.push(format!("SETUP/INSTRUMENT: {mode} child exited zero without genuine install/native observations; an empty test selection is not qualification"));
+        }
+    }
+    eprintln!(
+        "4510 aggregate compiler child dispositions: {}",
+        json!(outcomes)
+    );
+    if !failures.is_empty() {
+        return Err(failures.join("; "));
+    }
+    fixture.guard.finish()
+}
+// 4510 independent proof: install compiler invocation controls end.
