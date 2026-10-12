@@ -129,7 +129,7 @@ pub(in crate::analysis) fn missing_evidence(
             "No clear propagation path from changed behavior to an observable sink".to_string(),
         ),
         ExposureClass::StaticUnknown => missing.push(
-            "Syntax-first analysis cannot classify this change; use deep mode or real mutation"
+            "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"
                 .to_string(),
         ),
         ExposureClass::WeaklyExposed => {}
@@ -231,12 +231,13 @@ pub(in crate::analysis) fn recommended_next_step(
     probe: &Probe,
     class: &ExposureClass,
     owner_assertion_shaped: bool,
+    stop_reasons: &[StopReason],
 ) -> Option<String> {
     // RIPR-SPEC-0133: an assertion-shaped owner is the oracle, not the code
     // under test, so the standard code-under-test advice is incoherent for it.
     // The exposure class is unchanged; only the guidance is reframed.
     if owner_assertion_shaped {
-        return assertion_shaped_next_step(class);
+        return assertion_shaped_next_step(class, stop_reasons);
     }
     match class {
         ExposureClass::Exposed => None,
@@ -278,17 +279,16 @@ pub(in crate::analysis) fn recommended_next_step(
             }
         }
         ExposureClass::NoStaticPath => Some(crate::domain::NO_STATIC_PATH_NEXT_STEP.to_string()),
-        ExposureClass::InfectionUnknown => Some("Add a targeted boundary or negative-path test, or teach ripr about the fixture/builder in ripr.toml.".to_string()),
-        ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown => Some("Escalate to real mutation testing or deep static analysis for this probe.".to_string()),
+        ExposureClass::InfectionUnknown | ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown => Some(uncertainty_next_step(class, stop_reasons, false)),
     }
 }
 
 /// Guidance for an assertion-shaped owner, phrased for oracles rather than for
-/// code under test. `PropagationUnknown`/`StaticUnknown` keep the escalation
-/// text: "escalate to real mutation testing" is coherent for an oracle (the
-/// helper and the code it checks can both be mutation-tested). `Exposed`
-/// stays `None` — a finding that does not need a next step does not get one.
-fn assertion_shaped_next_step(class: &ExposureClass) -> Option<String> {
+/// code under test. Unknowns name an inspection, not an established test gap.
+fn assertion_shaped_next_step(
+    class: &ExposureClass,
+    stop_reasons: &[StopReason],
+) -> Option<String> {
     match class {
         ExposureClass::Exposed => None,
         ExposureClass::WeaklyExposed => {
@@ -300,13 +300,73 @@ fn assertion_shaped_next_step(class: &ExposureClass) -> Option<String> {
         ExposureClass::NoStaticPath => {
             Some(crate::domain::ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP.to_string())
         }
-        ExposureClass::InfectionUnknown => {
-            Some(crate::domain::ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP.to_string())
-        }
-        ExposureClass::PropagationUnknown | ExposureClass::StaticUnknown => Some(
-            "Escalate to real mutation testing or deep static analysis for this probe.".to_string(),
-        ),
+        ExposureClass::InfectionUnknown
+        | ExposureClass::PropagationUnknown
+        | ExposureClass::StaticUnknown => Some(uncertainty_next_step(class, stop_reasons, true)),
     }
+}
+
+/// The same uncertainty-resolution action feeds every Finding consumer. No
+/// new evidence or classification is inferred from a suggested experiment.
+fn uncertainty_next_step(
+    class: &ExposureClass,
+    reasons: &[StopReason],
+    assertion_shaped: bool,
+) -> String {
+    let mut step = if assertion_shaped {
+        crate::domain::ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP.to_string()
+    } else {
+        match class {
+            ExposureClass::InfectionUnknown => "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings.",
+            ExposureClass::PropagationUnknown => "Trace the changed value to the output or effect an existing test observes, and inspect its exact assertion.",
+            _ => "Inspect the changed behavior and its existing tests; ripr has not established a test gap.",
+        }.to_string()
+    };
+    let mut added = Vec::new();
+    for reason in reasons {
+        let action = match reason {
+            StopReason::NoChangedRustLine => {
+                "Inspect the changed declaration and the behavior that consumes it; ripr could not place this line inside an analyzed Rust function."
+            }
+            StopReason::ProcMacroOpaque | StopReason::MacroReachUnresolved => {
+                "Inspect the macro invocation and the output or effect it produces; ripr does not expand the macro."
+            }
+            StopReason::FixtureOpaque => {
+                "A related test mentions a fixture, builder, or generator; inspect its produced input before deciding another case is needed."
+            }
+            StopReason::AsyncBoundaryOpaque => {
+                "If a task boundary is involved, check that the existing test waits for completion and asserts the resulting effect."
+            }
+            StopReason::FeatureUnknown => {
+                "Check the intended Cargo feature/cfg settings and whether the gated test and assertion actually run."
+            }
+            StopReason::DynamicDispatchUnresolved => {
+                "Identify the receiver and implementation the existing test uses at the unresolved call."
+            }
+            StopReason::ExternalCrateBoundary => {
+                "Inspect the observable contract at the external-crate boundary; ripr does not follow that path."
+            }
+            StopReason::MaxDepthReached | StopReason::TransitiveReachUnresolved => {
+                "Inspect the helper call chain to the changed owner before adding a direct test merely to satisfy static analysis."
+            }
+            StopReason::HelperIdentityUnresolved => {
+                "Identify which same-named helper the existing test calls before changing any test."
+            }
+            StopReason::GapEvidenceUnresolved => {
+                "Inspect the refused assertion and whether it runs; an unreadable assertion is not an established missing test."
+            }
+            StopReason::InfectionEvidenceUnknown
+            | StopReason::PropagationEvidenceUnknown
+            | StopReason::StaticProbeUnknown => continue,
+        };
+        if !added.contains(&action) {
+            step.push(' ');
+            step.push_str(action);
+            added.push(action);
+        }
+    }
+    step.push_str(" Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused `cargo test` run. Static classification may remain unknown.");
+    step
 }
 
 fn weakly_exposed_guidance_for_family(family: &ProbeFamily) -> &'static str {
@@ -388,6 +448,7 @@ mod tests {
             &probe(ProbeFamily::SideEffect, "client.send(value)"),
             &ExposureClass::WeaklyExposed,
             false,
+            &[],
         );
         assert_eq!(
             side_effect.as_deref(),
@@ -400,6 +461,7 @@ mod tests {
             &probe(ProbeFamily::MatchArm, "None => 0"),
             &ExposureClass::WeaklyExposed,
             false,
+            &[],
         );
         assert_eq!(
             match_arm.as_deref(),
@@ -413,6 +475,7 @@ mod tests {
             &probe(ProbeFamily::Predicate, "value >= threshold"),
             &ExposureClass::WeaklyExposed,
             false,
+            &[],
         );
         assert_eq!(
             predicate.as_deref(),
@@ -425,6 +488,7 @@ mod tests {
             &probe(ProbeFamily::ErrorPath, "Err(AppError::Denied)"),
             &ExposureClass::WeaklyExposed,
             false,
+            &[],
         );
         assert_eq!(
             error_path.as_deref(),
@@ -435,6 +499,7 @@ mod tests {
             &probe(ProbeFamily::ReturnValue, "count + 1"),
             &ExposureClass::WeaklyExposed,
             false,
+            &[],
         );
         assert_eq!(
             return_value.as_deref(),
@@ -468,6 +533,7 @@ mod tests {
             &probe(ProbeFamily::ReturnValue, "Ok(amount)"),
             &ExposureClass::WeaklyExposed,
             false,
+            &[],
         );
         assert_eq!(
             plain_value.as_deref(),
@@ -485,36 +551,48 @@ mod tests {
         let return_value = probe(ProbeFamily::ReturnValue, "count + 1");
 
         assert_eq!(
-            recommended_next_step(&return_value, &ExposureClass::Exposed, true),
+            recommended_next_step(&return_value, &ExposureClass::Exposed, true, &[]),
             None
         );
         assert_eq!(
-            recommended_next_step(&return_value, &ExposureClass::WeaklyExposed, true).as_deref(),
+            recommended_next_step(&return_value, &ExposureClass::WeaklyExposed, true, &[])
+                .as_deref(),
             Some(crate::domain::ASSERTION_SHAPED_WEAKLY_EXPOSED_NEXT_STEP)
         );
         assert_eq!(
-            recommended_next_step(&return_value, &ExposureClass::ReachableUnrevealed, true)
-                .as_deref(),
+            recommended_next_step(
+                &return_value,
+                &ExposureClass::ReachableUnrevealed,
+                true,
+                &[]
+            )
+            .as_deref(),
             Some(crate::domain::ASSERTION_SHAPED_REACHABLE_UNREVEALED_NEXT_STEP)
         );
         assert_eq!(
-            recommended_next_step(&return_value, &ExposureClass::NoStaticPath, true).as_deref(),
+            recommended_next_step(&return_value, &ExposureClass::NoStaticPath, true, &[])
+                .as_deref(),
             Some(crate::domain::ASSERTION_SHAPED_NO_STATIC_PATH_NEXT_STEP)
         );
-        assert_eq!(
-            recommended_next_step(&return_value, &ExposureClass::InfectionUnknown, true).as_deref(),
-            Some(crate::domain::ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP)
-        );
-        // Escalation text is coherent for an oracle and stays unchanged.
-        assert_eq!(
-            recommended_next_step(&return_value, &ExposureClass::PropagationUnknown, true)
-                .as_deref(),
-            Some("Escalate to real mutation testing or deep static analysis for this probe.")
-        );
-        assert_eq!(
-            recommended_next_step(&return_value, &ExposureClass::StaticUnknown, true).as_deref(),
-            Some("Escalate to real mutation testing or deep static analysis for this probe.")
-        );
+        for class in [
+            ExposureClass::InfectionUnknown,
+            ExposureClass::PropagationUnknown,
+            ExposureClass::StaticUnknown,
+        ] {
+            let step = recommended_next_step(&return_value, &class, true, &[]).unwrap_or_default();
+            assert!(
+                step.starts_with(crate::domain::ASSERTION_SHAPED_INFECTION_UNKNOWN_NEXT_STEP),
+                "{step}"
+            );
+            assert!(
+                step.contains("original and changed") && step.contains("may remain unknown"),
+                "{step}"
+            );
+            assert!(
+                !step.contains("deep static analysis") && !step.contains("ripr.toml"),
+                "{step}"
+            );
+        }
     }
 
     // RIPR-SPEC-0133: the reframed guidance must state the detection rule in
