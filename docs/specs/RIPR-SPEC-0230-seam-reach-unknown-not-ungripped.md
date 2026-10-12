@@ -87,8 +87,8 @@ A gated impl passes when a test, a helper in a test file, a test file's
 function (`fn render<T: Display>`, an `impl Trait` or `dyn` argument) uses
 the syntax, or when other test-reached production code uses it in a body
 that also names `T`. A method body that uses `self` or `Self` also counts for
-its impl's self type and the types that type's fields or variants name, a few
-levels deep (`self.to_string()`, `format!("{:?}", self.inner)`). A
+its impl's self type and the types that type's fields or variants name, up to
+three levels deep (`self.to_string()`, `format!("{:?}", self.inner)`). A
 `Display` impl that writes a `char` field with `{:?}` runs `char`'s `Debug`,
 not every type's. Delegation within one trait passes the delegating impl's
 gate: an `Outer` `Display` that calls `self.0.fmt(f)` reaches `Inner`'s
@@ -148,6 +148,8 @@ may run, so each is named here:
 - Narrows: a panic a test observes another way than `#[should_panic]` or
   `catch_unwind` (`thread::spawn(..).join().is_err()`, an async task's
   `JoinError`) does not make failure messages count.
+- Narrows: a `self` use counts for field types at most three levels down
+  (`HELD_TYPE_DEPTH`); a type held four levels down reads `ungripped`.
 - Narrows: a gated callee still waiting for its trait's syntax when the
   rounds reach `MAX_TRANSITIVE_DEPTH` is not reached.
 - Widens: a test file's unused `use` item counts as syntax.
