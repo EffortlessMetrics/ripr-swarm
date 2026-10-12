@@ -67,10 +67,18 @@ pub(super) fn parse_ci_summary_options_with(
     args: &[String],
     workflow: &super::ci_packet::CiSettings,
 ) -> Result<CiSummaryOptions, String> {
+    // #7368: preserve an absent base instead of inventing `main`. When the
+    // event payload names neither base_ref nor default_branch, substituting
+    // `main` would print `origin/main` even for a repository whose default
+    // branch is `trunk`; the summary then cannot tell "missing base" apart
+    // from "base is main". An empty base_ref keeps the fail-closed wording in
+    // `first_run_status` reachable. A local run with no event at all gets the
+    // same honest answer: pass `--base-ref` explicitly.
     let base_ref = [&workflow.base_ref, &workflow.default_branch]
         .into_iter()
         .find(|name| !name.is_empty())
-        .map_or_else(|| "main".to_string(), Clone::clone);
+        .cloned()
+        .unwrap_or_default();
     let mut options = CiSummaryOptions {
         root: PathBuf::from("."),
         base_ref,
