@@ -674,10 +674,11 @@ fn find_related_tests_with_candidates<'a>(
                     .function_indices(owner_name)
                     .iter()
                     .map(|&function_index| index.functions().at(function_index)),
+                index,
             ),
             #[cfg(test)]
             RelatedTestCandidates::FullScan => {
-                super::OwnerCallIdentity::new(owner, index.functions().iter())
+                super::OwnerCallIdentity::new(owner, index.functions().iter(), index)
             }
         });
 

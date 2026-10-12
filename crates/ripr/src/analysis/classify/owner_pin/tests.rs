@@ -3329,6 +3329,43 @@ fn an_imported_owner_among_same_named_rivals_is_pinned_only_through_its_import()
     );
 }
 
+/// Review finding 4: the pin resolves the asserted call itself. A test that
+/// imports the rival and also calls the owner by its full path pins the
+/// rival through the bare `snap(17)`, never the owner; with the imports
+/// swapped (control) the same assertion pins the owner. The per-call
+/// resolution is the identity gate; the import-reading reach gate (#7097)
+/// refuses the same shape independently.
+#[test]
+fn a_mixed_owner_and_rival_test_pins_only_through_the_asserted_call() {
+    let mixed = SNAP_LIB.replace(
+        "    use super::celsius::snap;\n\n    #[test]\n    fn snap_seventeen_to_twenty() {\n",
+        "    use super::fahrenheit::snap;\n\n    #[test]\n    fn snap_seventeen_to_twenty() {\n        let _ = crate::celsius::snap(1);\n",
+    );
+    assert_ne!(mixed, SNAP_LIB, "the fixture must be rewritten");
+    let mixed_index = index(&[(LIB, mixed.as_str())]);
+    let pin = module_pin(&mixed_index, "::celsius::snap", "(v + 5) / 10 * 10");
+    assert!(pin.is_some());
+    let admitted = pin
+        .map(|pin| admitted_texts(&mixed_index, &pin))
+        .unwrap_or_else(|| vec!["no pin".to_string()]);
+    assert!(
+        admitted.is_empty(),
+        "`snap(17)` is fahrenheit's; the path call lends it nothing: {admitted:?}"
+    );
+
+    let control = SNAP_LIB.replace(
+        "    #[test]\n    fn snap_seventeen_to_twenty() {\n",
+        "    #[test]\n    fn snap_seventeen_to_twenty() {\n        let _ = crate::fahrenheit::snap(1);\n",
+    );
+    assert_ne!(control, SNAP_LIB, "the control fixture must be rewritten");
+    let control_index = index(&[(LIB, control.as_str())]);
+    let pin = module_pin(&control_index, "::celsius::snap", "(v + 5) / 10 * 10");
+    let admitted = pin
+        .map(|pin| admitted_texts(&control_index, &pin))
+        .unwrap_or_default();
+    assert_eq!(admitted, vec!["assert_eq!(snap(17), 20);".to_string()]);
+}
+
 /// #6544 trap pair: with only `use super::*`, the bare `snap` is bound by
 /// no scope ripr can read (both rivals sit in sibling modules), so neither
 /// rival is pinned.

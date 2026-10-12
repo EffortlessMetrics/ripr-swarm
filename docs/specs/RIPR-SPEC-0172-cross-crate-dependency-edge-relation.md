@@ -137,22 +137,35 @@ one package, a module-level `fn` can share its name with other module-level
 related tests, repo-mode test grip and the owner-return pin (RIPR-SPEC-0197)
 share one rule in `analysis/classify/call_identity.rs`:
 
-- a qualified call (`b::render(..)`, `crate::a::render(..)`,
-  `super::a::render(..)`, `my_crate::a::render(..)`) names the definitions
-  whose module path the qualifier spells;
+- a qualified call's leading `crate`, `self` or `super` is resolved from
+  the test's module. Any other leading segment must be bound by a `use`
+  around the test (followed through its path, a rename included), by a
+  `mod` declared there, or by one of the owner's own crate names as seen
+  from the test's crate (`my_crate::a::render(..)` from an integration
+  test). A leading segment bound by nothing ripr reads, such as a
+  dependency's `other_dep::a::render(..)`, leaves the call unsettled;
 - a bare call is bound by the innermost scope that binds the name: a `use`
-  in the test body, then each enclosing module's own `use` items and item
-  definitions, following `use super::*` outward and reading other globs;
+  at the test body's top level, then each enclosing module's own `use`
+  items and item definitions, following `use super::*` outward and reading
+  other globs. A `use`, item or glob inside a nested block of the test
+  binds only in that block, so every call of that name in the test stays
+  unsettled;
 - a test whose every call of the name settles on another definition is not
   related to the owner through any signal (direct call, file, module or
   name affinity), so it supplies neither reach nor confirming tokens;
+- the owner-return pin resolves the asserted call operand itself; another
+  call in the same test that names the owner lends it nothing;
 - a call settles on the owner only when its path matches the owner and
-  nothing else. A renamed import, a re-export path, an unparseable file or
-  a definition ripr could not place stays unsettled. An unsettled call keeps
-  the earlier behavior and never adds credit.
+  nothing else. A renamed bare import, a re-export path, an unparseable
+  file or a definition ripr could not place stays unsettled. An unsettled
+  call keeps the earlier behavior and never adds credit.
 
-This is bounded syntax, not name resolution. `#[path]` remaps and
-macro-generated items are residuals that read unsettled.
+This is bounded syntax, not name resolution. A package with any `#[path]`
+attribute switches the rule off, since module files may not sit where the
+layout says; macro-generated items are a residual that reads unsettled. A
+same-named `fn` in another crate of the package (an integration test's or a
+binary's root) or an `extern` declaration is no settled rival and keeps
+refusing the pin.
 
 ## Non-Goals
 

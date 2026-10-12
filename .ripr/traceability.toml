@@ -10700,10 +10700,19 @@ tests = [
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_unique_or_method_owner_has_no_identity",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::call_qualifiers_read_bare_qualified_method_and_definition_spellings",
   "crates/ripr/src/analysis/classify/call_identity.rs::tests::file_module_segments_follow_the_crate_layout",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_foreign_crate_namesake_path_is_unsettled",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::an_own_crate_name_path_settles_and_a_foreign_one_does_not",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_qualified_call_resolves_through_a_module_alias",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_block_local_binding_leaves_the_test_unsettled",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::resolve_call_settles_one_spelled_call",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_mixed_test_settles_coarsely_on_the_owner_but_its_bare_call_on_the_rival",
+  "crates/ripr/src/analysis/classify/call_identity.rs::tests::a_path_remapped_package_has_no_identity",
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::a_sibling_files_same_named_function_test_does_not_relate",
   "crates/ripr/src/analysis/syntax/name_scope.rs::tests::records_scopes_innermost_first_with_imports_globs_and_definitions",
   "crates/ripr/src/analysis/syntax/name_scope.rs::tests::a_module_item_of_the_name_is_a_definition_of_that_scope",
   "crates/ripr/src/analysis/syntax/name_scope.rs::tests::unparseable_or_missing_function_yields_none",
+  "crates/ripr/src/analysis/syntax/name_scope.rs::tests::a_block_local_use_is_block_bound_not_function_wide",
+  "crates/ripr/src/analysis/syntax/name_scope.rs::tests::use_paths_are_read_through_the_syntax_tree",
   "crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_qualified_call_to_another_modules_function_does_not_grip_the_owner",
 ]
 fixtures = [
@@ -12043,6 +12052,7 @@ spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_imported_owner_among_same_named_rivals_is_pinned_only_through_its_import",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_no_import_settles_pins_neither_rival",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_mixed_owner_and_rival_test_pins_only_through_the_asserted_call",
   "crates/ripr/tests/owner_pin_execution.rs::fallible_literal_runtime_pair_and_message_escape_execute_the_real_test",
   "crates/ripr/tests/owner_pin_execution.rs::fallible_literal_cli_preserves_unrelated_os_bytes_and_refuses_relevant_inputs",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs",

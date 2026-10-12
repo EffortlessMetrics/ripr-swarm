@@ -1424,7 +1424,7 @@ impl OwnerReturnPin {
         let identity = if method {
             None
         } else {
-            OwnerCallIdentity::new(owner, index.functions().iter())
+            OwnerCallIdentity::new(owner, index.functions().iter(), index)
         };
         if other_definition_competes(owner, index, method, identity.as_ref()) {
             return None;
@@ -1797,9 +1797,14 @@ impl OwnerReturnPin {
                     .item_nesting(index, &self.owner_file, &self.name, self.owner_start_line)
                     .is_none_or(|owner| owner.cfg_gated)
                     && !syntax.file_cfg_gated(index, &self.owner_file)
-                    && self.identity
-                    .as_ref()
-                    .is_none_or(|identity| identity.resolve_test(test, index) == CallTarget::Owner)
+                    // #6544: among same-named rivals, the asserted bare call
+                    // itself must name the owner, resolved in the test's
+                    // scopes; another call elsewhere in the test that names
+                    // the owner lends this one nothing. A helper's call sits
+                    // in the helper's scopes, which this does not read.
+                    && self.identity.as_ref().is_none_or(|identity| {
+                        helper.is_none() && identity.resolve_call(test, index, &[]) == CallTarget::Owner
+                    })
                     && !test_body_shadows_owner(test, &self.name)
                     && !binds_outside_let(&masked_body, &self.name)
                     && !bound_by_macro(&masked_body, &self.name)
@@ -1819,6 +1824,10 @@ impl OwnerReturnPin {
             // path itself must reach the owner.
             (PinCall::Bare, CallShape::Path(prefix)) => {
                 helper.is_none()
+                    && self.identity.as_ref().is_none_or(|identity| {
+                        identity.resolve_call(test, index, &path_prefix_segments(prefix))
+                            == CallTarget::Owner
+                    })
                     && test_source.is_some_and(|source| {
                         self.path_reaches_owner(prefix, test, source, index, syntax)
                     })
@@ -2507,6 +2516,15 @@ impl ReturnPathGate {
             Self::WholeValueField(gate) => gate.admits(expected),
         }
     }
+}
+
+/// The module segments of a `CallShape::Path` prefix, which
+/// `path_call_prefix` admits only as `::`-separated plain identifiers.
+fn path_prefix_segments(prefix: &str) -> Vec<String> {
+    prefix
+        .split("::")
+        .map(|segment| segment.trim().to_string())
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -5459,7 +5477,7 @@ pub(in crate::analysis) fn pin_scope_needs(
     let identity = if method {
         None
     } else {
-        OwnerCallIdentity::new(owner, index.functions().iter())
+        OwnerCallIdentity::new(owner, index.functions().iter(), index)
     };
     needs.competing_definitions =
         !other_definition_competes(owner, index, method, identity.as_ref());

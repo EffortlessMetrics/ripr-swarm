@@ -104,6 +104,7 @@ impl OwnerContext {
                     .functions()
                     .iter()
                     .filter(|function| function.name == name),
+                context.index,
             )
         });
         Self {

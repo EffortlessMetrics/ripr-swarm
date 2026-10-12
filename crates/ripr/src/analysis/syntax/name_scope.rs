@@ -1,19 +1,28 @@
 //! Lexical name scopes around one function (#6292, #6537, #6544): which
-//! `use` items, globs and item definitions could bind a bare name at that
-//! function, innermost scope first.
+//! `use` items, globs, module declarations and item definitions could bind
+//! a name at that function, innermost scope first.
 //!
 //! This is syntax, not name resolution. The caller decides what the facts
 //! mean and fails closed when they do not settle a single definition.
+//!
+//! A function body records only the items directly in its statement list.
+//! An item inside a nested block (`{ use crate::b::render; .. }`, a closure
+//! body, an `if` arm) binds its name only in that block; the scan does not
+//! track which calls sit in that block, so it records the name as
+//! block-bound and the caller treats every call of it in the function as
+//! unsettled.
 
 use super::nesting::parse_clean_source_file;
 use super::ra::LineIndex;
 use ra_ap_syntax::{
     AstNode, SyntaxNode,
-    ast::{self, HasModuleItem, HasName},
+    ast::{self, HasGenericArgs, HasModuleItem, HasName},
 };
+use std::collections::BTreeSet;
 
-/// The scopes that could bind `name` inside one function, innermost first:
-/// the function body, then each enclosing inline module, then the file.
+/// The scopes around one function, innermost first: the function body (and
+/// any enclosing function bodies), then each enclosing inline module, then
+/// the file.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct NameScopes {
     pub(crate) scopes: Vec<NameScope>,
@@ -25,20 +34,55 @@ pub(crate) struct NameScope {
     pub(crate) modules: Vec<String>,
     /// A function body rather than a module.
     pub(crate) fn_body: bool,
-    /// `use` leaves in this scope whose binding is the name.
-    pub(crate) imports: Vec<UseBinding>,
-    /// Path prefixes of glob imports (`use a::b::*` records `[a, b]`).
-    pub(crate) globs: Vec<Vec<String>>,
-    /// An item named the name is declared directly in this scope.
-    pub(crate) defines: bool,
+    /// `use` and `extern crate` leaves in this scope, by the name each binds.
+    pub(crate) imports: Vec<UseImport>,
+    /// Path prefixes of glob imports (`use a::b::*` records `[a, b]`);
+    /// `None` for a prefix the scan cannot read.
+    pub(crate) globs: Vec<Option<Vec<String>>>,
+    /// Names of non-module items declared directly in this scope (`fn`,
+    /// `const`, `static`, types, traits).
+    pub(crate) defines: BTreeSet<String>,
+    /// Names of `mod` items declared directly in this scope.
+    pub(crate) child_modules: BTreeSet<String>,
+    /// Names an item inside a nested block of this function body binds.
+    pub(crate) block_bindings: BTreeSet<String>,
+    /// A nested block of this function body holds a glob import, which
+    /// may bind any name there.
+    pub(crate) block_globs: bool,
+}
+
+impl NameScope {
+    /// The `use` bindings of `name` in this scope.
+    pub(crate) fn imports_of<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a UseBinding> {
+        self.imports
+            .iter()
+            .filter(move |import| import.bound == name)
+            .map(|import| &import.binding)
+    }
+
+    /// Whether a nested block of this function body may bind `name`.
+    pub(crate) fn block_binds(&self, name: &str) -> bool {
+        self.block_globs || self.block_bindings.contains(name)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct UseImport {
+    /// The name the leaf binds in its scope.
+    pub(crate) bound: String,
+    pub(crate) binding: UseBinding,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum UseBinding {
-    /// The imported path, its last segment the name itself.
+    /// The imported path, its last segment the bound name itself.
     Path(Vec<String>),
-    /// `use x::other as name;`: the binding is not spelled by its path.
-    Renamed,
+    /// `use x::other as name;`: the imported path, whose last segment is
+    /// not the bound name.
+    Renamed(Vec<String>),
+    /// A binding whose path the scan cannot read (`extern crate`, a leading
+    /// `::`, an unreadable segment).
+    Opaque,
 }
 
 /// The name scopes of the function named `fn_name` whose `fn` keyword sits
@@ -48,7 +92,6 @@ pub(crate) fn name_scopes_for_fn(
     source: &str,
     fn_line: usize,
     fn_name: &str,
-    name: &str,
 ) -> Option<NameScopes> {
     let parse = parse_clean_source_file(source)?;
     let line_index = LineIndex::new(source);
@@ -77,12 +120,25 @@ pub(crate) fn name_scopes_for_fn(
                 ..NameScope::default()
             };
             if let Some(body) = enclosing_fn.body() {
+                let top_level = body.stmt_list().map(|list| list.syntax().clone());
                 for node in body.syntax().descendants() {
                     if nearest_item_scope(&node).as_ref() != Some(&ancestor) {
                         continue;
                     }
-                    if let Some(item) = ast::Item::cast(node) {
-                        record_item(&item, name, &mut scope);
+                    let Some(item) = ast::Item::cast(node.clone()) else {
+                        continue;
+                    };
+                    if node.parent() == top_level {
+                        record_item(&item, &mut scope);
+                    } else {
+                        let mut block = NameScope::default();
+                        record_item(&item, &mut block);
+                        scope.block_globs |= !block.globs.is_empty();
+                        scope
+                            .block_bindings
+                            .extend(block.imports.into_iter().map(|import| import.bound));
+                        scope.block_bindings.extend(block.defines);
+                        scope.block_bindings.extend(block.child_modules);
                     }
                 }
             }
@@ -96,18 +152,18 @@ pub(crate) fn name_scopes_for_fn(
             // name is already the last segment.
             if let Some(items) = module.item_list() {
                 for item in items.items() {
-                    record_item(&item, name, &mut scope);
+                    record_item(&item, &mut scope);
                 }
             }
             scopes.push(scope);
         } else if let Some(file) = ast::SourceFile::cast(ancestor.clone()) {
             let mut scope = NameScope::default();
             for item in file.items() {
-                record_item(&item, name, &mut scope);
+                record_item(&item, &mut scope);
             }
             scopes.push(scope);
         }
-        // An `impl` or `trait` binds nothing a bare call could name; an
+        // An `impl` or `trait` binds nothing a path call could name; an
         // associated fn's scope continues at its enclosing module.
     }
     Some(NameScopes { scopes })
@@ -120,28 +176,43 @@ fn nearest_item_scope(node: &SyntaxNode) -> Option<SyntaxNode> {
     })
 }
 
-fn record_item(item: &ast::Item, name: &str, scope: &mut NameScope) {
+fn record_item(item: &ast::Item, scope: &mut NameScope) {
+    let mut define = |name: Option<ast::Name>| {
+        if let Some(name) = name {
+            scope.defines.insert(name.text().to_string());
+        }
+    };
     match item {
         ast::Item::Use(item_use) => {
             if let Some(tree) = item_use.use_tree() {
-                flatten_use_tree(&tree, &[], name, scope);
+                flatten_use_tree(&tree, Some(Vec::new()), scope);
             }
         }
-        ast::Item::Fn(function) => {
-            if function.name().is_some_and(|ident| ident.text() == name) {
-                scope.defines = true;
+        ast::Item::ExternCrate(item) => {
+            let bound = match item.rename() {
+                Some(rename) => rename.name().map(|ident| ident.text().to_string()),
+                None => item.name_ref().map(|name| name.text().to_string()),
+            };
+            if let Some(bound) = bound {
+                scope.imports.push(UseImport {
+                    bound,
+                    binding: UseBinding::Opaque,
+                });
             }
         }
-        ast::Item::Const(item) => {
-            if item.name().is_some_and(|ident| ident.text() == name) {
-                scope.defines = true;
+        ast::Item::Module(module) => {
+            if let Some(name) = module.name() {
+                scope.child_modules.insert(name.text().to_string());
             }
         }
-        ast::Item::Static(item) => {
-            if item.name().is_some_and(|ident| ident.text() == name) {
-                scope.defines = true;
-            }
-        }
+        ast::Item::Fn(item) => define(item.name()),
+        ast::Item::Const(item) => define(item.name()),
+        ast::Item::Static(item) => define(item.name()),
+        ast::Item::Struct(item) => define(item.name()),
+        ast::Item::Enum(item) => define(item.name()),
+        ast::Item::Union(item) => define(item.name()),
+        ast::Item::Trait(item) => define(item.name()),
+        ast::Item::TypeAlias(item) => define(item.name()),
         ast::Item::MacroRules(_) | ast::Item::MacroCall(_) => {
             // A macro may expand to an item of any name; the caller sees
             // only spelled bindings. Item-producing macros are a documented
@@ -151,24 +222,45 @@ fn record_item(item: &ast::Item, name: &str, scope: &mut NameScope) {
     }
 }
 
-fn path_segments(path: &ast::Path) -> Vec<String> {
-    path.syntax()
-        .text()
-        .to_string()
-        .split("::")
-        .map(|segment| segment.trim().to_string())
-        .filter(|segment| !segment.is_empty())
-        .collect()
+/// The path's segments through the syntax tree, outermost first. `None`
+/// for a path the scan cannot read as plain module segments: a leading
+/// `::`, a generic argument list, a `<T as Tr>` anchor, or a segment with
+/// no name.
+pub(crate) fn path_segments(path: &ast::Path) -> Option<Vec<String>> {
+    let mut segments = Vec::new();
+    for (position, segment) in path.segments().enumerate() {
+        if (position == 0 && segment.coloncolon_token().is_some())
+            || segment.generic_arg_list().is_some()
+            || segment.type_anchor().is_some()
+        {
+            return None;
+        }
+        segments.push(segment.name_ref()?.text().to_string());
+    }
+    (!segments.is_empty()).then_some(segments)
 }
 
-fn flatten_use_tree(tree: &ast::UseTree, prefix: &[String], name: &str, scope: &mut NameScope) {
-    let mut full = prefix.to_vec();
+/// `prefix` is `None` once an enclosing tree's path could not be read: its
+/// leaves still bind their names, but opaquely.
+fn flatten_use_tree(tree: &ast::UseTree, prefix: Option<Vec<String>>, scope: &mut NameScope) {
+    let mut full = prefix;
+    let mut last_text = None;
     if let Some(path) = tree.path() {
-        full.extend(path_segments(&path));
+        last_text = path
+            .segment()
+            .and_then(|segment| segment.name_ref())
+            .map(|name| name.text().to_string());
+        full = match (full, path_segments(&path)) {
+            (Some(mut full), Some(segments)) => {
+                full.extend(segments);
+                Some(full)
+            }
+            _ => None,
+        };
     }
     if let Some(list) = tree.use_tree_list() {
         for child in list.use_trees() {
-            flatten_use_tree(&child, &full, name, scope);
+            flatten_use_tree(&child, full.clone(), scope);
         }
         return;
     }
@@ -177,37 +269,45 @@ fn flatten_use_tree(tree: &ast::UseTree, prefix: &[String], name: &str, scope: &
         return;
     }
     // `a::{self}` binds `a`.
-    if full.last().is_some_and(|segment| segment == "self") {
-        full.pop();
+    if let Some(path) = full.as_mut()
+        && path.last().is_some_and(|segment| segment == "self")
+    {
+        path.pop();
+        last_text = path.last().cloned();
     }
-    let Some(last) = full.last().cloned() else {
+    let renamed_to = tree
+        .rename()
+        .map(|rename| rename.name().map(|ident| ident.text().to_string()));
+    let bound = match &renamed_to {
+        // `use x as _;` binds no name.
+        Some(name) => name.clone(),
+        None => last_text.clone(),
+    };
+    let Some(bound) = bound else {
         return;
     };
-    match tree.rename() {
-        Some(rename) => {
-            let bound = rename.name().map(|ident| ident.text().to_string());
-            if bound.as_deref() == Some(name) {
-                if last == name {
-                    scope.imports.push(UseBinding::Path(full));
-                } else {
-                    scope.imports.push(UseBinding::Renamed);
-                }
-            }
-        }
-        None => {
-            if last == name {
-                scope.imports.push(UseBinding::Path(full));
-            }
-        }
-    }
+    let binding = match full {
+        Some(path) if path.last() == Some(&bound) => UseBinding::Path(path),
+        Some(path) if !path.is_empty() => UseBinding::Renamed(path),
+        _ => UseBinding::Opaque,
+    };
+    scope.imports.push(UseImport { bound, binding });
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn scopes(source: &str, fn_line: usize, fn_name: &str, name: &str) -> NameScopes {
-        name_scopes_for_fn(source, fn_line, fn_name, name).unwrap_or_default()
+    fn scopes(source: &str, fn_line: usize, fn_name: &str) -> NameScopes {
+        name_scopes_for_fn(source, fn_line, fn_name).unwrap_or_default()
+    }
+
+    fn strings(segments: &[&str]) -> Vec<String> {
+        segments.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn imports_of(scope: &NameScope, name: &str) -> Vec<UseBinding> {
+        scope.imports_of(name).cloned().collect()
     }
 
     #[test]
@@ -226,39 +326,37 @@ mod tests {
     }
 }
 ";
-        let found = scopes(source, 8, "rounds", "snap");
+        let found = scopes(source, 8, "rounds");
         assert_eq!(found.scopes.len(), 3, "fn body, mod tests, file root");
         assert!(found.scopes[0].fn_body);
         assert_eq!(found.scopes[0].modules, vec!["tests".to_string()]);
         assert_eq!(
-            found.scopes[0].imports,
-            vec![UseBinding::Path(vec![
-                "super".to_string(),
-                "other".to_string(),
-                "snap".to_string()
-            ])]
+            imports_of(&found.scopes[0], "snap"),
+            vec![UseBinding::Path(strings(&["super", "other", "snap"]))]
         );
+        assert!(!found.scopes[0].block_binds("snap"));
         assert!(!found.scopes[1].fn_body);
         assert_eq!(found.scopes[1].modules, vec!["tests".to_string()]);
         assert_eq!(
-            found.scopes[1].imports,
-            vec![UseBinding::Path(vec![
-                "super".to_string(),
-                "celsius".to_string(),
-                "snap".to_string()
-            ])]
+            imports_of(&found.scopes[1], "snap"),
+            vec![UseBinding::Path(strings(&["super", "celsius", "snap"]))]
         );
-        assert_eq!(found.scopes[1].globs, vec![vec!["super".to_string()]]);
-        assert!(!found.scopes[1].defines);
+        assert_eq!(found.scopes[1].globs, vec![Some(strings(&["super"]))]);
+        assert!(!found.scopes[1].defines.contains("snap"));
         assert!(found.scopes[2].modules.is_empty());
-        assert!(!found.scopes[2].defines, "the root declares no fn snap");
+        assert!(
+            found.scopes[2].child_modules.contains("celsius"),
+            "the root declares `mod celsius`"
+        );
+        assert!(!found.scopes[2].defines.contains("snap"));
 
-        let renamed = scopes(source, 8, "rounds", "draw");
-        assert_eq!(renamed.scopes[1].imports, vec![UseBinding::Renamed]);
-        let self_import = scopes(source, 8, "rounds", "a");
         assert_eq!(
-            self_import.scopes[1].imports,
-            vec![UseBinding::Path(vec!["crate".to_string(), "a".to_string()])]
+            imports_of(&found.scopes[1], "draw"),
+            vec![UseBinding::Renamed(strings(&["crate", "b", "render"]))]
+        );
+        assert_eq!(
+            imports_of(&found.scopes[1], "a"),
+            vec![UseBinding::Path(strings(&["crate", "a"]))]
         );
     }
 
@@ -273,16 +371,89 @@ mod tests {
     fn warm() { assert_eq!(delay(), 5); }
 }
 ";
-        let found = scopes(source, 6, "warm", "delay");
+        let found = scopes(source, 6, "warm");
         assert_eq!(found.scopes.len(), 3);
-        assert!(!found.scopes[1].defines);
-        assert!(found.scopes[2].defines);
+        assert!(!found.scopes[1].defines.contains("delay"));
+        assert!(found.scopes[2].defines.contains("delay"));
+        assert!(found.scopes[1].child_modules.is_empty());
+        assert!(found.scopes[2].child_modules.contains("tests"));
+    }
+
+    /// Review finding: a `use` inside a nested block binds its name only in
+    /// that block, so it is recorded as block-bound, never as the function
+    /// body's own import. The same name imported at the body's top level is
+    /// an ordinary import (control).
+    #[test]
+    fn a_block_local_use_is_block_bound_not_function_wide() {
+        let source = "\
+#[test]
+fn mixed() {
+    use crate::a::render;
+    {
+        use crate::b::render;
+        assert_eq!(render(2), 4);
+    }
+    let check = || {
+        use crate::c::*;
+    };
+    assert_eq!(render(1), 2);
+}
+";
+        let found = scopes(source, 2, "mixed");
+        let body = &found.scopes[0];
+        assert!(body.fn_body);
+        assert_eq!(
+            imports_of(body, "render"),
+            vec![UseBinding::Path(strings(&["crate", "a", "render"]))],
+            "only the top-level import is the body's own"
+        );
+        assert!(body.block_bindings.contains("render"));
+        assert!(body.block_globs, "the closure's glob is block-bound");
+        assert!(body.block_binds("render"));
+
+        let top_only = "\
+#[test]
+fn top() {
+    use crate::a::render;
+    assert_eq!(render(1), 2);
+}
+";
+        let found = scopes(top_only, 2, "top");
+        assert!(!found.scopes[0].block_binds("render"));
+        assert_eq!(
+            imports_of(&found.scopes[0], "render"),
+            vec![UseBinding::Path(strings(&["crate", "a", "render"]))]
+        );
+    }
+
+    /// Segments come from the syntax tree: spacing around `::` does not
+    /// matter, and a leading `::` or `extern crate` binds opaquely.
+    #[test]
+    fn use_paths_are_read_through_the_syntax_tree() {
+        let source = "\
+mod tests {
+    use crate :: b :: render;
+    use ::other::render as other_render;
+    extern crate dep as a;
+    use ::glob::*;
+    fn t() {}
+}
+";
+        let found = scopes(source, 6, "t");
+        let tests = &found.scopes[1];
+        assert_eq!(
+            imports_of(tests, "render"),
+            vec![UseBinding::Path(strings(&["crate", "b", "render"]))]
+        );
+        assert_eq!(imports_of(tests, "other_render"), vec![UseBinding::Opaque]);
+        assert_eq!(imports_of(tests, "a"), vec![UseBinding::Opaque]);
+        assert_eq!(tests.globs, vec![None]);
     }
 
     #[test]
     fn unparseable_or_missing_function_yields_none() {
-        assert!(name_scopes_for_fn("fn broken( {", 1, "broken", "x").is_none());
-        assert!(name_scopes_for_fn("fn present() {}", 1, "absent", "x").is_none());
-        assert!(name_scopes_for_fn("fn present() {}", 2, "present", "x").is_none());
+        assert!(name_scopes_for_fn("fn broken( {", 1, "broken").is_none());
+        assert!(name_scopes_for_fn("fn present() {}", 1, "absent").is_none());
+        assert!(name_scopes_for_fn("fn present() {}", 2, "present").is_none());
     }
 }
