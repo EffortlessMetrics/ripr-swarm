@@ -168,7 +168,7 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
 
     if path_is_occupied(&config_path)? && !options.force && options.ci.is_none() {
         return Err(format!(
-            "{} already exists; rerun `ripr init --force` to overwrite it",
+            "{} already exists; rerun `ripr init --force` to overwrite it (resets customizations). Preview with `--dry-run`; `ripr init --ci github --force` refreshes the workflow and keeps the config",
             config_path.display()
         ));
     }
@@ -751,7 +751,14 @@ mod tests {
             Ok(_) => return Err("an existing config without --force must block".to_string()),
             Err(message) => {
                 assert!(message.contains("already exists"), "{message}");
-                assert!(message.contains("--force"), "{message}");
+                assert!(message.contains("ripr init --force"), "{message}");
+                assert!(message.contains("resets customizations"), "{message}");
+                assert!(message.contains("--dry-run"), "{message}");
+                assert!(
+                    message.contains("ripr init --ci github --force"),
+                    "{message}"
+                );
+                assert!(message.contains("keeps the config"), "{message}");
             }
         }
 
@@ -838,7 +845,17 @@ mod tests {
 
         match init_plan(&opts) {
             Ok(_) => return Err("an existing workflow without --force must block".to_string()),
-            Err(message) => assert!(message.contains("already exists"), "{message}"),
+            Err(message) => {
+                assert!(message.contains("already exists"), "{message}");
+                assert!(
+                    message.contains("ripr init --ci github --force"),
+                    "{message}"
+                );
+                assert!(
+                    !message.contains("resets customizations"),
+                    "config-overwrite wording must not leak into the workflow hint: {message}"
+                );
+            }
         }
 
         let _ = std::fs::remove_dir_all(&root);

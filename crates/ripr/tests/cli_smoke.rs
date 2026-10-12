@@ -13631,7 +13631,9 @@ fn init_dry_run_fails_like_the_real_run_when_config_exists_without_force() -> Re
         "dry run and real run must report the same blocker"
     );
     assert!(String::from_utf8_lossy(&dry.stderr).contains("already exists"));
-    assert!(String::from_utf8_lossy(&dry.stderr).contains("--force"));
+    assert!(String::from_utf8_lossy(&dry.stderr).contains("resets customizations"));
+    assert!(String::from_utf8_lossy(&dry.stderr).contains("--dry-run"));
+    assert!(String::from_utf8_lossy(&dry.stderr).contains("ripr init --ci github --force"));
 
     // The pre-existing config is untouched by either invocation.
     let config = std::fs::read_to_string(workspace.join("ripr.toml"))
@@ -13851,8 +13853,18 @@ fn init_refuses_existing_config_without_force() -> Result<(), String> {
         String::from_utf8_lossy(&output.stderr)
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("already exists"));
-    assert!(stderr.contains("--force"));
+    assert!(stderr.contains("already exists"), "stderr:\n{stderr}");
+    assert!(stderr.contains("ripr init --force"), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("resets customizations"),
+        "stderr:\n{stderr}"
+    );
+    assert!(stderr.contains("--dry-run"), "stderr:\n{stderr}");
+    assert!(
+        stderr.contains("ripr init --ci github --force"),
+        "stderr:\n{stderr}"
+    );
+    assert!(stderr.contains("keeps the config"), "stderr:\n{stderr}");
     let config = std::fs::read_to_string(workspace.join("ripr.toml"))
         .map_err(|e| format!("read existing ripr.toml: {e}"))?;
     assert!(config.contains("mode = \"deep\""));
