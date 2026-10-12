@@ -273,3 +273,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_control_production_owner (16)
+
+Reason:
+RIPR-SPEC-0133: call-built boundary input reads infection_unknown (#6615); next step follows #7477 unknown-finding guidance
+
+Command:
+`cargo xtask goldens bless assertion_shaped_control_production_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
