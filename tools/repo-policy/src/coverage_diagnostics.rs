@@ -101,7 +101,7 @@ fn tool_with_deadline(args: &[String], deadline_after: Duration) -> Result<Value
             };
             if status.is_some() && kill_deadline.is_none() {
                 match kill_group(pgid) {
-                    Ok(killed) => group_killed = killed,
+                    Ok(terminated) => group_killed = terminated,
                     Err(error) => cleanup_error = Some(error),
                 }
                 kill_deadline = Some(Instant::now() + TOOL_KILL_GRACE);
@@ -118,7 +118,7 @@ fn tool_with_deadline(args: &[String], deadline_after: Duration) -> Result<Value
         if now >= deadline && !timed_out {
             timed_out = true;
             match kill_group(pgid) {
-                Ok(killed) => group_killed |= killed,
+                Ok(terminated) => group_killed |= terminated,
                 Err(error) => cleanup_error = Some(error),
             }
             kill_deadline = Some(now + TOOL_KILL_GRACE);
