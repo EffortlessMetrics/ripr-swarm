@@ -1,0 +1,12 @@
+diff --git a/pricing/core.py b/pricing/core.py
+--- a/pricing/core.py
++++ b/pricing/core.py
+@@ -54,7 +54,7 @@ def loyalty_points(subtotal_cents):
+ 
+ def label_for(tier):
+     """Display label for a tier."""
+-    return tier.upper()
++    return tier.title()
+ 
+ 
+ def bulk_price(unit_cents, quantity, bulk_threshold=10):

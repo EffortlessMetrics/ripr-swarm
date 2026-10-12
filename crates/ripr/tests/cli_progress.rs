@@ -574,8 +574,22 @@ fn repo_format_quiet_keeps_stdout_byte_identical_and_drops_progress_stages() -> 
     assert!(loud.status.success(), "{}", stderr_text(&loud));
     assert!(quiet.status.success(), "{}", stderr_text(&quiet));
     // Byte-shape pin: the disclosure/progress work must not move stdout.
+    // #7369 added a wall-clock `generated_at` disclosure stamp (and the
+    // content commitment covers those bytes), so two runs differ by
+    // milliseconds; mask the volatile identity lines and compare everything
+    // else byte-for-byte.
+    let without_volatile_stamp = |bytes: &[u8]| -> String {
+        String::from_utf8_lossy(bytes)
+            .lines()
+            .filter(|line| {
+                !line.contains("\"generated_at\"") && !line.contains("\"content_sha256\"")
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    };
     assert_eq!(
-        loud.stdout, quiet.stdout,
+        without_volatile_stamp(&loud.stdout),
+        without_volatile_stamp(&quiet.stdout),
         "--quiet must not change machine stdout"
     );
     let quiet_err = stderr_text(&quiet);

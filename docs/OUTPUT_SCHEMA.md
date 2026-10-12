@@ -12977,9 +12977,15 @@ Field contract:
 
 Report packet index field contract:
 
-- `entries[].status` is `available`, `missing`, `pass`, `warn`, `fail`,
+- `entries[].status` is `available`, `missing`, `malformed`, `pass`, `warn`,
+  `fail`,
   `actionable`, `blocked`, `acknowledged`, `suppressed`, `stale`, `incomplete`,
-  `unreadable`, or `not_applicable`.
+  `unreadable`, or `not_applicable`. `malformed` marks a JSON-kind artifact
+  whose bytes do not parse as a JSON object (or cannot be read): existence
+  alone never credits it, the entry keeps its regeneration command, and the
+  packet cannot report `pass` while any entry is `malformed` (#7380). Receipt
+  JSONs discovered in the advertised receipts directory are indexed under
+  `validation_receipts` with the same status vocabulary (#7381).
 - `lane1_readiness.status` is `present`, `warn`, or `fail`.
 - `lane1_readiness.missing_artifacts`,
   `lane1_readiness.warning_artifacts`, and
@@ -17713,6 +17719,22 @@ An explicit ID absent from the preferred queue can reach its ledger; an ID
 absent from the ledger retains the not-found route. Selected stale or invalid
 artifacts still refuse without falling back to another packet. Replacing an
 artifact after a healthy refresh cannot bypass those checks.
+
+Actionable verification provenance is the closed set
+`canonical_item.verify_command` and `related_test_or_observer.name`, shared
+with the existing actionable projector. The latter retains the producer's
+bounded typed-related-test command and its truthful source label. Unknown,
+missing or nonstring labels refuse as `malformed_artifact`. A broad before/after
+repo-exposure snapshot comparison also refuses as `malformed_artifact` even
+when eligibility is asserted; it does not become bounded through a recognized
+source label. Ineligible packets and nonempty projection exclusions still
+refuse. Broad-route recognition uses the existing passive command-word
+interpretation, including equivalent whitespace and quoted word spellings.
+This is shared command metadata policy, not a general shell or cost parser.
+Command-time reads apply these same rules to the entire selected
+artifact, including sibling packets. These predicates do not authenticate a
+producer, grant execution authority or bind a Cargo test display command to a
+foreign working directory.
 
 Known preview or mixed-language artifacts retain their existing named-file
 admission. Rust provenance alone cannot establish their whole corpus

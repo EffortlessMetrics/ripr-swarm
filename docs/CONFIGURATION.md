@@ -27,6 +27,13 @@ files. Environment variables are process-local tuning knobs and are documented
 separately from repo policy.
 
 Configuration is for policy and tuning, not a prerequisite for first value.
+`ripr.toml` has no Rust fixture/builder computed-value mapping mechanism.
+Test-harness registrations identify test sources; they do not evaluate their
+inputs. For an unknown input, inspect how a related test's input reaches
+the changed expression and what the test actually checks. If it has an
+assertion, compare what that assertion observes under the original and changed
+behavior, using the project's configured test runner.
+
 `ripr.toml` is optional, and missing config is the normal first-run state — it
 uses built-in defaults. `ripr init` is **only** for teams that want to commit
 those defaults to disk so they can review, version, and tune repo policy; it
@@ -165,7 +172,7 @@ Runs the static exposure analysis and renders findings.
 
 | Flag | Default | Notes |
 | --- | --- | --- |
-| `--root PATH` | current directory | Workspace root used for diff and source discovery. Without `--root`, walks up to a `Cargo.toml` containing `[workspace]`; when there is none, to the nearest `Cargo.toml`, `pnpm-workspace.yaml`, `package.json` with a `workspaces` field, or `pyproject.toml` with `[tool.uv.workspace]`, else a verified git top level. An unverified `.git` entry bounds the walk without selecting that directory; absent a local manifest, the current directory stays selected. A moved root and its reason are printed on stderr. |
+| `--root PATH` | current directory | Workspace root used for diff and source discovery. Without `--root`, walks up to a `Cargo.toml` containing `[workspace]`; when there is none, to the nearest `Cargo.toml`, `pnpm-workspace.yaml`, `package.json` with a `workspaces` field, or `pyproject.toml` with `[tool.uv.workspace]`, else a verified git top level. An unverified `.git` entry bounds the walk without selecting that directory; absent a local manifest, the current directory stays selected. A moved root and its reason are printed on stderr. When that move skips a closer `ripr.toml` from the invocation directory (the file `ripr doctor` and `ripr pilot` would load from that cwd), stderr names the skipped directory entry and which file governed. Pass `--root .` (cwd is still that directory) to analyze with the closer file. |
 | `--base REV` | resolved per repository | Git revision used as the diff base when `--diff` is not given. With no `--base`, ripr resolves the first of `origin/HEAD`, `origin/main`, `origin/master`, `main`, `master` that exists; when none does, it says so rather than analyzing nothing. An explicit `--base` is used as given and is never substituted. |
 | `--diff PATH` | _(unset)_ | Path to a unified diff file. Overrides `--base`. `--diff -` reads from stdin. |
 | `--candidate-tree TREE` | _(unset)_ | Analyze exactly this immutable Git tree object, deriving the diff from Git objects alone. Mutually exclusive with `--diff` and `--base`. |
@@ -858,8 +865,14 @@ JSON-shaped, and `--json` is accepted for parity with `check`.
 `ripr` starts config discovery at the root passed by `--root` or by the LSP
 initialization root, then walks upward for the nearest `ripr.toml`. Discovery
 stops after checking an ancestor with a Cargo `[workspace]` table or at a `.git`
-boundary. Missing config is normal and preserves current built-in defaults.
-Unknown keys are errors so policy typos do not silently change analysis intent.
+boundary. Implicit `ripr check` first rebinds that selected root to the enclosing
+workspace when one exists, so a `ripr.toml` sitting in the invocation directory
+is not a candidate. `check` then warns on stderr when that closer file exists
+and differs from the loaded config, naming the skipped directory entry and
+`--root .` recovery; `doctor` and `pilot` still load from their
+`--root` (default cwd) and do not take that workspace walk. Missing config is
+normal and preserves current built-in defaults. Unknown keys are errors so
+policy typos do not silently change analysis intent.
 
 The example file ([`ripr.toml.example`](../ripr.toml.example)) is kept in sync
 with the supported v1 shape.

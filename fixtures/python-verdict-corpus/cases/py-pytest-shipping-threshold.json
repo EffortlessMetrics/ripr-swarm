@@ -1,0 +1,52 @@
+{
+  "case_id": "py-pytest-shipping-threshold",
+  "subject_id": "authored-py-pytest-pricing",
+  "diff": "cases/py-pytest-shipping-threshold.diff",
+  "anchor": {
+    "file": "pricing/core.py",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_assert_eq_boundary_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "if subtotal_cents > FREE_SHIPPING_CENTS:",
+        "mutated_line": "if subtotal_cents > FREE_SHIPPING_CENTS:",
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_pricing.py::test_free_shipping_starts_at_threshold",
+        "equivalence_review": "not equivalent: a 5000-cent order pays 499 shipping instead of shipping free"
+      },
+      {
+        "replacement": "if subtotal_cents >= FREE_SHIPPING_CENTS - 1:",
+        "mutated_line": "if subtotal_cents >= FREE_SHIPPING_CENTS - 1:",
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_pricing.py::test_free_shipping_starts_at_threshold",
+        "equivalence_review": "not equivalent: a 4999-cent order ships free instead of paying 499"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_free_shipping_starts_at_threshold pins 4999 and 5000 with `assert ==`, an exact-value oracle under RIPR-SPEC-0028, so both shifts of the boundary fail it. ripr reports weakly_exposed on a predicate against a module constant, a false actionable verdict; the literal-boundary case py-pytest-silver-parametrized is credited exposed.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

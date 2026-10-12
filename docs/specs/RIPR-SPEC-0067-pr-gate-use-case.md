@@ -528,6 +528,10 @@ disclosed and fails closed; it is never treated as a complete causal comparison.
 
 ## Failure Modes
 
+- `--root` is not an existing directory — argv-level could-not-complete
+  (exit 2) that names the root; evaluation does not start and no
+  decision report is written. This is a usage refusal, not a blocking
+  decision, so it does not violate the written-report rule below.
 - Required input missing for the selected mode — `config_error` with
   a repair-oriented report; never a guessed decision.
 - Labels not captured in CI — acknowledgement cannot apply; the

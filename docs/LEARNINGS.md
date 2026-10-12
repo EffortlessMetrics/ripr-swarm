@@ -3,6 +3,22 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-12: Implicit `check` skips a closer `ripr.toml` after the root move (#7468)
+
+Config discovery walks ancestors of the *selected analysis root*, not of the
+invocation cwd. Implicit `ripr check` rebinds that root to the enclosing
+workspace, so a member `ripr.toml` is never a candidate. `doctor` and `pilot`
+keep `--root` (default cwd) and load that closer file. Do not retarget which
+file `check` loads — that is per-crate config (#2671) — and do not fold
+doctor/pilot into `resolve_project_root` just to make the three commands agree.
+Name the skipped directory entry and the file that governed on stderr.
+Recovery is `--root .` (cwd is still the invocation directory; that spelling
+is shell-neutral). A member symlink to the workspace file is the same
+config, not a skip; a symlink to a *different* file still names the member
+entry, not the canonical target. Human-header `config:` and JSON
+`config_path` remain a follow-up: they churn every golden and need
+`docs/OUTPUT_SCHEMA.md`.
+
 ## 2026-10-12: Doctor `cargo_toml` is not `resolve_project_root` (#7466)
 
 `ripr check`'s `resolve_project_root` walks *up* and can return a git top

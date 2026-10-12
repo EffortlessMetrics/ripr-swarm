@@ -39,6 +39,31 @@ The packet should include:
 
 ## Required Evidence
 
+### Unknown finding guidance (#7477)
+
+For `infection_unknown`, `propagation_unknown`, and `static_unknown`, explain
+renders `To investigate this uncertainty:` using the same reconciled next step
+as JSON findings and context. This is an evidence-resolution experiment, not a
+promise that a test changes the static verdict or proof that a test is missing.
+Existing producer-specific limitation advice remains authoritative.
+
+Rust guidance follows the actual stop reasons: trace computed inputs (including
+default/empty cases), inspect macro output/effects, or inspect a changed
+declaration and the behavior consuming it. Inspect what the related test
+actually checks without presupposing that an assertion exists. Inspect any
+existing assertion before adding or strengthening a test, and do so only when
+that inspection establishes a gap. Compare the original and changed
+implementations with the project's configured test runner (`cargo test` for
+ordinary Cargo tests); custom harnesses can require their own selector arguments.
+The static classification may remain unknown. Neither macro expansion nor
+fixture/builder value mapping is unlocked by choosing a wider analysis mode or
+an undocumented `ripr.toml` key.
+
+Decidable findings retain their concrete `To change the verdict` recipes.
+Unknown explain glosses must preserve the domain's meaning: a changed Rust
+declaration can lack an analyzed function owner, a macro need not be procedural,
+and fixture/async mentions are heuristic limits rather than execution facts.
+
 The context packet should be grounded in a selected finding and include enough
 evidence for a human or agent to write one targeted test without broad repo
 guesswork.
@@ -80,6 +105,10 @@ Planned tests:
 - golden context packet for unknown propagation
 - LSP copy-context packet equality with CLI context packet
 - malformed-location guidance and valid-ID/location retry through both CLI siblings
+- unknown explain guidance on three real Rust fixtures across draft/fast/deep/ready,
+  with literal finding/class/reason identity, human/JSON section parity, and
+  scope-preserving context replay
+- retained boundary, missing-assertion, and no-path verdict-change recipes
 
 ## Implementation Mapping
 
