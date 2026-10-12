@@ -81,9 +81,10 @@ fn asserted_pattern(line: &str) -> Option<(String, String)> {
     pair(complete_macro_arguments(expression, "matches!")?)
 }
 
-/// A guard conjunct `a == b` where one side is the scrutinee or a name the
-/// pattern binds. `e.len() == 3` or `flag == true` pins no value of the
-/// matched expression, so it does not count.
+/// A guard conjunct `a == b` where exactly one side is the scrutinee or a
+/// name the pattern binds. `e.len() == 3` or `flag == true` pins no value of
+/// the matched expression, and `e == e` or `(a, b) if a == b` compares the
+/// match with itself, so none of them counts.
 fn guard_pins_value(guard: &str, scrutinee: &str, pattern: &str) -> bool {
     let bound = pattern_bindings(pattern);
     let subject = comparable(scrutinee);
@@ -96,10 +97,13 @@ fn guard_pins_value(guard: &str, scrutinee: &str, pattern: &str) -> bool {
         let Some(index) = top_level_equality(&masked) else {
             return false;
         };
-        [&conjunct[..index], &conjunct[index + 2..]]
-            .into_iter()
-            .map(comparable)
-            .any(|side| side == subject || bound.contains(&side))
+        // One side names the matched value and the other is a value
+        // expression: `e == e` or `a == b` over two bindings compares the
+        // match with itself and pins nothing.
+        let names_match = |side: &String| *side == subject || bound.contains(side);
+        let left = comparable(&conjunct[..index]);
+        let right = comparable(&conjunct[index + 2..]);
+        names_match(&left) != names_match(&right)
     })
 }
 
@@ -773,6 +777,21 @@ mod tests {
                 RelationalCheck,
                 Weak,
             ),
+            (
+                "assert!(matches!(check(20), Err(e) if e == e))",
+                BroadError,
+                Weak,
+            ),
+            (
+                "assert!(matches!(value, _ if value == value))",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(matches!(pair(), (a, b) if a == b))",
+                RelationalCheck,
+                Weak,
+            ),
             ("assert!(matches!(check(20), Err(1..=5)))", BroadError, Weak),
             (
                 "assert!(matches!(lookup(1), Some(x) if x > 3))",
@@ -824,6 +843,7 @@ mod tests {
             "assert!(matches!(lookup(1), Some(x) if x == 3))",
             "assert!(matches!(lookup(1), Some(x) if ready && *x == 3))",
             "assert!(matches!(check(20), Err(e) if e == E::Bad))",
+            "assert!(matches!(check(20), Err(e) if E::Bad == e))",
             // A user enum's `None`, `Ok` or `Err` variant is a variant pin.
             "assert!(matches!(mode(), Mode::None))",
             "assert!(matches!(reply(), Reply::Ok(_)))",

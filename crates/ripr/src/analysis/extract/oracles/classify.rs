@@ -10,8 +10,7 @@ use super::patterns::{
     is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
     is_effect_observer_subject_assertion, is_exact_error_variant_assertion,
     is_exact_membership_any_assertion, is_exact_value_assertion, is_mock_expectation_line,
-    is_smoke_check, is_snapshot_assertion,
-    is_whole_object_equality_assertion, tests_both_sides,
+    is_smoke_check, is_snapshot_assertion, is_whole_object_equality_assertion, tests_both_sides,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -408,6 +407,14 @@ mod tests {
             ),
             ("ensure!(r.is_ok() || r.is_err());", RelationalCheck, Weak),
             ("assert!(o.is_none_or(|v| v > 1));", SmokeOnly, Smoke),
+            // Both sides only on one receiver; a field is not a method.
+            ("assert!(left.is_ok() || right.is_err());", BroadError, Weak),
+            (
+                "assert!(get(1).is_some() || get(1).is_none());",
+                RelationalCheck,
+                Weak,
+            ),
+            ("assert!(status.is_err);", RelationalCheck, Weak),
             // Rule 5: whole identifier segments, outside free calls.
             (
                 "assert!(sentEvents.contains(&id));",
@@ -417,6 +424,12 @@ mod tests {
             ("assert!(state.ready);", MockExpectation, Medium),
             ("assert!(statement.is_empty());", RelationalCheck, Weak),
             ("assert!(consent_given());", RelationalCheck, Weak),
+            ("assert!(ready /* events_sent */);", RelationalCheck, Weak),
+            (
+                "assert!(ready, \"events_sent was {}\", n);",
+                RelationalCheck,
+                Weak,
+            ),
             (
                 "assert!(store.saved().is_empty());",
                 MockExpectation,

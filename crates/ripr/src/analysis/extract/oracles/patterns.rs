@@ -281,22 +281,74 @@ pub(super) fn is_smoke_check(text: &str) -> bool {
         || has_method_segment(&masked, "is_none")
 }
 
-/// RIPR-SPEC-0231 rule 4: `is_ok()` with `is_err()`, or `is_some()` with
-/// `is_none()`, joined by `||` accepts every value.
+/// RIPR-SPEC-0231 rule 4: `r.is_ok()` with `r.is_err()`, or `r.is_some()`
+/// with `r.is_none()`, on the same receiver and joined by `||`, accepts every
+/// value. `left.is_ok() || right.is_err()` checks two values and does not.
 pub(super) fn tests_both_sides(text: &str) -> bool {
     let masked = mask_comments_and_strings(text);
-    masked.contains("||")
-        && ((has_method_segment(&masked, "is_ok") && has_method_segment(&masked, "is_err"))
-            || (has_method_segment(&masked, "is_some") && has_method_segment(&masked, "is_none")))
+    if !masked.contains("||") {
+        return false;
+    }
+    let receivers = |name: &str| side_check_receivers(&masked, name);
+    let both = |a: &str, b: &str| {
+        let left = receivers(a);
+        receivers(b).iter().any(|receiver| left.contains(receiver))
+    };
+    both("is_ok", "is_err") || both("is_some", "is_none")
 }
 
-/// `name` as a whole method name: after `.` or `::`, and not followed by
+/// Receivers of plain `receiver.name()` calls (not negated, not the
+/// `name_and` combinators), whitespace removed.
+fn side_check_receivers(masked: &str, name: &str) -> Vec<String> {
+    let needle = format!(".{name}");
+    masked
+        .match_indices(&needle)
+        .filter_map(|(dot, _)| {
+            let rest = masked[dot + needle.len()..].trim_start();
+            if !rest.starts_with('(') {
+                return None;
+            }
+            let start = receiver_start(masked, dot);
+            if masked[..start].trim_end().ends_with('!') {
+                return None;
+            }
+            let receiver = masked[start..dot].split_whitespace().collect::<String>();
+            (!receiver.is_empty()).then_some(receiver)
+        })
+        .collect()
+}
+
+/// Start of the receiver expression that ends at byte `end`: identifiers,
+/// paths, field and method chains, and balanced brackets.
+fn receiver_start(masked: &str, end: usize) -> usize {
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    let mut index = end;
+    while index > 0 {
+        let byte = bytes[index - 1];
+        match byte {
+            b')' | b']' => depth += 1,
+            b'(' | b'[' if depth > 0 => depth -= 1,
+            _ if depth > 0 => {}
+            b'.' | b':' | b'_' | b'&' | b'*' => {}
+            _ if byte.is_ascii_alphanumeric() => {}
+            _ => break,
+        }
+        index -= 1;
+    }
+    index
+}
+
+/// `name` as a whole method name: a call after `.` (`r.is_ok()`), or a path
+/// after `::` (`Option::is_some`, passed as a function), and not followed by
 /// more identifier characters except the combinator forms `name_and` (and
-/// `is_none_or`). `is_okay` and `this_errs` are not `is_ok` / `is_err`.
+/// `is_none_or`). `is_okay`, `this_errs` and a `status.is_err` field are not
+/// `is_ok` / `is_err` checks.
 fn has_method_segment(text: &str, name: &str) -> bool {
     text.match_indices(name).any(|(index, _)| {
         let before = text[..index].trim_end();
-        let qualified = before.ends_with('.') || before.ends_with("::");
+        let method = before.ends_with('.');
+        let path = before.ends_with("::");
         let rest = &text[index + name.len()..];
         let rest = rest
             .strip_prefix("_and")
@@ -310,7 +362,8 @@ fn has_method_segment(text: &str, name: &str) -> bool {
             .chars()
             .next()
             .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
-        qualified && whole
+        let called = rest.trim_start().starts_with('(');
+        whole && ((method && called) || path)
     })
 }
 
@@ -472,11 +525,18 @@ pub(super) fn is_effect_observer_subject_assertion(line: &str) -> bool {
     if !(lower.contains("assert") || lower.contains("expect")) {
         return false;
     }
-    identifiers_with_position(line).any(|(start, identifier)| {
-        let free_call = line[start + identifier.len()..]
+    // In a known assertion macro only the asserted operands are subjects,
+    // and a word inside their comments or strings is not one. Other text
+    // keeps the line-level reading.
+    let masked = assertion_oracle_text(line).map_or_else(
+        || line.to_string(),
+        |operands| mask_comments_and_strings(&operands),
+    );
+    identifiers_with_position(&masked).any(|(start, identifier)| {
+        let free_call = masked[start + identifier.len()..]
             .trim_start()
             .starts_with('(')
-            && !line[..start].trim_end().ends_with('.');
+            && !masked[..start].trim_end().ends_with('.');
         !free_call
             && identifier_segments(identifier).any(|segment| {
                 OBSERVER_WORDS.contains(&segment.as_str())

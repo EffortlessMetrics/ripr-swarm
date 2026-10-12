@@ -311,13 +311,12 @@ rejected alternative. Any can be reversed later without touching the rest.
    covers; and grading the shape `mock_expectation` or
    `whole_object_equality` to borrow effect-family confirmation, because
    the grade must describe the assertion, not smuggle a verdict.
-
 4. **Family strength overrides.** Adopted: reveal's per-family override
    (`probe_relative_oracle_strength`) may lower but never raise a medium, weak
-   or smoke classifier strength, and the return-value owner pin needs a strong
-   oracle. Without this an `assert_ne!` struct literal's weak
-   `whole_object_equality` (rule 1) came back as strong and pinned the
-   owner. Today every exact kind the classifier emits is strong, so the cap
+   or smoke classifier strength, and an exact owner pin (the return-value pin
+   and #6692's clone-field pin) needs a strong oracle. Without this an
+   `assert_ne!` struct literal's weak `whole_object_equality` (rule 1) came
+   back as strong and pinned the owner. Today every exact kind the classifier emits is strong, so the cap
    and the gate change nothing until rule 1 emits a weak exact kind; they
    are what keeps rule 1's weakening from being undone downstream. This
    narrows the owner-pin Non-Goal below: the pin's confirmation is
@@ -342,8 +341,9 @@ rejected alternative. Any can be reversed later without touching the rest.
    Those two forms of examples 24 and 25 stay `not_established` until type
    resolution reaches the oracle classifier (#6737).
 7. **A guard that pins a value.** Adopted: a guard pins a value when one of
-   its top-level `&&` conjuncts is `a == b` with `a` or `b` the matched
-   scrutinee or a name the pattern binds. Rules 2 and 3 then leave the
+   its top-level `&&` conjuncts is `a == b` with exactly one of `a` and `b`
+   the matched scrutinee or a name the pattern binds; `e == e` and
+   `(a, b) if a == b` compare the match with itself and pin nothing. Rules 2 and 3 then leave the
    assertion to the ordinary chain: `_ if value == 2`, `Some(x) if x == 3`
    and `Err(e) if e == E::Bad` keep today's exact reading.
    RIPR-SPEC-0108's runtime-controlled fixtures
