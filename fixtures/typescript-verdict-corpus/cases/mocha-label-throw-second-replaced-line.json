@@ -8,7 +8,7 @@
   },
   "edit_kind": "behavior_change",
   "behavior_family": "error_path",
-  "test_shape": "mocha_chai_expect_to_throw_message_substring",
+  "test_shape": "mocha_chai_expect_to_throw_message_string",
   "hard_case": "the message-only `throw` change is the second line of a two-line replacement, so the old line must be paired by position inside the run, not by the run's shared new-side coordinate (#7524).",
   "truth": {
     "state": "not_discriminated",

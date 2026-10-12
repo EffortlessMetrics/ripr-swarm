@@ -4,7 +4,7 @@
   "origin": "authored",
   "anchor": "src/label.ts:5",
   "behavior_family": "error_path",
-  "test_shape": "mocha_chai_expect_to_throw_message_substring",
+  "test_shape": "mocha_chai_expect_to_throw_message_string",
   "hard_case": true,
   "truth": "not_discriminated",
   "ideal_verdict": "gap",

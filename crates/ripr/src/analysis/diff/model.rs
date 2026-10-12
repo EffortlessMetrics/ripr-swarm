@@ -167,4 +167,18 @@ mod tests {
             Some("b")
         );
     }
+
+    #[test]
+    fn interleaved_lines_are_one_line_blocks() {
+        // `-a +x -b +y`: each removed line carries its own new-side line, so
+        // the two-line added run is uneven against either removed line and
+        // pairs nothing; callers fall back to the same-coordinate match.
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines: vec![line(4, 4, "x"), line(5, 5, "y")],
+            removed_lines: vec![line(4, 4, "a"), line(5, 5, "b")],
+        };
+        assert!(changed.replaced_line_counterpart(4).is_none());
+        assert!(changed.replaced_line_counterpart(5).is_none());
+    }
 }
