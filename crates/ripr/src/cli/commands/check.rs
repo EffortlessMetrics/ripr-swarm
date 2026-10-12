@@ -243,6 +243,26 @@ pub(super) fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<
     Ok(())
 }
 
+/// Stderr line when implicit root resolution skipped a closer `ripr.toml`
+/// (#7468). Recovery is explicit `--root` at the invocation directory:
+/// that path skips the workspace walk, and config discovery from there
+/// loads the closer file.
+fn skipped_closer_config_warning(invocation_root: &Path, analysis_root: &Path) -> Option<String> {
+    let (closer, loaded) =
+        crate::config::closer_config_skipped_by_analysis_root(invocation_root, analysis_root)?;
+    let shown_closer = output::path::human_path(&closer);
+    let shown_analysis = output::path::human_path(analysis_root);
+    let quoted_invocation =
+        crate::agent::loop_commands::shell_arg(&output::path::human_path(invocation_root));
+    let governed = match loaded {
+        Some(path) => format!("applied `{}`", output::path::human_path(&path)),
+        None => "used built-in defaults".to_string(),
+    };
+    Some(format!(
+        "ripr: warning: resolved analysis root `{shown_analysis}` {governed}; ignored closer `{shown_closer}`. Pass `--root {quoted_invocation}` to analyze this directory with the closer file."
+    ))
+}
+
 fn parse_git_timeout(value: &str) -> Result<Option<std::time::Duration>, String> {
     parse_git_timeout_from("--git-timeout", value)
 }
@@ -548,6 +568,11 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // is the effective one for the whole run.
     let effective_format = input.format;
     let mut envelope_input = input.clone();
+    let implicit_invocation = if root_explicitly_provided {
+        None
+    } else {
+        std::fs::canonicalize(".").ok()
+    };
     if root_explicitly_provided {
         // An explicit --root that is not a directory reached the diff loader
         // and surfaced git's spawn failure, complete with the full argv:
@@ -701,6 +726,17 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
             )
         })?
     };
+    // #7468: implicit root resolution walks only ancestors of the rebound
+    // analysis root, so a closer ripr.toml from the invocation directory is
+    // skipped. Name both paths on stderr; do not change which file governs.
+    // Bound candidate trees ignore the worktree config (#4252), so they stay
+    // quiet. Explicit `--root` already selected the analysis root.
+    if candidate_tree.is_none()
+        && let Some(start) = implicit_invocation.as_deref()
+        && let Some(warning) = skipped_closer_config_warning(start, &input.root)
+    {
+        eprintln!("{}", terminal_safe(warning));
+    }
     apply_to_check_input(&mut input, &config, explicit);
     // Post-config-merge snapshot: mode may now come from ripr.toml.
     envelope_input = input.clone();
@@ -2428,6 +2464,133 @@ mod write_artifact_stripped_name_tests {
             !root.join("a.").exists(),
             "typed directory must not be written"
         );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod closer_config_warning_tests {
+    use super::super::tests::unique_command_test_dir;
+    use super::skipped_closer_config_warning;
+    use crate::output;
+    use std::path::PathBuf;
+
+    fn closer_config_fixture(label: &str) -> Result<(PathBuf, PathBuf), String> {
+        let workspace = unique_command_test_dir(label);
+        let member = workspace.join("crates/alpha");
+        std::fs::create_dir_all(&member).map_err(|err| format!("mkdir member: {err}"))?;
+        std::fs::write(
+            workspace.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/alpha\"]\n",
+        )
+        .map_err(|err| format!("write workspace manifest: {err}"))?;
+        std::fs::write(
+            member.join("Cargo.toml"),
+            "[package]\nname = \"alpha\"\nversion = \"0.0.0\"\n",
+        )
+        .map_err(|err| format!("write member manifest: {err}"))?;
+        Ok((workspace, member))
+    }
+
+    /// #7468: implicit check names the skipped member file, the file that
+    /// governed, and the `--root` recovery.
+    #[test]
+    fn skipped_closer_config_warning_names_both_files_and_the_recovery_root() -> Result<(), String>
+    {
+        let (workspace, member) = closer_config_fixture("check-closer-both")?;
+        std::fs::write(
+            workspace.join(crate::config::CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"deep\"\n",
+        )
+        .map_err(|err| format!("write workspace config: {err}"))?;
+        std::fs::write(
+            member.join(crate::config::CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"instant\"\n",
+        )
+        .map_err(|err| format!("write member config: {err}"))?;
+        let warning = skipped_closer_config_warning(&member, &workspace).ok_or_else(|| {
+            "implicit check must warn when it skips the member ripr.toml".to_string()
+        })?;
+        let shown_workspace_config =
+            output::path::human_path(&workspace.join(crate::config::CONFIG_FILE_NAME));
+        let shown_member_config =
+            output::path::human_path(&member.join(crate::config::CONFIG_FILE_NAME));
+        let quoted_member =
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(&member));
+        std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
+        assert!(warning.contains("applied"), "{warning}");
+        assert!(warning.contains(&shown_workspace_config), "{warning}");
+        assert!(warning.contains("ignored closer"), "{warning}");
+        assert!(warning.contains(&shown_member_config), "{warning}");
+        assert!(
+            warning.contains(&format!("--root {quoted_member}")),
+            "{warning}"
+        );
+        assert!(
+            !warning.contains("used built-in defaults"),
+            "a loaded workspace file must be named: {warning}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn skipped_closer_config_warning_names_built_in_defaults_when_the_workspace_has_no_file()
+    -> Result<(), String> {
+        let (workspace, member) = closer_config_fixture("check-closer-defaults")?;
+        std::fs::write(
+            member.join(crate::config::CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"instant\"\n",
+        )
+        .map_err(|err| format!("write member config: {err}"))?;
+        let warning = skipped_closer_config_warning(&member, &workspace).ok_or_else(|| {
+            "implicit check must still warn when the skipped file is the only ripr.toml".to_string()
+        })?;
+        std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
+        assert!(warning.contains("used built-in defaults"), "{warning}");
+        assert!(warning.contains("ignored closer"), "{warning}");
+        Ok(())
+    }
+
+    #[test]
+    fn skipped_closer_config_warning_quotes_a_spaced_invocation_root() -> Result<(), String> {
+        let (workspace, member) = closer_config_fixture("spaced closer ws")?;
+        assert!(
+            workspace
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains(' ')),
+            "fixture name must contain a space: {}",
+            workspace.display()
+        );
+        std::fs::write(
+            member.join(crate::config::CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"instant\"\n",
+        )
+        .map_err(|err| format!("write member config: {err}"))?;
+        let warning = skipped_closer_config_warning(&member, &workspace)
+            .ok_or_else(|| "a spaced member path must still warn".to_string())?;
+        let quoted_member =
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(&member));
+        std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
+        assert!(quoted_member.starts_with('\''), "{quoted_member}");
+        assert!(
+            warning.contains(&format!("--root {quoted_member}")),
+            "{warning}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn skipped_closer_config_warning_stays_quiet_at_the_analysis_root() -> Result<(), String> {
+        let (workspace, _member) = closer_config_fixture("check-closer-quiet")?;
+        std::fs::write(
+            workspace.join(crate::config::CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"deep\"\n",
+        )
+        .map_err(|err| format!("write workspace config: {err}"))?;
+        let warning = skipped_closer_config_warning(&workspace, &workspace);
+        std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
+        assert_eq!(warning, None);
         Ok(())
     }
 }

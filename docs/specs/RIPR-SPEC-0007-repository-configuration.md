@@ -166,6 +166,17 @@ then doctor reports the config path or default state and never prints the
 config source text.
 ```
 
+### Implicit check names a closer config it skipped
+
+```text
+Given a Cargo workspace with ripr.toml at the workspace root and a different
+ripr.toml in a member crate,
+when ripr check runs from that member without --root,
+then the workspace file still governs the run,
+and stderr names both files and which one governed,
+and `--root` at the member loads the closer file instead.
+```
+
 ### Doctor enable tip produces a loadable configuration
 
 ```text
@@ -239,6 +250,18 @@ Current tests:
 - `crates/ripr/src/cli/commands_agent_support.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
 - `crates/ripr/src/cli/commands_agent_support.rs::tests::unreadable_ripr_toml_lookup_is_not_built_in_defaults`
 - `crates/ripr/src/config.rs::tests::config_file_sets_core_operational_defaults`
+- `crates/ripr/src/config.rs::tests::closer_config_is_skipped_when_the_analysis_root_is_the_workspace`
+- `crates/ripr/src/config.rs::tests::closer_config_is_skipped_when_the_workspace_has_no_ripr_toml`
+- `crates/ripr/src/config.rs::tests::closer_config_from_a_nested_source_dir_is_still_skipped`
+- `crates/ripr/src/config.rs::tests::closer_config_is_skipped_when_the_files_have_identical_contents`
+- `crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_invocation_is_the_analysis_root`
+- `crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_only_the_workspace_has_ripr_toml`
+- `crates/ripr/src/config.rs::tests::closer_config_is_not_skipped_when_the_member_file_is_a_symlink_to_the_workspace_file`
+- `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_both_files_and_the_recovery_root`
+- `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_built_in_defaults_when_the_workspace_has_no_file`
+- `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_quotes_a_spaced_invocation_root`
+- `crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_stays_quiet_at_the_analysis_root`
+- `crates/ripr/tests/cli_smoke.rs::check_from_a_member_crate_warns_when_it_skips_the_closer_ripr_toml`
 - `crates/ripr/src/config.rs::tests::explicit_cli_mode_wins_over_config_mode`
 - `crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit`
 - `crates/ripr/src/config.rs::tests::malformed_or_unknown_config_is_actionable`
@@ -304,9 +327,11 @@ Planned tests:
 Current implementation:
 
 - `crates/ripr/src/config.rs` owns config parsing, defaults, validation,
-  presence (`config_entry_present` / `config_present_at_root`), and
-  precedence helpers. Workspace status and Python repair config-profile
-  detection consume that presence rule instead of `Path::is_file`.
+  presence (`config_entry_present` / `config_present_at_root`), skipped-closer
+  detection after an implicit analysis-root rebind
+  (`closer_config_skipped_by_analysis_root`), and precedence helpers.
+  Workspace status and Python repair config-profile detection consume that
+  presence rule instead of `Path::is_file`.
 - `crates/ripr/src/cli/commands.rs` loads repo config for `check`, `explain`,
   and `context`, and reports config status through `doctor`.
 - `crates/ripr/src/output/doctor.rs` projects missing cargo/rustc as analysis

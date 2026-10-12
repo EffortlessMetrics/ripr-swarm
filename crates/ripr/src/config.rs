@@ -230,6 +230,37 @@ pub(crate) fn config_discovered_for_root(root: &Path) -> bool {
     discover_config_path(root).is_some()
 }
 
+/// When implicit `check` rebinds the analysis root, config discovery walks
+/// only ancestors of *that* root. A `ripr.toml` that `doctor`/`pilot` would
+/// load from the invocation directory is then skipped (#7468). Return the
+/// closer path and the file the rebound root actually loads (`None` means
+/// built-in defaults). Same canonical file — including a symlink to the
+/// loaded path — is not a skip.
+pub(crate) fn closer_config_skipped_by_analysis_root(
+    invocation_root: &Path,
+    analysis_root: &Path,
+) -> Option<(PathBuf, Option<PathBuf>)> {
+    let closer = discover_config_path(invocation_root)?;
+    let loaded = discover_config_path(analysis_root);
+    if loaded
+        .as_deref()
+        .is_some_and(|loaded| same_config_file(&closer, loaded))
+    {
+        return None;
+    }
+    Some((closer, loaded))
+}
+
+fn same_config_file(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
 fn default_config_for_root(root: &Path) -> Result<RiprConfig, String> {
     let mut config = RiprConfig::default();
     if detect_python_project(root) {

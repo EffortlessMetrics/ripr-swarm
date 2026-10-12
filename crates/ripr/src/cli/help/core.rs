@@ -129,6 +129,8 @@ Options:
                            without one, to the nearest Cargo.toml or the git
                            top level. The walk never leaves the git
                            repository. A moved root is disclosed on stderr.
+                           When that move skips a closer ripr.toml, stderr
+                           names both files and which one governed.
   --base REV               Base revision for git diff. When omitted, ripr uses
                            the local origin/HEAD ref, then origin/main,
                            origin/master, main, and master in order; when none
