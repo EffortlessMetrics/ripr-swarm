@@ -9253,9 +9253,11 @@ fn selected() {
                 true,
             ),
             (
-                "nested-feature",
+                // Preservation does not bypass the inherited owner-file
+                // binding guard for nested cfg_attr payloads (#7082/#7104).
+                "nested-feature-owner-refusal",
                 "#![cfg_attr(test, cfg_attr(docsrs, feature(doc_cfg)))]",
-                true,
+                false,
             ),
             (
                 "inactive-opaque",
