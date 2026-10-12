@@ -20,6 +20,14 @@ pub(in crate::analysis) struct PropagationWitnessV1 {
     pub(in crate::analysis) behavior: BehaviorIdentity,
     pub(in crate::analysis) source: PropagationEndpoint,
     pub(in crate::analysis) edges: Vec<PropagationEdge>,
+    /// Declaration/callsite identity receipts only. These do not complete an
+    /// edge or contribute relation, activation, propagation or oracle credit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in crate::analysis) selected_helper_calls:
+        Vec<super::helper_transfer::SelectedInherentCall>,
+    /// Exact rule-7a observer provenance; absent preserves existing digests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::analysis) fallible_check: Option<super::FallibleCheckReceipt>,
     pub(in crate::analysis) sink: PropagationEndpoint,
     pub(in crate::analysis) completeness: PathCompleteness,
     pub(in crate::analysis) limitations: Vec<String>,
@@ -122,19 +130,50 @@ pub(in crate::analysis) fn current_path_witness(
     flow_sinks: &[FlowSinkFact],
 ) -> Option<PropagationWitnessV1> {
     let owner = probe.owner.clone()?;
+    // #6695: a statement-level `.ok_or(Type::Variant)?` returns exactly
+    // `Err(Type::Variant)` from the owner. The flow producer emits that sink
+    // only after confirming the `?` returns from the owner itself, so an
+    // equal sink identity is an established error edge (the closure in
+    // `ok_or_else(|| Type::Variant)` is the argument's own constant thunk,
+    // not an opaque path).
+    // Only when the line has no literal `Err(..)` construction: flow emits the
+    // owner-checked `ok_or?` sink exactly then. A line holding both
+    // (`x.map(|_| Err(E::V)).ok_or(E::V)?`) gets the unchecked
+    // `result_error_text` sink with the same text, which must not borrow the
+    // bypass (PR #6786 review).
+    let question_mark_sink = (matches!(probe.family, ProbeFamily::ErrorPath)
+        && super::text::exact_error_variant(&probe.expression).is_none())
+    .then(|| super::text::question_mark_error_variant(&probe.expression))
+    .flatten()
+    .map(|variant| format!("Result::Err({variant})"));
+    let is_question_mark_sink = |sink: &FlowSinkFact| {
+        sink.kind == FlowSinkKind::ErrorVariant
+            && question_mark_sink.as_deref() == Some(normalize_semantic_text(&sink.text).as_str())
+    };
     let sink = flow_sinks.iter().find(|sink| {
         sink.owner.as_ref() == Some(&owner)
             && sink.kind != FlowSinkKind::Unknown
             && family_accepts_sink(&probe.family, &sink.kind)
-            && source_sink_tokens_overlap(&probe.expression, &sink.text)
-            && !opaque_path_text(&probe.expression)
-            && !opaque_path_text(&sink.text)
+            // A line the strict `ok_or?` reader parses completes only through
+            // the owner-checked sink. When flow refused that sink (a closure,
+            // a converting owner error type), its fallback text sink must not
+            // complete through the generic identity rule (PR #6786 review,
+            // CodeRabbit).
+            && (is_question_mark_sink(sink)
+                || (question_mark_sink.is_none()
+                    && source_sink_tokens_overlap(&probe.expression, &sink.text)
+                    && !opaque_path_text(&probe.expression)
+                    && !opaque_path_text(&sink.text)))
     })?;
 
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
     let source_identity = normalize_semantic_text(&probe.expression);
     let sink_identity = normalize_semantic_text(&sink.text);
-    let edge_status = edge_status_for_kind(&edge_kind, &source_identity, &sink_identity);
+    let edge_status = if is_question_mark_sink(sink) {
+        EdgeStatus::Established
+    } else {
+        edge_status_for_kind(&edge_kind, &source_identity, &sink_identity)
+    };
     let collection_direct = is_direct_collection_state_write(probe, sink);
     let completeness = if collection_direct && edge_status == EdgeStatus::Established {
         PathCompleteness::Complete
@@ -166,6 +205,8 @@ pub(in crate::analysis) fn current_path_witness(
             identity: source_identity.clone(),
             line: probe.location.line,
         },
+        selected_helper_calls: Vec::new(),
+        fallible_check: None,
         edges: vec![PropagationEdge {
             kind: edge_kind.clone(),
             status: edge_status,
@@ -183,6 +224,148 @@ pub(in crate::analysis) fn current_path_witness(
     };
     witness.semantic_digest = witness.compute_semantic_digest();
     Some(witness)
+}
+
+/// A literal has no semantic tokens. Only the complete rule-7a source/value
+/// receipt can adapt its exact local owner return into a complete witness.
+pub(in crate::analysis) fn fallible_literal_witness(
+    probe: &Probe,
+    sinks: &[FlowSinkFact],
+    receipt: &super::FallibleCheckReceipt,
+) -> Option<PropagationWitnessV1> {
+    if !receipt.valid_for(probe) {
+        return None;
+    }
+    let sink = sinks.iter().find(|sink| {
+        sink.owner == probe.owner
+            && sink.kind == FlowSinkKind::ReturnValue
+            && sink.line == probe.location.line
+            && normalize_semantic_text(&sink.text) == normalize_semantic_text(&probe.expression)
+    })?;
+    let identity = normalize_semantic_text(&probe.expression);
+    let mut witness = PropagationWitnessV1 {
+        schema_version: SCHEMA_VERSION,
+        behavior: BehaviorIdentity {
+            owner: probe.owner.clone()?,
+            family: probe.family.as_str().into(),
+            delta: probe.delta.as_str().into(),
+            expression: identity.clone(),
+        },
+        source: PropagationEndpoint {
+            kind: "changed_behavior".into(),
+            identity: identity.clone(),
+            line: probe.location.line,
+        },
+        edges: vec![PropagationEdge {
+            kind: PropagationEdgeKind::DirectReturn,
+            status: EdgeStatus::Established,
+            from: identity.clone(),
+            to: identity.clone(),
+        }],
+        selected_helper_calls: Vec::new(),
+        fallible_check: Some(receipt.clone()),
+        sink: PropagationEndpoint {
+            kind: sink.kind.as_str().into(),
+            identity,
+            line: sink.line,
+        },
+        completeness: PathCompleteness::Complete,
+        limitations: vec![
+            "bounded_fallible_literal_check".into(),
+            "static_local_flow_only".into(),
+        ],
+        semantic_digest: String::new(),
+    };
+    witness.semantic_digest = witness.compute_semantic_digest();
+    Some(witness)
+}
+
+/// A field-to-push route may contain a macro initializer that the complete
+/// local adapter refuses. Retain its exact local field as a candidate only;
+/// the independently parsed returned-ledger route never completes this path.
+pub(in crate::analysis) fn returned_ledger_witness(
+    probe: &Probe,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    if probe.family != ProbeFamily::FieldConstruction {
+        return None;
+    }
+    let owner = probe.owner.clone()?;
+    let identity = normalize_semantic_text(&probe.expression);
+    let sink = sinks.iter().find(|sink| {
+        sink.owner.as_ref() == Some(&owner)
+            && sink.kind == FlowSinkKind::StructField
+            && normalize_semantic_text(&sink.text) == identity
+    })?;
+    let mut witness = PropagationWitnessV1 {
+        schema_version: SCHEMA_VERSION,
+        behavior: BehaviorIdentity {
+            owner,
+            family: probe.family.as_str().to_string(),
+            delta: probe.delta.as_str().to_string(),
+            expression: identity.clone(),
+        },
+        source: PropagationEndpoint {
+            kind: "changed_behavior".to_string(),
+            identity: identity.clone(),
+            line: probe.location.line,
+        },
+        selected_helper_calls: Vec::new(),
+        fallible_check: None,
+        edges: vec![PropagationEdge {
+            kind: PropagationEdgeKind::StructField,
+            status: EdgeStatus::Candidate,
+            from: identity.clone(),
+            to: identity.clone(),
+        }],
+        sink: PropagationEndpoint {
+            kind: sink.kind.as_str().to_string(),
+            identity,
+            line: sink.line,
+        },
+        completeness: PathCompleteness::Partial,
+        limitations: vec!["observer_binding_not_modeled".to_string()],
+        semantic_digest: String::new(),
+    };
+    witness.semantic_digest = witness.compute_semantic_digest();
+    Some(witness)
+}
+
+/// Retain identity-only helper transfer in the existing witness. The pushed
+/// field is a candidate element, and no indexed observer has been established.
+/// This cannot satisfy the complete-direct-witness gate.
+pub(in crate::analysis) fn retain_returned_ledger(
+    witness: &mut PropagationWitnessV1,
+    owner: &SymbolId,
+    parameter: &str,
+    caller: &SymbolId,
+    local: &str,
+) {
+    let parameter_identity = format!("{}::{parameter}", owner.0);
+    let local_identity = format!("{}::{local}", caller.0);
+    witness.edges.push(PropagationEdge {
+        kind: PropagationEdgeKind::EffectTarget,
+        status: EdgeStatus::Candidate,
+        from: witness.sink.identity.clone(),
+        to: parameter_identity.clone(),
+    });
+    witness.edges.push(PropagationEdge {
+        kind: PropagationEdgeKind::EffectTarget,
+        status: EdgeStatus::Established,
+        from: parameter_identity,
+        to: local_identity.clone(),
+    });
+    witness.edges.push(PropagationEdge {
+        kind: PropagationEdgeKind::DirectReturn,
+        status: EdgeStatus::Established,
+        from: local_identity,
+        to: format!("{}::return {local}", caller.0),
+    });
+    witness.completeness = PathCompleteness::Partial;
+    witness
+        .limitations
+        .push("returned_mutable_ledger_observer_unresolved".to_string());
+    witness.semantic_digest = witness.compute_semantic_digest();
 }
 
 fn completeness_for_edge(kind: &PropagationEdgeKind, status: &EdgeStatus) -> PathCompleteness {
@@ -234,7 +417,8 @@ fn direct_return_identity(text: &str) -> Option<String> {
 
 fn canonical_error_identity(text: &str) -> String {
     let normalized_text = normalize_semantic_text(text);
-    let normalized = normalized_text.trim_start_matches("return ");
+    let normalized = without_err_turbofish(normalized_text.trim_start_matches("return "));
+    let normalized = normalized.as_str();
     if normalized.starts_with("Err(") {
         format!("Result::{normalized}")
     } else {
@@ -253,6 +437,10 @@ pub(in crate::analysis) fn complete_direct_witness(
         return false;
     };
     witness.digest_matches()
+        && witness
+            .fallible_check
+            .as_ref()
+            .is_none_or(|receipt| receipt.valid_for(probe))
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
@@ -298,6 +486,7 @@ pub(in crate::analysis) fn valid_owner_bound_partial_witness(
         return false;
     };
     witness.digest_matches()
+        && witness.fallible_check.is_none()
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
@@ -379,7 +568,10 @@ pub(in crate::analysis) fn is_direct_collection_state_write(
 /// True when the assertion's primary observed subject is `receiver`.
 ///
 /// `assert_eq!(items, expected)` observes `items`. `assert_eq!(other, items)`
-/// observes `other` and must not credit a token on the expected side.
+/// observes `other` and must not credit a token on the expected side. The
+/// subject must be exactly `receiver`, `receiver[..]` (or another index that
+/// ends there), or `receiver.<value-read>(..)`. A trailing operator after the
+/// first read, or `capacity`, does not observe the collection (#7135).
 pub(in crate::analysis) fn assertion_observes_direct_collection(
     assertion_text: &str,
     receiver: &str,
@@ -412,25 +604,20 @@ fn macro_payload<'a>(text: &'a str, name: &str) -> Option<&'a str> {
 }
 
 fn balanced_inner(after_open: &str) -> Option<&str> {
-    let mut depth = 1usize;
-    for (index, character) in after_open.char_indices() {
-        match character {
-            '(' | '[' | '{' => depth = depth.saturating_add(1),
-            ')' | ']' | '}' => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return after_open.get(..index);
-                }
-            }
-            _ => {}
-        }
-    }
-    None
+    after_open.get(..delimited_group_closer_index(after_open)?)
 }
 
 fn first_call_argument(payload: &str) -> Option<String> {
     let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
     for (index, character) in payload.char_indices() {
+        let rest_after = payload
+            .get(index.saturating_add(character.len_utf8())..)
+            .unwrap_or("");
+        if in_quoted_literal(&mut quote, &mut escaped, character, rest_after) {
+            continue;
+        }
         match character {
             '(' | '[' | '{' => depth = depth.saturating_add(1),
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
@@ -453,9 +640,27 @@ fn subject_names_collection(subject: &str, receiver: &str) -> bool {
         return false;
     };
     if rest.starts_with('[') {
-        return true;
+        return remainder_after_delimited_group(rest).is_some_and(|tail| tail.trim().is_empty());
     }
-    collection_read_method(rest).is_some_and(is_collection_read_method)
+    collection_value_read_ends(rest)
+}
+
+/// True when `rest` is exactly `.<value-read>(..)` with no trailing operator.
+fn collection_value_read_ends(rest: &str) -> bool {
+    let Some(method) = collection_read_method(rest) else {
+        return false;
+    };
+    if !is_collection_read_method(method) {
+        return false;
+    }
+    let Some(after_name) = rest
+        .strip_prefix('.')
+        .and_then(|text| text.get(method.len()..))
+        .map(str::trim_start)
+    else {
+        return false;
+    };
+    remainder_after_delimited_group(after_name).is_some_and(|tail| tail.trim().is_empty())
 }
 
 fn collection_read_method(rest: &str) -> Option<&str> {
@@ -466,6 +671,84 @@ fn collection_read_method(rest: &str) -> Option<&str> {
         .map(|(index, _)| index)
         .unwrap_or(rest.len());
     rest.get(..end).filter(|name| !name.is_empty())
+}
+
+fn remainder_after_delimited_group(text: &str) -> Option<&str> {
+    let open = text.chars().next()?;
+    if !matches!(open, '(' | '[' | '{') {
+        return None;
+    }
+    let after_open = text.get(open.len_utf8()..)?;
+    let closer_at = delimited_group_closer_index(after_open)?;
+    let closer_len = after_open.get(closer_at..)?.chars().next()?.len_utf8();
+    after_open.get(closer_at.checked_add(closer_len)?..)
+}
+
+/// Byte index of the closer that returns depth to 0 in `after_open`.
+/// Quoted literals are scanned as units so a `)` inside a string is not a closer.
+fn delimited_group_closer_index(after_open: &str) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut quote = None;
+    let mut escaped = false;
+    for (index, character) in after_open.char_indices() {
+        let rest_after = after_open
+            .get(index.saturating_add(character.len_utf8())..)
+            .unwrap_or("");
+        if in_quoted_literal(&mut quote, &mut escaped, character, rest_after) {
+            continue;
+        }
+        match character {
+            '(' | '[' | '{' => depth = depth.saturating_add(1),
+            ')' | ']' | '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(index);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// True when `character` is inside a quoted literal and must not count as a delimiter.
+///
+/// A `'` starts a character literal only when lookahead shows `'\…'` or `'x'`.
+/// Lifetime ticks such as `'static` are not quotes.
+fn in_quoted_literal(
+    quote: &mut Option<char>,
+    escaped: &mut bool,
+    character: char,
+    rest_after: &str,
+) -> bool {
+    if let Some(q) = *quote {
+        if *escaped {
+            *escaped = false;
+            return true;
+        }
+        if character == '\\' {
+            *escaped = true;
+            return true;
+        }
+        if character == q {
+            *quote = None;
+        }
+        return true;
+    }
+    if character == '"' || (character == '\'' && starts_char_literal(rest_after)) {
+        *quote = Some(character);
+        return true;
+    }
+    false
+}
+
+fn starts_char_literal(after_tick: &str) -> bool {
+    let mut chars = after_tick.chars();
+    match chars.next() {
+        Some('\\') => true,
+        Some(_) => chars.next() == Some('\''),
+        None => false,
+    }
 }
 
 fn is_collection_read_method(name: &str) -> bool {
@@ -481,7 +764,6 @@ fn is_collection_read_method(name: &str) -> bool {
             | "as_slice"
             | "as_ref"
             | "to_vec"
-            | "capacity"
     )
 }
 
@@ -525,10 +807,21 @@ fn opaque_path_text(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
     lower.contains("dyn ")
         || lower.contains("box<dyn")
-        || lower.contains("ffi")
+        || names_ffi_boundary(&lower)
         || lower.contains("extern ")
         || has_macro_invocation(&lower)
         || has_closure_syntax(&lower)
+}
+
+/// Whether a (lowercased) text names an FFI boundary: an identifier or path
+/// segment that IS `ffi` or carries it as an underscore-separated word
+/// (`std::ffi::CStr`, `ffi_call`, `sys_ffi`). A plain substring check also
+/// matched ordinary words (`Insufficient`, `efficient`, `traffic`) and
+/// refused their error-variant witnesses (#6673).
+fn names_ffi_boundary(lower: &str) -> bool {
+    lower
+        .split(|character: char| !character.is_ascii_alphanumeric() && character != '_')
+        .any(|identifier| identifier.split('_').any(|word| word == "ffi"))
 }
 
 fn has_macro_invocation(text: &str) -> bool {
@@ -564,9 +857,45 @@ fn source_sink_tokens_overlap(source: &str, sink: &str) -> bool {
             .any(|token| source_tokens.iter().any(|source| source == token))
 }
 
+/// `Err::<T, E>(payload)` and `Result::Err::<T, E>(payload)` spelled as
+/// `Err(payload)`: the turbofish names types, not a different constructor,
+/// so error identities compare equal with the flow sink, which
+/// `exact_error_variant` already reduces to `Result::Err(payload)` (PR #6786
+/// review, Devin). Nested generics are balanced. Any other text is returned
+/// unchanged.
+fn without_err_turbofish(text: &str) -> String {
+    let Some(generics) = text
+        .strip_prefix("Result::")
+        .unwrap_or(text)
+        .strip_prefix("Err::<")
+    else {
+        return text.to_string();
+    };
+    let mut depth = 1i32;
+    for (offset, ch) in generics.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => {
+                depth -= 1;
+                if depth == 0 {
+                    let rest = &generics[offset + 1..];
+                    return if rest.starts_with('(') {
+                        format!("Err{rest}")
+                    } else {
+                        text.to_string()
+                    };
+                }
+            }
+            _ => {}
+        }
+    }
+    text.to_string()
+}
+
 fn path_identity_text(text: &str) -> String {
     let normalized_text = normalize_semantic_text(text);
-    let normalized = normalized_text.trim_start_matches("return ");
+    let normalized = without_err_turbofish(normalized_text.trim_start_matches("return "));
+    let normalized = normalized.as_str();
     if let Some(payload) = normalized
         .strip_prefix("Err(")
         .and_then(|value| value.strip_suffix(')'))
@@ -767,7 +1096,31 @@ impl PropagationWitnessV1 {
             append_canonical_field(&mut canonical, &edge.from);
             append_canonical_field(&mut canonical, &edge.to);
         }
+        // Source coordinates remain diagnostic, as for existing endpoints.
+        // Empty receipts preserve the historical digest; identities are bound
+        // only when the declaration/callsite producer actually supplies them.
+        if !self.selected_helper_calls.is_empty() {
+            append_canonical_section_header(
+                &mut canonical,
+                "selected-helper-calls",
+                self.selected_helper_calls.len(),
+            );
+            for call in &self.selected_helper_calls {
+                append_canonical_section_header(&mut canonical, "selected-helper-call", 4);
+                append_canonical_field(
+                    &mut canonical,
+                    &call.test_declaration.file.to_string_lossy(),
+                );
+                append_canonical_field(&mut canonical, &call.test_name);
+                append_canonical_field(&mut canonical, &call.callee.0);
+                append_canonical_field(&mut canonical, &call.helper.0);
+            }
+        }
         append_canonical_section_header(&mut canonical, "sink", 2);
+        if let Some(receipt) = &self.fallible_check {
+            append_canonical_section_header(&mut canonical, "fallible-check", 1);
+            append_canonical_field(&mut canonical, &receipt.semantic_digest);
+        }
         append_canonical_field(&mut canonical, &self.sink.kind);
         append_canonical_field(&mut canonical, &self.sink.identity);
         append_canonical_section_header(&mut canonical, "path", 1);
@@ -807,6 +1160,88 @@ mod tests {
     use crate::domain::{DeltaKind, ProbeId, SourceLocation};
     use std::path::PathBuf;
 
+    /// #6673: `Insufficient` contains the letters `ffi`; only an `ffi`
+    /// identifier word names an FFI boundary.
+    #[test]
+    fn ffi_boundary_is_an_identifier_word_not_a_substring() {
+        for text in [
+            "return Err(PayError::Insufficient)",
+            "Result::Err(PayError::Insufficient)",
+            "return efficient_total(traffic)",
+        ] {
+            assert!(!opaque_path_text(text), "{text}");
+        }
+        for text in [
+            "std::ffi::CStr::from_ptr(raw)",
+            "ffi_call(handle)",
+            "sys_ffi::open(path)",
+        ] {
+            assert!(opaque_path_text(text), "{text}");
+        }
+    }
+
+    /// `return Result::Err::<T, E>(E::Bad)` and `return Err::<T, E>(..)`
+    /// reach the same canonical sink as `return Err(E::Bad)` through the
+    /// production flow facts, nested generics included.
+    #[test]
+    fn qualified_and_unqualified_err_turbofish_complete_the_error_witness() -> Result<(), String> {
+        for expression in [
+            "return Result::Err::<u8, E>(E::Bad);",
+            "return Err::<u8, E>(E::Bad);",
+            "return Result::Err::<Vec<Option<u8>>, E>(E::Bad);",
+            "return Err(E::Bad);",
+        ] {
+            let witness = production_witness(&probe(ProbeFamily::ErrorPath, expression), None)
+                .ok_or_else(|| format!("no witness for {expression}"))?;
+            assert_eq!(
+                witness.edges[0].status,
+                EdgeStatus::Established,
+                "{expression}"
+            );
+            assert_eq!(
+                witness.completeness,
+                PathCompleteness::Complete,
+                "{expression}"
+            );
+        }
+        assert_eq!(
+            without_err_turbofish("Result::Err::<Vec<Option<u8>>, E>(E::Bad)"),
+            "Err(E::Bad)"
+        );
+        assert_eq!(
+            without_err_turbofish("Result::Err(E::Bad)"),
+            "Result::Err(E::Bad)"
+        );
+        Ok(())
+    }
+
+    /// The owner-checked `ok_or?` bypass keys on the probe line having no
+    /// literal `Err(..)`; a line with both must use the ordinary edge rule.
+    #[test]
+    fn question_mark_bypass_refuses_a_line_that_also_constructs_err() {
+        let both = probe(
+            ProbeFamily::ErrorPath,
+            "let v = x.map(|_| Err(E::V)).ok_or(E::V)?;",
+        );
+        let sinks = [sink(FlowSinkKind::ErrorVariant, "Result::Err(E::V)", 10)];
+        let witness = current_path_witness(&both, &sinks);
+        assert!(
+            witness
+                .as_ref()
+                .is_none_or(|witness| witness.edges[0].status != EdgeStatus::Established),
+            "{witness:?}"
+        );
+        // Positive control: the plain `ok_or?` line keeps the bypass.
+        let plain = probe(ProbeFamily::ErrorPath, "let v = x.ok_or(E::V)?;");
+        let witness = current_path_witness(&plain, &sinks);
+        assert!(
+            witness
+                .as_ref()
+                .is_some_and(|witness| witness.edges[0].status == EdgeStatus::Established),
+            "{witness:?}"
+        );
+    }
+
     fn probe(family: ProbeFamily, expression: &str) -> Probe {
         Probe {
             id: ProbeId("probe:fixture:1".to_string()),
@@ -841,7 +1276,7 @@ mod tests {
             file: PathBuf::from("src/lib.rs"),
             start_line: 1,
             end_line: 20,
-            body: "fn calculate() { status: amount; }".to_string(),
+            body: "fn calculate() { status: amount; }".into(),
             calls: Vec::new(),
             returns: return_text
                 .map(|text| {
@@ -1301,6 +1736,93 @@ mod tests {
             "a quoted assert_eq! must not supply the collection observer"
         );
         Ok(())
+    }
+
+    /// #7135: a collection subject is only the root, an index/slice of the
+    /// root, or one value-read of the root, and it must end there. Trailing
+    /// operators and `capacity` are not discriminators.
+    #[test]
+    fn collection_subject_must_end_after_root_index_or_value_read() {
+        for assertion in [
+            "assert_eq!(items.capacity() >= 1, true);",
+            "assert_eq!(items.capacity(), 4);",
+            "assert_eq!(items.is_empty() || true, true);",
+            "assert_eq!(items.len() * 0, 0);",
+            "assert_eq!(items[0] + 1, 6);",
+            "assert_eq!(items.len().min(1), 1);",
+        ] {
+            assert!(
+                !assertion_observes_direct_collection(assertion, "items"),
+                "non-discriminating subject must not observe the collection: {assertion}"
+            );
+        }
+
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items.len(), 1);", "items"),
+            "an exact len() read must still observe the collection"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items[0], 5);", "items"),
+            "an index into the collection must still observe it"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items[..], expected);", "items"),
+            "a whole-slice read must still observe the collection"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(items, expected);", "items"),
+            "a whole-collection equality must still observe it"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert_eq!(&items[..], expected);", "items"),
+            "a borrowed whole-slice read must still observe the collection"
+        );
+        assert!(
+            assertion_observes_direct_collection("assert!(items.is_empty());", "items"),
+            "a bare is_empty() read must still observe the collection"
+        );
+        assert!(
+            assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&\")\".to_string()), true);",
+                "items"
+            ),
+            "a value-read whose argument string holds a parenthesis must still observe the collection"
+        );
+        assert!(
+            !assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&\")\".to_string()) || true, true);",
+                "items"
+            ),
+            "a trailing operator after a string-bearing value-read must still refuse"
+        );
+        assert!(
+            assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&\"(\".to_string()), true);",
+                "items"
+            ),
+            "a value-read whose argument string holds an opening parenthesis must still observe the collection"
+        );
+        assert!(
+            !assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&\"(\".to_string()) || true, true);",
+                "items"
+            ),
+            "a trailing operator after an opening-paren string value-read must still refuse"
+        );
+        assert!(
+            assertion_observes_direct_collection(
+                "assert_eq!(items, Vec::<&'static str>::new());",
+                "items"
+            ),
+            "a lifetime on the expected side must not prevent a whole-collection observer"
+        );
+        assert!(
+            assertion_observes_direct_collection(
+                "assert_eq!(items.contains(&')'), true);",
+                "items"
+            ),
+            "a char-literal value-read argument must still observe the collection"
+        );
     }
 
     #[test]

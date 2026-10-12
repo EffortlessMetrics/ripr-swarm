@@ -19,6 +19,18 @@
     "mode": { "enum": ["instant", "draft", "fast", "deep", "ready"] },
     "root": { "type": "string", "minLength": 1 },
     "base": { "$ref": "#/$defs/nullable_string" },
+    "base_commit": { "type": "string", "minLength": 1 },
+    "merge_base_commit": { "type": "string", "minLength": 1 },
+    "head": {
+      "description": "Where a live-repository diff ended: the HEAD commit or the working tree on top of it. Absent for diff-file, stdin and candidate-tree input.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source"],
+      "properties": {
+        "source": { "enum": ["commit", "working_tree"] },
+        "commit": { "type": "string", "minLength": 1 }
+      }
+    },
     "summary": { "$ref": "#/$defs/summary" },
     "analysis_outcome": { "$ref": "#/$defs/analysis_outcome_projection" },
     "findings": {
@@ -40,6 +52,10 @@
       "items": { "type": "object" }
     },
     "unanalyzed_working_tree": { "type": "boolean" },
+    "untracked_working_tree_source_paths": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
     "preview_languages": {
       "type": "array",
       "items": { "$ref": "#/$defs/preview_language" }
@@ -49,10 +65,60 @@
       "type": "array",
       "items": { "$ref": "#/$defs/test_harness" }
     },
-    "source_subject": { "$ref": "#/$defs/source_subject" }
+    "source_subject": { "$ref": "#/$defs/source_subject" },
+    "canonical_next_action": { "$ref": "#/$defs/canonical_next_action" }
   },
   "$defs": {
     "nullable_string": { "type": ["string", "null"] },
+    "canonical_next_action": {
+      "description": "Bounded primary next action from the shared selector (canonical_next_action.v1, #7258). Present on the public navigation-aware `ripr check --format json` adapter. Absent from the generic JSON renderer and unbounded pr-evidence path, which lack navigation/provenance context and must not invent a committed-source default or executable route.",
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schema_version",
+        "producer",
+        "subject",
+        "action_class",
+        "non_claim"
+      ],
+      "properties": {
+        "schema_version": { "const": "canonical_next_action.v1" },
+        "producer": { "type": "string", "minLength": 1 },
+        "subject": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["root", "diff_source"],
+          "properties": {
+            "root": { "type": "string", "minLength": 1 },
+            "diff_source": { "type": "object" },
+            "item": { "$ref": "#/$defs/nullable_string" }
+          }
+        },
+        "currentness": { "type": "object" },
+        "action_class": {
+          "type": "string",
+          "enum": [
+            "run_command",
+            "inspect_details",
+            "choose_item",
+            "choose_attempt",
+            "satisfy_prerequisite",
+            "retry_current_subject",
+            "terminal_no_action",
+            "unsupported_or_limited"
+          ]
+        },
+        "command": { "type": ["object", "null"] },
+        "stop": { "type": ["object", "null"] },
+        "expected_transition": { "type": ["object", "null"] },
+        "alternatives": { "type": "array" },
+        "limitations": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "non_claim": { "type": "string", "minLength": 1 }
+      }
+    },
     "source_subject": {
       "description": "Content digests, read in this analysis run, of every workspace file a gap ledger derived from this output would name (#4544). Present only when that set is non-empty.",
       "type": "object",

@@ -8,4 +8,4 @@
   a committed baseline nightly, on demand, and when a pull request that
   touches pilot ranking or seam grading leaves draft. Labels must
   come from a full cargo-mutants run, checked against an unfiltered
-  `cargo mutants --list`.
+  `cargo mutants --list` (#6608).

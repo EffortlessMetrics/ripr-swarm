@@ -579,11 +579,41 @@ fn call_prefix_is_named(text: &str) -> bool {
 }
 
 fn has_field_shape(text: &str) -> bool {
-    !is_constant_declaration(text)
-        && !is_tuple_type_declaration(text)
-        && text.contains(':')
-        && !text.contains("::")
-        && !is_function_signature(text)
+    // #6676: a `let` binding's pattern and type annotation are binding
+    // syntax, not a struct-literal field (`let value: u8 = parse()?;`,
+    // `let (a, b): (u8, u8) = pair;`). Only the initializer after the
+    // top-level `=` can construct a field (`let w = Window { start: s };`);
+    // a declaration without an initializer constructs nothing. The
+    // initializer is read on comment/string-masked text.
+    if is_constant_declaration(text) || is_tuple_type_declaration(text) {
+        return false;
+    }
+    if let Some(initializer) = let_binding_initializer(text) {
+        return initializer.is_some_and(|scan| scan.contains(':') && !scan.contains("::"));
+    }
+    text.contains(':') && !text.contains("::") && !is_function_signature(text)
+}
+
+/// For a `let` statement line, the comment/string-masked initializer after
+/// its top-level `=` (`Some(Some(..))`), or `Some(None)` when the line
+/// declares without an initializer. `None` when the line is not a `let`
+/// statement.
+fn let_binding_initializer(text: &str) -> Option<Option<String>> {
+    // Masked first: a comment between `let` and the pattern
+    // (`let/* note */value`) separates the tokens like whitespace.
+    let masked = mask_comments_and_strings(text.trim_start());
+    if !masked
+        .strip_prefix("let")
+        .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+    {
+        return None;
+    }
+    let span = initializer_span(&masked);
+    if span.len() == masked.len() {
+        // No top-level `=`: `initializer_span` fell back to the whole line.
+        return Some(None);
+    }
+    Some(Some(span.to_string()))
 }
 
 fn is_function_signature(text: &str) -> bool {
@@ -726,6 +756,54 @@ mod tests {
             assert!(
                 families.contains(&ProbeFamily::StaticUnknown),
                 "{text} should fall through to static_unknown"
+            );
+        }
+    }
+
+    /// #6676: a `let` binding's pattern and type annotation never read as a
+    /// struct-literal field, so `let value: u8 = parse()?;` keeps its error
+    /// family but acquires no field_construction probe.
+    #[test]
+    fn let_binding_type_annotations_are_not_field_construction() {
+        for text in [
+            "let value: u8 = text.trim_end_matches('%').parse()?;",
+            "let mut count: usize = 0;",
+            "let (lo, hi): (u8, u8) = (a, b);",
+            "let Point { x, y }: Point = origin;",
+            "let total: u64;",
+            "let label: &str = \"a: b\"; // note: c",
+            "let\tvalue: u8 = 0;",
+            "let\n    value: u8 = 0;",
+            "let/* note */value: u8 = 0;",
+        ] {
+            let families = classify_changed_line(text);
+            assert!(
+                !families.contains(&ProbeFamily::FieldConstruction),
+                "{text} is a binding, not a field: {families:?}"
+            );
+        }
+        assert!(
+            classify_changed_line("let value: u8 = text.trim_end_matches('%').parse()?;")
+                .contains(&ProbeFamily::ErrorPath),
+            "the changed `?` still reads as an error path"
+        );
+    }
+
+    /// #6676 negative control: a struct literal field keeps
+    /// field_construction, including one constructed in a `let` initializer.
+    #[test]
+    fn struct_literal_fields_keep_field_construction_beside_let_bindings() {
+        for text in [
+            "total: discounted_total,",
+            "start: self.start,",
+            "let window: Window = Window { start: lo, end: hi };",
+            "let mut w = Window { start: lo };",
+            "let\tw = Window { start: lo };",
+        ] {
+            let families = classify_changed_line(text);
+            assert!(
+                families.contains(&ProbeFamily::FieldConstruction),
+                "{text} constructs a field: {families:?}"
             );
         }
     }

@@ -162,7 +162,13 @@ fn agent_receipt_config_fingerprint(root: &Path) -> Result<Option<String>, Strin
     let path = root.join(CONFIG_FILE_NAME);
     match crate::bounded_input::read_to_string(&path) {
         Ok(text) => Ok(Some(config_fingerprint(&text))),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            if crate::config::config_present_at_root(root) {
+                Err(format!("read {} failed: {err}", path.display()))
+            } else {
+                Ok(None)
+            }
+        }
         Err(err) => Err(format!("read {} failed: {err}", path.display())),
     }
 }
@@ -222,14 +228,21 @@ pub(super) fn read_agent_verify_snapshot(path: &Path, label: &str) -> Result<Str
     })
 }
 
+/// Resolve the argv working set to the lines/owners the brief will cover.
+///
+/// The typed error carries the refusal family (`base_unresolvable` /
+/// `repository_root_unusable` through `load_diff_core`) so `agent brief
+/// --json` refusals name the family instead of the honest fallback (#7331);
+/// path-confinement failures stay untyped messages because no Git verdict
+/// is claimed.
 pub(super) fn resolve_agent_brief_working_set(
     root: &Path,
     working_set: &crate::cli::agent::AgentBriefWorkingSet,
-) -> Result<AgentBriefResolvedWorkingSet, String> {
+) -> Result<AgentBriefResolvedWorkingSet, crate::core_error::CoreError> {
     match working_set {
         crate::cli::agent::AgentBriefWorkingSet::Diff(path) => {
             let diff_path = validate_agent_brief_diff_path(root, path)?;
-            let diff_text = analysis::load_diff(root, None, Some(&diff_path), None)?;
+            let diff_text = analysis::load_diff_core(root, None, Some(&diff_path), None)?;
             let changed_lines = agent_brief_lines_from_diff(root, &diff_text);
             let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
             Ok(AgentBriefResolvedWorkingSet::diff(
@@ -239,7 +252,7 @@ pub(super) fn resolve_agent_brief_working_set(
             .map(|working_set| working_set.with_changed_owners(changed_owners))
         }
         crate::cli::agent::AgentBriefWorkingSet::Base(base) => {
-            let diff_text = analysis::load_diff(root, Some(base.as_str()), None, None)?;
+            let diff_text = analysis::load_diff_core(root, Some(base.as_str()), None, None)?;
             let changed_lines = agent_brief_lines_from_diff(root, &diff_text);
             let changed_owners = agent_brief_owners_for_lines(root, &changed_lines);
             Ok(AgentBriefResolvedWorkingSet::base(
@@ -252,6 +265,7 @@ pub(super) fn resolve_agent_brief_working_set(
             .iter()
             .map(|file| confine_agent_brief_file_path(root, file))
             .collect::<Result<Vec<_>, _>>()
+            .map_err(crate::core_error::CoreError::from)
             .map(AgentBriefResolvedWorkingSet::files),
         crate::cli::agent::AgentBriefWorkingSet::SeamId(seam_id) => {
             Ok(AgentBriefResolvedWorkingSet::seam_id(seam_id.clone()))
@@ -689,5 +703,95 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    /// A dangling `ripr.toml` is present but unreadable: the receipt fingerprint
+    /// must fail closed rather than record the same `None` as a missing file.
+    #[cfg(unix)]
+    #[test]
+    fn dangling_ripr_toml_symlink_is_present_not_built_in_defaults() -> Result<(), String> {
+        let dir = ScratchDir::new("dangling-config");
+        match agent_receipt_config_fingerprint(&dir.path)? {
+            None => {}
+            Some(fingerprint) => {
+                return Err(format!(
+                    "an absent ripr.toml must record no fingerprint, not {fingerprint}"
+                ));
+            }
+        }
+
+        std::os::unix::fs::symlink("no-such-target.toml", dir.path.join("ripr.toml"))
+            .map_err(|error| error.to_string())?;
+        let load_error = match crate::config::load_for_root(&dir.path) {
+            Ok(_) => {
+                return Err("load_for_root must refuse a dangling ripr.toml".to_string());
+            }
+            Err(error) => error,
+        };
+        if !load_error.contains("ripr.toml") {
+            return Err(format!(
+                "load_for_root must name ripr.toml for a dangling link: {load_error}"
+            ));
+        }
+        match agent_receipt_config_fingerprint(&dir.path) {
+            Ok(None) => Err(
+                "a dangling ripr.toml must not fingerprint as absent built-in defaults".to_string(),
+            ),
+            Ok(Some(fingerprint)) => Err(format!(
+                "a dangling ripr.toml must not fingerprint as readable: {fingerprint}"
+            )),
+            Err(error) if error.contains("ripr.toml") => Ok(()),
+            Err(error) => Err(format!(
+                "a dangling ripr.toml must name ripr.toml when unread: {error}"
+            )),
+        }
+    }
+
+    /// A `PermissionDenied` lookup is not absence. Presence-first mapping of
+    /// `config_present_at_root == false` to `Ok(None)` would record built-in
+    /// defaults when `symlink_metadata` cannot even name the entry.
+    #[cfg(unix)]
+    #[test]
+    fn unreadable_ripr_toml_lookup_is_not_built_in_defaults() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = ScratchDir::new("unreadable-config-lookup");
+        std::fs::write(dir.path.join("ripr.toml"), "mode = \"advisory\"\n")
+            .map_err(|error| error.to_string())?;
+        match agent_receipt_config_fingerprint(&dir.path)? {
+            Some(_) => {}
+            None => {
+                return Err(
+                    "a readable ripr.toml must fingerprint instead of recording absence"
+                        .to_string(),
+                );
+            }
+        }
+
+        struct RestoreMode(std::path::PathBuf);
+        impl Drop for RestoreMode {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755));
+            }
+        }
+        let _restore = RestoreMode(dir.path.clone());
+        std::fs::set_permissions(&dir.path, std::fs::Permissions::from_mode(0o000))
+            .map_err(|error| format!("chmod root 000: {error}"))?;
+        match agent_receipt_config_fingerprint(&dir.path) {
+            Ok(None) => Err(
+                "an unreadable ripr.toml lookup must not fingerprint as absent built-in defaults"
+                    .to_string(),
+            ),
+            Ok(Some(_)) => {
+                // A privileged process can still traverse mode 000. Skip rather
+                // than fail the production behavior that remains correct for
+                // unprivileged users.
+                Ok(())
+            }
+            Err(error) if error.contains("ripr.toml") => Ok(()),
+            Err(error) => Err(format!(
+                "an unreadable ripr.toml lookup must name ripr.toml: {error}"
+            )),
+        }
     }
 }

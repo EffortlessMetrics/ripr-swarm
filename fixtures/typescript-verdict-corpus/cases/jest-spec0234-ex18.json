@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-spec0234-ex18",
+  "subject_id": "authored-ts-jest-relations",
+  "diff": "cases/jest-spec0234-ex18.diff",
+  "anchor": {
+    "file": "src/priceAlias.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_named_import_alias_tobe",
+  "hard_case": "owner called through a named-import alias (`priceAlias as p`)",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "priceAlias",
+        "equivalence_review": "not equivalent: behavior_change edit (the spec's diff); changes the returned/passed value for amount > 100"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test imports `{ priceAlias as p }` and pins `expect(p(150)).toBe(140)`; the edit makes it 130 and the test fails. ripr finds the `direct_owner_call` relation with an `exact_value` oracle but still reports `weakly_exposed` (gap_state actionable), a wrong-direction gap on a discriminated change. (spec says today weakly_exposed with propagation_unknown; target exposed - still weakly_exposed). Spec cells: RIPR-SPEC-0243 example 18",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-grid-boundary",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for the mutation-operator x test-style grid",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "5f5ff0d0d0c99c9a21791c00ecb5da778076fa6c9f66b7ac53042ad9e0612c56"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "e68ba4524e1476111ae2cdbba759fa1154c88d0621ef94e56c2543cb56c113e7"
+    }
+  ]
+}

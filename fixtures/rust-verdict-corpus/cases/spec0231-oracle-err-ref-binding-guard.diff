@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 0094e74..00fae02 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ pub fn check(x: u32) -> Result<u32, String> {
+     if x > 10 {
+-        return Err(String::from("big"));
++        return Err("big".to_string());
+     }
+     Ok(x)
+ }

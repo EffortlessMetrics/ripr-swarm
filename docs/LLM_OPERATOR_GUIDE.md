@@ -64,7 +64,7 @@ Generated GitHub CI also uploads these paths under the `ripr-reports` artifact.
 It keeps compatibility copies of the packet and brief JSON under
 `target/ripr/agent/`.
 
-## Ordinary path: `ripr agent repair`
+## Ordinary path: the repair transaction
 
 For Rust, ignore Cargo's entire `target/` directory before starting (for example
 `/target/` in `.gitignore`, or an equivalent Git exclude rule). The before phase
@@ -73,7 +73,11 @@ workflow artifacts or an attempt if it is missing. This keeps the focused Cargo
 test's build output separate from the enforced test-only edit surface.
 
 For one named gap, the repair transaction writes the snapshot, packet, verify,
-and receipt artifacts above for you:
+and receipt artifacts above for you. The ordinary spelling is task-first —
+`ripr repair` starts the attempt, `ripr continue` runs its after phase, and
+`ripr status` reports state and the next action; the explicit-phase spelling
+below is the advanced route over the same services, and the commands the tool
+prints may use it:
 
 ```bash
 ripr agent repair --root . --seam-id <seam-id> --phase before
@@ -91,8 +95,11 @@ envelope (`schema_version` `0.1`) carrying the verify 0.3 document unchanged
 under `verify` with the status report embedded beside it under
 `agent_status` — so an orchestrator can `JSON.parse` stdout once and every
 stdout document's shape is identifiable from its `schema_version`; narration
-stays on stderr. When the after phase refuses after the verify render, stdout
-is the bare verify 0.3 document alone; a typed refusal before it (diverged
+stays on stderr. When the after phase refuses after the verify render with
+the attempt still receipt-eligible, stdout is the bare verify 0.3 document
+alone; when the edit cage finished the attempt as not receipt-ready, stdout
+is the typed `repair_after_failure` document naming the terminal attempt
+state and the cage verdict (#6033); a typed refusal before it (diverged
 HEAD, drifted analysis inputs, no movement; exit `3`) prints the
 `repair_after_refusal` document with the cause and recovery. For the
 separately authorized `verify` phase of a trust-bound Python attempt, see

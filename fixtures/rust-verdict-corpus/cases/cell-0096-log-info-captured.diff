@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..392e27a 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -22,7 +22,7 @@ pub fn report(amount: u32) {
+ 
+ /// Logs through the `log` facade; its test captures and checks the record.
+ pub fn audit(amount: u32) {
+-    log::info!("audited {}", amount * 7);
++    log::info!("audited {}", 7 * amount);
+ }
+ 
+ /// Prints to stderr; the test pins only the returned flag.

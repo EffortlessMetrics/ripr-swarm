@@ -12,9 +12,9 @@ ripr agent repair --root . --seam-id <seam-id> --phase before
 ripr agent repair --root . --attempt <repair-attempt-id> --phase after
 ```
 
-The before phase prints the attempt manifest path and the exact `--attempt` command to run next. Preserve that command across agent sessions, process restarts, and concurrent work.
+The before phase prints the attempt manifest path and the exact `--attempt` command to run next. Preserve that command across agent sessions, process restarts, and concurrent work. When the captured edit-cage baseline is ambiguous — the capture could not prove the exact worktree state it measured, which stale `target/` state on Windows correlates with (#7204) — the before phase replaces the edit instruction with the disclosure on stderr ("`ambiguous: true`", the artifact that records it, and the Incomparable consequence) and records a `limitations` entry on the manifest: that attempt can only end in an `Incomparable` refusal, so resolve the workspace condition and run the same `--phase before` command again from a clean state if a scorable attempt is wanted.
 
-The repair packet is written to `target/ripr/workflow/agent-packet.json`. By default stdout is a short summary, in a terminal and in a pipe alike: the seam, the changed behavior, the missing discriminator, the one test file to edit, an assertion shape, the packet path, and the exact `--attempt ... --phase after` command. With `--json` stdout is exactly one JSON document, like every other agent command: the packet envelope (`schema_version` `0.5`, see [Output Schema](OUTPUT_SCHEMA.md) § "Agent Seam Packets") with an additive `repair_attempt` block naming the attempt id, the attempt manifest path, the packet path, and the exact `--attempt ... --phase after` command to run after the edit. A driver that captures only stdout can therefore complete before → edit → after without reading stderr; the packet content itself stays unchanged from the file, and the stdout document is not part of the attempt's digest bindings — the packet file is. Both the document and the stderr narration print only after the attempt is durably published, so a refused preparation never emits a success document. The packet file is the machine artifact either way.
+The repair packet is written to `target/ripr/workflow/agent-packet.json`. By default stdout is a short summary, in a terminal and in a pipe alike: the seam, the changed behavior, the missing discriminator, the one test file to edit, an assertion shape, the packet path, and the exact `--attempt ... --phase after` command. With `--json` stdout is exactly one JSON document, like every other agent command: the packet envelope (`schema_version` `0.5`, see [Output Schema](OUTPUT_SCHEMA.md) § "Agent Seam Packets") with an additive `repair_attempt` block naming the attempt id, the attempt manifest path, the packet path, and the exact `--attempt ... --phase after` command to run after the edit. A driver that captures only stdout can therefore complete before → edit → after without reading stderr; when the captured baseline is ambiguous (#7204) that same stdout carries the disclosure instead — the `repair_attempt` block gains `baseline_ambiguous: true`, and the plain summary replaces the bare after-edit directive with the warning and the clean-state restart route — the packet content itself stays unchanged from the file, and the stdout document is not part of the attempt's digest bindings — the packet file is. Both the document and the stderr narration print only after the attempt is durably published, so a refused preparation never emits a success document. The packet file is the machine artifact either way.
 
 `--seam-id <id> --phase after` remains a compatibility route. It succeeds only when exactly one awaiting attempt has that seam. Zero or multiple matches fail closed; RIPR does not guess which attempt is newest or intended.
 
@@ -256,7 +256,7 @@ target/ripr/workflow/            # status input
 
 Those paths keep existing review and cockpit integrations working. Their evidence is admitted only after the exact attempt's retained before snapshot and packet have been resolved and validated.
 
-By default the after phase's stdout is a short summary: the movement line (for example `Result for seam ...: weak -> exposed (weakly_gripped -> strongly_gripped, improved).`), whether a test run was recorded, the next step, and the receipt and verify paths. On a refusal stdout stays empty and stderr names the cause and recovery. With `--json`, stdout is exactly one JSON document, like every other agent command: the versioned `repair_after_result` envelope (`schema_version` `0.1`), which carries the agent verify 0.3 document — every existing field, including its own top-level `status` — unchanged under `verify`, with the status report embedded beside it under `agent_status`, so a caller can parse stdout once and every stdout document's shape is identifiable from its `schema_version`. Narration stays on stderr. When the after phase refuses after the verify render (for example the receipt is not receipt-ready), stdout is the bare verify 0.3 document alone — a pure verify document, still one document, honestly labeled. When it refuses with a named cause before any verify document exists (a diverged HEAD, drifted analysis inputs, or a no-movement verify refusal; exit code `3`), stdout is the typed `repair_after_refusal` document (`schema_version` `0.2`): `attempt_id`, the terse `error`, and the `narration` lines naming the cause and recovery that stderr also carries.
+By default the after phase's stdout is a short summary: the movement line (for example `Result for seam ...: weak -> exposed (weakly_gripped -> strongly_gripped, improved).`), whether a test run was recorded, the next step, and the receipt and verify paths. On a refusal stdout stays empty and stderr names the cause and recovery. With `--json`, stdout is exactly one JSON document, like every other agent command: the versioned `repair_after_result` envelope (`schema_version` `0.1`), which carries the agent verify 0.3 document — every existing field, including its own top-level `status` — unchanged under `verify`, with the status report embedded beside it under `agent_status`, so a caller can parse stdout once and every stdout document's shape is identifiable from its `schema_version`. Narration stays on stderr. When the after phase refuses after the verify render with the attempt still receipt-eligible (for example a failed receipt publication), stdout is the bare verify 0.3 document alone — a pure verify document, still one document, honestly labeled. When the edit cage instead finished the attempt as not receipt-ready (verdict `violated` or `incomparable`, or the attempt is `stale`), stdout is the typed `repair_after_failure` document (`schema_version` `0.4`), which names the terminal `attempt_state` and the `edit_cage_verdict` instead of a success-shaped movement summary (#6033); the refused phase also withdraws the fresh shared workflow artifacts it wrote and restores the previous projections' bytes (a pre-attempt artifact is renamed aside when the phase begins), so `ripr agent status` does not show them as current loop artifacts beside the terminal attempt. When it refuses with a named cause before any verify document exists (a diverged HEAD, drifted analysis inputs, or a no-movement verify refusal; exit code `3`), stdout is the typed `repair_after_refusal` document (`schema_version` `0.2`): `attempt_id`, the terse `error`, and the `narration` lines naming the cause and recovery that stderr also carries.
 
 ### Rerunning the receipt
 
@@ -278,8 +278,18 @@ Repair attempts fail closed:
   `lang-typescript` feature, a TypeScript/JavaScript test path such as
   `*.test.ts`, `*.spec.*`, `*.cy.*`, or `__tests__`) is refused before any attempt is
   created, and before the phase writes any workflow artifact or prints a
-  completion line; inline `#[cfg(test)]` modules in production files are not
-  valid edit targets;
+  completion line. The one exception is a production Rust file whose only
+  role in the repair is its inline test module: the attempt is created only
+  when that file has exactly one governed inline `#[cfg(test)]` module (no
+  second candidate, no out-of-line `mod tests;`), and the after phase is
+  compliant only when the edit inserts at least one new function with a
+  recognised test attribute (plus optional helper `fn` and `use` items,
+  comments, and blank lines) into that module's body, with production code,
+  the module declaration, every existing body byte (tests, comments, blank
+  lines), and every staged or committed copy of the file unchanged or equal
+  to the validated bytes. A generated file (built-in naming or
+  `languages.rust.generated_file_patterns`) is refused at the before phase. Any other change to that file
+  fails the attempt as `outside_inline_test_region` (#5210);
 - malformed or unknown attempt IDs are rejected;
 - missing, moved, modified, or digest-mismatched retained artifacts are rejected;
 - a cross-attempt packet is rejected;
@@ -290,7 +300,7 @@ Repair attempts fail closed:
 
 Two refusals happen before the attempt is finished, so the attempt stays `awaiting_edit` and the printed rerun works: changed analysis inputs ([Cargo.lock between the phases](#cargolock-between-the-phases)) and a `HEAD` that no longer descends from the prepared head ([Committing between the phases](#committing-between-the-phases)).
 
-A failed, incomparable, or stale attempt is terminal: re-running its after phase or `ripr agent receipt` refuses. The after phase lists each refused path and the recovery route. If you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree). Undo the refused changes and set the test edit aside, for example with `git stash`. While the gap still exists, run `ripr agent repair --root . --seam-id <seam-id> --phase before` to prepare a new attempt. Restore the test edit, then run the new `--attempt` command.
+A failed, incomparable, or stale attempt is terminal: re-running its after phase or `ripr agent receipt` refuses. The recovery narration follows the verdict (#7204). When the cage refused paths, the after phase lists each refused path and the undo route: if you committed the test edit or a refused change, uncommit it first (for example `git reset --soft HEAD~1` when it is the last commit; the changes stay in the worktree); undo the refused changes and set the test edit aside, for example with `git stash`; while the gap still exists, run `ripr agent repair --root . --seam-id <seam-id> --phase before` to prepare a new attempt; restore the test edit, then run the new `--attempt` command. When the verdict is `Incomparable` with an empty violations list, nothing was refused and no undo is narrated: the narration names the incomparability cause — a before-phase baseline recorded `ambiguous: true` when the attempt's baseline artifact carries it — and routes to a fresh attempt from a clean state: set the test edit aside, run the `--phase before` command from the clean state, restore the test edit, then run the new `--attempt` command. Because an incomparable delta is never judged against the edit surface, an empty violations list is not a compliance finding: the narration also names the changed paths the cage did not evaluate and warns that a plain `git stash` leaves untracked files in place, so an outside-surface change is not silently carried into the next baseline.
 
 RIPR does not select “the latest” attempt, reconstruct an attempt from mutable global files, or continue on partial evidence.
 
@@ -298,38 +308,37 @@ RIPR does not select “the latest” attempt, reconstruct an attempt from mutab
 
 A repair attempt prepares and verifies evidence. RIPR does not author or apply the focused test edit, call an external model provider, run mutation testing, prove test adequacy or correctness, authorize merge, or turn static evidence into runtime proof.
 
-### Inline-only repositories are out of repair scope (#5210)
+### Inline test modules a repair cannot target (#5210)
 
-Bounded repair authorizes whole files only, and only files matching the
-test-surface path convention (`tests`/`test` components, `*_test` and
-`*_tests` Rust/Python names, `test_*.py`, TypeScript test files): a
-production file that matches the convention is eligible as a whole-file
-target, and inline `#[cfg(test)]` modules in a file that does not match
-never qualify it. A repository whose only tests are inline in
-non-test-surface files can never start a bounded repair, on any surface.
-This is a permanent scope boundary, not a missing feature queued behind
-other work: the repair workflow consumes only file-level cage authority
-(#3163) and does not integrate the existing inline-module region cage
-(`edit_cage/inline_test_region`, RIPR-SPEC-0181). Refusals stay loud and
-typed on every surface; no surface promises what another refuses:
+Bounded repair authorizes whole test-surface files (`tests`/`test`
+components, `*_test` and `*_tests` Rust/Python names, `test_*.py`,
+TypeScript test files) and one narrower case: a production Rust file with
+exactly one governed inline `#[cfg(test)]` module, where the edit is
+confined to inserting new tests inside that module (see the exception
+above and RIPR-SPEC-0181). A production file whose inline tests do not
+meet that bar cannot start a bounded repair: no candidate module, more
+than one candidate module, or an out-of-line `mod tests;`. Refusals stay
+loud and typed on every surface:
 
 - CLI: `ripr agent repair --phase before` refuses with `has no test file
   ripr can route a repair to` and names the packet field below;
-- MCP: `ripr_prepare_repair` returns `repair_packet_ready: false` with
-  ineligibility `fix_site_not_test_surface` once the earlier gates
-  (candidate actionability, discriminator, static limits, established
-  fix site) pass, and creates nothing; earlier gates keep their own
-  refusal reasons;
+- MCP: `ripr_prepare_repair` still applies the test-surface rule alone, so
+  it refuses every inline-module seam, including the eligible single-module
+  case, with ineligibility `fix_site_not_test_surface` once the earlier
+  gates (candidate actionability, discriminator, static limits, established
+  fix site) pass, and creates nothing (MCP parity is #5516); earlier gates
+  keep their own refusal reasons;
 - pilot: the summary ranks seams for inspection by hand with no repair
   start, and the focused-test line names the missing test target;
 - packet: `recommended_test.file` is `"not_applicable"` when no target
-  was proposed; an inline-module proposal instead names the production
+  was proposed; an ineligible inline-module proposal names the production
   file with target kind `NewInlineTestModule` and a demoted
   inspection-only task. Both states carry an empty
   `allowed_edit_surface` with the seam's production file under
   `forbidden_files`.
 
-To gain a repair target, add the focused test as a separate test-surface
-file (a `tests/` path or `*_test.rs` name) in the crate that owns the
-seam, then rerun pilot. Until then, inspect the ranked seams by hand:
-they are still worth reading, just not repairable through RIPR.
+To gain a repair target for such a seam, keep exactly one inline
+`#[cfg(test)]` module in the file, or add the focused test as a separate
+test-surface file (a `tests/` path or `*_test.rs` name) in the crate that
+owns the seam, then rerun pilot. Until then, inspect the ranked seams by
+hand: they are still worth reading, just not repairable through RIPR.

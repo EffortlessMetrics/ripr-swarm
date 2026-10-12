@@ -1,0 +1,22 @@
+{
+  "case_id": "semver-greater-patch",
+  "subject_id": "semver",
+  "origin": "upstream",
+  "anchor": "src/eval.rs:82",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_custom_assert_helper",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

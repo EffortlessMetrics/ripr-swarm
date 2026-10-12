@@ -6,8 +6,8 @@
 
 use std::ops::Range;
 
-use ra_ap_syntax::ast::{self, HasAttrs, HasModuleItem, HasName};
-use ra_ap_syntax::{AstNode, SyntaxNode};
+use ra_ap_syntax::ast::{self, HasAttrs, HasName};
+use ra_ap_syntax::{AstNode, NodeOrToken, SyntaxKind, SyntaxNode};
 
 use super::{InlineTestRegionError, InlineTestRegionRejectReason, digest_bytes};
 
@@ -145,24 +145,40 @@ fn module_path(node: &SyntaxNode) -> String {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ObservedItemKind {
+    /// A `fn` carrying a recognised test attribute.
+    TestFn,
+    /// Any other `fn`, such as a helper.
     Fn,
     Use,
     NestedModule,
     Other,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum BodyElementKind {
+    Item(ObservedItemKind),
+    Comment,
+    Whitespace,
+    /// Anything else between the braces (an inner attribute, a stray token).
+    Other,
+}
+
+/// One element of a module body between its braces, in source order. Items
+/// carry their own attributes and attached comments; detached comments and
+/// whitespace between items are elements of their own, so no body byte is
+/// dropped.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct ObservedItem {
-    pub(crate) kind: ObservedItemKind,
+pub(crate) struct BodyElement {
+    pub(crate) kind: BodyElementKind,
     pub(crate) text: String,
 }
 
-pub(crate) fn named_module_items(
+pub(crate) fn named_module_body(
     source: &str,
     expected_module_path: &str,
-) -> Result<Vec<ObservedItem>, InlineTestRegionError> {
+) -> Result<Vec<BodyElement>, InlineTestRegionError> {
     let Some(parse) = crate::analysis::parse_clean_source_file(source) else {
         return Err(InlineTestRegionError::Unsupported {
             reason: InlineTestRegionRejectReason::Unparseable,
@@ -182,14 +198,7 @@ pub(crate) fn named_module_items(
         let Some(list) = module.item_list() else {
             continue;
         };
-        matches.push(
-            list.items()
-                .map(|item| ObservedItem {
-                    kind: item_kind(&item),
-                    text: item.syntax().text().to_string(),
-                })
-                .collect::<Vec<_>>(),
-        );
+        matches.push(body_elements(&list));
     }
     match matches.len() {
         1 => Ok(matches.remove(0)),
@@ -202,10 +211,46 @@ pub(crate) fn named_module_items(
     }
 }
 
+fn body_elements(list: &ast::ItemList) -> Vec<BodyElement> {
+    list.syntax()
+        .children_with_tokens()
+        .filter(|element| {
+            !matches!(
+                element.kind(),
+                ra_ap_syntax::T!['{'] | ra_ap_syntax::T!['}']
+            )
+        })
+        .map(|element| match element {
+            NodeOrToken::Node(node) => BodyElement {
+                kind: ast::Item::cast(node.clone()).map_or(BodyElementKind::Other, |item| {
+                    BodyElementKind::Item(item_kind(&item))
+                }),
+                text: node.text().to_string(),
+            },
+            NodeOrToken::Token(token) => BodyElement {
+                kind: match token.kind() {
+                    SyntaxKind::WHITESPACE => BodyElementKind::Whitespace,
+                    SyntaxKind::COMMENT => BodyElementKind::Comment,
+                    _ => BodyElementKind::Other,
+                },
+                text: token.text().to_string(),
+            },
+        })
+        .collect()
+}
+
 fn item_kind(item: &ast::Item) -> ObservedItemKind {
     let node = item.syntax();
-    if ast::Fn::cast(node.clone()).is_some() {
-        ObservedItemKind::Fn
+    if let Some(function) = ast::Fn::cast(node.clone()) {
+        let attributes = function
+            .attrs()
+            .map(|attr| attr.syntax().text().to_string())
+            .collect::<Vec<_>>();
+        if crate::analysis::attributes_define_test(attributes.iter().map(String::as_str)) {
+            ObservedItemKind::TestFn
+        } else {
+            ObservedItemKind::Fn
+        }
     } else if ast::Use::cast(node.clone()).is_some() {
         ObservedItemKind::Use
     } else if ast::Module::cast(node.clone()).is_some() {

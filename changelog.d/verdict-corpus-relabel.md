@@ -10,4 +10,4 @@
   reproduced every label; the bytesize master@66a3715 (2.7.0) cases now
   skip a quickcheck property that fails on random inputs regardless of the
   edit. Replays run cargo offline and refuse test commands or checkout
-  symlinks that would leave the run-owned tree.
+  symlinks that would leave the run-owned tree (#6596).

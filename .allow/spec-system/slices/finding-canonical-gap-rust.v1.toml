@@ -1,0 +1,72 @@
+schema_version = "2.0"
+id = "ripr.slice.finding-canonical-gap-rust.v1"
+generation = 1
+
+source_issue = "issue:5268"
+design_reference = "RIPR-SPEC-0045"
+change_class = "behavior_change"
+
+claim_boundary = """
+The Rust producer now populates `Finding.canonical_gap` (and the additive
+`canonical_gap_id` / `canonical_gap` output members) in both production loops
+(diff and repo), mirroring the Python producer's identity shape and its
+typed static-limitation gate. The normalized discriminator derives from the
+changed line the probe already carries: a comparison predicate names the
+equality boundary the classifier's missing-discriminator statement renders
+(extracted by the same operand reader), with quoted string/char literals
+byte-encoded so distinct predicates never share one identity. Population is
+an identity claim, not an establishment claim: a producer-named missing
+discriminator keeps the typed `missing_discriminator` refusal ahead of any
+populated gap; a finding withheld behind its own static limitation and a
+probe with no owner identity keep `canonical_gap: None`. The MCP gap and
+repair-card resource routes read a producer id (which embeds a
+workspace-relative path) whole. It does not change `RepairReadiness` gate
+order or reason strings, re-base the gate on a different producer fact,
+populate canonical gaps for other languages, or claim discriminator
+establishment anywhere.
+"""
+
+non_goals = [
+  "re-basing the MCP readiness gate onto a different producer fact",
+  "changing RepairReadiness gate order, reason strings, or fail-closed posture",
+  "populating canonical gaps for Python/Perl/TypeScript producers",
+  "establishing (not just naming) discriminators; real establishment stays a producer/test fact",
+  "Python/Perl key-normalization changes (their conventions are untouched)",
+]
+
+return_conditions = [
+  "Return to root if a populated gap id can collide across distinct changed behaviors.",
+  "Return to root if a static-limited or ownerless finding loses its typed refusal.",
+  "Return to root if the seam-to-witness binding ever credits a producer gap id as a repo seam's canonical gap id.",
+  "Return to root if golden drift shows any semantic flip (class, finding set, oracle, or stop-reason change).",
+]
+
+owned_seams = [
+  "seam:ripr:analysis:rust-canonical-gap-identity",
+]
+
+shared_seams = [
+  "seam:ripr:mcp:repair-readiness",
+  "seam:ripr:analysis:witness-adapters",
+  "seam:ripr:lsp:canonical-finding-groups",
+  "seam:ripr:app:repair-card-handoff",
+]
+
+forbidden_seams = [
+  "seam:ripr:analysis:classifier-finding-construction",
+  "seam:ripr:output:check-json-contract",
+  "seam:ripr:fixtures:goldens",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0045"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

@@ -9,7 +9,7 @@
         {
           "label": "first_repair_packet",
           "gap_identity": "gap:rust:pricing",
-          "packet": "RIPR first repair packet\nGap identity: gap:rust:pricing\nLanguage: rust\nSuggested action:\n- Keep the receipt with the focused repair evidence.\nVerify command:\nripr agent verify --root . --json\nReceipt command:\nripr agent receipt --root . --json\nLimits and non-claims:\n- Static editor evidence only."
+          "packet": "RIPR first repair packet\nGap identity: gap:rust:pricing\nLanguage: rust\nSuggested action:\n- Keep the receipt with the focused repair evidence.\nVerify command:\nripr agent verify --root <root> --json\nReceipt command:\nripr agent receipt --root <root> --json\nLimits and non-claims:\n- Static editor evidence only."
         }
       ]
     },

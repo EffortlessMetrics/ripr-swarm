@@ -1,0 +1,12 @@
+diff --git a/src/pricing.ts b/src/pricing.ts
+--- a/src/pricing.ts
++++ b/src/pricing.ts
+@@ -29,7 +29,7 @@ export function discountCents(tier: string, subtotalCents: number): number {
+ }
+ 
+ export function taxCents(subtotalCents: number): number {
+-  return Math.floor((subtotalCents * 8) / 100);
++  return Math.floor((subtotalCents * 9) / 100);
+ }
+ 
+ export function totalWithTax(subtotalCents: number): number {

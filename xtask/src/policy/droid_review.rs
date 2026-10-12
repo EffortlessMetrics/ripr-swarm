@@ -274,13 +274,11 @@ pub(crate) fn check_droid_review_config() -> Result<(), String> {
     if let Ok(text) = crate::read_text_lossy(Path::new(droid_review_path)) {
         let lines = active_yaml_lines(&text);
 
-        if !has_active_line(&lines, "opened")
-            || !has_active_line(&lines, "synchronize")
-            || !has_active_line(&lines, "ready_for_review")
-            || !has_active_line(&lines, "reopened")
-        {
+        let mut types = repo_policy::routed_rust_pull_request_types(&text).unwrap_or_default();
+        types.sort();
+        if types != ["labeled", "opened", "reopened", "synchronize", "unlabeled"] {
             violations.push(format!(
-                "{droid_review_path}: pull_request types must include opened, synchronize, ready_for_review, reopened"
+                "{droid_review_path}: pull_request types must be opened, synchronize, reopened, labeled, unlabeled; Ready must not repeat advisory computation (#4987)"
             ));
         }
 

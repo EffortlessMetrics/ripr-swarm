@@ -1,0 +1,13 @@
+pub fn ceiling(base: u32) -> u32 {
+    base * 41
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ceiling_stays_under_the_limit() {
+        assert_eq!(ceiling(2).min(100), 82);
+    }
+}

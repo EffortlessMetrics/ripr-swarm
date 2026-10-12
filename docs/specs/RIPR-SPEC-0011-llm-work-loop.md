@@ -60,6 +60,17 @@ when a UTF-8 Unix directory name contains a literal backslash. A custom missing
 verify path has no known snapshot pair and emits no workflow producer hint.
 The refusal and receipt evidence boundaries remain unchanged (#6684).
 
+With an absolute selected root that has no literal Unix backslash in its name,
+`agent start --out` preserves a custom workflow directory's native UTF-8 Unix
+filename characters in manifest locators,
+artifact inventory and generated commands. Both relative and absolute `--out`
+inputs must address that same physical directory when the emitted snapshot,
+verify, receipt and regeneration commands run from another working directory.
+A literal backslash or shell quote must not select a slash-normalized decoy.
+Windows retains separator presentation. This does not qualify arbitrary
+relative-root invocations, workflow root spellings containing a literal Unix
+backslash, or change missing custom-input recovery (#6809).
+
 The loop command templates are centralized in one internal module before the
 workflow manifest is introduced. That module owns the current workflow artifact
 paths, the editor/CI pilot-agent artifact paths, and the command builders for:
@@ -109,7 +120,8 @@ Receipt provenance records:
 - `ripr_version`;
 - `repo_root`;
 - `config_fingerprint` when `ripr.toml` exists and can be read without running
-  analysis;
+  analysis; a present but unreadable `ripr.toml` (including a dangling
+  symlink) is an error, not a missing fingerprint;
 - `command_template_version`;
 - `generated_at`;
 - before, after, and verify artifact paths plus SHA-256 hashes;
@@ -399,7 +411,15 @@ after phase applies) and selects `next_command` in this order:
    (`next.repair_command: null`) selects nothing and warns
    `pilot_found_no_repair_target`: rerunning pilot would rank the same seam
    again, so the warning names the hand step (a test in the seam's own
-   crate) instead. Likewise a complete pilot summary that ranked no seam,
+   crate) instead. A complete pilot summary that ranked no seam because it
+   withheld every seam as a static limitation (`opaque` or `*_unknown`,
+   `withheld_static_limitations_total` > 0) and recorded no repair start
+   selects nothing and warns
+   `pilot_withheld_static_limitations_no_repair_target`, naming the repo
+   exposure report where each withheld seam names its unresolved stage
+   (#5497). When that run's repo exposure report says a seam limit applied,
+   the warning names raising the limit and rerunning pilot instead, since
+   seams past the cut may hold gaps. Likewise a complete pilot summary that ranked no seam,
    recorded no repair card (`python_first_use` absent, `null`, or status
    `no_python_findings` or `no_repair_cards`; `analysis_unavailable` is not
    this fact), routed the code to `ripr check` (`language_routes.state:
@@ -455,6 +475,14 @@ interprets it through the receipt owner (`output::agent_receipt`):
   that attempt; the reading is `unconfirmed`, because the earlier outcome cannot
   be reconstructed, and the warning names the new-attempt command for the seam
   in case its gap is still open.
+
+Repair inventories and Git currentness probes ignore the user's
+`diff.orderFile`: a dangling orderfile must not abort the before phase or the
+after phase, including when the focused test edit was committed between phases.
+A live orderfile leaves the same static result. Dirty production input still
+refuses with its path and commit/restore recovery, without publishing an attempt.
+Successful static repair evidence stays advisory and records that verification
+was not run (#6837).
 
 An after phase that refuses after selecting its attempt records the refusal on
 the attempt (`last_after_refusal`, owned by `app::repair_attempt`): the final
@@ -601,6 +629,9 @@ it does not execute the command or grant edit authority.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_smoke/repair_orderfile.rs::repair_completes_despite_user_orderfile`
+- `crates/ripr/tests/cli_smoke/repair_orderfile.rs::dirty_production_requires_recovery_despite_user_orderfile`
+
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_reports_missing_artifacts_and_next_commands`
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_recovers_seam_id_from_receipt`
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_recovers_seam_id_from_verify_packet_or_brief`
@@ -639,6 +670,8 @@ it does not execute the command or grant edit authority.
 - `crates/ripr/src/output/agent_workflow.rs::tests::workflow_json_is_structured_and_advisory`
 - `crates/ripr/src/output/agent_workflow.rs::tests::workflow_markdown_lists_commands_and_boundaries`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_json_selects_changed_seam`
+- `crates/ripr/src/cli/commands_agent_support.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
+- `crates/ripr/src/cli/commands_agent_support.rs::tests::unreadable_ripr_toml_lookup_is_not_built_in_defaults`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_guidance_covers_improved_state`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_guidance_covers_changed_state`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_guidance_covers_regressed_state`

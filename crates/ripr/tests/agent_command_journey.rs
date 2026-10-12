@@ -49,9 +49,50 @@ static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// `agent status`, and fixture-setup snapshot production, which redirects the
 /// child stdout into a file the way the shell redirect would).
 fn run_ripr(current_dir: &Path, args: &[&str]) -> Result<Output, String> {
-    Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .current_dir(current_dir)
-        .args(args)
+    run_ripr_with_env_opt(current_dir, args, None, None)
+}
+
+/// [`run_ripr`] with one child-scoped environment override. The variable is
+/// set on the child only, so parallel tests never observe it.
+fn run_ripr_with_env(
+    current_dir: &Path,
+    args: &[&str],
+    env_key: &str,
+    env_value: &str,
+) -> Result<Output, String> {
+    run_ripr_with_env_opt(current_dir, args, Some((env_key, env_value)), None)
+}
+
+/// [`run_ripr`] with one variable removed from the child environment, so a
+/// silence assertion stays hermetic when the developer runs the suite with
+/// that switch set in the ambient environment (#6917). Setting it to an
+/// empty value would still enable presence-gated tracing.
+fn run_ripr_without_env(
+    current_dir: &Path,
+    args: &[&str],
+    env_key: &str,
+) -> Result<Output, String> {
+    run_ripr_with_env_opt(current_dir, args, None, Some(env_key))
+}
+
+/// The one spawn site behind [`run_ripr`], [`run_ripr_with_env`], and
+/// [`run_ripr_without_env`], so the file keeps a single direct-spawn
+/// construction for the `ripr` binary.
+fn run_ripr_with_env_opt(
+    current_dir: &Path,
+    args: &[&str],
+    env_override: Option<(&str, &str)>,
+    env_remove: Option<&str>,
+) -> Result<Output, String> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ripr"));
+    command.current_dir(current_dir).args(args);
+    if let Some((key, value)) = env_override {
+        command.env(key, value);
+    }
+    if let Some(key) = env_remove {
+        command.env_remove(key);
+    }
+    command
         .output()
         .map_err(|error| format!("spawn ripr {args:?} in {}: {error}", current_dir.display()))
 }
@@ -678,6 +719,131 @@ fn cleanup(root: &Path) {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// #7289: each artifact command in a brief must prepare its own redirect,
+/// even when pasted before the before-snapshot command from a foreign cwd.
+#[test]
+fn brief_artifact_command_inspect_packet_prepares_its_directory() -> Result<(), String> {
+    brief_artifact_command_journey("/next/inspect_packet", "agent-seam-packets.json", "packets")
+}
+
+#[test]
+fn brief_artifact_command_after_snapshot_prepares_its_directory() -> Result<(), String> {
+    brief_artifact_command_journey(
+        "/top_seams/0/verification/after_snapshot_command",
+        "after.repo-exposure.json",
+        "seams",
+    )
+}
+
+#[test]
+fn brief_artifact_command_before_snapshot_prepares_its_directory() -> Result<(), String> {
+    brief_artifact_command_journey(
+        "/top_seams/0/verification/before_snapshot_command",
+        "before.repo-exposure.json",
+        "seams",
+    )
+}
+
+fn brief_artifact_command_journey(
+    pointer: &str,
+    artifact: &str,
+    subjects: &str,
+) -> Result<(), String> {
+    let Some(bash) = shell_prerequisite()? else {
+        return Ok(());
+    };
+    let base = unique_temp_workspace("brief-artifact-command");
+    let result = (|| -> Result<(), String> {
+        let relative_root = "selected repo's root café";
+        let root = base.join(relative_root);
+        std::fs::create_dir_all(&root).map_err(|error| format!("create root: {error}"))?;
+        init_producer_fixture_repo(&root)?;
+        let diff = root.join("diff.patch");
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/boundary_gap/diff.patch"),
+            &diff,
+        )
+        .map_err(|error| format!("copy brief diff: {error}"))?;
+        let output = run_ripr(
+            &base,
+            &[
+                "agent",
+                "brief",
+                "--root",
+                relative_root,
+                "--diff",
+                "diff.patch",
+                "--json",
+            ],
+        )?;
+        assert_success(&output, "ripr agent brief with a relative root")?;
+        let brief: Value = serde_json::from_slice(&output.stdout)
+            .map_err(|error| format!("parse brief JSON: {error}"))?;
+        let seam_id = brief
+            .pointer("/top_seams/0/seam_id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+            .ok_or_else(|| format!("brief has no selected seam: {brief}"))?;
+        let command = brief
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .filter(|command| !command.is_empty())
+            .ok_or_else(|| format!("brief has no {pointer}: {brief}"))?;
+        let workflow = root.join("target/ripr/workflow");
+        if workflow.exists() {
+            return Err("brief setup unexpectedly prepared the workflow directory".to_string());
+        }
+        let journey = Journey {
+            root_arg: root_arg_of(&root),
+            launch_dir: foreign_launch_dir(&base)?,
+            path_env: shell_path_env()?,
+            bash,
+            seam_id: seam_id.to_string(),
+            root,
+        };
+        // First execution has no output directory; the second must also
+        // succeed and remain bound to the selected root.
+        for _ in 0..2 {
+            let output = run_in_shell(&journey, command)?;
+            assert_success(&output, &format!("printed {pointer}: {command}"))?;
+            let document = read_json(&workflow_artifact(&journey.root, artifact))?;
+            let rows = document
+                .get(subjects)
+                .and_then(Value::as_array)
+                .ok_or_else(|| format!("{artifact} has no {subjects}: {document}"))?;
+            if !rows
+                .iter()
+                .any(|row| row.get("seam_id").and_then(Value::as_str) == Some(seam_id))
+            {
+                return Err(format!(
+                    "{artifact} does not contain selected seam {seam_id}: {document}"
+                ));
+            }
+            if journey.launch_dir.join("target").exists() || base.join("target").exists() {
+                return Err("printed brief command wrote outside the selected root".to_string());
+            }
+        }
+        // Removal control: keep the producer and redirect byte-identical,
+        // remove only preparation, and observe the intended shell failure.
+        std::fs::remove_dir_all(&workflow).map_err(|error| format!("remove workflow: {error}"))?;
+        let (_, bare_command) = command
+            .split_once(" && ")
+            .ok_or_else(|| format!("{pointer} has no preparation to remove: {command}"))?;
+        let output = run_in_shell(&journey, bare_command)?;
+        if output.status.success()
+            || !String::from_utf8_lossy(&output.stderr).contains(artifact)
+            || workflow_artifact(&journey.root, artifact).exists()
+        {
+            return Err(format!(
+                "removing {pointer} preparation did not reject its redirect: {output:?}"
+            ));
+        }
+        Ok(())
+    })();
+    cleanup(&base);
+    result
+}
+
 struct ReviewCardFixture(PathBuf);
 
 impl Drop for ReviewCardFixture {
@@ -1000,6 +1166,29 @@ fn rooted_packet_next_journey(prepared_repair: bool) -> Result<(), String> {
             // The advertised recipe brackets a real test edit; verify refuses
             // two snapshots of the same repository revision.
             observe_selected_boundary(&selected)?;
+        }
+    }
+    if !prepared_repair {
+        // #3948: the embedded evidence-record verify names the selected root
+        // like `next` does, and keeps its typed spec. Pasted from the decoy,
+        // it verifies the selected repository's snapshots.
+        let item = packet
+            .pointer("/packets/0/evidence_record/canonical_item")
+            .ok_or_else(|| format!("packet omitted the canonical item: {packet}"))?;
+        let verify = item
+            .get("verify_command")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("canonical item omitted verify_command: {item}"))?;
+        if item
+            .pointer("/command_specs/verify")
+            .is_none_or(Value::is_null)
+        {
+            return Err(format!("bound verify display lost its typed spec: {item}"));
+        }
+        let output = run_in_shell(&journey, verify)?;
+        assert_success(&output, "embedded evidence_record verify_command")?;
+        if journey.launch_dir.join("target").exists() {
+            return Err("embedded verify wrote into foreign decoy root".to_string());
         }
     }
     let receipt = read_json(&selected.join("target/ripr/reports/agent-receipt.json"))?;
@@ -1733,6 +1922,162 @@ fn relative_root_follow_ups(base: &Path, bash: &Path) -> Result<(), String> {
     }
     if journey.launch_dir.join("target").exists() {
         return Err("a pasted command wrote into the foreign directory".to_string());
+    }
+    Ok(())
+}
+
+/// #5301 item 1: the repair before phase builds the classified-seam
+/// inventory once and shares it across packet, start, and snapshot. The
+/// opt-in latency trace prints exactly one `phase=total` line per inventory
+/// load, so one such line proves the shared load; the pre-fix code prints
+/// three. The shared load has no on-disk effect by design (the duplicate
+/// loads were byte-identical), so the trace, whose wire shape the
+/// `resource_cost` unit tests pin, is the honest oracle here rather than an
+/// artifact comparison.
+#[test]
+fn repair_before_phase_builds_one_shared_inventory() -> Result<(), String> {
+    let Some(bash) = shell_prerequisite()? else {
+        return Ok(());
+    };
+    let base = unique_temp_workspace("before-shared-inventory");
+    let result = before_phase_builds_one_shared_inventory(&base, &bash);
+    cleanup(&base);
+    result
+}
+
+fn before_phase_builds_one_shared_inventory(base: &Path, bash: &Path) -> Result<(), String> {
+    let root = base.join("selected root");
+    let (journey, _) = start_journey_at_root(&root, bash)?;
+    // The repair before phase refuses a checkout whose build directory is
+    // not Git-ignored, as on the relative-root journey.
+    std::fs::write(root.join(".gitignore"), "/target/\n")
+        .map_err(|error| format!("write .gitignore: {error}"))?;
+    fixture_git_ok(&root, &["add", ".gitignore"])
+        .map_err(|error| format!("fixture git add: {error}"))?;
+    commit_fixture(&root, "ignore the build directory")?;
+    let output = run_ripr_with_env(
+        &journey.launch_dir,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &journey.root_arg,
+            "--seam-id",
+            &journey.seam_id,
+            "--phase",
+            "before",
+        ],
+        "RIPR_REPO_EXPOSURE_LATENCY_TRACE",
+        "1",
+    )?;
+    assert_success(&output, "ripr agent repair --phase before")?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let totals = stderr.matches("phase=total ").count();
+    if totals != 1 {
+        return Err(format!(
+            "before phase ran {totals} inventory loads, expected 1:\n{stderr}"
+        ));
+    }
+    Ok(())
+}
+
+/// #6897/#6917: the opt-in persist-latency trace prints one line per
+/// persist span on the before phase, stays silent without the switch, and
+/// never disturbs `--json` stdout.
+#[test]
+fn repair_before_phase_emits_persist_trace_when_enabled() -> Result<(), String> {
+    let Some(bash) = shell_prerequisite()? else {
+        return Ok(());
+    };
+    let base = unique_temp_workspace("before-persist-trace");
+    let result = before_phase_emits_persist_trace_when_enabled(&base, &bash);
+    cleanup(&base);
+    result
+}
+
+fn before_phase_emits_persist_trace_when_enabled(base: &Path, bash: &Path) -> Result<(), String> {
+    let root = base.join("selected root");
+    let (journey, _) = start_journey_at_root(&root, bash)?;
+    // The repair before phase refuses a checkout whose build directory is
+    // not Git-ignored, as on the relative-root journey.
+    std::fs::write(root.join(".gitignore"), "/target/\n")
+        .map_err(|error| format!("write .gitignore: {error}"))?;
+    fixture_git_ok(&root, &["add", ".gitignore"])
+        .map_err(|error| format!("fixture git add: {error}"))?;
+    commit_fixture(&root, "ignore the build directory")?;
+    let traced = run_ripr_with_env(
+        &journey.launch_dir,
+        &[
+            "agent",
+            "repair",
+            "--root",
+            &journey.root_arg,
+            "--seam-id",
+            &journey.seam_id,
+            "--phase",
+            "before",
+        ],
+        "RIPR_PERSIST_LATENCY_TRACE",
+        "1",
+    )?;
+    assert_success(&traced, "ripr agent repair --phase before")?;
+    let stderr = String::from_utf8_lossy(&traced.stderr);
+    for span in [
+        "phase=baseline_git_inventory ",
+        "phase=baseline_worktree_identity ",
+        "phase=baseline_index_records ",
+        "phase=baseline_stability_recheck ",
+        "phase=baseline_capture ",
+        "phase=baseline_serialize ",
+        "phase=baseline_write ",
+        "phase=attempt_stage_source_read:before_snapshot ",
+        "phase=attempt_stage_source_write:before_snapshot ",
+        "phase=attempt_stage_source_digest:before_snapshot ",
+        "phase=attempt_stage_artifacts ",
+        "phase=persist_before_attempt ",
+    ] {
+        if stderr.matches(span).count() != 1 {
+            return Err(format!(
+                "traced before phase must print {span}exactly once:\n{stderr}"
+            ));
+        }
+    }
+    // Without the switch the same phase stays silent and `--json` stdout
+    // keeps its repair_attempt document. The switch is removed from the
+    // child environment (not merely unset by omission) so ambient developer
+    // tracing cannot leak into the silence oracle.
+    let untraced = run_ripr_without_env(
+        &journey.launch_dir,
+        &[
+            "agent",
+            "repair",
+            "--json",
+            "--root",
+            &journey.root_arg,
+            "--seam-id",
+            &journey.seam_id,
+            "--phase",
+            "before",
+        ],
+        "RIPR_PERSIST_LATENCY_TRACE",
+    )?;
+    assert_success(&untraced, "ripr agent repair --phase before --json")?;
+    let untraced_stderr = String::from_utf8_lossy(&untraced.stderr);
+    if untraced_stderr.contains("ripr_persist_latency") {
+        return Err(format!(
+            "untraced before phase must print no persist lines:\n{untraced_stderr}"
+        ));
+    }
+    let document: Value = serde_json::from_slice(&untraced.stdout)
+        .map_err(|error| format!("before-phase --json stdout is not JSON: {error}"))?;
+    if document
+        .pointer("/repair_attempt/attempt_id")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return Err(format!(
+            "before-phase --json stdout is missing repair_attempt.attempt_id:\n{document}"
+        ));
     }
     Ok(())
 }

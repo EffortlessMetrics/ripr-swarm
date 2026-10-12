@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-mined-wire",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 from test shapes mined in real crates (bytes, httparse, byteorder, base64)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "691031773a13f06597c44af20385189d753fb566e1e65e8a84c81496198a309f"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "36261f2ee6b79b76c694078c2140259f32c97ff8f4865763a3289b4c46e227cd"
+    }
+  ]
+}

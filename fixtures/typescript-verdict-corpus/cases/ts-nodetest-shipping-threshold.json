@@ -1,0 +1,66 @@
+{
+  "case_id": "ts-nodetest-shipping-threshold",
+  "subject_id": "authored-ts-nodetest-pricing",
+  "diff": "cases/ts-nodetest-shipping-threshold.diff",
+  "anchor": {
+    "file": "src/pricing.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "node_assert_strict_equal_boundary_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "Node.js v22.22.0 (node:test, --experimental-strip-types), x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "free shipping starts at the threshold",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "free shipping starts at the threshold",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (FREE_SHIPPING_CENTS < subtotalCents) {",
+        "mutated_line": "if (FREE_SHIPPING_CENTS < subtotalCents) {",
+        "outcome": "tests_failed",
+        "failing_test": "free shipping starts at the threshold",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      },
+      {
+        "replacement": "if (FREE_SHIPPING_CENTS > subtotalCents) {",
+        "mutated_line": "if (FREE_SHIPPING_CENTS > subtotalCents) {",
+        "outcome": "tests_failed",
+        "failing_test": "free shipping starts at the threshold",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "\"free shipping starts at the threshold\" pins 4999 and 5000 with assert.equal from node:assert/strict, an exact-value oracle under RIPR-SPEC-0027, so every mutant of the rewritten `FREE_SHIPPING_CENTS <= subtotalCents` fails it. ripr credits the predicate exposed, the ideal verdict.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

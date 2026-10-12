@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..ee953ce 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -149,7 +149,7 @@ pub trait Counter {
+     fn step(&self) -> u32;
+ 
+     fn advance(&self) -> u32 {
+-        self.step() * 4
++        4 * self.step()
+     }
+ }
+ 

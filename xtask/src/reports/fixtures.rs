@@ -431,12 +431,17 @@ pub(crate) fn is_manifest_only_fixture_dir(path: &Path) -> bool {
                     | "python-real-repo-evals"
                     | "real-repair-attempts"
                     | "rust-verdict-corpus"
+                    | "typescript-verdict-corpus"
+                    | "python-verdict-corpus"
+                    | "perl-verdict-corpus"
                     | "release_control"
                     | "release_denominator"
                     | "release_scope"
                     | "source_promotion"
                     | "surface-projection-alignment"
                     | "swarm-plan-packet-corpus"
+                    | "work_portfolio"
+                    | "work_selection_identity"
                     | "typescript-bun-ub-calibration"
                     | "typescript-preview-false-actionable-audit"
                     | "typescript-preview-repair-loop"
@@ -893,6 +898,14 @@ fn compare_golden(
 ) -> Result<GoldenComparison, String> {
     let expected_text = read_text_lossy(expected)?;
     let actual_text = read_text_lossy(actual)?;
+    let (expected_text, actual_text) = if surface == "check.json" {
+        (
+            normalize_check_json_golden_document(&expected_text),
+            normalize_check_json_golden_document(&actual_text),
+        )
+    } else {
+        (expected_text, actual_text)
+    };
     let normalized_expected = normalize_golden_text(&expected_text);
     let normalized_actual = normalize_golden_text(&actual_text);
     Ok(GoldenComparison {
@@ -964,7 +977,68 @@ fn snapshot_line_preview(line: &str) -> String {
     preview
 }
 
+/// Classification goldens pin analyzer findings, not the check-JSON
+/// canonical next-action projection (#7258). Strip that one last member so
+/// embedding it on the public CLI path does not force a corpus-wide golden
+/// refresh. Dedicated CLI/schema tests own the field.
+fn strip_canonical_next_action_member(value: &str) -> String {
+    const MARKER: &str = "\n  \"canonical_next_action\": ";
+    let Some(start) = value.rfind(MARKER) else {
+        return value.to_string();
+    };
+    let rest = &value[start + MARKER.len()..];
+    // The check JSON adapter appends a compact one-line value, then the
+    // object's closing brace. The first newline after the marker is that
+    // terminator (`\n}` plus an optional trailing newline), not a later
+    // trailing newline that would drop the brace.
+    let Some(end) = rest.find('\n') else {
+        return value.to_string();
+    };
+    let mut stripped = value[..start].to_string();
+    if stripped.ends_with(',') {
+        stripped.pop();
+    }
+    stripped.push_str(&rest[end..]);
+    stripped
+}
+
+/// Last-member append reconstitutes a pretty root closer (`]\n}`). One
+/// classification golden still stores compact `]}`. Normalize both so
+/// embedding `canonical_next_action` does not look like findings drift.
+fn split_compact_root_object_closer(value: &str) -> String {
+    let trailing_newline = value.ends_with('\n');
+    let trimmed = value.trim_end();
+    let Some(without_brace) = trimmed.strip_suffix('}') else {
+        return value.to_string();
+    };
+    if without_brace.ends_with('\n') {
+        return value.to_string();
+    }
+    let Some(without_bracket) = without_brace.strip_suffix(']') else {
+        return value.to_string();
+    };
+    // Keep one-line documents such as `{"findings":[]}` intact. Compact
+    // fixture goldens place `]}` after indent: `  ]}`.
+    if !without_bracket.ends_with(|ch: char| ch.is_whitespace()) {
+        return value.to_string();
+    }
+    let mut split = String::with_capacity(value.len() + 1);
+    split.push_str(without_bracket);
+    split.push(']');
+    split.push('\n');
+    split.push('}');
+    if trailing_newline {
+        split.push('\n');
+    }
+    split
+}
+
+fn normalize_check_json_golden_document(value: &str) -> String {
+    split_compact_root_object_closer(&strip_canonical_next_action_member(value))
+}
+
 pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
+    let value = normalize_check_json_golden_document(value);
     // #2337: match the human normalizer's approach — replace ALL backslashes
     // with forward slashes, not just the escaped double-backslash form. On
     // Windows, ripr check --json can emit single-backslash paths inside
@@ -1009,11 +1083,86 @@ pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
 }
 
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
-    let normalized = value.replace('\\', "/");
+    let normalized = project_renderer_cwd(&normalize_separators(value));
     let trimmed = normalized.trim_end_matches(['\r', '\n']);
     let mut output = trimmed.to_string();
     output.push('\n');
     output
+}
+
+/// Turn Windows separators into `/` while keeping the shell's `'\''`
+/// escape intact, so a checkout path containing an apostrophe still reaches
+/// `project_cwd_prefix` as one quoted token (#6762).
+fn normalize_separators(value: &str) -> String {
+    value
+        .split(r"'\''")
+        .map(|part| part.replace('\\', "/"))
+        .collect::<Vec<_>>()
+        .join(r"'\''")
+}
+
+/// The `check` drill-in commands bind `--root` to the resolved repository
+/// (#3948), so a rendered fixture carries the renderer's working directory.
+/// Checked-in goldens hold the machine-independent `<cwd>/` placeholder
+/// instead, the same projection the library tests use.
+fn project_renderer_cwd(text: &str) -> String {
+    let Ok(cwd) = std::env::current_dir() else {
+        // An unreadable working directory leaves the text unprojected, so a
+        // comparison fails loudly instead of passing on machine paths.
+        return text.to_string();
+    };
+    project_cwd_prefix(text, &format!("{}/", normalize_path(&cwd)))
+}
+
+/// Replace `prefix` with `<cwd>/`. A checkout path that needs shell quoting
+/// (a space, `'`, ...) renders the whole token quoted, `'<prefix>tail'`; the
+/// goldens hold the form a quote-free checkout renders, so the quotes are
+/// dropped whenever the tail alone would not need them.
+fn project_cwd_prefix(text: &str, prefix: &str) -> String {
+    let quoted_open = format!("'{}", prefix.replace('\'', r"'\''"));
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(quoted_open.as_str()) {
+        let after = &rest[at + quoted_open.len()..];
+        let Some((tail, consumed)) = quoted_tail(after) else {
+            break;
+        };
+        out.push_str(&rest[..at]);
+        if !tail.is_empty() && tail.chars().all(is_bare_shell_char) {
+            out.push_str("<cwd>/");
+            out.push_str(&tail);
+        } else {
+            out.push_str("'<cwd>/");
+            out.push_str(&tail.replace('\'', r"'\''"));
+            out.push('\'');
+        }
+        rest = &after[consumed..];
+    }
+    out.push_str(rest);
+    out.replace(prefix, "<cwd>/")
+}
+
+/// Read the rest of a `shell_arg`-quoted token after its opening quote:
+/// the unescaped tail and the bytes consumed through the closing quote. An
+/// embedded quote renders as `'\''` and stays part of the token (#6762).
+fn quoted_tail(after: &str) -> Option<(String, usize)> {
+    let mut tail = String::new();
+    let mut at = 0;
+    loop {
+        let end = at + after[at..].find('\'')?;
+        tail.push_str(&after[at..end]);
+        if after[end..].starts_with(r"'\''") {
+            tail.push('\'');
+            at = end + 4;
+        } else {
+            return Some((tail, end + 1));
+        }
+    }
+}
+
+/// Mirror of `shell_arg`'s bare-token rule.
+fn is_bare_shell_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '.' | '/' | '_' | '-' | ':')
 }
 
 fn fixture_name(path: &Path) -> Result<String, String> {
@@ -1942,6 +2091,51 @@ fn fixtures_new(name: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cwd_projection_unquotes_a_spaced_checkout_and_keeps_needed_quotes() {
+        let prefix = "/tmp/my checkout/";
+        // A bare tail renders quoted only because of the prefix: golden form.
+        assert_eq!(
+            project_cwd_prefix(
+                "ripr explain --root '/tmp/my checkout/fixtures/x/input' --diff d",
+                prefix
+            ),
+            "ripr explain --root <cwd>/fixtures/x/input --diff d"
+        );
+        // A tail that itself needs quoting keeps the quotes.
+        assert_eq!(
+            project_cwd_prefix("--root '/tmp/my checkout/repo root'", prefix),
+            "--root '<cwd>/repo root'"
+        );
+        // A quote-free checkout projects the bare prefix.
+        assert_eq!(
+            project_cwd_prefix("--root /w/fixtures/x/input", "/w/"),
+            "--root <cwd>/fixtures/x/input"
+        );
+        // #6762: a tail carrying an escaped quote is one token, not two.
+        assert_eq!(
+            project_cwd_prefix(r"--root '/tmp/my checkout/it'\''s/input' --diff d", prefix),
+            r"--root '<cwd>/it'\''s/input' --diff d"
+        );
+        // So is a checkout whose own path carries the quote.
+        assert_eq!(
+            project_cwd_prefix(
+                r"--root '/tmp/dev'\''s repo/fixtures/x/input' --diff d",
+                "/tmp/dev's repo/"
+            ),
+            "--root <cwd>/fixtures/x/input --diff d"
+        );
+        // The full human-output path keeps that escape through separator
+        // normalization; replacing every backslash first left it unprojected.
+        assert_eq!(
+            project_cwd_prefix(
+                &normalize_separators(r"--root '/tmp/dev'\''s repo/fixtures\x\input' --diff d"),
+                "/tmp/dev's repo/"
+            ),
+            "--root <cwd>/fixtures/x/input --diff d"
+        );
+    }
+
     /// Unique per process and per call. Fixed names under the shared temp
     /// directory collide when two `cargo test` processes run at once — two
     /// worktrees on one machine is the ordinary case here — and one process
@@ -1996,6 +2190,94 @@ mod tests {
         let input = r#"{"path":"src/lib.rs","count":42}"#;
         let out = normalize_fixture_json_output(input);
         assert_eq!(out, input);
+    }
+
+    #[test]
+    fn normalize_json_strips_canonical_next_action_without_touching_findings() -> Result<(), String>
+    {
+        let input = "{\n  \"findings\": [{\"id\":\"gap-1\"}],\n  \"source_subject\": {\"digest_algorithm\":\"sha256\"},\n  \"canonical_next_action\": {\"schema_version\":\"canonical_next_action.v1\",\"action_class\":\"inspect_details\"}\n}\n";
+        let out = normalize_fixture_json_output(input);
+        if out.contains("canonical_next_action") {
+            return Err(format!(
+                "fixture goldens must not absorb the check JSON action: {out}"
+            ));
+        }
+        if !(out.contains("\"findings\"") && out.contains("source_subject")) {
+            return Err(format!(
+                "strip must keep the classification document: {out}"
+            ));
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&out)
+            .map_err(|error| format!("stripped output must remain JSON: {error}"))?;
+        if parsed.get("canonical_next_action").is_some() {
+            return Err("parsed document still has canonical_next_action".to_string());
+        }
+        if parsed["findings"][0]["id"] != "gap-1" {
+            return Err(format!("findings drifted: {parsed}"));
+        }
+        if parsed["source_subject"]["digest_algorithm"] != "sha256" {
+            return Err(format!(
+                "closing brace after the compact member must survive strip: {out}"
+            ));
+        }
+        Ok(())
+    }
+
+    fn simulate_append_canonical_next_action(rendered: &str) -> String {
+        let trimmed = rendered.trim_end();
+        let Some(body) = trimmed.strip_suffix('}') else {
+            return rendered.to_string();
+        };
+        let body = body.trim_end();
+        let newline = if rendered.ends_with('\n') { "\n" } else { "" };
+        format!(
+            "{body},\n  \"canonical_next_action\": {{\"schema_version\":\"canonical_next_action.v1\"}}\n}}{newline}"
+        )
+    }
+
+    #[test]
+    fn compact_findings_closer_golden_matches_after_last_member_strip() -> Result<(), String> {
+        let compact = "{\n  \"findings\": [\n    {\"id\":\"gap-1\"}\n  ]}\n";
+        let pretty = "{\n  \"findings\": [\n    {\"id\":\"gap-1\"}\n  ]\n}\n";
+        let appended = simulate_append_canonical_next_action(compact);
+        let compact_out = normalize_check_json_golden_document(compact);
+        let appended_out = normalize_check_json_golden_document(&appended);
+        let pretty_out = normalize_check_json_golden_document(pretty);
+        if compact_out != appended_out {
+            return Err(format!(
+                "compact findings closer golden must match reconstituted last-member strip\ncompact: {compact_out:?}\nappended: {appended_out:?}"
+            ));
+        }
+        if compact_out != pretty_out {
+            return Err(format!(
+                "compact and pretty findings closers must share one normalized form\ncompact: {compact_out:?}\npretty: {pretty_out:?}"
+            ));
+        }
+        if compact_out.contains("canonical_next_action") {
+            return Err(format!("strip leaked the last member: {compact_out}"));
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&compact_out)
+            .map_err(|error| format!("normalized compact closer must stay JSON: {error}"))?;
+        if parsed["findings"][0]["id"] != "gap-1" {
+            return Err(format!("findings drifted: {parsed}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn one_line_findings_document_keeps_its_compact_closer() {
+        let input = r#"{"findings":[{"id":"gap-1"}]}"#;
+        assert_eq!(normalize_check_json_golden_document(input), input);
+    }
+
+    #[test]
+    fn compact_closer_normalization_still_sees_finding_id_drift() {
+        let left = "{\n  \"findings\": [\n    {\"id\":\"gap-1\"}\n  ]}\n";
+        let right = "{\n  \"findings\": [\n    {\"id\":\"gap-2\"}\n  ]}\n";
+        assert_ne!(
+            normalize_check_json_golden_document(left),
+            normalize_check_json_golden_document(right)
+        );
     }
 
     use std::sync::atomic::{AtomicUsize, Ordering};

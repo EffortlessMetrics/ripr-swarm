@@ -1,7 +1,6 @@
 use super::PythonOwner;
-use super::related_tests::{
-    PythonRelatedCandidate, line_prefix_looks_like_comment_or_string, strongest_assertion,
-};
+use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
+use super::related_tests::{PythonRelatedCandidate, line_prefix_looks_like_comment_or_string};
 use super::source_facts::parse_module_result;
 use super::static_limits::is_simple_python_identifier;
 use crate::analysis::diff::ChangedLine;
@@ -785,6 +784,7 @@ pub(super) fn changed_default_overridden_params(
     multi_line_header_line: bool,
     owner: &PythonOwner,
     related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
 ) -> Option<Vec<String>> {
     if matches!(
         owner.owner_kind,
@@ -802,9 +802,12 @@ pub(super) fn changed_default_overridden_params(
         if !candidate.relation.uses_oracle() {
             continue;
         }
-        let is_strong = strongest_assertion(&candidate.test.assertions).is_some_and(|assertion| {
-            assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
-        });
+        // The family-selected assertion (#5572), the one the row displays.
+        let is_strong = select_relevant_assertion(&candidate.test.assertions, Some(focus))
+            .assertion()
+            .is_some_and(|assertion| {
+                assertion.oracle_strength.rank() >= OracleStrength::Strong.rank()
+            });
         if !is_strong {
             continue;
         }

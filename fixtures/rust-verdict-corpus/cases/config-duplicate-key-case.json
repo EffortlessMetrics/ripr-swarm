@@ -1,0 +1,44 @@
+{
+  "case_id": "config-duplicate-key-case",
+  "subject_id": "authored-config",
+  "diff": "cases/config-duplicate-key-case.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 56
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate",
+  "test_shape": "integration_test_same_case_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if pairs.iter().any(|(seen, _)| seen.eq_ignore_ascii_case(key)) {",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: \"port = 1\\nPort = 2\" is rejected as DuplicateKey instead of yielding both pairs"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "duplicate_keys_name_the_key_and_line repeats the key in the same case, so case-insensitive matching passes every test. ripr reports infection_unknown, an acceptable limit where a gap is ideal.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,5 +1,16 @@
 use super::*;
 
+/// These controls exercise a healthy root before its first analysis. Bind
+/// both facts returned by the production root resolver, rather than pairing
+/// a ready status with an artificially unavailable analysis root.
+fn healthy_server() -> Result<McpServer, String> {
+    let (status, root) = WorkspaceStatus::resolve_with_root(None);
+    if root.is_none() {
+        return Err("healthy MCP fixture did not resolve a usable root".to_string());
+    }
+    McpServer::new(status, root).map_err(|error| error.to_string())
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn delayed_durable_read_leaves_the_async_executor_and_status_available() -> Result<(), String>
 {
@@ -231,8 +242,7 @@ fn sdk_server_declares_snapshot_and_gap_resource_templates() -> Result<(), Strin
 
 #[tokio::test]
 async fn list_gaps_before_any_refresh_is_a_typed_no_snapshot_failure() -> Result<(), String> {
-    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
-        .map_err(|error| error.to_string())?;
+    let server = healthy_server()?;
     let response = server
         .list_gaps_tool(None)
         .await
@@ -261,6 +271,66 @@ async fn list_gaps_before_any_refresh_is_a_typed_no_snapshot_failure() -> Result
         != Some(workspace::CODE_NO_SNAPSHOT)
     {
         return Err(format!("pre-refresh list_gaps lost no_snapshot: {value}"));
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn list_gaps_accepts_offset_and_limit_at_the_dispatch_edge() -> Result<(), String> {
+    // #6021: paging arguments are part of the input contract. A pre-refresh
+    // server answers past dispatch with typed `no_snapshot` — proving the
+    // arguments were accepted — while malformed values stay invalid params.
+    let server = healthy_server()?;
+    for arguments in [
+        serde_json::json!({}),
+        serde_json::json!({"offset": 0}),
+        serde_json::json!({"offset": 3, "limit": 10}),
+        serde_json::json!({"snapshot_id": "snapshot:sha256:x", "offset": 0, "limit": 1}),
+    ] {
+        let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        let response = server
+            .list_gaps_tool(arguments)
+            .await
+            .map_err(|error| format!("dispatch must accept paging arguments: {error:?}"))?;
+        let result = match response {
+            rmcp::model::CallToolResponse::Complete(result) => result,
+            other => {
+                return Err(format!(
+                    "accepted paging arguments must reach the typed failure, got {other:?}"
+                ));
+            }
+        };
+        let value = serde_json::to_value(result).map_err(|error| error.to_string())?;
+        if value
+            .pointer("/structuredContent/failure/code")
+            .and_then(serde_json::Value::as_str)
+            != Some(workspace::CODE_NO_SNAPSHOT)
+        {
+            return Err(format!("paging call lost no_snapshot: {value}"));
+        }
+    }
+    for arguments in [
+        serde_json::json!({"offset": -1}),
+        serde_json::json!({"offset": 1.5}),
+        serde_json::json!({"offset": "3"}),
+        serde_json::json!({"limit": 0}),
+        serde_json::json!({"limit": true}),
+        serde_json::json!({"verbose": true}),
+    ] {
+        let arguments = serde_json::from_value(arguments).map_err(|error| error.to_string())?;
+        match server.list_gaps_tool(arguments).await {
+            Err(error) if error.code == rmcp::model::ErrorCode::INVALID_PARAMS => {}
+            Ok(response) => {
+                return Err(format!(
+                    "list_gaps must reject malformed paging arguments with invalid params: {response:?}"
+                ));
+            }
+            Err(error) => {
+                return Err(format!(
+                    "list_gaps must reject malformed paging arguments with invalid params, got {error:?}"
+                ));
+            }
+        }
     }
     Ok(())
 }
@@ -299,8 +369,7 @@ async fn get_gap_accepts_canonical_id_at_the_dispatch_edge() -> Result<(), Strin
     // (`canonical_id`), not the old `gap_id` name. A pre-refresh server
     // answers past-dispatch calls with typed `no_snapshot`, which proves
     // the dispatch edge accepted the spelling.
-    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
-        .map_err(|error| error.to_string())?;
+    let server = healthy_server()?;
     let arguments = serde_json::from_value(serde_json::json!({"canonical_id": "gap:x"}))
         .map_err(|error| error.to_string())?;
     let response = server
@@ -385,8 +454,7 @@ fn gap_resource_templates_spell_the_identity_canonical_id() -> Result<(), String
 
 #[tokio::test]
 async fn prepare_repair_fails_closed_before_refresh() -> Result<(), String> {
-    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
-        .map_err(|error| error.to_string())?;
+    let server = healthy_server()?;
     let arguments = serde_json::from_value(serde_json::json!({"canonical_id": "gap:any"}))
         .map_err(|error| error.to_string())?;
     let response = server
@@ -506,8 +574,7 @@ async fn receipt_status_fails_closed_before_refresh() -> Result<(), String> {
 
 #[tokio::test]
 async fn repair_card_fails_closed_before_refresh() -> Result<(), String> {
-    let server = McpServer::new(WorkspaceStatus::resolve_with_root(None).0, None)
-        .map_err(|error| error.to_string())?;
+    let server = healthy_server()?;
     let arguments = serde_json::from_value(serde_json::json!({"canonical_id": "gap:test:1"}))
         .map_err(|error| error.to_string())?;
     let response = server

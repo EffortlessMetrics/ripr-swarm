@@ -29,6 +29,14 @@ Routine publication and convergence inside the selected repository claim—push 
 
 # Procedure
 
+"Protected squash merge" means the normal squash operation respecting existing
+enforcement. It does not require protection to exist or authorize installing it.
+Read applicable classic protection and active rulesets, preserving unreadable
+policy as an evidence gap. If no applicable protection exists, ordinary merge
+can still proceed after current-head review, findings and required proof are
+satisfied. Existing restrictions remain binding; never use admin bypass or
+change settings to obtain a merge.
+
 1. Reuse the PR that already owns the claim. Search current source, all-state PRs, recently merged PRs, and the controlling issue immediately before publishing a new PR. Publish a new PR only when no equivalent candidate exists.
 2. Write a complete body:
    - production and evidence delta;
@@ -63,6 +71,51 @@ Routine publication and convergence inside the selected repository claim—push 
 15. After merge, verify `main`, update issue acceptance, parent state, generated evidence, and any residual work. A merged PR means implementation landed; it does not by itself complete the parent issue, release phase, or high-level goal.
 16. After deliberate closure or supersession, record the winning candidate and preserved residual work.
 17. Close out every lane-created worktree and generated resource using [bounded storage closeout](../../../docs/PR_AUTOMATION.md#bounded-local-storage-and-proof-retention). Return each exact resource as released, retained with a concrete consumer/evidence reason, or awaiting owner verification. Preserve required proof and unique work; use the already-authorized recoverable handling for confirmed inactive residue instead of leaving every previous executable expanded indefinitely. A terminal PR disposition alone is not resource-release evidence.
+
+# Blocking discoveries and repair stacks
+
+Do not merge known-red work into main. Keep technical results truthful: add the
+regression that exposes a discovered defect even when the development branch turns
+red. Filing an issue, replying to a review, or resolving its thread does not repair it.
+A candidate-introduced, worsened, or claim-falsifying defect requires
+`REPAIR_REQUIRED`; unavailable evidence stays `NOT_ESTABLISHED`.
+
+The root selects the smallest useful repair route and one writer per candidate:
+
+- **Candidate defect:** repair the existing PR by default. A child repair may isolate
+  useful implementation/review work, but its unsafe parent cannot land first. Fold
+  the child into the parent or one combined integration candidate, then prove and
+  review the resulting tree before main receives it.
+- **Independent prerequisite defect:** reuse its existing repair owner or create one
+  bounded repair PR. Dependent work may stack above that repair. After it lands,
+  reconcile the dependent delta and refresh affected integration evidence; do not
+  duplicate the repair across every blocked PR.
+- **Independent non-blocking discovery:** record why the current claim remains true
+  and exposure is not worsened, then retain a durable follow-up. An issue URL alone
+  cannot establish that classification.
+
+Record the exact parent/head, child-only delta, writer, proof basis, and landing
+route for a stack. Parent/child CI is stack-local evidence, not protected-main
+acceptance. Never arm child auto-merge into an unprotected feature branch to bypass
+that boundary. A contiguous independently safe, reviewed, and proved prefix may
+land normally; do not flatten every stack into a giant PR. Preserve unique work
+and findings across squash, retarget, and incorporation, and close only the
+acceptance actually satisfied by the landed result.
+
+A new material finding withdraws readiness even on an unchanged head. If auto-merge
+is armed, disarm it through the available authorized GitHub operation and verify the
+readback before resolving the blocking thread. An unavailable or failed disarm is
+an integration-control blocker; do not claim the merge is contained. After repair,
+affected proof and cumulative rereview must restore `REVIEW_READY` before arming.
+Old green, an unrelated later comment, or a completed agent run cannot restore it.
+
+Keep disjoint work moving. For the selected claim, usable repair/proof work outranks
+passive waiting; genuine remote waits name their owner and decision-changing event
+without an idle polling worker. Batch related findings into one repair wave, preserve
+unaffected review, and do not force branch churn or a global intake freeze. These
+instructions govern agent decisions; they do not install branch protection.
+The existing Draft -> Ready proof trigger remains in force; being Ready for
+hosted qualification is not REVIEW_READY or permission to arm auto-merge.
 
 # Release-scope law
 

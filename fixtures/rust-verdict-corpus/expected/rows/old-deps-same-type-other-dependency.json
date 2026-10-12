@@ -1,0 +1,22 @@
+{
+  "case_id": "old-deps-same-type-other-dependency",
+  "subject_id": "authored-old-deps",
+  "origin": "authored",
+  "anchor": "meter/src/lib.rs:31",
+  "behavior_family": "return_value",
+  "test_shape": "same_type_name_from_other_dependency",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

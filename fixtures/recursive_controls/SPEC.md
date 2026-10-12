@@ -22,7 +22,9 @@ cargo xtask fixtures recursive_controls
 
 ## Then
 
-Every probe stays `weakly_exposed`: the bounded context refuses each
+Every probe stays at its fail-closed class, `infection_unknown` with
+`Changed boundary input is unresolved` naming `final_label`
+(RIPR-SPEC-0001, #6674): the bounded context refuses each
 variant by rule — a repeated state is a true cycle, the fourth
 evaluation exceeds the explicit bound, a computed argument never
 binds, and a non-unique callee never resolves.

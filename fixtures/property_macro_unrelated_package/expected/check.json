@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:crates_a_src_lib.rs:predicate:bdf7ae04",
+      "canonical_gap_id": "gap:rust:crates/a/src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:crates/a/src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+        "language": "rust",
+        "file": "crates/a/src/lib.rs",
+        "owner": "discounted_total",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount==discount_threshold"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.48,
@@ -18,7 +30,7 @@
         "id": "probe:crates_a_src_lib.rs:predicate:bdf7ae04",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/property_macro_unrelated_package/input/crates/a/src/lib.rs",
+        "file": "./crates/a/src/lib.rs",
         "line": 2,
         "expression": "amount >= discount_threshold"
        },

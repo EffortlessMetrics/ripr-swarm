@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0231-oracle-events-sent-contains",
+  "subject_id": "authored-spec0231-10",
+  "diff": "cases/spec0231-oracle-events-sent-contains.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "contains_on_observer_name",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "events_sent.push(id + 1);",
+        "mutated_line": "events_sent.push(id + 1);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::send_records_the_id",
+        "equivalence_review": "not equivalent: the recorded id becomes id + 1"
+      },
+      {
+        "replacement": "events_sent.push(id); events_sent.push(id);",
+        "mutated_line": "events_sent.push(id); events_sent.push(id);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the event is recorded twice"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "contains(&id) pins membership, not count: pushing id + 1 fails it, pushing twice passes. Spec cells: RIPR-SPEC-0231 example 10 (control: spec marks it unchanged); spec-adopted oracle mock_expectation / medium.",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#10"
+  ]
+}

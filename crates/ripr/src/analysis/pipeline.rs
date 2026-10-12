@@ -127,15 +127,46 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
         None => None,
     };
     cancellation::checkpoint()?;
-    let mut result = committed_source::with_overlay(overlay.clone(), || {
-        run_pipeline_for_diff_text(options, oracle_policy, languages, rust_config, &loaded.text)
-    })?;
-    if let Some(overlay) = overlay {
-        result.uncommitted_source_paths = overlay.dirty_source_paths();
-        result.untracked_source_paths = overlay.untracked_source_paths();
-    }
-    bind_effective_base(&mut result, loaded.effective_base)?;
-    Ok(result)
+    // #7292: the analyzed-revisions resolution reads the repository without
+    // depending on the analysis result. Run it on a worker thread DURING
+    // the analysis instead of serially after it, so the probe processes'
+    // wall time stops extending every live-repository refresh. The same
+    // probe runs with the same inputs; a failed worker reads as the
+    // resolver's own absent outcome (best-effort naming, per contract).
+    // The worker carries this attempt's cancellation token, and the
+    // analysis result is evaluated only after the join, so a worker panic
+    // cannot ride the scope destructor through an early error return.
+    let probe_base = loaded.effective_base.clone();
+    let probe_token = cancellation::current_token();
+    std::thread::scope(|scope| {
+        let probes = probe_base.as_deref().map(|base| {
+            scope.spawn(move || {
+                cancellation::with_optional_token(probe_token.as_ref(), || {
+                    diff::resolve_analyzed_revisions(
+                        &options.root,
+                        base,
+                        false,
+                        options.git_timeout,
+                    )
+                })
+            })
+        });
+        let result = committed_source::with_overlay(overlay.clone(), || {
+            run_pipeline_for_diff_text(options, oracle_policy, languages, rust_config, &loaded.text)
+        });
+        let analyzed_revisions = match probes {
+            Some(handle) => handle.join().ok(),
+            None => None,
+        };
+        let mut result = result?;
+        if let Some(overlay) = overlay {
+            result.uncommitted_source_paths = overlay.dirty_source_paths();
+            result.untracked_source_paths = overlay.untracked_source_paths();
+        }
+        result.analyzed_revisions = analyzed_revisions;
+        bind_effective_base(&mut result, loaded.effective_base)?;
+        Ok(result)
+    })
 }
 
 /// Build the committed-content overlay for a committed-history diff and
@@ -220,10 +251,89 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options.git_timeout,
     )?;
     cancellation::checkpoint()?;
-    let mut result =
-        run_pipeline_for_diff_text(options, oracle_policy, languages, rust_config, &loaded.text)?;
-    bind_effective_base(&mut result, loaded.effective_base)?;
-    Ok(result)
+    // #7292: the untracked-routed-files probe and the analyzed-revisions
+    // resolution read the repository without depending on the analysis
+    // result. Run them on a worker thread DURING the analysis instead of
+    // serially after it: a whole-tree analysis takes seconds while the
+    // probes are a handful of short git processes, so serializing them
+    // after the analysis added their full wall time to every refresh. The
+    // same probes run with the same inputs and failure semantics; only
+    // their placement moves. The worker carries this attempt's cancellation
+    // token so a superseded refresh cancels its git children instead of
+    // waiting out their deadline, and the analysis result is evaluated only
+    // after the join, so a worker panic cannot ride the scope destructor
+    // through an early error return.
+    let probe_base = loaded.effective_base.clone();
+    let probe_token = cancellation::current_token();
+    std::thread::scope(|scope| {
+        let probes = scope.spawn(move || {
+            cancellation::with_optional_token(probe_token.as_ref(), || {
+                #[cfg(test)]
+                PROBE_OVERLAP_WORKER_STARTED.store(true, std::sync::atomic::Ordering::Release);
+                // RIPR-SPEC-0116: the working-tree diff covers tracked files
+                // only; name the untracked routed files it cannot contain so
+                // the output can say so.
+                let untracked =
+                    committed_source::untracked_routed_paths(&options.root, options.git_timeout);
+                let analyzed = probe_base.as_deref().map(|base| {
+                    diff::resolve_analyzed_revisions(&options.root, base, true, options.git_timeout)
+                });
+                (untracked, analyzed)
+            })
+        });
+        #[cfg(test)]
+        wait_for_probe_worker_for_test();
+        let result = run_pipeline_for_diff_text(
+            options,
+            oracle_policy,
+            languages,
+            rust_config,
+            &loaded.text,
+        );
+        let (untracked, analyzed) = match probes.join() {
+            Ok(pair) => pair,
+            // A panicked probe worker fails closed exactly like a failed
+            // probe: the untracked disclosure refuses the run and the
+            // revision naming stays absent.
+            Err(_) => (
+                Err("untracked-routed-files probe worker panicked"
+                    .to_string()
+                    .into()),
+                None,
+            ),
+        };
+        let mut result = result?;
+        result.untracked_source_paths = untracked?;
+        result.analyzed_revisions = analyzed;
+        bind_effective_base(&mut result, loaded.effective_base)?;
+        Ok(result)
+    })
+}
+
+/// #7292 test seam: when the wait flag is set, the worktree pipeline's
+/// analysis phase spins (bounded) until the disclosure-probe worker has
+/// started. Before the overlap fix the probes ran only after the analysis
+/// returned, so the flag stayed unset for the whole bound and the overlap
+/// test failed; with the overlap the worker starts immediately and the
+/// wait exits at once. Test-only: the flag is never set outside tests.
+#[cfg(test)]
+pub(crate) static PROBE_OVERLAP_WAIT_FOR_WORKER: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+pub(crate) static PROBE_OVERLAP_WORKER_STARTED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[cfg(test)]
+fn wait_for_probe_worker_for_test() {
+    use std::sync::atomic::Ordering;
+    use std::time::{Duration, Instant};
+    if !PROBE_OVERLAP_WAIT_FOR_WORKER.load(Ordering::Acquire) {
+        return;
+    }
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !PROBE_OVERLAP_WORKER_STARTED.load(Ordering::Acquire) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(5));
+    }
 }
 
 /// Records the base the diff loader used (#3940) in the envelope field and
@@ -1153,6 +1263,7 @@ fn run_pipeline_for_diff_text(
         // effective base (#3940); every other path involves no base.
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
+        analyzed_revisions: None,
         untracked_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
@@ -1183,6 +1294,14 @@ fn limitations_from_language_runs(
                     AnalysisLimitationKind::LanguageAdapterUnavailable,
                     AnalysisRecoveryKind::EnableLanguage,
                 ),
+                // #6828: a configured managed producer was invoked and
+                // failed. `producer_failure` + `inspect_failure` names the
+                // real exporter failure; `enable_language` would re-advise a
+                // configuration the user already made.
+                LanguageRunStatus::Failed => (
+                    AnalysisLimitationKind::ProducerFailure,
+                    AnalysisRecoveryKind::InspectFailure,
+                ),
                 LanguageRunStatus::Partial => (
                     AnalysisLimitationKind::ProducerFailure,
                     AnalysisRecoveryKind::InspectFailure,
@@ -1193,14 +1312,18 @@ fn limitations_from_language_runs(
                 .reason
                 .clone()
                 .unwrap_or_else(|| format!("{} adapter did not complete.", run.language));
+            let recovery_detail = match run.status {
+                LanguageRunStatus::Failed => {
+                    "Fix the failing Perl facts exporter named in the detail (exit status, \
+                     timeout, or spawn error) and re-run the analysis."
+                }
+                _ => "Inspect the adapter result and re-run the analysis.",
+            };
             Ok(Some(
                 AnalysisLimitation::new(
                     kind,
                     AnalysisStage::LanguageAdapter,
-                    AnalysisRecovery::new(
-                        recovery,
-                        "Inspect the adapter result and re-run the analysis.",
-                    )?,
+                    AnalysisRecovery::new(recovery, recovery_detail.to_string())?,
                 )
                 .with_detail(bounded_language_run_detail(&run.language, &detail))?,
             ))
@@ -1349,6 +1472,7 @@ pub(crate) fn run_repo_pipeline_with_oracle_policy_and_rust_config(
         partial_scope: None,
         effective_base: None,
         uncommitted_source_paths: Vec::new(),
+        analyzed_revisions: None,
         untracked_source_paths: Vec::new(),
         rust_diagnostic_origins,
         rust_consumed_sources,
@@ -1679,12 +1803,21 @@ fn analyze_python_repo(
 /// (fingerprint/coherence/capability/path/id/digest) surfaces as `Invalid` —
 /// the producer emitted something untrustworthy, and that is distinct from the
 /// adapter simply being unavailable (no packet path, feature off, read error,
-/// parse error, or schema mismatch). The non-abort contract is preserved
-/// either way: the run is recorded, never propagated.
+/// parse error, or schema mismatch). A *configured* managed producer that was
+/// invoked and failed (#6828) surfaces as `Failed` via the adapter's
+/// `PERL_PRODUCER_FAILURE_REASON_PREFIX` marker, so the typed limitation can
+/// name the real exporter failure instead of the generic missing-packet
+/// advice. The non-abort contract is preserved either way: the run is
+/// recorded, never propagated.
 fn perl_run_status_for_err(reason: &str) -> LanguageRunStatus {
     // Integrity-check failures all carry the `ingestion:` prefix emitted by
-    // `PerlFactPacket::validate_ingestion`. Everything else is an
-    // availability/config failure.
+    // `PerlFactPacket::validate_ingestion`. A threaded producer failure
+    // carries the adapter's `producer failure: ` marker. Everything else is
+    // an availability/config failure.
+    #[cfg(feature = "lang-perl")]
+    if reason.starts_with(super::language::PERL_PRODUCER_FAILURE_REASON_PREFIX) {
+        return LanguageRunStatus::Failed;
+    }
     if reason.starts_with("ingestion:") {
         LanguageRunStatus::Invalid
     } else {
@@ -1929,6 +2062,7 @@ mod tests {
             include_unchanged_tests: false,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
@@ -2046,6 +2180,7 @@ mod tests {
             include_unchanged_tests: false,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
@@ -2834,6 +2969,7 @@ mod tests {
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -3370,6 +3506,7 @@ mod tests {
                     include_unchanged_tests: false,
                     resolve_tsconfig_paths: false,
                     perl_facts_path: None,
+                    perl_producer_failure: None,
                     git_timeout: None,
                     git_candidate: None,
                     production_like_targets: Default::default(),
@@ -3419,6 +3556,7 @@ mod tests {
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -3453,6 +3591,7 @@ mod tests {
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -3543,6 +3682,7 @@ mod tests {
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -3596,6 +3736,7 @@ mod tests {
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -3721,6 +3862,7 @@ mod tests {
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -3811,6 +3953,7 @@ mod tests {
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -3843,6 +3986,7 @@ mod tests {
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -3870,6 +4014,7 @@ mod tests {
             include_unchanged_tests: false,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
@@ -3952,6 +4097,7 @@ mod tests {
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
@@ -4027,6 +4173,7 @@ mod tests {
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -4070,6 +4217,7 @@ mod tests {
             include_unchanged_tests: false,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
@@ -4141,6 +4289,7 @@ mod tests {
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -4184,6 +4333,7 @@ mod tests {
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -4290,6 +4440,7 @@ mod tests {
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: Some(facts),
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -4341,6 +4492,109 @@ mod tests {
         Ok(())
     }
 
+    /// #6828: a threaded producer failure (`AnalysisOptions::
+    /// perl_producer_failure`) must surface as a `failed` language run whose
+    /// reason carries the real exporter failure verbatim — not the generic
+    /// missing-packet advice — and as a `producer_failure` typed limitation
+    /// with `inspect_failure` recovery. The run stays fail-closed: no Perl
+    /// findings, non-abort.
+    #[cfg(feature = "lang-perl")]
+    #[test]
+    fn diff_pipeline_types_threaded_producer_failure_as_failed_run() -> Result<(), String> {
+        use super::limitations_from_language_runs;
+        let root = temp_root("perl-producer-failed")?;
+        let diff_file = root.join("perl.diff");
+        write(
+            &diff_file,
+            "diff --git a/lib/App.pm b/lib/App.pm\n\
+             --- /dev/null\n\
+             +++ b/lib/App.pm\n\
+             @@ -0,0 +1 @@\n\
+             +sub discount { return 0 }\n",
+        )?;
+        let exporter_failure = "Perl facts exporter exited with status exit code: 1 (non-zero); \
+             packet rejected even if a partial file exists";
+
+        let result = run_diff_pipeline_with_oracle_policy(
+            &AnalysisOptions {
+                root: root.clone(),
+                base: None,
+                diff_file: Some(diff_file),
+                mode: AnalysisMode::Draft,
+                resolved_subject_identity: None,
+                open_rust_index_paths: Default::default(),
+                include_unchanged_tests: false,
+                resolve_tsconfig_paths: false,
+                perl_facts_path: None,
+                perl_producer_failure: Some(exporter_failure.to_string()),
+                git_timeout: None,
+                git_candidate: None,
+                production_like_targets: Default::default(),
+                test_harnesses: Vec::new(),
+            },
+            &OraclePolicy::default(),
+            &[LanguageId::Rust, LanguageId::Perl],
+        );
+        let analysis = match result {
+            Ok(a) => a,
+            Err(reason) => {
+                return Err(format!(
+                    "pipeline aborted on Perl producer failure, expected non-abort: {reason}"
+                ));
+            }
+        };
+
+        let perl_run = analysis
+            .language_runs
+            .iter()
+            .find(|run| run.language == "perl")
+            .ok_or_else(|| "expected a perl language_run entry".to_string())?;
+        assert_eq!(
+            perl_run.status,
+            super::LanguageRunStatus::Failed,
+            "a configured producer that was invoked and failed must be `failed`"
+        );
+        let reason = perl_run
+            .reason
+            .as_deref()
+            .ok_or_else(|| "failed run must carry a reason".to_string())?;
+        assert!(
+            reason.contains(exporter_failure),
+            "the run reason must carry the exporter failure verbatim, got: {reason}"
+        );
+        assert!(
+            !reason.contains("requires a fact packet"),
+            "the run reason must not re-advise the configuration the user already made: {reason}"
+        );
+        assert!(
+            analysis.findings.is_empty(),
+            "a failed producer must stay fail-closed: no findings"
+        );
+
+        // The shared run→limitation authority types the failed run as
+        // producer_failure + inspect_failure with a cause-carrying detail.
+        let limitations = limitations_from_language_runs(&analysis.language_runs)?;
+        let limitation = limitations
+            .iter()
+            .find(|limitation| {
+                limitation.kind == crate::analysis_outcome::AnalysisLimitationKind::ProducerFailure
+            })
+            .ok_or_else(|| "expected a producer_failure limitation".to_string())?;
+        assert_eq!(
+            limitation.recovery.kind,
+            crate::analysis_outcome::AnalysisRecoveryKind::InspectFailure,
+            "producer_failure recovery must be inspect_failure"
+        );
+        let detail = limitation.bounded_detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.contains(exporter_failure),
+            "limitation detail must carry the exporter failure, got: {detail}"
+        );
+
+        let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
     #[cfg(all(feature = "lang-typescript", feature = "lang-python"))]
     #[test]
     fn diff_pipeline_dispatches_enabled_preview_feature_adapters() -> Result<(), String> {
@@ -4376,6 +4630,7 @@ index 0000000..1111111 100644
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -4435,6 +4690,7 @@ index 0000000..1111111 100644
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -4494,6 +4750,7 @@ index 0000000..1111111 100644
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -4540,6 +4797,7 @@ index 0000000..1111111 100644
             include_unchanged_tests: true,
             resolve_tsconfig_paths: false,
             perl_facts_path: None,
+            perl_producer_failure: None,
             git_timeout: None,
             git_candidate: None,
             production_like_targets: Default::default(),
@@ -4838,6 +5096,7 @@ index 0000000..1111111 100644
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -4897,6 +5156,7 @@ index 0000000..1111111 100644
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -4970,6 +5230,7 @@ index 0000000..1111111 100644
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -5044,6 +5305,7 @@ index 0000000..1111111 100644
                 include_unchanged_tests: false,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -5092,6 +5354,7 @@ index 0000000..1111111 100644
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -5138,6 +5401,7 @@ index 0000000..1111111 100644
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -5182,6 +5446,7 @@ index 0000000..1111111 100644
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -5253,6 +5518,7 @@ index 0000000..1111111 100644
                 include_unchanged_tests: true,
                 resolve_tsconfig_paths: false,
                 perl_facts_path: None,
+                perl_producer_failure: None,
                 git_timeout: None,
                 git_candidate: None,
                 production_like_targets: Default::default(),
@@ -5296,6 +5562,7 @@ index 0000000..1111111 100644
             line_budget: 50,
             budget_disclosures: Vec::new(),
             selected_files: vec!["src/lib.rs".to_string()],
+            unselected_files: vec!["src/other.rs".to_string()],
             selected_changed_lines: 70,
             uninspected_files_lower_bound: usize::from(uninspected_lines > 0),
             uninspected_changed_lines_lower_bound: uninspected_lines,
@@ -5336,5 +5603,125 @@ index 0000000..1111111 100644
             "{detail}"
         );
         Ok(())
+    }
+
+    fn fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+        let output = std::process::Command::new("git")
+            .current_dir(root)
+            // A hook or caller carrying GIT_DIR/GIT_WORK_TREE would redirect
+            // the fixture setup at that repository instead of the temp
+            // fixture, so the routing family is stripped.
+            .env_remove("GIT_DIR")
+            .env_remove("GIT_WORK_TREE")
+            .env_remove("GIT_INDEX_FILE")
+            .args(args)
+            .output()
+            .map_err(|err| format!("run git {args:?}: {err}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "git {args:?} failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        Ok(())
+    }
+
+    /// #7292 discriminating test: the disclosure probes (untracked-routed
+    /// files, analyzed revisions) must overlap the analysis instead of
+    /// serializing after it. The test seam makes the analysis phase wait
+    /// for the probe worker to start, so the probe worker demonstrably runs
+    /// DURING the analysis. Before the overlap the probes ran only after
+    /// `run_pipeline_for_diff_text` returned, the worker-start flag never
+    /// got set, the wait spun to its 30s bound, and both assertions below
+    /// failed.
+    #[test]
+    fn worktree_pipeline_probes_overlap_the_analysis() -> Result<(), String> {
+        use crate::config::RustLanguageConfig;
+        use std::sync::atomic::Ordering;
+        use std::time::{Duration, Instant};
+
+        PROBE_OVERLAP_WAIT_FOR_WORKER.store(true, Ordering::Release);
+        PROBE_OVERLAP_WORKER_STARTED.store(false, Ordering::Release);
+
+        let root = temp_root("probe-overlap")?;
+        let result = (|| -> Result<(), String> {
+            fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"probe-overlap-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+            )?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 1\n}\n",
+            )?;
+            fixture_git(&root, &["init", "--initial-branch", "main"])
+                .or_else(|_| fixture_git(&root, &["init"]))?;
+            fixture_git(&root, &["config", "user.email", "test@example.com"])?;
+            fixture_git(&root, &["config", "user.name", "Test"])?;
+            fixture_git(&root, &["config", "commit.gpgsign", "false"])?;
+            fixture_git(&root, &["add", "."])?;
+            fixture_git(&root, &["commit", "-m", "base"])?;
+            // A second commit makes `HEAD~1` resolvable as the worktree
+            // base, and a dirty tracked edit gives the live diff content.
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 2\n}\n",
+            )?;
+            fixture_git(&root, &["add", "."])?;
+            fixture_git(&root, &["commit", "-m", "second"])?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 3\n}\n",
+            )?;
+
+            let mut options = draft_diff_options(root.clone());
+            options.base = Some("HEAD~1".to_string());
+            let started = Instant::now();
+            let analysis = run_worktree_pipeline_with_oracle_policy_and_rust_config(
+                &options,
+                &OraclePolicy::default(),
+                &[LanguageId::Rust],
+                &RustLanguageConfig::default(),
+            );
+            let elapsed = started.elapsed();
+
+            let worker_started = PROBE_OVERLAP_WORKER_STARTED.load(Ordering::Acquire);
+            if !worker_started {
+                return Err(
+                    "the probe worker never started during the analysis: the disclosure probes \
+                     ran only after the analysis returned"
+                        .to_string(),
+                );
+            }
+            // The seam's own bound is 30s; reaching it means the worker was
+            // still not observed while the analysis waited for it, which is
+            // the pre-fix behavior this test pins against.
+            if elapsed >= Duration::from_secs(25) {
+                return Err(format!(
+                    "the analysis waited {:.1}s for the probe worker: the probes did not overlap \
+                     the analysis",
+                    elapsed.as_secs_f32()
+                ));
+            }
+            let analysis = analysis.map_err(|err| format!("worktree pipeline failed: {err}"))?;
+            // The overlap must not change the resolved values: the live
+            // base was analyzed with its revisions named.
+            let revisions = analysis
+                .analyzed_revisions
+                .ok_or_else(|| "analyzed revisions must be named".to_string())?;
+            if revisions.base_ref != "HEAD~1" || !revisions.working_tree {
+                return Err(format!(
+                    "unexpected analyzed revisions: base_ref={} working_tree={}",
+                    revisions.base_ref, revisions.working_tree
+                ));
+            }
+            if revisions.head_commit.is_none() || revisions.base_commit.is_none() {
+                return Err("resolved commits must be named".to_string());
+            }
+            Ok(())
+        })();
+        PROBE_OVERLAP_WAIT_FOR_WORKER.store(false, Ordering::Release);
+        let _ = fs::remove_dir_all(&root);
+        result
     }
 }

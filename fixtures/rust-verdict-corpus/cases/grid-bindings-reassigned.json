@@ -1,0 +1,52 @@
+{
+  "case_id": "grid-bindings-reassigned",
+  "subject_id": "authored-grid-bindings",
+  "diff": "cases/grid-bindings-reassigned.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "changed_binding_reassigned_before_comparison",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let mut budget = 101;",
+        "mutated_line": "let mut budget = 101;",
+        "outcome": "tests_failed",
+        "failing_test": "budget_is_one_hundred_twenty",
+        "equivalence_review": "not equivalent: budget_is_one_hundred_twenty fails on it"
+      },
+      {
+        "replacement": "let mut budget = 99;",
+        "mutated_line": "let mut budget = 99;",
+        "outcome": "tests_failed",
+        "failing_test": "budget_is_one_hundred_twenty",
+        "equivalence_review": "not equivalent: budget_is_one_hundred_twenty fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Changed binding reaches the comparison only after a reassignment (`budget += 20;`). RIPR-SPEC-0157 lists reassignment as a fail-closed blocker. The pins at 120 and 121 catch both mutants. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0157.",
+  "labeling_observation": {
+    "ripr_commit": "fddf363",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

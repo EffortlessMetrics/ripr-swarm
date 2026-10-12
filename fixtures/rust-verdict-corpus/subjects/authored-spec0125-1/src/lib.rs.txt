@@ -1,0 +1,33 @@
+//! RIPR-SPEC-0125 example 1: the tests check only that an error happened.
+
+#[derive(Debug, PartialEq)]
+pub enum NameError {
+    Empty,
+    TooLong,
+}
+
+pub fn check_name(s: &str) -> Result<&str, NameError> {
+    if s.is_empty() {
+        return Err(NameError::Empty);
+    }
+    if s.len() > 8 {
+        return Err(NameError::TooLong);
+    }
+    Ok(s)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_bad_names() {
+        assert!(check_name("").is_err());
+        assert!(check_name("abcdefghij").is_err());
+    }
+
+    #[test]
+    fn accepts_a_short_name() {
+        assert_eq!(check_name("bob"), Ok("bob"));
+    }
+}

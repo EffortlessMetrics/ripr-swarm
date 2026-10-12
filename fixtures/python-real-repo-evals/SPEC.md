@@ -99,6 +99,15 @@ expected-failure suppression. Its native identities and nonempty control
 subjects are checked by the existing fixture-contract route. It contributes to
 none of the repair-card, no-action, installed-journey or promotion metrics.
 
+The native control answer key distinguishes `pytest.skip` (one registered
+subject, zero bodies) from `pytest.xfail` (one executed body whose failure is
+suppressed). Each selected subject's explicit JSON reason must match both its
+control variant and its JUnit skipped type; active subjects have explicit null
+reasons, including fixed-source XPASS. The fixture verifier rejects missing,
+unknown and swapped reasons even when JSON and JUnit agree with each other.
+The retained observations are unchanged. These checks bind the known pytest
+JUnit serialization; they do not claim general XML validation.
+
 ## Must Not
 
 - Do not treat these records as support-tier promotion.

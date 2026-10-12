@@ -1,0 +1,51 @@
+{
+  "case_id": "semver-digit-upper",
+  "subject_id": "semver",
+  "diff": "cases/semver-digit-upper.diff",
+  "anchor": {
+    "file": "src/parse.rs",
+    "line": 166
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_public_api",
+  "hard_case": "same line as the first-run edit, scored here as a behavior-preserving rewrite with two mutants",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "b'9' <= digit",
+        "mutated_line": "if digit < b'0' || b'9' <= digit {",
+        "outcome": "tests_failed",
+        "failing_test": "test_basic",
+        "equivalence_review": "not equivalent: '9' stops being a digit"
+      },
+      {
+        "replacement": "b':' < digit",
+        "mutated_line": "if digit < b'0' || b':' < digit {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: ':' becomes a digit with value 10, but no test parses a ':' right after a number"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Tests catch '9' being rejected but nothing exercises the byte just above '9', so the boundary is only partly discriminated. ripr's infection_unknown is an acceptable abstention; a gap naming the ':' input would be ideal.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

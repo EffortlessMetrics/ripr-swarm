@@ -25,7 +25,7 @@ impl TestDeclarationRoot {
 /// `node:test` and Vitest accept an options object before the callback
 /// (`it(name, { timeout }, fn)`); otherwise the callback is argument 1, which
 /// keeps `test(name, fn, timeout)` working (#4548).
-fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>) -> usize {
+pub(super) fn declaration_callback_index(call: &oxc_ast::ast::CallExpression<'_>) -> usize {
     let is_function = |argument: Option<&oxc_ast::ast::Argument<'_>>| {
         matches!(
             argument,
@@ -60,6 +60,7 @@ pub(crate) fn extract_tests(file: &Path, source: &str) -> Vec<TypeScriptTest> {
                 &ret.program.body,
                 &imports,
             ),
+            admission: TypeScriptAdmissionContext::of_program(&ret.program.body, &imports, file),
             ..TestScope::default()
         };
         // One line index per source; every test and assertion line is a
@@ -745,6 +746,11 @@ pub(crate) fn collect_tests_from_statements(
         ) {
             test.mocks_in_file = mocks.to_vec();
             test.imports_in_file = imports.to_vec();
+            if let Statement::ExpressionStatement(statement) = stmt
+                && let Expression::CallExpression(call) = &statement.expression
+            {
+                test.assertion_admission = scope.admission.admission_of(call, &test.assertions);
+            }
             // Test callback parameters (`it.each` rows, Vitest fixtures)
             // shadow every enclosing binding of the same name.
             let parameters = statement_callback_parameter_names(stmt)
@@ -781,6 +787,8 @@ pub(crate) struct TestScope {
     /// The file's imported assertion-library bindings (`node:assert`, chai;
     /// #4547), credited in every test body.
     assertion_bindings: TypeScriptAssertionBindings,
+    /// File-wide facts for each test's assertion admission (#5524).
+    admission: TypeScriptAdmissionContext,
 }
 
 /// One binding a scope-level statement makes, and when it runs.
@@ -1561,6 +1569,30 @@ fn collect_statement_declared_names(statement: &Statement<'_>, out: &mut Vec<Str
     }
 }
 
+/// Whether a test callback's first parameter is an object pattern that binds
+/// `expect` under its own name (`({ expect }) => ...`).
+fn first_parameter_destructures_expect(argument: &oxc_ast::ast::Argument<'_>) -> bool {
+    let params = match argument {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
+        oxc_ast::ast::Argument::FunctionExpression(function) => &function.params,
+        _ => return false,
+    };
+    let Some(first) = params.items.first() else {
+        return false;
+    };
+    let oxc_ast::ast::BindingPattern::ObjectPattern(object) = &first.pattern else {
+        return false;
+    };
+    object.properties.iter().any(|property| {
+        property.key.static_name().as_deref() == Some("expect")
+            && matches!(
+                &property.value,
+                oxc_ast::ast::BindingPattern::BindingIdentifier(ident)
+                    if ident.name.as_str() == "expect"
+            )
+    })
+}
+
 /// Names declared in `statements` that are visible to a later sibling
 /// statement: every declaration at this level, plus the `var` and function
 /// declarations nested blocks hoist out. Block-scoped `let`/`const`/`class`
@@ -1729,6 +1761,9 @@ pub(crate) fn test_from_statement(
         mocks_in_file: Vec::new(),
         imports_in_file: Vec::new(),
         scope_bindings: Vec::new(),
+        // Replaced by `collect_tests_from_statements`, which has the file's
+        // admission context; fail-closed until then.
+        assertion_admission: TypeScriptAssertionAdmission::Unresolved,
     })
 }
 
@@ -1770,7 +1805,27 @@ pub(crate) fn test_name_and_assertions_from_call(
             || body_declarations.iter().any(|declared| declared == name)
             || super::related_tests::local_identifier_declared_in_test_body(call_text, name)
     });
+    // RIPR-SPEC-0243 rule 3: Vitest's `test("x", ({ expect }) => ...)`
+    // destructures the runner `expect` from the test context, unless the body
+    // re-declares it.
+    let bindings = if first_parameter_destructures_expect(callback)
+        && !body_declarations
+            .iter()
+            .any(|declared| declared == "expect")
+        && !super::related_tests::local_identifier_declared_in_test_body(call_text, "expect")
+    {
+        bindings.with_context_expect()
+    } else {
+        bindings
+    };
     let bindings = &bindings;
+    // An inline literal `test.each` table reads as one concrete case per
+    // row; any other table keeps the row-parameter assertions.
+    if call_callee_is_active_each_declaration(call, TestDeclarationRoot::Test)
+        && let Some(assertions) = table_row_assertions(call, callback, source, bindings)
+    {
+        return Some((name, assertions));
+    }
     let assertions = function_body_statements_from_argument(callback)
         .map(|statements| {
             collect_assertions_in_statements_with_bindings(

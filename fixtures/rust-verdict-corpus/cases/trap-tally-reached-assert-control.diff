@@ -1,0 +1,11 @@
+diff --git a/src/probes_checked.rs b/src/probes_checked.rs
+index dadcef8..f92854c 100644
+--- a/src/probes_checked.rs
++++ b/src/probes_checked.rs
+@@ -1,5 +1,5 @@
+ pub fn tally(base: u32) -> u32 {
+-    base * 9
++    9 * base
+ }
+ 
+ #[cfg(test)]

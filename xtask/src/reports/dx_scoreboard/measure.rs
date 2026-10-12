@@ -5,8 +5,18 @@
 //! a fresh `RIPR_CACHE_DIR` per repository so "cold" means no ripr cache,
 //! and the warm check reuses that same cache.
 
+mod check_admission;
+
 use super::{Config, CorpusEntry, Options, RunContext, Sample, SampleOutcome};
-use crate::run::{MeasuredOutput, capture_output_measured};
+use crate::run::{MeasuredOutput, capture_bytes_in_dir_with_timeout, capture_output_measured};
+#[cfg(test)]
+pub(crate) use check_admission::{
+    CHECK_SCHEMA_VERSION, OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL, admit_check_document,
+    permissive_json_exit_zero,
+};
+pub(crate) use check_admission::{
+    CheckAdmission, CheckSubject, admit_check_sample, scan_check_contradictions,
+};
 use serde_json::{Value, json};
 use std::collections::BTreeSet;
 use std::fs;
@@ -16,6 +26,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 const CACHE_ENV: &str = "RIPR_CACHE_DIR";
 const GIT_TIMEOUT: Duration = Duration::from_mins(10);
 const SHORT_TIMEOUT: Duration = Duration::from_mins(2);
+/// Warm-check samples are always draft. The flag is explicit so a checkout
+/// `ripr.toml` cannot retarget the producer away from the admission subject
+/// (#7273). Shared with `warm_check_args` so command and subject cannot drift.
+pub(crate) const WARM_CHECK_MODE: &str = "draft";
 /// Directory name of the paste-safety fixture root. It holds a space, a
 /// command substitution that would create `PWNED` if a printed command left
 /// it unquoted, an apostrophe and double quotes.
@@ -286,20 +300,20 @@ fn measure_corpus_entry(
         }
     }
 
-    let check_args = vec![
-        "check".to_string(),
-        "--root".to_string(),
-        root.clone(),
-        "--base".to_string(),
-        entry
-            .base_sha
-            .clone()
-            .unwrap_or_else(|| "HEAD~1".to_string()),
-        "--format".to_string(),
-        "json".to_string(),
-    ];
+    let base = entry
+        .base_sha
+        .clone()
+        .unwrap_or_else(|| "HEAD~1".to_string());
+    // Known checkout HEAD only. Missing means unknown, not "any head".
+    let head = git(Some(&checkout), &["rev-parse", "HEAD"])
+        .ok()
+        .map(|output| output.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let check_args = warm_check_args(&root, &base);
+    let subject = warm_check_subject(root, base, head);
     // The first run warms the cache for this exact diff; the second is the
-    // edit-check loop a developer repeats.
+    // edit-check loop a developer repeats. Warm-up success is required
+    // before the measured population may be described as warm.
     let warmup = capture_output_measured(
         &binary.display().to_string(),
         &check_args,
@@ -308,8 +322,8 @@ fn measure_corpus_entry(
         timeout,
         "dx-scoreboard warm-up check",
     );
-    let measured = warmup.and_then(|_| {
-        capture_output_measured(
+    let measured = match &warmup {
+        Ok(warmup) if !warmup.output.timed_out => capture_output_measured(
             &binary.display().to_string(),
             &check_args,
             None,
@@ -317,49 +331,93 @@ fn measure_corpus_entry(
             timeout,
             "dx-scoreboard warm check",
         )
-    });
-    match measured {
-        Ok(measured) => {
-            let ms = duration_ms(&measured);
-            let parsed = serde_json::from_str::<Value>(&measured.output.stdout).ok();
-            let ok = exited_zero(&measured) && parsed.is_some();
-            let findings = parsed
-                .as_ref()
-                .and_then(|json| json["summary"]["findings"].as_u64())
-                .unwrap_or(0);
-            samples.push(sample(
-                "speed.warm_check_ms",
-                if ok {
-                    SampleOutcome::Value(ms)
-                } else {
-                    SampleOutcome::Incomplete(ms)
-                },
-                format!(
-                    "exit {}, {findings} finding(s) on HEAD~1..HEAD",
-                    exit_label(&measured)
-                ),
-            ));
-            samples.push(rss_sample(
-                &sample,
-                "speed.warm_check_peak_rss_mb",
-                &measured,
-                ok,
-            ));
-            if let Some(json) = parsed {
-                contradictions = Some(merge_contradictions(
-                    contradictions,
-                    check_contradictions(&json),
-                ));
-            } else {
-                missing_sources.push("warm check JSON");
-            }
-        }
-        Err(err) => {
+        .map(Some),
+        Ok(_) | Err(_) => Ok(None),
+    };
+    record_warm_check(
+        &sample,
+        &subject,
+        warmup,
+        measured,
+        samples,
+        &mut contradictions,
+        &mut missing_sources,
+    );
+
+    let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
+    samples.push(sample("trust.self_contradictions", outcome, detail));
+    json!({"id": entry.id, "sha": entry.sha, "url": entry.url, "status": "measured"})
+}
+
+/// Measured `ripr check` argv for a warm-check sample. `--mode draft` is
+/// explicit (same precedent as the corpus pilot's `--mode ready`) so the
+/// producer cannot inherit a non-draft checkout `ripr.toml`.
+pub(crate) fn warm_check_args(root: &str, base: &str) -> Vec<String> {
+    vec![
+        "check".to_string(),
+        "--root".to_string(),
+        root.to_string(),
+        "--base".to_string(),
+        base.to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+        "--mode".to_string(),
+        WARM_CHECK_MODE.to_string(),
+    ]
+}
+
+pub(crate) fn warm_check_subject(root: String, base: String, head: Option<String>) -> CheckSubject {
+    CheckSubject {
+        root,
+        mode: WARM_CHECK_MODE.to_string(),
+        base,
+        head,
+    }
+}
+
+/// Pre-#7273 argv: no `--mode`, so a checkout `ripr.toml` can retarget the
+/// producer. Restoring this as `warm_check_args` must fail the discriminator.
+#[cfg(test)]
+pub(crate) fn check_args_without_explicit_mode(root: &str, base: &str) -> Vec<String> {
+    vec![
+        "check".to_string(),
+        "--root".to_string(),
+        root.to_string(),
+        "--base".to_string(),
+        base.to_string(),
+        "--format".to_string(),
+        "json".to_string(),
+    ]
+}
+
+/// Admit a warm-up plus measured check pair. Incomplete children keep raw
+/// duration/RSS; a measured capture error after warm-up is `Failed` on both
+/// warm-check metrics so `--gate` sees a broken instrument. Only a
+/// successful warm-up and a completed intended-subject analysis may enter
+/// the comparable complete-work population.
+pub(crate) fn record_warm_check(
+    sample: &dyn Fn(&str, SampleOutcome, String) -> Sample,
+    subject: &CheckSubject,
+    warmup: Result<MeasuredOutput, String>,
+    measured: Result<Option<MeasuredOutput>, String>,
+    samples: &mut Vec<Sample>,
+    contradictions: &mut Option<(usize, Vec<String>)>,
+    missing_sources: &mut Vec<&str>,
+) {
+    let warmup_admission = match &warmup {
+        Ok(warmup) => admit_measured(warmup, subject),
+        Err(_) => CheckAdmission::Rejected {
+            reason: "warm-up capture failed".to_string(),
+        },
+    };
+    let warmup_ok = warmup_admission.is_complete();
+    match (warmup, measured) {
+        (Err(err), _) => {
             missing_sources.push("warm check JSON");
             samples.push(sample(
                 "speed.warm_check_ms",
                 SampleOutcome::Failed,
-                err.clone(),
+                format!("warm-up capture failed: {err}"),
             ));
             samples.push(sample(
                 "speed.warm_check_peak_rss_mb",
@@ -367,11 +425,108 @@ fn measure_corpus_entry(
                 err,
             ));
         }
+        (Ok(_), Err(err)) => {
+            missing_sources.push("warm check JSON");
+            samples.push(sample(
+                "speed.warm_check_ms",
+                SampleOutcome::Failed,
+                format!(
+                    "warm-up {}; measured capture failed: {err}",
+                    warmup_admission.reason()
+                ),
+            ));
+            samples.push(sample(
+                "speed.warm_check_peak_rss_mb",
+                SampleOutcome::Failed,
+                err,
+            ));
+        }
+        (Ok(warmup), Ok(None)) => {
+            missing_sources.push("warm check JSON");
+            let ms = duration_ms(&warmup);
+            samples.push(sample(
+                "speed.warm_check_ms",
+                SampleOutcome::Incomplete(ms),
+                format!(
+                    "exit {}, warm-up {}; measured run not taken",
+                    exit_label(&warmup),
+                    warmup_admission.reason()
+                ),
+            ));
+            samples.push(rss_sample(
+                sample,
+                "speed.warm_check_peak_rss_mb",
+                &warmup,
+                false,
+            ));
+        }
+        (Ok(_warmup), Ok(Some(measured))) => {
+            let admission = admit_measured(&measured, subject);
+            let complete = warmup_ok && admission.is_complete();
+            let ms = duration_ms(&measured);
+            let findings = admission
+                .findings()
+                .map(|count| count.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            let mut detail = format!(
+                "exit {}, {findings} finding(s) on {}..HEAD",
+                exit_label(&measured),
+                subject.base
+            );
+            if !warmup_ok {
+                detail.push_str(&format!(
+                    "; warm-up did not establish a valid warm population ({})",
+                    warmup_admission.reason()
+                ));
+            }
+            if !admission.is_complete() {
+                detail.push_str(&format!("; {}", admission.reason()));
+            }
+            if admission.rendering_truncated() {
+                detail.push_str("; findings array rendering was truncated");
+            }
+            samples.push(sample(
+                "speed.warm_check_ms",
+                if complete {
+                    SampleOutcome::Value(ms)
+                } else {
+                    SampleOutcome::Incomplete(ms)
+                },
+                detail,
+            ));
+            samples.push(rss_sample(
+                sample,
+                "speed.warm_check_peak_rss_mb",
+                &measured,
+                complete,
+            ));
+            // Trust may scan only an admitted complete document. A rejected
+            // subject or incomplete analysis cannot contribute a clean zero.
+            if admission.is_complete() {
+                match serde_json::from_str::<Value>(&measured.output.stdout) {
+                    Ok(json) => match check_contradictions(&json) {
+                        Ok(found) => {
+                            *contradictions =
+                                Some(merge_contradictions(contradictions.take(), found));
+                        }
+                        Err(_) => missing_sources.push("warm check JSON"),
+                    },
+                    Err(_) => missing_sources.push("warm check JSON"),
+                }
+            } else {
+                missing_sources.push("warm check JSON");
+            }
+        }
     }
+}
 
-    let (outcome, detail) = contradiction_outcome(contradictions, &missing_sources);
-    samples.push(sample("trust.self_contradictions", outcome, detail));
-    json!({"id": entry.id, "sha": entry.sha, "url": entry.url, "status": "measured"})
+fn admit_measured(measured: &MeasuredOutput, subject: &CheckSubject) -> CheckAdmission {
+    admit_check_sample(
+        measured.output.timed_out,
+        exited_zero(measured),
+        &measured.output.stdout,
+        subject,
+    )
 }
 
 /// Why earlier ripr state in `checkout` must not be cleared, if it must not.
@@ -413,7 +568,7 @@ pub(crate) fn contradiction_outcome(
     }
 }
 
-fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result<PathBuf, String> {
+pub(crate) fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result<PathBuf, String> {
     let dir = options.corpus_dir.join(&entry.id);
     if !dir.join(".git").exists() {
         if !options.clone {
@@ -436,6 +591,7 @@ fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result<PathBuf, S
         )?;
     }
     let dir = fs::canonicalize(&dir).map_err(|err| format!("{}: {err}", dir.display()))?;
+    verify_own_checkout(&dir)?;
     let head = git(Some(&dir), &["rev-parse", "HEAD"])?;
     if head.trim() != entry.sha {
         let checkout = git(Some(&dir), &["checkout", "--quiet", "--detach", &entry.sha]);
@@ -464,16 +620,64 @@ fn prepare_checkout(entry: &CorpusEntry, options: &Options) -> Result<PathBuf, S
     Ok(dir)
 }
 
-fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
+/// Refuse a corpus directory that is not the root of its own repository.
+/// A `.git` left empty or partial (an interrupted clone, or a CI cache that
+/// restored `target/` without the object store) makes git walk up to the
+/// enclosing repository, and the pin checkout below would then detach the
+/// caller's own working tree.
+pub(crate) fn verify_own_checkout(dir: &Path) -> Result<(), String> {
+    let output = git(Some(dir), &["rev-parse", "--show-toplevel"])?;
+    // Strip only git's line ending; a directory name may end in spaces.
+    let printed = output.trim_end_matches(['\n', '\r']);
+    let toplevel = fs::canonicalize(printed).map_err(|err| format!("{printed}: {err}"))?;
+    if toplevel == dir {
+        Ok(())
+    } else {
+        Err(format!(
+            "{} is not its own git checkout (git resolves it to {}); delete it and rerun with --clone",
+            dir.display(),
+            toplevel.display()
+        ))
+    }
+}
+
+/// Repository-location overrides a caller can leave in the environment (a git
+/// hook sets `GIT_DIR`, for one). Corpus commands must resolve the corpus
+/// checkout itself, never the caller's repository.
+const GIT_ENV_REMOVE: [&str; 7] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_COMMON_DIR",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_NAMESPACE",
+];
+
+pub(crate) fn git(cwd: Option<&Path>, args: &[&str]) -> Result<String, String> {
     let owned: Vec<String> = args.iter().map(|arg| (*arg).to_string()).collect();
-    let measured = capture_output_measured("git", &owned, cwd, &[], GIT_TIMEOUT, "git")?;
-    if exited_zero(&measured) {
-        Ok(measured.output.stdout)
+    let output = capture_bytes_in_dir_with_timeout(
+        Path::new("git"),
+        &owned,
+        cwd.unwrap_or_else(|| Path::new(".")),
+        &[],
+        &GIT_ENV_REMOVE,
+        GIT_TIMEOUT,
+        "git",
+    )?;
+    if output.timed_out {
+        Err(format!(
+            "git {} timed out after {} s",
+            args.join(" "),
+            GIT_TIMEOUT.as_secs()
+        ))
+    } else if output.status.is_some_and(|status| status.success()) {
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     } else {
         Err(format!(
             "git {} failed: {}",
             args.join(" "),
-            measured.output.stderr.trim()
+            String::from_utf8_lossy(&output.stderr).trim()
         ))
     }
 }
@@ -502,36 +706,10 @@ pub(crate) fn repo_exposure_contradictions(exposure: &Value) -> (usize, Vec<Stri
 /// Self-contradiction rules over one `ripr check --format json` result:
 /// `R2` classification `no_static_path` while listing related tests;
 /// `R3` evidence says related tests were found while listing none.
-pub(crate) fn check_contradictions(check: &Value) -> (usize, Vec<String>) {
-    let mut count = 0;
-    let mut examples = Vec::new();
-    for finding in check["findings"].as_array().into_iter().flatten() {
-        let related = finding["related_tests_total"].as_u64().unwrap_or(0);
-        let id = finding["id"].as_str().unwrap_or("?");
-        let rule = if finding["classification"].as_str() == Some("no_static_path") && related > 0 {
-            Some(format!(
-                "R2 {id} no_static_path with {related} related tests"
-            ))
-        } else if related == 0
-            && finding["evidence"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .any(|line| line.starts_with("Related tests were found"))
-        {
-            Some(format!("R3 {id} says related tests were found but lists 0"))
-        } else {
-            None
-        };
-        if let Some(rule) = rule {
-            count += 1;
-            if examples.len() < 3 {
-                examples.push(rule);
-            }
-        }
-    }
-    (count, examples)
+/// A missing findings array or a declared rendering prefix cannot be
+/// scanned as a clean empty population.
+pub(crate) fn check_contradictions(check: &Value) -> Result<(usize, Vec<String>), String> {
+    scan_check_contradictions(check)
 }
 
 fn merge_contradictions(
@@ -1345,9 +1523,46 @@ pub(crate) fn runner_class() -> String {
     } else {
         "local".to_string()
     };
-    format!(
+    let class = format!(
         "{host}-{}-{}-{cpus}cpu",
         std::env::consts::OS,
         std::env::consts::ARCH
-    )
+    );
+    // Hosted runners with the same vCPU count run on more than one CPU
+    // model, and wall time moved ~1.7x between them on identical code
+    // (#6726). Keying on the model leaves those pairs uncompared instead
+    // of failing the gate on hardware.
+    match fs::read_to_string("/proc/cpuinfo")
+        .ok()
+        .and_then(|cpuinfo| cpu_model_slug(&cpuinfo))
+    {
+        Some(model) => format!("{class}-{model}"),
+        None => class,
+    }
+}
+
+/// The first `model name` in `/proc/cpuinfo` (on Arm, the `CPU implementer`
+/// and `CPU part` codes) as a lowercase dash-separated slug, or `None` when
+/// neither is present.
+pub(crate) fn cpu_model_slug(cpuinfo: &str) -> Option<String> {
+    let field = |name: &str| {
+        cpuinfo.lines().find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            let value = value.trim();
+            (key.trim() == name && !value.is_empty()).then_some(value)
+        })
+    };
+    // Arm kernels print no `model name`; the implementer and part codes
+    // identify the core design instead.
+    let model = match field("model name") {
+        Some(model) => model.to_string(),
+        None => format!("arm-{}-{}", field("CPU implementer")?, field("CPU part")?),
+    };
+    let slug = model
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|part| !part.is_empty())
+        .map(str::to_ascii_lowercase)
+        .collect::<Vec<_>>()
+        .join("-");
+    (!slug.is_empty()).then_some(slug)
 }

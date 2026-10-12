@@ -120,7 +120,7 @@ For Droid workflows:
 - `automatic_review: true` and `automatic_security_review: true` must be set.
 - `review_depth: shallow` unless intentionally changed.
 - `cancel-in-progress: false` with per-PR concurrency group.
-- `pull_request` types must include `opened`, `synchronize`, `ready_for_review`, `reopened`.
+- `pull_request` types are `opened`, `synchronize`, `reopened`, `labeled`, `unlabeled`; `ready_for_review` must not repeat advisory computation (#4987).
 - Same-repo guard (`head.repo.full_name == github.repository`) is required.
 - Draft PRs must not be filtered out.
 - `MINIMAX_API_KEY` must be job-level env referencing `${{ secrets.MINIMAX_API_KEY }}`.

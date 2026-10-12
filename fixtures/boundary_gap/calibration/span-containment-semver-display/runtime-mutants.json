@@ -1,0 +1,47 @@
+{
+  "cargo_mutants_version": "27.1.0",
+  "outcomes": [
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/display.rs:20:17: replace + with * in <impl Display for Version>::fmt",
+          "file": "src/display.rs",
+          "span": {
+            "start": {
+              "line": 20,
+              "column": 17
+            },
+            "end": {
+              "line": 20,
+              "column": 18
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant"
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/display.rs:20:17: replace + with - in <impl Display for Version>::fmt",
+          "file": "src/display.rs",
+          "span": {
+            "start": {
+              "line": 20,
+              "column": 17
+            },
+            "end": {
+              "line": 20,
+              "column": 18
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant"
+    }
+  ]
+}

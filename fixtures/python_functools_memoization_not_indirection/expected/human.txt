@@ -32,8 +32,8 @@ Start here:
     - 5 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/python_functools_memoization_not_indirection/input --diff fixtures/python_functools_memoization_not_indirection/diff.patch --mode fast probe:src_memo.py:python_preview:7684d8ca
-  ripr context --root fixtures/python_functools_memoization_not_indirection/input --diff fixtures/python_functools_memoization_not_indirection/diff.patch --mode fast --at probe:src_memo.py:python_preview:7684d8ca
+  ripr explain --root <cwd>/fixtures/python_functools_memoization_not_indirection/input --diff <cwd>/fixtures/python_functools_memoization_not_indirection/diff.patch --mode fast probe:src_memo.py:python_preview:7684d8ca
+  ripr context --root <cwd>/fixtures/python_functools_memoization_not_indirection/input --diff <cwd>/fixtures/python_functools_memoization_not_indirection/diff.patch --mode fast --at probe:src_memo.py:python_preview:7684d8ca
 
 Hidden:
   1 lower-priority finding(s) omitted from default human output (Python preview: 1).

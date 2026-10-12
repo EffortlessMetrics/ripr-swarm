@@ -9,8 +9,8 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 | Inspect a finding | The `ripr explain` command printed by `check` | Evidence for that finding, using the same root, diff, mode, and ID. |
 | Hand off a finding | The `ripr context` command printed by `check` | Context for a human or coding agent. |
 | Explore the repository | `ripr pilot --root .` | Broader analysis, pilot reports, and a supported next action. |
-| Repair a selected Rust gap | The `ripr agent repair` command printed by pilot | A prepared before/edit/after attempt; you or your agent edit the test. |
-| Resume a repair | `ripr agent status --root .` | The continuation command or a recovery step. |
+| Repair a selected Rust gap | `ripr repair` | A prepared before/edit/after attempt; you or your agent edit the test. |
+| Resume a repair | `ripr status --root .` | The continuation command or a recovery step. |
 | Compose PR evidence | `ripr first-pr` with the inputs described in [First PR workflow](FIRST_PR_WORKFLOW.md) | A summary of existing artifacts, not a new analysis or repair. |
 | Add advisory CI | `ripr init --ci github` | A non-blocking GitHub workflow to review and commit. |
 | Diagnose setup | `ripr doctor` | Tooling and configuration checks with recovery guidance. Not required before every run. |
@@ -22,31 +22,37 @@ see [installation](QUICKSTART.md#installation) for published and source builds.
 
 ## Repair transaction
 
-Start with `ripr pilot --root .`. When it supplies a supported repair, copy its
-before command. `check` prints probe IDs; `agent repair` accepts repository-scoped
-seam IDs. They are not interchangeable.
+Start with `ripr pilot --root .`. When it supplies a supported repair, run
+`ripr repair` with the listed seam ID; pilot also prints the equivalent
+advanced `ripr agent repair` spelling. `check` prints probe IDs; `repair`
+accepts repository-scoped seam IDs. They are not interchangeable.
 
 The sequence below is a reference, not a copy-ready command: replace `SEAM_ID`
-with the ID from pilot and `ATTEMPT_ID` with the ID printed by the before phase.
-Prefer the complete commands printed by ripr.
+with the ID from pilot. When several attempts are current, `ripr continue`
+names the explicit `--attempt` retry. Prefer the complete commands printed
+by ripr.
 
 ```bash
-ripr agent repair --root . --seam-id SEAM_ID --phase before
+ripr repair SEAM_ID --root .
 # Read the packet, then edit one allowed test and run its authorized test command.
-ripr agent repair --root . --attempt ATTEMPT_ID --phase after
+ripr continue --root .
 ```
 
-The before phase records the initial evidence and prints the continuation
-command. The after phase records static evidence after the edit and emits the
-receipt. Test execution and static movement are separate observations.
+The repair command runs the before phase, which records the initial evidence
+and prints the continuation command. The continue command runs the after
+phase, which records static evidence after the edit and emits the receipt.
+Test execution and static movement are separate observations.
 
-Keep the `--attempt` command when changing sessions. The seam ID selects the
+Keep the printed continuation command when changing sessions, or rerun
+`ripr continue --attempt ATTEMPT_ID --root .`. The seam ID selects the
 gap; the attempt ID selects its prepared transaction. To recover, run
-`ripr agent status --root .` and follow [Repair attempt identity](REPAIR_ATTEMPT.md).
+`ripr status --root .` and follow [Repair attempt identity](REPAIR_ATTEMPT.md).
 
-The compatibility form `--seam-id ... --phase after` requires exactly one
-waiting attempt for that seam. Zero or multiple matches are rejected rather
-than guessed.
+The advanced compatibility form `ripr agent repair --seam-id ... --phase after`
+requires exactly one waiting attempt for that seam. Zero or multiple matches
+are rejected rather than guessed. The advanced spellings `ripr agent repair`
+(`--phase before|after`) and `ripr agent status` run the same transaction with
+explicit phase vocabulary.
 
 ### Trust-bound Python repair
 

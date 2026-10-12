@@ -74,6 +74,14 @@ that belongs to the review and work only inside it:
 git worktree add --detach <own-path> <sha>
 ```
 
+Candidate protection does not prohibit an admitted wrong-result, removal or
+fixture experiment in that review-owned tree. Keep its target/output separate,
+record the original reviewed head plus the experimental diff and result, and
+leave the submitted candidate unchanged. Experimental bytes are a control, not
+the reviewed candidate or a rival submission. Apply
+[existing resource admission](../../../docs/PR_AUTOMATION.md#bounded-local-storage-and-proof-retention);
+if isolation or execution is unavailable, retain that missing proof honestly.
+
 `git checkout`, `git switch`, `git reset`, and every other HEAD-moving command are
 prohibited in a shared root checkout or a sibling candidate worktree. Those are
 owned by their writer, and a clean tree at the instant of observation does not

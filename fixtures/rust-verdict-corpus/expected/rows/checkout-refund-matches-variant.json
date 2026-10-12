@@ -1,0 +1,22 @@
+{
+  "case_id": "checkout-refund-matches-variant",
+  "subject_id": "authored-checkout",
+  "origin": "authored",
+  "anchor": "src/payment.rs:28",
+  "behavior_family": "error_path",
+  "test_shape": "unit_test_assert_matches_variant",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

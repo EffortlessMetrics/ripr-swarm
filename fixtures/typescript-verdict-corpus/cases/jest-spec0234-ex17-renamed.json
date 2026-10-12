@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-spec0234-ex17-renamed",
+  "subject_id": "authored-ts-jest-relations",
+  "diff": "cases/jest-spec0234-ex17-renamed.diff",
+  "anchor": {
+    "file": "src/priceRenamed.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_default_import_renamed_tobe",
+  "hard_case": "default import bound to a different local name (`cost`), so only import-path affinity links test and owner",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "cost",
+        "equivalence_review": "not equivalent: behavior_change edit (the spec's diff); changes the returned/passed value for amount > 100"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test default-imports `priceRenamed` as `cost` and pins `expect(cost(150)).toBe(140)`; the edit makes it 130 and the test fails. ripr relates the test only through `import_path_affinity` and reports `weakly_exposed` although the exact-value oracle runs the changed code. (matches spec: import_path_affinity, weakly_exposed). Spec cells: RIPR-SPEC-0243 example 17",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
