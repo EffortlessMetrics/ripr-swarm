@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "tests/it.rs pins reason(None) to 1 on the unedited crate; None selects the changed arm and the exact assert_eq! fails on the edit. The spec states the test as assert_eq!(reason(None), 0) against the post-edit source; a behavior_change subject must pass its own tests before the edit, so the stored test pins the pre-edit value 1, the same selecting call and exact oracle. Spec cells: RIPR-SPEC-0229 example 2. ripr reads exposed on the match arm: reason(None) provably selects the changed arm under an exact assert_eq!, as the example requires.",
+  "reasoning": "tests/it.rs pins reason(None) to 1 on the unedited crate; None selects the changed arm and the exact assert_eq! fails on the edit. The spec states the test as assert_eq!(reason(None), 0) against the post-edit source; a behavior_change subject must pass its own tests before the edit, so the stored test pins the pre-edit value 1, the same selecting call and exact oracle. Spec cells: RIPR-SPEC-0229 example 2. ripr reads exposed on the match arm: reason(None) provably selects the changed arm under an exact assert_eq!, as the example requires. If ripr ever folds a match arm's literal the way RIPR-SPEC-0233 folds an owner, this stored pre-edit literal contradicts the edited arm and the case would move for reasons unrelated to 0229.",
   "labeling_observation": {
     "ripr_commit": "dd5a66b5",
     "full_checkout_verdict": "credited",

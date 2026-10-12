@@ -12,7 +12,7 @@
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 101
+floor = 100
 
 # LSP Repair Packet Command
 [[spec]]
@@ -436,6 +436,10 @@ scope = "in"
 [[spec.waived]]
 example = 1
 reason = "the example's test asserts 5_000 where the unedited owner returns 3_500, so the unedited suite fails and `verdict-corpus relabel` refuses every mutant outcome; the claim is also repo-scope seam grip and receipt closure, not a diff verdict"
+
+[[spec.waived]]
+example = 2
+reason = "repo-scope seam credit: the example is the gap-closure and oracle-strength rule when an added test's literal agrees with the folded owner, which RIPR-SPEC-0233's Test Mapping says diff-scoped corpora do not pin; a diff case reads the same with or without the fold"
 
 [[spec.waived]]
 example = 3

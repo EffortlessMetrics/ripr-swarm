@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "tests/it.rs pins f(9) to \"many\" on the unedited crate; widening 1..=8 to 1..=9 moves 9 from the _ arm to the changed arm with an unequal literal result, so the exact assert_eq! fails on the edit. The spec states the test as assert_eq!(f(9), \"digit\") against the post-edit source; a behavior_change subject must pass its own tests before the edit, so the stored test pins the pre-edit value \"many\", the same moved input and exact oracle. Spec cells: RIPR-SPEC-0229 example 8. ripr reads weakly_exposed, a false actionable gap: the example requires exposed.",
+  "reasoning": "tests/it.rs pins f(9) to \"many\" on the unedited crate; widening 1..=8 to 1..=9 moves 9 from the _ arm to the changed arm with an unequal literal result, so the exact assert_eq! fails on the edit. The spec states the test as assert_eq!(f(9), \"digit\") against the post-edit source; a behavior_change subject must pass its own tests before the edit, so the stored test pins the pre-edit value \"many\", the same moved input and exact oracle. Spec cells: RIPR-SPEC-0229 example 8. ripr reads weakly_exposed, a false actionable gap: the example requires exposed. If ripr ever folds a match arm's literal the way RIPR-SPEC-0233 folds an owner, this stored pre-edit literal contradicts the edited arm and the case would move for reasons unrelated to 0229.",
   "labeling_observation": {
     "ripr_commit": "dd5a66b5",
     "full_checkout_verdict": "gap",

@@ -1,9 +1,0 @@
-//! RIPR-SPEC-0233 example 2: the issue #6026 crate with a consistent boundary assert.
-
-pub fn discounted_total(amount_cents: u64, discount_threshold_cents: u64) -> u64 {
-    if amount_cents >= discount_threshold_cents {
-        amount_cents * 70 / 100
-    } else {
-        amount_cents
-    }
-}
