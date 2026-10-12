@@ -636,6 +636,7 @@ fn plain_class_body(body: &str) -> bool {
 ///   only calls `super` with its parameters or literals;
 /// - `function name(params)[: Type] { ... }` whose body is plain (see
 ///   `plain_function_body`);
+///
 /// each optionally `export`ed. Anything else (a top-level statement, a
 /// variable, a type alias, an interface, a decorator) fails.
 fn module_is_plain(source: &str) -> bool {
