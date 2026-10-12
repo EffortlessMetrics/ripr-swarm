@@ -127,65 +127,71 @@ fn module_classes(masked_module: &str) -> Option<Vec<ModuleClass>> {
     Some(classes)
 }
 
-/// `true` when the module binds `name` other than by `class name`: a
-/// `const`, `let` or `var` declaration, a `function`, `enum` or `namespace`,
-/// an import, an `export { other as name }` rename, or an assignment
-/// (`name = ...`). Nested scopes and type annotations count too, so the
-/// answer errs towards a binding.
+/// `true` when the module uses `name` anywhere a binding could hide: every
+/// occurrence must be a `class name` header, an `extends name` clause, a
+/// `new name` expression, an `instanceof name` test or a return type
+/// (`): name {`). A declaration, parameter, catch binding, import, export
+/// clause, destructuring target, assignment or member use (`name.prototype`)
+/// fails, as does a type assertion (`x as name`), so the answer errs towards
+/// a binding.
 fn module_rebinds(masked_module: &str, name: &str) -> bool {
-    let declares = |keyword: &str| {
-        identifier_offsets(masked_module, keyword)
-            .into_iter()
-            .any(|at| {
-                let rest = &masked_module[at + keyword.len()..];
-                let end = rest.find(['=', ';']).unwrap_or(rest.len());
-                !identifier_offsets(&rest[..end], name).is_empty()
-            })
-    };
-    if ["const", "let", "var"]
-        .iter()
-        .any(|keyword| declares(keyword))
-    {
-        return true;
-    }
-    // An import statement runs to its `;`.
-    let imports = identifier_offsets(masked_module, "import")
+    identifier_offsets(masked_module, name)
         .into_iter()
         .any(|at| {
-            let rest = &masked_module[at..];
-            let end = rest.find(';').unwrap_or(rest.len());
-            !identifier_offsets(&rest[..end], name).is_empty()
-        });
-    // `as` only inside an export clause: `x as NotFound` elsewhere is a type
-    // assertion.
-    let renamed = identifier_offsets(masked_module, "export")
-        .into_iter()
-        .any(|at| {
-            let rest = masked_module[at + "export".len()..].trim_start();
-            let Some(clause) = rest.strip_prefix('{') else {
-                return false;
+            let before = masked_module[..at].trim_end();
+            let previous = before
+                .rsplit(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '$')))
+                .next()
+                .unwrap_or("");
+            let after = masked_module[at + name.len()..].trim_start();
+            let plain = match previous {
+                "class" | "extends" => {
+                    after.starts_with(['{', '<']) || after.starts_with("extends")
+                }
+                "new" => after.starts_with('('),
+                "instanceof" => after.starts_with([')', '&', '|', ';', '?']) || after.is_empty(),
+                "" => {
+                    before
+                        .strip_suffix(':')
+                        .is_some_and(|head| head.trim_end().ends_with(')'))
+                        && after.starts_with('{')
+                }
+                _ => false,
             };
-            let clause = &clause[..clause.find('}').unwrap_or(clause.len())];
-            identifier_offsets(clause, name)
-                .into_iter()
-                .any(|at| clause[..at].trim_end().ends_with(" as"))
-        });
-    imports
-        || renamed
-        || identifier_offsets(masked_module, name)
-            .into_iter()
-            .any(|at| {
-                let before = masked_module[..at].trim_end();
-                let previous = before
-                    .rsplit(|c: char| !(c.is_alphanumeric() || matches!(c, '_' | '$')))
-                    .next()
-                    .unwrap_or("");
-                let after = masked_module[at + name.len()..].trim_start();
-                ["function", "enum", "namespace"].contains(&previous)
-                    || (after.starts_with('=')
-                        && !after.starts_with("==")
-                        && !after.starts_with("=>"))
-            })
+            !plain
+        })
+}
+
+/// `true` when the module can patch a global or a constructor where the
+/// class-name scan cannot see it: a decorator, an ambient `declare`, a
+/// global object, `eval` or `Function`, `Symbol` or `Reflect` access, or a
+/// hook or constructor name spelled in a string (`[Symbol["hasInstance"]]`,
+/// `"constructor"() { ... }`).
+fn module_escapes_name_scan(raw_module: &str, masked_module: &str) -> bool {
+    masked_module.contains('@')
+        || [
+            "declare",
+            "globalThis",
+            "window",
+            "global",
+            "self",
+            "eval",
+            "Function",
+            "Symbol",
+            "Reflect",
+        ]
+        .iter()
+        .any(|name| !identifier_offsets(masked_module, name).is_empty())
+        || [
+            "hasInstance",
+            "setPrototypeOf",
+            "__proto__",
+            "constructor\"",
+            "constructor'",
+            "constructor`",
+        ]
+        .iter()
+        .any(|text| raw_module.contains(text))
 }
 
 /// The module class named `name` when the owner and the module's importers
@@ -349,7 +355,7 @@ pub(crate) fn ts_owner_branches_split_class(
         return false;
     };
     let module = ts_mask_literals_and_comments(module_source);
-    if module_overrides_instanceof(&module) {
+    if module_overrides_instanceof(&module) || module_escapes_name_scan(module_source, &module) {
         return false;
     }
     let Some(classes) = module_classes(&module) else {

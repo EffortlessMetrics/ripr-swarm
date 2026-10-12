@@ -21,11 +21,12 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
         CHANGED,
         "Forbidden"
     ));
-    // A type assertion naming the class is not a binding.
-    let cast =
-        format!("{ERRORS}export function cast(e: unknown) {{\n  return e as NotFound;\n}}\n");
+    // `instanceof` and a return type are plain uses of a class name.
+    let reads = format!(
+        "{ERRORS}export function isMissing(e: unknown): NotFound {{\n  if (e instanceof NotFound) {{\n    return e;\n  }}\n  return new NotFound(\"x\");\n}}\n"
+    );
     assert!(ts_owner_branches_split_class(
-        OWNER, &cast, CHANGED, "NotFound"
+        OWNER, &reads, CHANGED, "NotFound"
     ));
     // A builtin on the other branch is never a user class instance.
     let builtin = OWNER.replace("new Forbidden(", "new RangeError(");
@@ -134,7 +135,7 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
         (
             "the module assigns the other class's builtin parent",
             OWNER.to_string(),
-            format!("{ERRORS}globalThis.x = 1;\nError = NotFound;\n"),
+            format!("{ERRORS}Error = NotFound;\n"),
             "NotFound",
         ),
         (
@@ -165,6 +166,60 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
                 "import {{ Base }} from \"./base\";\n{}",
                 ERRORS.replace("class NotFound extends Error", "class NotFound extends Base")
             ),
+            "NotFound",
+        ),
+        (
+            "a type assertion is not told apart from a rename",
+            OWNER.to_string(),
+            format!("{ERRORS}export function cast(e: unknown) {{\n  return e as NotFound;\n}}\n"),
+            "NotFound",
+        ),
+        (
+            "a parameter shadows the other class",
+            OWNER.replace("(status: number)", "(status: number, Forbidden: typeof NotFound)"),
+            ERRORS.replace("(status: number)", "(status: number, Forbidden: typeof NotFound)"),
+            "NotFound",
+        ),
+        (
+            "a logical assignment rebinds the other class",
+            OWNER.to_string(),
+            format!("{ERRORS}Forbidden &&= NotFound;\n"),
+            "NotFound",
+        ),
+        (
+            "a global object patches a builtin parent",
+            OWNER.to_string(),
+            format!("(globalThis as any).Error = NotFound;\n{ERRORS}"),
+            "NotFound",
+        ),
+        (
+            "a decorator can replace the other class",
+            OWNER.to_string(),
+            ERRORS.replace("export class Forbidden", "@swap export class Forbidden"),
+            "NotFound",
+        ),
+        (
+            "a string-keyed hook",
+            OWNER.to_string(),
+            ERRORS.replace(
+                "class NotFound extends Error {}",
+                "class NotFound extends Error {\n  static [Symbol[\"hasInstance\"]](x: unknown) {\n    return true;\n  }\n}",
+            ),
+            "NotFound",
+        ),
+        (
+            "a string-named constructor",
+            OWNER.to_string(),
+            ERRORS.replace(
+                "class Forbidden extends Error {}",
+                "class Forbidden extends Error {\n  \"constructor\"() {\n    super();\n  }\n}",
+            ),
+            "NotFound",
+        ),
+        (
+            "an ambient class declaration",
+            OWNER.to_string(),
+            ERRORS.replace("export class Forbidden", "declare class Forbidden"),
             "NotFound",
         ),
     ] {

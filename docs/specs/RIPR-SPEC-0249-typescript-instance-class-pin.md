@@ -111,9 +111,13 @@ ladder and in its related-test row, when all of these hold:
   argument list (`new X().as()` and `new X() || y` fail);
 - one branch returns `C`, the other returns a different class `D`, and the
   owner's module declares `export class C` outside every block;
-- the module does not otherwise bind a class name the check reads: no
-  `const`, `let` or `var` declaration, `function`, `enum`, `namespace`,
-  import, `export { X as C }` rename or assignment of it, in any scope;
+- every class name the check reads (`C`, `D` and their ancestors) appears
+  in the module only as a `class Name` header, an `extends Name` clause, a
+  `new Name(` expression, an `instanceof Name` test or a return type
+  (`): Name {`); any other use (a declaration, parameter, catch binding,
+  import, export clause, destructuring target, assignment, member use such
+  as `Name.prototype`, or a type assertion `x as Name`) fails, because a
+  binding could hide behind it;
 - every ancestor of `C` is a top-level module class or a builtin, so no
   imported parent can hand `C` an inherited `Symbol.hasInstance` hook;
 - `D` can never be a `C`: walking its `extends` chain through top-level
@@ -125,13 +129,18 @@ ladder and in its related-test row, when all of these hold:
   the test body nor an enclosing scope rebinds it (`const C = Error`);
 - the module has no `Symbol.hasInstance` hook, prototype rewrite
   (`setPrototypeOf`, `__proto__`) or constructor that contains a `return`,
-  any of which lets `instanceof` disagree with the `extends` chain.
+  any of which lets `instanceof` disagree with the `extends` chain; the
+  hook and prototype names are matched in string text too, and a module
+  with a decorator, an ambient `declare`, `globalThis`, `window`,
+  `global`, `self`, `eval`, `Function`, `Symbol`, `Reflect` or a
+  string-named `constructor` fails, since each can patch a class or a
+  global where the name scan cannot see it.
 
 The module scan reads every `class Name` declaration; a module with any
 generic (`class A<T>`), anonymous (`export default class {`) or repeated
 class declaration is not read, and a mixin or member parent
 (`extends mix(C)`, `extends ns.Base`), a nested class or an imported class
-stops the walk. The binding scan errs towards a binding: a type annotation
+stops the walk. The name scan errs towards a binding: a type annotation
 such as `const e: C = ...` counts, and the pin keeps the weak reading.
 Builtins: `Error`, `TypeError`, `RangeError`, `SyntaxError`,
 `ReferenceError`, `EvalError`, `URIError`, `AggregateError`, `Object`,
@@ -175,6 +184,12 @@ documented decisions and proceed"). Recorded on #6654.
 - `typescript_oracle_confidence` in the oracle metadata evidence reads the
   assertion's default (weak) strength, so a credited pin shows `low`.
 - Single-line `if (...) return ...;`, ternaries and `switch` are not read.
+- Only the owner's module is read. A setup file or another module that
+  patches a global class (`globalThis.Error = ...`) before the test runs
+  is not seen.
+- The scan reads masked text, and the shared masker can take a division
+  after `!` or `++` (`n! / 2`) for a regular expression, which hides the
+  rest of that line from the name scan (#7483).
 - The boundary witness checks that a tested call carries the boundary
   input, not that control reaches the changed `if`: an earlier
   `if (admin) { return ...; }` can stop the tested call first. This
