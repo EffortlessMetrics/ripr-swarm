@@ -136,21 +136,26 @@ fn environment_allowed(env: &BTreeMap<String, String>) -> bool {
     })
 }
 
+// Select OS-string names first: unrelated bytes are not receipt inputs.
+// Cargo prefixes remain relevant even when the rest of the name is invalid.
+fn relevant_environment_name(name: &std::ffi::OsStr) -> bool {
+    name.as_encoded_bytes().starts_with(b"CARGO_")
+        || [
+            "PATH",
+            "HOME",
+            "USERPROFILE",
+            "RUSTUP_HOME",
+            "RUSTUP_TOOLCHAIN",
+            "RUSTFLAGS",
+        ]
+        .iter()
+        .any(|key| name == std::ffi::OsStr::new(key))
+}
+
 // Capture flag changes for currentness without interpreting compiler flags.
 fn environment_identity_inputs(env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
     env.iter()
-        .filter(|(key, _)| {
-            key.starts_with("CARGO_")
-                || matches!(
-                    key.as_str(),
-                    "PATH"
-                        | "HOME"
-                        | "USERPROFILE"
-                        | "RUSTUP_HOME"
-                        | "RUSTUP_TOOLCHAIN"
-                        | "RUSTFLAGS"
-                )
-        })
+        .filter(|(key, _)| relevant_environment_name(std::ffi::OsStr::new(key)))
         .map(|(key, value)| (format!("env:{key}"), digest(value.as_bytes())))
         .collect()
 }
@@ -158,6 +163,7 @@ fn environment_identity_inputs(env: &BTreeMap<String, String>) -> BTreeMap<Strin
 fn snapshot(root: &Path) -> Option<BTreeMap<String, String>> {
     let root = root.canonicalize().ok()?;
     let env = std::env::vars_os()
+        .filter(|(key, _)| relevant_environment_name(key))
         .map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
         .collect::<Option<BTreeMap<_, _>>>()?;
     if !environment_allowed(&env) {
