@@ -796,6 +796,22 @@ include!({:?});
         "legacy admission must bind candidate identity"
     );
     assert!(output.is_empty());
+    let real_git = fixture
+        .command("bash")?
+        .args(["-c", "command -v git"])
+        .output()?;
+    assert!(real_git.status.success());
+    let real_git = String::from_utf8(real_git.stdout)?.trim().to_owned();
+    fixture.write_shim("git", &format!(
+        "if test \"$1\" = rev-parse && test \"$2\" = HEAD; then printf '%s\\n' {head:?}; echo 'failed-head-probe-control' >&2; exit 9; fi\nexec {real_git:?} \"$@\"\n"))?;
+    let (failed_probe, output) = fixture.select("pull_request", &head, &head)?;
+    assert_eq!(
+        failed_probe.status.code(),
+        Some(9),
+        "matching stdout from failed HEAD inspection is not admission evidence: {failed_probe:?}"
+    );
+    assert!(output.is_empty());
+    assert!(String::from_utf8(failed_probe.stderr)?.contains("failed-head-probe-control"));
     Ok(())
 }
 
