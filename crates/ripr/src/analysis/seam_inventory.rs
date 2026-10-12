@@ -8482,7 +8482,7 @@ fn selected({input}) {{ {body} }}
                 Some("selected"),
             );
             if let Some(owner) = expected {
-                let inventory = result.map_err(|error| format!("{label}: {error}"))?;
+                let inventory = result.map_err(|error| format!("{label}: {error:?}"))?;
                 assert_eq!(inventory.selected_test_count, 1, "{label}");
                 assert!(!inventory.classified.is_empty(), "{label}");
                 assert!(
