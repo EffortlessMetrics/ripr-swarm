@@ -8329,7 +8329,13 @@ impl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
         )?;
         let file = root.join("src/lib.rs");
         let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
-        assert!(!index.files().get(&file).ok_or("missing indexed file")?.used_lexical_fallback);
+        assert!(
+            !index
+                .files()
+                .get(&file)
+                .ok_or("missing indexed file")?
+                .used_lexical_fallback
+        );
         assert_eq!(index.tests().len(), 1);
         assert!(index.functions().iter().any(|function| function.name == "new"
             && matches!(&function.impl_context, crate::analysis::facts::FunctionImplContext::Impl { self_type } if self_type == "Alpha")
@@ -8380,7 +8386,13 @@ fn selected() {
             .iter()
             .find(|test| test.name == "selected")
             .ok_or("missing indexed test")?;
-        assert!(!index.files().get(&file).ok_or("missing indexed file")?.used_lexical_fallback);
+        assert!(
+            !index
+                .files()
+                .get(&file)
+                .ok_or("missing indexed file")?
+                .used_lexical_fallback
+        );
         let syntax = super::super::classify::OwnerPinSyntax::default();
         let calls = super::super::classify::TargetedCallSyntax::new(&index)
             .occurrences(test, |line, name| {
@@ -8408,7 +8420,14 @@ fn selected() {
         )));
         for call in &calls {
             let range = call.range.clone().ok_or("unexpected unproven row")?;
-            assert_eq!(&index.files().get(&file).ok_or("missing indexed file")?.source[range], call.text);
+            assert_eq!(
+                &index
+                    .files()
+                    .get(&file)
+                    .ok_or("missing indexed file")?
+                    .source[range],
+                call.text
+            );
         }
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
@@ -8487,7 +8506,11 @@ fn selected() {
                 "{label}: missing captured call"
             );
             assert!(
-                !index.files().get(&file).ok_or("missing indexed file")?.used_lexical_fallback,
+                !index
+                    .files()
+                    .get(&file)
+                    .ok_or("missing indexed file")?
+                    .used_lexical_fallback,
                 "{label}: parser fallback"
             );
             let result = inventory_changed_test_classified_seams_at_with_config_node(

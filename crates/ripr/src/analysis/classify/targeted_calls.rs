@@ -128,7 +128,7 @@ impl<'index> TargetedCallSyntax<'index> {
                 );
                 retain_hidden(
                     function.syntax(),
-                    opaque_source: opaque_source.into_owned(),
+                    opaque_source,
                     0,
                     lines,
                     test,
@@ -167,7 +167,7 @@ impl<'index> TargetedCallSyntax<'index> {
                         _ => {
                             opaque(
                                 invocation.syntax(),
-                                opaque_source: opaque_source.into_owned(),
+                                opaque_source,
                                 0,
                                 lines,
                                 test,
@@ -180,7 +180,7 @@ impl<'index> TargetedCallSyntax<'index> {
                     if !macro_unambiguous(line, &name) {
                         opaque(
                             invocation.syntax(),
-                            opaque_source: opaque_source.into_owned(),
+                            opaque_source,
                             0,
                             lines,
                             test,
@@ -206,7 +206,7 @@ impl<'index> TargetedCallSyntax<'index> {
                     let Some(operand_parse) = parse_clean_source_file(&wrapped) else {
                         opaque(
                             invocation.syntax(),
-                            opaque_source: opaque_source.into_owned(),
+                            opaque_source,
                             0,
                             lines,
                             test,
@@ -225,7 +225,7 @@ impl<'index> TargetedCallSyntax<'index> {
                     if tuple.fields().count() < operands {
                         opaque(
                             invocation.syntax(),
-                            opaque_source: opaque_source.into_owned(),
+                            opaque_source,
                             0,
                             lines,
                             test,
@@ -241,7 +241,7 @@ impl<'index> TargetedCallSyntax<'index> {
                         else {
                             opaque(
                                 invocation.syntax(),
-                                opaque_source: opaque_source.into_owned(),
+                                opaque_source,
                                 0,
                                 lines,
                                 test,
@@ -252,7 +252,7 @@ impl<'index> TargetedCallSyntax<'index> {
                         if position >= operands {
                             opaque(
                                 operand.syntax(),
-                                opaque_source: opaque_source.into_owned(),
+                                opaque_source,
                                 shift,
                                 lines,
                                 test,
@@ -270,7 +270,7 @@ impl<'index> TargetedCallSyntax<'index> {
                         );
                         retain_hidden(
                             operand.syntax(),
-                            opaque_source: opaque_source.into_owned(),
+                            opaque_source,
                             shift,
                             lines,
                             test,
@@ -283,7 +283,7 @@ impl<'index> TargetedCallSyntax<'index> {
                         {
                             opaque(
                                 nested.syntax(),
-                                opaque_source: opaque_source.into_owned(),
+                                opaque_source,
                                 shift,
                                 lines,
                                 test,
