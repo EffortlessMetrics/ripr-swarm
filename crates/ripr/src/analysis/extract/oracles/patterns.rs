@@ -1,6 +1,6 @@
 use super::arguments::{
-    assertion_oracle_text, boolean_assertion_condition, comparable_expression,
-    custom_assertion_arguments, equality_assertion_arguments,
+    assertion_oracle_text, boolean_assertion_macro_condition, comparable_expression,
+    custom_assertion_arguments, equality_assertion_arguments, is_complete_macro_invocation,
 };
 use crate::analysis::classify::{error_constructor_call_paths, rust_string_literals};
 use crate::analysis::extract::mask_comments_and_strings;
@@ -315,31 +315,124 @@ fn is_struct_literal(operand: &str) -> bool {
 
 /// RIPR-SPEC-0231 rule 1: `assert!(!matches!(..))` (and the `debug_assert!`
 /// and `ensure!` forms) only excludes one pattern, so it pins no value and
-/// names no error variant the result must have.
+/// names no error variant the result must have. The negated pattern must be
+/// the whole condition; a compound condition is read by
+/// [`negated_pattern_conjunct_rest`] or capped by the caller.
 pub(super) fn is_negated_pattern_assertion(line: &str) -> bool {
-    let Some(condition) = boolean_assertion_condition(line) else {
-        return false;
-    };
-    let mut condition = condition.trim();
-    while let Some(inner) = super::arguments::parenthesized_contents(condition) {
-        condition = inner.trim();
-    }
-    let Some(negated) = condition.strip_prefix('!') else {
-        return false;
-    };
-    let mut inner = negated.trim_start();
-    while let Some(rest) = inner.strip_prefix('(') {
-        inner = rest.trim_start();
-    }
-    inner.starts_with("matches!") || inner.starts_with("assert_matches!")
+    boolean_assertion_macro_condition(line)
+        .is_some_and(|(_, condition)| is_negated_pattern_condition(&condition))
 }
 
-/// RIPR-SPEC-0231 rule 1: a custom helper whose name has a `ne`, `not` or
-/// `neq` segment asserts inequality, whatever else the name says.
-pub(super) fn is_inequality_named_custom_helper(line: &str) -> bool {
-    custom_assertion_helper_name(line).is_some_and(|name| {
-        name.split('_')
-            .any(|segment| matches!(segment, "ne" | "not" | "neq"))
+/// One complete `!matches!(..)`, optionally parenthesized, with nothing else.
+fn is_negated_pattern_condition(condition: &str) -> bool {
+    let Some(negated) = unwrap_parentheses(condition.trim()).strip_prefix('!') else {
+        return false;
+    };
+    let inner = unwrap_parentheses(negated.trim());
+    is_complete_macro_invocation(inner, "matches!")
+        || is_complete_macro_invocation(inner, "assert_matches!")
+}
+
+fn unwrap_parentheses(mut text: &str) -> &str {
+    while let Some(inner) = super::arguments::parenthesized_contents(text) {
+        text = inner.trim();
+    }
+    text
+}
+
+/// For a boolean assertion whose condition is a top-level `&&` chain with at
+/// least one whole negated-pattern conjunct, the same assertion over only the
+/// other conjuncts (`None` when the condition is not such a chain, and an
+/// empty string when every conjunct is a negated pattern). A negated pattern
+/// pins nothing, so the remaining conjuncts carry the assertion's reading.
+pub(super) fn negated_pattern_conjunct_rest(line: &str) -> Option<String> {
+    let (macro_name, condition) = boolean_assertion_macro_condition(line)?;
+    let conjuncts = split_top_level_conjuncts(unwrap_parentheses(condition.trim()));
+    if conjuncts.len() < 2
+        || !conjuncts
+            .iter()
+            .any(|conjunct| is_negated_pattern_condition(conjunct))
+    {
+        return None;
+    }
+    let rest = conjuncts
+        .iter()
+        .filter(|conjunct| !is_negated_pattern_condition(conjunct))
+        .map(|conjunct| conjunct.trim())
+        .collect::<Vec<_>>();
+    if rest.is_empty() {
+        return Some(String::new());
+    }
+    Some(format!("{macro_name}({});", rest.join(" && ")))
+}
+
+/// Splits on `&&` outside any delimiter, string or comment.
+fn split_top_level_conjuncts(condition: &str) -> Vec<&str> {
+    let masked = mask_comments_and_strings(condition);
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    let mut start = 0;
+    let mut parts = Vec::new();
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'&' if depth == 0 && bytes.get(index + 1) == Some(&b'&') => {
+                parts.push(condition.get(start..index).unwrap_or_default());
+                index += 2;
+                start = index;
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    parts.push(condition.get(start..).unwrap_or_default());
+    parts
+}
+
+/// Whether a boolean assertion's condition negates a `matches!` anywhere,
+/// for example inside `||` or a nested group. Such a condition cannot be read
+/// conjunct by conjunct, so the caller caps it at the inequality strength.
+pub(super) fn contains_negated_pattern(line: &str) -> bool {
+    let Some((_, condition)) = boolean_assertion_macro_condition(line) else {
+        return false;
+    };
+    let masked = mask_comments_and_strings(&condition);
+    let bytes = masked.as_bytes();
+    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    masked.match_indices("matches!").any(|(found, _)| {
+        // Walk back over the macro path (`assert_matches!`, `std::matches!`),
+        // then over whitespace and `(`, to the operator before it.
+        let mut index = found;
+        while index > 0 && (is_ident(bytes[index - 1]) || bytes[index - 1] == b':') {
+            index -= 1;
+        }
+        while index > 0 && (bytes[index - 1].is_ascii_whitespace() || bytes[index - 1] == b'(') {
+            index -= 1;
+        }
+        index > 0 && bytes[index - 1] == b'!' && (index < 2 || !is_ident(bytes[index - 2]))
+    })
+}
+
+/// RIPR-SPEC-0231 rule 1: a call to an `assert_*` helper function whose name
+/// has a `ne`, `not` or `neq` segment asserts inequality, whatever else the
+/// name says and whatever macros its arguments use
+/// (`assert_not_equal(matches!(r, Err(E::Bad)), true)`).
+pub(super) fn is_inequality_named_assertion_helper(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    let Some((callee, _)) = trimmed.split_once('(') else {
+        return false;
+    };
+    if callee.contains('!') {
+        return false;
+    }
+    custom_assertion_helper_name(trimmed).is_some_and(|name| {
+        name.starts_with("assert_")
+            && name
+                .split('_')
+                .any(|segment| matches!(segment, "ne" | "not" | "neq"))
     })
 }
 

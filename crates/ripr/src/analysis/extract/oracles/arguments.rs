@@ -53,13 +53,18 @@ pub(super) fn custom_assertion_arguments(line: &str) -> Option<Vec<String>> {
     delimited_contents_at(line, open).map(|contents| split_top_level_commas(&contents))
 }
 
-/// The condition operand of a boolean assertion macro (`assert!`,
-/// `debug_assert!` or `ensure!`), without its diagnostic arguments.
-pub(super) fn boolean_assertion_condition(line: &str) -> Option<String> {
+/// The macro name and condition operand of a boolean assertion macro
+/// (`assert!`, `debug_assert!` or `ensure!`), without its diagnostic
+/// arguments.
+pub(super) fn boolean_assertion_macro_condition(line: &str) -> Option<(&'static str, String)> {
     ["debug_assert!", "assert!", "ensure!"]
-        .iter()
-        .find_map(|macro_name| macro_invocation_arguments(line, macro_name))
-        .and_then(|arguments| arguments.into_iter().next())
+        .into_iter()
+        .find_map(|macro_name| {
+            let condition = macro_invocation_arguments(line, macro_name)?
+                .into_iter()
+                .next()?;
+            Some((macro_name, condition))
+        })
 }
 
 pub(super) fn ensure_assertion_arguments(line: &str) -> Option<Vec<String>> {
@@ -103,6 +108,11 @@ fn is_wildcard_pattern(pattern: &str) -> bool {
         pattern = inner.trim();
     }
     pattern == "_"
+}
+
+/// Whether `text` is exactly one complete invocation of `macro_name`.
+pub(super) fn is_complete_macro_invocation(text: &str, macro_name: &str) -> bool {
+    complete_macro_arguments(text, macro_name).is_some()
 }
 
 fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>> {

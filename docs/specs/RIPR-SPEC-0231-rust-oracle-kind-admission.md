@@ -181,7 +181,14 @@ Two pattern terms are used below.
    weak strength: a struct-literal operand keeps the `whole_object_equality`
    kind, as RIPR-SPEC-0225 says, with no field credit; any other `{` (a
    closure or block operand) assigns `relational_check`. A negated pattern
-   assertion takes rule 1 before rules 2 and 3.
+   assertion takes rule 1 before rules 2 and 3. A negated pattern is an
+   inequality only when it is the whole condition; in a top-level `&&` chain
+   the other conjuncts decide the reading, and anywhere else (`||`, a nested
+   group) the reading is capped at weak. An inequality-named helper is
+   recognized before any exact-kind step, so a `matches!(.., Err(E::X))`
+   argument cannot lend it a kind, and the cap keeps a reading already below
+   weak. No probe-family strength override in reveal lifts an inequality
+   above its classified strength.
 2. **Patterns with bindings are not variant pins.** At steps 0 and 1, a
    `matches!` or `assert_matches!` whose `Err(..)` inner pattern is
    irrefutable, `..` or pins no value (rule 3's test) assigns
@@ -462,7 +469,14 @@ rejected alternative. Any can be reversed later without touching the rest.
   test as `relational_check` / weak, and `cli_smoke.rs`
   `repo_exposure_does_not_count_an_inequality_assertion_as_a_strong_grip`
   shows its seam is weakly gripped in the repo audit (strongly gripped
-  before).
+  before). `spec_0231_rule_1_inequality_helper_precedes_exact_kinds` and
+  `spec_0231_rule_1_negated_pattern_must_be_the_whole_condition` pin the
+  helper and compound-negation readings, and `rust_index.rs`
+  `parser_oracles_follow_spec_0231_rule_1_for_helpers_and_compound_negations`
+  checks them on both adapters. `reveal.rs`
+  `probe_relative_oracle_strength_never_promotes_an_inequality` and fixture
+  `fixtures/inequality_struct_assertion_not_exact` show example 14's struct
+  inequality stays weak under every probe family.
 - Planned: one classifier unit test per remaining acceptance example (rules
   2 to 6).
 - Rule 7: `exact_membership_any_assertion_admits_exact_equality` and

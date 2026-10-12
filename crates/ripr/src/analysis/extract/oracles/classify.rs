@@ -1,17 +1,17 @@
 use crate::domain::{OracleKind, OracleStrength};
 
 use super::arguments::{
-    assertion_oracle_text, ensure_assertion_arguments, is_unguarded_wildcard_assertion,
-    outer_assertion_condition,
+    assertion_oracle_text, boolean_assertion_macro_condition, ensure_assertion_arguments,
+    is_unguarded_wildcard_assertion, outer_assertion_condition,
 };
 use super::patterns::{
-    contains_exact_comparison, inequality_has_struct_literal_operand, is_broad_error_assertion,
-    is_clear_exact_custom_assertion_helper, is_custom_assertion_helper, is_duplicative_comparison,
-    is_duplicative_equality_assertion, is_exact_error_variant_assertion,
+    contains_exact_comparison, contains_negated_pattern, inequality_has_struct_literal_operand,
+    is_broad_error_assertion, is_clear_exact_custom_assertion_helper, is_custom_assertion_helper,
+    is_duplicative_comparison, is_duplicative_equality_assertion, is_exact_error_variant_assertion,
     is_exact_membership_any_assertion, is_exact_value_assertion, is_inequality_macro_assertion,
-    is_inequality_named_custom_helper, is_inequality_only_comparison, is_mock_expectation_line,
+    is_inequality_named_assertion_helper, is_inequality_only_comparison, is_mock_expectation_line,
     is_negated_pattern_assertion, is_side_effect_observer_assertion, is_snapshot_assertion,
-    is_whole_object_equality_assertion,
+    is_whole_object_equality_assertion, negated_pattern_conjunct_rest,
 };
 
 /// RIPR-SPEC-0231 rule 1: an inequality shows only that the value is not one
@@ -48,6 +48,65 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
     if is_negated_pattern_assertion(line) {
         return INEQUALITY;
     }
+    // In a top-level `&&` chain the negated pattern pins nothing, so the
+    // other conjuncts decide (`!matches!(r, Err(E::X)) && score == 4` reads
+    // as `score == 4`). A negation anywhere else caps the whole reading.
+    if let Some(rest) = negated_pattern_conjunct_rest(line) {
+        return if rest.is_empty() {
+            INEQUALITY
+        } else {
+            classify_assertion(&rest)
+        };
+    }
+    if contains_negated_pattern(line) {
+        return capped_at_inequality(classify_non_negated_assertion(
+            line,
+            scalar_integer_relation,
+        ));
+    }
+    // An inequality-named helper is recognized before any exact-kind step,
+    // so a `matches!` or `Err(..)` among its arguments cannot lend it the
+    // exact kind it denies (`assert_not_equal(matches!(r, Err(E::X)), true)`).
+    // Capping, not replacing, keeps an unknown helper reading unknown.
+    if is_inequality_named_assertion_helper(line) {
+        return capped_at_inequality(classify_non_negated_assertion(
+            line,
+            scalar_integer_relation,
+        ));
+    }
+    classify_non_negated_assertion(line, scalar_integer_relation)
+}
+
+/// RIPR-SPEC-0231 rule 1: whether the assertion only shows its value differs
+/// from one alternative (`assert_ne!`, `debug_assert_ne!`, a whole
+/// `!matches!(..)` condition, an inequality-named `assert_*` helper, or a
+/// boolean condition whose only comparison is `!=`). Reveal reads this so a
+/// probe-family override can never lift an inequality above its classified
+/// strength.
+pub(crate) fn is_inequality_assertion(line: &str) -> bool {
+    let oracle_text = assertion_oracle_text(line);
+    let line = oracle_text.as_deref().unwrap_or(line);
+    is_inequality_macro_assertion(line)
+        || is_negated_pattern_assertion(line)
+        || is_inequality_named_assertion_helper(line)
+        || boolean_assertion_macro_condition(line)
+            .is_some_and(|(_, condition)| is_inequality_only_comparison(&condition))
+}
+
+/// RIPR-SPEC-0231 rule 1 as a ceiling: an inequality never reads above weak,
+/// and a reading already at or below weak keeps its kind and strength.
+fn capped_at_inequality(classification: OracleClassification) -> OracleClassification {
+    if classification.strength.rank() > INEQUALITY.strength.rank() {
+        INEQUALITY
+    } else {
+        classification
+    }
+}
+
+fn classify_non_negated_assertion(
+    line: &str,
+    scalar_integer_relation: bool,
+) -> OracleClassification {
     if let Some(classification) = classify_fallible_assertion(line) {
         return classification;
     }
@@ -118,9 +177,6 @@ pub(crate) fn classify_assertion(line: &str) -> OracleClassification {
             strength: OracleStrength::Medium,
         }
     } else if is_clear_exact_custom_assertion_helper(line) {
-        if is_inequality_named_custom_helper(line) {
-            return INEQUALITY;
-        }
         OracleClassification {
             kind: OracleKind::ExactValue,
             strength: OracleStrength::Strong,
@@ -510,6 +566,157 @@ mod tests {
             if actual.kind != expected_kind || actual.strength != expected_strength {
                 return Err(format!(
                     "{text}: expected {expected_kind:?}/{expected_strength:?}, got {actual:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #6670 review: an inequality-named helper is recognized before the
+    /// exact-kind steps, so a `matches!(.., Err(..))` argument cannot lend
+    /// it `exact_error_variant` / strong.
+    #[test]
+    fn spec_0231_rule_1_inequality_helper_precedes_exact_kinds() -> Result<(), String> {
+        use OracleKind::{ExactErrorVariant, RelationalCheck, Unknown};
+        use OracleStrength::{Strong, Weak};
+        for (text, expected_kind, expected_strength) in [
+            (
+                "assert_not_equal(matches!(result, Err(E::Bad)), true);",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "helpers::assert_ne(matches!(check(20), Err(E::Bad)), true);",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "checker.assert_not_matches(matches!(result, Err(E::Bad)), true);",
+                RelationalCheck,
+                Weak,
+            ),
+            // Capped, not replaced: an unknown helper stays unknown.
+            ("assert_not_empty(items);", Unknown, OracleStrength::Unknown),
+            // Controls: the equality helper keeps the exact kind.
+            (
+                "assert_equal(matches!(result, Err(E::Bad)), true);",
+                ExactErrorVariant,
+                Strong,
+            ),
+            (
+                "assert_json_eq(actual, expected);",
+                OracleKind::ExactValue,
+                Strong,
+            ),
+        ] {
+            let actual = classify_assertion(text);
+            if actual.kind != expected_kind || actual.strength != expected_strength {
+                return Err(format!(
+                    "{text}: expected {expected_kind:?}/{expected_strength:?}, got {actual:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #6670 review: only a negated `matches!` that is the whole condition
+    /// is an inequality. In a top-level `&&` chain the other conjuncts
+    /// decide; any other compound use caps the reading at weak.
+    #[test]
+    fn spec_0231_rule_1_negated_pattern_must_be_the_whole_condition() -> Result<(), String> {
+        use OracleKind::{ExactErrorVariant, ExactValue, RelationalCheck, SmokeOnly};
+        use OracleStrength::{Smoke, Strong, Weak};
+        for (text, expected_kind, expected_strength) in [
+            // The whole condition: an inequality.
+            ("assert!(!matches!(r, Err(E::Bad)));", RelationalCheck, Weak),
+            (
+                "assert!(!(matches!(r, Err(E::Bad))));",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(!matches!(r, Err(E::Bad)) && !matches!(r, Err(E::Other)));",
+                RelationalCheck,
+                Weak,
+            ),
+            // `&&` chains: the remaining conjuncts carry the reading.
+            (
+                "ensure!(!matches!(r, Err(E::Bad)) && score == 4);",
+                ExactValue,
+                Strong,
+            ),
+            (
+                "assert!(!matches!(r, Err(E::Bad)) && matches!(r, Err(E::Other)));",
+                ExactErrorVariant,
+                Strong,
+            ),
+            (
+                "assert!(!matches!(r, Err(E::Bad)) && r.is_ok());",
+                SmokeOnly,
+                Smoke,
+            ),
+            (
+                "assert!(!matches!(r, Err(E::Bad)) && score == 4);",
+                RelationalCheck,
+                Weak,
+            ),
+            // Any other compound negation fails closed at weak.
+            (
+                "assert!(!matches!(r, Err(E::Bad)) || matches!(r, Err(E::Other)));",
+                RelationalCheck,
+                Weak,
+            ),
+            (
+                "assert!(ready && (!matches!(r, Err(E::Bad)) || matches!(r, Err(E::Other))));",
+                RelationalCheck,
+                Weak,
+            ),
+            // A double negation is not read through; it fails closed.
+            (
+                "assert!(!!matches!(r, Err(E::Bad)));",
+                RelationalCheck,
+                Weak,
+            ),
+            // Control: a positive pattern beside a `!=` keeps its kind.
+            (
+                "assert!(matches!(r, Err(E::Bad)) && score != 4);",
+                ExactErrorVariant,
+                Strong,
+            ),
+        ] {
+            let actual = classify_assertion(text);
+            if actual.kind != expected_kind || actual.strength != expected_strength {
+                return Err(format!(
+                    "{text}: expected {expected_kind:?}/{expected_strength:?}, got {actual:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// #6670 review: `debug_assert_eq!` carries the same asserted relation as
+    /// `assert_eq!` (the operand projection and the owner and arm readers
+    /// already treat them alike), so it earns the same exact credit.
+    #[test]
+    fn debug_assert_eq_earns_the_assert_eq_exact_credit() -> Result<(), String> {
+        use OracleKind::{ExactErrorVariant, ExactValue, WholeObjectEquality};
+        use OracleStrength::Strong;
+        for (text, expected_kind) in [
+            ("debug_assert_eq!(score(2), 4);", ExactValue),
+            ("assert_eq!(score(2), 4);", ExactValue),
+            (
+                "debug_assert_eq!(build(3), Config { retries: 3 });",
+                WholeObjectEquality,
+            ),
+            (
+                "debug_assert_eq!(check(20), Err(E::Bad));",
+                ExactErrorVariant,
+            ),
+        ] {
+            let actual = classify_assertion(text);
+            if actual.kind != expected_kind || actual.strength != Strong {
+                return Err(format!(
+                    "{text}: expected {expected_kind:?}/Strong, got {actual:?}"
                 ));
             }
         }
