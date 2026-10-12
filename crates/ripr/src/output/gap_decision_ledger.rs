@@ -1,3 +1,9 @@
+// Operational preview markers emitted by this ledger producer. They retain
+// advisory actionability and do not extend the analyzer StaticLimitKind enum.
+pub(crate) const PYTHON_PREVIEW_STATIC_LIMIT_KIND: &str = "python_preview";
+pub(crate) const PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND: &str =
+    "python_repair_card_unavailable";
+
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::agent::loop_commands::shell_arg;
 use crate::domain::{CommandRole, CommandSpec};
@@ -1400,7 +1406,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         policy_state: "new".to_string(),
         repairability: repairability.to_string(),
         repair_route,
-        static_limit_kind: Some("python_preview".to_string()),
+        static_limit_kind: Some(PYTHON_PREVIEW_STATIC_LIMIT_KIND.to_string()),
         static_limit_detail: Some("Python repair cards are preview advisory evidence.".to_string()),
         static_limits: string_array_at(card, &["limits"])
             .into_iter()
@@ -2232,7 +2238,7 @@ fn gap_record_from_python_no_repair_card_finding(
     {
         return None;
     }
-    let static_limit_kind = "python_repair_card_unavailable";
+    let static_limit_kind = PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND;
     let reason = if first_missing_discriminator_value(finding).is_none() {
         "static evidence names no concrete missing discriminator"
     } else {

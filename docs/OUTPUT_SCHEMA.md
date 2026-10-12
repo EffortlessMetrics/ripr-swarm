@@ -17447,6 +17447,16 @@ exposed Python preview finding without a `python_repair_card` becomes one with
 `static_limit_kind = "python_repair_card_unavailable"`; neither carries a repair
 route, verify command, or receipt (RIPR-SPEC-0046).
 
+Passive and command-time LSP admission recognize the producer-owned operational
+`python_preview` and `python_repair_card_unavailable` markers without extending
+the analyzer limitation enum or promoting ineligible records. Producer-issued
+comparison identities remain unchanged: literal `<`/`>` may occur in the
+existing balanced inert single-quoted command form. Safety and root binding
+distinguish that data from the one allowed trailing stdout redirect; other
+operator, substitution, redirect-target and source-subject guards remain in
+force. Unknown scalar kinds remain refused. Admitted Python ledgers retain the
+explicit unavailable preview/mixed corpus scope (RIPR-SPEC-0077).
+
 The command writes JSON to `target/ripr/reports/gap-decision-ledger.json` and
 Markdown to `target/ripr/reports/gap-decision-ledger.md` by default. It does
 not rerun analysis, infer analyzer truth, publish comments, edit source,
