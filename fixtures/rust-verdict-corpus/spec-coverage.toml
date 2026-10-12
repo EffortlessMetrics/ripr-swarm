@@ -433,6 +433,18 @@ scope = "in"
 id = "RIPR-SPEC-0233"
 scope = "in"
 
+[[spec.waived]]
+example = 1
+reason = "the example's test asserts 5_000 where the unedited owner returns 3_500, so the unedited suite fails and `verdict-corpus relabel` refuses every mutant outcome; the claim is also repo-scope seam grip and receipt closure, not a diff verdict"
+
+[[spec.waived]]
+example = 3
+reason = "same wrong 5_000 literal as example 1 against a helper-calling owner, so the unedited suite fails and `verdict-corpus relabel` can establish no runtime truth"
+
+[[spec.waived]]
+example = 4
+reason = "the contradicted test fails on the unedited owner, so `verdict-corpus relabel` can establish no runtime truth; the claim is the outcome receipt's gap-closed wording and weak/unknown section, not a diff verdict"
+
 # Perl fact-packet classification
 [[spec]]
 id = "RIPR-SPEC-0235"

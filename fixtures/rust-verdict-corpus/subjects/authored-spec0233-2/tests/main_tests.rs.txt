@@ -1,0 +1,6 @@
+use spec0233_2::discounted_total;
+
+#[test]
+fn boundary_asserts_true_value() {
+    assert_eq!(discounted_total(5_000, 5_000), 3_500);
+}
