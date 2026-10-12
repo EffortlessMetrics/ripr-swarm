@@ -250,6 +250,15 @@ enum WorktreeIdentity {
     File {
         digest: String,
         executable: bool,
+        /// Digest of the CRLF-normalized bytes, recorded only when the file
+        /// actually carries CRLF sequences so a later line-ending flip
+        /// (for example a `core.autocrlf` checkout rewrite between phases)
+        /// can be told apart from a real edit (#7377). Absent means
+        /// normalization would be the identity, so the exact digest already
+        /// carries the content identity. Skipped on serialization when
+        /// absent so baselines for CR-free files keep their old shape.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        eol_normalized_digest: Option<String>,
     },
     IgnoredFileProbe {
         sample_digest: String,
@@ -934,6 +943,36 @@ fn apply_index_records(
     Ok(())
 }
 
+/// Whether two captured states of one path differ only in line-ending
+/// style: the exact digests differ but the CRLF-normalized digests match,
+/// with the index entry and executable bit unchanged (#7377). Either side
+/// may carry the normalized digest or not — a flip in either direction
+/// (LF->CRLF or CRLF->LF) normalizes both sides to the same digest.
+fn eol_only_line_ending_flip(old: &RepositoryPathState, new: &RepositoryPathState) -> bool {
+    if old.index_entry != new.index_entry {
+        return false;
+    }
+    let (
+        WorktreeIdentity::File {
+            digest: old_digest,
+            executable: old_executable,
+            eol_normalized_digest: old_normalized,
+        },
+        WorktreeIdentity::File {
+            digest: new_digest,
+            executable: new_executable,
+            eol_normalized_digest: new_normalized,
+        },
+    ) = (&old.worktree_identity, &new.worktree_identity)
+    else {
+        return false;
+    };
+    old_executable == new_executable
+        && old_digest != new_digest
+        && old_normalized.as_deref().unwrap_or(old_digest.as_str())
+            == new_normalized.as_deref().unwrap_or(new_digest.as_str())
+}
+
 /// `committed` is the tree diff from the baseline head to the after head
 /// when that movement is admitted (empty when HEAD did not move), and `None`
 /// when HEAD movement makes the delta incomparable.
@@ -954,6 +993,19 @@ fn delta_from_repository_states(
         let old = before.paths.get(&path);
         let new = after.paths.get(&path);
         if old == new {
+            continue;
+        }
+        // A git-invisible line-ending flip (#7377): with `core.autocrlf` a
+        // mid-loop checkout or stash pop can rewrite a tracked file's CRLF
+        // sequences while `git status` stays clean, so the byte change names
+        // no author. Equal normalized digests prove no content moved;
+        // counting the flip as an edit would terminally refuse a production
+        // file the agent never touched, and the narrated recovery (`git
+        // stash`, undo) cannot address a change Git itself cannot see. A
+        // real edit survives normalization and still enters the delta.
+        if let (Some(old), Some(new)) = (old, new)
+            && eol_only_line_ending_flip(old, new)
+        {
             continue;
         }
         let untracked = |state: Option<&RepositoryPathState>| {
@@ -1185,6 +1237,25 @@ fn nul_records(bytes: &[u8]) -> impl Iterator<Item = Result<&str, String>> {
         })
 }
 
+/// Digest of the CRLF-normalized bytes, or `None` when the file carries no
+/// CRLF sequence (normalization would be the identity, so the exact digest
+/// already proves content identity). Only CRLF pairs move: a lone `\r` is
+/// content, matching Git's `core.autocrlf` semantics (#7377).
+fn eol_normalized_file_digest(bytes: &[u8]) -> Option<String> {
+    if !bytes.windows(2).any(|pair| pair == b"\r\n") {
+        return None;
+    }
+    let mut normalized = Vec::with_capacity(bytes.len());
+    let mut rest = bytes;
+    while let Some(position) = rest.windows(2).position(|pair| pair == b"\r\n") {
+        normalized.extend_from_slice(&rest[..position]);
+        normalized.push(b'\n');
+        rest = &rest[position + 2..];
+    }
+    normalized.extend_from_slice(rest);
+    Some(format!("{:x}", Sha256::digest(&normalized)))
+}
+
 fn worktree_identity(
     root: &Path,
     relative: &str,
@@ -1246,8 +1317,9 @@ fn worktree_identity(
             return Ok(WorktreeIdentity::Other);
         }
         return Ok(WorktreeIdentity::File {
-            digest: format!("{:x}", Sha256::digest(bytes)),
+            digest: format!("{:x}", Sha256::digest(&bytes)),
             executable: is_executable(&opened_metadata),
+            eol_normalized_digest: eol_normalized_file_digest(&bytes),
         });
     }
     Ok(WorktreeIdentity::Other)
@@ -2039,6 +2111,95 @@ mod tests {
         // this pins the label contract itself.
         assert_eq!(CaptureTraceLabel::Baseline.as_str(), "baseline");
         assert_eq!(CaptureTraceLabel::Reevaluation.as_str(), "reevaluate");
+    }
+
+    #[test]
+    fn eol_normalized_digest_tracks_crlf_only() -> Result<(), String> {
+        // An LF-only file: normalization would be the identity, so no
+        // normalized digest is retained and the exact digest already proves
+        // content identity.
+        if let Some(digest) = eol_normalized_file_digest(b"pub fn price() {}\n") {
+            return Err(format!(
+                "an LF-only file recorded a normalized digest: {digest}"
+            ));
+        }
+        // A CRLF file: the normalized digest is the digest of the LF bytes,
+        // which is what a flip to LF (or from LF) must compare equal to.
+        let normalized = eol_normalized_file_digest(b"pub fn price() {}\r\n")
+            .ok_or_else(|| "a CRLF file must record a normalized digest".to_string())?;
+        let lf_digest = format!("{:x}", Sha256::digest(b"pub fn price() {}\n"));
+        if normalized != lf_digest {
+            return Err("the normalized digest must equal the LF digest".to_string());
+        }
+        // A lone `\r` is content, not a line ending: it must not normalize
+        // away, or an autocrlf comparison could mask a real byte change.
+        if eol_normalized_file_digest(b"pub fn price() {}\r").is_some() {
+            return Err("a lone carriage return must not normalize away".to_string());
+        }
+        Ok(())
+    }
+
+    /// A `core.autocrlf` line-ending flip between the before and after
+    /// phases is git-invisible and names no author: the cage compares
+    /// CRLF-normalized digests for the changed-path decision, so flipping a
+    /// forbidden production file's endings LF->CRLF beside a real test edit
+    /// must not enter the delta or refuse the file (#7377), while a real
+    /// content change to the same file still does.
+    #[test]
+    fn eol_only_flip_of_a_forbidden_file_is_not_an_edit() -> Result<(), String> {
+        let fixture = git_fixture("eol-flip")?;
+        let policy = policy()?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        // The focused test edit the attempt exists for.
+        fs::write(fixture.root.join("tests/pricing.rs"), "fn boundary() {}\n\n#[test]\nfn focused() {}\n")
+            .map_err(|err| format!("write focused test edit: {err}"))?;
+        // The checkout-rewrite flip: only the production file's endings move.
+        fs::write(
+            fixture.root.join("src/pricing.rs"),
+            "pub fn price() {}\r\n",
+        )
+        .map_err(|err| format!("rewrite CRLF production file: {err}"))?;
+        let (delta, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+        if delta
+            .changes
+            .iter()
+            .any(|change| change.path == "src/pricing.rs")
+        {
+            return Err(format!(
+                "the EOL flip entered the delta as an edit: {delta:?}"
+            ));
+        }
+        if verdict.status != EditCageVerdictStatus::Compliant {
+            return Err(format!(
+                "the EOL flip moved the verdict beside a real test edit: {verdict:?}"
+            ));
+        }
+        // Control: a real content change to the same file still enters the
+        // delta and still refuses as a forbidden path.
+        fs::write(
+            fixture.root.join("src/pricing.rs"),
+            "pub fn price() { /* real change */ }\r\n",
+        )
+        .map_err(|err| format!("rewrite production file with a real change: {err}"))?;
+        let (delta, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+        if !delta
+            .changes
+            .iter()
+            .any(|change| change.path == "src/pricing.rs")
+        {
+            return Err("a real edit to the flipped file must enter the delta".to_string());
+        }
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !verdict
+                .violations
+                .iter()
+                .any(|violation| violation.kind == EditCageViolationKind::ForbiddenPath)
+        {
+            return Err(format!(
+                "a real edit must still refuse as a forbidden path: {verdict:?}"
+            ));
+        }
+        Ok(())
     }
 
     struct GitFixture {
