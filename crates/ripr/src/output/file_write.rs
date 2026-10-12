@@ -498,7 +498,10 @@ mod output_dir_tests {
         // Other OS codes keep the raw error without a invented diagnosis.
         let other = io::Error::from_raw_os_error(28);
         let plain = super::write_failure_message_for_host(path, &other, true);
-        assert!(plain.starts_with("failed to write F:/"), "{plain}");
+        assert!(
+            plain.starts_with(&format!("failed to write {drive}/")),
+            "{plain}"
+        );
         assert!(!plain.contains("likely held open"), "{plain}");
         // Non-Windows hosts render the text unchanged and never add the hint.
         let unix = super::write_failure_message_for_host(path, &locked, false);
