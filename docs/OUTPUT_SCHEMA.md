@@ -17716,7 +17716,10 @@ missing or nonstring labels refuse as `malformed_artifact`. A broad before/after
 repo-exposure snapshot comparison also refuses as `malformed_artifact` even
 when eligibility is asserted; it does not become bounded through a recognized
 source label. Ineligible packets and nonempty projection exclusions still
-refuse. Command-time reads apply these same rules to the entire selected
+refuse. Broad-route recognition uses the existing passive command-word
+interpretation, including equivalent whitespace and quoted word spellings.
+This is shared command metadata policy, not a general shell or cost parser.
+Command-time reads apply these same rules to the entire selected
 artifact, including sibling packets. These predicates do not authenticate a
 producer, grant execution authority or bind a Cargo test display command to a
 foreign working directory.

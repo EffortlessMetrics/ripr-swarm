@@ -87,7 +87,9 @@ and bounded command instead of rewriting it to canonical provenance.
 
 Unknown, missing or nonstring source labels refuse as `malformed_artifact`.
 The existing broad before/after repo-exposure snapshot comparison also refuses
-as `malformed_artifact`, even if the artifact asserts eligibility. Projection
+as `malformed_artifact`, even if the artifact asserts eligibility. Recognition
+uses the existing passive command-word interpretation, so equivalent whitespace
+and quoted word spellings cannot bypass this exclusion. Projection
 exclusions, unsafe commands, out-of-root paths, and source/corpus currentness
 continue to gate the whole artifact, including invalid sibling packets, before
 a selected packet is rendered. Genuine fresh production can recover the same

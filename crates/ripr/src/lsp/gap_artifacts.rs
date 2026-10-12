@@ -1,3 +1,4 @@
+use crate::domain::command_tokens;
 use crate::domain::{CommandSpec, LanguageId, LanguageStatus, StaticLimitKind};
 use crate::output::first_useful_action::DEFAULT_FIRST_USEFUL_ACTION_OUT;
 use crate::output::gap_decision_ledger::DEFAULT_GAP_DECISION_LEDGER_OUT;
@@ -1941,28 +1942,6 @@ fn looks_like_command_payload(value: &str) -> bool {
         || trimmed.starts_with("pytest ")
         || trimmed.starts_with("python -m unittest ")
         || trimmed.starts_with("python -m pytest ")
-}
-
-fn command_tokens(command: &str) -> Vec<String> {
-    let mut tokens = Vec::new();
-    let mut current = String::new();
-    let mut quote = None;
-    for character in command.chars() {
-        match (quote, character) {
-            (Some(active), value) if value == active => quote = None,
-            (None, '"' | '\'') => quote = Some(character),
-            (None, value) if value.is_whitespace() => {
-                if !current.is_empty() {
-                    tokens.push(std::mem::take(&mut current));
-                }
-            }
-            _ => current.push(character),
-        }
-    }
-    if !current.is_empty() {
-        tokens.push(current);
-    }
-    tokens
 }
 
 fn is_inside_workspace(root: &Path, path: &Path) -> bool {

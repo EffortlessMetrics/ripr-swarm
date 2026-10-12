@@ -28,11 +28,37 @@ pub fn actionable_verify_source_is_supported(source: &str) -> bool {
 /// projection and passive admission. It is not a shell parser, a general cost
 /// estimate, or permission to execute any other command.
 pub fn verify_command_is_unbounded_repo_exposure_snapshot_compare(command: &str) -> bool {
-    let normalized = command.trim().replace('\\', "/");
+    let normalized = command_tokens(&command.trim().replace('\\', "/")).join(" ");
     normalized.contains("ripr agent verify")
         && normalized.contains("--before")
         && normalized.contains("--after")
         && normalized.contains("repo-exposure.json")
+}
+
+/// Decode the existing passive command display words for shared policy checks.
+///
+/// This preserves the LSP token interpretation; it does not execute a command
+/// or implement a general shell parser.
+pub(crate) fn command_tokens(command: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    for character in command.chars() {
+        match (quote, character) {
+            (Some(active), value) if value == active => quote = None,
+            (None, '"' | '\'') => quote = Some(character),
+            (None, value) if value.is_whitespace() => {
+                if !current.is_empty() {
+                    tokens.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(character),
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
