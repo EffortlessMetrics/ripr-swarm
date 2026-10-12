@@ -26,6 +26,7 @@ Linked issues:
 - #6603 (mutation evidence for rules 12 to 14, from the #6597 corpus)
 - #6599, #6600, #6601 (false actionable, false `exposed` and Hypothesis
   fixture verdicts in the #6597 corpus; rules 15 to 19)
+- #6733 (a removed term that is zero at every asserted input; rule 20)
 
 Linked PRs:
 
@@ -74,6 +75,9 @@ Support-tier impact:
   the changed line writes, and a Hypothesis `@example` row. Rules 18 and
   19 remove credit: an expected value computed through the changed owner,
   and a property test whose generated inputs carry the boundary.
+- Rule 20 (2026-10-12, #6733) removes credit: a removed or added call term
+  that every strong related call evaluates to `0` moves from `exposed` to
+  `weakly_exposed`, as an unactivated boundary does.
 
 Policy impact:
 
@@ -562,6 +566,27 @@ mutant calibrates the rule; ripr reports only the static shape.
     other parameters, so it does not stand in for an `@example` row. A `@given` test with no
     assertion reads reach-only like any other test, because it has no
     oracle for the generated inputs to hide.
+20. **A changed term that every asserted input makes zero is not
+    activated.** When the whole difference between the old and the new
+    line is one additive call term, `+ f(args)` or `- f(args)`, removed or
+    added, the term changes the owner's result only for inputs where it
+    is nonzero. The term must sit after an operand and before a closing
+    bracket, a comma, another additive operator, a comment or the end of
+    the line, so that dropping it leaves the rest of the expression as it
+    was (`x - f(y) * 2` is not such a term). `f` must be a module function
+    of the owner's file whose body, after an optional docstring, is
+    exactly `if P OP V: return A` then `return B`, where `P` is a
+    parameter, `OP` one comparison, and `V`, `A` and `B` are literals or
+    module constants RIPR-SPEC-0028's boundary rule resolves. The term's
+    argument for `P` must resolve in each strong owner call the boundary
+    rule reads: a literal, an owner parameter that call binds to a
+    literal, or such a constant. When every such call resolves and every
+    one evaluates the term to `0`, the finding is `weakly_exposed` and
+    names `f(args) != 0` as the missing discriminator, with the observed
+    argument values. Any unresolved call, any nonzero value, or no
+    analyzable call leaves the verdict to the other rules. The rule
+    evaluates integers only, reads one call deep, and does not run for a
+    method owner.
 
 ### Verdict ladder
 
@@ -577,7 +602,7 @@ the first matching row wins (reach / observe / discriminate):
 | 3 | only heuristic relations | `weakly_exposed`, no repair card | weak / weak / weak |
 | 4 | strong, credited, gates pass | `exposed` | yes / yes / yes |
 | 5 | strong, credited, changed default always overridden | `weakly_exposed` | yes / weak / weak |
-| 6 | strong, credited, boundary not activated | `weakly_exposed` | yes / yes / weak |
+| 6 | strong, credited, boundary or changed term (rule 20) not activated | `weakly_exposed` | yes / yes / weak |
 | 7 | strong otherwise (orthogonal or error-path gate) | `weakly_exposed` | yes / weak / weak |
 | 8 | weaker than strong | `weakly_exposed` | yes / weak / weak |
 
@@ -678,6 +703,17 @@ rejected alternative. Any can be reversed later without touching the rest.
     nothing is a gap, not a limit, so it keeps its actionable verdict.
     Rejected: treat every `@given` test as a limit, which hides the
     "asserts nothing" gap of `py-hypothesis-label-no-crash`.
+14. **A removed term that is zero at the asserted input.** Adopted
+    (2026-10-12, #6733): rule 20, evaluating one guarded-return callee one
+    call deep with the boundary rule's own literal bindings. The corpus
+    case `py-pytest-quote-shipping-term` removes `+ shipping_fee(...)`
+    and its only test orders above the free-shipping threshold, so the
+    mutant survives while every gate credited `exposed`. Rejected: record
+    the case as a known limit, because the false `exposed` hides a real
+    gap and the shape (a fee, discount or surcharge that is zero above a
+    threshold) is common in pricing code. Rejected: general
+    interprocedural value evaluation, because one guarded return is the
+    largest shape whose value static evidence reads without running code.
 
 ## Required Evidence
 
@@ -689,7 +725,7 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Golden drift lists every Python finding whose class, relation or
   `oracle_alignment` moved, split into credit gained (rules 4, 6, 8, 12,
   13, 14, 15, 16, 17, 19) and
-  credit removed (rules 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 18, 19).
+  credit removed (rules 1, 2, 3, 4, 5, 7, 8, 9, 10, 11, 13, 18, 19, 20).
 - The static-limit detectors have a negative test per token rule (a
   string literal, a longer identifier, a `.` receiver).
 
@@ -697,7 +733,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 - No new oracle kind, strength, relation, limit kind or alignment value,
   apart from rule 17's `alignment_reason` token.
-- No helper body resolution, fixture resolution or import graph.
+- No helper body resolution, fixture resolution or import graph. Rule
+  20 reads one owner-module callee of a single guarded-return shape; it
+  is not a general value evaluator.
 - No change to the boundary activation rule, apart from rule 16's offset
   operands, and no change to the changed-default rule, the dunder rules
   or RIPR-SPEC-0201.
@@ -929,6 +967,15 @@ and the test is `tests/test_subject.py`, which imports each owner from
     calls `passed(score)`: `score` is not a fixture, and the finding is
     `weakly_exposed` (today `static_unknown`,
     `unresolved_pytest_fixture`; rule 19).
+40. Module `FREE = 5000`, `def ship(s):` / `if s >= FREE:` / `return 0`
+    / `return 499`, and `def quote(s): return {'total': s}`, changed from
+    `return {'total': s + ship(s)}`; test
+    `assert quote(6000)['total'] == 6000` only: `weakly_exposed`, missing
+    discriminator `ship(s) != 0` (today `exposed`; rule 20, #6733). Adding
+    `assert quote(1000)['total'] == 1499`: `exposed` (unchanged; that call
+    activates the term). With `amount = 6000` and `quote(amount)`:
+    `exposed` (unchanged; the input does not resolve). With `ship` changed
+    to `return s // 100`: `exposed` (unchanged; not a guarded return).
 
 ## Test Mapping
 
@@ -966,25 +1013,32 @@ and the test is `tests/test_subject.py`, which imports each owner from
   orders.
 - Planned: a split-gate test for examples 31 and 32.
 - Planned: a negative detector test per token case of rule 8.
-- Planned: rule 12 to 14 tests for examples 8, 20, 21 and 34: the
-  `assertRaises` callable, the message-only change of example 21, the
-  unchanged `lambda` callable, and the reassigned-`exc`, inside-the-body
-  and `is not None` negatives.
-  The message-only example 21 test asserts `direct` alignment through
-  the body call, so it cannot pass on a `KeyError` token match.
+- Rules 3, 12 to 14 and 20: `verdict_corpus_tests.rs` pins examples 8,
+  11, 20, 21, 34 and 40 with crediting and non-crediting forms: the
+  explicit-tolerance, non-`self` receiver and `assertNotAlmostEqual`
+  negatives; the `assertRaises` callable, a trivial regex and another
+  function as the callable; the message-only change of example 21, whose
+  comparison holds the old message, so it credits through the body call
+  rather than a `KeyError` token; and the reassigned-`exc`, attribute
+  assignment, inside-the-body, length-read and tautology negatives.
+  `term_activation.rs` unit tests pin the term reader, including the
+  precedence, unary-sign and changed-argument negatives.
 - Corpus: `py-spec0233-ex08-almost-equal`,
   `py-spec0233-ex20-raises-regex` and `py-spec0233-ex21-exc-value`
-  (#6597) score credited once rules 12 to 14 land. Example 34's
-  `exc.value is not None` and length forms have cases
-  (`py-spec0233-ex34-exc-not-none`, `py-spec0233-ex34-exc-length`, #7546);
-  the corpus has no `assertRaises` callable, `assertRaises ... as cm` or
-  other example 34 form yet, and each needs its own case before those
-  parts read as established.
+  (#6597) score credited under rules 12 to 14,
+  `py-spec0233-ex11-fluent-helper` scores limited under rule 3, and
+  `py-pytest-quote-shipping-term` scores its ideal `weakly_exposed` under
+  rule 20. Example 34's `exc.value is not None` and length forms have
+  cases (`py-spec0233-ex34-exc-not-none`, `py-spec0233-ex34-exc-length`,
+  #7546); the corpus has no `assertRaises` callable,
+  `assertRaises ... as cm` or other example 34 form yet, and each needs
+  its own case before those parts read as established.
 
 ## Implementation Mapping
 
 - `crates/ripr/src/analysis/language/python/oracles.rs`: assertion table,
-  rules 1 to 3, 12, 14 and 15, and each assertion's gate text (rule 4).
+  rules 1 to 3, 12, 14 and 15, and each assertion's gate text (rules 4
+  and 13).
 - `crates/ripr/src/analysis/language/python/related_tests.rs`:
   `strongest_assertion` and `RelatedTest` oracle text (rule 4), relation
   order, rules 7 and 13.
@@ -999,7 +1053,9 @@ and the test is `tests/test_subject.py`, which imports each owner from
   order and token detection (rule 8), the `property_based_test` condition
   (rule 19).
 - `crates/ripr/src/analysis/language/python/boundary.rs`: offset operands
-  (rule 16).
+  (rule 16), and the strong owner calls rule 20 reads.
+- `crates/ripr/src/analysis/language/python/term_activation.rs`: the
+  changed call term and the guarded-return callee (rule 20).
 - `crates/ripr/src/analysis/language/python/effect_alignment.rs`: effect
   channels (rule 17) and self-computed expected values (rule 18).
 - `crates/ripr/src/analysis/language/python/hypothesis.rs` and

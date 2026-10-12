@@ -148,6 +148,7 @@ fn owner_from_function(
         decorators.push("async_def".to_string());
     }
     let parameters = function_parameters(context.source, args);
+    let guarded_return = super::term_activation::guarded_return(context.source, body, &parameters);
     let same_class_callees = super::same_class_callees::same_class_callees_from_body(
         body,
         super::same_class_callees::method_receiver_name(&parameters, &decorators),
@@ -175,6 +176,7 @@ fn owner_from_function(
         ),
         same_class_callees,
         class_path: context.class_context.unwrap_or_default().to_string(),
+        guarded_return,
     }
 }
 
@@ -231,6 +233,7 @@ fn owner_from_class(
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         class_path: String::new(),
+        guarded_return: None,
     }
 }
 
@@ -258,6 +261,7 @@ pub(super) fn module_owner(
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         class_path: String::new(),
+        guarded_return: None,
     }
 }
 

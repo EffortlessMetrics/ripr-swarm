@@ -18,7 +18,7 @@ fn collect_assertions(
     source: &SourceText<'_>,
     out: &mut Vec<PythonAssertion>,
 ) {
-    for stmt in statements {
+    for (index, stmt) in statements.iter().enumerate() {
         match stmt {
             Stmt::Assert(assert_stmt) => {
                 out.push(assertion_from_assert(assert_stmt, source));
@@ -45,11 +45,13 @@ fn collect_assertions(
                 collect_assertions(&while_stmt.orelse, source, out);
             }
             Stmt::With(with_stmt) => {
-                collect_with_item_assertions(&with_stmt.items, &with_stmt.body, source, out);
+                let after = &statements[index + 1..];
+                collect_with_item_assertions(&with_stmt.items, &with_stmt.body, after, source, out);
                 collect_assertions(&with_stmt.body, source, out);
             }
             Stmt::AsyncWith(with_stmt) => {
-                collect_with_item_assertions(&with_stmt.items, &with_stmt.body, source, out);
+                let after = &statements[index + 1..];
+                collect_with_item_assertions(&with_stmt.items, &with_stmt.body, after, source, out);
                 collect_assertions(&with_stmt.body, source, out);
             }
             Stmt::Try(try_stmt) => {
@@ -77,6 +79,7 @@ fn collect_assertions(
 fn collect_with_item_assertions(
     items: &[ast::WithItem],
     body: &[Stmt],
+    after: &[Stmt],
     source: &SourceText<'_>,
     out: &mut Vec<PythonAssertion>,
 ) {
@@ -94,9 +97,135 @@ fn collect_with_item_assertions(
                     assertion.gate_text,
                     text_for_range(source, body_range).trim()
                 );
+                // Rule 14: the raised error compared by value after the `with`
+                // pins it; the comparison joins the item's gate text.
+                if let Some(comparison) = bound_exception_comparison(item, after, source) {
+                    assertion.oracle_kind = OracleKind::ExactErrorVariant;
+                    assertion.oracle_strength = OracleStrength::Strong;
+                    assertion.gate_text = format!("{}\n{comparison}", assertion.gate_text);
+                }
             }
             out.push(assertion);
         }
+    }
+}
+
+/// RIPR-SPEC-0238 rule 14: the text of the first statement after a
+/// `raises(...) as N` / `assertRaises(...) as N` item that compares a
+/// value-preserving read of the raised error with `==`, when nothing in
+/// between rebinds or mutates `N`.
+fn bound_exception_comparison(
+    item: &ast::WithItem,
+    after: &[Stmt],
+    source: &SourceText<'_>,
+) -> Option<String> {
+    let Some(Expr::Name(bound)) = item.optional_vars.as_deref() else {
+        return None;
+    };
+    let bound = bound.id.as_str();
+    let Expr::Call(call) = &item.context_expr else {
+        return None;
+    };
+    let name = expr_full_name(call.func.as_ref())?;
+    let field = if name.ends_with(".assertRaises") || name.ends_with(".assertRaisesRegex") {
+        "exception"
+    } else {
+        "value"
+    };
+    for stmt in after {
+        if let Some((left, right)) = equality_operands(stmt)
+            && !same_tokens(source, left, right)
+            && (reads_raised_error(left, bound, field) || reads_raised_error(right, bound, field))
+        {
+            return Some(text_for_range(source, stmt.range()).trim().to_string());
+        }
+        if statement_touches_name(stmt, bound) {
+            return None;
+        }
+    }
+    None
+}
+
+/// The two operands of `assert A == B` or `self.assertEqual(A, B)`.
+fn equality_operands(stmt: &Stmt) -> Option<(&Expr, &Expr)> {
+    match stmt {
+        Stmt::Assert(assert_stmt) => match assert_stmt.test.as_ref() {
+            Expr::Compare(compare)
+                if compare.ops.len() == 1 && matches!(compare.ops[0], ast::CmpOp::Eq) =>
+            {
+                Some((compare.left.as_ref(), compare.comparators.first()?))
+            }
+            _ => None,
+        },
+        Stmt::Expr(expr_stmt) => match expr_stmt.value.as_ref() {
+            Expr::Call(call)
+                if expr_full_name(call.func.as_ref())
+                    .is_some_and(|name| name.rsplit('.').next() == Some("assertEqual")) =>
+            {
+                compared_operands(call)
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// `N.value` (or `N.exception`) alone, as `str(...)` or `repr(...)` of it, or
+/// its `.args` or a literal index of `.args`.
+fn reads_raised_error(expr: &Expr, bound: &str, field: &str) -> bool {
+    let is_error = |expr: &Expr| {
+        matches!(expr, Expr::Attribute(attribute)
+            if attribute.attr.as_str() == field
+                && matches!(attribute.value.as_ref(), Expr::Name(name) if name.id.as_str() == bound))
+    };
+    let is_args = |expr: &Expr| {
+        matches!(expr, Expr::Attribute(attribute)
+            if attribute.attr.as_str() == "args" && is_error(attribute.value.as_ref()))
+    };
+    match expr {
+        Expr::Call(call) => {
+            matches!(call.func.as_ref(), Expr::Name(name) if matches!(name.id.as_str(), "str" | "repr"))
+                && call.keywords.is_empty()
+                && call.args.len() == 1
+                && is_error(&call.args[0])
+        }
+        Expr::Subscript(subscript) => {
+            is_args(subscript.value.as_ref())
+                && matches!(
+                    subscript.slice.as_ref(),
+                    Expr::Constant(ast::ExprConstant {
+                        value: ast::Constant::Int(_),
+                        ..
+                    })
+                )
+        }
+        _ => is_error(expr) || is_args(expr),
+    }
+}
+
+/// Whether a statement assigns `name`, or an attribute or subscript reached
+/// through it, or calls a method on it or on such an attribute.
+fn statement_touches_name(stmt: &Stmt, name: &str) -> bool {
+    let rooted = |expr: &Expr| expr_root_name(expr) == Some(name);
+    match stmt {
+        Stmt::Assign(assign) => assign.targets.iter().any(rooted),
+        Stmt::AugAssign(assign) => rooted(&assign.target),
+        Stmt::AnnAssign(assign) => rooted(&assign.target),
+        Stmt::Delete(delete) => delete.targets.iter().any(rooted),
+        Stmt::Expr(expr_stmt) => matches!(expr_stmt.value.as_ref(), Expr::Call(call)
+            if matches!(call.func.as_ref(), Expr::Attribute(attribute) if rooted(&attribute.value))),
+        // A nested block may rebind the name in a way the scan does not follow.
+        Stmt::Assert(_) | Stmt::Pass(_) => false,
+        _ => true,
+    }
+}
+
+fn expr_root_name(expr: &Expr) -> Option<&str> {
+    match expr {
+        Expr::Name(name) => Some(name.id.as_str()),
+        Expr::Attribute(attribute) => expr_root_name(attribute.value.as_ref()),
+        Expr::Subscript(subscript) => expr_root_name(subscript.value.as_ref()),
+        _ => None,
     }
 }
 
@@ -164,6 +293,26 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
     };
     let (oracle_kind, oracle_strength, oracle_shape) = oracle_for_call(call, source)?;
     let text = text_for_range(source, call.range).trim().to_string();
+    // Rule 13: the callable form calls its callable, so the gates read that
+    // call as they read the body of the `with` form.
+    if let Some((callable, arguments)) = exception_assertion_callable(call) {
+        let arguments = arguments
+            .iter()
+            .map(|argument| text_for_range(source, argument.range()).trim().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Some(PythonAssertion {
+            gate_text: format!(
+                "{text}\n{}({arguments})",
+                text_for_range(source, callable.range()).trim()
+            ),
+            text,
+            line: line_for_range_start(source, call.range),
+            oracle_kind,
+            oracle_strength,
+            oracle_shape,
+        });
+    }
     let gate_text = compared_operands(call)
         .map(|(first, second)| {
             format!(
@@ -341,7 +490,10 @@ fn oracle_for_call(
 ) -> Option<(OracleKind, OracleStrength, PythonOracleShape)> {
     let name = expr_full_name(call.func.as_ref())?;
     let last_segment = name.rsplit('.').next().unwrap_or(name.as_str());
-    if matches!(last_segment, "assertEqual" | "assertDictEqual")
+    if matches!(
+        last_segment,
+        "assertEqual" | "assertDictEqual" | "assertAlmostEqual"
+    ) && (last_segment != "assertAlmostEqual" || name == "self.assertAlmostEqual")
         && compared_operands(call).is_some_and(|(first, second)| same_tokens(source, first, second))
     {
         // RIPR-SPEC-0238 rule 1: comparing an expression with itself pins nothing.
@@ -372,6 +524,30 @@ fn oracle_for_call(
             OracleStrength::Weak,
             oracle_shape_for_call_arguments(call, PythonOracleShape::BoundaryAssertion),
         )),
+        // RIPR-SPEC-0238 rule 12: at its default tolerance the call pins the
+        // value; an explicit band may admit the old value. Only `self.` is the
+        // unittest method; another receiver may be a project helper.
+        "assertAlmostEqual" if name == "self.assertAlmostEqual" => {
+            let explicit = |position: usize, keyword: &str| {
+                call.args
+                    .get(position)
+                    .or_else(|| keyword_value(call, keyword))
+                    .is_some_and(|value| !is_none_literal(value))
+            };
+            if explicit(2, "places") || explicit(4, "delta") {
+                Some((
+                    OracleKind::RelationalCheck,
+                    OracleStrength::Weak,
+                    oracle_shape_for_call_arguments(call, PythonOracleShape::BoundaryAssertion),
+                ))
+            } else {
+                Some((
+                    OracleKind::ExactValue,
+                    OracleStrength::Strong,
+                    oracle_shape_for_call_arguments(call, PythonOracleShape::ExactAssertion),
+                ))
+            }
+        }
         "assertTrue" | "assertFalse" => Some((
             OracleKind::SmokeOnly,
             OracleStrength::Smoke,
@@ -401,7 +577,10 @@ fn oracle_for_call(
             PythonOracleShape::ExceptionAssertion,
         )),
         "raises" if name == "pytest.raises" || name == "raises" => {
-            let pattern = keyword_value(call, "match");
+            // Rule 13: in the callable form pytest passes `match=` to the
+            // callable instead of checking the message.
+            let pattern = keyword_value(call, "match")
+                .filter(|_| exception_assertion_callable(call).is_none());
             if pattern.is_some_and(|pattern| !is_trivial_message_pattern(pattern, source)) {
                 Some((
                     OracleKind::ExactErrorVariant,
@@ -427,13 +606,59 @@ fn oracle_for_call(
             OracleStrength::Medium,
             PythonOracleShape::MockExpectation,
         )),
-        _ if looks_like_custom_assertion_helper(&name) => Some((
-            OracleKind::Unknown,
-            OracleStrength::Unknown,
-            PythonOracleShape::UnknownCustomHelper,
-        )),
+        _ if looks_like_custom_assertion_helper(&name)
+            || chain_calls_assertion_helper(call.func.as_ref()) =>
+        {
+            Some((
+                OracleKind::Unknown,
+                OracleStrength::Unknown,
+                PythonOracleShape::UnknownCustomHelper,
+            ))
+        }
         _ => None,
     }
+}
+
+/// RIPR-SPEC-0238 rule 3: a fluent chain whose callee contains an
+/// assertion-helper call (`assert_that(x).is_equal_to(y)`).
+fn chain_calls_assertion_helper(func: &Expr) -> bool {
+    match func {
+        Expr::Attribute(attribute) => chain_calls_assertion_helper(attribute.value.as_ref()),
+        Expr::Call(call) => {
+            expr_full_name(call.func.as_ref())
+                .is_some_and(|name| looks_like_custom_assertion_helper(&name))
+                || chain_calls_assertion_helper(call.func.as_ref())
+        }
+        _ => false,
+    }
+}
+
+fn is_none_literal(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Constant(ast::ExprConstant {
+            value: ast::Constant::None,
+            ..
+        })
+    )
+}
+
+/// RIPR-SPEC-0238 rule 13: the callable an exception assertion calls, and the
+/// positional arguments it passes, when the callable is a bare or dotted name
+/// (`assertRaisesRegex(KeyError, 'empty', parse, '')`).
+pub(super) fn exception_assertion_callable(call: &ast::ExprCall) -> Option<(&Expr, &[Expr])> {
+    let name = expr_full_name(call.func.as_ref())?;
+    let last_segment = name.rsplit('.').next().unwrap_or(name.as_str());
+    let position = match last_segment {
+        "assertRaises" => 1,
+        "assertRaisesRegex" => 2,
+        "raises" if name == "pytest.raises" || name == "raises" => 1,
+        _ => return None,
+    };
+    let callable = call.args.get(position)?;
+    expr_full_name(callable)
+        .filter(|_| matches!(callable, Expr::Name(_) | Expr::Attribute(_)))
+        .map(|_| (callable, &call.args[position + 1..]))
 }
 
 /// The two operands a comparison assertion call compares, positional or named
@@ -443,7 +668,7 @@ fn compared_operands(call: &ast::ExprCall) -> Option<(&Expr, &Expr)> {
     let last_segment = name.rsplit('.').next().unwrap_or(name.as_str());
     if !matches!(
         last_segment,
-        "assertEqual" | "assertDictEqual" | "assertNotEqual" | "assertIn"
+        "assertEqual" | "assertDictEqual" | "assertAlmostEqual" | "assertNotEqual" | "assertIn"
     ) {
         return None;
     }

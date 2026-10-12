@@ -763,3 +763,193 @@ fn a_capture_bound_after_the_owner_call_observes_its_output() -> Result<(), Stri
     );
     Ok(())
 }
+
+fn unittest_fee_class(body: &str) -> Result<ExposureClass, String> {
+    fee_class(&format!(
+        "import unittest\n\n\nclass FeeTest(unittest.TestCase):\n    def test_fee(self):\n        {body}\n"
+    ))
+}
+
+#[test]
+fn assert_almost_equal_at_its_default_tolerance_pins_the_value() -> Result<(), String> {
+    // Rule 12 (#6603): at seven places the assertion fails for any change of
+    // at least 1e-7; an explicit tolerance band may admit the old value.
+    for body in [
+        "self.assertAlmostEqual(fee(10), 30.0)",
+        "self.assertAlmostEqual(fee(10), 30.0, places=None)",
+        "self.assertAlmostEqual(fee(10), 30.0, None, \"msg\", None)",
+    ] {
+        assert_eq!(unittest_fee_class(body)?, ExposureClass::Exposed, "{body}");
+    }
+    for body in [
+        "self.assertAlmostEqual(fee(10), 30.0, places=0)",
+        "self.assertAlmostEqual(fee(10), 30.0, delta=100)",
+        "self.assertAlmostEqual(fee(10), 30.0, 0)",
+        "self.assertAlmostEqual(fee(10), 30.0, None, \"msg\", 100)",
+        "checks.assertAlmostEqual(fee(10), 30.0)",
+        "self.assertNotAlmostEqual(fee(10), 20.0)",
+        "self.assertAlmostEqual(fee(10), fee(10))",
+    ] {
+        assert_ne!(unittest_fee_class(body)?, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_fluent_helper_chain_is_an_opaque_custom_helper() -> Result<(), String> {
+    // Rule 3 (#6603): the helper body is not read, so the verdict abstains
+    // rather than reporting a gap the helper may already close.
+    let imports = "from src.shop import charge, fee\nfrom tests.fluent import assert_that";
+    let class = |body: &str| classify(FEE, 2, FEE_OLD, &test_module(imports, body));
+    assert_eq!(
+        class("def test_fee():\n    assert_that(fee(10)).is_equal_to(30)\n")?,
+        ExposureClass::StaticUnknown
+    );
+    // A chain with no assertion-helper call is still no assertion.
+    assert_eq!(
+        class("def test_fee():\n    print_that(fee(10)).is_equal_to(30)\n")?,
+        ExposureClass::WeaklyExposed
+    );
+    Ok(())
+}
+
+const MESSAGE: &str = "def parse(text):\n    if not text:\n        raise KeyError(\"blank\")\n    return int(text)\n\n\ndef other(text):\n    if not text:\n        raise KeyError(\"blank\")\n    return int(text)\n";
+const MESSAGE_OLD: &str = "        raise KeyError(\"empty\")";
+
+fn message_class(body: &str) -> Result<ExposureClass, String> {
+    classify(
+        MESSAGE,
+        3,
+        MESSAGE_OLD,
+        &test_module(
+            "import unittest\n\nimport pytest\n\nfrom src.shop import other, parse",
+            body,
+        ),
+    )
+}
+
+fn unittest_message_class(body: &str) -> Result<ExposureClass, String> {
+    message_class(&format!(
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n{body}\n"
+    ))
+}
+
+#[test]
+fn the_callable_of_an_exception_assertion_is_called() -> Result<(), String> {
+    // Rule 13 (#6603): the assertion calls the callable it is passed.
+    for body in [
+        "        self.assertRaisesRegex(KeyError, \"empty\", parse, \"\")",
+        "        self.assertRaisesRegex(KeyError, \"blank\", parse, \"\")",
+    ] {
+        assert_eq!(
+            unittest_message_class(body)?,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    for body in [
+        // Only the class is pinned.
+        "        self.assertRaises(KeyError, parse, \"\")",
+        "        self.assertRaisesRegex(KeyError, \".*\", parse, \"\")",
+        // Another function is called, so the owner is not reached.
+        "        self.assertRaisesRegex(KeyError, \"empty\", other, \"\")",
+    ] {
+        assert_ne!(
+            unittest_message_class(body)?,
+            ExposureClass::Exposed,
+            "{body}"
+        );
+    }
+    // pytest passes `match=` to the callable in this form.
+    assert_ne!(
+        message_class(
+            "def test_parse():\n    pytest.raises(KeyError, parse, \"\", match=\"empty\")\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_bound_exception_compared_by_value_pins_the_error() -> Result<(), String> {
+    // Rule 14 (#6603): the comparison after the `with` reads the raised error.
+    for body in [
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert str(exc.value) == \"'empty'\"\n",
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert exc.value.args[0] == \"blank\"\n",
+        "class ParseTest(unittest.TestCase):\n    def test_parse(self):\n        with self.assertRaises(KeyError) as cm:\n            parse(\"\")\n        self.assertEqual(str(cm.exception), \"'empty'\")\n",
+    ] {
+        assert_eq!(message_class(body)?, ExposureClass::Exposed, "{body}");
+    }
+    for body in [
+        // A coarser read does not pin the message.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert len(str(exc.value)) == 7\n",
+        // A comparison inside the body runs only when nothing is raised.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n        assert str(exc.value) == \"'empty'\"\n",
+        // The exception is rebound before the comparison.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    exc = None\n    assert str(exc.value) == \"'empty'\"\n",
+        // An attribute reached through the exception is assigned.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    exc.value.args = (\"empty\",)\n    assert str(exc.value) == \"'empty'\"\n",
+        // `is not None` is not a value comparison.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert exc.value is not None\n",
+        // A tautology does not promote.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert str(exc.value) == str(exc.value)\n",
+        // Another bound name.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    err = KeyError(\"x\")\n    assert str(err) == \"'empty'\"\n",
+    ] {
+        assert_ne!(message_class(body)?, ExposureClass::Exposed, "{body}");
+    }
+    Ok(())
+}
+
+const QUOTE: &str = "FREE_SHIPPING_CENTS = 5000\n\n\ndef shipping_fee(subtotal_cents):\n    \"\"\"Orders at or above the threshold ship free.\"\"\"\n    if subtotal_cents >= FREE_SHIPPING_CENTS:\n        return 0\n    return 499\n\n\ndef handling_fee(subtotal_cents):\n    return subtotal_cents // 100\n\n\ndef quote(subtotal_cents):\n    return {\"total_cents\": subtotal_cents}\n";
+const QUOTE_OLD_SHIPPING: &str =
+    "    return {\"total_cents\": subtotal_cents + shipping_fee(subtotal_cents)}";
+const QUOTE_OLD_HANDLING: &str =
+    "    return {\"total_cents\": subtotal_cents + handling_fee(subtotal_cents)}";
+
+fn quote_class(old: &str, body: &str) -> Result<ExposureClass, String> {
+    classify(
+        QUOTE,
+        16,
+        old,
+        &test_module("from src.shop import quote", body),
+    )
+}
+
+#[test]
+fn a_removed_term_that_every_asserted_input_makes_zero_is_not_discriminated() -> Result<(), String>
+{
+    // #6733: `shipping_fee(6000)` is 0, so the test passes with or without it.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::WeaklyExposed
+    );
+    // One input below the threshold activates the term.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    assert quote(6000)[\"total_cents\"] == 6000\n    assert quote(1000)[\"total_cents\"] == 1499\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // An input the rule cannot resolve leaves the verdict to the oracle.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_SHIPPING,
+            "def test_quote():\n    amount = 6000\n    assert quote(amount)[\"total_cents\"] == 6000\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A callee that is not one guarded return of literals is not evaluated.
+    assert_eq!(
+        quote_class(
+            QUOTE_OLD_HANDLING,
+            "def test_quote():\n    assert quote(50)[\"total_cents\"] == 50\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}

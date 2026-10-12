@@ -137,6 +137,7 @@ mod source_utils;
 use source_utils::{is_test_file, normalized_path};
 mod same_class_callees;
 mod static_limits;
+mod term_activation;
 mod test_activation;
 use static_limits::{
     PythonStaticLimit, has_identifier_boundary, line_prefix_before,
@@ -211,6 +212,10 @@ struct PythonOwner {
     /// first (`Outer.Inner` for `Outer.Inner.__init__`). Empty for other
     /// owners. `qualified_name` keeps only the innermost class.
     class_path: String,
+    /// The body of a function owner that is one guarded return of literals
+    /// (`if x >= LIMIT: return 0` then `return 499`). Used only to evaluate a
+    /// removed call term one call deep (`term_activation.rs`, #6733).
+    guarded_return: Option<term_activation::PythonGuardedReturn>,
 }
 
 /// One declared parameter of a Python function owner.

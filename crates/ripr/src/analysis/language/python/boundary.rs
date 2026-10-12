@@ -49,6 +49,57 @@ use super::{PythonOwner, PythonTest};
 use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
 use std::collections::BTreeMap;
 
+/// One strong related call to the owner with the literal value each bound
+/// parameter takes (an explicit argument or a literal default).
+pub(super) struct PythonOwnerCallValues {
+    pub(super) line: usize,
+    pub(super) text: String,
+    pub(super) values: BTreeMap<String, String>,
+}
+
+/// The owner calls the boundary rule reads, for another activation rule
+/// (`term_activation.rs`): the same strong rows, the same constants.
+pub(super) fn strong_owner_call_values(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> Vec<PythonOwnerCallValues> {
+    let constants = unrebound_constants(owner, related_candidates);
+    strong_owner_call_rows(owner, &constants, related_candidates, focus)
+        .into_iter()
+        .map(|row| PythonOwnerCallValues {
+            line: row.line,
+            text: row.text,
+            values: row
+                .bindings
+                .into_iter()
+                .map(|(parameter, binding)| (parameter, binding.value))
+                .collect(),
+        })
+        .collect()
+}
+
+/// The owner's module constants no related test file reassigns
+/// (`pricing.DISCOUNT_THRESHOLD = 5` can change one at runtime).
+pub(super) fn unrebound_constants(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+) -> Vec<PythonModuleConstant> {
+    owner
+        .module_constants
+        .iter()
+        .filter(|constant| {
+            !related_candidates.iter().any(|candidate| {
+                candidate
+                    .test
+                    .constant_rebinding
+                    .assigns_attribute(&constant.name)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// Whether static evidence places a strong related call on the boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BoundaryActivation {
@@ -100,21 +151,7 @@ pub(super) fn python_boundary_evidence(
         .as_ref()
         .map(|(left, right)| format!("{left} == {right}"));
 
-    // A related test file that assigns the constant's attribute
-    // (`pricing.DISCOUNT_THRESHOLD = 5`) can change it at runtime.
-    let constants: Vec<PythonModuleConstant> = owner
-        .module_constants
-        .iter()
-        .filter(|constant| {
-            !related_candidates.iter().any(|candidate| {
-                candidate
-                    .test
-                    .constant_rebinding
-                    .assigns_attribute(&constant.name)
-            })
-        })
-        .cloned()
-        .collect();
+    let constants = unrebound_constants(owner, related_candidates);
     let rows = strong_owner_call_rows(owner, &constants, related_candidates, focus);
     let mut observed_values: Vec<ValueFact> = rows
         .iter()
@@ -270,7 +307,7 @@ fn module_constant<'a>(
 
 /// An operand's value independent of any test call: its own literal, or the
 /// literal of the module constant it names.
-fn static_operand(operand: &str, constants: &[PythonModuleConstant]) -> Option<String> {
+pub(super) fn static_operand(operand: &str, constants: &[PythonModuleConstant]) -> Option<String> {
     if let Some((base, offset)) = integer_offset(operand) {
         return static_operand(base, constants).and_then(|value| shifted_integer(&value, offset));
     }
