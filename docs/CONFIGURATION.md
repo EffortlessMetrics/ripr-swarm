@@ -27,6 +27,13 @@ files. Environment variables are process-local tuning knobs and are documented
 separately from repo policy.
 
 Configuration is for policy and tuning, not a prerequisite for first value.
+`ripr.toml` has no Rust fixture/builder computed-value mapping mechanism.
+Test-harness registrations identify test sources; they do not evaluate their
+inputs. For an unknown input, inspect how a related test's input reaches
+the changed expression and what the test actually checks. If it has an
+assertion, compare what that assertion observes under the original and changed
+behavior, using the project's configured test runner.
+
 `ripr.toml` is optional, and missing config is the normal first-run state — it
 uses built-in defaults. `ripr init` is **only** for teams that want to commit
 those defaults to disk so they can review, version, and tune repo policy; it

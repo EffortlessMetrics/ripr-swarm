@@ -77,13 +77,13 @@ Evidence
 
 Weakness
   - No strong discriminator was detected
-  - Syntax-first analysis cannot classify this change; use deep mode or real mutation
+  - Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests
 
 Stop reasons:
   - static_probe_unknown — ripr could not model this change well enough to classify it
 
 Next step
-  Escalate to real mutation testing or deep static analysis for this probe.
+  Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.
 Drill in:
   ripr explain --root <cwd>/fixtures/error_path_diagnostic_raw/input --diff <cwd>/fixtures/error_path_diagnostic_raw/diff.patch --mode fast probe:src_lib.rs:static_unknown:afc04379
   ripr context --root <cwd>/fixtures/error_path_diagnostic_raw/input --diff <cwd>/fixtures/error_path_diagnostic_raw/diff.patch --mode fast --at probe:src_lib.rs:static_unknown:afc04379
