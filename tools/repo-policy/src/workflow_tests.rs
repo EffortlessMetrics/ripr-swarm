@@ -10,25 +10,6 @@ fn coverage_failure_capture_preserves_original_command_and_failure() -> Result<(
     assert!(text.contains("failure() && steps.generate-coverage.outcome == 'failure'"));
     assert!(text.contains("always() && steps.generate-coverage.outcome == 'failure'"));
     assert!(text.contains("name: coverage-failure-diagnostics"));
-    #[cfg(unix)]
-    {
-        let output = std::process::Command::new("python3")
-            .args([
-                "-m",
-                "unittest",
-                "discover",
-                "-s",
-                "tools/coverage_diagnostics",
-            ])
-            .current_dir(&root)
-            .output()
-            .map_err(|error| error.to_string())?;
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
     Ok(())
 }
 

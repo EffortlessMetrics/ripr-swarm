@@ -32,7 +32,10 @@ jobs:
       - uses: taiki-e/install-action@cargo-llvm-cov
 
       - name: Check diagnostic capture controls
-        run: python3 -m unittest discover -s tools/coverage_diagnostics
+        run: cargo test -p repo-policy --lib coverage_diagnostics
+
+      - name: Pre-build failure diagnostic adapter
+        run: cargo build -p repo-policy
 
       - name: Clean coverage state
         run: cargo llvm-cov clean --workspace
@@ -49,7 +52,7 @@ jobs:
 
       - name: Retain bounded failed-profile diagnostics
         if: ${{ failure() && steps.generate-coverage.outcome == 'failure' }}
-        run: python3 tools/coverage_diagnostics/capture.py --profiles target/llvm-cov-target --list target/llvm-cov-target/ripr-swarm-profraw-list --output target/ripr/reports/coverage-diagnostics
+        run: target/debug/repo-policy capture-coverage-failure
 
       - name: Upload failed-profile diagnostics
         if: ${{ always() && steps.generate-coverage.outcome == 'failure' }}
