@@ -114,7 +114,13 @@ ladder and in its related-test row, when all of these hold:
 - `D` can never be a `C`: walking its `extends` chain through classes the
   module declares reaches a class with no `extends`, or a name in the
   builtin list below that the module does not itself declare, without
-  meeting `C`.
+  meeting `C`;
+- the test's `C` is the module's class: the test file imports it under its
+  own name from the owner's module (`import { C } from ...`), and neither
+  the test body nor an enclosing scope rebinds it (`const C = Error`);
+- the module has no `Symbol.hasInstance` hook, prototype rewrite
+  (`setPrototypeOf`, `__proto__`) or constructor that contains a `return`,
+  any of which lets `instanceof` disagree with the `extends` chain.
 
 The module scan reads every `class Name` declaration; a module with any
 generic (`class A<T>`), anonymous (`export default class {`) or repeated
@@ -203,14 +209,18 @@ documented decisions and proceed"). Recorded on #6654.
 7. A branch returning `cached`, `new Forbidden("denied").asNotFound()`,
    an imported class, or holding another statement; a changed `if` inside
    an arrow; a one-line `if (c) { return ...; }`: not credited.
-8. `return new Forbidden("denied")` changed to
+8. As example 1 with `static [Symbol.hasInstance]` on `NotFound`, a
+   `Forbidden` constructor that returns a `NotFound`, a test-local
+   `const NotFound = Error`, or `NotFound` imported from another module:
+   not `exposed`.
+9. `return new Forbidden("denied")` changed to
    `return new Forbidden("refused")` with the problem's tests: not
    `exposed`, and rule 1 reads no pin on that value seam.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs`
-  pins examples 1 to 8 and the owner-side conditions.
+  pins examples 1 to 9 and the owner-side conditions.
 - `fixtures/typescript-verdict-corpus` pins example 1:
   `jest-mined-tobeinstanceof` reads `credited`.
 

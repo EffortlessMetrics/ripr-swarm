@@ -212,12 +212,76 @@ pub(crate) fn ts_owner_branches_split_class(
         return false;
     };
     let module = ts_mask_literals_and_comments(module_source);
+    if module_overrides_instanceof(&module) {
+        return false;
+    }
     let Some(classes) = module_classes(&module) else {
         return false;
     };
     classes.iter().any(|(name, _)| name == asserted)
         && other != asserted
         && never_instance_of(&other, asserted, &classes)
+}
+
+/// `true` when the module can make `instanceof` disagree with the `extends`
+/// chain: a `Symbol.hasInstance` hook (inherited by subclasses), a
+/// prototype rewrite, or a constructor that can return another object.
+fn module_overrides_instanceof(masked_module: &str) -> bool {
+    // Plain text, not identifier offsets: these are member names
+    // (`Symbol.hasInstance`, `Object.setPrototypeOf`).
+    if ["hasInstance", "setPrototypeOf", "__proto__"]
+        .iter()
+        .any(|name| masked_module.contains(name))
+    {
+        return true;
+    }
+    identifier_offsets(masked_module, "constructor")
+        .into_iter()
+        .any(|at| {
+            let rest = &masked_module[at..];
+            let Some(open) = rest.find('{') else {
+                return true;
+            };
+            let mut depth = 0usize;
+            for (index, c) in rest[open..].char_indices() {
+                match c {
+                    '{' => depth += 1,
+                    '}' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            let body = &rest[open..open + index];
+                            return !identifier_offsets(body, "return").is_empty();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            true
+        })
+}
+
+/// `true` when the test's `class` is the owner module's class: imported
+/// under its own name from the owner's module, and not rebound in the test
+/// or an enclosing scope (`const NotFound = Error`).
+fn test_binds_owner_module_class(
+    test: &TypeScriptTest,
+    class: &str,
+    owner: &TypeScriptOwner,
+    alias_map: Option<&TsAliasMap>,
+    workspace_root: Option<&Path>,
+) -> bool {
+    let imported = test.imports_in_file.iter().any(|import| {
+        !import.namespace
+            && import.local == class
+            && import.imported.as_deref() == Some(class)
+            && import_source_matches_owner(import, &test.file, owner, alias_map, workspace_root)
+    });
+    imported
+        && !local_identifier_declared_in_test_body(&test.body_text, class)
+        && !test
+            .scope_bindings
+            .iter()
+            .any(|binding| binding.name == class)
 }
 
 /// Collect the credited `toBeInstanceOf` assertions for a predicate change:
@@ -285,6 +349,13 @@ pub(crate) fn ts_instance_class_facts(
                 }
             };
             if owner_ok
+                && test_binds_owner_module_class(
+                    candidate.test,
+                    class,
+                    owner,
+                    alias_map,
+                    workspace_root,
+                )
                 && ts_observes_whole_owner_result(candidate.test, assertion, owner, &receivers)
                 && let Some(observed) = assertion.observed_expression.clone()
             {

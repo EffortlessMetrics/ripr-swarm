@@ -283,8 +283,33 @@ fn instance_pin_stays_weak_without_a_settled_class_split() -> Result<(), String>
         "class Forbidden extends Error",
         "class Forbidden extends NotFound",
     );
+    // `instanceof` consults a `Symbol.hasInstance` hook, and a constructor
+    // can return another object, so the `extends` chain no longer decides.
+    let hooked = ERRORS.replace(
+        "class NotFound extends Error {}",
+        "class NotFound extends Error {\n  static [Symbol.hasInstance](v: unknown) {\n    return v instanceof Error;\n  }\n}",
+    );
+    let returning = ERRORS.replace(
+        "class Forbidden extends Error {}",
+        "class Forbidden extends Error {\n  constructor(m: string) {\n    super(m);\n    return new NotFound(m);\n  }\n}",
+    );
+    let other_module = "import { errorFor } from \"../src/errors\";\nimport { NotFound } from \"../src/other\";\ntest(\"status codes\", () => {\n  expect(errorFor(404)).toBeInstanceOf(NotFound);\n});\n".to_string();
     for (label, module, test) in [
         ("instance-subclass", subclass.as_str(), pinned.clone()),
+        ("instance-has-instance", hooked.as_str(), pinned.clone()),
+        (
+            "instance-returning-constructor",
+            returning.as_str(),
+            pinned.clone(),
+        ),
+        (
+            "instance-shadowed-class",
+            ERRORS,
+            errors_test(
+                "  const NotFound = Error;\n  expect(errorFor(404)).toBeInstanceOf(NotFound);",
+            ),
+        ),
+        ("instance-other-module-class", ERRORS, other_module),
         (
             "instance-not-owner-result",
             ERRORS,
@@ -314,7 +339,12 @@ fn instance_pin_stays_weak_without_a_settled_class_split() -> Result<(), String>
             ),
         ),
     ] {
-        let finding = errors_finding(label, module, &test, PREDICATE_OLD, PREDICATE_NEW, 5)?;
+        let line = module
+            .lines()
+            .position(|text| text == PREDICATE_OLD)
+            .ok_or("changed line missing")?
+            + 1;
+        let finding = errors_finding(label, module, &test, PREDICATE_OLD, PREDICATE_NEW, line)?;
         assert_eq!(finding.probe.family, ProbeFamily::Predicate, "{label}");
         assert_ne!(
             finding.class,
