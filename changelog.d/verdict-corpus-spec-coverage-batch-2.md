@@ -25,4 +25,4 @@
     between range arms is not implemented.
   - `spec0117-proximity-macro-plus-direct`: ripr keeps the gap as RIPR-SPEC-0117
     example 6 requires, but the macro-routed test it does not credit kills every
-    mutant.
+    mutant (#7544).
