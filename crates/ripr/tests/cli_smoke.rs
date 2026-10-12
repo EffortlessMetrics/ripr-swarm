@@ -994,6 +994,12 @@ fn normalize_unchanged_repo_exposure_producer_fixture(
     let input_identity = json_pointer_str(&value, "/artifact/analysis/input_identity")?;
     value["artifact"]["snapshot_identity"] =
         serde_json::json!(format!("snapshot:{input_identity};revision:{stable_head}"));
+    // The wall-clock generated_at stamp (#7369) is volatile by design: the
+    // portable fixture pins identity fields, so it drops out of the
+    // normalization rather than pinning a fake clock.
+    if let Some(artifact) = value["artifact"].as_object_mut() {
+        artifact.remove("generated_at");
+    }
     let mut raw = serde_json::to_string_pretty(&value)?;
     raw.push('\n');
     serde_json::from_str(&recommit_repo_exposure_json(raw)).map_err(Into::into)
@@ -14960,6 +14966,21 @@ fn pilot_withholds_static_limitations_and_keeps_a_true_gap()
     Ok(())
 }
 
+/// #7369 follow-up: repo artifacts carry a wall-clock `generated_at`
+/// disclosure stamp now, so two identical runs differ by milliseconds (and
+/// the content commitment covers those bytes). Cross-run equality checks drop
+/// the volatile artifact identity fields and keep comparing everything else.
+fn without_volatile_repo_artifact_fields(mut value: serde_json::Value) -> serde_json::Value {
+    if let Some(artifact) = value
+        .get_mut("artifact")
+        .and_then(|part| part.as_object_mut())
+    {
+        artifact.remove("generated_at");
+        artifact.remove("content_sha256");
+    }
+    value
+}
+
 /// When the pilot seam budget truncates the inventory, pilot's snapshot holds
 /// fewer seams than the after snapshot `ripr check` takes. It must not carry
 /// the comparable identity, or verify would compare two populations.
@@ -15252,7 +15273,11 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let still_inventory_packets: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(root.join("target/ripr/pilot/agent-seam-packets.json"))?,
     )?;
+    let still_inventory = without_volatile_repo_artifact_fields(still_inventory);
+    let inventory = without_volatile_repo_artifact_fields(inventory);
     assert_eq!(still_inventory, inventory);
+    let still_inventory_packets = without_volatile_repo_artifact_fields(still_inventory_packets);
+    let inventory_packets = without_volatile_repo_artifact_fields(inventory_packets);
     assert_eq!(still_inventory_packets, inventory_packets);
     assert_eq!(
         packet_count(&still_inventory_packets)?,
@@ -15283,6 +15308,8 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         "{wrong_control}"
     );
 
+    let wrong_control = without_volatile_repo_artifact_fields(wrong_control);
+    let before = without_volatile_repo_artifact_fields(before);
     assert_eq!(
         wrong_control, before,
         "lifting the wrong control must preserve the pilot cut"
@@ -15291,6 +15318,8 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let wrong_control_packets: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
         root.join("target/ripr/pilot/agent-seam-packets.json"),
     )?)?;
+    let wrong_control_packets = without_volatile_repo_artifact_fields(wrong_control_packets);
+    let packets = without_volatile_repo_artifact_fields(packets);
     assert_eq!(
         wrong_control_packets, packets,
         "lifting the inventory control must preserve the pilot packet cut"

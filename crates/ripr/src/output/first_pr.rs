@@ -2670,6 +2670,18 @@ fn base_fetch_refspec(branch: &str) -> String {
 
 fn fetch_base_command(options: &FirstPrOptions) -> String {
     if let Some(branch) = options.base.strip_prefix("origin/") {
+        if branch.is_empty() {
+            // Fail closed (#7368): an `origin/` base with an empty branch is
+            // an invalid ref that no fetch spelling can make resolve, so
+            // fetch-everything advice would be dead recovery. Point at a
+            // rerun with a valid base instead; the example ref is concrete so
+            // the line stays safe to copy into a shell (an unquoted `<ref>`
+            // would parse as redirection).
+            return format!(
+                "ripr first-pr --root {} --base origin/main --head HEAD",
+                shell_arg(&options.command_root())
+            );
+        }
         format!(
             "git -C {} fetch origin -- {}",
             shell_arg(&options.command_root()),
@@ -2883,6 +2895,37 @@ mod tests {
         assert!(
             first_pr_write_command(&FirstPrOptions::default(), out, true)
                 .contains("--base <ref> --head")
+        );
+    }
+
+    #[test]
+    fn fetch_base_command_with_empty_origin_branch_points_at_valid_rerun() {
+        // #7368: `origin/` with an empty branch is an invalid ref that no
+        // fetch spelling can make resolve; the recovery must point at a rerun
+        // with a valid base instead of dead fetch-everything advice.
+        let empty = FirstPrOptions {
+            base: "origin/".to_string(),
+            ..FirstPrOptions::default()
+        };
+        let command = fetch_base_command(&empty);
+        assert!(
+            command.contains("--base origin/main --head HEAD"),
+            "{command}"
+        );
+        assert!(
+            !command.contains('<'),
+            "the recovery command must stay safe to copy into a shell: {command}"
+        );
+        assert!(!command.contains("fetch"), "{command}");
+
+        let named = FirstPrOptions {
+            base: "origin/trunk".to_string(),
+            ..FirstPrOptions::default()
+        };
+        let command = fetch_base_command(&named);
+        assert!(
+            command.contains("+refs/heads/trunk:refs/remotes/origin/trunk"),
+            "{command}"
         );
     }
 
