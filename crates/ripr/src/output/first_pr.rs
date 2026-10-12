@@ -3340,8 +3340,17 @@ mod tests {
             "Also missing: Gap decision ledger at `target/ripr/reports/gap-decision-ledger.json`"
         ));
         assert!(summary.contains("Then run: `ripr reports gap-ledger"));
+        // Resolve both positions: the recovery command carries a `(Bash)`
+        // label once a PowerShell variant exists, so an unlabeled `find`
+        // returns `None` and `None < Some(_)` would pass vacuously.
+        let regen_at = summary
+            .find("Regeneration command (Bash):")
+            .ok_or_else(|| summary.clone())?;
+        let also_missing_at = summary
+            .find("Also missing:")
+            .ok_or_else(|| summary.clone())?;
         assert!(
-            summary.find("Regeneration command:") < summary.find("Also missing:"),
+            regen_at < also_missing_at,
             "repo exposure recovery must precede the dependent ledger: {summary}"
         );
         let markdown = render_start_here_markdown(&packet);

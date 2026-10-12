@@ -882,20 +882,25 @@ mod tests {
     }
 
     #[test]
-    fn recovery_command_pair_keeps_bash_first_on_every_host() {
+    fn recovery_command_pair_keeps_bash_first_on_every_host() -> Result<(), String> {
         // #7387: both labeled forms print, but the Bash form must stay
         // first on every host — the `(PowerShell)` label pairs the variant
         // with the command line before it (paste-extractor contract in
         // crates/ripr/tests/printed_command_paste.rs), so host-dependent
-        // reordering mis-pastes the raw Bash form into PowerShell.
+        // reordering mis-pastes the raw Bash form into PowerShell. Resolve
+        // both label positions so a missing form fails the test instead of
+        // passing vacuously on `None < Some(_)`.
         let bash = "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json";
         let mut out = String::new();
         push_recovery_command(&mut out, "Regeneration command", bash);
-        assert!(
-            out.find("Regeneration command (Bash):")
-                < out.find("Regeneration command (PowerShell):"),
-            "{out}"
-        );
+        let bash_at = out
+            .find("Regeneration command (Bash):")
+            .ok_or_else(|| out.clone())?;
+        let powershell_at = out
+            .find("Regeneration command (PowerShell):")
+            .ok_or_else(|| out.clone())?;
+        assert!(bash_at < powershell_at, "{out}");
+        Ok(())
     }
 
     #[test]
