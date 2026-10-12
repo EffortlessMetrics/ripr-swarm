@@ -32,7 +32,7 @@ impl AttributedArchive {
         source.revalidate()?;
         let target = owned_root.join("package-target");
         let manifest = source.package_root().join("Cargo.toml");
-        let config = owned_cargo_config(owned_root, "package")?;
+        let config = owned_cargo_config(owned_root, "package", None)?;
         let args = vec![
             "--config".to_string(),
             config.to_string_lossy().into_owned(),
@@ -114,7 +114,8 @@ impl AttributedArchive {
         }
         let install_root = owned_root.join("installed");
         let target_root = owned_root.join("install-target");
-        let config = owned_cargo_config(owned_root, "install")?;
+        let toolchain = InstallToolchain::observe(&extracted)?;
+        let config = owned_cargo_config(owned_root, "install", Some(&toolchain))?;
         let args = vec![
             "--config".to_string(),
             config.to_string_lossy().into_owned(),
@@ -131,17 +132,15 @@ impl AttributedArchive {
             "--target-dir".to_string(),
             target_root.to_string_lossy().into_owned(),
         ];
-        let toolchain = InstallToolchain::observe(&extracted)?;
-        let output = qualified_command(
+        let output = qualified_command_with_environment(
             Path::new("cargo"),
             &args,
             &extracted,
             Duration::from_mins(15),
             "qualified cargo install",
+            &toolchain.environment(),
         )?;
-        if InstallToolchain::observe(&extracted)? != toolchain {
-            return Err("install toolchain changed during compilation".to_string());
-        }
+        toolchain.revalidate(&extracted)?;
         self.revalidate()?;
         revalidate_extracted_files(&extracted, &self.inventory)?;
         let binary = install_root.join("bin").join(format!(
@@ -471,6 +470,7 @@ impl InstalledCandidate {
             "installed_executable": self.installed_binary,
             "compiler_artifact": self.producer.artifact,
             "compiler_installed_bytes_equal_at_capture": true,
+            "rustc_command": self.producer.toolchain.rustc_command,
             "rustc_verbose_version": self.producer.toolchain.rustc_verbose_version,
             "cargo_verbose_version": self.producer.toolchain.cargo_verbose_version,
             "capture_mode": if self.captured.is_some() { "exclusive_frozen_reference" } else { "installed_output" },
@@ -478,7 +478,11 @@ impl InstalledCandidate {
     }
 }
 
-fn owned_cargo_config(root: &Path, phase: &str) -> Result<PathBuf, String> {
+fn owned_cargo_config(
+    root: &Path,
+    phase: &str,
+    toolchain: Option<&InstallToolchain>,
+) -> Result<PathBuf, String> {
     let temporary = root.join(format!("{phase}-temporary"));
     std::fs::create_dir(&temporary)
         .map_err(|error| format!("create owned Cargo temporary directory: {error}"))?;
@@ -498,6 +502,9 @@ fn owned_cargo_config(root: &Path, phase: &str) -> Result<PathBuf, String> {
     }
     let mut config = toml::map::Map::new();
     config.insert("env".to_string(), toml::Value::Table(environment));
+    if let Some(toolchain) = toolchain {
+        toolchain.configure(&mut config)?;
+    }
     let path = root.join(format!("{phase}-cargo-config.toml"));
     std::fs::write(
         &path,
@@ -515,11 +522,22 @@ fn qualified_command(
     timeout: Duration,
     context: &str,
 ) -> Result<crate::run::TimedBytesOutput, String> {
+    qualified_command_with_environment(program, args, cwd, timeout, context, &[])
+}
+
+fn qualified_command_with_environment(
+    program: &Path,
+    args: &[String],
+    cwd: &Path,
+    timeout: Duration,
+    context: &str,
+    environment: &[(&str, &str)],
+) -> Result<crate::run::TimedBytesOutput, String> {
     let output = crate::run::capture_bytes_in_dir_with_timeout(
         program,
         args,
         cwd,
-        &[],
+        environment,
         &[
             "CARGO_TARGET_DIR",
             "GIT_DIR",

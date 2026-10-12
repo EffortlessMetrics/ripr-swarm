@@ -279,8 +279,14 @@ or replace a required original witness. Bind qualification to the explicitly
 selected compiler artifact and observed behavior under its admitted ownership.
 
 The qualification-only #4510 installed-candidate harness retains the actual
-Cargo-install executable message and observed toolchain, checks compiler and
-installed bytes agree, and captures those retained bytes in an exclusive slot
+Cargo-install executable message and observed toolchain. Installation uses the
+same absolute PATH-selected rustc invocation entry for version observation and
+compilation, with compiler selectors pinned and wrappers disabled in its owned
+command/configuration. Relative PATH entries resolve from the extracted working
+directory; ambiguous drive-relative entries refuse. This preserves a rustup
+proxy's rustc basename and observes versions without authenticating SDK bytes.
+The harness checks compiler and installed bytes agree and captures those retained
+bytes in an exclusive slot
 before qualified consumption. Reuse the same captured handle; another capture
 must refuse an occupied slot even if its bytes match. Failed captures publish no
 handle and remove only an observed owned partial; where native file ownership

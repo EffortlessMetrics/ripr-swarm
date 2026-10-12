@@ -2069,8 +2069,31 @@ fn real_compiler_invocation_custody_pins_selected_command_against_overrides() ->
                 ("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", wrapper_text),
             ]);
         }
-        let attempted = crate::run::capture_bytes_in_dir_with_timeout(
-            &executable,
+        // The actor waits for its inner owned command deadlines and cleanup.
+        // This helper applies removals after overlay, so preserve overlay keys.
+        let removals = [
+            MODE,
+            CONTROL,
+            ORIGINAL_PATH,
+            "RUSTC",
+            "CARGO_BUILD_RUSTC",
+            "RUSTC_WRAPPER",
+            "CARGO_BUILD_RUSTC_WRAPPER",
+            "RUSTC_WORKSPACE_WRAPPER",
+            "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
+            "CARGO_TARGET_DIR",
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+        ]
+        .into_iter()
+        .filter(|name| !overlay.iter().any(|(present, _)| present == name))
+        .collect::<Vec<_>>();
+        let executable_text = executable.to_str().ok_or_else(|| {
+            "INSTRUMENT: compiler actor executable path must be UTF-8".to_string()
+        })?;
+        let attempted = crate::run::capture_output_in_dir_with_envs(
+            executable_text,
             &[
                 "--exact".to_string(),
                 exact.clone(),
@@ -2078,24 +2101,9 @@ fn real_compiler_invocation_custody_pins_selected_command_against_overrides() ->
                 "--test-threads=1".to_string(),
             ],
             &fixture.controller,
-            &overlay,
-            &[
-                MODE,
-                CONTROL,
-                ORIGINAL_PATH,
-                "RUSTC",
-                "CARGO_BUILD_RUSTC",
-                "RUSTC_WRAPPER",
-                "CARGO_BUILD_RUSTC_WRAPPER",
-                "RUSTC_WORKSPACE_WRAPPER",
-                "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
-                "CARGO_TARGET_DIR",
-                "GIT_DIR",
-                "GIT_WORK_TREE",
-                "GIT_INDEX_FILE",
-            ],
-            Duration::from_mins(5),
             "4510 actual compiler adversarial child test",
+            &overlay,
+            &removals,
         );
         let output = match attempted {
             Ok(output) => output,
@@ -2111,33 +2119,21 @@ fn real_compiler_invocation_custody_pins_selected_command_against_overrides() ->
             }
         };
         // Preserve child native output, including every retained-fixture line.
-        eprintln!(
-            "4510 compiler child {mode} stdout:\n{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        eprintln!(
-            "4510 compiler child {mode} stderr:\n{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let status = output.status.and_then(|status| status.code());
-        let observation =
-            json!({"mode": mode, "native_status": status, "timed_out": output.timed_out});
+        eprintln!("4510 compiler child {mode} stdout:\n{}", output.stdout);
+        eprintln!("4510 compiler child {mode} stderr:\n{}", output.stderr);
+        let status = output.status.code();
+        let observation = json!({"mode": mode, "native_status": status});
         eprintln!("4510 compiler child native disposition: {observation}");
         outcomes.push(observation);
-        if output.timed_out {
-            failures.push(format!("INSTRUMENT: {mode} native child deadline expired"));
-        } else if !output.status.is_some_and(|status| status.success()) {
-            let behavior = [&output.stderr, &output.stdout].iter().any(|stream| {
-                stream
-                    .windows(b"BEHAVIOR:".len())
-                    .any(|bytes| bytes == b"BEHAVIOR:")
-            });
+        if !output.status.success() {
+            let behavior = [&output.stderr, &output.stdout]
+                .iter()
+                .any(|stream| stream.contains("BEHAVIOR:"));
             failures.push(format!("{}: {mode} native child status {status:?}; retained stdout/stderr identify the exact failure",
                 if behavior { "BEHAVIOR" } else { "SETUP/INSTRUMENT" }));
         } else if !output
             .stderr
-            .windows(b"4510 actual compiler invocation/native observations:".len())
-            .any(|bytes| bytes == b"4510 actual compiler invocation/native observations:")
+            .contains("4510 actual compiler invocation/native observations:")
         {
             failures.push(format!("SETUP/INSTRUMENT: {mode} child exited zero without genuine install/native observations; an empty test selection is not qualification"));
         }

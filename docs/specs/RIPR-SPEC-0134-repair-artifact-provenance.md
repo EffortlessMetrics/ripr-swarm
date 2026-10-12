@@ -381,8 +381,17 @@ bounded by this reread contract; full package/install qualification remains
 separate from these controls.
 
 The existing admitted installed-candidate handle also retains the actual
-Cargo-install executable artifact and observed Cargo/rustc versions. The selected
-compiler executable must belong to the owned install target and match the
+Cargo-install executable artifact and observed Cargo/rustc versions. Its
+install-specific rustc command is one absolute PATH-selected invocation entry,
+observed before and after compilation under the same controlled environment.
+The install command and owned Cargo configuration pin both compiler selectors,
+disable both wrappers and control child PATH, including their Cargo environment
+counterparts. Plain relative PATH entries resolve from the extracted working
+directory; prefixed drive-relative entries refuse. Parent resolution preserves
+a rustup proxy's rustc basename. Package production retains its existing policy;
+these observations do not authenticate SDK bytes or bind arbitrary build scripts,
+rustflags or linkers. The selected compiler executable must belong to the owned
+install target and match the
 installed bytes before initial capture. The qualified negative-corpus consumer
 captures those retained bytes once using exclusive creation in its owned producer
 root; an occupied destination refuses even when its bytes match. Complete
