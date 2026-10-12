@@ -14,8 +14,11 @@
 //! incomplete, but a trust scan that needs omitted findings cannot appear
 //! clean.
 //!
-//! Root identity is compared after unifying `\\` to `/` and decoding the
-//! producer `%25` escape. That is a local compare, not a copy of ripr's
+//! Root identity is compared in producer encoding: the expected checkout
+//! unifies `\\` to `/` and encodes each `%` as `%25`, then matches the
+//! producer root after the same separator unification. Decoding `%25` on
+//! both sides would reject a checkout whose name contains literal `%25`
+//! (producer `%2525`). That is a local compare, not a copy of ripr's
 //! private `stable_path_text`. Head is checked only when the producer
 //! emits `head.commit`; a missing head is unknown, not a mismatch.
 
@@ -363,16 +366,21 @@ pub(crate) fn findings_rendering_truncated(check: &Value) -> bool {
 
 fn field_matches(field: &str, actual: &str, expected: &str) -> bool {
     if field == "root" {
-        portable_root(actual) == portable_root(expected)
+        encode_expected_root(expected) == unify_root_separators(actual)
     } else {
         actual == expected
     }
 }
 
-/// Unify Windows separators and the producer `%` escape so the same
-/// checkout is not rejected as the wrong root.
-fn portable_root(value: &str) -> String {
-    value.replace('\\', "/").replace("%25", "%")
+fn unify_root_separators(value: &str) -> String {
+    value.replace('\\', "/")
+}
+
+/// Encode a checkout root the way the producer writes it: `/` separators
+/// and `%` → `%25`. Applied only to the expected harness root. Not a copy
+/// of private `stable_path_text` (no invalid-byte codec).
+fn encode_expected_root(value: &str) -> String {
+    unify_root_separators(value).replace('%', "%25")
 }
 
 /// Complete kinds may disclose only `eol_only_churn`. A missing, non-array,
@@ -939,6 +947,20 @@ mod tests {
         assert!(
             admit_check_document(&doc, &percent_subject).is_complete(),
             "producer %25 escape must match a literal % checkout"
+        );
+        let mut percent25_subject = subject.clone();
+        percent25_subject.root = "/tmp/corpus%25a".to_string();
+        let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
+        doc["root"] = json!("/tmp/corpus%2525a");
+        assert!(
+            admit_check_document(&doc, &percent25_subject).is_complete(),
+            "producer %2525 encoding must match a checkout whose name contains literal %25"
+        );
+        let mut percent25_wrong_root = percent25_subject.clone();
+        percent25_wrong_root.root = "/tmp/corpus%25b".to_string();
+        assert!(
+            !admit_check_document(&doc, &percent25_wrong_root).is_complete(),
+            "a genuinely different %25-bearing root must still reject"
         );
     }
 
