@@ -22,6 +22,10 @@ suite('Genuine actionable queue consumer', () => {
   let genuine: Queue;
 
   suiteSetup(async function () {
+    if (process.env.RIPR_TEST_WORKSPACE_TRUST === 'untrusted') {
+      this.skip();
+      return;
+    }
     const suppliedRoot = process.env.RIPR_TEST_ACTIONABLE_QUEUE_ROOT;
     if (!suppliedRoot) {
       console.info('Genuine queue composition not established: producer fixture root was not supplied.');
