@@ -20,6 +20,11 @@ pub(in crate::analysis) struct PropagationWitnessV1 {
     pub(in crate::analysis) behavior: BehaviorIdentity,
     pub(in crate::analysis) source: PropagationEndpoint,
     pub(in crate::analysis) edges: Vec<PropagationEdge>,
+    /// Declaration/callsite identity receipts only. These do not complete an
+    /// edge or contribute relation, activation, propagation or oracle credit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in crate::analysis) selected_helper_calls:
+        Vec<super::helper_transfer::SelectedInherentCall>,
     pub(in crate::analysis) sink: PropagationEndpoint,
     pub(in crate::analysis) completeness: PathCompleteness,
     pub(in crate::analysis) limitations: Vec<String>,
@@ -197,6 +202,7 @@ pub(in crate::analysis) fn current_path_witness(
             identity: source_identity.clone(),
             line: probe.location.line,
         },
+        selected_helper_calls: Vec::new(),
         edges: vec![PropagationEdge {
             kind: edge_kind.clone(),
             status: edge_status,
@@ -246,6 +252,7 @@ pub(in crate::analysis) fn returned_ledger_witness(
             identity: identity.clone(),
             line: probe.location.line,
         },
+        selected_helper_calls: Vec::new(),
         edges: vec![PropagationEdge {
             kind: PropagationEdgeKind::StructField,
             status: EdgeStatus::Candidate,
@@ -1024,6 +1031,26 @@ impl PropagationWitnessV1 {
             append_canonical_field(&mut canonical, edge.status.as_str());
             append_canonical_field(&mut canonical, &edge.from);
             append_canonical_field(&mut canonical, &edge.to);
+        }
+        // Source coordinates remain diagnostic, as for existing endpoints.
+        // Empty receipts preserve the historical digest; identities are bound
+        // only when the declaration/callsite producer actually supplies them.
+        if !self.selected_helper_calls.is_empty() {
+            append_canonical_section_header(
+                &mut canonical,
+                "selected-helper-calls",
+                self.selected_helper_calls.len(),
+            );
+            for call in &self.selected_helper_calls {
+                append_canonical_section_header(&mut canonical, "selected-helper-call", 4);
+                append_canonical_field(
+                    &mut canonical,
+                    &call.test_declaration.file.to_string_lossy(),
+                );
+                append_canonical_field(&mut canonical, &call.test_name);
+                append_canonical_field(&mut canonical, &call.callee.0);
+                append_canonical_field(&mut canonical, &call.helper.0);
+            }
         }
         append_canonical_section_header(&mut canonical, "sink", 2);
         append_canonical_field(&mut canonical, &self.sink.kind);
