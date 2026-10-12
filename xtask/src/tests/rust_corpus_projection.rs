@@ -204,26 +204,22 @@ fn genuine_rust_producer_and_xtask_projector_preserve_explicit_raw_language_and_
             && captured["seams"][0]["evidence_record"]["canonical_gap_id"] == GAP,
         || format!("positive must be the real exact nonempty weak pricing gap: {captured}"),
     )?;
-    for raw in [
-        &captured["seams"][0]["evidence_record"]["raw_findings"],
-        &captured["seams"][0]["evidence_record"]["canonical_item"]["raw_findings"],
-    ] {
-        let findings = raw.as_array().ok_or("real producer omitted raw findings")?;
-        require(
-            !findings.is_empty()
-                && findings.iter().all(|finding| {
-                    finding["language"] == "rust"
-                        && finding["language_status"] == "stable"
-                        && finding["file"] == "src/lib.rs"
-                        && finding["line"] == 2
-                }),
-            || {
-                format!(
-                    "the Rust typed factory must explicitly supply every actual raw language; extension/identity inference is insufficient: {captured}"
-                )
-            },
-        )?;
-    }
+    let raw = &captured["seams"][0]["evidence_record"]["raw_findings"];
+    let findings = raw.as_array().ok_or("real producer omitted raw findings")?;
+    require(
+        !findings.is_empty()
+            && findings.iter().all(|finding| {
+                finding["language"] == "rust"
+                    && finding["language_status"] == "stable"
+                    && finding["file"] == "src/lib.rs"
+                    && finding["line"] == 2
+            }),
+        || {
+            format!(
+                "the Rust typed factory must explicitly supply every actual raw language; extension/identity inference is insufficient: {captured}"
+            )
+        },
+    )?;
     let actionable = actionable_projection(root, &captured)?;
     let packets = actionable["packets"]
         .as_array()
@@ -242,7 +238,7 @@ fn genuine_rust_producer_and_xtask_projector_preserve_explicit_raw_language_and_
                 .as_str()
                 .is_some_and(|command| !command.is_empty())
             && packets[0]["raw_findings"]
-                == captured["seams"][0]["evidence_record"]["canonical_item"]["raw_findings"]
+                == captured["seams"][0]["evidence_record"]["raw_findings"]
             && actionable["source_subject"]["files"]
                 .as_array()
                 .is_some_and(|files| !files.is_empty()),
@@ -265,7 +261,7 @@ fn genuine_completed_no_action_corpus_produces_an_empty_queue_without_invented_l
     require(
         captured["seams"][0]["seam_id"] == SEAM
             && captured["seams"][0]["grip_class"] == "strongly_gripped"
-            && captured["seams"][0]["evidence_record"]["canonical_gap_id"] == GAP
+            && captured["seams"][0]["evidence_record"]["canonical_gap_id"].is_null()
             && captured["seams"][0]["evidence_record"]["canonical_item"]["gap_state"]
                 == "already_observed",
         || {

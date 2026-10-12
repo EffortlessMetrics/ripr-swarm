@@ -1055,29 +1055,42 @@ fn real_preview_and_mixed_scope_ledgers(root: &Path) -> ProofResult<(Value, Valu
         "[project]\nname = \"pricing-preview\"\nversion = \"0.0.0\"\n",
     )
     .map_err(|error| error.to_string())?;
-    std::fs::write(root.join("src/pricing.py"),
-        "def calculate_discount(amount, threshold):\n    if amount != threshold:\n        return amount - 10\n    return amount\n")
-        .map_err(|error| error.to_string())?;
-    std::fs::write(root.join("tests/test_pricing.py"),
-        "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n")
-        .map_err(|error| error.to_string())?;
+    // Reuse the governed python_return_value_shape fixture. Its exact
+    // assertion makes the genuine native finding exposed and its ledger a
+    // supported NoActionAlreadyObserved preview record. No unsupported
+    // generic preview limit or receipt-comparator rejection supplies scope.
+    std::fs::write(
+        root.join("src/price.py"),
+        "def final_price(amount):\n    return amount - 10\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/test_price.py"),
+        include_str!("../../../../fixtures/python_return_value_shape/input/tests/test_price.py"),
+    )
+    .map_err(|error| error.to_string())?;
     fixture_git::fixture_git_ok(
         root,
         &[
             "add",
             "ripr.toml",
             "pyproject.toml",
-            "src/pricing.py",
-            "tests/test_pricing.py",
+            "src/price.py",
+            "tests/test_price.py",
         ],
     )?;
-    fixture_git::fixture_git_ok(root, &["commit", "-m", "Python pricing base"])?;
+    fixture_git::fixture_git_ok(root, &["commit", "-m", "Python return-value base"])?;
     let python_base = head(root)?;
-    std::fs::write(root.join("src/pricing.py"),
-        "def calculate_discount(amount, threshold):\n    if amount == threshold:\n        return amount - 10\n    return amount\n")
-        .map_err(|error| error.to_string())?;
-    fixture_git::fixture_git_ok(root, &["add", "src/pricing.py"])?;
-    fixture_git::fixture_git_ok(root, &["commit", "-m", "change Python equality predicate"])?;
+    std::fs::write(
+        root.join("src/price.py"),
+        include_str!("../../../../fixtures/python_return_value_shape/input/src/price.py"),
+    )
+    .map_err(|error| error.to_string())?;
+    fixture_git::fixture_git_ok(root, &["add", "src/price.py"])?;
+    fixture_git::fixture_git_ok(
+        root,
+        &["commit", "-m", "change observed Python return value"],
+    )?;
 
     let rust_capture = capture(root)?;
     let rust_corpus = captured_corpus(&rust_capture)?.clone();
@@ -1088,11 +1101,11 @@ fn real_preview_and_mixed_scope_ledgers(root: &Path) -> ProofResult<(Value, Valu
     std::fs::create_dir_all(&inputs).map_err(|error| error.to_string())?;
     let python_diff = fixture_git::fixture_git_output(
         root,
-        &["diff", &python_base, "HEAD", "--", "src/pricing.py"],
+        &["diff", &python_base, "HEAD", "--", "src/price.py"],
     )?;
-    require(python_diff.contains("+    if amount == threshold:"), || {
+    require(python_diff.contains("+    return amount - 12"), || {
         format!(
-            "Python-only producer stimulus must contain the real changed boundary: {python_diff}"
+            "Python-only producer stimulus must contain the governed changed return value: {python_diff}"
         )
     })?;
     let diff_path = inputs.join("python.diff");
@@ -1121,27 +1134,36 @@ fn real_preview_and_mixed_scope_ledgers(root: &Path) -> ProofResult<(Value, Valu
             )
         },
     )?;
-    // The genuine == preview producer retains the exact nonempty Python
-    // identity as a StaticLimitation: it has no concrete missing
-    // discriminator/repair card, so no verify or receipt command is emitted.
-    // Preserve that native disposition. Do not strip command fields, rename
-    // canonical identities, or invent a preview action to qualify its scope.
+    // Pin the unmodified native producer's supported nonempty no-action
+    // disposition before passive qualification. The exact fixture supplies
+    // real Python preview tags, identities and named-file provenance; no
+    // limits or commands are stripped to manufacture admission.
+    let python_id = "gap:python:src/price.py:final_price:return_value:return_value:amount-12";
     require(
-        python_records.len() == 1
-            && python_records[0]["canonical_gap_id"]
-                == "gap:python:src/pricing.py:calculate_discount:predicate_boundary:predicate:amount==threshold"
-            && python_records[0]["kind"] == "StaticLimitation"
-            && python_records[0]["gap_state"] == "static_limitation"
-            && python_records[0]["repairability"] == "analyzer_limitation"
-            && python_records[0]["static_limit_kind"] == "python_repair_card_unavailable"
+        python_capture["findings"]
+            .as_array()
+            .is_some_and(|findings| {
+                findings.len() == 1
+                    && findings[0]["classification"] == "exposed"
+                    && findings[0]["canonical_gap_id"] == python_id
+                    && findings[0]["language"] == "python"
+                    && findings[0]["language_status"] == "preview"
+            })
+            && python_records.len() == 1
+            && python_records[0]["canonical_gap_id"] == python_id
+            && python_records[0]["kind"] == "NoActionAlreadyObserved"
+            && python_records[0]["gap_state"] == "already_observed"
+            && python_records[0]["repairability"] == "no_action"
+            && python_records[0]["static_limit_kind"].is_null()
+            && python_records[0].get("static_limits").is_none()
             && python_records[0]["verification_commands"] == json!([])
             && python_records[0]["receipt_command"].is_null()
             && python_ledger["summary"]["records_total"] == 1
             && python_ledger["summary"]["repairable_total"] == 0
-            && python_ledger["summary"]["static_limitation_total"] == 1,
+            && python_ledger["summary"]["no_action_total"] == 1,
         || {
             format!(
-                "the genuine Python producer must retain its native nonempty static-limitation disposition: {python_ledger}"
+                "genuine Python exact-return producer must retain its supported observed preview record: {python_capture}; {python_ledger}"
             )
         },
     )?;
@@ -1546,12 +1568,28 @@ fn passive_nonempty_no_action_rust_ledger_still_requires_current_corpus() -> Pro
             && old["summary"]["records_total"] == 1
             && old["summary"]["no_action_total"] == 1
             && old["summary"]["repairable_total"] == 0
-            && old["records"][0]["canonical_gap_id"] == GAP
+            && old["records"][0]["canonical_gap_id"] == "gap:rust:67f9714ba37b3967"
             && old["records"][0]["gap_state"] == "already_observed"
-            && old["records"][0]["language"] == "rust",
+            && old["records"][0]["language"] == "rust"
+            && old["records"][0]["seam_id"] == SEAM
+            && old["records"][0]["kind"] == "NoActionAlreadyObserved",
         || {
             format!(
                 "no-action stimulus must be a real nonempty already-observed Rust record: {captured}; {old}"
+            )
+        },
+    )?;
+    let observed_id = old["records"][0]["canonical_gap_id"]
+        .as_str()
+        .ok_or("genuine no-action record omitted its canonical identity")?
+        .to_string();
+    // Closing the gap removes its actionable canonical group. The actual
+    // ledger retains the exact seam via its existing observed fallback ID.
+    require(
+        captured["seams"][0]["evidence_record"]["canonical_gap_id"].is_null(),
+        || {
+            format!(
+                "genuinely observed seam must not pretend its old actionable canonical group persists: {captured}"
             )
         },
     )?;
@@ -1578,7 +1616,8 @@ fn passive_nonempty_no_action_rust_ledger_still_requires_current_corpus() -> Pro
     let fresh_capture = capture(root)?;
     let fresh = derive(root, &fresh_capture, "regenerated-no-action")?;
     require(
-        fresh["records"][0]["canonical_gap_id"] == GAP
+        fresh["records"][0]["canonical_gap_id"] == observed_id
+            && fresh["records"][0]["seam_id"] == SEAM
             && fresh["records"][0]["gap_state"] == "already_observed"
             && fresh["summary"]["records_total"] == 1
             && fresh["summary"]["no_action_total"] == 1
