@@ -145,6 +145,21 @@ fn gate_evaluate_completed_visible_only_run_still_emits_default_mode_warning() -
             "completed default-mode evaluation must still disclose visible-only: {stderr}"
         ));
     }
+    if !stderr.contains("never blocks on findings") {
+        return Err(format!(
+            "visible-only warning must qualify that findings do not block: {stderr}"
+        ));
+    }
+    if !stderr.contains("exception-policy violations still can") {
+        return Err(format!(
+            "visible-only warning must disclose that exception-policy can still block: {stderr}"
+        ));
+    }
+    if stderr.contains("and never blocks.") {
+        return Err(format!(
+            "unqualified 'never blocks' contradicts exception-policy blocking in visible-only: {stderr}"
+        ));
+    }
     let _ = std::fs::remove_dir_all(&dir);
     Ok(())
 }

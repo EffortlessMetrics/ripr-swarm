@@ -80,7 +80,8 @@ non-zero exit only after writing `target/ripr/reports/gate-decision.json` and
 
 When the CLI is invoked without `--mode` and stderr is non-interactive, it
 prints a warning that the `visible-only` default records advisory evidence and
-never blocks after a completed evaluation. Missing-input usage errors and
+never blocks on findings after a completed evaluation, but exception-policy
+violations still can. Missing-input usage errors and
 `config_error` reports stay quiet. This warning does not change the decision or
 exit status. Pass an explicit mode to document the intended posture;
 `--mode visible-only` suppresses the warning, while blocking modes remain

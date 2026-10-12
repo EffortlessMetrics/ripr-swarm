@@ -1702,6 +1702,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::gate_command_writes_visible_only_reports",
   "crates/ripr/src/cli/commands.rs::tests::gate_command_writes_blocked_report_before_error",
   "crates/ripr/src/cli/commands/gate.rs::tests::default_visible_only_warning_requires_omitted_mode_and_non_interactive_use",
+  "crates/ripr/src/cli/commands/gate.rs::tests::default_visible_only_warning_says_findings_never_block_but_exception_policy_still_can",
   "crates/ripr/tests/gate_visible_only_warning.rs::gate_evaluate_missing_input_does_not_emit_visible_only_warning",
   "crates/ripr/tests/gate_visible_only_warning.rs::gate_evaluate_config_error_does_not_emit_visible_only_warning",
   "crates/ripr/tests/gate_visible_only_warning.rs::gate_evaluate_completed_visible_only_run_still_emits_default_mode_warning",

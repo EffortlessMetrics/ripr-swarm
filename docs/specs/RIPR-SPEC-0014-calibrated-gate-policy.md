@@ -148,7 +148,8 @@ or invalid policy values.
 
 When a completed `ripr gate evaluate` omits `--mode` and stderr is
 non-interactive, the CLI must print a warning that the default is
-`visible-only`, that it records advisory evidence, and that it never blocks.
+`visible-only`, that it records advisory evidence, that findings never
+block, and that exception-policy violations still can.
 Missing-input usage errors and `config_error` reports must not print that
 warning: those runs never applied the default mode to findings. The warning
 must not change the decision, exit status, JSON, or Markdown report. An
