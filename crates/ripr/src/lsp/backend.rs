@@ -9480,6 +9480,10 @@ mod gap_record_context_tests {
 
     fn gap_ledger_json() -> &'static str {
         r#"{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "kind": "gap_decision_ledger",
+  "root": ".",
   "records": [
     {
       "gap_id": "gap:pr:pricing:threshold-boundary",
