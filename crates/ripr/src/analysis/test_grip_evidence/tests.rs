@@ -18575,6 +18575,96 @@ fn debug_impl_of_a_field_type_a_method_formats_is_opaque() -> Result<(), String>
     Ok(())
 }
 
+fn held_depth_case(levels: usize) -> Result<(StageEvidence, SeamGripClass), String> {
+    // `Wrapper` holds `Amount` through `levels - 1` intermediate structs;
+    // `describe` formats `self.inner` without naming `Amount`.
+    let mut source = String::from(
+        "pub struct Amount(pub u32);\n\
+         impl std::fmt::Debug for Amount {\n\
+             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                 let amount = self.0;\n\
+                 if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+             }\n\
+         }\n",
+    );
+    let mut held = String::from("Amount");
+    let mut value = String::from("Amount(150)");
+    for level in 1..levels {
+        source.push_str(&format!(
+            "pub struct Level{level} {{ pub inner: {held} }}\n"
+        ));
+        held = format!("Level{level}");
+        value = format!("{held} {{ inner: {value} }}");
+    }
+    source.push_str(&format!(
+        "pub struct Wrapper {{ inner: {held} }}\n\
+         impl Wrapper {{ pub fn new(inner: {held}) -> Self {{ Wrapper {{ inner }} }} pub fn describe(&self) -> String {{ format!(\"{{:?}}\", self.inner) }} }}\n"
+    ));
+    let test = format!(
+        "use ripr_fixture::*;\n\
+         #[test] fn renders() {{ assert_eq!(Wrapper::new({value}).describe(), \"large\"); }}\n"
+    );
+    unresolved_reach_case(&[
+        ("src/lib.rs", source.as_str()),
+        ("tests/wrapper.rs", test.as_str()),
+    ])
+}
+
+#[test]
+fn debug_impl_of_a_type_held_three_levels_down_is_opaque() -> Result<(), String> {
+    let (reach, class) = held_depth_case(3)?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn debug_impl_of_a_type_held_four_levels_down_stays_ungripped() -> Result<(), String> {
+    // #6662 review: `HELD_TYPE_DEPTH` stops at three levels, a narrowing the
+    // spec names.
+    let (reach, class) = held_depth_case(4)?;
+    assert_eq!(reach.state, StageState::No, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Ungripped);
+    Ok(())
+}
+
+#[test]
+fn debug_callee_deferred_until_a_later_root_uses_its_syntax_is_opaque() -> Result<(), String> {
+    // #6662 review: `Outer`'s `.fmt(f)` reaches `Hidden`'s `Debug::fmt`
+    // before any `{:?}` is seen, so it waits; `Second`'s `Display`, reached
+    // in the same round, formats its `Hidden` field with `{:?}`, and the
+    // retry then reaches it. No reached body names `Hidden`, so it never
+    // becomes a dispatch root itself.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Hidden(pub u32);\n\
+             impl std::fmt::Debug for Hidden {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             pub struct Second { hidden: Hidden }\n\
+             impl std::fmt::Display for Second {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, \"{:?}\", self.hidden) }\n\
+             }\n\
+             pub struct Outer(pub u32);\n\
+             impl std::fmt::Display for Outer {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { self.0.fmt(f) }\n\
+             }\n",
+        ),
+        (
+            "tests/outer.rs",
+            "use ripr_fixture::Outer;\n\
+             #[test] fn renders() { assert_eq!(Outer(150).to_string(), \"150\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
 #[test]
 fn debug_impl_a_method_does_not_hold_stays_ungripped() -> Result<(), String> {
     // Negative control: `describe` formats a `u32` field, so building an
