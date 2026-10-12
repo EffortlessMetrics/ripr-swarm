@@ -124,9 +124,12 @@ documented decisions and proceed"). Recorded on #6654.
 ### Known limits
 
 - A file that runs under `node --test` without importing `node:test`
-  (globals only), or that loads it only through `require` destructuring
-  (`const { test } = require("node:test")`) or a type-only import, is not
-  read. `require("node:test").test` is read.
+  (globals only), or that names it only in a type-only import, is not
+  read. `const test = require("node:test")`, `const { test } =
+  require("node:test")` and `require("node:test").test` are read.
+- `export { test } from "node:test"` binds nothing in the file, so a name
+  it re-exports never counts as a `node:test` registration, even when an
+  import from `node:test` also binds it (under-credit).
 - A test registered through a global `test` / `it` (no import) or
   through a callee whose root identifier is not bound to `node:test` is
   not read.

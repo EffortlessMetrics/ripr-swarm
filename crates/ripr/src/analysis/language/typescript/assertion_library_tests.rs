@@ -885,6 +885,18 @@ fn node_test_context_assert_follows_the_registration_binding() {
             true,
         ),
         (
+            "whole-module require",
+            "const test = require(\"node:test\");",
+            "test(\"late fee\", (t) => {\n  CALL\n});",
+            true,
+        ),
+        (
+            "destructured require",
+            "const { test } = require(\"node:test\");",
+            "test(\"late fee\", (t) => {\n  CALL\n});",
+            true,
+        ),
+        (
             "only modifier",
             "import test from \"node:test\";",
             "test.only(\"late fee\", (t) => {\n  CALL\n});",
@@ -905,6 +917,12 @@ fn node_test_context_assert_follows_the_registration_binding() {
         (
             "describe imported as test",
             "import { describe as test } from \"node:test\";",
+            "test(\"late fee\", (t) => {\n  CALL\n});",
+            false,
+        ),
+        (
+            "test re-exported from node:test, imported from another runner",
+            "export { test } from \"node:test\";\nimport { test } from \"./fixtures\";",
             "test(\"late fee\", (t) => {\n  CALL\n});",
             false,
         ),
@@ -933,6 +951,7 @@ fn node_test_context_assert_follows_the_registration_binding() {
                 "t.assert.equal(...)",
             );
         } else {
+            assert_eq!(tests.len(), 1, "{label}: {tests:?}");
             assert!(read.is_empty(), "{label}: {read:?}");
         }
     }

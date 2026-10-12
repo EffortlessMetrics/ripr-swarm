@@ -791,8 +791,8 @@ pub(crate) struct TypeScriptAssertionBindings {
     chai_modules: Vec<String>,
     /// What the bare name `expect` reaches (RIPR-SPEC-0243 rule 3).
     expect_binding: ExpectBinding,
-    /// Identifiers bound to `node:test` (`test`, `it`, a namespace), whose
-    /// test context carries `t.assert` (RIPR-SPEC-0252).
+    /// Identifiers bound to `node:test`'s default export, `test` or `it`,
+    /// whose test context carries `t.assert` (RIPR-SPEC-0252).
     node_test_locals: Vec<String>,
     /// Whether the test being read was registered through one of
     /// `node_test_locals`; set only by `for_registration`, so any other
@@ -869,6 +869,12 @@ impl TypeScriptAssertionBindings {
                 bindings.bind(&module, Some(member.property.name.as_str()), false, local);
             }
         }
+        // `export { test } from "node:test"` reaches here as an import but
+        // binds no local, so a `test` in scope is some other binding.
+        let reexported = node_test_reexported_names(statements);
+        bindings
+            .node_test_locals
+            .retain(|local| !reexported.iter().any(|name| name == local));
         bindings
     }
 
@@ -1112,10 +1118,33 @@ fn assert_method_is_recognized(method: &str, flavor: AssertFlavor) -> bool {
     )
 }
 
+/// Names a top-level `export { ... } from "node:test"` re-exports. The
+/// import extractor records them as imports, but they bind nothing in this
+/// file.
+fn node_test_reexported_names(statements: &oxc_allocator::Vec<'_, Statement<'_>>) -> Vec<String> {
+    let mut names = Vec::new();
+    for stmt in statements {
+        let Statement::ExportNamedDeclaration(export) = stmt else {
+            continue;
+        };
+        if export.declaration.is_some()
+            || export.source.as_ref().map(|source| source.value.as_str()) != Some("node:test")
+        {
+            continue;
+        }
+        names.extend(
+            export.specifiers.iter().filter_map(|specifier| {
+                super::owners::module_export_name_text(&specifier.exported)
+            }),
+        );
+    }
+    names
+}
+
 /// RIPR-SPEC-0252 rule 1: `t.assert.<method>(...)` on a `node:test` test
 /// context. `t.assert` exposes the top-level `node:assert` functions, so the
 /// call reads as legacy `node:assert` does (`equal` is loose `==`). Only a
-/// file that imports from `node:test` has this receiver shape; AVA's
+/// test registered through a `node:test` binding has this receiver shape; AVA's
 /// `t.assert(value)` is a call, not a member object, and is read elsewhere.
 fn node_test_context_assert_assertion(
     expr: &Expression<'_>,
