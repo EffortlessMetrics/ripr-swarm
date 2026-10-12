@@ -480,8 +480,13 @@ fn assert_corpus_refused(status: &Value, kind: &str, reason: Option<&str>) -> Pr
             .iter()
             .find(|component| component["component"] == name)
             .ok_or_else(|| format!("corpus refusal omitted {name} outcome: {status}"))?;
+        let expected_state = if name == "gap_ledger" {
+            "failed"
+        } else {
+            "limited"
+        };
         require(
-            component["state"] == "limited" && component["kind"] == kind,
+            component["state"] == expected_state && component["kind"] == kind,
             || format!("{name} must disclose the named corpus limitation: {component}"),
         )?;
         require(
@@ -653,9 +658,14 @@ fn cache_corpus_authority(root: &Path, corpus: &Value) -> ProofResult {
         receipts.iter().any(|receipt| {
             receipt["schema_version"] == corpus["cache_schema_version"]
                 && receipt["files_content_hash"] == corpus["files_content_hash"]
-                && receipt["classified_seams"]
+                && receipt["classified_seams"]["seams"]
                     .as_array()
-                    .is_some_and(|seams| seams.len() == 1)
+                    .is_some_and(|seams| {
+                        seams.len() == 1
+                            && seams[0]["seam"]["id"] == SEAM
+                            && seams[0]["seam"]["file"] == "src/lib.rs"
+                            && seams[0]["seam"]["owner"] == "src/lib.rs::discounted_total"
+                    })
         }),
         || {
             format!(

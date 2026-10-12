@@ -17642,7 +17642,7 @@ top-level `source_subject`:
   cache content authority, not another digest or a HEAD identity. Cold and
   warm inventories carry the same authority. Derived writers copy it only
   within the same canonical physical root; they do not rehash the current
-  workspace or rebase an aggregate onto another root. Missing producer root
+  workspace or rebase an aggregate onto another root. Missing/relative producer root
   or a different root makes corpus provenance unavailable.
 - `files[]`: one entry per workspace file the artifact's records name, sorted
   by `path`. `path` is repo-relative with `/` separators and no `.` or `..`
@@ -17705,6 +17705,8 @@ uses `rust_workspace`, `current`, and `null`; preview/mixed admission uses
 `preview_or_mixed_language`, `unavailable`, and
 `preview_or_mixed_corpus_provenance_unavailable`. No admitted affected
 artifacts yields an empty array. This does not promote preview support.
+Complete preview/mixed corpus provenance is separately tracked in
+[#7452](https://github.com/EffortlessMetrics/ripr-swarm/issues/7452).
 
 Rejected artifacts publish no gap diagnostics, and the repair-packet and
 gap-context commands return a `not_actionable_or_incomplete` sentinel whose
