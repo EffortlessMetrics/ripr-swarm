@@ -1537,7 +1537,6 @@ fn tampered_retained_binding_fails_closed() -> Result<(), String> {
     Ok(())
 }
 
-#[test]
 /// #7369 follow-up: repo artifacts carry a wall-clock `generated_at`
 /// disclosure stamp now (and the content commitment covers those bytes), so
 /// two runs of one selection differ by milliseconds. Equality checks strip
@@ -1553,6 +1552,7 @@ fn without_volatile_artifact_identity(mut value: Value) -> Value {
     value
 }
 
+#[test]
 fn distinct_prepared_attempts_bind_their_exact_packet_inputs() -> Result<(), String> {
     let fixture = build_fixture("deterministic")?;
     let seam_id = find_seam_for_target(&fixture.root, TARGET_TEST_FILE)?;
