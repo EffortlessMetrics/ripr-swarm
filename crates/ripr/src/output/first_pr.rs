@@ -3323,7 +3323,7 @@ mod tests {
             "Missing artifact: Repo exposure report at `target/ripr/reports/repo-exposure.json`"
         ));
         assert!(summary.contains(&format!(
-            "Regeneration command: `ripr check --root {} --mode instant",
+            "Regeneration command (Bash): `ripr check --root {} --mode instant",
             shell_arg(&crate::agent::loop_commands::bound_root("."))
         )));
         assert_eq!(packet["selected"]["also_missing"][0]["id"], "gap_ledger");
