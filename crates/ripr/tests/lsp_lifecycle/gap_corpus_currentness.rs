@@ -435,9 +435,7 @@ impl CorpusMutation {
 
     fn apply(self, root: &Path) -> ProofResult {
         match self {
-            Self::AddEquality => {
-                std::fs::write(root.join("tests/new_boundary.rs"), EQUALITY_TEST)
-            }
+            Self::AddEquality => std::fs::write(root.join("tests/new_boundary.rs"), EQUALITY_TEST),
             Self::EditUnclaimed => {
                 std::fs::write(root.join("tests/corpus_control.rs"), CORPUS_CONTROL_EDITED)
             }
