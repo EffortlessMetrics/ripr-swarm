@@ -229,7 +229,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     })
 }
 
-const DEFAULT_VISIBLE_ONLY_WARNING: &str = "ripr: gate evaluate is using default mode visible-only; it records advisory evidence and never blocks. Pass --mode acknowledgeable, --mode baseline-check, or --mode calibrated-gate to opt into blocking policy.";
+const DEFAULT_VISIBLE_ONLY_WARNING: &str = "ripr: gate evaluate is using default mode visible-only; it records advisory evidence and never blocks on findings, but exception-policy violations still can. Pass --mode acknowledgeable, --mode baseline-check, or --mode calibrated-gate to opt into blocking policy.";
 
 fn default_visible_only_warning(
     mode_explicit: bool,
@@ -417,6 +417,22 @@ mod tests {
                 out_md: PathBuf::from("target/ripr/reports/gate-decision.md"),
                 mode_explicit: false,
             })
+        );
+    }
+
+    #[test]
+    fn default_visible_only_warning_says_findings_never_block_but_exception_policy_still_can() {
+        assert!(
+            DEFAULT_VISIBLE_ONLY_WARNING.contains("never blocks on findings"),
+            "visible-only warning must qualify that findings do not block: {DEFAULT_VISIBLE_ONLY_WARNING}"
+        );
+        assert!(
+            DEFAULT_VISIBLE_ONLY_WARNING.contains("exception-policy violations still can"),
+            "visible-only warning must disclose that exception-policy can still block: {DEFAULT_VISIBLE_ONLY_WARNING}"
+        );
+        assert!(
+            !DEFAULT_VISIBLE_ONLY_WARNING.contains("and never blocks."),
+            "unqualified 'never blocks' contradicts exception-policy blocking in visible-only: {DEFAULT_VISIBLE_ONLY_WARNING}"
         );
     }
 

@@ -318,6 +318,9 @@ language `runtime_probes` with `required: false` because a language runtime is
 an analysis capability, not a build prerequisite. It does not establish
 whether project verification will succeed; that requires running the selected
 project verification command with its own toolchain.
+When Rust is in scope, `cargo_toml` pass evidence names the selected-root
+manifest, or a nested/ancestor Cargo.toml (`Cargo.toml found at
+rust/Cargo.toml via workspace root rust/`) when the selected root has none.
 `skipped` (additive in schema `0.2`) marks a check that does not apply to the
 root, such as the `cargo_toml`, `tool_cargo`, and `tool_rustc` checks on a
 root where Rust is not in scope. A skipped check never fails the report, and

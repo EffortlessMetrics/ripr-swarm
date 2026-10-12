@@ -880,6 +880,18 @@ tests = [
   "crates/ripr/src/output/doctor.rs::tests::doctor_tool_check_times_out_a_hanging_tool_100_times",
   "crates/ripr/src/output/doctor.rs::tests::old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build",
   "crates/ripr/src/output/doctor.rs::tests::rust_root_with_missing_cargo_discloses_verification_limitation",
+  "crates/ripr/src/output/doctor.rs::tests::nested_workspace_under_git_root_passes_cargo_toml",
+  "crates/ripr/src/output/doctor.rs::tests::nested_package_under_git_root_passes_cargo_toml",
+  "crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_target_does_not_pass",
+  "crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_venv_does_not_pass",
+  "crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_fixtures_does_not_pass",
+  "crates/ripr/src/output/doctor.rs::tests::cargo_toml_inside_ripr_dir_does_not_pass",
+  "crates/ripr/src/output/doctor.rs::tests::sibling_nested_workspaces_pass_naming_one",
+  "crates/ripr/src/output/doctor.rs::tests::ancestor_workspace_from_member_src_passes_cargo_toml",
+  "crates/ripr/src/output/doctor.rs::tests::ancestor_package_from_src_passes_cargo_toml",
+  "crates/ripr/src/output/doctor.rs::tests::cargo_toml_walk_does_not_cross_the_git_top_level",
+  "crates/ripr/src/output/doctor.rs::tests::nested_cargo_toml_walk_does_not_follow_directory_symlinks",
+  "crates/ripr/tests/cli_smoke.rs::doctor_git_root_with_nested_workspace_passes_cargo_toml",
   "crates/ripr/src/output/doctor.rs::tests::source_build_missing_toolchain_names_install_fix_and_keeps_other_failures",
   "crates/ripr/src/output/doctor.rs::tests::doctor_wait_failure_stays_off_the_source_build_install_route",
   "crates/ripr/src/output/doctor.rs::tests::doctor_cargo_probe_uses_selected_root",
@@ -1702,6 +1714,7 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::gate_command_writes_visible_only_reports",
   "crates/ripr/src/cli/commands.rs::tests::gate_command_writes_blocked_report_before_error",
   "crates/ripr/src/cli/commands/gate.rs::tests::default_visible_only_warning_requires_omitted_mode_and_non_interactive_use",
+  "crates/ripr/src/cli/commands/gate.rs::tests::default_visible_only_warning_says_findings_never_block_but_exception_policy_still_can",
   "crates/ripr/tests/gate_visible_only_warning.rs::gate_evaluate_missing_input_does_not_emit_visible_only_warning",
   "crates/ripr/tests/gate_visible_only_warning.rs::gate_evaluate_config_error_does_not_emit_visible_only_warning",
   "crates/ripr/tests/gate_visible_only_warning.rs::gate_evaluate_completed_visible_only_run_still_emits_default_mode_warning",
@@ -8408,6 +8421,12 @@ tests = [
   "xtask/src/reports/release/candidate_harness/input.rs::tests::retained_custody_refuses_same_byte_symlink_replacements",
   "xtask/src/reports/release/candidate_harness/archive.rs::tests::extracted_install_inputs_refuse_growth_at_each_retained_length",
   "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_package_install_custody_rejects_ignored_foreign_and_changed_bytes",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_witness_consumes_frozen_reference_after_mutable_outputs_change",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_capture_refuses_occupied_regular_and_link_canaries",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_partial_capture_cleans_only_its_observed_owned_object",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_competing_capture_creators_leave_one_complete_witness",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_consumer_retains_failed_capture_root_and_cleans_success",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_invocation_custody_pins_selected_command_against_overrides",
   "crates/ripr/src/agent/artifact.rs::tests::content_placeholder_is_fixed_width",
   "crates/ripr/src/agent/artifact.rs::tests::content_commitment_rejects_duplicate_fields",
   "crates/ripr/src/agent/artifact.rs::tests::content_commitment_rejects_non_hex_digest",
@@ -8477,7 +8496,9 @@ fixtures = [
 ]
 code = [
   "xtask/src/reports/release/candidate_harness/archive.rs",
+  "xtask/src/reports/release/candidate_harness/archive/producer.rs",
   "xtask/src/reports/release/candidate_harness/input.rs",
+  "xtask/src/reports/release/candidate_harness/input/capture.rs",
   "crates/ripr/src/agent/artifact.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
   "crates/ripr/src/config.rs",
@@ -13969,6 +13990,33 @@ outputs = [
 ]
 metrics = [
   "typescript_corpus_amendment_mismatch",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0250"
+name = "TypeScript match-object field pin"
+spec = "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::returned_field_key_reads_only_a_top_level_field_of_the_one_returned_literal",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_pin_exposes_a_listed_returned_field",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_pin_stays_weak_without_the_listed_field_on_the_whole_result",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_facts_read_field_construction_changes_only",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_refused_readings_keep_their_parsed_subject",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/instance_class_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/match_object_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/oracle.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md",
+]
+metrics = [
+  "typescript_match_object_pin_mismatch",
 ]
 
 [[behavior]]
