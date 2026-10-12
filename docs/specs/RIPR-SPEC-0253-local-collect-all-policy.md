@@ -15,7 +15,10 @@ independent policy scans; it does not compose product policy artifacts.
 
 Support-tier impact:
 
-- None. No product, language, platform, packaging, or support-tier promotion.
+- None.
+
+This local command changes no product, language, platform, packaging, or
+support-tier promotion.
 
 Policy impact:
 
