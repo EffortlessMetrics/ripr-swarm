@@ -262,3 +262,27 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (14)
+
+Reason:
+RIPR-SPEC-0003: #7477 gives reason-specific uncertainty-resolution actions without verdict-change promises or unsupported deep/fixture-config routes; classifications, evidence, and decidable guidance unchanged.
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — assertion_shaped_oracle_test_file (15)
+
+Reason:
+RIPR-SPEC-0003: #7477 conditional assertion inspection and actual configured runner guidance; whole JSON evidence and classifications independently preserved.
+
+Command:
+`cargo xtask goldens bless assertion_shaped_oracle_test_file --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

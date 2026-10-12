@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -83,7 +83,7 @@ def perr_match_anything(text):
+ 
+ def perr_raises_regex(text):
+     if not text:
+-        raise KeyError("empty")
++        raise KeyError("blank")
+     return int(text)
+ 
+ 

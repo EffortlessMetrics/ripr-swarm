@@ -173,7 +173,7 @@
         {"kind":"unknown","text":"unknown sink","line":7}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "No test is seen calling decode; tests share only its file or a name token: bare_decode_names_the_free_function, negative_input_exits_early"],
-      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; use deep mode or real mutation"],
+      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
       "assertion_texts": {
         "5": "assert_eq!(decode(8), 9);",
         "16": "assert_eq!(checked_half(-4), Err(HalfError::Negative));"
@@ -254,8 +254,8 @@
       "stop_reasons": ["static_probe_unknown"],
       "oracle_kind": "exact_error_variant",
       "oracle_strength": "unknown",
-      "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
-      "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
+      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
       "language": "rust",
       "source_currentness": "base_deleted"
     },
@@ -568,7 +568,7 @@
         {"kind":"unknown","text":"unknown sink","line":55}
       ],
       "evidence": ["A related test observes a value or effect near the changed behavior", "Assertions exist, but oracle strength is unknown", "Changed syntax is not mapped to a high-confidence probe family", "No propagation model is available for this changed syntax", "Related tests appear to reach scaled: local_scaled_binding_shadows_the_owner"],
-      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; use deep mode or real mutation"],
+      "missing": ["No strong discriminator was detected", "Syntax-first analysis cannot classify this change; inspect the changed behavior and its existing tests"],
       "assertion_texts": {
         "22": "assert_eq!(scaled(3), 30);"
       },
@@ -618,8 +618,8 @@
       "stop_reasons": ["static_probe_unknown"],
       "oracle_kind": "exact_value",
       "oracle_strength": "unknown",
-      "recommended_next_step": "Escalate to real mutation testing or deep static analysis for this probe.",
-      "suggested_next_action": "Escalate to real mutation testing or deep static analysis for this probe.",
+      "recommended_next_step": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
       "language": "rust",
       "source_currentness": "base_deleted"
     }

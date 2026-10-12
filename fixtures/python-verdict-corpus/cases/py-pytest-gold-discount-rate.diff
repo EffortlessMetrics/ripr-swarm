@@ -1,0 +1,12 @@
+diff --git a/pricing/core.py b/pricing/core.py
+--- a/pricing/core.py
++++ b/pricing/core.py
+@@ -23,7 +23,7 @@ def tier_for_points(points):
+ def discount_cents(tier, subtotal_cents):
+     """Discount a tier earns on a subtotal."""
+     if tier == "gold":
+-        return subtotal_cents * 10 // 100
++        return subtotal_cents * 20 // 100
+     if tier == "silver":
+         return subtotal_cents * 5 // 100
+     return 0

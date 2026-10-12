@@ -1568,9 +1568,21 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     fn process_is_running(pid: u32) -> Result<bool> {
-        let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        process_stat_is_running(fs::read_to_string(format!("/proc/{pid}/stat")))
+    }
+
+    #[cfg(target_os = "linux")]
+    fn process_stat_is_running(stat: std::io::Result<String>) -> Result<bool> {
+        let stat = match stat {
             Ok(stat) => stat,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            // A process can exit after its proc descriptor is opened but before
+            // the stat read; Linux reports ESRCH for that vanished task.
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    || error.raw_os_error() == Some(libc::ESRCH) =>
+            {
+                return Ok(false);
+            }
             Err(error) => return Err(error.to_string()),
         };
         let state = stat
@@ -1578,6 +1590,44 @@ mod tests {
             .and_then(|(_, tail)| tail.split_whitespace().next())
             .ok_or("process state unavailable")?;
         Ok(!matches!(state, "Z" | "X"))
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn process_exit_observer_accepts_only_missing_process_errors() {
+        for errno in [libc::ENOENT, libc::ESRCH] {
+            assert_eq!(
+                process_stat_is_running(Err(std::io::Error::from_raw_os_error(errno))),
+                Ok(false),
+                "exited process observation errno {errno}"
+            );
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn process_exit_observer_preserves_unrelated_errors_and_malformed_stat() {
+        for errno in [libc::EACCES, libc::EIO] {
+            let error = std::io::Error::from_raw_os_error(errno);
+            let expected = error.to_string();
+            assert_eq!(process_stat_is_running(Err(error)), Err(expected));
+        }
+        assert_eq!(
+            process_stat_is_running(Ok("malformed stat".to_string())),
+            Err("process state unavailable".to_string())
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn process_exit_observer_distinguishes_live_and_terminal_states() {
+        for (state, running) in [("R", true), ("S", true), ("Z", false), ("X", false)] {
+            assert_eq!(
+                process_stat_is_running(Ok(format!("123 (child (name)) {state} 1 2 3"))),
+                Ok(running),
+                "process state {state}"
+            );
+        }
     }
 
     #[cfg(target_os = "linux")]

@@ -120,6 +120,9 @@ fn validate_fast_report(files: &[String], report: &str) -> Result<(), String> {
 
     let categories = super::super::categorize_changed_files(files);
     let mut required = Vec::new();
+    if categories.support_tiers {
+        required.push("check-support-tiers");
+    }
     if categories.rust_src {
         required.extend([
             "check-no-panic-family",
@@ -367,9 +370,79 @@ mod tests {
     }
 
     #[test]
+    fn selected_support_tier_inputs_require_leaf_receipt() -> Result<(), String> {
+        for path in [
+            "docs/specs/RIPR-SPEC-9999-control.md",
+            "docs/specs/nested/control.md",
+            "docs/status/SUPPORT_TIERS.md",
+            "README.md",
+            "metrics/rust-repair-trust/corpus.json",
+            "xtask/src/main.rs",
+            "xtask/src/command.rs",
+            "xtask/src/command/front_door.rs",
+            ".github/workflows/proof.yml",
+            "scripts/proof.sh",
+        ] {
+            let categories = super::super::super::categorize_changed_files(&[path.to_string()]);
+            if !categories.support_tiers {
+                return Err(format!("support-tier input was not selected: {path}"));
+            }
+            let mut report = EMPTY_FAST_REPORT.to_string();
+            let mut other_gates = String::new();
+            if categories.rust_src {
+                for gate in RUST_GATES {
+                    other_gates.push_str(&format!("- {gate}\n"));
+                }
+            }
+            if categories.workflow {
+                other_gates.push_str("- check-workflows\n");
+            }
+            report = report.replace("\n\nSkipped:\n", &format!("\n{other_gates}\nSkipped:\n"));
+            let (result, receipt) = selected_receipt(&[path], &report);
+            let error = result
+                .err()
+                .ok_or_else(|| format!("missing support leaf passed: {path}"))?;
+            if !error.contains("check-support-tiers")
+                || !receipt.contains("Selector: fast_report_mismatch")
+            {
+                return Err(format!(
+                    "missing leaf was not diagnosed: {path}; {error}; {receipt}"
+                ));
+            }
+            let complete =
+                report.replace("\n\nSkipped:\n", "\n- check-support-tiers\n\nSkipped:\n");
+            selected_receipt(&[path], &complete).0?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn support_tier_near_matches_keep_noop_applicability() -> Result<(), String> {
+        for path in [
+            "docs/specs/control.txt",
+            "docs/specs-not/control.md",
+            "docs/status/SUPPORT_TIERS.md.bak",
+            "README.md.bak",
+            "metrics/rust-repair-trust/corpus.json.bak",
+            "xtask/src-not/main.rs",
+            "scripts-not/proof.sh",
+            ".github/workflows-not/proof.yml",
+            "docs/guide.md",
+            "crates/ripr/src/lib.rs",
+        ] {
+            if super::super::super::categorize_changed_files(&[path.to_string()]).support_tiers {
+                return Err(format!("unrelated input selected a support scan: {path}"));
+            }
+        }
+        if super::super::super::categorize_changed_files(&[]).support_tiers {
+            return Err("zero paths selected a support scan".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
     fn documentation_and_manifest_near_matches_keep_fast_receipts() -> Result<(), String> {
         for path in [
-            "README.md",
             "docs/guide.md",
             "docs/Cargo.toml.md",
             "OtherCargo.toml",
