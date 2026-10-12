@@ -1,0 +1,11 @@
+diff --git a/src/stacks.rs b/src/stacks.rs
+index 0d0061a..0b3fc08 100644
+--- a/src/stacks.rs
++++ b/src/stacks.rs
+@@ -1,5 +1,5 @@
+ pub fn stack(base: u32) -> u32 {
+-    base * 31
++    31 * base
+ }
+ 
+ #[cfg(test)]

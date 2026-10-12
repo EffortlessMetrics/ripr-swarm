@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:error_path:51fc5156",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 29,
         "expression": "try_checksum_summary(payload).map_err(Into::into)"
        },
@@ -29,7 +29,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_checksum_summary(payload).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_checksum_summary(payload).map_err(Into::into) (line 29)", "related test tests/errors.rs:4 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}", "related test tests/errors.rs:4 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: matches!(\n        error.downcast_ref::<ChecksumError>(),\n        Some(ChecksumError::MalformedPayload)\n    )", "source function argument value payload = \"payload?\" at line 5", "source enum variant value ChecksumError::MalformedPayload at line 8", "source enum variant value ChecksumError::MalformedPayload at line 8"],
+      "evidence_path": ["reach yes: Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_checksum_summary(payload).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_checksum_summary(payload).map_err(Into::into) (line 29)", "related test tests/errors.rs:4 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}", "source function argument value payload = \"payload?\" at line 5", "source enum variant value ChecksumError::MalformedPayload at line 8"],
       "flow_sinks": [
         {"kind":"error_variant","text":"try_checksum_summary(payload).map_err(Into::into)","line":29}
       ],
@@ -50,12 +50,6 @@
             "line": 8,
             "value": "ChecksumError::MalformedPayload",
             "context": "enum_variant"
-          },
-          {
-            "line": 8,
-            "value": "ChecksumError::MalformedPayload",
-            "context": "enum_variant",
-            "provenance": "matches!(\n        error.downcast_ref::<ChecksumError>(),\n        Some(ChecksumError::MalformedPayload)\n    )"
           }
         ],
         "missing_discriminators": [
@@ -71,17 +65,11 @@
           "line": 8,
           "value": "ChecksumError::MalformedPayload",
           "context": "enum_variant"
-        },
-        {
-          "line": 8,
-          "value": "ChecksumError::MalformedPayload",
-          "context": "enum_variant",
-          "provenance": "matches!(\n        error.downcast_ref::<ChecksumError>(),\n        Some(ChecksumError::MalformedPayload)\n    )"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 2,
+      "related_tests_total": 1,
       "related_tests": [
         {
           "name": "checksum_summary_pins_wrong_sibling_variant",
@@ -90,18 +78,6 @@
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
-        },
-        {
-          "name": "checksum_summary_pins_wrong_sibling_variant",
-          "file": "tests/errors.rs",
-          "line": 4,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "matches!(\n        error.downcast_ref::<ChecksumError>(),\n        Some(ChecksumError::MalformedPayload)\n    )",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
@@ -133,7 +109,7 @@
         "id": "probe:src_lib.rs:return_value:588b0f56",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 29,
         "expression": "try_checksum_summary(payload).map_err(Into::into)"
        },
@@ -144,7 +120,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_checksum_summary(payload).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: try_checksum_summary(payload).map_err(Into::into) (line 29)", "related test tests/errors.rs:4 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}", "related test tests/errors.rs:4 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: matches!(\n        error.downcast_ref::<ChecksumError>(),\n        Some(ChecksumError::MalformedPayload)\n    )", "source function argument value payload = \"payload?\" at line 5", "source enum variant value ChecksumError::MalformedPayload at line 8", "source enum variant value ChecksumError::MalformedPayload at line 8"],
+      "evidence_path": ["reach yes: Related tests appear to reach checksum_summary: checksum_summary_pins_wrong_sibling_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_checksum_summary(payload).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: try_checksum_summary(payload).map_err(Into::into) (line 29)", "related test tests/errors.rs:4 checksum_summary_pins_wrong_sibling_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}", "source function argument value payload = \"payload?\" at line 5", "source enum variant value ChecksumError::MalformedPayload at line 8"],
       "flow_sinks": [
         {"kind":"return_value","text":"try_checksum_summary(payload).map_err(Into::into)","line":29}
       ],
@@ -165,12 +141,6 @@
             "line": 8,
             "value": "ChecksumError::MalformedPayload",
             "context": "enum_variant"
-          },
-          {
-            "line": 8,
-            "value": "ChecksumError::MalformedPayload",
-            "context": "enum_variant",
-            "provenance": "matches!(\n        error.downcast_ref::<ChecksumError>(),\n        Some(ChecksumError::MalformedPayload)\n    )"
           }
         ],
         "missing_discriminators": [
@@ -186,17 +156,11 @@
           "line": 8,
           "value": "ChecksumError::MalformedPayload",
           "context": "enum_variant"
-        },
-        {
-          "line": 8,
-          "value": "ChecksumError::MalformedPayload",
-          "context": "enum_variant",
-          "provenance": "matches!(\n        error.downcast_ref::<ChecksumError>(),\n        Some(ChecksumError::MalformedPayload)\n    )"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 2,
+      "related_tests_total": 1,
       "related_tests": [
         {
           "name": "checksum_summary_pins_wrong_sibling_variant",
@@ -205,18 +169,6 @@
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "if !matches!(\nerror.downcast_ref::<ChecksumError>(),\nSome(ChecksumError::MalformedPayload)\n) {\nreturn Err(\"checksum witness pinned the malformed-payload sibling\".into());\n}",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
-        },
-        {
-          "name": "checksum_summary_pins_wrong_sibling_variant",
-          "file": "tests/errors.rs",
-          "line": 4,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "matches!(\n        error.downcast_ref::<ChecksumError>(),\n        Some(ChecksumError::MalformedPayload)\n    )",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
@@ -248,7 +200,7 @@
         "id": "probe:src_lib.rs:error_path:ad27ed37",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 43,
         "expression": "try_render_summary(raw).map_err(Into::into)"
        },
@@ -259,7 +211,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach render_summary: render_summary_observes_other_enum_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_render_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_render_summary(raw).map_err(Into::into) (line 43)", "related test tests/errors.rs:18 render_summary_observes_other_enum_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}", "related test tests/errors.rs:18 render_summary_observes_other_enum_variant uses strong exact value oracle: matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )", "source function argument value raw = \"zhex\" at line 19", "source enum variant value ParseSummaryError::MalformedSource at line 22", "source enum variant value ParseSummaryError::MalformedSource at line 22"],
+      "evidence_path": ["reach yes: Related tests appear to reach render_summary: render_summary_observes_other_enum_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches error variant: try_render_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches error variant: try_render_summary(raw).map_err(Into::into) (line 43)", "related test tests/errors.rs:18 render_summary_observes_other_enum_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}", "source function argument value raw = \"zhex\" at line 19", "source enum variant value ParseSummaryError::MalformedSource at line 22"],
       "flow_sinks": [
         {"kind":"error_variant","text":"try_render_summary(raw).map_err(Into::into)","line":43}
       ],
@@ -280,12 +232,6 @@
             "line": 22,
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
-          },
-          {
-            "line": 22,
-            "value": "ParseSummaryError::MalformedSource",
-            "context": "enum_variant",
-            "provenance": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )"
           }
         ],
         "missing_discriminators": [
@@ -301,17 +247,11 @@
           "line": 22,
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
-        },
-        {
-          "line": 22,
-          "value": "ParseSummaryError::MalformedSource",
-          "context": "enum_variant",
-          "provenance": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 2,
+      "related_tests_total": 1,
       "related_tests": [
         {
           "name": "render_summary_observes_other_enum_variant",
@@ -320,18 +260,6 @@
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
-        },
-        {
-          "name": "render_summary_observes_other_enum_variant",
-          "file": "tests/errors.rs",
-          "line": 18,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
@@ -363,7 +291,7 @@
         "id": "probe:src_lib.rs:return_value:1224f837",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/error_variant_boxed_wrapper_fail_closed/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 43,
         "expression": "try_render_summary(raw).map_err(Into::into)"
        },
@@ -374,7 +302,7 @@
         "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
         "discriminate": {"state":"weak","confidence":"medium","summary":"Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)"}
        },
-      "evidence_path": ["reach yes: Related tests appear to reach render_summary: render_summary_observes_other_enum_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_render_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: try_render_summary(raw).map_err(Into::into) (line 43)", "related test tests/errors.rs:18 render_summary_observes_other_enum_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}", "related test tests/errors.rs:18 render_summary_observes_other_enum_variant uses strong exact value oracle: matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )", "source function argument value raw = \"zhex\" at line 19", "source enum variant value ParseSummaryError::MalformedSource at line 22", "source enum variant value ParseSummaryError::MalformedSource at line 22"],
+      "evidence_path": ["reach yes: Related tests appear to reach render_summary: render_summary_observes_other_enum_variant", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: try_render_summary(raw).map_err(Into::into)", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)", "local flow reaches returned value: try_render_summary(raw).map_err(Into::into) (line 43)", "related test tests/errors.rs:18 render_summary_observes_other_enum_variant uses strong exact value oracle: if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}", "source function argument value raw = \"zhex\" at line 19", "source enum variant value ParseSummaryError::MalformedSource at line 22"],
       "flow_sinks": [
         {"kind":"return_value","text":"try_render_summary(raw).map_err(Into::into)","line":43}
       ],
@@ -395,12 +323,6 @@
             "line": 22,
             "value": "ParseSummaryError::MalformedSource",
             "context": "enum_variant"
-          },
-          {
-            "line": 22,
-            "value": "ParseSummaryError::MalformedSource",
-            "context": "enum_variant",
-            "provenance": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )"
           }
         ],
         "missing_discriminators": [
@@ -416,17 +338,11 @@
           "line": 22,
           "value": "ParseSummaryError::MalformedSource",
           "context": "enum_variant"
-        },
-        {
-          "line": 22,
-          "value": "ParseSummaryError::MalformedSource",
-          "context": "enum_variant",
-          "provenance": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )"
         }
       ],
       "missing_discriminators": [
       ],
-      "related_tests_total": 2,
+      "related_tests_total": 1,
       "related_tests": [
         {
           "name": "render_summary_observes_other_enum_variant",
@@ -435,18 +351,6 @@
           "oracle_strength": "strong",
           "oracle_kind": "exact_value",
           "oracle": "if !matches!(\nerror.downcast_ref::<ParseSummaryError>(),\nSome(ParseSummaryError::MalformedSource)\n) {\nreturn Err(\"render witness pinned the parse-summary variant instead\".into());\n}",
-          "relation_reason": "direct_owner_call",
-          "relation_confidence": "high",
-          "miss": "observation_unconfirmed",
-          "why": "ripr could not confirm that this assertion observes the changed behavior"
-        },
-        {
-          "name": "render_summary_observes_other_enum_variant",
-          "file": "tests/errors.rs",
-          "line": 18,
-          "oracle_strength": "strong",
-          "oracle_kind": "exact_value",
-          "oracle": "matches!(\n        error.downcast_ref::<ParseSummaryError>(),\n        Some(ParseSummaryError::MalformedSource)\n    )",
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",

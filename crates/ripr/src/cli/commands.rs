@@ -38,6 +38,8 @@ mod policy_commands;
 mod receipt_command;
 #[path = "commands/swarm/mod.rs"]
 mod swarm_command;
+#[path = "commands/task_first.rs"]
+mod task_first;
 
 pub(super) use agent::{agent, before_phase_stdout, run_before_repair_with_identity};
 pub(super) use context::context;
@@ -60,6 +62,9 @@ pub(super) use receipt_command::{RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP};
 // for `ripr cache status|clear` suggestions, so `cli::help` needs a path to
 // them. Removing this re-export must fail to compile.
 pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_STATUS_HELP};
+pub(super) use task_first::{
+    CONTINUE_HELP, REPAIR_HELP, STATUS_HELP, continue_repair, repair, status,
+};
 
 pub(super) fn receipt(args: &[String]) -> Result<(), String> {
     receipt_command::run_receipt(args)
@@ -157,18 +162,8 @@ pub(super) fn outcome(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_outcome_options(args)?;
-    let before_json = crate::bounded_input::read_to_string(&options.before).map_err(|err| {
-        format!(
-            "read {} failed: {err}",
-            output::outcome::display_path(&options.before)
-        )
-    })?;
-    let after_json = crate::bounded_input::read_to_string(&options.after).map_err(|err| {
-        format!(
-            "read {} failed: {err}",
-            output::outcome::display_path(&options.after)
-        )
-    })?;
+    let before_json = read_calibration_text(&options.before, SnapshotCaptureKind::Outcome)?;
+    let after_json = read_calibration_text(&options.after, SnapshotCaptureKind::Outcome)?;
     let report = output::outcome::targeted_test_outcome_report_from_json(
         &before_json,
         &after_json,
@@ -548,6 +543,10 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
             options.root
         ));
     }
+    // Persist the producer's selected directory, not a label that a consumer
+    // would resolve in its own invocation directory (#7382).
+    let selected_root = std::fs::canonicalize(&options.root)
+        .map_err(|error| format!("resolve gap-ledger root {} failed: {error}", options.root))?;
     let records_path = ledger_source_path(options.source.path())?;
     // An unreadable source means the command could not complete for the same
     // reason: refuse before writing a `blocked` ledger.
@@ -559,13 +558,22 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
             )
         })?;
     let input = output::gap_decision_ledger::GapDecisionLedgerInput {
-        root: options.root,
+        // `root` is consumed as a native path. Display escaping would turn
+        // a literal `%` into a different directory named `%25` (#7382).
+        root: selected_root
+            .to_str()
+            .ok_or_else(|| {
+                format!(
+                    "reports gap-ledger root {} resolves to a non-UTF-8 path; select a UTF-8 repository root",
+                    options.root
+                )
+            })?
+            .to_string(),
         generated_at: gap_decision_ledger_generated_at()?,
         source_kind: options.source.kind(),
         records_path,
         records_json: Ok(records_json),
     };
-    let selected_root = PathBuf::from(&input.root);
     let mut report = output::gap_decision_ledger::build_gap_decision_ledger_report(input);
     output::gap_decision_ledger::stamp_gap_decision_ledger_source_subject(
         &mut report,
@@ -1179,13 +1187,10 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_calibrate_cargo_mutants_options(rest)?;
-    let repo_exposure_json = crate::bounded_input::read_to_string(&options.repo_exposure_json)
-        .map_err(|err| {
-            format!(
-                "read {} failed: {err}",
-                output::outcome::display_path(&options.repo_exposure_json)
-            )
-        })?;
+    let repo_exposure_json = read_calibration_text(
+        &options.repo_exposure_json,
+        SnapshotCaptureKind::RepoExposure,
+    )?;
     let mutants_json = read_calibration_mutants_json(&options.mutants_json)?;
     let report = output::mutation_calibration::mutation_calibration_report_from_json(
         &repo_exposure_json,
@@ -1282,21 +1287,21 @@ fn read_calibration_mutants_json(path: &Path) -> Result<String, String> {
         }
 
         if outcomes_exists {
-            return read_calibration_text(&outcomes_path);
+            return read_calibration_text(&outcomes_path, SnapshotCaptureKind::CargoMutants);
         }
         if mutants_exists {
-            return read_calibration_text(&mutants_path);
+            return read_calibration_text(&mutants_path, SnapshotCaptureKind::CargoMutants);
         }
         return Err(format!(
             "{} is a directory but contains neither outcomes.json nor mutants.json",
             output::outcome::display_path(path)
         ));
     }
-    read_calibration_text(path)
+    read_calibration_text(path, SnapshotCaptureKind::CargoMutants)
 }
 
 fn read_json_value(path: &Path) -> Result<serde_json::Value, String> {
-    let text = read_calibration_text(path)?;
+    let text = read_calibration_text(path, SnapshotCaptureKind::CargoMutants)?;
     serde_json::from_str(&text).map_err(|err| {
         format!(
             "failed to parse JSON from {}: {err}",
@@ -1305,9 +1310,45 @@ fn read_json_value(path: &Path) -> Result<serde_json::Value, String> {
     })
 }
 
-fn read_calibration_text(path: &Path) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path)
-        .map_err(|err| format!("read {} failed: {err}", output::outcome::display_path(path)))
+/// Capture command named when a snapshot path is missing, so first-run
+/// `outcome` / `calibrate cargo-mutants` do not stop on a raw OS error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SnapshotCaptureKind {
+    Outcome,
+    RepoExposure,
+    CargoMutants,
+}
+
+fn snapshot_capture_hint(kind: SnapshotCaptureKind, displayed_path: &str) -> String {
+    // Quote after `display_path`: the NotFound prefix stays human-readable,
+    // but the pasted redirect must remain one shell token (#7349, #5188).
+    let quoted_path = crate::agent::loop_commands::shell_arg(displayed_path);
+    match kind {
+        SnapshotCaptureKind::Outcome => format!(
+            "Run `ripr check --format repo-exposure-json > {quoted_path}` first, or pass a `ripr check --json` output."
+        ),
+        SnapshotCaptureKind::RepoExposure => {
+            format!("Run `ripr check --format repo-exposure-json > {quoted_path}` first.")
+        }
+        SnapshotCaptureKind::CargoMutants => {
+            "Run `cargo mutants` first, then pass its output directory or `outcomes.json`."
+                .to_string()
+        }
+    }
+}
+
+fn read_calibration_text(path: &Path, kind: SnapshotCaptureKind) -> Result<String, String> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        let displayed = output::outcome::display_path(path);
+        if err.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "read {displayed} failed: not found. {}",
+                snapshot_capture_hint(kind, &displayed)
+            )
+        } else {
+            format!("read {displayed} failed: {err}")
+        }
+    })
 }
 
 fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
@@ -2763,20 +2804,78 @@ struct DiffOptions {
     explicit: CheckInputExplicit,
 }
 
+/// The `ripr diff --json` refusal envelope keys its document with the diff
+/// report's schema version (#7331). Owner: the `DiffReport.schema_version`
+/// literal in `output/diff_report.rs` (pinned there by the output-contract
+/// version gate), mirrored here because the report value exists only on the
+/// success path.
+const DIFF_REFUSAL_SCHEMA_VERSION: &str = "0.1";
+
 pub(super) fn diff(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_diff_help();
         return Ok(());
     }
     let options = parse_diff_options(args)?;
-    let config = load_for_root(&options.root)?;
+    let json = matches!(options.format, DiffReportFormat::Json);
+    // #7331: every post-argv-parse failure of a JSON diff run writes the
+    // shared refusal envelope (the diff report's own schema version) to
+    // stdout before the prose error reaches stderr. Argv usage errors above
+    // stay prose-only. Config loading comes first and has no merged mode
+    // yet, so its refusal names the parsed mode.
+    let config = load_for_root(&options.root).map_err(|err| {
+        let error = crate::cli::commands_context::config_load_refusal(&options.root, err);
+        if !json {
+            return error.to_string();
+        }
+        crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(options.mode.as_str()),
+            &options.root,
+            options.base.as_deref(),
+            error,
+        )
+    })?;
+    // Effective mode after config merging: `run_diff_check_from_file`
+    // applies `config.analysis.mode()` unless `--mode` was explicit, and a
+    // later refusal must name the mode the check actually ran with, not
+    // the pre-merge default (#7331 review).
+    let effective_mode = if options.explicit.mode {
+        options.mode.clone()
+    } else {
+        config
+            .analysis
+            .mode()
+            .cloned()
+            .unwrap_or_else(|| options.mode.clone())
+    };
+    let refuse = |error: crate::core_error::CoreError| -> String {
+        if !json {
+            return error.to_string();
+        }
+        crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(effective_mode.as_str()),
+            &options.root,
+            options.base.as_deref(),
+            error,
+        )
+    };
     // #3952 / RIPR-SPEC-0084: an omitted --base resolves the repository's
     // default branch through the same authority as `ripr check`, and an
     // explicit one is verified there, instead of assuming `origin/main`.
-    let base = analysis::resolve_effective_base(&options.root, options.base.as_deref(), None)?;
-    let diff_text = analysis::load_diff_range(&options.root, &base, &options.head)?;
+    // The typed core keeps the refusal identity (`base_unresolvable` /
+    // `repository_root_unusable`) that the String wrapper would flatten
+    // (#7331); Display is a pure projection, so stderr prose is unchanged.
+    let base = analysis::resolve_effective_base_core(&options.root, options.base.as_deref(), None)
+        .map_err(&refuse)?;
+    let diff_text = analysis::load_diff_range(&options.root, &base, &options.head)
+        .map_err(|err| refuse(crate::core_error::CoreError::from(err)))?;
     let changed_files = diff_changed_files_from_text(&diff_text);
-    let diff_file = crate::app::temp_diff::write_temporary_diff_file(&diff_text)?;
+    let diff_file = crate::app::temp_diff::write_temporary_diff_file(&diff_text)
+        .map_err(|err| refuse(crate::core_error::CoreError::from(err)))?;
 
     let check_result = run_diff_check_from_file(&options, &base, &config, &diff_file);
     let _ = std::fs::remove_file(&diff_file);
@@ -2785,7 +2884,7 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
     if let Some(parent) = diff_file.parent() {
         let _ = std::fs::remove_dir(parent);
     }
-    let output = check_result?;
+    let output = check_result.map_err(|err| refuse(crate::core_error::CoreError::from(err)))?;
 
     let report = output::diff_report::build_diff_report(
         &output,
@@ -6794,21 +6893,83 @@ language = "rust"
         std::fs::write(&before, outcome_before_json())
             .map_err(|err| format!("write before snapshot: {err}"))?;
 
-        let missing_before = outcome(&args(&[
-            "--before",
-            &dir.join("missing-before.json").display().to_string(),
-            "--after",
-            &dir.join("missing-after.json").display().to_string(),
-        ]));
-        assert!(matches!(missing_before, Err(message) if message.contains("read")));
+        let missing_before_path = dir.join("missing-before.json");
+        let missing_before_display = output::outcome::display_path(&missing_before_path);
+        let missing_before = err_message(
+            outcome(&args(&[
+                "--before",
+                &missing_before_path.display().to_string(),
+                "--after",
+                &dir.join("missing-after.json").display().to_string(),
+            ])),
+            "missing --before must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &missing_before,
+            &missing_before_display,
+            &format!("ripr check --format repo-exposure-json > {missing_before_display}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            missing_before.contains("ripr check --json"),
+            "outcome snapshots also accept check JSON:\n{missing_before}"
+        );
 
-        let missing_after = outcome(&args(&[
-            "--before",
-            &before.display().to_string(),
-            "--after",
-            &dir.join("missing-after.json").display().to_string(),
-        ]));
-        assert!(matches!(missing_after, Err(message) if message.contains("read")));
+        let missing_after_path = dir.join("missing-after.json");
+        let missing_after_display = output::outcome::display_path(&missing_after_path);
+        let missing_after = err_message(
+            outcome(&args(&[
+                "--before",
+                &before.display().to_string(),
+                "--after",
+                &missing_after_path.display().to_string(),
+            ])),
+            "missing --after must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &missing_after,
+            &missing_after_display,
+            &format!("ripr check --format repo-exposure-json > {missing_after_display}"),
+            &["cargo mutants"],
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn outcome_non_not_found_read_error_keeps_raw_io_and_omits_capture_hint() -> Result<(), String>
+    {
+        let dir = unique_command_test_dir("outcome-invalid-utf8");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let before = dir.join("before.json");
+        let after = dir.join("after.json");
+        std::fs::write(&before, [0xff, 0xfe])
+            .map_err(|err| format!("write invalid before: {err}"))?;
+        std::fs::write(&after, outcome_after_json())
+            .map_err(|err| format!("write after snapshot: {err}"))?;
+
+        let message = err_message(
+            outcome(&args(&[
+                "--before",
+                &before.display().to_string(),
+                "--after",
+                &after.display().to_string(),
+            ])),
+            "invalid UTF-8 must fail",
+        )?;
+        let displayed = output::outcome::display_path(&before);
+        assert!(
+            message.starts_with(&format!("read {displayed} failed:")),
+            "{message}"
+        );
+        assert!(
+            !message.contains("not found"),
+            "non-NotFound must keep the raw I/O reason:\n{message}"
+        );
+        assert!(
+            !message.contains("ripr check --format repo-exposure-json"),
+            "capture hint is NotFound-only:\n{message}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
@@ -6889,10 +7050,282 @@ language = "rust"
 
         let rendered = std::fs::read_to_string(&out)
             .map_err(|err| format!("read calibration output: {err}"))?;
-        assert!(rendered.contains(r#""schema_version": "0.1""#));
+        assert!(rendered.contains(r#""schema_version": "0.2""#));
         assert!(rendered.contains(r#""static_gap_and_runtime_signal": 1"#));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[test]
+    fn calibrate_missing_inputs_name_the_caller_capture_command() -> Result<(), String> {
+        let dir = unique_command_test_dir("calibrate-missing");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let repo = dir.join("repo-exposure.json");
+        std::fs::write(&repo, calibration_repo_json())
+            .map_err(|err| format!("write repo exposure: {err}"))?;
+
+        let missing_mutants = dir.join("missing-mutants.json");
+        let missing_mutants_display = output::outcome::display_path(&missing_mutants);
+        let mutants_message = err_message(
+            calibrate(&args(&[
+                "cargo-mutants",
+                "--mutants-json",
+                &missing_mutants.display().to_string(),
+                "--repo-exposure-json",
+                &repo.display().to_string(),
+            ])),
+            "missing --mutants-json must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &mutants_message,
+            &missing_mutants_display,
+            "cargo mutants",
+            &[
+                "ripr check --format repo-exposure-json",
+                "ripr check --json",
+            ],
+        );
+
+        let missing_repo = dir.join("missing-repo-exposure.json");
+        let missing_repo_display = output::outcome::display_path(&missing_repo);
+        let repo_message = err_message(
+            calibrate(&args(&[
+                "cargo-mutants",
+                "--mutants-json",
+                &missing_mutants.display().to_string(),
+                "--repo-exposure-json",
+                &missing_repo.display().to_string(),
+            ])),
+            "missing --repo-exposure-json must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &repo_message,
+            &missing_repo_display,
+            &format!("ripr check --format repo-exposure-json > {missing_repo_display}"),
+            &["cargo mutants", "ripr check --json"],
+        );
+
+        let empty_dir = dir.join("empty-mutants-out");
+        std::fs::create_dir_all(&empty_dir).map_err(|err| format!("create empty dir: {err}"))?;
+        let directory_message = err_message(
+            calibrate(&args(&[
+                "cargo-mutants",
+                "--mutants-json",
+                &empty_dir.display().to_string(),
+                "--repo-exposure-json",
+                &repo.display().to_string(),
+            ])),
+            "empty cargo-mutants directory must fail",
+        )?;
+        assert!(
+            directory_message
+                .contains("is a directory but contains neither outcomes.json nor mutants.json"),
+            "{directory_message}"
+        );
+        assert!(
+            !directory_message.contains("Run `cargo mutants` first"),
+            "directory contents error is not NotFound:\n{directory_message}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn read_calibration_text_names_capture_command_per_kind() -> Result<(), String> {
+        let missing = PathBuf::from("definitely-missing-snapshot.json");
+        let outcome = err_message(
+            read_calibration_text(&missing, SnapshotCaptureKind::Outcome),
+            "missing outcome snapshot must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &outcome,
+            "definitely-missing-snapshot.json",
+            "ripr check --format repo-exposure-json > definitely-missing-snapshot.json",
+            &["cargo mutants"],
+        );
+        assert!(
+            outcome.contains("ripr check --json"),
+            "outcome kind must mention check JSON:\n{outcome}"
+        );
+
+        let repo = err_message(
+            read_calibration_text(&missing, SnapshotCaptureKind::RepoExposure),
+            "missing repo-exposure snapshot must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &repo,
+            "definitely-missing-snapshot.json",
+            "ripr check --format repo-exposure-json > definitely-missing-snapshot.json",
+            &["cargo mutants", "ripr check --json"],
+        );
+
+        let mutants = err_message(
+            read_calibration_text(&missing, SnapshotCaptureKind::CargoMutants),
+            "missing cargo-mutants snapshot must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &mutants,
+            "definitely-missing-snapshot.json",
+            "cargo mutants",
+            &[
+                "ripr check --format repo-exposure-json",
+                "ripr check --json",
+            ],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_calibration_text_quotes_spaced_not_found_redirect_and_keeps_plain_path_bare()
+    -> Result<(), String> {
+        use crate::agent::loop_commands::shell_arg;
+
+        let plain = PathBuf::from("definitely-missing-snapshot.json");
+        let plain_display = output::outcome::display_path(&plain);
+        assert_eq!(
+            shell_arg(&plain_display),
+            plain_display,
+            "control path must stay a bare shell token"
+        );
+        let plain_message = err_message(
+            read_calibration_text(&plain, SnapshotCaptureKind::Outcome),
+            "plain missing outcome snapshot must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &plain_message,
+            &plain_display,
+            &format!("ripr check --format repo-exposure-json > {plain_display}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            !plain_message.contains(&format!("> '{plain_display}'")),
+            "unambiguous redirect must stay unquoted:\n{plain_message}"
+        );
+
+        let spaced = PathBuf::from("missing snapshot.json");
+        let spaced_display = output::outcome::display_path(&spaced);
+        let quoted = shell_arg(&spaced_display);
+        assert_ne!(
+            quoted, spaced_display,
+            "a space must force quoting of the redirect token"
+        );
+        assert!(
+            spaced_display.contains(' '),
+            "fixture path must contain a space: {spaced_display}"
+        );
+
+        let outcome = err_message(
+            read_calibration_text(&spaced, SnapshotCaptureKind::Outcome),
+            "spaced missing outcome snapshot must fail",
+        )?;
+        assert!(
+            outcome.starts_with(&format!("read {spaced_display} failed: not found.")),
+            "NotFound prefix stays unquoted:\n{outcome}"
+        );
+        assert_missing_snapshot_named_capture(
+            &outcome,
+            &spaced_display,
+            &format!("ripr check --format repo-exposure-json > {quoted}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            !outcome.contains(&format!("> {spaced_display}`")),
+            "spaced redirect must not stay bare:\n{outcome}"
+        );
+
+        let repo = err_message(
+            read_calibration_text(&spaced, SnapshotCaptureKind::RepoExposure),
+            "spaced missing repo-exposure snapshot must fail",
+        )?;
+        assert!(
+            repo.starts_with(&format!("read {spaced_display} failed: not found.")),
+            "RepoExposure prefix stays unquoted:\n{repo}"
+        );
+        assert_missing_snapshot_named_capture(
+            &repo,
+            &spaced_display,
+            &format!("ripr check --format repo-exposure-json > {quoted}"),
+            &["cargo mutants", "ripr check --json"],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn outcome_not_found_quotes_spaced_capture_redirect() -> Result<(), String> {
+        use crate::agent::loop_commands::shell_arg;
+
+        let dir = unique_command_test_dir("outcome-spaced");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let missing_before = dir.join("missing before.json");
+        let displayed = output::outcome::display_path(&missing_before);
+        let quoted = shell_arg(&displayed);
+        assert!(
+            displayed.contains(' '),
+            "CLI fixture path must contain a space: {displayed}"
+        );
+        assert_ne!(quoted, displayed);
+
+        let message = err_message(
+            outcome(&args(&[
+                "--before",
+                &missing_before.display().to_string(),
+                "--after",
+                &dir.join("after.json").display().to_string(),
+            ])),
+            "spaced missing --before must fail",
+        )?;
+        assert!(
+            message.starts_with(&format!("read {displayed} failed: not found.")),
+            "CLI NotFound prefix stays unquoted:\n{message}"
+        );
+        assert_missing_snapshot_named_capture(
+            &message,
+            &displayed,
+            &format!("ripr check --format repo-exposure-json > {quoted}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            !message.contains(&format!("> {displayed}`")),
+            "CLI spaced redirect must not stay bare:\n{message}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    fn err_message<T: std::fmt::Debug>(
+        result: Result<T, String>,
+        context: &str,
+    ) -> Result<String, String> {
+        match result {
+            Err(message) => Ok(message),
+            Ok(value) => Err(format!("{context}; got Ok({value:?})")),
+        }
+    }
+
+    fn assert_missing_snapshot_named_capture(
+        message: &str,
+        displayed_path: &str,
+        expected_command: &str,
+        forbidden: &[&str],
+    ) {
+        assert!(
+            message.starts_with(&format!("read {displayed_path} failed: not found.")),
+            "{message}"
+        );
+        assert!(
+            !message.contains("os error"),
+            "NotFound must name the capture command instead of a raw OS error:\n{message}"
+        );
+        assert!(
+            message.contains(expected_command),
+            "expected {expected_command:?} in:\n{message}"
+        );
+        for fragment in forbidden {
+            assert!(
+                !message.contains(fragment),
+                "caller-specific hint must not include {fragment:?}:\n{message}"
+            );
+        }
     }
 
     #[test]
@@ -7117,6 +7550,190 @@ language = "rust"
             "the workflow no longer points at the setting docs"
         );
 
+        Ok(())
+    }
+
+    /// #5955: the CI-integration section of docs/EXIT_CODES.md kept
+    /// describing a retired `check_status`/`review-comments` step graph
+    /// after the template moved to one `ripr reports ci-packet` step, so the
+    /// canonical exit-code reference and the generated file described two
+    /// different workflows. Pin the section to the generated bytes: the step
+    /// it shows must be the template's analysis step, and every `ripr`
+    /// command its fenced blocks show must exist in the generated workflow.
+    #[test]
+    fn exit_codes_ci_section_only_describes_generated_workflow_steps() -> Result<(), String> {
+        let workflow = generated_github_actions_workflow();
+        let doc = include_str!("../../../../docs/EXIT_CODES.md");
+        let section = doc
+            .split_once("## CI integration\n")
+            .map(|(_, rest)| rest)
+            .ok_or("docs/EXIT_CODES.md has no `## CI integration` section")?;
+        let section = section
+            .split_once("\n## ")
+            .map(|(section, _)| section)
+            .unwrap_or(section);
+
+        // The analysis step the section shows must be the template's own
+        // step, byte-for-byte, so a template change the section did not
+        // follow fails here.
+        let step_start = workflow
+            .find("- name: Run RIPR")
+            .ok_or("generated workflow has no `Run RIPR` step")?;
+        let step = workflow[step_start..]
+            .lines()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            section.contains(&step),
+            "docs/EXIT_CODES.md CI integration does not show the generated \
+             analysis step:\n{step}\n\nsection:\n{section}"
+        );
+
+        // Every `ripr` command the section's fenced blocks show must exist
+        // in the generated workflow, so a retired step graph cannot be
+        // attributed to it again. Prose names commands with inline backticks
+        // and stays unchecked; a fenced block claims generated-file content.
+        let mut fenced = false;
+        for line in section.lines() {
+            if line.starts_with("```") {
+                fenced = !fenced;
+                continue;
+            }
+            if !fenced {
+                continue;
+            }
+            let trimmed = line.trim();
+            let command = trimmed.strip_prefix("run: ").unwrap_or(trimmed);
+            if !command.starts_with("ripr ") {
+                continue;
+            }
+            assert!(
+                workflow.contains(command),
+                "docs/EXIT_CODES.md CI integration shows command `{command}`, \
+                 which the generated workflow does not contain"
+            );
+        }
+
+        // The prose claims bind to their owned sources too (#6876 review), so
+        // a template or packet change cannot leave the section green while it
+        // drifts: the gate authority to the template's own job-level line,
+        // the failure-surviving uploads and summary to the template's
+        // `always()` steps, and the failure roles to the packet's own
+        // messages and command-metadata stop states.
+        let job_continue = workflow
+            .lines()
+            .find(|line| line.contains("vars.RIPR_GATE_MODE == ''"))
+            .map(str::trim)
+            .ok_or("generated workflow has no job-level RIPR_GATE_MODE continue-on-error")?;
+        assert!(
+            section.contains(job_continue),
+            "docs/EXIT_CODES.md CI integration does not quote the generated \
+             job-level continue-on-error expression:\n{job_continue}\n\nsection:\n{section}"
+        );
+        for step in ["Add RIPR advisory summary", "Upload RIPR report artifacts"] {
+            assert!(
+                workflow.contains(&format!("- name: {step}\n        if: always()")),
+                "the generated workflow no longer runs `{step}` under \
+                 `if: always()`, but the section still claims the steps after \
+                 a failure upload artifacts and the step summary"
+            );
+        }
+        assert!(
+            section.contains("always()"),
+            "the section no longer names the always() steps the binding above checks"
+        );
+        assert!(
+            section.contains("nonzero")
+                && include_str!("command_metadata.rs")
+                    .contains("exits nonzero after the packet is written")
+                && include_str!("commands/ci_packet.rs")
+                    .contains("failed and is advisory; continuing"),
+            "the section's failure-role prose no longer matches the ci-packet \
+             stop states or advisory-continuation message; revisit the section"
+        );
+
+        Ok(())
+    }
+
+    /// The reverse of the setting checks above (#6723): every setting,
+    /// permission, job setting and step that docs/CI.md describes for the
+    /// generated workflow is still in it, so removing one from the template
+    /// while the doc still explains it fails here. A bullet this test cannot
+    /// bind fails too, so a new doc entry has to be added here.
+    #[test]
+    fn ci_doc_describes_only_what_the_generated_workflow_has() -> Result<(), String> {
+        let workflow = generated_github_actions_workflow();
+        let workflow_lines: Vec<&str> = workflow.lines().map(str::trim_start).collect();
+        let doc = include_str!("../../../../docs/CI.md");
+        let section = doc
+            .split_once("#### Generated workflow settings and steps\n")
+            .and_then(|(_, rest)| rest.split_once("\nFor a first rollout"))
+            .map(|(section, _)| section)
+            .ok_or("docs/CI.md has no generated workflow settings section ending at \"For a first rollout\"")?;
+        let mut entries = 0usize;
+        for entry in section.lines().filter_map(|line| line.strip_prefix("- ")) {
+            let step = entry
+                .strip_prefix("**")
+                .and_then(|rest| rest.split_once("**"))
+                .map(|(step, _)| step);
+            let setting = entry
+                .strip_prefix('`')
+                .and_then(|rest| rest.split_once('`'))
+                .map(|(setting, _)| setting);
+            let present = match (step, setting) {
+                // The two unnamed steps are documented by what they use.
+                (Some("Checkout"), _) => workflow_lines
+                    .iter()
+                    .any(|line| line.starts_with("- uses: actions/checkout@")),
+                (Some("actions/cache"), _) => workflow_lines
+                    .iter()
+                    .any(|line| line.starts_with("- uses: actions/cache@")),
+                (Some(name), _) => {
+                    let expected = format!("- name: {name}");
+                    workflow_lines.iter().any(|line| *line == expected)
+                }
+                (None, Some("labeled")) => workflow_lines.iter().any(|line| {
+                    line.starts_with("types: [")
+                        && line.contains(" labeled,")
+                        && line.contains(" unlabeled]")
+                }),
+                (None, Some(setting)) if setting.starts_with("RIPR_") => {
+                    let expected = format!("{setting}:");
+                    workflow_lines
+                        .iter()
+                        .any(|line| line.starts_with(&expected))
+                }
+                (None, Some(permission)) => workflow_lines
+                    .iter()
+                    .any(|line| line.split(" #").next().map(str::trim_end) == Some(permission)),
+                (None, None) if entry.starts_with("Every run step is bash") => {
+                    workflow.contains("\ndefaults:\n  run:\n    shell: bash\n")
+                }
+                (None, None) if entry.starts_with("One run per pull request") => {
+                    workflow.contains("\nconcurrency:\n")
+                        && workflow_lines.contains(&"cancel-in-progress: true")
+                }
+                (None, None) if entry.starts_with("The job is `continue-on-error`") => {
+                    workflow_lines.iter().any(|line| {
+                        line.starts_with("continue-on-error: ${{ vars.RIPR_GATE_MODE == '' ")
+                    })
+                }
+                (None, None) => {
+                    return Err(format!(
+                        "docs/CI.md entry is not bound to the generated workflow; add it to this test: {entry}"
+                    ));
+                }
+            };
+            assert!(
+                present,
+                "docs/CI.md describes `{entry}`, which the generated workflow no longer has"
+            );
+            entries += 1;
+        }
+        // Today's inventory: 4 settings, 6 permission and job entries and 8
+        // steps. Fewer means the section stopped being read or lost an entry.
+        assert!(entries >= 18, "read only {entries} entries:\n{section}");
         Ok(())
     }
 
@@ -7681,11 +8298,22 @@ language = "rust"
     /// `-generated.rs:42`, a previously usable selector, with no `--`
     /// end-of-options escape to recover it. The token must reach selector
     /// handling, while a genuine typo still gets the suggestion.
+    ///
+    /// The selector is explained against an empty `--diff` so the test never
+    /// analyzes the host checkout's diff against its default branch, which on
+    /// a PR with a large Rust diff took over thirty minutes.
     #[test]
-    fn explain_keeps_dash_prefixed_file_line_selectors() {
+    fn explain_keeps_dash_prefixed_file_line_selectors() -> Result<(), String> {
+        let dir =
+            std::env::temp_dir().join(format!("ripr-explain-dash-selector-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).map_err(|error| format!("create {dir:?}: {error}"))?;
+        let diff = dir.join("empty.diff");
+        std::fs::write(&diff, "").map_err(|error| format!("write {diff:?}: {error}"))?;
+        let diff_arg = diff.to_string_lossy().into_owned();
         let unknown_argument_error =
             "unknown explain argument \"-generated.rs:42\". Run `ripr explain --help`.";
-        let result = explain(&args(&["-generated.rs:42"]));
+        let result = explain(&args(&["--diff", &diff_arg, "-generated.rs:42"]));
+        let _ = std::fs::remove_dir_all(&dir);
         assert_ne!(
             result,
             Err(unknown_argument_error.to_string()),
@@ -7704,6 +8332,7 @@ language = "rust"
                     .to_string()
             )
         );
+        Ok(())
     }
 
     /// Also pins that the `!value.starts_with('-')` guard on the positional

@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0231-oracle-some-ref-binding",
+  "subject_id": "authored-spec0231-23a",
+  "diff": "cases/spec0231-oracle-some-ref-binding.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "option_return",
+  "test_shape": "matches_some_ref_binding",
+  "hard_case": "Measured defect: ripr reports exact_value / strong (the spec's 'today'); the spec adopts smoke_only / smoke (rule 3).",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Some(5);",
+        "mutated_line": "return Some(5);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: lookup(1) returns 5; Some(ref x) accepts it"
+      },
+      {
+        "replacement": "return None;",
+        "mutated_line": "return None;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::lookup_one_is_some",
+        "equivalence_review": "not equivalent: lookup(1) returns None"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Some(ref x) only checks the side. Spec cells: RIPR-SPEC-0231 example 23 (form Some(ref x)).",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#23"
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "case_id": "ledger-ship-log-push",
+  "subject_id": "authored-ledger",
+  "diff": "cases/ledger-ship-log-push.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 80
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "call_deletion",
+  "test_shape": "unit_test_assert_eq_history",
+  "hard_case": "call-deletion mutant is the statement removed (replacement is the empty line)",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "",
+        "mutated_line": "",
+        "outcome": "tests_failed",
+        "failing_test": "tests::history_records_every_movement_in_order",
+        "equivalence_review": "not equivalent: shipping leaves no Shipped event, so history() holds only the Received event"
+      },
+      {
+        "replacement": "self.log.push(Event::Received { sku: sku.to_owned(), qty });",
+        "mutated_line": "self.log.push(Event::Received { sku: sku.to_owned(), qty });",
+        "outcome": "tests_failed",
+        "failing_test": "tests::history_records_every_movement_in_order",
+        "equivalence_review": "not equivalent: a shipment is logged as Received { qty: 2 } instead of Shipped { qty: 2 }"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "history_records_every_movement_in_order compares the whole event log with assert_eq, so removing or retargeting the push fails it. ripr reports call_deletion exposed but also weakly_exposed field_construction and side_effect probes on the same line, so the line reads as a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "exposed",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

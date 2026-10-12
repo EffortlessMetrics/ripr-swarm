@@ -1,0 +1,12 @@
+diff --git a/src/errors.rs b/src/errors.rs
+--- a/src/errors.rs
++++ b/src/errors.rs
+@@ -25,7 +25,7 @@
+         return Err(CodeError::Empty);
+     }
+     if raw.len() > 4 {
+-        return Err(CodeError::TooLong);
++        return Err(CodeError::NotDigit);
+     }
+     raw.parse::<u32>().map_err(|_| CodeError::NotDigit)
+ }

@@ -1,0 +1,22 @@
+{
+  "case_id": "trap-tally-reached-assert-control",
+  "subject_id": "authored-trap-kit",
+  "origin": "authored",
+  "anchor": "src/probes_checked.rs:2",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_after_untaken_early_return",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

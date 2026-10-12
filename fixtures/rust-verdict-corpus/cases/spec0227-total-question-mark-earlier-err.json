@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0227-total-question-mark-earlier-err",
+  "subject_id": "authored-spec0227-13",
+  "diff": "cases/spec0227-total-question-mark-earlier-err.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 24
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "question_mark_propagation",
+  "test_shape": "is_err_on_earlier_err",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let d = digit(c).unwrap_or(0);",
+        "mutated_line": "let d = digit(c).unwrap_or(0);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: total(\"1.\") returns Ok(1) instead of Err(Bad)"
+      },
+      {
+        "replacement": "let d = digit(c).unwrap_or(1);",
+        "mutated_line": "let d = digit(c).unwrap_or(1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: total(\"1.\") returns Ok(2) instead of Err(Bad)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "letter_is_refused asserts total(\"x\").is_err(), but no_letters(s)? already returns Err(Bad) for \"x\" before the digit loop, so the unwrap_or mutants never run on that input and the test passes. Spec cells: RIPR-SPEC-0227 example 13 (rule 3b negative control: condition 2 fails, an earlier ? already returns Err).",
+  "labeling_observation": {
+    "ripr_commit": "a9d36dc71",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0227#13"
+  ]
+}

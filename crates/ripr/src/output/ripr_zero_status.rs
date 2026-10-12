@@ -1,9 +1,10 @@
 use super::first_pr::{ProofPathLabels, REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
 use super::gap_decision_ledger::{self, GapRecord};
 use super::gate::{
-    GATE_STATUS_CONFIG_ERROR, blocked_producer_warnings, discloses_blocked_producer_outcome,
-    discloses_incomplete_analysis_outcome, discloses_limited_findings_bound,
-    discloses_limited_partial_scope, incomplete_analysis_outcome_kind,
+    GATE_DECISION_KNOWN_STATUSES, GATE_STATUS_CONFIG_ERROR, blocked_producer_warnings,
+    discloses_blocked_producer_outcome, discloses_incomplete_analysis_outcome,
+    discloses_limited_findings_bound, discloses_limited_partial_scope,
+    incomplete_analysis_outcome_kind,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -619,6 +620,97 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
             ..DeltaParse::default()
         };
     }
+    // Present-but-malformed run-state disclosures fail closed (#6770
+    // review): a corrupt qualifier must never read as a complete
+    // denominator. Absence (or explicit null) is fine — complete runs
+    // carry no envelope — but a present envelope must hold the shape the
+    // shared predicates read. A future producer adding shapes extends both
+    // the predicates and this gate together.
+    let mut malformed_disclosures = Vec::new();
+    if let Some(outcome) = value.get("analysis_outcome")
+        && !outcome.is_null()
+        && !outcome.is_object()
+    {
+        malformed_disclosures.push("analysis_outcome");
+    }
+    if let Some(scope) = value.get("analysis_scope")
+        && !scope.is_null()
+        && !scope.is_object()
+    {
+        malformed_disclosures.push("analysis_scope");
+    }
+    if let Some(limitations) = value.get("run_limitations")
+        && !limitations.is_null()
+        && !limitations.is_array()
+    {
+        malformed_disclosures.push("run_limitations");
+    }
+    if let Some(status) = value.get("current_gate_status")
+        && !status.is_null()
+        && status.as_str().is_none_or(|text| {
+            text.trim().is_empty() || !GATE_DECISION_KNOWN_STATUSES.contains(&text)
+        })
+    {
+        malformed_disclosures.push("current_gate_status");
+    }
+    // Predicate-consumed members validate too (#6770 review): a well-typed
+    // envelope with corrupt members ({"analysis_complete": "false"}) would
+    // otherwise dodge the disclosure predicates and read as a complete
+    // denominator. Only members the shared predicates consume are gated;
+    // diagnostic-only positions (the outcome kind) keep their safe defaults.
+    if let Some(outcome) = value.get("analysis_outcome")
+        && let Some(complete) = outcome.get("analysis_complete")
+        && !complete.is_null()
+        && !complete.is_boolean()
+    {
+        malformed_disclosures.push("analysis_outcome.analysis_complete");
+    }
+    if let Some(scope) = value.get("analysis_scope")
+        && let Some(run_status) = scope.get("run_status")
+        && !run_status.is_null()
+        && run_status
+            .as_str()
+            .is_none_or(|text| text.trim().is_empty())
+    {
+        malformed_disclosures.push("analysis_scope.run_status");
+    }
+    if let Some(limitations) = value.get("run_limitations").and_then(Value::as_array)
+        && limitations.iter().any(|entry| {
+            if entry.is_null() {
+                return false;
+            }
+            let Some(entry) = entry.as_object() else {
+                return true;
+            };
+            // Blank discriminators are corrupt, not undisclosed: the
+            // predicates match exact vocabulary tokens, so a blank member
+            // would dodge disclosure and read as a complete denominator.
+            // Real entries always name non-blank run_status and category
+            // (output/json bounded-run contract), so an entry without a
+            // usable discriminator is likewise malformed.
+            let usable = |member: Option<&Value>| {
+                member
+                    .is_some_and(|value| value.as_str().is_some_and(|text| !text.trim().is_empty()))
+            };
+            let run_status = entry.get("run_status");
+            let category = entry.get("category");
+            run_status.is_some_and(|value| !value.is_null() && !usable(Some(value)))
+                || category.is_some_and(|value| !value.is_null() && !usable(Some(value)))
+                || (!usable(run_status) && !usable(category))
+        })
+    {
+        malformed_disclosures.push("run_limitations[]");
+    }
+    if !malformed_disclosures.is_empty() {
+        return DeltaParse {
+            status: ParseStatus::Invalid,
+            warnings: vec![format!(
+                "required baseline debt delta input {path} has malformed run-state disclosures ({}); a corrupt disclosure qualifier is not evidence of zero debt",
+                malformed_disclosures.join(", ")
+            )],
+            ..DeltaParse::default()
+        };
+    }
     // Every count above validated as a real usize, so these reads are exact.
     let still_present = usize_path(&value, &["delta", "still_present"]);
     let resolved = usize_path(&value, &["delta", "resolved"]);
@@ -691,6 +783,16 @@ fn parse_delta(path: &str, text: Result<String, String>) -> DeltaParse {
         warnings.push(format!(
             "required baseline debt delta input {path} discloses an incomplete analysis outcome ({}); an incomplete denominator can never yield achieved",
             incomplete_analysis_outcome_kind(&value)
+        ));
+    }
+    // A failed current evaluation has no decisions (#6257 review): the delta
+    // propagates the gate status verbatim, and a config_error current is
+    // never a denominator, mirroring the gate-reader Z5 arm. Without this,
+    // a delta-only invocation would read the empty counts as all-clear.
+    if string_field(value.get("current_gate_status")).as_deref() == Some(GATE_STATUS_CONFIG_ERROR) {
+        partial_denominator = true;
+        warnings.push(format!(
+            "required baseline debt delta input {path} reports current gate status config_error; a failed evaluation can never yield achieved"
         ));
     }
     // Counts and items must reconcile (#5251 Z3): the check below
@@ -1161,10 +1263,10 @@ fn classify_review(review: Option<ReviewMetadata>, generated_at: &str) -> Metada
     if review.owner.is_none() || review.reason.is_none() || review.created_at.is_none() {
         return MetadataState::Missing;
     }
-    if is_stale_review(review_after, generated_at) {
-        MetadataState::Stale
-    } else {
-        MetadataState::Current
+    match deadline_health(review_after, generated_at) {
+        DeadlineHealth::Stale => MetadataState::Stale,
+        DeadlineHealth::Current => MetadataState::Current,
+        DeadlineHealth::Incomparable => MetadataState::Unknown,
     }
 }
 
@@ -1198,7 +1300,7 @@ fn warn_for_metadata(metadata: MetadataCounts, warnings: &mut Vec<String>) {
     }
     if metadata.unknown > 0 {
         warnings.push(format!(
-            "{} baseline entries have unparseable review metadata",
+            "{} baseline entries have unparseable or incomparable review metadata",
             metadata.unknown
         ));
     }
@@ -1397,14 +1499,243 @@ fn top_static_class(counts: &BTreeMap<String, usize>) -> Option<String> {
         .map(|(class, _count)| class.clone())
 }
 
-fn is_stale_review(review_after: &str, generated_at: &str) -> bool {
-    match (unix_ms(review_after), unix_ms(generated_at)) {
-        (Some(review_after), Some(generated_at)) => review_after < generated_at,
-        _ => match (iso_day(review_after), iso_day(generated_at)) {
-            (Some(review_after), Some(generated_at)) => review_after < generated_at,
-            _ => false,
-        },
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ReviewInstant {
+    UnixMs(i128),
+    IsoDay(String),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DeadlineHealth {
+    Current,
+    Stale,
+    Incomparable,
+}
+
+fn deadline_health(review_after: &str, generated_at: &str) -> DeadlineHealth {
+    match compare_review_deadline(review_after, generated_at) {
+        Some(true) => DeadlineHealth::Stale,
+        Some(false) => DeadlineHealth::Current,
+        None => DeadlineHealth::Incomparable,
     }
+}
+
+/// `Some(true)` when `review_after` is strictly before `generated_at`.
+/// `None` when the two values cannot be compared.
+fn compare_review_deadline(review_after: &str, generated_at: &str) -> Option<bool> {
+    let deadline = parse_review_instant(review_after)?;
+    let now = parse_review_instant(generated_at)?;
+    match (&deadline, &now) {
+        (ReviewInstant::UnixMs(deadline), ReviewInstant::UnixMs(now)) => Some(deadline < now),
+        _ => Some(iso_day_of(&deadline)? < iso_day_of(&now)?),
+    }
+}
+
+fn iso_day_of(instant: &ReviewInstant) -> Option<String> {
+    match instant {
+        ReviewInstant::IsoDay(day) => Some(day.clone()),
+        ReviewInstant::UnixMs(ms) => unix_ms_to_iso_day(*ms),
+    }
+}
+
+fn unix_ms_to_iso_day(ms: i128) -> Option<String> {
+    const MILLIS_PER_DAY: i128 = 86_400_000;
+    let days = i64::try_from(ms.div_euclid(MILLIS_PER_DAY)).ok()?;
+    format_civil_day(days_to_civil_date(days)?)
+}
+
+/// Converts days since 1970-01-01 UTC to a civil `(year, month, day)` using the
+/// Howard Hinnant algorithm. Returns `None` when the day is outside the
+/// Gregorian years this classifier will format (`1..=9999`).
+fn days_to_civil_date(days_since_epoch: i64) -> Option<(i64, i64, i64)> {
+    if !(MIN_UNIX_DAY..=MAX_UNIX_DAY).contains(&days_since_epoch) {
+        return None;
+    }
+    let z = days_since_epoch + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    Some((y, m, d))
+}
+
+fn civil_date_to_days(year: i64, month: i64, day: i64) -> Option<i64> {
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = if month > 2 { month - 3 } else { month + 9 };
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era
+        .checked_mul(146_097)?
+        .checked_add(doe)?
+        .checked_sub(719_468)?;
+    if (MIN_UNIX_DAY..=MAX_UNIX_DAY).contains(&days) {
+        Some(days)
+    } else {
+        None
+    }
+}
+
+const MIN_CIVIL_YEAR: i64 = 1;
+const MAX_CIVIL_YEAR: i64 = 9999;
+/// Unix days for `0001-01-01` and `9999-12-31` UTC, the range `days_to_civil_date`
+/// will format without overflowing Hinnant intermediates.
+const MIN_UNIX_DAY: i64 = -719_162;
+const MAX_UNIX_DAY: i64 = 2_932_896;
+
+fn format_civil_day(parts: (i64, i64, i64)) -> Option<String> {
+    let (year, month, day) = parts;
+    if !(MIN_CIVIL_YEAR..=MAX_CIVIL_YEAR).contains(&year) {
+        return None;
+    }
+    Some(format!("{year:04}-{month:02}-{day:02}"))
+}
+
+fn parse_review_instant(value: &str) -> Option<ReviewInstant> {
+    if let Some(ms) = unix_ms(value) {
+        return Some(ReviewInstant::UnixMs(ms));
+    }
+    parse_utc_calendar_day(value).map(ReviewInstant::IsoDay)
+}
+
+fn parse_utc_calendar_day(value: &str) -> Option<String> {
+    match value.as_bytes().get(10) {
+        None => format_civil_day(parse_gregorian_date(value)?),
+        Some(b'T' | b't') => parse_rfc3339_utc_day(value),
+        _ => None,
+    }
+}
+
+fn parse_gregorian_date(value: &str) -> Option<(i64, i64, i64)> {
+    if value.len() != 10 {
+        return None;
+    }
+    let bytes = value.as_bytes();
+    if bytes.get(4).copied() != Some(b'-') || bytes.get(7).copied() != Some(b'-') {
+        return None;
+    }
+    if !bytes.get(..4)?.iter().all(u8::is_ascii_digit)
+        || !bytes.get(5..7)?.iter().all(u8::is_ascii_digit)
+        || !bytes.get(8..10)?.iter().all(u8::is_ascii_digit)
+    {
+        return None;
+    }
+    let year = value.get(..4)?.parse::<i64>().ok()?;
+    let month = value.get(5..7)?.parse::<i64>().ok()?;
+    let day = value.get(8..10)?.parse::<i64>().ok()?;
+    if !(MIN_CIVIL_YEAR..=MAX_CIVIL_YEAR).contains(&year)
+        || !(1..=12).contains(&month)
+        || day < 1
+        || day > i64::from(days_in_month(year, month)?)
+    {
+        return None;
+    }
+    Some((year, month, day))
+}
+
+fn days_in_month(year: i64, month: i64) -> Option<u8> {
+    Some(match month {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 => {
+            if is_gregorian_leap(year) {
+                29
+            } else {
+                28
+            }
+        }
+        _ => return None,
+    })
+}
+
+fn is_gregorian_leap(year: i64) -> bool {
+    year.rem_euclid(4) == 0 && (year.rem_euclid(100) != 0 || year.rem_euclid(400) == 0)
+}
+
+fn parse_rfc3339_utc_day(value: &str) -> Option<String> {
+    let date = value.get(..10)?;
+    let (year, month, day) = parse_gregorian_date(date)?;
+    if !matches!(value.as_bytes().get(10).copied(), Some(b'T' | b't')) {
+        return None;
+    }
+    let time = value.get(11..)?;
+    let hour = parse_two_digits(time.get(..2)?)?;
+    if time.as_bytes().get(2).copied() != Some(b':') {
+        return None;
+    }
+    let minute = parse_two_digits(time.get(3..5)?)?;
+    if time.as_bytes().get(5).copied() != Some(b':') {
+        return None;
+    }
+    let second = parse_two_digits(time.get(6..8)?)?;
+    if hour > 23 || minute > 59 || second > 60 {
+        return None;
+    }
+    let offset_seconds = parse_rfc3339_offset(skip_rfc3339_fraction(time.get(8..)?)?)?;
+    let local_days = civil_date_to_days(year, month, day)?;
+    let local_seconds = local_days
+        .checked_mul(86_400)?
+        .checked_add(i64::from(hour) * 3_600)?
+        .checked_add(i64::from(minute) * 60)?
+        .checked_add(i64::from(second.min(59)))?;
+    let utc_seconds = local_seconds.checked_sub(offset_seconds)?;
+    // RFC 3339 §5.7 leap seconds are 23:59:60 UTC, including offset forms such
+    // as 15:59:60-08:00. Civil-day conversion keeps that instant on the UTC day.
+    if second == 60 {
+        const UTC_LEAP_SECOND_TOD: i64 = 23 * 3_600 + 59 * 60 + 59;
+        if utc_seconds.rem_euclid(86_400) != UTC_LEAP_SECOND_TOD {
+            return None;
+        }
+    }
+    let utc_days = utc_seconds.div_euclid(86_400);
+    format_civil_day(days_to_civil_date(utc_days)?)
+}
+
+fn skip_rfc3339_fraction(value: &str) -> Option<&str> {
+    let Some(rest) = value.strip_prefix('.') else {
+        return Some(value);
+    };
+    let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+    if digits == 0 {
+        return None;
+    }
+    rest.get(digits..)
+}
+
+fn parse_rfc3339_offset(value: &str) -> Option<i64> {
+    match value.as_bytes().first().copied() {
+        Some(b'Z' | b'z') if value.len() == 1 => Some(0),
+        Some(sign @ (b'+' | b'-')) => {
+            if value.len() != 6 || value.as_bytes().get(3).copied() != Some(b':') {
+                return None;
+            }
+            let hours = i64::from(parse_two_digits(value.get(1..3)?)?);
+            let minutes = i64::from(parse_two_digits(value.get(4..6)?)?);
+            if hours > 23 || minutes > 59 {
+                return None;
+            }
+            let magnitude = hours.checked_mul(3_600)?.checked_add(minutes * 60)?;
+            if sign == b'-' {
+                Some(-magnitude)
+            } else {
+                Some(magnitude)
+            }
+        }
+        _ => None,
+    }
+}
+
+fn parse_two_digits(value: &str) -> Option<u8> {
+    if value.len() != 2 || !value.as_bytes().iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    value.parse().ok()
 }
 
 fn age_days(created_at: &str, generated_at: &str) -> Option<i64> {
@@ -1420,18 +1751,6 @@ fn age_days(created_at: &str, generated_at: &str) -> Option<i64> {
 
 fn unix_ms(value: &str) -> Option<i128> {
     value.strip_prefix("unix_ms:")?.parse().ok()
-}
-
-fn iso_day(value: &str) -> Option<String> {
-    let day = value.get(0..10)?;
-    if day.len() == 10
-        && day.as_bytes().get(4) == Some(&b'-')
-        && day.as_bytes().get(7) == Some(&b'-')
-    {
-        Some(day.to_string())
-    } else {
-        None
-    }
 }
 
 fn baseline_path_for_summary(input_path: Option<&str>, delta_path: Option<&str>) -> Option<String> {
@@ -1614,11 +1933,335 @@ pub(crate) use crate::output::path::display_path;
 #[cfg(test)]
 mod tests {
     use super::{
-        RiprZeroStatusInput, build_ripr_zero_status_report, render_ripr_zero_status_json,
-        render_ripr_zero_status_markdown,
+        MetadataState, ReviewMetadata, RiprZeroStatusInput, build_ripr_zero_status_report,
+        classify_review, render_ripr_zero_status_json, render_ripr_zero_status_markdown,
+        unix_ms_to_iso_day,
     };
     use crate::output::first_pr::{REPAIR_AFTER_PHASE_LABEL, REPAIR_AFTER_PHASE_STEP};
     use serde_json::Value;
+
+    /// 2026-10-05 12:00:00 UTC — noon so same-day ISO deadlines compare on the
+    /// UTC calendar date, not on a midnight edge.
+    const RUN_AT_2026_10_05_NOON: &str = "unix_ms:1791201600000";
+    /// 2026-10-06 12:00:00 UTC — used to pin offset RFC3339 midnight crossings.
+    const RUN_AT_2026_10_06_NOON: &str = "unix_ms:1791288000000";
+    const PAST_UNIX_MS_2026_01_01: &str = "unix_ms:1767225600000";
+    const FUTURE_UNIX_MS_2026_12_31: &str = "unix_ms:1798675200000";
+
+    fn complete_review(review_after: &str) -> ReviewMetadata {
+        ReviewMetadata {
+            invalid: false,
+            owner: Some("team".into()),
+            reason: Some("baseline".into()),
+            created_at: Some("unix_ms:0".into()),
+            review_after: Some(review_after.into()),
+        }
+    }
+
+    #[test]
+    fn classify_review_marks_past_due_iso_calendar_deadline_stale() {
+        assert_eq!(
+            classify_review(Some(complete_review("2026-01-01")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Stale,
+            "plain YYYY-MM-DD past the run date must be stale, not silently current"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-01-01T00:00:00Z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC3339 calendar deadlines must compare against the UTC run date"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-01-01")), "2026-10-05T12:00:00Z"),
+            MetadataState::Stale,
+            "ISO review_after vs RFC3339 generated_at must still evaluate"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-01-01t00:00:00Z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC3339 lowercase t is a valid date-time separator"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-01-01T00:00:00z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC3339 lowercase z is a valid UTC offset"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("1990-12-31T23:59:60Z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC 3339 leap second 23:59:60 stays on that UTC day"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("1990-12-31T15:59:60-08:00")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale,
+            "RFC 3339 leap second with offset is the same UTC instant"
+        );
+    }
+
+    #[test]
+    fn classify_review_marks_past_due_unix_ms_deadline_stale() {
+        assert_eq!(
+            classify_review(
+                Some(complete_review(PAST_UNIX_MS_2026_01_01)),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Stale
+        );
+    }
+
+    #[test]
+    fn classify_review_marks_incomparable_review_after_unknown_not_current() {
+        assert_eq!(
+            classify_review(
+                Some(complete_review("not-a-deadline")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown,
+            "unparseable review_after must not fail open to current"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("unix_ms:not-millis")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-13-40")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Unknown,
+            "impossible calendar dates are incomparable, not current"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-02-31")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Unknown,
+            "February 31 is not a Gregorian date and must not classify stale"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-02-29")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Unknown,
+            "29 February on a non-leap year is incomparable"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-12-01Tnot-a-time")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown,
+            "a T suffix that is not RFC3339 must not classify current"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-05T12:00:60Z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown,
+            "second 60 is only a leap second at 23:59 UTC"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-05T23:59:60-02:00")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Unknown,
+            "local 23:59:60 is not a leap second unless UTC is 23:59"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-01-01")), "not-a-timestamp"),
+            MetadataState::Unknown,
+            "a valid deadline against an unparseable generated_at is unknown"
+        );
+    }
+
+    #[test]
+    fn classify_review_normalizes_rfc3339_offsets_to_utc_day() {
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-05T23:30:00-02:00")),
+                RUN_AT_2026_10_06_NOON
+            ),
+            MetadataState::Current,
+            "written 2026-10-05 with -02:00 is 2026-10-06 UTC, same as the run day"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-06T00:30:00+02:00")),
+                RUN_AT_2026_10_06_NOON
+            ),
+            MetadataState::Stale,
+            "written 2026-10-06 with +02:00 is 2026-10-05 UTC, the prior run day"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2024-02-29")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Stale,
+            "a real leap-day calendar deadline still compares"
+        );
+    }
+
+    #[test]
+    fn classify_review_keeps_current_and_future_deadlines_current() {
+        assert_eq!(
+            classify_review(Some(complete_review("2026-10-05")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Current,
+            "same-day ISO deadline is not in the past"
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review("2026-10-05T23:59:60Z")),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Current,
+            "same-day UTC leap second stays on the UTC run date"
+        );
+        assert_eq!(
+            classify_review(Some(complete_review("2026-12-31")), RUN_AT_2026_10_05_NOON),
+            MetadataState::Current
+        );
+        assert_eq!(
+            classify_review(
+                Some(complete_review(FUTURE_UNIX_MS_2026_12_31)),
+                RUN_AT_2026_10_05_NOON
+            ),
+            MetadataState::Current
+        );
+    }
+
+    #[test]
+    fn classify_review_requires_the_complete_record_before_deadline_evaluation() {
+        // Operator-facing contract (docs/RIPR_ZERO_REPORTING_WORKFLOW.md,
+        // "Age And Refresh Baselines"): review ownership and deadlines are
+        // operator-set ledger content, and a hand-set deadline is evaluated
+        // only when the whole review record is present. An incomplete record
+        // stays missing_metadata instead of guessing stale or current.
+        let complete = complete_review("2026-01-01");
+        for field in ["owner", "reason", "created_at", "review_after"] {
+            let mut record = complete.clone();
+            match field {
+                "owner" => record.owner = None,
+                "reason" => record.reason = None,
+                "created_at" => record.created_at = None,
+                _ => record.review_after = None,
+            }
+            assert_eq!(
+                classify_review(Some(record), RUN_AT_2026_10_05_NOON),
+                MetadataState::Missing,
+                "review metadata missing `{field}` stays missing_metadata, never stale or current"
+            );
+        }
+        assert_eq!(
+            classify_review(None, RUN_AT_2026_10_05_NOON),
+            MetadataState::Missing,
+            "a baseline entry without any review object is missing_metadata"
+        );
+    }
+
+    #[test]
+    fn unix_ms_to_iso_day_uses_utc_civil_date() {
+        assert_eq!(unix_ms_to_iso_day(0).as_deref(), Some("1970-01-01"));
+        assert_eq!(
+            unix_ms_to_iso_day(1_767_225_600_000).as_deref(),
+            Some("2026-01-01")
+        );
+        assert_eq!(
+            unix_ms_to_iso_day(1_791_201_600_000).as_deref(),
+            Some("2026-10-05")
+        );
+        assert_eq!(
+            unix_ms_to_iso_day(i128::from(i64::MAX).saturating_mul(86_400_000)).as_deref(),
+            None,
+            "day counts near i64 limits must fail closed, not overflow civil-date math"
+        );
+    }
+
+    #[test]
+    fn ripr_zero_status_evaluates_iso_review_after_and_fails_closed_on_incomparable()
+    -> Result<(), String> {
+        let baseline = r#"{
+          "schema_version": "0.1",
+          "kind": "gate_baseline",
+          "created_at": "unix_ms:0",
+          "entries": [
+            {"identity": {"seam_id": "iso-stale"}, "path": "src/iso.rs", "review": {"owner": "team", "reason": "baseline", "created_at": "unix_ms:0", "review_after": "2026-01-01"}},
+            {"identity": {"seam_id": "unix-stale"}, "path": "src/unix.rs", "review": {"owner": "team", "reason": "baseline", "created_at": "unix_ms:0", "review_after": "unix_ms:1767225600000"}},
+            {"identity": {"seam_id": "iso-current"}, "path": "src/current.rs", "review": {"owner": "team", "reason": "baseline", "created_at": "unix_ms:0", "review_after": "2026-12-31"}},
+            {"identity": {"seam_id": "incomparable"}, "path": "src/bad.rs", "review": {"owner": "team", "reason": "baseline", "created_at": "unix_ms:0", "review_after": "not-a-deadline"}}
+          ]
+        }"#;
+        let delta = r#"{
+          "schema_version": "0.1",
+          "tool": "ripr",
+          "kind": "baseline_debt_delta",
+          "baseline": {"path": ".ripr/gate-baseline.json", "entries": 4},
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [],
+          "warnings": []
+        }"#;
+
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: RUN_AT_2026_10_05_NOON.to_string(),
+            baseline_path: Some(".ripr/gate-baseline.json".to_string()),
+            delta_path: "target/ripr/reports/baseline-debt-delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: Some(Ok(baseline.to_string())),
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        let value: Value = serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+        assert_eq!(value["baseline"]["metadata"]["stale"], 2, "{rendered}");
+        assert_eq!(value["baseline"]["metadata"]["current"], 1, "{rendered}");
+        assert_eq!(value["baseline"]["metadata"]["unknown"], 1, "{rendered}");
+        assert_eq!(
+            value["baseline"]["metadata"]["missing_metadata"], 0,
+            "{rendered}"
+        );
+        let warnings = value["warnings"]
+            .as_array()
+            .ok_or("warnings array missing")?;
+        let warning_text: Vec<&str> = warnings.iter().filter_map(Value::as_str).collect();
+        assert!(
+            warning_text
+                .iter()
+                .any(|warning| warning.contains("stale review metadata")),
+            "{warning_text:?}"
+        );
+        assert!(
+            warning_text
+                .iter()
+                .any(|warning| { warning.contains("unparseable or incomparable review metadata") }),
+            "{warning_text:?}"
+        );
+        Ok(())
+    }
 
     #[test]
     fn ripr_zero_status_reports_not_yet_with_metadata_and_repair_route() -> Result<(), String> {
@@ -2332,6 +2975,175 @@ mod tests {
         assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
         assert!(rendered.contains("malformed counts"), "{rendered}");
         assert!(rendered.contains("still_present"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_malformed_run_state_disclosure() -> Result<(), String>
+    {
+        // Present-but-malformed run-state disclosures fail closed (#6770
+        // review): a corrupt qualifier is never a complete denominator, even
+        // when the counts themselves validate. Explicit null stays absent.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [],
+          "analysis_outcome": "garbage",
+          "analysis_scope": null,
+          "run_limitations": {},
+          "current_gate_status": 42
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("malformed run-state disclosures"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("analysis_outcome"), "{rendered}");
+        assert!(rendered.contains("run_limitations"), "{rendered}");
+        assert!(rendered.contains("current_gate_status"), "{rendered}");
+        assert!(!rendered.contains("analysis_scope"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_malformed_disclosure_member() -> Result<(), String> {
+        // Predicate-consumed members validate, not just envelope shapes
+        // (#6770 review): {"analysis_complete": "false"} dodges the
+        // boolean-false predicate, so without member validation a corrupt
+        // qualifier reads as a complete denominator. Null limitation
+        // entries stay lenient, matching top-level null handling.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [],
+          "analysis_outcome": {"analysis_complete": "false"},
+          "analysis_scope": {"run_status": 42},
+          "run_limitations": [{"run_status": 42}, "bare-string", null],
+          "current_gate_status": "  "
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("malformed run-state disclosures"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("analysis_outcome.analysis_complete"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("analysis_scope.run_status"), "{rendered}");
+        assert!(rendered.contains("run_limitations[]"), "{rendered}");
+        assert!(rendered.contains("current_gate_status"), "{rendered}");
+        assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
+        Ok(())
+    }
+
+    #[test]
+    fn ripr_zero_status_reports_unknown_for_a_blank_disclosure_discriminator() -> Result<(), String>
+    {
+        // Blank discriminators are corrupt, not undisclosed (#6770 review):
+        // the predicates match exact vocabulary tokens, so blank members
+        // dodge disclosure; likewise an entry with no usable discriminator
+        // and an out-of-schema gate status. All fail as Invalid, never as
+        // a complete denominator.
+        let delta = r#"{
+          "schema_version": "0.1",
+          "kind": "baseline_debt_delta",
+          "delta": {
+            "still_present": 0,
+            "resolved": 0,
+            "new_policy_eligible": 0,
+            "acknowledged": 0,
+            "suppressed": 0,
+            "stale_baseline_entry": 0,
+            "invalid_baseline_entry": 0,
+            "missing_current_input": 0
+          },
+          "items": [],
+          "analysis_scope": {"run_status": "  "},
+          "run_limitations": [{"run_status": " "}, {"category": ""}, {}],
+          "current_gate_status": "error"
+        }"#;
+        let report = build_ripr_zero_status_report(RiprZeroStatusInput {
+            root: ".".to_string(),
+            generated_at: "unix_ms:100000000".to_string(),
+            baseline_path: None,
+            delta_path: "delta.json".to_string(),
+            gap_ledger_path: None,
+            gate_path: None,
+            pr_guidance_path: None,
+            recommendation_calibration_path: None,
+            baseline_json: None,
+            delta_json: Ok(delta.to_string()),
+            gap_ledger_json: None,
+            gate_json: None,
+            pr_guidance_json: None,
+            recommendation_calibration_json: None,
+        });
+        let rendered = render_ripr_zero_status_json(&report)?;
+        assert!(rendered.contains("\"state\": \"unknown\""), "{rendered}");
+        assert!(
+            rendered.contains("malformed run-state disclosures"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("analysis_scope.run_status"), "{rendered}");
+        assert!(rendered.contains("run_limitations[]"), "{rendered}");
+        assert!(rendered.contains("current_gate_status"), "{rendered}");
         assert!(!rendered.contains("\"state\": \"achieved\""), "{rendered}");
         Ok(())
     }

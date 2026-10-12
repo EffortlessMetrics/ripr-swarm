@@ -3,6 +3,7 @@
 //! Parser/cache `FileFacts` remains the owned wire DTO. Its facts are moved into
 //! these arenas once; membership is never inferred from a name, span or path.
 use super::model::*;
+use crate::analysis::syntax::{MacroBindingCandidates, ModuleItemScopes};
 use serde::ser::{SerializeMap, SerializeStruct};
 use std::collections::{BTreeMap, BTreeSet};
 use std::marker::PhantomData;
@@ -119,6 +120,21 @@ pub struct RustIndex {
     test_positions: Vec<usize>,
     membership_revision: u64,
     pub package_names: BTreeSet<String>,
+    /// `package_names` plus the crate names of workspace members that have
+    /// at least one indexed file. Only the trusted-macro binding scan reads
+    /// it: a glob import from such a crate brings in macros whose
+    /// definitions the scan already reads. The same-name import gate keeps
+    /// `package_names`, because a sibling crate's function can still take a
+    /// bare call meant for the owner.
+    pub(crate) macro_owned_crates: BTreeSet<String>,
+    /// Whether a drop-in assertion crate (`pretty_assertions`) imported by a
+    /// file is the registry package. Unset for an index assembled without a
+    /// manifest walk, which verifies nothing.
+    pub(crate) drop_in_manifests: super::drop_in::DropInManifests,
+    /// The crate names under which a test's crate imports a workspace
+    /// member's library, read from member manifests. Unset for an index
+    /// assembled without a manifest walk, which names nothing.
+    pub(crate) member_crates: super::member_crates::MemberCrates,
     pub include_parents: BTreeMap<PathBuf, ResolvedIncludeParent>,
     pub include_limitations: Vec<RustIncludeLimitation>,
     pub non_utf8_sources: BTreeSet<PathBuf>,
@@ -140,7 +156,6 @@ pub(super) struct IndexedFileFacts {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct FileData {
     pub path: PathBuf,
-    pub calls: Vec<CallFact>,
     pub returns: Vec<ReturnFact>,
     pub literals: Vec<LiteralFact>,
     pub probe_shapes: Vec<ProbeShapeFact>,
@@ -148,7 +163,9 @@ pub struct FileData {
     pub module_declarations: Vec<ModuleDeclarationFact>,
     pub unresolved_property_macros: Vec<UnresolvedPropertyMacroFact>,
     pub role_provenance: SourceRoleProvenance,
-    pub source: String,
+    pub source: std::sync::Arc<str>,
+    pub(crate) item_scopes: Option<Box<ModuleItemScopes>>,
+    pub(crate) macro_candidates: Option<Box<MacroBindingCandidates>>,
 }
 
 /// A borrowed ordered view; it cannot outlive or retain an index generation.
@@ -305,21 +322,41 @@ impl Deref for FileFactsView<'_> {
 }
 impl serde::Serialize for FileFactsView<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        let mut state = serializer.serialize_struct("FileFacts", 11)?;
+        // Attached encoding, identical to `FileFacts`: children keep spans
+        // into `source` when they share its allocation (detached
+        // `FunctionFact` serialization would inline them instead), and
+        // arena children from a foreign allocation inline their text.
+        let functions: Vec<FunctionFactWire> = self
+            .functions
+            .iter()
+            .map(|fact| FunctionFactWire::attached(fact, &self.source))
+            .collect();
+        let tests: Vec<TestFactWire> = self
+            .tests
+            .iter()
+            .map(|fact| TestFactWire::attached(fact, &self.source))
+            .collect();
+        let probe_shapes: Vec<ProbeShapeFactWire> = self
+            .probe_shapes
+            .iter()
+            .map(|fact| ProbeShapeFactWire::attached(fact, &self.source))
+            .collect();
+        let mut state = serializer.serialize_struct("FileFacts", 12)?;
         state.serialize_field("path", &self.path)?;
-        state.serialize_field("functions", &self.functions)?;
-        state.serialize_field("tests", &self.tests)?;
-        state.serialize_field("calls", &self.calls)?;
+        state.serialize_field("functions", &functions)?;
+        state.serialize_field("tests", &tests)?;
         state.serialize_field("returns", &self.returns)?;
         state.serialize_field("literals", &self.literals)?;
-        state.serialize_field("probe_shapes", &self.probe_shapes)?;
+        state.serialize_field("probe_shapes", &probe_shapes)?;
         state.serialize_field("used_lexical_fallback", &self.used_lexical_fallback)?;
         state.serialize_field("module_declarations", &self.module_declarations)?;
         state.serialize_field(
             "unresolved_property_macros",
             &self.unresolved_property_macros,
         )?;
-        state.serialize_field("source", &self.source)?;
+        state.serialize_field("source", self.source.as_ref())?;
+        state.serialize_field("item_scopes", &self.item_scopes)?;
+        state.serialize_field("macro_candidates", &self.macro_candidates)?;
         state.end()
     }
 }
@@ -400,6 +437,19 @@ impl serde::Serialize for IndexFiles<'_> {
 }
 
 impl RustIndex {
+    /// Crate names whose glob imports the trusted-macro scan treats as
+    /// workspace-owned: `macro_owned_crates` when the build computed it,
+    /// else `package_names` (an index assembled without a manifest walk).
+    pub(crate) fn macro_scope_crates(&self) -> &BTreeSet<String> {
+        if self.macro_owned_crates.is_empty() {
+            &self.package_names
+        } else {
+            &self.macro_owned_crates
+        }
+    }
+}
+
+impl RustIndex {
     pub fn functions(&self) -> FactSlice<'_, FunctionFact> {
         FactSlice {
             arena: &self.function_facts,
@@ -436,7 +486,6 @@ impl RustIndex {
             path: fact_path,
             functions,
             tests,
-            calls,
             returns,
             literals,
             probe_shapes,
@@ -445,6 +494,8 @@ impl RustIndex {
             unresolved_property_macros,
             role_provenance,
             source,
+            item_scopes,
+            macro_candidates,
         } = facts;
         // Allocate handle storage explicitly: an in-place map collection can retain
         // the much larger FunctionFact source allocation for these small IDs.
@@ -476,7 +527,6 @@ impl RustIndex {
             IndexedFileFacts {
                 data: FileData {
                     path: fact_path,
-                    calls,
                     returns,
                     literals,
                     probe_shapes,
@@ -485,6 +535,8 @@ impl RustIndex {
                     unresolved_property_macros,
                     role_provenance,
                     source,
+                    item_scopes,
+                    macro_candidates,
                 },
                 functions,
                 tests,
@@ -664,7 +716,6 @@ impl RustIndex {
         let file = self.files().get(path)?;
         let FileData {
             path,
-            calls,
             returns,
             literals,
             probe_shapes,
@@ -673,12 +724,13 @@ impl RustIndex {
             unresolved_property_macros,
             role_provenance,
             source,
+            item_scopes,
+            macro_candidates,
         } = file.data().clone();
         Some(FileFacts {
             path,
             functions: file.functions.iter().cloned().collect(),
             tests: file.tests.iter().cloned().collect(),
-            calls,
             returns,
             literals,
             probe_shapes,
@@ -687,6 +739,8 @@ impl RustIndex {
             unresolved_property_macros,
             role_provenance,
             source,
+            item_scopes,
+            macro_candidates,
         })
     }
     #[cfg(test)]

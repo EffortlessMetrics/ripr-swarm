@@ -4,16 +4,20 @@
 const WORKFLOW: &str = include_str!("../../.github/workflows/rust-gates.yml");
 const REQUIRED_GATES: &[(&str, &str)] = &[
     ("formatting", "cargo fmt --check"),
+    ("agent_skills", "cargo policy preflight"),
     ("precommit", "cargo xtask precommit"),
     (
         "promotion_honesty",
         "cargo xtask check-evidence-promotion-honesty",
     ),
-    ("agent_skills", "cargo xtask check-agent-skills"),
     ("dependencies", "cargo xtask check-dependencies"),
     ("process_policy", "cargo xtask check-process-policy"),
     ("network_policy", "cargo xtask check-network-policy"),
     ("workspace_check", "cargo check --workspace --all-targets"),
+    (
+        "all_features_check",
+        "cargo check -p ripr --all-targets --all-features",
+    ),
     (
         "clippy",
         "cargo clippy --workspace --all-targets -- -D warnings",

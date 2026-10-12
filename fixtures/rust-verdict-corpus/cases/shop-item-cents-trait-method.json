@@ -1,0 +1,52 @@
+{
+  "case_id": "shop-item-cents-trait-method",
+  "subject_id": "authored-shop",
+  "diff": "cases/shop-item-cents-trait-method.diff",
+  "anchor": {
+    "file": "pricing/src/lib.rs",
+    "line": 25
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "trait_method_owner_pin",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --workspace",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.units * 100",
+        "mutated_line": "self.units * 100",
+        "outcome": "tests_failed",
+        "failing_test": "tests::item_cents_are_per_unit",
+        "equivalence_review": "not equivalent: two units cost 200"
+      },
+      {
+        "replacement": "self.units + 125",
+        "mutated_line": "self.units + 125",
+        "outcome": "tests_failed",
+        "failing_test": "tests::item_cents_are_per_unit",
+        "equivalence_review": "not equivalent: two units cost 127"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "item.cents() is pinned to 250 for two units, so both mutants of the trait impl fail it. Spec cells: RIPR-SPEC-0197.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

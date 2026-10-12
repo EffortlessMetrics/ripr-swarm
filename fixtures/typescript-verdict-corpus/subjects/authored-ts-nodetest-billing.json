@@ -1,0 +1,105 @@
+{
+  "subject_id": "authored-ts-nodetest-billing",
+  "origin": "authored",
+  "version_label": "authored@2026-10-04",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "package.json",
+      "sha256": "51d59e6d2dab7593932bdf5a9e43f876f802b620d42d1fe2121b0c72ecc4aa11"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/bulk.ts",
+      "sha256": "5cd78a609e11d26bcbd9936a021b1657eb97322dbe80980a6bb5bfb08d83d4df"
+    },
+    {
+      "path": "src/charge.ts",
+      "sha256": "7e8ea8b2441e7806329531bbbe0d3be664326cd4dee704963ea1d363150e9744"
+    },
+    {
+      "path": "src/currency.ts",
+      "sha256": "8b06379bf6dd889ca4a84b43c4650173655938f1ef58ed4b5d0dd60425c774bd"
+    },
+    {
+      "path": "src/invoice.ts",
+      "sha256": "b1f1ada3a654cc8c0ef47c31deef764836897a71b142ec5f9d62cc40439581ed"
+    },
+    {
+      "path": "src/latefee.ts",
+      "sha256": "c14ea752e9e4c7c2f77410989f3d8eea67dc8cc603a4c8721e02001a1c8cd550"
+    },
+    {
+      "path": "src/lib.ts",
+      "sha256": "63c7d5318ac14712d5a45e9eeadce2d07ed7a2d1af706abc4a0957c7a5016355"
+    },
+    {
+      "path": "src/member.ts",
+      "sha256": "4fd6b01d2245d6be8d48bad4fad3b3474f15a9b21edb2e77ab1c0d6230e8cf94"
+    },
+    {
+      "path": "src/receipt.ts",
+      "sha256": "2ee7fb52f0375abc439f2dc7785a209e7723917365cf34d736e6efecdac2a169"
+    },
+    {
+      "path": "src/refund.ts",
+      "sha256": "b73bf8c5b68248b2c915bda53796cf9cc179c9f41f361d3cfc2d153a0ab1b7e2"
+    },
+    {
+      "path": "src/shipping.ts",
+      "sha256": "e0cfe99f3f3b93d540d66d2cd6bdef2e4742d74c7609b9ceb4cee96019db5f72"
+    },
+    {
+      "path": "src/tier.ts",
+      "sha256": "87643522348e20a8b60ff932fbf3ce611ab58b9123327a59e83f374ad0ce96d6"
+    },
+    {
+      "path": "test/bulk.test.ts",
+      "sha256": "9483adeacf66a98798b9697d56cefb0b757af68adeac3638e0706b5e7a814ae2"
+    },
+    {
+      "path": "test/charge.test.ts",
+      "sha256": "442be5e054a1ef5b89b786ceaf8689f9be1234b425caf577cee3d6565b5bc23f"
+    },
+    {
+      "path": "test/currency.test.ts",
+      "sha256": "c9d51b7f3d4c0d0669c44d4292f0c3846e222fc5f01efd6f2f4e830eafcfae6e"
+    },
+    {
+      "path": "test/invoice.test.ts",
+      "sha256": "14c6a2e2fc5ea530ac9f9348649e196a4c751b44615f3ee59212076ec81d7405"
+    },
+    {
+      "path": "test/latefee.test.ts",
+      "sha256": "a2666e2a0aa3e9c372a5535df291edfb38a4cef7523721ee33a6f416418ef1b8"
+    },
+    {
+      "path": "test/lib.test.ts",
+      "sha256": "9419e78c8765b1ca3f477f2edab1fca93742ee0e5228aa01c2a8c82caa2db4d9"
+    },
+    {
+      "path": "test/member.test.ts",
+      "sha256": "b351bbba0e8bf72d33e06b5c42b378d8a322450144d9c84e0a9c1386abad954a"
+    },
+    {
+      "path": "test/receipt.test.ts",
+      "sha256": "ddef83012e79cdbe47c5f5fc31e8bff85e7270abd6ad57599e62d5615cd4b69d"
+    },
+    {
+      "path": "test/refund.test.ts",
+      "sha256": "bcf59a65f942a3370f2837ac2d2ed749fb8fbabfe7c6591559f064daab137e32"
+    },
+    {
+      "path": "test/shipping.test.ts",
+      "sha256": "aa07c6cf5fbee9cea4e26c932dc97b7b939184558d04b62551564d71dd5d58ac"
+    },
+    {
+      "path": "test/tier.test.ts",
+      "sha256": "3b20ed6e994d8734195313116e3221d0bca823b61dd600cd0bced0a3ea134b2c"
+    }
+  ]
+}

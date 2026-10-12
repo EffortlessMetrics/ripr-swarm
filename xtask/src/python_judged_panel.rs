@@ -62,7 +62,7 @@ pub(crate) const KNOWN_LIMITATION_QUALITIES: [&str; 4] =
 /// The product-contract StaticLimitKind vocabulary, mirrored exactly from
 /// `crates/ripr/src/domain/language.rs` (`StaticLimitKind::as_str`). Do not
 /// invent kinds here; extend the product enum first, then this mirror.
-const KNOWN_STATIC_LIMIT_KINDS: [&str; 19] = [
+const KNOWN_STATIC_LIMIT_KINDS: [&str; 20] = [
     "dynamic_dispatch",
     "metaprogramming",
     "missing_import_graph",
@@ -82,6 +82,7 @@ const KNOWN_STATIC_LIMIT_KINDS: [&str; 19] = [
     "rust_subprocess_binary_reach_unresolved",
     "wrapper_error_binding_unresolved",
     "python_transitive_reach_unresolved",
+    "rust_assertion_context_unresolved",
 ];
 /// Historical sweep renditions are hand-trimmed; a retained anchor line within
 /// this distance of the rendition's changed position is disclosed as a warning.

@@ -1,0 +1,52 @@
+{
+  "case_id": "grid-bindings-computed-arg",
+  "subject_id": "authored-grid-bindings",
+  "diff": "cases/grid-bindings-computed-arg.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "helper_reached_with_computed_args",
+  "hard_case": "At labeling this read gap: ripr related the tests to the private is_bulk only by file, and read `base + 1` as the literal 1 (observed qty values 1 and 9), asking for a `qty == 10` input the test already supplies. At head it reads abstained/limited (infection_unknown, weakly_exposed). #6672 stays open.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "10 < qty",
+        "mutated_line": "10 < qty",
+        "outcome": "tests_failed",
+        "failing_test": "ten_items_earn_the_bulk_discount",
+        "equivalence_review": "not equivalent: ten_items_earn_the_bulk_discount fails on it"
+      },
+      {
+        "replacement": "10 > qty",
+        "mutated_line": "10 > qty",
+        "outcome": "tests_failed",
+        "failing_test": "ten_items_earn_the_bulk_discount",
+        "equivalence_review": "not equivalent: ten_items_earn_the_bulk_discount fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Boundary inside a private helper reached through order_discount; the test passes computed arguments (`base + 1`, `base`). RIPR-SPEC-0159's computed-argument stop covers hop call-site arguments (here only the caller's own parameter), and RIPR-SPEC-0001's owner-input rule does not admit a computed expression as an exact input value. The pins at 10 and 9 catch both listed mutants. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0159.",
+  "labeling_observation": {
+    "ripr_commit": "fddf363",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

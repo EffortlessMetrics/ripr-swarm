@@ -1,0 +1,22 @@
+{
+  "case_id": "old-share-assert-owner-with-caller",
+  "subject_id": "authored-old-errors",
+  "origin": "authored",
+  "anchor": "src/checks.rs:10",
+  "behavior_family": "predicate",
+  "test_shape": "assertion_shaped_owner_with_production_caller",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

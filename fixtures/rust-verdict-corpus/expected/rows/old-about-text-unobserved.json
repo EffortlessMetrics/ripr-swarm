@@ -1,0 +1,22 @@
+{
+  "case_id": "old-about-text-unobserved",
+  "subject_id": "authored-old-errors",
+  "origin": "authored",
+  "anchor": "src/help.rs:5",
+  "behavior_family": "return_value",
+  "test_shape": "help_text_const_only_nonempty",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

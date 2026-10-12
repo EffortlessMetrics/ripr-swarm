@@ -1,0 +1,51 @@
+{
+  "case_id": "cell-0173-trial-unwrap-only",
+  "subject_id": "authored-spec-harness",
+  "diff": "cases/cell-0173-trial-unwrap-only.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "ok_value",
+  "test_shape": "harness_trial_unwrap_smoke",
+  "hard_case": "The trial callback calls parse_qty(\"5\").unwrap() and discards the value; unwrap only checks that the result is Ok.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test --workspace",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Ok(2 + n)",
+        "mutated_line": "Ok(2 + n)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: parse_qty(\"5\") becomes Ok(7)"
+      },
+      {
+        "replacement": "Ok(n)",
+        "mutated_line": "Ok(n)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: parse_qty(\"5\") becomes Ok(5)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "quantity_parses passes for any Ok value, so both mutants pass. Spec cells: RIPR-SPEC-0173 method unwrap/expect smoke oracle.",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

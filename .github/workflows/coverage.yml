@@ -31,6 +31,12 @@ jobs:
 
       - uses: taiki-e/install-action@cargo-llvm-cov
 
+      - name: Check diagnostic capture controls
+        run: cargo test -p repo-policy --lib coverage_diagnostics
+
+      - name: Pre-build failure diagnostic adapter
+        run: cargo build -p repo-policy
+
       - name: Clean coverage state
         run: cargo llvm-cov clean --workspace
 
@@ -41,7 +47,21 @@ jobs:
         run: cargo build -p ripr
 
       - name: Generate coverage
+        id: generate-coverage
         run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+
+      - name: Retain bounded failed-profile diagnostics
+        if: ${{ failure() && steps.generate-coverage.outcome == 'failure' }}
+        run: target/debug/repo-policy capture-coverage-failure
+
+      - name: Upload failed-profile diagnostics
+        if: ${{ always() && steps.generate-coverage.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-failure-diagnostics
+          path: target/ripr/reports/coverage-diagnostics
+          if-no-files-found: warn
+          retention-days: 5
 
       - name: Upload coverage artifact
         if: always()

@@ -1,0 +1,51 @@
+{
+  "case_id": "vitest-orders-stock-own-module-mocked",
+  "subject_id": "authored-ts-vitest-orders",
+  "diff": "cases/vitest-orders-stock-own-module-mocked.diff",
+  "anchor": {
+    "file": "src/stock.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_vi_mock_owner_module_caller_asserted",
+  "hard_case": "the only test reaches the owner through placeOrder but vi.mock replaces ../src/stock with a factory",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "node 22.22.0; vitest 5.0.3; typescript 5.9; @stryker-mutator/core 10.0.0 (vitest runner)",
+    "mutants": [
+      {
+        "replacement": "return onHand - -qty;",
+        "mutated_line": "return onHand - -qty;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: adds qty instead of subtracting it"
+      },
+      {
+        "replacement": "return onHand + +qty;",
+        "mutated_line": "return onHand + +qty;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: adds qty instead of subtracting it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "test/place.test.ts mocks the owner's own module (vi.mock(\"../src/stock\", () => ({ reserveStock: () => 5 }))) and asserts only the caller placeOrder, so the real reserveStock never runs and both mutants survive. ripr reports no_static_path (no related test, typescript_test_runner_unresolved package limitation) and does not name mocked_module, which counts as an abstention here.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

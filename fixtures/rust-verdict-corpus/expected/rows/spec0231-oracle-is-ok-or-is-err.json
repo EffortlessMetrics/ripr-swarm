@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0231-oracle-is-ok-or-is-err",
+  "subject_id": "authored-spec0231-26",
+  "origin": "authored",
+  "anchor": "src/lib.rs:11",
+  "behavior_family": "ok_return",
+  "test_shape": "is_ok_or_is_err_tautology",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

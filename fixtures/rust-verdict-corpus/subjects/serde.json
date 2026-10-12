@@ -1,0 +1,58 @@
+{
+  "subject_id": "serde",
+  "upstream": "https://github.com/serde-rs/serde",
+  "commit": "9d3410e3f4e38f9ea1a798e7ae9fab71577ab31b",
+  "version_label": "master@9d3410e (shared corpus pin)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": {
+    "manifest": "benchmarks/rust_corpus/manifest.json (draft #5288)",
+    "corpus_version": "2026-10-04.1",
+    "repo_id": "serde"
+  },
+  "retained_files": [
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "62c7a1e35f56406896d7aa7ca52d0cc0d272ac022b5d2796e7d6905db8a3636a"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3"
+    },
+    {
+      "path": "serde_core/Cargo.toml",
+      "sha256": "64b9a69b30f9086f6c9c84613e3d1057b551c446baa71a42a80e925b4525fc29"
+    },
+    {
+      "path": "serde_core/build.rs",
+      "sha256": "b472f6036a525f03f157722853cc3780ca3579653ff56814c5a8e13b88078fbe"
+    },
+    {
+      "path": "serde_core/src/lib.rs",
+      "sha256": "a7bb93dd49fe140d797159f3d50ba84e8e0d15b85258becb1bd437064e9760aa"
+    },
+    {
+      "path": "serde_core/src/ser/impls.rs",
+      "sha256": "5ee7efc439345e8665da0bd79bc06c02a0506e5fd0f3a4cf11af0c7197eaa643"
+    },
+    {
+      "path": "serde_core/src/ser/mod.rs",
+      "sha256": "ec097d92c8545356961e977a4c9650361cadd1d3a243d805ae7b0e0e589ae803"
+    },
+    {
+      "path": "serde_derive/Cargo.toml",
+      "sha256": "94b48c328f3f469d9ab58a295609ceece94f883d993d6b43109e1185965702f4"
+    },
+    {
+      "path": "serde_derive/src/internals/case.rs",
+      "sha256": "10c8dda2b32d8c6c6b63cf09cdc63d02375af7e95ecefe8fecb34f93b65191bb"
+    },
+    {
+      "path": "serde_derive/src/internals/mod.rs",
+      "sha256": "c1ece6bbce5a5e8a2bf5d6d9a29e85551258db9c610fab73ac19c6b7d8cf98fd"
+    },
+    {
+      "path": "serde_derive/src/lib.rs",
+      "sha256": "7c0b396d01181952c770f3acd135447883ab6bbd72ae84f5d7dfa6176dcbc7cb"
+    }
+  ]
+}

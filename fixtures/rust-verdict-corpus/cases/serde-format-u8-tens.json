@@ -1,0 +1,52 @@
+{
+  "case_id": "serde-format-u8-tens",
+  "subject_id": "serde",
+  "diff": "cases/serde-format-u8-tens.diff",
+  "anchor": {
+    "file": "serde_core/src/ser/impls.rs",
+    "line": 777
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "loop_assert_eq_exhaustive",
+  "hard_case": "same exhaustive loop as the hundreds case, second boundary",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test -p serde_core --lib",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "n > 10",
+        "mutated_line": "} else if n > 10 {",
+        "outcome": "tests_failed",
+        "failing_test": "ser::impls::test_format_u8",
+        "equivalence_review": "not equivalent: 10 takes the one-digit branch and writes ':'"
+      },
+      {
+        "replacement": "n > 8",
+        "mutated_line": "} else if n > 8 {",
+        "outcome": "tests_failed",
+        "failing_test": "ser::impls::test_format_u8",
+        "equivalence_review": "not equivalent: 9 takes the two-digit branch and writes \"09\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The exhaustive loop discriminates the tens boundary too. ripr reports propagation_unknown here, a limitation rather than a gap, which is an acceptable abstention.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

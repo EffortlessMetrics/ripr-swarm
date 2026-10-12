@@ -1,0 +1,45 @@
+{
+  "case_id": "nodetest-latefee-t-assert",
+  "subject_id": "authored-ts-nodetest-billing",
+  "diff": "cases/nodetest-latefee-t-assert.diff",
+  "anchor": {
+    "file": "src/latefee.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "nodetest_context_t_assert_equal",
+  "hard_case": "node 22 `t.assert.equal` is a real strict-ish assertion that ripr does not read",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "node 22.22.0; tsx 4.23.15; node:test + node:assert (built in); @stryker-mutator/core 10.0.0 (command runner)",
+    "mutants": [
+      {
+        "replacement": "return 2 / days;",
+        "mutated_line": "return 2 / days;",
+        "outcome": "tests_failed",
+        "failing_test": "late fee is two per day",
+        "equivalence_review": "not equivalent: gives 0.2 instead of 20 for 10 days"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`return days * 2` rewritten to `return 2 * days`. The test asserts through the node:test context `t.assert.equal(lateFee(10), 20)`, which kills the only mutant. ripr does not read `t.assert.*` (RIPR-SPEC-0243: no assertion), so the related test's oracle is unknown and the class is `weakly_exposed`, a false gap against a discriminated truth. Spec cells: RIPR-SPEC-0243 execution-context receiver rule (`t.assert.equal(...)` yields no assertion).",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

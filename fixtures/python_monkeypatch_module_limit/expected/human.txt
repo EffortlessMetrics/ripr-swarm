@@ -26,8 +26,8 @@ Start here:
     - 4 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/python_monkeypatch_module_limit/input --diff fixtures/python_monkeypatch_module_limit/diff.patch --mode fast probe:src_service.py:python_preview:94fc2856
-  ripr context --root fixtures/python_monkeypatch_module_limit/input --diff fixtures/python_monkeypatch_module_limit/diff.patch --mode fast --at probe:src_service.py:python_preview:94fc2856
+  ripr explain --root <cwd>/fixtures/python_monkeypatch_module_limit/input --diff <cwd>/fixtures/python_monkeypatch_module_limit/diff.patch --mode fast probe:src_service.py:python_preview:94fc2856
+  ripr context --root <cwd>/fixtures/python_monkeypatch_module_limit/input --diff <cwd>/fixtures/python_monkeypatch_module_limit/diff.patch --mode fast --at probe:src_service.py:python_preview:94fc2856
 
 More:
   Full evidence: rerun with --format human-full

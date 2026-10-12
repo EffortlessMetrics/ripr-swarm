@@ -1,0 +1,66 @@
+{
+  "case_id": "vitest-orders-tier-each-boundary-pinned",
+  "subject_id": "authored-ts-vitest-orders",
+  "diff": "cases/vitest-orders-tier-each-boundary-pinned.diff",
+  "anchor": {
+    "file": "src/tier.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "vitest_it_each_table_boundary_pinned",
+  "hard_case": "table rows carry the expected value; a static reader sees only the row parameter in toBe(expected)",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "node 22.22.0; vitest 5.0.3; typescript 5.9; @stryker-mutator/core 10.0.0 (vitest runner)",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "isGoldTier spend 499 -> false",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "isGoldTier spend 500 -> true",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (500 < spend) {",
+        "mutated_line": "if (500 < spend) {",
+        "outcome": "tests_failed",
+        "failing_test": "isGoldTier spend 500 -> true",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      },
+      {
+        "replacement": "if (500 > spend) {",
+        "mutated_line": "if (500 > spend) {",
+        "outcome": "tests_failed",
+        "failing_test": "isGoldTier spend 499 -> false",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`spend >= 500` is rewritten to the exactly equivalent `500 <= spend`; the it.each table pins 499 -> false and 500 -> true, so every mutant fails a row. ripr reports weakly_exposed with typescript_table_case_unresolved and typescript_dynamic_assertion_unresolved because toBe(expected) reads a row value, an under-credit. Tests sit at top level because a describe() wrapper made Stryker's vitest runner report detected mutants as not detected.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

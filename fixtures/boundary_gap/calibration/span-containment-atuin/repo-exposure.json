@@ -1,0 +1,257 @@
+{
+  "schema_version": "0.4",
+  "scope": "repo",
+  "seams": [
+    {
+      "seam_id": "000f706384b63df2",
+      "kind": "predicate_boundary",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 40,
+      "column": 5,
+      "end_line": 40,
+      "end_column": 47,
+      "grip_class": "strongly_gripped"
+    },
+    {
+      "seam_id": "f17a02397c93826a",
+      "kind": "return_value",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 40,
+      "column": 5,
+      "end_line": 40,
+      "end_column": 47,
+      "grip_class": "strongly_gripped"
+    },
+    {
+      "seam_id": "33f2fc9a4bfabc2e",
+      "kind": "predicate_boundary",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 72,
+      "column": 8,
+      "end_line": 73,
+      "end_column": 62,
+      "grip_class": "strongly_gripped"
+    },
+    {
+      "seam_id": "ad0475b208359476",
+      "kind": "call_presence",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 73,
+      "column": 12,
+      "end_line": 73,
+      "end_column": 62,
+      "grip_class": "strongly_gripped"
+    },
+    {
+      "seam_id": "9b3a32b1fdffede4",
+      "kind": "call_presence",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 78,
+      "column": 9,
+      "end_line": 78,
+      "end_column": 94,
+      "grip_class": "strongly_gripped"
+    },
+    {
+      "seam_id": "9b3732b1fdfdb80d",
+      "kind": "call_presence",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 78,
+      "column": 21,
+      "end_line": 78,
+      "end_column": 37,
+      "grip_class": "strongly_gripped"
+    },
+    {
+      "seam_id": "9b2cb7b1fdf49287",
+      "kind": "call_presence",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 78,
+      "column": 46,
+      "end_line": 78,
+      "end_column": 54,
+      "grip_class": "strongly_gripped"
+    },
+    {
+      "seam_id": "9b22a3b1fdec1c06",
+      "kind": "call_presence",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 78,
+      "column": 80,
+      "end_line": 78,
+      "end_column": 92,
+      "grip_class": "strongly_gripped"
+    },
+    {
+      "seam_id": "a2a1825a2a7a3178",
+      "kind": "return_value",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 85,
+      "column": 9,
+      "end_line": 85,
+      "end_column": 68,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "cb384a36e083789a",
+      "kind": "call_presence",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 85,
+      "column": 9,
+      "end_line": 85,
+      "end_column": 68,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "1026575689c7153b",
+      "kind": "call_presence",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 99,
+      "column": 18,
+      "end_line": 99,
+      "end_column": 29,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "f49c5d86e1d4a8fe",
+      "kind": "predicate_boundary",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 101,
+      "column": 25,
+      "end_line": 101,
+      "end_column": 38,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "2d733edde2d4a212",
+      "kind": "match_arm",
+      "file": "crates/atuin-ai/src/context.rs",
+      "line": 144,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "25a88f39b588c3f3",
+      "kind": "match_arm",
+      "file": "crates/atuin/src/command/client/store/rebuild.rs",
+      "line": 29,
+      "grip_class": "activation_unknown"
+    },
+    {
+      "seam_id": "418947cf842e6ee5",
+      "kind": "call_presence",
+      "file": "crates/atuin/src/command/client/store/rebuild.rs",
+      "line": 29,
+      "column": 15,
+      "end_line": 29,
+      "end_column": 32,
+      "grip_class": "activation_unknown"
+    },
+    {
+      "seam_id": "ba5d32401a508d4d",
+      "kind": "call_presence",
+      "file": "crates/atuin/src/command/client/store/rebuild.rs",
+      "line": 71,
+      "column": 30,
+      "end_line": 71,
+      "end_column": 84,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "3a2cc8888f55e1c1",
+      "kind": "match_arm",
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 38,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "69c30532868c4586",
+      "kind": "call_presence",
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 38,
+      "column": 46,
+      "end_line": 38,
+      "end_column": 73,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "ae7b3d349a0b29c6",
+      "kind": "predicate_boundary",
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 58,
+      "column": 12,
+      "end_line": 58,
+      "end_column": 74,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "6f6d7e4d5197a1de",
+      "kind": "call_presence",
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 58,
+      "column": 14,
+      "end_line": 58,
+      "end_column": 31,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "ae7b3b349a0b2660",
+      "kind": "predicate_boundary",
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 58,
+      "column": 14,
+      "end_line": 58,
+      "end_column": 41,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "ae7ec0349a0e3e36",
+      "kind": "predicate_boundary",
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 58,
+      "column": 45,
+      "end_line": 58,
+      "end_column": 73,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "a72597349643e206",
+      "kind": "predicate_boundary",
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 62,
+      "column": 12,
+      "end_line": 62,
+      "end_column": 52,
+      "grip_class": "strongly_gripped"
+    },
+    {
+      "seam_id": "662e474d4c303fcb",
+      "kind": "call_presence",
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 62,
+      "column": 13,
+      "end_line": 62,
+      "end_column": 28,
+      "grip_class": "ungripped"
+    },
+    {
+      "seam_id": "8a8382794c05b62b",
+      "kind": "predicate_boundary",
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 99,
+      "column": 12,
+      "end_line": 99,
+      "end_column": 54,
+      "grip_class": "strongly_gripped"
+    },
+    {
+      "seam_id": "eef0358604b2e8fa",
+      "kind": "call_presence",
+      "file": "crates/atuin/src/logs/otel/enabled.rs",
+      "line": 99,
+      "column": 27,
+      "end_line": 99,
+      "end_column": 54,
+      "grip_class": "weakly_gripped"
+    }
+  ]
+}

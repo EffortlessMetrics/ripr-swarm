@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 9ea04c7..fcdeaed 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -23,7 +23,7 @@ pub fn read_u16_le(bytes: &[u8]) -> u16 {
+ 
+ /// Reads a big-endian `u32` from the first four bytes.
+ pub fn read_u32(bytes: &[u8]) -> u32 {
+-    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
++    u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) | 0
+ }
+ 
+ /// How far a frame header has been read.

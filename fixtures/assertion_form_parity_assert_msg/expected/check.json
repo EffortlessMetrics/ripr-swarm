@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:c80557eb",
+      "canonical_gap_id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "discounted_total",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "amount==discount_threshold"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:c80557eb",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/assertion_form_parity_assert_msg/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "amount >= discount_threshold"
        },
@@ -116,6 +128,18 @@
     },
     {
       "id": "probe:src_lib.rs:static_unknown:71494b13",
+      "canonical_gap_id": "gap:rust:src/lib.rs:discounted_total:static_unknown:static_unknown:amount-10",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:discounted_total:static_unknown:static_unknown:amount-10",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "discounted_total",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "amount-10"
+
+      },
       "classification": "static_unknown",
       "severity": "note",
       "confidence": 0.50,
@@ -123,7 +147,7 @@
         "id": "probe:src_lib.rs:static_unknown:71494b13",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/assertion_form_parity_assert_msg/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "amount - 10"
        },
@@ -207,6 +231,18 @@
     },
     {
       "id": "probe:src_lib.rs:static_unknown:77d2f649",
+      "canonical_gap_id": "gap:rust:src/lib.rs:discounted_total:static_unknown:static_unknown:amount",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:discounted_total:static_unknown:static_unknown:amount",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "discounted_total",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "amount"
+
+      },
       "classification": "static_unknown",
       "severity": "note",
       "confidence": 0.50,
@@ -214,7 +250,7 @@
         "id": "probe:src_lib.rs:static_unknown:77d2f649",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/assertion_form_parity_assert_msg/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 5,
         "expression": "amount"
        },
