@@ -634,6 +634,7 @@ mod tests {
         assert!(CHECK_HELP.contains("walks up to a Cargo.toml containing [workspace]"));
         assert!(CHECK_HELP.contains("skips a closer ripr.toml"));
         assert!(CHECK_HELP.contains("which one governed"));
+        assert!(CHECK_HELP.contains("`--root .`"));
         assert!(CHECK_HELP.contains("needs test-efficiency"));
         assert!(CHECK_HELP.contains("docs/BADGE_ADOPTION.md"));
         assert!(CHECK_HELP.contains("--mode ready --json"));

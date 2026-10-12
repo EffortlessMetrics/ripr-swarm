@@ -244,22 +244,21 @@ pub(super) fn resolve_implicit_workspace_root(input: &mut CheckInput) -> Result<
 }
 
 /// Stderr line when implicit root resolution skipped a closer `ripr.toml`
-/// (#7468). Recovery is explicit `--root` at the invocation directory:
-/// that path skips the workspace walk, and config discovery from there
-/// loads the closer file.
+/// (#7468). Recovery is `--root .`: the warning only fires for implicit
+/// check, so cwd is still the invocation directory. That spelling is
+/// shell-neutral (Bash and PowerShell). Explicit `--root` skips the
+/// workspace walk, and config discovery from there loads the closer file.
 fn skipped_closer_config_warning(invocation_root: &Path, analysis_root: &Path) -> Option<String> {
     let (closer, loaded) =
         crate::config::closer_config_skipped_by_analysis_root(invocation_root, analysis_root)?;
     let shown_closer = output::path::human_path(&closer);
     let shown_analysis = output::path::human_path(analysis_root);
-    let quoted_invocation =
-        crate::agent::loop_commands::shell_arg(&output::path::human_path(invocation_root));
     let governed = match loaded {
         Some(path) => format!("applied `{}`", output::path::human_path(&path)),
         None => "used built-in defaults".to_string(),
     };
     Some(format!(
-        "ripr: warning: resolved analysis root `{shown_analysis}` {governed}; ignored closer `{shown_closer}`. Pass `--root {quoted_invocation}` to analyze this directory with the closer file."
+        "ripr: warning: resolved analysis root `{shown_analysis}` {governed}; ignored closer `{shown_closer}`. Pass `--root .` to analyze this directory with the closer file."
     ))
 }
 
@@ -2515,16 +2514,14 @@ mod closer_config_warning_tests {
             output::path::human_path(&workspace.join(crate::config::CONFIG_FILE_NAME));
         let shown_member_config =
             output::path::human_path(&member.join(crate::config::CONFIG_FILE_NAME));
-        let quoted_member =
-            crate::agent::loop_commands::shell_arg(&output::path::human_path(&member));
         std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
         assert!(warning.contains("applied"), "{warning}");
         assert!(warning.contains(&shown_workspace_config), "{warning}");
         assert!(warning.contains("ignored closer"), "{warning}");
         assert!(warning.contains(&shown_member_config), "{warning}");
         assert!(
-            warning.contains(&format!("--root {quoted_member}")),
-            "{warning}"
+            warning.contains("Pass `--root .`"),
+            "recovery must be shell-neutral `--root .`: {warning}"
         );
         assert!(
             !warning.contains("used built-in defaults"),
@@ -2552,14 +2549,15 @@ mod closer_config_warning_tests {
     }
 
     #[test]
-    fn skipped_closer_config_warning_quotes_a_spaced_invocation_root() -> Result<(), String> {
-        let (workspace, member) = closer_config_fixture("spaced closer ws")?;
+    fn skipped_closer_config_warning_keeps_root_dot_when_the_invocation_path_has_an_apostrophe()
+    -> Result<(), String> {
+        let (workspace, member) = closer_config_fixture("alice's closer ws")?;
         assert!(
             workspace
                 .file_name()
                 .and_then(|name| name.to_str())
-                .is_some_and(|name| name.contains(' ')),
-            "fixture name must contain a space: {}",
+                .is_some_and(|name| name.contains('\'')),
+            "fixture name must contain an apostrophe: {}",
             workspace.display()
         );
         std::fs::write(
@@ -2568,14 +2566,15 @@ mod closer_config_warning_tests {
         )
         .map_err(|err| format!("write member config: {err}"))?;
         let warning = skipped_closer_config_warning(&member, &workspace)
-            .ok_or_else(|| "a spaced member path must still warn".to_string())?;
-        let quoted_member =
-            crate::agent::loop_commands::shell_arg(&output::path::human_path(&member));
+            .ok_or_else(|| "an apostrophe in the member path must still warn".to_string())?;
         std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
-        assert!(quoted_member.starts_with('\''), "{quoted_member}");
         assert!(
-            warning.contains(&format!("--root {quoted_member}")),
-            "{warning}"
+            warning.contains("Pass `--root .`"),
+            "recovery must not Bash-quote the invocation path: {warning}"
+        );
+        assert!(
+            !warning.contains(r"'\''"),
+            "PowerShell cannot parse Bash apostrophe quoting: {warning}"
         );
         Ok(())
     }
@@ -2591,6 +2590,40 @@ mod closer_config_warning_tests {
         let warning = skipped_closer_config_warning(&workspace, &workspace);
         std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
         assert_eq!(warning, None);
+        Ok(())
+    }
+
+    /// A member symlink to a different file must name the member entry, not
+    /// the canonical target `discover_config_path` would load.
+    #[cfg(unix)]
+    #[test]
+    fn skipped_closer_config_warning_names_the_member_entry_when_it_is_a_symlink_to_a_different_file()
+    -> Result<(), String> {
+        let (workspace, member) = closer_config_fixture("check-closer-symlink-elsewhere")?;
+        let elsewhere = workspace.join("elsewhere.toml");
+        std::fs::write(
+            workspace.join(crate::config::CONFIG_FILE_NAME),
+            "[analysis]\nmode = \"deep\"\n",
+        )
+        .map_err(|err| format!("write workspace config: {err}"))?;
+        std::fs::write(&elsewhere, "[analysis]\nmode = \"instant\"\n")
+            .map_err(|err| format!("write elsewhere config: {err}"))?;
+        let member_entry = member.join(crate::config::CONFIG_FILE_NAME);
+        std::os::unix::fs::symlink(&elsewhere, &member_entry)
+            .map_err(|err| format!("symlink member config: {err}"))?;
+        let warning = skipped_closer_config_warning(&member, &workspace)
+            .ok_or_else(|| "a member symlink to a different file must still warn".to_string())?;
+        let shown_member = output::path::human_path(&member_entry);
+        let shown_elsewhere = output::path::human_path(&elsewhere);
+        std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
+        assert!(
+            warning.contains(&shown_member),
+            "warning must name the skipped member entry: {warning}"
+        );
+        assert!(
+            !warning.contains(&shown_elsewhere),
+            "warning must not substitute the symlink target: {warning}"
+        );
         Ok(())
     }
 }

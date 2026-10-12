@@ -233,9 +233,10 @@ pub(crate) fn config_discovered_for_root(root: &Path) -> bool {
 /// When implicit `check` rebinds the analysis root, config discovery walks
 /// only ancestors of *that* root. A `ripr.toml` that `doctor`/`pilot` would
 /// load from the invocation directory is then skipped (#7468). Return the
-/// closer path and the file the rebound root actually loads (`None` means
-/// built-in defaults). Same canonical file — including a symlink to the
-/// loaded path — is not a skip.
+/// closer *directory entry* and the file the rebound root actually loads
+/// (`None` means built-in defaults). Same canonical file — including a
+/// symlink to the loaded path — is not a skip. A member symlink to a
+/// *different* file still names the member entry, not the target.
 pub(crate) fn closer_config_skipped_by_analysis_root(
     invocation_root: &Path,
     analysis_root: &Path,
@@ -248,7 +249,18 @@ pub(crate) fn closer_config_skipped_by_analysis_root(
     {
         return None;
     }
-    Some((closer, loaded))
+    Some((closer_entry_for_warning(invocation_root, closer), loaded))
+}
+
+/// Direct `ripr.toml` at the invocation directory is the skipped entry even
+/// when [`discover_config_path`] canonicalized a resolvable symlink.
+fn closer_entry_for_warning(invocation_root: &Path, discovered: PathBuf) -> PathBuf {
+    let direct = invocation_root.join(CONFIG_FILE_NAME);
+    if config_entry_present(&direct) {
+        direct
+    } else {
+        discovered
+    }
 }
 
 fn same_config_file(left: &Path, right: &Path) -> bool {

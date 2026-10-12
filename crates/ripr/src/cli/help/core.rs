@@ -130,7 +130,8 @@ Options:
                            top level. The walk never leaves the git
                            repository. A moved root is disclosed on stderr.
                            When that move skips a closer ripr.toml, stderr
-                           names both files and which one governed.
+                           names both files and which one governed. Recovery
+                           is `--root .` from that directory.
   --base REV               Base revision for git diff. When omitted, ripr uses
                            the local origin/HEAD ref, then origin/main,
                            origin/master, main, and master in order; when none

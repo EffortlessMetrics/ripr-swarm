@@ -2040,3 +2040,45 @@ fn closer_config_is_not_skipped_when_the_member_file_is_a_symlink_to_the_workspa
     );
     Ok(())
 }
+
+/// A member symlink to a *different* file is a skip; name the member entry,
+/// not the canonical target `discover_config_path` would load.
+#[cfg(unix)]
+#[test]
+fn closer_config_names_the_member_entry_when_it_is_a_symlink_to_a_different_file()
+-> Result<(), String> {
+    let (workspace, member) = skipped_config_workspace("symlink-elsewhere")?;
+    let workspace_config = workspace.join(CONFIG_FILE_NAME);
+    let elsewhere = workspace.join("elsewhere.toml");
+    fs::write(&workspace_config, "[analysis]\nmode = \"deep\"\n")
+        .map_err(|err| format!("write workspace config: {err}"))?;
+    fs::write(&elsewhere, "[analysis]\nmode = \"instant\"\n")
+        .map_err(|err| format!("write elsewhere config: {err}"))?;
+    let member_entry = member.join(CONFIG_FILE_NAME);
+    std::os::unix::fs::symlink(&elsewhere, &member_entry)
+        .map_err(|err| format!("symlink member config: {err}"))?;
+    let skipped = closer_config_skipped_by_analysis_root(&member, &workspace);
+    let (closer, loaded) = skipped.ok_or_else(|| {
+        "a member symlink to a different file must still be reported as skipped".to_string()
+    })?;
+    let loaded = loaded.ok_or_else(|| "workspace ripr.toml must be the loaded file".to_string())?;
+    let closer_is_member_entry = closer == member_entry;
+    let closer_is_target = closer == elsewhere;
+    fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
+    assert!(
+        closer_is_member_entry,
+        "warning must name the skipped member entry, not the symlink target: {}",
+        closer.display()
+    );
+    assert!(
+        !closer_is_target,
+        "canonical target must not replace the member entry: {}",
+        closer.display()
+    );
+    assert!(
+        loaded.ends_with(CONFIG_FILE_NAME),
+        "loaded must remain the workspace file: {}",
+        loaded.display()
+    );
+    Ok(())
+}
