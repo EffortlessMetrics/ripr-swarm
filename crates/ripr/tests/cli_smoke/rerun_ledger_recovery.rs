@@ -795,6 +795,35 @@ fn assert_root_binding_lsp_selected(
     Ok(())
 }
 
+fn assert_root_binding_lsp_bound_verify_root(
+    selected: &[serde_json::Value],
+    expected_root: &Path,
+) -> TestResult {
+    let expected_root = expected_root.canonicalize()?;
+    let mut has_bound_verify = false;
+    for command in selected[0]["diagnostic"]["data"]["verification_commands"]
+        .as_array()
+        .ok_or("missing projected verification commands")?
+    {
+        let command = command.as_str().ok_or("verification command is not text")?;
+        if !command.starts_with("ripr ") {
+            continue;
+        }
+        let args = printed_ripr_args(command)?;
+        for pair in args.windows(2).filter(|pair| pair[0] == "--root") {
+            let root_arg = Path::new(&pair[1]);
+            if root_arg.is_absolute() && root_arg.canonicalize()? == expected_root {
+                has_bound_verify = true;
+            }
+        }
+    }
+    assert!(
+        has_bound_verify,
+        "the admitted diagnostic must bind its verification command to the selected workspace"
+    );
+    Ok(())
+}
+
 /// Shared admission contract for a Unix symlink root and an ordinary Windows
 /// root whose CLI producer uses the canonical extended-prefix spelling.
 fn root_binding_lsp_alias_contract(
@@ -812,30 +841,10 @@ fn root_binding_lsp_alias_contract(
     }
     let physical = root_binding_lsp_diagnostics(&physical_root)?;
     assert_root_binding_lsp_selected(&physical, ledger)?;
-    // At least one genuine producer display carries A's absolute native
-    // root. The alias case therefore passes through command-root validation
-    // as well as report-root comparison, rather than testing `--root .` only.
-    let mut has_bound_verify = false;
-    for command in ledger["records"][0]["verification_commands"]
-        .as_array()
-        .ok_or("missing producer verification commands")?
-    {
-        let command = command.as_str().ok_or("verification command is not text")?;
-        if !command.starts_with("ripr ") {
-            continue;
-        }
-        let args = printed_ripr_args(command)?;
-        for pair in args.windows(2).filter(|pair| pair[0] == "--root") {
-            let root_arg = Path::new(&pair[1]);
-            if root_arg.is_absolute() && root_arg.canonicalize()? == physical_root {
-                has_bound_verify = true;
-            }
-        }
-    }
-    assert!(
-        has_bound_verify,
-        "the real producer must exercise an absolute command root"
-    );
+    // The real default producer retains portable `--root .` displays. LSP
+    // command validation admits that route, then bind_portable_command binds
+    // the projected command to this selected workspace for copying/pasting.
+    assert_root_binding_lsp_bound_verify_root(&physical, &physical_root)?;
 
     // B's own real default producer is a nonempty positive control before
     // copying A's unchanged ledger bytes into B's default artifact location.
@@ -930,6 +939,7 @@ fn root_binding_lsp_alias_contract(
         foreign.len()
     );
     assert_root_binding_lsp_selected(&alias, ledger)?;
+    assert_root_binding_lsp_bound_verify_root(&alias, selected_root)?;
     assert!(
         foreign.is_empty(),
         "byte-identical B must refuse A's producer ledger: {foreign:?}"
