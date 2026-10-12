@@ -428,7 +428,7 @@ fn mixed_macro_limit_preserves_confirmed_discrimination_and_examined_misses() ->
     for state in [StageState::Weak, StageState::No] {
         let mut confirmed = before.clone();
         confirmed.ripr.reveal.discriminate.state = StageState::Yes;
-        confirmed.ripr.infect.state = state;
+        confirmed.ripr.infect.state = state.clone();
         assert!(!super::needs_mixed_macro_reach_limit(&confirmed));
         confirmed.ripr.infect.state = StageState::Yes;
         confirmed.ripr.propagate.state = state;

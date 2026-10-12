@@ -8820,6 +8820,7 @@ tests = [
 fixtures = [
   "fixtures/benches_harness_evidence",
   "fixtures/rust_macro_reach_limitation",
+  "fixtures/rust_mixed_direct_macro_reach",
   "fixtures/evidence-promotion-honesty-corpus",
 ]
 code = [

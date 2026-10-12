@@ -311,6 +311,7 @@ an assertion inside that helper is refused like any untrusted macro.
 - Rust adapter wiring in `crates/ripr/src/analysis/language/rust/mod.rs` for diff
   and repo modes.
 - Pure fixture: `fixtures/rust_macro_reach_limitation/`.
+- Mixed direct/macro fixture: `fixtures/rust_mixed_direct_macro_reach/`.
 - Honesty corpus member in
   `fixtures/evidence-promotion-honesty-corpus/corpus.json` asserting
   `must_emit_limitation`, `expected_limit_kind: rust_macro_reach_unresolved`,
@@ -361,6 +362,7 @@ an assertion inside that helper is refused like any untrusted macro.
 | Human witness and limitation-detail projection | `crates/ripr/src/output/human/sections.rs` |
 | Output contract docs | `docs/OUTPUT_SCHEMA.md` |
 | Pure fixture | `fixtures/rust_macro_reach_limitation/` |
+| Mixed direct/macro fixture | `fixtures/rust_mixed_direct_macro_reach/` |
 | Honesty corpus case | `fixtures/evidence-promotion-honesty-corpus/corpus.json` |
 
 ## CI Proof
@@ -379,7 +381,11 @@ an assertion inside that helper is refused like any untrusted macro.
 ## Metrics
 
 - Golden fixture pass: `fixtures/rust_macro_reach_limitation`.
+- Mixed direct/macro golden fixture pass: `fixtures/rust_mixed_direct_macro_reach`.
 - Corpus invariant: `rust_macro_reach_named_limitation` emits
   `rust_macro_reach_unresolved`, discloses a witness and limitation detail, and remains
   non-promoted at `no_static_path`.
 - Existing transitive-reach fixture behavior remains unchanged.
+- Corpus invariant: `rust_mixed_direct_macro_witness_not_a_gap` retains
+  `weakly_exposed` and reach `yes`, names the macro limitation and witness,
+  and removes unsupported repair, verify and receipt advice.
