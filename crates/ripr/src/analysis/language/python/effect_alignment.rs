@@ -142,10 +142,10 @@ impl EffectReads {
     /// with no known line, or one above the first owner call, reads the
     /// channel before the changed effect could write it.
     pub(super) fn observed_by(&self, assertion: &str, line: Option<usize>) -> bool {
-        if !self
+        if self
             .first_call_line
             .zip(line)
-            .is_some_and(|(first_call, line)| line >= first_call)
+            .is_none_or(|(first_call, line)| line < first_call)
         {
             return false;
         }
