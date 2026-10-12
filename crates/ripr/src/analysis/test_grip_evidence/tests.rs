@@ -17872,6 +17872,87 @@ fn trait_method_reached_only_by_delegation_is_opaque_not_ungripped() -> Result<(
     Ok(())
 }
 
+#[test]
+fn helper_shared_by_two_dispatch_roots_names_the_root_that_sorts_first() -> Result<(), String> {
+    // `Beta::fmt` sorts after `Alpha::fmt`, so `Alpha::fmt` claims `label`.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Alpha(pub u32);\n\
+             impl std::fmt::Display for Alpha {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     f.write_str(label(self.0))\n\
+                 }\n\
+             }\n\
+             pub struct Beta(pub u32);\n\
+             impl std::fmt::Display for Beta {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     f.write_str(label(self.0))\n\
+                 }\n\
+             }\n\
+             fn label(amount: u32) -> &'static str { if amount > 100 { \"large\" } else { \"small\" } }\n",
+        ),
+        (
+            "tests/render.rs",
+            "use ripr_fixture::{Alpha, Beta};\n\
+             #[test] fn renders() { assert_eq!(Beta(1).to_string(), Alpha(150).to_string()); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach
+            .summary
+            .contains("`label` may run from `fmt` (src/lib.rs:3), a trait method of `Alpha`"),
+        "the first root in path order is named: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn dispatch_callees_record_mentions_in_path_order_not_call_order() -> Result<(), String> {
+    // `Outer::fmt` calls `late` before `early`; both name `Inner`. The
+    // mention credited for `Inner` is the callee that sorts first by path.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "struct Inner(u32);\n\
+             impl std::fmt::Display for Inner {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             fn early() -> String { Inner(1).to_string() }\n\
+             fn late() -> String { Inner(2).to_string() }\n\
+             #[derive(Default)]\n\
+             pub struct Outer;\n\
+             impl std::fmt::Display for Outer {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     f.write_str(&late())?;\n\
+                     f.write_str(&early())\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/outer.rs",
+            "use ripr_fixture::Outer;\n\
+             #[test] fn renders() { assert_eq!(Outer::default().to_string(), \"smallsmall\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert!(
+        reach.summary.contains(
+            "`early` (src/lib.rs:8), which may itself run through trait dispatch, uses `Inner`"
+        ),
+        "the path-first callee is the witness: {}",
+        reach.summary
+    );
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
 // --- #6026: a boundary assert whose expected value contradicts static
 // evaluation must not close the gap ---
 
