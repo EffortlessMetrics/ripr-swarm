@@ -64,6 +64,7 @@ map is:
 | `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` | `schema_version` | `0.2` |
+| `ripr cache export` success stdout | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr help --json` | `schema_version` | `2` |
@@ -444,6 +445,17 @@ directory for inspection (#5989), matching the directory `ripr check` reads
 and writes through the alias; `cache clear` keeps its fail-closed symlink
 refusal for the leaf and for symlinked ancestors, and names the real path
 or offending component it protects.
+
+`ripr cache export [--root PATH] --out NEW_DIRECTORY` prints a success JSON object
+with `schema_version: "0.1"`, `cache_dir` (absolute export directory),
+`classified_entries` (available current full/compact families), `file_fact_entries`,
+`missing_file_facts`, `copied_files` (including manifests and referenced shards)
+and `logical_file_bytes` (sum of copied encoded file lengths). These lengths do
+not describe allocated bytes, directory overhead or peak disk use. Missing
+optional file facts are counted; corrupt present entries and incomplete required
+references refuse success. There is no success JSON for incomplete export. Require
+exit zero before consuming the directory; failure names retained owned partial
+output. The live cache is unchanged. See [RIPR-SPEC-0252](specs/RIPR-SPEC-0252-current-cache-export.md).
 
 ## Matched intervention-study preregistration
 

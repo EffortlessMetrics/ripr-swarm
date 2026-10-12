@@ -820,7 +820,9 @@ const CACHE_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:CacheEnvelope:v1";
 const SHARDED_ENVELOPE_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheEnvelope:v1";
 const SHARDED_MANIFEST_DIGEST_DOMAIN: &str = "ripr-cache:ShardedCacheManifest:v1";
 
+mod export;
 mod store;
+pub(crate) use export::export_current;
 
 /// Environment variable that relocates the cache base directory. When set
 /// to a non-empty path, all cache reads and writes use that path as the
@@ -4995,7 +4997,7 @@ mod tests {
         Ok(())
     }
 
-    fn sample_classified() -> ClassifiedSeam {
+    pub(super) fn sample_classified() -> ClassifiedSeam {
         let seam = RepoSeam::new(
             PathBuf::from("src/foo.rs"),
             "src/foo.rs::foo",
@@ -5623,7 +5625,7 @@ mod tests {
         Ok(())
     }
 
-    fn empty_state() -> WorkspaceState<'static> {
+    pub(super) fn empty_state() -> WorkspaceState<'static> {
         WorkspaceState {
             workspace_root: Path::new("/repo"),
             files: &[],
@@ -5634,7 +5636,7 @@ mod tests {
         }
     }
 
-    fn isolated_dir(label: &str) -> PathBuf {
+    pub(super) fn isolated_dir(label: &str) -> PathBuf {
         std::env::temp_dir().join(format!("ripr-cache-{label}-{}", uuid_like()))
     }
 

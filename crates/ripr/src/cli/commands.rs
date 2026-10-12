@@ -61,7 +61,7 @@ pub(super) use receipt_command::{RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP};
 // Cache help bodies live beside the cache parser but are also the flag source
 // for `ripr cache status|clear` suggestions, so `cli::help` needs a path to
 // them. Removing this re-export must fail to compile.
-pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_STATUS_HELP};
+pub(super) use cache_command::{CACHE_CLEAR_HELP, CACHE_EXPORT_HELP, CACHE_STATUS_HELP};
 pub(super) use task_first::{
     CONTINUE_HELP, REPAIR_HELP, STATUS_HELP, continue_repair, repair, status,
 };

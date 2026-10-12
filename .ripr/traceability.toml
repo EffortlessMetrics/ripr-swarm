@@ -14409,3 +14409,24 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0252"
+name = "Current-input cache snapshot export"
+spec = "docs/specs/RIPR-SPEC-0252-current-cache-export.md"
+tests = [
+  "crates/ripr/src/cli/commands/cache.rs::tests::export_current_snapshot_through_command_preserves_source_and_bounds_history",
+  "crates/ripr/src/cli/commands/cache.rs::tests::export_parser_requires_one_destination_and_keeps_its_flags_separate",
+  "crates/ripr/src/cli/commands/cache.rs::tests::export_preserves_relative_analysis_root_identity",
+  "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_keeps_current_manifest_references_and_file_facts_without_history",
+  "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_refuses_missing_corrupt_wrong_key_and_escaping_shards",
+  "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_counts_missing_optional_facts_and_refuses_corrupt_present_facts",
+  "crates/ripr/src/analysis/seam_cache/export.rs::tests::normalized_source_layout_preserves_relative_and_parent_component_spellings",
+]
+code = [
+  "crates/ripr/src/analysis/seam_cache/export.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/cli/commands/cache.rs",
+]
+output_contracts = ["docs/OUTPUT_SCHEMA.md"]
+metrics = ["unit_test_pass_rate"]
