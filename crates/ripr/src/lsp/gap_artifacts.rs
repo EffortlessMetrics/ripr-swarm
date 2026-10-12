@@ -13,11 +13,20 @@ const DEFAULT_ACTIONABLE_GAPS_OUT: &str = "target/ripr/reports/actionable-gaps.j
 pub(super) struct GapArtifactValidationContext<'a> {
     pub(super) root: &'a Path,
     pub(super) enabled_languages: &'a [LanguageId],
+    pub(super) repo_config: &'a crate::config::RiprConfig,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum GapArtifactCorpusCurrentness {
+    CurrentRustWorkspace,
+    PreviewOrMixedUnavailable,
+    EmptyActionableQueueUnavailable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ValidatedGapArtifact {
     pub(super) kind: GapArtifactKind,
+    pub(super) corpus_currentness: Option<GapArtifactCorpusCurrentness>,
     pub(super) root: Option<String>,
     pub(super) identities: Vec<GapArtifactIdentity>,
     pub(super) language: Option<LanguageId>,
@@ -65,6 +74,9 @@ pub(super) enum GapArtifactRejection {
     /// A file the artifact's records name no longer has the content the
     /// artifact was computed from (#4544). Carries the repo-relative path.
     StaleSubject(String),
+    /// The full analyzed Rust source/test corpus changed, including files
+    /// outside the artifact's named repair route.
+    StaleCorpus,
     /// The artifact carries no usable `source_subject` stamp, so it cannot be
     /// matched to the current workspace (#4544). Carries the reason code.
     UnverifiableSubject(&'static str),
@@ -76,6 +88,35 @@ pub(super) enum GapArtifactRejection {
 }
 
 impl ValidatedGapArtifact {
+    pub(super) fn corpus_currentness_json(&self) -> Option<Value> {
+        let kind = match self.kind {
+            GapArtifactKind::GapDecisionLedger => "gap_decision_ledger",
+            GapArtifactKind::ActionableGaps => "actionable_gaps",
+            _ => return None,
+        };
+        let (scope, currentness, limitation) = match self.corpus_currentness? {
+            GapArtifactCorpusCurrentness::CurrentRustWorkspace => {
+                ("rust_workspace", "current", None)
+            }
+            GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable => (
+                "preview_or_mixed_language",
+                "unavailable",
+                Some("preview_or_mixed_corpus_provenance_unavailable"),
+            ),
+            GapArtifactCorpusCurrentness::EmptyActionableQueueUnavailable => (
+                "empty_actionable_queue",
+                "unavailable",
+                Some("empty_actionable_queue_corpus_scope_unavailable"),
+            ),
+        };
+        Some(serde_json::json!({
+            "kind": kind,
+            "scope": scope,
+            "corpus_currentness": currentness,
+            "limitation": limitation,
+        }))
+    }
+
     pub(super) fn is_safe_projection_input(&self) -> bool {
         let kind_is_supported = matches!(
             self.kind,
@@ -172,6 +213,7 @@ impl GapArtifactRejection {
             Self::OutOfWorkspacePath(_) => "out_of_workspace_path",
             Self::StaleArtifact => "stale_artifact",
             Self::StaleSubject(_) => "stale_subject",
+            Self::StaleCorpus => "stale_corpus",
             Self::UnverifiableSubject(_) => "unverifiable_subject",
             Self::UnavailableLanguage(_) => "unavailable_language",
             Self::UnsupportedSchema(_) => "unsupported_schema",
@@ -185,10 +227,12 @@ impl GapArtifactRejection {
 pub(super) fn validate_workspace_gap_artifact_report(
     root: &Path,
     enabled_languages: &[LanguageId],
+    repo_config: &crate::config::RiprConfig,
 ) -> GapArtifactValidationReport {
     let context = GapArtifactValidationContext {
         root,
         enabled_languages,
+        repo_config,
     };
     let mut report = GapArtifactValidationReport::default();
     for relative in [
@@ -274,7 +318,8 @@ pub(super) fn validate_gap_artifact(
     {
         return Err(GapArtifactRejection::MissingIdentity);
     }
-    validate_source_subject(artifact, kind, context.root)?;
+    validation.corpus_currentness =
+        validate_source_subject(artifact, kind, context.root, context.repo_config)?;
     Ok(validation)
 }
 
@@ -291,7 +336,8 @@ pub(super) fn validate_source_subject(
     artifact: &Value,
     kind: GapArtifactKind,
     root: &Path,
-) -> Result<(), GapArtifactRejection> {
+    repo_config: &crate::config::RiprConfig,
+) -> Result<Option<GapArtifactCorpusCurrentness>, GapArtifactRejection> {
     let (items, subject_paths): (&[Value], SubjectPathsFn) = match kind {
         GapArtifactKind::GapDecisionLedger => (
             artifact
@@ -310,7 +356,7 @@ pub(super) fn validate_source_subject(
         ),
         GapArtifactKind::EvidenceRecord
         | GapArtifactKind::FirstUsefulAction
-        | GapArtifactKind::AgentReceipt => return Ok(()),
+        | GapArtifactKind::AgentReceipt => return Ok(None),
     };
     let required = items
         .iter()
@@ -320,7 +366,73 @@ pub(super) fn validate_source_subject(
         root,
         artifact.get("source_subject"),
         &required,
-    ))
+    ))?;
+
+    if kind == GapArtifactKind::ActionableGaps && items.is_empty() {
+        // The kind validator already requires the existing complete zero-count
+        // queue contract. Preserve that no-action admission without claiming
+        // that an empty language population proves a current Rust corpus.
+        return Ok(Some(
+            GapArtifactCorpusCurrentness::EmptyActionableQueueUnavailable,
+        ));
+    }
+
+    // Inspect the complete raw population, including no-action records and
+    // every packet finding. A missing language cannot select a weaker scope
+    // merely because a sibling record is a known preview language.
+    let mut known_language = false;
+    let mut preview_or_mixed = false;
+    let mut missing_language = false;
+    let mut observe = |value: &Value| -> Result<(), GapArtifactRejection> {
+        match language_from_value(value)? {
+            Some(language) => {
+                known_language = true;
+                preview_or_mixed |= language != LanguageId::Rust;
+            }
+            None => missing_language = true,
+        }
+        Ok(())
+    };
+    for item in items {
+        if kind == GapArtifactKind::ActionableGaps {
+            let findings = item.get("raw_findings").and_then(Value::as_array);
+            if item.get("language").is_some() || findings.is_none_or(Vec::is_empty) {
+                observe(item)?;
+            }
+            if let Some(findings) = findings {
+                for finding in findings {
+                    observe(finding)?;
+                }
+            }
+        } else {
+            observe(item)?;
+        }
+    }
+    if missing_language || !known_language {
+        return Err(GapArtifactRejection::UnverifiableSubject(
+            "source_subject_corpus_scope_missing",
+        ));
+    }
+    if preview_or_mixed {
+        // Preserve the existing named-file admission for these languages.
+        // A Rust-only hash cannot establish their whole corpus currentness.
+        return Ok(Some(
+            GapArtifactCorpusCurrentness::PreviewOrMixedUnavailable,
+        ));
+    }
+    match gap_source_subject::check_rust_corpus_subject(
+        root,
+        artifact.get("source_subject"),
+        repo_config,
+    ) {
+        gap_source_subject::CorpusSubjectCheck::Current => {
+            Ok(Some(GapArtifactCorpusCurrentness::CurrentRustWorkspace))
+        }
+        gap_source_subject::CorpusSubjectCheck::Stale => Err(GapArtifactRejection::StaleCorpus),
+        gap_source_subject::CorpusSubjectCheck::Unverifiable(reason) => {
+            Err(GapArtifactRejection::UnverifiableSubject(reason))
+        }
+    }
 }
 
 /// Map a stamp comparison onto the shared typed rejection vocabulary so the
@@ -354,6 +466,7 @@ fn validate_first_useful_action(
     let (verify_command_specs, receipt_command_specs) = command_specs_from_value(commands)?;
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::FirstUsefulAction,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities: vec![identity],
         language: language_from_value(artifact)?,
@@ -454,6 +567,7 @@ fn validate_gap_decision_ledger(
     }
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::GapDecisionLedger,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities,
         language,
@@ -604,6 +718,7 @@ fn validate_actionable_gaps(
 
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::ActionableGaps,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities,
         language,
@@ -1031,6 +1146,7 @@ fn validate_evidence_record(
     let (verify_command_specs, receipt_command_specs) = command_specs_from_value(canonical_item)?;
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::EvidenceRecord,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities: vec![identity],
         language: language_from_value(artifact)?,
@@ -1062,6 +1178,7 @@ fn validate_agent_receipt(
     ]);
     Ok(ValidatedGapArtifact {
         kind: GapArtifactKind::AgentReceipt,
+        corpus_currentness: None,
         root: report_root.map(ToOwned::to_owned),
         identities: vec![identity],
         language: language_from_value(artifact)?,
@@ -2139,13 +2256,28 @@ mod tests {
     }
 
     fn root() -> PathBuf {
-        PathBuf::from("/workspace")
+        std::env::temp_dir().join(format!(
+            "ripr-lsp-gap-validation-unit-{}",
+            std::process::id()
+        ))
     }
+
+    static TEST_REPO_CONFIG: std::sync::LazyLock<crate::config::RiprConfig> =
+        std::sync::LazyLock::new(crate::config::RiprConfig::default);
+    static TEST_ROOT: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
+        let path = root();
+        assert!(
+            std::fs::create_dir_all(&path).is_ok(),
+            "create owned unit workspace"
+        );
+        path
+    });
 
     fn context(enabled_languages: &[LanguageId]) -> GapArtifactValidationContext<'_> {
         GapArtifactValidationContext {
-            root: Path::new("/workspace"),
+            root: &TEST_ROOT,
             enabled_languages,
+            repo_config: &TEST_REPO_CONFIG,
         }
     }
 
@@ -2308,10 +2440,7 @@ mod tests {
     /// absent under the fixture roots, so the stamp records `null` digests
     /// and stays current until a test creates, edits, or deletes one.
     fn stamped(artifact: Value) -> Value {
-        crate::output::gap_source_subject::with_source_subject_for_test(
-            Path::new("/workspace"),
-            artifact,
-        )
+        crate::output::gap_source_subject::with_source_subject_for_test(&TEST_ROOT, artifact)
     }
 
     fn temp_root(label: &str) -> Result<PathBuf, String> {
@@ -2523,6 +2652,7 @@ mod tests {
         let context = GapArtifactValidationContext {
             root: &workspace,
             enabled_languages: &[LanguageId::Rust],
+            repo_config: &TEST_REPO_CONFIG,
         };
         let validated =
             validate_gap_artifact(&artifact, &context).map_err(|err| format!("{err:?}"))?;
@@ -3535,10 +3665,13 @@ mod tests {
 
     #[test]
     fn command_root_accepts_quoted_workspace_path() {
-        let workspace = root();
-        let command = "ripr agent verify --root \"/workspace\" --json";
+        let workspace = root().join("quoted workspace");
+        let command = format!(
+            "ripr agent verify --root \"{}\" --json",
+            workspace.display()
+        );
 
-        assert!(command_payload_is_safe(&workspace, command));
+        assert!(command_payload_is_safe(&workspace, &command));
     }
 
     #[test]
@@ -3778,6 +3911,7 @@ mod tests {
             let context = GapArtifactValidationContext {
                 root: &root,
                 enabled_languages: &[LanguageId::Rust],
+                repo_config: &TEST_REPO_CONFIG,
             };
             let stamp = |artifact: Value| {
                 crate::output::gap_source_subject::with_source_subject_for_test(&root, artifact)
@@ -3877,6 +4011,7 @@ mod tests {
             let context = GapArtifactValidationContext {
                 root: &root,
                 enabled_languages: &[LanguageId::Rust],
+                repo_config: &TEST_REPO_CONFIG,
             };
             for (shape, observer) in [
                 ("string", json!("tests/observer.rs::t")),
@@ -3947,7 +4082,8 @@ mod tests {
         fs::write(&actionable_path, actionable_gaps_report().to_string())
             .map_err(|err| format!("write {}: {err}", actionable_path.display()))?;
 
-        let report = validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust]);
+        let report =
+            validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust], &TEST_REPO_CONFIG);
         assert_eq!(report.artifacts.len(), 2);
         assert!(report.rejections.is_empty());
         assert!(
@@ -3979,7 +4115,8 @@ mod tests {
         fs::write(&report_path, "{")
             .map_err(|err| format!("write {}: {err}", report_path.display()))?;
 
-        let report = validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust]);
+        let report =
+            validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust], &TEST_REPO_CONFIG);
         assert!(report.artifacts.is_empty());
         assert_eq!(
             report.rejections,
