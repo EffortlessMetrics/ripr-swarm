@@ -180,6 +180,12 @@ mod tests {
 
     use super::{run_transaction, selector_report};
 
+    #[test]
+    fn child_diagnostics_do_not_change_the_ran_skipped_contract() -> Result<(), String> {
+        let report = format!("{EMPTY_FAST_REPORT}{}", crate::check_fast_diagnostics(&[]));
+        super::validate_fast_report(&[], &report)
+    }
+
     const EMPTY_FAST_REPORT: &str = concat!(
         "# check-fast report\n\n",
         "Status: pass\n\n",
