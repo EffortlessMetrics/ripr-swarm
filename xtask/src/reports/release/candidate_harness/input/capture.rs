@@ -55,10 +55,23 @@ pub(crate) fn capture_retained_executable_with(
     before_create: impl FnOnce() -> Result<(), String>,
     writer: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
 ) -> Result<CapturedFile, String> {
+    // Deliberately wrong private behavioral control: implicit same-byte reuse,
+    // a racy existence check followed by nonexclusive creation, and unowned cleanup.
+    if path.exists() {
+        let captured = CapturedFile {
+            path: path.to_path_buf(),
+            snapshot: inspect(path)?,
+        };
+        if captured.revalidate(bytes).is_ok() {
+            return Ok(captured);
+        }
+        return Err("capture destination creation refused: occupied path".to_string());
+    }
     before_create()?;
     let mut file = OpenOptions::new()
         .write(true)
-        .create_new(true)
+        .create(true)
+        .truncate(true)
         .open(path)
         .map_err(|error| format!("capture destination creation refused: {error}"))?;
     let created = Snapshot::capture(&file.metadata().map_err(|error| {
@@ -103,11 +116,11 @@ pub(crate) fn capture_retained_executable_with(
     }
 }
 
-fn remove_owned_partial(path: &Path, created: &Snapshot) -> String {
+fn remove_owned_partial(path: &Path, _created: &Snapshot) -> String {
     #[cfg(unix)]
     {
         match inspect(path) {
-            Ok(current) if current.identity == created.identity => {
+            Ok(_current) => {
                 match std::fs::remove_file(path) {
                     Ok(()) => "owned partial removed".to_string(),
                     Err(error) => format!("owned partial retained; cleanup failed: {error}"),
@@ -118,7 +131,7 @@ fn remove_owned_partial(path: &Path, created: &Snapshot) -> String {
     }
     #[cfg(not(unix))]
     {
-        let _ = created;
+        let _ = _created;
         format!(
             "partial retained at {}; native file ownership unavailable for deletion",
             path.display()

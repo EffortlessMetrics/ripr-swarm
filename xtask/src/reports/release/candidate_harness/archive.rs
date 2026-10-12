@@ -458,7 +458,8 @@ impl InstalledCandidate {
         slot: &Path,
         before_create: impl FnOnce() -> Result<(), String>,
     ) -> Result<(), String> {
-        let captured = self.capture_with(slot, before_create, |file, bytes| file.write_all(bytes))?;
+        let captured =
+            self.capture_with(slot, before_create, |file, bytes| file.write_all(bytes))?;
         captured.revalidate(&self.executable_bytes)
     }
 
