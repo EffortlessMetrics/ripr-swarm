@@ -674,18 +674,18 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/rust-verdict-corpus/expected/report.json false_verdict_rate: 72/203",
+          "detail": "fixtures/rust-verdict-corpus false_verdict_rate: 50/365",
           "repo": null,
           "status": "below_target",
-          "value": 0.3547
+          "value": 0.137
         }
       ],
-      "source": "file:fixtures/rust-verdict-corpus/expected/report.json#false_verdict_rate",
+      "source": "verdict-corpus:fixtures/rust-verdict-corpus#false_verdict_rate",
       "status": "below_target",
       "target": 0.05,
       "title": "Wrong verdicts on the hand-checked verdict corpus",
       "unit": "ratio",
-      "value": 0.3547
+      "value": 0.137
     },
     {
       "baseline": {
