@@ -234,7 +234,7 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 | `toMatchSnapshot`, `toMatchInlineSnapshot` | `snapshot` / medium |
 | `toHaveBeenCalled`, `toHaveBeenCalledWith`, `toHaveBeenCalledTimes`, `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` | `mock_expectation` / medium |
 | `toBeTruthy`, `toBeFalsy`, `toBeDefined`, `toBeUndefined`, `toBeNull`, `toBeNaN` | `smoke_only` / smoke |
-| `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split) | `relational_check` / weak |
+| `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
 | any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` |
 
 `.resolves` and `.rejects` use the same table. A snapshot never reaches

@@ -13985,6 +13985,33 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0250"
+name = "TypeScript match-object field pin"
+spec = "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::returned_field_key_reads_only_a_top_level_field_of_the_one_returned_literal",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_pin_exposes_a_listed_returned_field",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_pin_stays_weak_without_the_listed_field_on_the_whole_result",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_facts_read_field_construction_changes_only",
+  "crates/ripr/src/analysis/language/typescript/tests/match_object_tests.rs::match_object_refused_readings_keep_their_parsed_subject",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/instance_class_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/match_object_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/oracle.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md",
+]
+metrics = [
+  "typescript_match_object_pin_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0249"
 name = "TypeScript instance class pin"
 spec = "docs/specs/RIPR-SPEC-0249-typescript-instance-class-pin.md"
