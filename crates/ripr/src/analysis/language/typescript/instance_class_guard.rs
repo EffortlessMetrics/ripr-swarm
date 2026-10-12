@@ -277,12 +277,11 @@ pub(crate) fn ts_instance_class_facts(
             };
             if owner_ok
                 && ts_observes_whole_owner_result(candidate.test, assertion, owner, &receivers)
+                && let Some(observed) = assertion.observed_expression.clone()
             {
-                if let Some(observed) = assertion.observed_expression.clone() {
-                    facts
-                        .credited
-                        .push((candidate.test.file.clone(), assertion.line, observed));
-                }
+                facts
+                    .credited
+                    .push((candidate.test.file.clone(), assertion.line, observed));
             }
         }
     }
