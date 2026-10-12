@@ -8341,6 +8341,28 @@ use super::{module}::{{diagnostic_refresh_plan}};
     }
 
     #[test]
+    fn changed_test_inventory_exact_occurrence_multiline_constructor() -> Result<(), String> {
+        let root = make_tempdir("targeted-exact-multiline")?;
+        write_file(&root.join("Cargo.toml"), "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n")?;
+        write_file(&root.join("src/lib.rs"), r#"
+pub struct Alpha;
+impl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
+#[test] fn selected() {
+    assert_eq!(crate::Alpha::
+        new(1), 1);
+}
+"#)?;
+        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
+            &root, &RiprConfig::default(), Path::new("src/lib.rs"), Some("selected"),
+        )?;
+        assert_eq!(inventory.selected_test_count, 1);
+        assert_eq!(inventory.direct_call_names, ["new"]);
+        assert!(!inventory.classified.is_empty());
+        assert!(inventory.classified.iter().all(|entry| entry.seam.owner() == "src/lib.rs::impl Alpha::new"));
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
     fn changed_test_inventory_keeps_distinct_qualified_constructor_owners() -> Result<(), String> {
         let root = make_tempdir("targeted-qualified-constructors")?;
         write_file(
