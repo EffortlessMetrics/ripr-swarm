@@ -51,6 +51,40 @@ cockpit principle of RIPR-SPEC-0069.
 
 ## Behavior
 
+### Passive Rust corpus currentness
+
+A gap ledger or actionable-gap report with a complete Rust language population
+must match the full Rust inventory's captured `files_content_hash` before the
+LSP admits its records, diagnostics, actions or repair packet. The existing
+source-subject and canonical root authorities remain in force. The producer
+must preserve the key from the actual classified analysis, including cache
+hits; a derived writer must not replace it with current workspace bytes.
+
+An added, edited or deleted production/test Rust file outside the old named
+repair route refuses the artifact as `stale_corpus`, including at unchanged
+HEAD. Run status is `stale`; cache and ledger component outcomes disclose the
+reason and fresh-analysis regeneration route. Missing/legacy, malformed,
+unsupported or unreadable corpus provenance refuses as
+`unverifiable_subject` with a named `source_subject_corpus_*` reason and run
+status `cache_limited`. Missing language provenance refuses as
+`source_subject_corpus_scope_missing`; a preview sibling cannot bypass it.
+Command-time packet reads share this admission boundary.
+
+Known preview/mixed artifacts preserve existing named-file admission and
+workspace status explicitly discloses
+`preview_or_mixed_corpus_provenance_unavailable`. This Rust-only corpus guard
+does not establish their currentness or promote their support tier. It adds
+no blanket HEAD gate, configuration-semantic or before/after-lineage claim.
+Empty commits, same-input branches and dirty non-corpus files do not invalidate
+the Rust content authority. Explicit absolute-root historical rerun remains
+a current-scope recomputation path independent of passive admission.
+
+Discriminating controls use real capture → ledger → fresh framed LSP sessions:
+same-HEAD unrelated-test changes with unchanged named digests refuse; fresh
+analysis regenerates a meaningful nonempty admitted result. Cold/warm analysis,
+delayed derivation, legacy provenance, scope distinction and active historical
+recomputation are independently controlled in `gap_corpus_currentness.rs`.
+
 ### Severity rules
 
 **Finding diagnostics** (`diagnostic_for_finding_with_config`):

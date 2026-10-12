@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 pub mod agent_skills;
 pub mod ci_scratch;
+pub mod coverage_diagnostics;
 pub mod executable_files;
 mod identity;
 pub mod python_wheel;

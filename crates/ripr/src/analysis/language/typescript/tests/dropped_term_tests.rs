@@ -164,6 +164,12 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
         "{:?}",
         finding.missing
     );
+    // The discriminate summary agrees with the withdrawn credit.
+    let summary = &finding.ripr.reveal.discriminate.summary;
+    assert!(
+        summary.contains("withdrew the discrimination credit") && summary.contains("`fee`"),
+        "{summary}"
+    );
 
     // A call term does not fold: `shipping(6000)` is 0, and ripr cannot
     // show otherwise.
@@ -190,6 +196,52 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
         "  return subtotal + shipping(subtotal) + FLAT;",
     )?;
     assert_eq!(finding.class, ExposureClass::Exposed);
+
+    // The whole result of a renamed import, an outer call
+    // around an inner one, and a fractional `fee` each witness the term.
+    for (label, import, call) in [
+        ("dropped-term-alias", "price as subject", "subject(6000, 7)"),
+        ("dropped-term-outer", "price", "price(price(6000, 0), 7)"),
+        ("dropped-term-half", "price", "price(6000, 0.5)"),
+    ] {
+        let test = format!(
+            "import {{ {import} }} from \"../src/price\";\ntest(\"price\", () => {{\n  expect({call}).toBe(1);\n}});\n"
+        );
+        let finding = price_finding(
+            label,
+            &test,
+            "  return subtotal + shipping(subtotal) + FLAT;",
+        )?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
+    }
+
+    // A local bound to a renamed import's call witnesses the term too.
+    let local_alias = "import { price as subject } from \"../src/price\";\ntest(\"price\", () => {\n  const result = subject(6000, 7);\n  expect(result).toBe(1);\n});\n";
+    let finding = price_finding(
+        "dropped-term-alias-local",
+        local_alias,
+        "  return subtotal + shipping(subtotal) + FLAT;",
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
+
+    // A double sum absorbs a term below 2^-52 of its magnitude, so a
+    // `fee` under 1e-6 does not witness it.
+    let finding = price_finding(
+        "dropped-term-absorbed",
+        &price_test("price(6000, 0.0000000000001)", "6499"),
+        "  return subtotal + shipping(subtotal) + FLAT;",
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
 
     // A non-zero call the assertion sees only through another expression
     // does not count: `Math.sign` hides the dropped `fee`.

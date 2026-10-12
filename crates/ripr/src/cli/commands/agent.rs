@@ -1882,7 +1882,8 @@ fn write_agent_repo_exposure_snapshot_with_report(
         "ready".to_string(),
         None,
         config,
-    )?;
+    )?
+    .with_rust_corpus_key(report.corpus_key.as_ref());
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())

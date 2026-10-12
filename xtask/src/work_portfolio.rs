@@ -2936,7 +2936,8 @@ pub(crate) fn build_explain_view(
             .map(|candidate| candidate.candidate_id.clone())
             .collect();
         return Err(format!(
-            "unknown candidate `{candidate_id}`; known candidates: {known:?}"
+            "unknown candidate `{candidate_id}`; known candidates: {}",
+            md_backtick_csv(&known)
         ));
     };
     Ok(WorkExplainViewV1 {
@@ -2956,6 +2957,43 @@ fn wire_label(value: &impl Serialize) -> String {
         Ok(other) => other.to_string(),
         Err(_) => "unknown".to_string(),
     }
+}
+
+/// Comma-separated backticked identity tokens (`candidate:issue:9101`, not
+/// Debug quotes or brackets).
+fn md_backtick_csv<T: AsRef<str>>(ids: &[T]) -> String {
+    ids.iter()
+        .map(|id| format!("`{}`", id.as_ref()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Captured issue numbers as `#1693, #9202` instead of Debug `[1693, 9202]`.
+fn md_issue_csv(issues: &[u64]) -> String {
+    issues
+        .iter()
+        .map(|issue| format!("#{issue}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Nested Markdown list of identity tokens under a heading, matching the
+/// dependencies list style.
+fn md_nested_backtick_list(heading: &str, ids: &[String]) -> String {
+    let mut body = format!("- {heading}:\n");
+    for id in ids {
+        body.push_str(&format!("  - `{id}`\n"));
+    }
+    body
+}
+
+/// Nested Markdown list of plain prose items under a heading.
+fn md_nested_plain_list(heading: &str, items: &[String]) -> String {
+    let mut body = format!("- {heading}:\n");
+    for item in items {
+        body.push_str(&format!("  - {item}\n"));
+    }
+    body
 }
 
 fn md_table_row(cells: &[String]) -> String {
@@ -3019,7 +3057,7 @@ pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> Str
             campaign.id.clone(),
             campaign.state.clone(),
             campaign.surfaces.join(", "),
-            format!("{:?}", campaign.issues),
+            md_issue_csv(&campaign.issues),
             campaign.candidates.to_string(),
         ]));
         body.push('\n');
@@ -3126,9 +3164,9 @@ fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
         }
     }
     if !candidate.conflict_edges.is_empty() {
-        body.push_str(&format!(
-            "- conflict edges: {:?}\n",
-            candidate.conflict_edges
+        body.push_str(&md_nested_backtick_list(
+            "conflict edges",
+            &candidate.conflict_edges,
         ));
     }
     if let Some(family) = &candidate.duplicate_family {
@@ -3141,9 +3179,9 @@ fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
         ));
     }
     if !candidate.regression_risks.is_empty() {
-        body.push_str(&format!(
-            "- regression risks: {:?}\n",
-            candidate.regression_risks
+        body.push_str(&md_nested_plain_list(
+            "regression risks",
+            &candidate.regression_risks,
         ));
     }
     body.push_str("- ranking factors (ordered, no hidden score):\n");
@@ -4574,6 +4612,122 @@ mod tests {
             work_candidates_markdown(&build_candidates_view(&snapshot, None, None, 3, None)?);
         if !candidates_md.contains("omitted=9") {
             return Err("candidates markdown must report the omitted count honestly".to_string());
+        }
+        Ok(())
+    }
+
+    /// Human Markdown must render campaign issues, candidate conflict edges,
+    /// regression risks, and the unknown-id error as plain Markdown, not Rust
+    /// Debug (`{:?}`) lists. JSON stays an array DTO; only the renderer
+    /// changes (#7432).
+    #[test]
+    fn work_portfolio_markdown_renders_lists_as_plain_markdown_not_debug() -> Result<(), String> {
+        let snapshot = committed()?;
+        let markdown = work_portfolio_markdown(&snapshot);
+        for campaign in &snapshot.campaigns {
+            let debug = format!("{:?}", campaign.issues);
+            if markdown.contains(&debug) {
+                return Err(format!(
+                    "portfolio markdown leaked Debug campaign issues `{debug}`"
+                ));
+            }
+            if campaign.issues.is_empty() {
+                continue;
+            }
+            let expected = campaign
+                .issues
+                .iter()
+                .map(|issue| format!("#{issue}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            if !markdown.contains(&expected) {
+                return Err(format!(
+                    "portfolio markdown missing campaign issues `{expected}`"
+                ));
+            }
+        }
+
+        let collision = candidate(&snapshot, 9107)?;
+        let explain =
+            work_explain_markdown(&build_explain_view(&snapshot, &collision.candidate_id)?);
+        let debug_edges = format!("conflict edges: {:?}", collision.conflict_edges);
+        if explain.contains(&debug_edges) {
+            return Err(format!(
+                "explain markdown leaked Debug conflict edges `{debug_edges}`"
+            ));
+        }
+        if collision.conflict_edges.is_empty() {
+            return Err(
+                "issue 9107 must carry conflict-edge membership for this oracle".to_string(),
+            );
+        }
+        if !explain.contains("- conflict edges:\n") {
+            return Err("conflict edges must render as a nested Markdown list".to_string());
+        }
+        for edge in &collision.conflict_edges {
+            let item = format!("  - `{edge}`\n");
+            if !explain.contains(&item) {
+                return Err(format!(
+                    "explain markdown missing conflict-edge item `{item}` in: {explain}"
+                ));
+            }
+        }
+
+        let regression = candidate(&snapshot, 9101)?;
+        let regression_md =
+            work_explain_markdown(&build_explain_view(&snapshot, &regression.candidate_id)?);
+        let debug_risks = format!("regression risks: {:?}", regression.regression_risks);
+        if regression_md.contains(&debug_risks) {
+            return Err(format!(
+                "explain markdown leaked Debug regression risks `{debug_risks}`"
+            ));
+        }
+        if regression.regression_risks.is_empty() {
+            return Err("issue 9101 must carry regression risks for this oracle".to_string());
+        }
+        if !regression_md.contains("- regression risks:\n") {
+            return Err("regression risks must render as a nested Markdown list".to_string());
+        }
+        for risk in &regression.regression_risks {
+            let item = format!("  - {risk}\n");
+            if !regression_md.contains(&item) {
+                return Err(format!(
+                    "explain markdown missing regression-risk item `{item}` in: {regression_md}"
+                ));
+            }
+        }
+
+        let Err(error) = build_explain_view(&snapshot, "candidate:issue:9999") else {
+            return Err("unknown candidate must fail closed".to_string());
+        };
+        let known: Vec<&str> = snapshot
+            .candidates
+            .iter()
+            .map(|row| row.candidate_id.as_str())
+            .collect();
+        let debug_known = format!("{known:?}");
+        if error.contains(&debug_known) {
+            return Err(format!("unknown-id error leaked Debug list: {error}"));
+        }
+        let expected_known = known
+            .iter()
+            .map(|id| format!("`{id}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !error.contains(&expected_known) {
+            return Err(format!(
+                "unknown-id error must list backticked ids `{expected_known}`, got: {error}"
+            ));
+        }
+        if error.contains("\"candidate:issue:") {
+            return Err(format!("unknown-id error still quotes ids: {error}"));
+        }
+
+        let json = work_portfolio_json(&snapshot)?;
+        if !json.contains("\"conflict_edges\"") || !json.contains("\"regression_risks\"") {
+            return Err(
+                "JSON DTO must still carry conflict_edges and regression_risks arrays".to_string(),
+            );
         }
         Ok(())
     }

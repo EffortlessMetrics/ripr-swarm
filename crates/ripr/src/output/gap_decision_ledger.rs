@@ -632,7 +632,20 @@ pub(crate) fn stamp_gap_decision_ledger_source_subject(
         root,
         &required,
     ) {
-        Ok(subject) => {
+        Ok(mut subject) => {
+            if report
+                .input_root
+                .as_deref()
+                .is_none_or(|input_root| !Path::new(input_root).is_absolute())
+                && subject.corpus.is_some()
+            {
+                // A relative producer label cannot recover the working
+                // directory of captured aggregate inputs. Preserve existing
+                // named-file legacy rebasing without blessing the corpus.
+                subject.corpus = Some(serde_json::json!({
+                    "unavailable": "input_source_subject_corpus_root_missing"
+                }));
+            }
             report.source_subject = Some(subject);
             report.source_subject_unavailable = None;
         }

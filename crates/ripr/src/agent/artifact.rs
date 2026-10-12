@@ -51,9 +51,20 @@ pub(crate) struct RepoExposureArtifactContext {
     pub(crate) mode: String,
     pub(crate) base_revision: Option<String>,
     pub(crate) input_identity: String,
+    /// Full Rust inventory provenance supplied by that analysis, never
+    /// computed by artifact serialization or inferred from these seams.
+    pub(crate) corpus_key: Option<crate::analysis::seam_cache::RepoSeamCacheKey>,
 }
 
 impl RepoExposureArtifactContext {
+    pub(crate) fn with_rust_corpus_key(
+        mut self,
+        key: Option<&crate::analysis::seam_cache::RepoSeamCacheKey>,
+    ) -> Self {
+        self.corpus_key = key.cloned();
+        self
+    }
+
     /// Build the portable semantic input identity for one repo-exposure run.
     ///
     /// The canonical string covers exactly the inputs that affect analysis
@@ -136,6 +147,7 @@ impl RepoExposureArtifactContext {
             mode,
             base_revision,
             input_identity,
+            corpus_key: None,
         })
     }
 }

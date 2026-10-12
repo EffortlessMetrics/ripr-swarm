@@ -168,7 +168,8 @@ pub(crate) fn render_check_with_config_and_progress(
                         output.mode.as_str().to_string(),
                         output.base.clone(),
                         config,
-                    )?;
+                    )?
+                    .with_rust_corpus_key(report.corpus_key.as_ref());
                 repo_exposure::render_repo_exposure_json_with_context(
                     &report.classified,
                     report.limit_info.as_ref(),

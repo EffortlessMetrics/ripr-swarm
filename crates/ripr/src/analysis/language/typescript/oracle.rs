@@ -24,7 +24,10 @@ pub(crate) fn oracle_for_matcher(matcher: &str) -> (OracleKind, OracleStrength) 
         | "toBeLessThan"
         | "toBeLessThanOrEqual"
         | "toHaveLength"
-        | "toHaveProperty" => (OracleKind::RelationalCheck, OracleStrength::Weak),
+        | "toHaveProperty"
+        // RIPR-SPEC-0249: passes for any instance of the class or a subclass;
+        // a predicate change can read it strong (`ts_instance_class_facts`).
+        | "toBeInstanceOf" => (OracleKind::RelationalCheck, OracleStrength::Weak),
         _ => (OracleKind::Unknown, OracleStrength::Unknown),
     }
 }
@@ -637,7 +640,10 @@ pub(crate) fn expect_assertion_from_expression(
     // is a concrete resolvable literal. Detect dynamic args to emit the
     // typescript_dynamic_assertion_unresolved limitation.
     let (expected_value_or_variant, has_dynamic_matcher_arg) =
-        extract_matcher_expected_value(matcher, &error_payload, outer_call, source);
+        match instance_class_argument(matcher, async_modifier, outer_call) {
+            Some(class) => (Some(class), false),
+            None => extract_matcher_expected_value(matcher, &error_payload, outer_call, source),
+        };
 
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, matcher);
@@ -1593,6 +1599,35 @@ pub(crate) fn error_payload_from_assertion(
                 expected,
                 kind: TypeScriptErrorPayloadKind::RejectsMatchObject,
             })
+        }
+        _ => None,
+    }
+}
+
+/// RIPR-SPEC-0249: the class a value `toBeInstanceOf(Class)` names, when
+/// the argument is one PascalCase identifier. `.rejects` observes the error,
+/// not the returned value, so it names none.
+fn instance_class_argument(
+    matcher: &str,
+    async_modifier: Option<&str>,
+    matcher_call: &oxc_ast::ast::CallExpression<'_>,
+) -> Option<String> {
+    if matcher != "toBeInstanceOf"
+        || async_modifier == Some("rejects")
+        || matcher_call.arguments.len() != 1
+    {
+        return None;
+    }
+    match matcher_call.arguments.first()? {
+        Argument::Identifier(ident)
+            if ident
+                .name
+                .as_str()
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_uppercase()) =>
+        {
+            Some(ident.name.to_string())
         }
         _ => None,
     }

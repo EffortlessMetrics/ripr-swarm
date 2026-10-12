@@ -3,6 +3,15 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-12: An evidence window pointer is a command of the surface that prints it (#7476)
+
+Check's human evidence window may say `--format json`, because `ripr check`
+accepts that flag. `ripr explain` reuses the same window and does not. A
+footnote on explain must name check's JSON format, not a flag of the command
+the reader is already running. Do not emit a bare `ripr check --format json`
+line from explain: the printed-command paste suite will try to run it, and
+that invocation has no root or diff.
+
 ## 2026-10-11: Digest `Related test (1 of N)` counts matched rows, not tests (#6807)
 
 `Finding::related_tests_total()` is `related_tests_matched_total`: matched

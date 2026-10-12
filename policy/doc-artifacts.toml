@@ -1293,6 +1293,14 @@ owner = "product-analysis"
 standalone_reason = "Amends the TypeScript oracle rules from corpus mutation evidence: copy-for-identity changes need an identity matcher, and three nested callbacks that run before the test settles are collected."
 
 [[artifact]]
+id = "RIPR-SPEC-0249"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0249-typescript-instance-class-pin.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads TypeScript toBeInstanceOf from corpus mutation evidence: a class pin discriminates a predicate change whose paths return classes the owner module keeps apart."
+
+[[artifact]]
 id = "RIPR-SPEC-0248"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0248-typescript-dropped-additive-term.md"

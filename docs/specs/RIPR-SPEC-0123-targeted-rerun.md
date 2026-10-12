@@ -110,6 +110,11 @@ absolute-root ledger retains recomputation after source/test edits, including
 unstamped legacy records. This root-binding contract adds no HEAD/base revision
 staleness policy.
 
+Passive editor admission additionally checks the full Rust analysis corpus
+captured by the producer. That guard is not applied to explicit historical
+absolute-root selectors: they keep recomputing current selected scopes after
+corpus edits, including when their old ledger lacks corpus provenance.
+
 Editor gap-artifact admission shares the same existing canonical-directory
 comparison for absolute roots, so a symlink-selected workspace or Windows
 native spelling can consume its physical canonical ledger root. Existing

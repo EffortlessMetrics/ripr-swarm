@@ -136,7 +136,7 @@ impl Fixture {
         fs::create_dir(&root)?;
         let fixture = Self(root);
         let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-        for path in [
+        let inputs = [
             "Cargo.toml",
             "Cargo.lock",
             "rust-toolchain.toml",
@@ -150,13 +150,17 @@ impl Fixture {
             "docs/ARCHITECTURE.md",
             "policy",
             "fixtures/boundary_gap/expected",
-        ] {
+        ];
+        for path in inputs {
             copy(&source.join(path), &fixture.0.join(path))?;
         }
         fixture.git(&["init", "--object-format=sha1", "-b", "main"])?;
         fixture.git(&["config", "user.name", "Wheel Fixture"])?;
         fixture.git(&["config", "user.email", "fixture@example.invalid"])?;
         fixture.git(&["config", "commit.gpgsign", "false"])?;
+        let mut add = vec!["add", "--"];
+        add.extend(inputs);
+        fixture.git(&add)?;
         fixture.commit()?;
         fixture.write_shim("cargo", "exec \"$POLICY_BINARY\" \"${@:2}\"\n")?;
         Ok(fixture)
@@ -179,6 +183,9 @@ impl Fixture {
                 std::env::var_os("RUSTUP_HOME").ok_or("RUSTUP_HOME")?,
             )
             .env("POLICY_BINARY", env!("CARGO_BIN_EXE_repo-policy"));
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            command.env("LLVM_PROFILE_FILE", profile);
+        }
         Ok(command)
     }
     fn git(&self, args: &[&str]) -> TestResult<String> {
@@ -187,7 +194,7 @@ impl Fixture {
         Ok(String::from_utf8(output.stdout)?.trim().to_owned())
     }
     fn commit(&self) -> TestResult<String> {
-        self.git(&["add", "--all"])?;
+        self.git(&["add", "--update"])?;
         self.git(&["commit", "-m", "fixture", "--allow-empty"])?;
         self.git(&["rev-parse", "HEAD"])
     }
@@ -204,6 +211,7 @@ impl Fixture {
     fn change(&self, path: &str, text: &str) -> TestResult<String> {
         fs::create_dir_all(self.0.join(path).parent().ok_or("parent")?)?;
         fs::write(self.0.join(path), text)?;
+        self.git(&["add", "--", path])?;
         self.commit()
     }
     fn select(&self, event: &str, base: &str, head: &str) -> TestResult<(Output, String)> {
@@ -355,6 +363,33 @@ fn mixed_other_ledgers_and_selector_surfaces_qualify() -> TestResult {
             assert_eq!(selected, "qualify=true\n");
         }
     }
+    Ok(())
+}
+
+#[test]
+fn fixture_commits_preserve_untracked_profiles_and_track_intended_inputs() -> TestResult {
+    let fixture = Fixture::new()?;
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        let output = fixture
+            .command("bash")?
+            .args(["-c", "printf '%s' \"$LLVM_PROFILE_FILE\""])
+            .output()?;
+        assert!(output.status.success());
+        assert_eq!(output.stdout, profile.as_encoded_bytes());
+    }
+    let base = fixture.git(&["rev-parse", "HEAD"])?;
+    let profile = fixture.0.join("default_regression.profraw");
+    fs::write(&profile, b"coverage bytes must remain available")?;
+    fs::write(fixture.0.join("unrequested.txt"), "untracked control")?;
+    let ledger = format!("{}\n# intentional ledger change\n", fixture.ledger()?);
+    fixture.change(LEDGER, &ledger)?;
+    let head = fixture.change("intentional.rs", "// explicit fixture input\n")?;
+    assert_eq!(
+        fixture.git(&["diff", "--name-only", &base, &head])?,
+        format!("intentional.rs\n{LEDGER}")
+    );
+    assert_eq!(fs::read(&profile)?, b"coverage bytes must remain available");
+    assert!(fixture.0.join("unrequested.txt").is_file());
     Ok(())
 }
 
