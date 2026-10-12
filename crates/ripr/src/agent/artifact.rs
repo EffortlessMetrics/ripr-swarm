@@ -392,12 +392,12 @@ pub(crate) fn validate_repo_exposure_artifact(
     // disclosure shape the producer pins. A legacy artifact without the field
     // stays acceptable — the absence is a missing disclosure, not invalid
     // identity — but a malformed stamp fails closed instead of passing.
-    if let Some(stamp) = identity.generated_at.as_deref() {
-        if !stamp.starts_with("unix_ms:") {
-            return Err(format!(
-                "agent verify {label} artifact carries a generated_at stamp that is not a unix_ms millisecond disclosure: {stamp}"
-            ));
-        }
+    if let Some(stamp) = identity.generated_at.as_deref()
+        && !stamp.starts_with("unix_ms:")
+    {
+        return Err(format!(
+            "agent verify {label} artifact carries a generated_at stamp that is not a unix_ms millisecond disclosure: {stamp}"
+        ));
     }
     // Version gate (#2823): only the current input-identity algorithm
     // validates as current evidence. A previous-version identity (for example
