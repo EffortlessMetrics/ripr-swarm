@@ -253,3 +253,57 @@ baseline file. Install seconds compare only against a same-runner baseline.
 Numbers hold for the recorded revision, binary, runner class, and pinned
 corpus. Targets are proposed bars, not product guarantees. Verdict metrics are
 static and do not claim runtime mutation outcomes.
+
+## Verdict-rate case populations
+
+Verdict-rate samples carry `population` (`ripr-verdict-case-population-v1`):
+`rate` and one entry per case with `case_id`, `definition_sha256`, `numerator`
+and `denominator`. Zero-eligible contributions remain in the evidence. The
+corpus owner supplies the contributions; findings, rather than cases, supply
+the contradiction-rate denominator. The producer validates corpus definitions,
+actual retained-file pins, complete expected-row coverage and row/definition
+agreement. It loads and hashes each corpus once for all selected rates.
+
+The whole-corpus value still determines the absolute target status. Regression
+compares fractions over cases with the same ID and scoring-definition hash in
+both observations, using the existing margin and unrounded fractions. JSON
+`baseline.common` records both fractions and case count; `new_cases`,
+`removed_cases`, `changed_definitions`, `added` and `removed` report composition
+separately. Markdown names both the common-case comparison and the additions.
+Missing, duplicate, inconsistent or incomparable population evidence enters
+`gate.failed_comparisons` and fails `--gate`. It is not an unmeasured pass.
+Spec-example coverage has its separate existing producer and floor contract.
+
+Scoring identity includes corpus schema and projection policy, case/subject ID,
+anchor, edit kind, diff bytes, truth state, ideal/acceptable verdicts, mutant
+replacement/outcome semantics, and the subject origin, upstream pin and actual
+retained-file hashes. Ordered sets are normalized. Reasoning, spec citations,
+labeling observations, replay commands, failing-test annotations, equivalence
+reviews and `mutated_line` replay scaffolding are provenance rather than this
+scoring identity. This hash does not assert full replay equivalence.
+
+`testdata/7552-original-baseline-with-population.json` preserves the original
+committed baseline with metadata-only evidence for its five Rust samples, from
+revision
+`10e56371911a4e6ef8020fbcd7e5f2692fc9b7f1`: corpus blob
+`10b9f397e2c39f4f819b1f68659b5ff1dbf28675`, report blob
+`0b038c45bb6b2fa25faf8708c57cf41e58522e6d`. Removing the two added sample fields
+reconstructs the original baseline bytes (SHA256
+`2df8bc3f48d6ec1384464d7baacfe8e31a24553dcfc019c6b4f9dfbacf667ea5`). All original
+values, source details, revision and thresholds are preserved. This test witness
+does not replace the operational baseline. A live metadata-only migration must
+verify its exact original observation before enriching it; a rate refresh needs
+its own policy decision and attributable observation provenance. #7555 proposed
+a conflicting refresh while this repair was in progress, so this PR leaves
+`metrics/dx-scoreboard/baseline.json` untouched. The later
+`3961078c56b8c89258af56068fdf989f97b7d776` report has eight differing rows and is
+not a replacement. Historical per-case contradiction denominators are absent
+and were not reconstructed. Legacy TypeScript/Python observations still lack
+attributable population evidence and fail comparison explicitly.
+
+`testdata/7552-rust-abstention.json` freezes committed expected records at
+`6da363f9b630845d82d8a073c42429d90cd03732`, rather than executing the analyzer.
+It pins the actual retained regression, 58/203 to 74/203 (+16/203, above the
+unchanged 0.02 margin), separately from 55/162 added abstentions and the whole
+129/365 value. It is a regression-test witness, not a new baseline. The repair
+does not make that gate green or change analyzer classifications (#7553).
