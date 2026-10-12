@@ -31,6 +31,9 @@ jobs:
 
       - uses: taiki-e/install-action@cargo-llvm-cov
 
+      - name: Check diagnostic capture controls
+        run: python3 -m unittest discover -s tools/coverage_diagnostics
+
       - name: Clean coverage state
         run: cargo llvm-cov clean --workspace
 
@@ -41,7 +44,21 @@ jobs:
         run: cargo build -p ripr
 
       - name: Generate coverage
+        id: generate-coverage
         run: cargo llvm-cov --workspace --all-features --lcov --output-path lcov.info
+
+      - name: Retain bounded failed-profile diagnostics
+        if: ${{ failure() && steps.generate-coverage.outcome == 'failure' }}
+        run: python3 tools/coverage_diagnostics/capture.py --profiles target/llvm-cov-target --list target/llvm-cov-target/ripr-swarm-profraw-list --output target/ripr/reports/coverage-diagnostics
+
+      - name: Upload failed-profile diagnostics
+        if: ${{ always() && steps.generate-coverage.outcome == 'failure' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-failure-diagnostics
+          path: target/ripr/reports/coverage-diagnostics
+          if-no-files-found: warn
+          retention-days: 5
 
       - name: Upload coverage artifact
         if: always()

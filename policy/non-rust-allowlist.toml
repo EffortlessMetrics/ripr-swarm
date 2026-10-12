@@ -856,3 +856,21 @@ surface = "repo"
 classification = "fixture"
 reason = "Committed agent-as-user run harness output that docs/PUBLIC_PROOF.md is rendered from. It has no in-repo producer command, so it is edited by hand and not refreshed by public-proof."
 covered_by = ["cargo test -p xtask public_proof"]
+
+[[allow]]
+glob = "tools/coverage_diagnostics/capture.py"
+kind = "script"
+owner = "coverage/4978"
+surface = "ci"
+classification = "tooling"
+reason = "Bounded read-only failed-profile capture; preserves original Coverage failure and merge inputs."
+covered_by = ["cargo test -p repo-policy --lib coverage_failure_capture_preserves_original_command_and_failure"]
+
+[[allow]]
+glob = "tools/coverage_diagnostics/test_capture.py"
+kind = "script"
+owner = "coverage/4978"
+surface = "ci"
+classification = "test"
+reason = "Positive, malformed, missing-input, path-isolation and byte-budget controls for coverage diagnostics."
+covered_by = ["cargo test -p repo-policy --lib coverage_failure_capture_preserves_original_command_and_failure"]

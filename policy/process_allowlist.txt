@@ -147,3 +147,5 @@ tools/repo-policy/src/python_wheel.rs|Command::new|1|wheel-applicability|#4987: 
 tools/repo-policy/src/python_wheel.rs|use std::process::Command|1|wheel-applicability|#4987: Command and null stdin for the same read-only Git probes.
 tools/repo-policy/tests/python_wheel_workflow.rs|Command::new|1|wheel-applicability-proof|#4987: GNU timeout bounds real Git histories, production policy/selector shell and actual workflow predicates in private fixtures; no wheel builds, network or publication.
 tools/repo-policy/tests/python_wheel_workflow.rs|use std::process::Command|1|wheel-applicability-proof|#4987: imports for the same bounded fixture command helper.
+tools/coverage_diagnostics/capture.py|subprocess.Popen|1|coverage/4978|Bounded fixed-argv local toolchain/version and unfiltered llvm-profdata diagnostic replay; thirty-second owned process-group deadline, capped retained streams, no shell, network or environment dump.
+tools/repo-policy/src/workflow_tests.rs|Command::new|1|coverage/4978|Unix-only owning contract executes the stdlib diagnostic controls with Python in the current source root; no shell, network or user repository mutation.
