@@ -92,6 +92,8 @@ repository-relative test file or an unambiguous `path::test_node` selector
 within that file. An unknown or ambiguous node is a named limitation
 (`changed_test_unresolved`, `changed_test_owner_unresolved`, or
 `changed_test_owner_ambiguous`).
+Exact occurrence admission shares the existing file-composition authority: included, unresolved or unadmitted module provenance remains refused; supported `#[cfg(test)]` module declarations remain admitted.
+
 Selected owner admission uses individual parser-backed source occurrences,
 including byte-mapped expression operands of unambiguously bound `assert!`,
 `assert_eq!` and `assert_ne!`, and already-captured execution-bearing parameter

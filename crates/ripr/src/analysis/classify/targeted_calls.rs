@@ -88,6 +88,7 @@ impl<'index> TargetedCallSyntax<'index> {
     pub(in crate::analysis) fn occurrences(
         &self,
         test: &TestSummary,
+        source_provenance_admitted: bool,
         macro_unambiguous: impl Fn(usize, &str) -> bool,
     ) -> Vec<TargetedCallOccurrence> {
         let mut occurrences = Vec::new();
@@ -98,7 +99,8 @@ impl<'index> TargetedCallSyntax<'index> {
                 .filter(|facts| !facts.used_lexical_fallback)
                 .and_then(|facts| TargetedFile::parse(&facts.source))
         });
-        if let (Some(facts), Some(cached)) = (facts, cached.as_ref()) {
+        if source_provenance_admitted && let (Some(facts), Some(cached)) = (facts, cached.as_ref())
+        {
             let lines = &cached.lines;
             let empty_ranges = &cached.empty_ranges;
             let opaque_source = &cached.opaque_source;

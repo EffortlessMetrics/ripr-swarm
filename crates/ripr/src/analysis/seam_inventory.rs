@@ -985,9 +985,13 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         )
     };
     for test in &selected_tests {
-        for call in call_syntax.occurrences(test, |line, name| {
-            syntax.targeted_macro_binding_is_unambiguous(test, line, name, &cached.index)
-        }) {
+        for call in call_syntax.occurrences(
+            test,
+            syntax.targeted_source_provenance_is_admitted(test, &cached.index),
+            |line, name| {
+                syntax.targeted_macro_binding_is_unambiguous(test, line, name, &cached.index)
+            },
+        ) {
             use super::classify::TargetedCallShape;
             use crate::analysis::facts::FunctionImplContext;
             let functions = cached
@@ -8533,8 +8537,11 @@ owner(3))] x: i32) { assert!(x > 0); }
             .iter()
             .find(|test| test.name == "selected")
             .ok_or("missing test")?;
-        let calls =
-            super::super::classify::TargetedCallSyntax::new(&index).occurrences(test, |_, _| true);
+        let calls = super::super::classify::TargetedCallSyntax::new(&index).occurrences(
+            test,
+            true,
+            |_, _| true,
+        );
         let owners = calls
             .iter()
             .filter(|call| call.name == "owner")
@@ -8594,10 +8601,11 @@ fn selected() {
                 .used_lexical_fallback
         );
         let syntax = super::super::classify::OwnerPinSyntax::default();
-        let calls = super::super::classify::TargetedCallSyntax::new(&index)
-            .occurrences(test, |line, name| {
-                syntax.targeted_macro_binding_is_unambiguous(test, line, name, &index)
-            });
+        let calls = super::super::classify::TargetedCallSyntax::new(&index).occurrences(
+            test,
+            syntax.targeted_source_provenance_is_admitted(test, &index),
+            |line, name| syntax.targeted_macro_binding_is_unambiguous(test, line, name, &index),
+        );
         let new = calls
             .iter()
             .filter(|call| call.name == "new")
@@ -8731,6 +8739,109 @@ fn selected() {
                 ),
                 "{label}: {result:?}"
             );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_module_provenance() -> Result<(), String> {
+        for (label, declaration, admitted) in [
+            ("plain", "mod selected;", true),
+            ("test-cfg", "#[cfg(test)] mod selected;", true),
+            ("false-cfg", "#[cfg(any())] mod selected;", false),
+            ("opaque", "#[opaque_attr] mod selected;", false),
+            ("include", "include!(\"selected.rs\");", false),
+        ] {
+            for (layout, call) in [
+                ("line", "crate::owner(1)"),
+                ("multiline", "crate::\nowner(1)"),
+            ] {
+                for shape in ["assertion", "body", "parameter"] {
+                    let root = make_tempdir(&format!("targeted-provenance-{label}-{layout}"))?;
+                    write_file(
+                        &root.join("Cargo.toml"),
+                        "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+                    )?;
+                    write_file(
+                        &root.join("src/lib.rs"),
+                        &format!(
+                            "pub fn owner(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }}\n{declaration}\n"
+                        ),
+                    )?;
+                    if shape == "parameter" {
+                        write_file(
+                            &root.join("Cargo.toml"),
+                            "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dev-dependencies]\nrstest = { version = \"=0.27.0\", default-features = false }\n",
+                        )?;
+                    }
+                    let file = root.join("src/selected.rs");
+                    let source = match shape {
+                        "body" => format!(
+                            "#[test]\nfn selected() {{ let value = {call}; assert_eq!(value, 1); }}\n"
+                        ),
+                        "parameter" => format!(
+                            "use rstest::rstest;\n#[rstest]\nfn selected(#[values({call})] x: i32) {{ assert_eq!(x, 1); }}\n"
+                        ),
+                        _ => format!("#[test]\nfn selected() {{ assert_eq!({call}, 1); }}\n"),
+                    };
+                    write_file(&file, &source)?;
+                    let index = crate::analysis::facts::build_index(
+                        &root,
+                        &[root.join("src/lib.rs"), file.clone()],
+                    )?;
+                    assert_eq!(index.tests().len(), 1, "{label}/{layout}: missing test");
+                    let test = &index.tests()[0];
+                    assert_eq!(test.file, file);
+                    assert!(test.calls.iter().any(|call| call.name == "owner"));
+                    assert!(
+                        !index
+                            .files()
+                            .get(&file)
+                            .ok_or("missing indexed file")?
+                            .used_lexical_fallback
+                    );
+                    assert!(index.functions().iter().any(|owner| owner.name == "owner"));
+                    let syntax = super::super::classify::OwnerPinSyntax::default();
+                    assert_eq!(
+                        syntax.targeted_source_provenance_is_admitted(test, &index),
+                        admitted,
+                        "{label}/{layout}: provenance authority",
+                    );
+                    let result = inventory_changed_test_classified_seams_at_with_config_node(
+                        &root,
+                        &RiprConfig::default(),
+                        Path::new("src/selected.rs"),
+                        Some("selected"),
+                    );
+                    if admitted {
+                        let inventory =
+                            result.map_err(|error| format!("{label}/{layout}: {error:?}"))?;
+                        assert!(
+                            !inventory.classified.is_empty(),
+                            "{label}/{layout}: empty owner"
+                        );
+                        assert!(
+                            inventory
+                                .classified
+                                .iter()
+                                .all(|entry| entry.seam.owner() == "src/lib.rs::owner")
+                        );
+                    } else {
+                        assert!(
+                            matches!(
+                                result,
+                                Err(TargetedTestInventoryError::Selector {
+                                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                                    selected_test_count: 1,
+                                    ..
+                                })
+                            ),
+                            "{label}/{layout}: {result:?}"
+                        );
+                    }
+                    std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+                }
+            }
         }
         Ok(())
     }

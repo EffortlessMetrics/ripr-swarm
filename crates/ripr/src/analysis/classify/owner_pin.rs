@@ -548,6 +548,17 @@ impl OwnerPinSyntax {
             .cloned()
     }
 
+    /// Exact call syntax is authority only when the selected source composes
+    /// through admitted module declarations. This shares the assertion gate,
+    /// including its supported test-build cfg rules.
+    pub(in crate::analysis) fn targeted_source_provenance_is_admitted(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> bool {
+        self.source_provenance_refusal(test, index).is_none()
+    }
+
     /// Call occurrence parsing borrows binding authority only. It does not
     /// grant assertion execution, oracle strength or receiver identity.
     pub(in crate::analysis) fn targeted_macro_binding_is_unambiguous(
@@ -557,7 +568,8 @@ impl OwnerPinSyntax {
         name: &str,
         index: &RustIndex,
     ) -> bool {
-        !self.trusted_macro_ambiguities(index).contains(name)
+        self.source_provenance_refusal(test, index).is_none()
+            && !self.trusted_macro_ambiguities(index).contains(name)
             && !self
                 .scoped_names_for(test, line)
                 .iter()
@@ -595,12 +607,65 @@ impl OwnerPinSyntax {
             .clone()
     }
 
+    /// File composition authority shared by assertion admission and targeted
+    /// assertion operands. Syntax in an included or unadmitted module cannot
+    /// borrow a standard macro binding from an incomplete scope view.
+    fn source_provenance_refusal(
+        &self,
+        test: &TestSummary,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
+        let Some(facts) = index
+            .files()
+            .get(&test.file)
+            .filter(|facts| !facts.used_lexical_fallback)
+        else {
+            return Some(AssertionRefusal::LexicalFallback);
+        };
+        if let Some(reason) = &facts.role_provenance.earliest_unresolved_reason {
+            return Some(AssertionRefusal::UnresolvedModule(reason.clone()));
+        }
+        let mut by_file = self.by_file.borrow_mut();
+        for edge in &facts.role_provenance.edges {
+            // Module composition already owns resolution. Include expansions
+            // lack an exact declaration coordinate here, so remain unknown.
+            if edge.kind != SourceRoleProvenanceEdgeKind::Module {
+                return Some(AssertionRefusal::IncludedFile {
+                    parent: edge.parent.clone(),
+                    line: edge.line,
+                });
+            }
+            let Some(parent) = index
+                .files()
+                .get(&edge.parent)
+                .filter(|facts| !facts.used_lexical_fallback)
+            else {
+                return Some(AssertionRefusal::LexicalFallback);
+            };
+            if !by_file
+                .entry(edge.parent.clone())
+                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
+                .admits_module_declaration(edge.line, &edge.declaration)
+            {
+                return Some(AssertionRefusal::ModuleDeclaration {
+                    parent: edge.parent.clone(),
+                    line: edge.line,
+                    declaration: edge.declaration.clone(),
+                });
+            }
+        }
+        None
+    }
+
     fn refusal(
         &self,
         test: &TestSummary,
         assertion: &OracleFact,
         index: &RustIndex,
     ) -> Option<AssertionRefusal> {
+        if let Some(refusal) = self.source_provenance_refusal(test, index) {
+            return Some(refusal);
+        }
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
@@ -646,34 +711,6 @@ impl OwnerPinSyntax {
         ambiguous.extend(self.scoped_names_for(test, assertion.line));
         ambiguous.extend(self.crate_names_for(test, index));
         let mut by_file = self.by_file.borrow_mut();
-        for edge in &facts.role_provenance.edges {
-            // Module composition already owns resolution. Include expansions
-            // lack an exact declaration coordinate here, so remain unknown.
-            if edge.kind != SourceRoleProvenanceEdgeKind::Module {
-                return Some(AssertionRefusal::IncludedFile {
-                    parent: edge.parent.clone(),
-                    line: edge.line,
-                });
-            }
-            let Some(parent) = index
-                .files()
-                .get(&edge.parent)
-                .filter(|facts| !facts.used_lexical_fallback)
-            else {
-                return Some(AssertionRefusal::LexicalFallback);
-            };
-            if !by_file
-                .entry(edge.parent.clone())
-                .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
-                .admits_module_declaration(edge.line, &edge.declaration)
-            {
-                return Some(AssertionRefusal::ModuleDeclaration {
-                    parent: edge.parent.clone(),
-                    line: edge.line,
-                    declaration: edge.declaration.clone(),
-                });
-            }
-        }
         // A terminal Err-return guard is keyed by its condition; the oracle
         // text may join continuation lines or elide the Err payload.
         let guard_key = err_return_guard_twin(&assertion.text)
