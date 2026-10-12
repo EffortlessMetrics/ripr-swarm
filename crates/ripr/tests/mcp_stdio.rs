@@ -5,6 +5,10 @@ use std::process::{Command, Output, Stdio};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+#[path = "common/mod.rs"]
+mod common;
+use common::fixture_git::fixture_git_ok;
+
 #[path = "support/mcp_stdio_observation.rs"]
 mod process_observation;
 use process_observation::Observation;
@@ -15,6 +19,13 @@ fn workspace_root() -> Result<PathBuf, String> {
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .ok_or_else(|| "crate manifest directory has no workspace parent".to_string())
+}
+
+/// One spawn constructor for every worktree-built `ripr` launch in this
+/// harness (`mcp --stdio` and `agent card`). Process policy counts
+/// constructor sites, not call sites.
+fn worktree_ripr() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
 }
 
 fn run_mcp(root: &Path, chunks: &[&[u8]]) -> Result<Output, String> {
@@ -29,7 +40,7 @@ fn run_mcp_with_input_custody(
     let (executable, executable_sha256) =
         Observation::executable_custody(Path::new(env!("CARGO_BIN_EXE_ripr")))?;
     let launched = Instant::now();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_ripr"))
+    let mut child = worktree_ripr()
         .args(["mcp", "--stdio", "--root"])
         .arg(root)
         .stdin(Stdio::piped())
@@ -307,6 +318,205 @@ fn line(value: Value) -> Result<Vec<u8>, String> {
     Ok(encoded)
 }
 
+/// Optional tool fields may be omitted, but their advertised string/integer
+/// types do not accept explicit null. Pin the schemas and dispatch separately
+/// against literal expectations, through the actual stdio process (#7314).
+#[test]
+fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), String> {
+    let root = workspace_root()?;
+    let cases = [
+        (
+            "ripr_list_gaps",
+            "snapshot_id",
+            json!({}),
+            json!("snapshot:sha256:input-control"),
+            "string",
+        ),
+        ("ripr_list_gaps", "offset", json!({}), json!(0), "integer"),
+        ("ripr_list_gaps", "limit", json!({}), json!(1), "integer"),
+        (
+            "ripr_get_gap",
+            "snapshot_id",
+            json!({"canonical_id": "gap:input-control"}),
+            json!("snapshot:sha256:input-control"),
+            "string",
+        ),
+        (
+            "ripr_prepare_repair",
+            "snapshot_id",
+            json!({"canonical_id": "gap:input-control"}),
+            json!("snapshot:sha256:input-control"),
+            "string",
+        ),
+        (
+            "ripr_get_repair_card",
+            "snapshot_id",
+            json!({"canonical_id": "gap:input-control"}),
+            json!("snapshot:sha256:input-control"),
+            "string",
+        ),
+    ];
+    let tool_call = |id: &str, name: &str, arguments: Value| {
+        line(json!({
+            "jsonrpc": "2.0", "id": id, "method": "tools/call",
+            "params": { "_meta": current_meta(), "name": name, "arguments": arguments }
+        }))
+    };
+    let mut requests = vec![
+        line(json!({
+            "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+            "params": { "_meta": current_meta() }
+        }))?,
+        line(json!({
+            "jsonrpc": "2.0", "id": "tools", "method": "tools/list",
+            "params": { "_meta": current_meta() }
+        }))?,
+    ];
+    for (index, (tool, field, omitted, valid, _kind)) in cases.iter().enumerate() {
+        for (variant, value) in [
+            ("omitted", None),
+            ("valid", Some(valid.clone())),
+            ("null", Some(Value::Null)),
+        ] {
+            let mut arguments = omitted.clone();
+            if let Some(value) = value {
+                arguments
+                    .as_object_mut()
+                    .ok_or("control arguments must be an object")?
+                    .insert((*field).into(), value);
+            }
+            requests.push(tool_call(&format!("{index}-{variant}"), tool, arguments)?);
+        }
+    }
+    requests.push(tool_call(
+        "wrong-type",
+        "ripr_list_gaps",
+        json!({"limit": false}),
+    )?);
+    requests.push(tool_call("recovery", "ripr_workspace_status", json!({}))?);
+    let input = requests.concat();
+    let output = run_mcp(&root, &[&input])?;
+    let responses = response_lines(&output)?;
+    if responses.len() != requests.len() {
+        return Err(format!(
+            "expected {} correlated replies, got {}",
+            requests.len(),
+            responses.len()
+        ));
+    }
+    if output
+        .stdout
+        .split(|byte| *byte == b'\n')
+        .any(|frame| frame.len() > 128 * 1024)
+    {
+        return Err("argument control exceeded the literal 128-KiB response bound".into());
+    }
+    let reply = |id: &str| {
+        responses
+            .iter()
+            .find(|response| response.get("id").and_then(Value::as_str) == Some(id))
+            .ok_or_else(|| format!("missing correlated response for {id}"))
+    };
+    let discovered = reply("discover")?;
+    if discovered.get("error").is_some()
+        || !discovered
+            .pointer("/result/supportedVersions")
+            .and_then(Value::as_array)
+            .is_some_and(|versions| {
+                versions
+                    .iter()
+                    .any(|version| version.as_str() == Some("2026-07-28"))
+            })
+    {
+        return Err("control did not reach real server discovery".into());
+    }
+    let tools = reply("tools")?
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .ok_or("discovery omitted tools")?;
+    for (index, (tool, field, _omitted, _valid, kind)) in cases.iter().enumerate() {
+        let descriptor = tools
+            .iter()
+            .find(|descriptor| descriptor.get("name").and_then(Value::as_str) == Some(*tool))
+            .ok_or_else(|| format!("discovery omitted {tool}"))?;
+        let schema = descriptor
+            .get("inputSchema")
+            .ok_or("tool omitted input schema")?;
+        if schema
+            .pointer(&format!("/properties/{field}/type"))
+            .and_then(Value::as_str)
+            != Some(*kind)
+            || schema
+                .get("required")
+                .and_then(Value::as_array)
+                .is_some_and(|fields| fields.iter().any(|value| value.as_str() == Some(*field)))
+        {
+            return Err(format!(
+                "{tool}.{field} must stay optional with non-null {kind} type: {schema}"
+            ));
+        }
+        for variant in ["omitted", "valid"] {
+            let accepted = reply(&format!("{index}-{variant}"))?;
+            if accepted.get("error").is_some()
+                || accepted.pointer("/result/isError").and_then(Value::as_bool) != Some(true)
+                || accepted
+                    .pointer("/result/structuredContent/failure/code")
+                    .and_then(Value::as_str)
+                    != Some("no_snapshot")
+            {
+                return Err(format!(
+                    "{tool}.{field} {variant} must reach session lookup: {accepted}"
+                ));
+            }
+        }
+        let rejected = reply(&format!("{index}-null"))?;
+        let expected_message = format!(
+            "{field} must be a {}",
+            if *kind == "integer" {
+                "non-negative integer"
+            } else {
+                "string"
+            }
+        );
+        if rejected.pointer("/error/code").and_then(Value::as_i64) != Some(-32602)
+            || rejected.pointer("/error/message").and_then(Value::as_str)
+                != Some(expected_message.as_str())
+            || rejected.get("result").is_some()
+        {
+            return Err(format!(
+                "{tool}.{field} null must be correlated Invalid Params before session lookup: {rejected}"
+            ));
+        }
+    }
+    if reply("wrong-type")?
+        .pointer("/error/code")
+        .and_then(Value::as_i64)
+        != Some(-32602)
+    {
+        return Err("boolean paging limit must remain Invalid Params".into());
+    }
+    let recovered = reply("recovery")?;
+    if recovered.get("error").is_some()
+        || recovered
+            .pointer("/result/isError")
+            .and_then(Value::as_bool)
+            != Some(false)
+        || recovered
+            .pointer("/result/structuredContent/schema_version")
+            .and_then(Value::as_str)
+            != Some("ripr-mcp-workspace-status-v1")
+        || recovered
+            .pointer("/result/structuredContent/session/attempt_state")
+            .and_then(Value::as_str)
+            != Some("no_snapshot")
+    {
+        return Err(format!(
+            "status must succeed unchanged after argument errors: {recovered}"
+        ));
+    }
+    Ok(())
+}
+
 #[test]
 fn readable_request_id_larger_than_output_cap_terminates_without_oversized_reply()
 -> Result<(), String> {
@@ -369,6 +579,92 @@ fn readable_request_id_larger_than_output_cap_terminates_without_oversized_reply
     let stderr = std::str::from_utf8(&output.stderr).map_err(|error| error.to_string())?;
     if stderr.len() > 1024 || !stderr.contains("MCP output limit") {
         return Err("termination must retain a bounded, redacted MCP output-limit reason".into());
+    }
+    Ok(())
+}
+
+#[test]
+fn pre_call_contract_discloses_committed_scope_on_wire_and_help() -> Result<(), String> {
+    let root = workspace_root()?;
+    let requests = [
+        line(json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": { "protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": { "name": "scope-contract-test", "version": "1" } }
+        }))?,
+        line(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))?,
+        line(json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {} }))?,
+    ]
+    .concat();
+    let output = run_mcp(&root, &[&requests])?;
+    let replies = response_lines(&output)?;
+    if replies.len() != 2 {
+        return Err(format!(
+            "expected initialize and tools/list replies: {replies:?}"
+        ));
+    }
+    let instructions = replies[0]
+        .pointer("/result/instructions")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "initialize omitted instructions".to_string())?;
+    let refresh = replies[1]
+        .pointer("/result/tools")
+        .and_then(Value::as_array)
+        .and_then(|tools| tools.iter().find(|tool| tool["name"] == "ripr_refresh"))
+        .ok_or_else(|| "tools/list omitted ripr_refresh".to_string())?;
+    let description = refresh
+        .get("description")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "ripr_refresh omitted its description".to_string())?;
+    if refresh.pointer("/inputSchema/properties") != Some(&json!({})) {
+        return Err(format!(
+            "refresh must retain its argument-free scope: {refresh}"
+        ));
+    }
+    let discovery = line(json!({ "jsonrpc": "2.0", "id": 1,
+        "method": "server/discover", "params": { "_meta": current_meta() } }))?;
+    let discover_output = run_mcp(&root, &[&discovery])?;
+    let discovered = response_lines(&discover_output)?;
+    let discover_instructions = discovered
+        .first()
+        .and_then(|reply| reply.pointer("/result/instructions"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "server/discover omitted instructions".to_string())?;
+    let help = worktree_ripr()
+        .args(["mcp", "--help"])
+        .output()
+        .map_err(|error| format!("run MCP help: {error}"))?;
+    if !help.status.success() {
+        return Err(format!("MCP help failed: {:?}", help.status.code()));
+    }
+    let help = String::from_utf8(help.stdout).map_err(|error| error.to_string())?;
+    // Literal acceptance expectations, independent of descriptor constants.
+    // Test the delivered surfaces before any analysis call, even on a clean root.
+    let mut failures = Vec::new();
+    for (surface, text) in [
+        ("initialize", instructions),
+        ("tools/list ripr_refresh", description),
+        ("server/discover", discover_instructions),
+        ("mcp --help", help.as_str()),
+    ] {
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        for required in [
+            "committed default-branch diff",
+            "staged and unstaged tracked edits and untracked files are outside",
+            "`ripr check` defaults to the working tree when staged or unstaged tracked edits exist",
+            "shared check authority does not mean identical input",
+            "`ripr check --committed`",
+        ] {
+            if !text.contains(required) {
+                failures.push(format!("{surface} omitted {required:?}"));
+            }
+        }
+        if text.contains("the same analysis `ripr check`") {
+            failures.push(format!("{surface} promises identical CLI input"));
+        }
+    }
+    if !failures.is_empty() {
+        return Err(failures.join("\n"));
     }
     Ok(())
 }
@@ -835,6 +1131,191 @@ fn unsupported_inline_version_is_rejected_and_next_request_recovers() -> Result<
     Ok(())
 }
 
+/// The first evidence read must name the root problem and a recovery that
+/// can change it, on tools and resources alike (#7346).
+#[test]
+fn unavailable_workspace_evidence_names_restart_before_any_refresh() -> Result<(), String> {
+    struct FixtureRoot(PathBuf);
+    impl Drop for FixtureRoot {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let temp = std::env::temp_dir();
+    std::fs::create_dir_all(&temp).map_err(|error| format!("create temp root: {error}"))?;
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| error.to_string())?
+        .as_nanos();
+    let path = temp.join(format!(
+        "ripr-mcp-unavailable-{}-{nonce}",
+        std::process::id()
+    ));
+    std::fs::create_dir(&path).map_err(|error| format!("create markerless root: {error}"))?;
+    let fixture = FixtureRoot(path);
+    let missing = fixture.0.join("missing");
+    for (root, root_error) in [
+        (fixture.0.as_path(), "repository_marker_missing"),
+        (missing.as_path(), "root_missing"),
+    ] {
+        let mut requests = vec![
+            line(json!({
+                "jsonrpc": "2.0", "id": "discover", "method": "server/discover",
+                "params": { "_meta": current_meta() }
+            }))?,
+            line(json!({
+                "jsonrpc": "2.0", "id": "status", "method": "tools/call",
+                "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
+            }))?,
+        ];
+        for phase in ["before", "after"] {
+            if phase == "after" {
+                requests.push(line(json!({
+                    "jsonrpc": "2.0", "id": "refresh", "method": "tools/call",
+                    "params": { "_meta": current_meta(), "name": "ripr_refresh", "arguments": {} }
+                }))?);
+            }
+            for (name, arguments) in [
+                ("ripr_list_gaps", json!({})),
+                ("ripr_get_gap", json!({ "canonical_id": "gap:any" })),
+                ("ripr_prepare_repair", json!({ "canonical_id": "gap:any" })),
+                ("ripr_get_repair_card", json!({ "canonical_id": "gap:any" })),
+            ] {
+                requests.push(line(json!({
+                    "jsonrpc": "2.0", "id": format!("{phase}-{name}"), "method": "tools/call",
+                    "params": { "_meta": current_meta(), "name": name, "arguments": arguments }
+                }))?);
+            }
+            for uri in [
+                "ripr://snapshot/snapshot:sha256:any",
+                "ripr://gap/gap:any",
+                "ripr://repair-card/gap:any",
+            ] {
+                requests.push(line(json!({
+                    "jsonrpc": "2.0", "id": format!("{phase}-{uri}"), "method": "resources/read",
+                    "params": { "_meta": current_meta(), "uri": uri }
+                }))?);
+            }
+        }
+        requests.push(line(json!({
+            "jsonrpc": "2.0", "id": "survivor", "method": "tools/call",
+            "params": { "_meta": current_meta(), "name": "ripr_workspace_status", "arguments": {} }
+        }))?);
+        let output = run_mcp(root, &[&requests.concat()])?;
+        let responses = response_lines(&output)?;
+        if responses.len() != 18 {
+            return Err(format!(
+                "expected 18 replies for {root_error}, got {}",
+                responses.len()
+            ));
+        }
+        let by_id: std::collections::HashMap<&str, &Value> = responses
+            .iter()
+            .filter_map(|response| {
+                response
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(|id| (id, response))
+            })
+            .collect();
+        if by_id.len() != 18 {
+            return Err(format!(
+                "expected 18 unique reply ids for {root_error}, got {}",
+                by_id.len()
+            ));
+        }
+        for phase in ["before", "after"] {
+            for subject in [
+                "ripr_list_gaps",
+                "ripr_get_gap",
+                "ripr_prepare_repair",
+                "ripr_get_repair_card",
+                "ripr://snapshot/snapshot:sha256:any",
+                "ripr://gap/gap:any",
+                "ripr://repair-card/gap:any",
+            ] {
+                let id = format!("{phase}-{subject}");
+                if !by_id.contains_key(id.as_str()) {
+                    return Err(format!(
+                        "missing intended evidence reply {id} for {root_error}"
+                    ));
+                }
+            }
+        }
+        for id in ["status", "survivor"] {
+            let reply = by_id.get(id).ok_or_else(|| format!("missing {id} reply"))?;
+            if reply
+                .pointer("/result/structuredContent/workspace/workspace_state")
+                .and_then(Value::as_str)
+                != Some("unavailable")
+                || reply
+                    .pointer("/result/structuredContent/workspace/root/error_code")
+                    .and_then(Value::as_str)
+                    != Some(root_error)
+                || reply
+                    .pointer("/result/structuredContent/session/attempt_state")
+                    .and_then(Value::as_str)
+                    != Some("no_snapshot")
+            {
+                return Err(format!(
+                    "fixture or survivor state lost {root_error}: {reply}"
+                ));
+            }
+        }
+        let recovery = "restart the server with `ripr mcp --stdio --root <repository>`";
+        let refresh = by_id
+            .get("refresh")
+            .ok_or_else(|| "missing refresh reply".to_string())?;
+        let expected_failure = refresh
+            .pointer("/result/structuredContent/failure")
+            .ok_or_else(|| format!("refresh lost typed root failure: {refresh}"))?;
+        if expected_failure.get("code").and_then(Value::as_str) != Some("workspace_unavailable")
+            || expected_failure.get("recovery").and_then(Value::as_str) != Some(recovery)
+        {
+            return Err(format!("refresh lost the actionable recovery: {refresh}"));
+        }
+        for (id, reply) in &by_id {
+            if !id.starts_with("before-") && !id.starts_with("after-") && *id != "refresh" {
+                continue;
+            }
+            let resource = id.contains("ripr://");
+            let failure = if resource {
+                if reply.pointer("/error/code").and_then(Value::as_i64) != Some(-32602) {
+                    return Err(format!("{id} lost resource failure semantics: {reply}"));
+                }
+                reply.pointer("/error/data/failure")
+            } else {
+                if reply.pointer("/result/isError").and_then(Value::as_bool) != Some(true) {
+                    return Err(format!("{id} lost typed tool failure: {reply}"));
+                }
+                let text = reply
+                    .pointer("/result/content/0/text")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if !text.contains("workspace_unavailable") || !text.contains(recovery) {
+                    return Err(format!("{id} rendered an unusable recovery: {reply}"));
+                }
+                reply.pointer("/result/structuredContent/failure")
+            };
+            if failure
+                .and_then(|value| value.get("code"))
+                .and_then(Value::as_str)
+                != Some("workspace_unavailable")
+                || failure
+                    .and_then(|value| value.get("recovery"))
+                    .and_then(Value::as_str)
+                    != Some(recovery)
+                || failure != Some(expected_failure)
+            {
+                return Err(format!(
+                    "{id} must share refresh's root failure before and after refresh: {reply}"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The evidence tools fail closed on the wire before the first refresh:
 /// a stock-shaped raw client gets typed structured failures (never a
 /// partial document), and the snapshot/gap resource reads route through the
@@ -1017,6 +1498,712 @@ fn gap_tools_fail_closed_before_the_first_refresh() -> Result<(), String> {
         return Err(format!(
             "unknown snapshot resource lost its typed state: {snapshot}"
         ));
+    }
+    Ok(())
+}
+
+/// Refresh on a small fixture can outlive the scripted `run_mcp` 10s
+/// deadline; this session writes one request only after the previous
+/// matching reply, the same production-stdio custody as `mcp_workspace_config`.
+struct SequentialStdio {
+    child: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+    replies: std::sync::mpsc::Receiver<Value>,
+    stdout: Option<std::thread::JoinHandle<Vec<u8>>>,
+    stderr: Option<std::thread::JoinHandle<Vec<u8>>>,
+}
+
+impl SequentialStdio {
+    fn spawn(root: &Path) -> Result<Self, String> {
+        let mut child = worktree_ripr()
+            .args(["mcp", "--stdio", "--root"])
+            .arg(root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|error| format!("spawn ripr mcp: {error}"))?;
+        let stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "spawned MCP process did not expose stdin".to_string())?;
+        let mut stdout_pipe = child
+            .stdout
+            .take()
+            .ok_or_else(|| "spawned MCP process did not expose stdout".to_string())?;
+        let mut stderr_pipe = child
+            .stderr
+            .take()
+            .ok_or_else(|| "spawned MCP process did not expose stderr".to_string())?;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let stdout = std::thread::spawn(move || {
+            use std::io::BufRead;
+            let mut reader = std::io::BufReader::new(&mut stdout_pipe);
+            let mut buffer = Vec::new();
+            loop {
+                let mut frame = Vec::new();
+                match reader.read_until(b'\n', &mut frame) {
+                    Ok(0) => break,
+                    Err(_) => break,
+                    Ok(_) => {
+                        if let Ok(value) = serde_json::from_slice::<Value>(&frame) {
+                            let _ = sender.send(value);
+                        }
+                        buffer.extend_from_slice(&frame);
+                    }
+                }
+            }
+            buffer
+        });
+        let stderr = std::thread::spawn(move || {
+            let mut buffer = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut stderr_pipe, &mut buffer);
+            buffer
+        });
+        Ok(Self {
+            child,
+            stdin: Some(stdin),
+            replies: receiver,
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+        })
+    }
+
+    fn call(
+        &mut self,
+        id: &str,
+        method: &str,
+        mut params: Value,
+        timeout: Duration,
+    ) -> Result<Value, String> {
+        if let Some(object) = params.as_object_mut() {
+            object.insert("_meta".to_string(), current_meta());
+        }
+        let request = json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params,
+        });
+        let mut encoded = serde_json::to_vec(&request).map_err(|error| error.to_string())?;
+        encoded.push(b'\n');
+        let stdin = self
+            .stdin
+            .as_mut()
+            .ok_or_else(|| "the session stdin was already released".to_string())?;
+        stdin
+            .write_all(&encoded)
+            .map_err(|error| format!("write {method}: {error}"))?;
+        stdin
+            .flush()
+            .map_err(|error| format!("flush {method}: {error}"))?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err(format!(
+                    "timed out waiting for the {method} reply id {id:?}"
+                ));
+            }
+            let reply = self
+                .replies
+                .recv_timeout(remaining)
+                .map_err(|_disconnected| {
+                    format!("reply channel closed before the {method} reply id {id:?}")
+                })?;
+            if reply.get("id").and_then(Value::as_str) == Some(id) {
+                return Ok(reply);
+            }
+        }
+    }
+
+    fn call_tool(
+        &mut self,
+        id: &str,
+        name: &str,
+        arguments: Value,
+        timeout: Duration,
+    ) -> Result<Value, String> {
+        self.call(
+            id,
+            "tools/call",
+            json!({ "name": name, "arguments": arguments }),
+            timeout,
+        )
+    }
+}
+
+impl Drop for SequentialStdio {
+    fn drop(&mut self) {
+        self.stdin = None;
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        if let Some(stdout) = self.stdout.take() {
+            let _ = stdout.join();
+        }
+        if let Some(stderr) = self.stderr.take() {
+            let _ = stderr.join();
+        }
+    }
+}
+
+struct FixtureGuard {
+    root: PathBuf,
+}
+
+impl Drop for FixtureGuard {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+fn commit_fixture(root: &Path, message: &str) -> Result<(), String> {
+    fixture_git_ok(root, &["add", "."])?;
+    fixture_git_ok(
+        root,
+        &[
+            "-c",
+            "user.name=ripr fixture",
+            "-c",
+            "user.email=fixture@ripr.invalid",
+            "commit",
+            "-qm",
+            message,
+        ],
+    )
+}
+
+/// B4 repair-ready fixture: main holds `>=`, the checked-out `journey`
+/// branch narrows to `>`, and `discounted_total(100, 100) == 90` pins the
+/// boundary. Same shape as `agentic_bench_mcp`'s B4 control.
+fn install_b4_repair_ready_fixture() -> Result<PathBuf, String> {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|error| format!("clock before Unix epoch: {error}"))?
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!(
+        "ripr-mcp-stdio-repair-card-b4-{}-{stamp}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(root.join("tests")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"mcp-journey-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\nname = \"mcp_journey_fixture\"\npath = \"src/lib.rs\"\n\n[workspace]\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount >= discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("tests/pricing.rs"),
+        "use mcp_journey_fixture::discounted_total;\n\n#[test]\nfn below_threshold_has_no_discount() {\n    assert_eq!(discounted_total(50, 100), 50);\n}\n\n#[test]\nfn far_above_threshold_discounts() {\n    assert_eq!(discounted_total(10_000, 100), 9_990);\n}\n\n#[test]\nfn exact_boundary_gets_the_discount() {\n    assert_eq!(discounted_total(100, 100), 90);\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["-c", "init.defaultBranch=main", "init", "-q"])?;
+    fixture_git_ok(&root, &["config", "user.name", "ripr fixture"])?;
+    fixture_git_ok(&root, &["config", "user.email", "fixture@ripr.invalid"])?;
+    fixture_git_ok(&root, &["config", "core.autocrlf", "false"])?;
+    commit_fixture(&root, "open boundary")?;
+    fixture_git_ok(&root, &["checkout", "-q", "-b", "journey"])?;
+    std::fs::write(
+        root.join("src/lib.rs"),
+        "pub fn discounted_total(amount: i32, discount_threshold: i32) -> i32 {\n    if amount > discount_threshold {\n        amount - 10\n    } else {\n        amount\n    }\n}\n",
+    )
+    .map_err(|error| error.to_string())?;
+    commit_fixture(&root, "closed boundary")?;
+    Ok(root)
+}
+
+fn structured_tool_success(reply: &Value, context: &str) -> Result<Value, String> {
+    let result = reply
+        .get("result")
+        .ok_or_else(|| format!("{context} lost its result: {reply}"))?;
+    if result
+        .pointer("/isError")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Err(format!(
+            "{context} returned an error instead of a card: {result}"
+        ));
+    }
+    result
+        .get("structuredContent")
+        .cloned()
+        .ok_or_else(|| format!("{context} omitted structuredContent: {result}"))
+}
+
+/// Keep the wording tied to actual input selection: the same dirty fixture
+/// yields CLI findings but a committed-only MCP snapshot with scope disclosure.
+#[cfg(feature = "lang-rust")]
+#[test]
+fn dirty_tree_cli_and_mcp_retain_their_distinct_inputs() -> Result<(), String> {
+    let root = install_b4_repair_ready_fixture()?;
+    let _cleanup = FixtureGuard { root: root.clone() };
+    std::fs::write(root.join(".gitignore"), "/target/\n").map_err(|error| error.to_string())?;
+    commit_fixture(&root, "ignore generated analysis artifacts")?;
+    fixture_git_ok(&root, &["update-ref", "refs/heads/main", "HEAD"])?;
+    let committed_diff = common::fixture_git::fixture_git_output(&root, &["diff", "main...HEAD"])?;
+    if !committed_diff.trim().is_empty() {
+        return Err("fixture must have an empty committed default-branch diff".to_string());
+    }
+    let source = root.join("src/lib.rs");
+    let committed = std::fs::read_to_string(&source).map_err(|error| error.to_string())?;
+    std::fs::write(&source, committed.replace("amount - 10", "amount - 20"))
+        .map_err(|error| error.to_string())?;
+    fixture_git_ok(&root, &["add", "src/lib.rs"])?;
+    std::fs::write(
+        &source,
+        committed.replace("amount - 10", "amount - 20").replace(
+            "amount > discount_threshold",
+            "amount >= discount_threshold",
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("src/untracked.rs"),
+        "pub fn untracked() -> i32 { 42 }\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let before = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
+    if !before.contains("MM src/lib.rs") || !before.contains("?? src/untracked.rs") {
+        return Err(format!(
+            "fixture lost staged/unstaged/untracked subjects: {before}"
+        ));
+    }
+    let before_head = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?;
+    let before_diff =
+        common::fixture_git::fixture_git_output(&root, &["diff", "--binary", "HEAD"])?;
+    let before_index =
+        common::fixture_git::fixture_git_output(&root, &["diff", "--cached", "--binary"])?;
+    let before_untracked =
+        std::fs::read(root.join("src/untracked.rs")).map_err(|error| error.to_string())?;
+    let check = |committed_only: bool| -> Result<Value, String> {
+        let mut command = worktree_ripr();
+        command
+            .args(["check", "--format", "json", "--root"])
+            .arg(&root);
+        if committed_only {
+            command.arg("--committed");
+        }
+        let output = command.output().map_err(|error| error.to_string())?;
+        if !output.status.success() {
+            return Err(format!(
+                "check failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        serde_json::from_slice(&output.stdout).map_err(|error| error.to_string())
+    };
+    let live = check(false)?;
+    if live.pointer("/head/source").and_then(Value::as_str) != Some("working_tree")
+        || live
+            .get("findings")
+            .and_then(Value::as_array)
+            .is_none_or(Vec::is_empty)
+    {
+        return Err(format!(
+            "dirty default CLI must analyze real findings: {live}"
+        ));
+    }
+    let committed_cli = check(true)?;
+    if committed_cli
+        .get("findings")
+        .and_then(Value::as_array)
+        .is_none_or(|items| !items.is_empty())
+        || committed_cli.get("unanalyzed_working_tree") != Some(&json!(true))
+    {
+        return Err(format!(
+            "--committed must exclude dirty edits and disclose them: {committed_cli}"
+        ));
+    }
+    let mut session = SequentialStdio::spawn(&root)?;
+    let timeout = Duration::from_mins(1);
+    session.call("discover", "server/discover", json!({}), timeout)?;
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), timeout)?;
+    let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
+    if refresh.pointer("/attempt/state").and_then(Value::as_str) != Some("completed")
+        || refresh
+            .pointer("/snapshot/outcome_kind")
+            .and_then(Value::as_str)
+            != Some("no_scope")
+        || refresh
+            .pointer("/snapshot/total_items")
+            .and_then(Value::as_u64)
+            != Some(0)
+        || refresh.pointer("/scope/analyzed").and_then(Value::as_str)
+            != Some("committed default-branch diff")
+        || refresh
+            .pointer("/scope/untracked_edits/total")
+            .and_then(Value::as_u64)
+            != Some(1)
+    {
+        return Err(format!(
+            "MCP must retain committed-only no_scope with dirty disclosure: {refresh}"
+        ));
+    }
+    let status = session.call_tool("status", "ripr_workspace_status", json!({}), timeout)?;
+    let status = structured_tool_success(&status, "ripr_workspace_status")?;
+    if status.pointer("/session/scope") != refresh.get("scope") {
+        return Err(format!("status lost refresh scope disclosure: {status}"));
+    }
+    drop(session);
+    let after = common::fixture_git::fixture_git_output(&root, &["status", "--porcelain"])?;
+    let after_head = common::fixture_git::fixture_git_output(&root, &["rev-parse", "HEAD"])?;
+    let after_diff = common::fixture_git::fixture_git_output(&root, &["diff", "--binary", "HEAD"])?;
+    let after_index =
+        common::fixture_git::fixture_git_output(&root, &["diff", "--cached", "--binary"])?;
+    let after_untracked =
+        std::fs::read(root.join("src/untracked.rs")).map_err(|error| error.to_string())?;
+    if before != after
+        || before_head != after_head
+        || before_diff != after_diff
+        || before_index != after_index
+        || before_untracked != after_untracked
+    {
+        return Err(format!(
+            "analysis changed the dirty fixture: before={before:?}, after={after:?}"
+        ));
+    }
+    Ok(())
+}
+
+/// Presentation-only command displays bind the portable `.` on MCP and the
+/// selected checkout on the CLI (#3999). They never enter `repair_card_id`.
+fn blank_presentation_displays(card: &mut Value) {
+    if let Some(display) = card.pointer_mut("/next_action/display") {
+        *display = json!("");
+    }
+    if let Some(display) = card.pointer_mut("/canonical_next_action/command/display") {
+        *display = json!("");
+    }
+}
+
+fn run_cli_agent_card(root: &Path, seam_id: &str) -> Result<Value, String> {
+    let output = worktree_ripr()
+        .args([
+            "agent",
+            "card",
+            "--root",
+            &root.display().to_string(),
+            "--seam-id",
+            seam_id,
+            "--json",
+        ])
+        .output()
+        .map_err(|error| format!("spawn ripr agent card: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "ripr agent card failed for seam {seam_id}: status {:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!(
+            "ripr agent card stdout is not JSON: {error}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        )
+    })
+}
+
+/// After refresh on the B4 repair-ready fixture, `ripr_get_repair_card`
+/// must ship `ripr-mcp-repair-card-v1` whose inner card matches
+/// `ripr agent card` for the same seam. A wrong schema, an error instead
+/// of a card, or a diverging card fails this control (#7144).
+#[test]
+fn get_repair_card_after_refresh_matches_cli_agent_card() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
+    if refresh
+        .pointer("/snapshot/finding_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        == 0
+    {
+        return Err(format!(
+            "B4 refresh must yield a gap before the card success path can run: {refresh}"
+        ));
+    }
+
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let items = list
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("ripr_list_gaps omitted items: {list}"))?;
+    let canonical_id = items
+        .iter()
+        .find(|item| {
+            item.pointer("/file")
+                .and_then(Value::as_str)
+                .is_some_and(|file| file.ends_with("src/lib.rs"))
+        })
+        .and_then(|item| item.pointer("/canonical_id").and_then(Value::as_str))
+        .ok_or_else(|| format!("B4 list_gaps has no src/lib.rs item: {list}"))?
+        .to_string();
+
+    let card_reply = session.call_tool(
+        "card",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    drop(session);
+    let document = structured_tool_success(&card_reply, "ripr_get_repair_card")?;
+    if document.pointer("/schema_version").and_then(Value::as_str)
+        != Some("ripr-mcp-repair-card-v1")
+    {
+        return Err(format!(
+            "repair-card success path lost schema ripr-mcp-repair-card-v1: {document}"
+        ));
+    }
+    let mcp_card = document
+        .get("card")
+        .cloned()
+        .ok_or_else(|| format!("repair-card document omitted card: {document}"))?;
+    let repair_card_id = mcp_card
+        .pointer("/repair_card_id")
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| format!("repair-card success path omitted repair_card_id: {mcp_card}"))?;
+    let seam_id = mcp_card
+        .pointer("/subject/seam_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("repair-card success path omitted subject.seam_id: {mcp_card}"))?;
+
+    let cli_card = run_cli_agent_card(&root, seam_id)?;
+    if cli_card.pointer("/schema_version").and_then(Value::as_str) != Some("repair_card.v1") {
+        return Err(format!("ripr agent card lost repair_card.v1: {cli_card}"));
+    }
+    if cli_card.pointer("/repair_card_id").and_then(Value::as_str) != Some(repair_card_id) {
+        return Err(format!(
+            "MCP card diverged from `ripr agent card` identity: mcp={repair_card_id} cli={}",
+            cli_card.pointer("/repair_card_id").unwrap_or(&Value::Null)
+        ));
+    }
+    let mut mcp_compared = mcp_card;
+    let mut cli_compared = cli_card;
+    blank_presentation_displays(&mut mcp_compared);
+    blank_presentation_displays(&mut cli_compared);
+    if mcp_compared != cli_compared {
+        return Err(format!(
+            "MCP card diverged from `ripr agent card` after blanking presentation displays:\nmcp={mcp_compared}\ncli={cli_compared}"
+        ));
+    }
+    Ok(())
+}
+
+fn read_resource_document(
+    session: &mut SequentialStdio,
+    id: &str,
+    uri: &str,
+    timeout: Duration,
+) -> Result<Value, String> {
+    let reply = session.call(id, "resources/read", json!({ "uri": uri }), timeout)?;
+    let text = reply
+        .pointer("/result/contents/0/text")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("resource {uri} omitted JSON text: {reply}"))?;
+    serde_json::from_str(text)
+        .map_err(|error| format!("resource {uri} text is not JSON: {error}: {text}"))
+}
+
+/// After refresh on the B4 repair-ready fixture, every tool/resource pair
+/// returns the same document: `ripr_get_gap` with `ripr://gap/{id}`,
+/// `ripr_get_repair_attempt` with `ripr://repair-attempt/{id}`,
+/// `ripr_get_receipt_status` with `ripr://receipt/{id}`, and
+/// `ripr_get_repair_card` with `ripr://repair-card/{id}`. The snapshot
+/// resource has no tool twin, so it pins its envelope instead
+/// (`ripr-mcp-snapshot-v1`, identity, typed outcome). A drift in URI
+/// parsing, resource envelopes, or error mapping fails this control (#7145).
+#[test]
+fn resource_reads_match_tools_after_refresh() -> Result<(), String> {
+    const REFRESH_TIMEOUT: Duration = Duration::from_mins(3);
+    const REPLY_TIMEOUT: Duration = Duration::from_mins(1);
+    let root = install_b4_repair_ready_fixture()?;
+    let _guard = FixtureGuard { root: root.clone() };
+    let mut session = SequentialStdio::spawn(&root)?;
+    session.call("discover", "server/discover", json!({}), REPLY_TIMEOUT)?;
+
+    let refresh = session.call_tool("refresh", "ripr_refresh", json!({}), REFRESH_TIMEOUT)?;
+    let refresh = structured_tool_success(&refresh, "ripr_refresh")?;
+    if refresh
+        .pointer("/snapshot/finding_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        == 0
+    {
+        return Err(format!(
+            "B4 refresh must yield a gap before the equivalence control can run: {refresh}"
+        ));
+    }
+
+    let list = session.call_tool("list", "ripr_list_gaps", json!({}), REPLY_TIMEOUT)?;
+    let list = structured_tool_success(&list, "ripr_list_gaps")?;
+    let snapshot_id = list
+        .pointer("/snapshot_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("ripr_list_gaps omitted snapshot_id: {list}"))?
+        .to_string();
+    let items = list
+        .pointer("/items")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("ripr_list_gaps omitted items: {list}"))?;
+    let canonical_id = items
+        .iter()
+        .find(|item| {
+            item.pointer("/file")
+                .and_then(Value::as_str)
+                .is_some_and(|file| file.ends_with("src/lib.rs"))
+        })
+        .and_then(|item| item.pointer("/canonical_id").and_then(Value::as_str))
+        .ok_or_else(|| format!("B4 list_gaps has no src/lib.rs item: {list}"))?
+        .to_string();
+
+    // Snapshot: envelope pin (no tool twin exists).
+    let snapshot = read_resource_document(
+        &mut session,
+        "snapshot-resource",
+        &format!("ripr://snapshot/{snapshot_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if snapshot.pointer("/schema_version").and_then(Value::as_str) != Some("ripr-mcp-snapshot-v1") {
+        return Err(format!(
+            "snapshot resource lost ripr-mcp-snapshot-v1: {snapshot}"
+        ));
+    }
+    if snapshot.pointer("/snapshot_id").and_then(Value::as_str) != Some(snapshot_id.as_str()) {
+        return Err(format!("snapshot resource lost its identity: {snapshot}"));
+    }
+    if snapshot
+        .pointer("/outcome/kind")
+        .and_then(Value::as_str)
+        .is_none_or(str::is_empty)
+    {
+        return Err(format!(
+            "snapshot resource lost the typed outcome: {snapshot}"
+        ));
+    }
+
+    // Gap pair.
+    let gap_tool = session.call_tool(
+        "gap-tool",
+        "ripr_get_gap",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let gap_tool = structured_tool_success(&gap_tool, "ripr_get_gap")?;
+    let gap_resource = read_resource_document(
+        &mut session,
+        "gap-resource",
+        &format!("ripr://gap/{canonical_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if gap_tool != gap_resource {
+        return Err(format!(
+            "gap tool and resource diverged:\ntool={gap_tool}\nresource={gap_resource}"
+        ));
+    }
+
+    // Card pair.
+    let card_tool = session.call_tool(
+        "card-tool",
+        "ripr_get_repair_card",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let card_tool = structured_tool_success(&card_tool, "ripr_get_repair_card")?;
+    let card_resource = read_resource_document(
+        &mut session,
+        "card-resource",
+        &format!("ripr://repair-card/{canonical_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if card_tool != card_resource {
+        return Err(format!(
+            "repair-card tool and resource diverged:\ntool={card_tool}\nresource={card_resource}"
+        ));
+    }
+
+    // Attempt pair: prepare the B4 item, then read both routes.
+    let prepared = session.call_tool(
+        "prepare",
+        "ripr_prepare_repair",
+        json!({ "canonical_id": canonical_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let prepared = structured_tool_success(&prepared, "ripr_prepare_repair")?;
+    let attempt_id = prepared
+        .pointer("/attempt/attempt_id")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("B4 prepare must yield an attempt: {prepared}"))?
+        .to_string();
+    let attempt_tool = session.call_tool(
+        "attempt-tool",
+        "ripr_get_repair_attempt",
+        json!({ "attempt_id": attempt_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let attempt_tool = structured_tool_success(&attempt_tool, "ripr_get_repair_attempt")?;
+    let attempt_resource = read_resource_document(
+        &mut session,
+        "attempt-resource",
+        &format!("ripr://repair-attempt/{attempt_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if attempt_tool != attempt_resource {
+        return Err(format!(
+            "repair-attempt tool and resource diverged:\ntool={attempt_tool}\nresource={attempt_resource}"
+        ));
+    }
+
+    // Receipt pair: session receipt ids are attempt-bound.
+    let receipt_tool = session.call_tool(
+        "receipt-tool",
+        "ripr_get_receipt_status",
+        json!({ "receipt_id": attempt_id }),
+        REPLY_TIMEOUT,
+    )?;
+    let receipt_tool = structured_tool_success(&receipt_tool, "ripr_get_receipt_status")?;
+    let receipt_resource = read_resource_document(
+        &mut session,
+        "receipt-resource",
+        &format!("ripr://receipt/{attempt_id}"),
+        REPLY_TIMEOUT,
+    )?;
+    if receipt_tool != receipt_resource {
+        return Err(format!(
+            "receipt tool and resource diverged:\ntool={receipt_tool}\nresource={receipt_resource}"
+        ));
+    }
+
+    // Miss mapping: unknown ids fail closed with typed data codes.
+    for (id, uri, kind) in [
+        ("gap-miss", "ripr://gap/no-such-item", "gap"),
+        (
+            "card-miss",
+            "ripr://repair-card/no-such-item",
+            "repair-card",
+        ),
+    ] {
+        let miss = session.call(id, "resources/read", json!({ "uri": uri }), REPLY_TIMEOUT)?;
+        let code = miss.pointer("/error/data/code").and_then(Value::as_str);
+        if code != Some("item_not_found") {
+            return Err(format!("{kind} resource miss lost item_not_found: {miss}"));
+        }
     }
     Ok(())
 }

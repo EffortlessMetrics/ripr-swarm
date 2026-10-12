@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::run::{COMMAND_DIAGNOSTIC_DISCLOSURE, CommandDiagnostic};
 use crate::run::{ProcessErrorKind, capture_output_without_timeout, capture_process_output};
 
 #[cfg(test)]
@@ -37,6 +38,7 @@ impl PrecommitFailureKind {
 struct PrecommitError {
     kind: PrecommitFailureKind,
     message: String,
+    diagnostic: Option<Box<CommandDiagnostic>>,
 }
 
 impl PrecommitError {
@@ -44,7 +46,13 @@ impl PrecommitError {
         Self {
             kind,
             message: message.into(),
+            diagnostic: None,
         }
+    }
+
+    fn with_diagnostic(mut self, diagnostic: CommandDiagnostic) -> Self {
+        self.diagnostic = Some(Box::new(diagnostic));
+        self
     }
 }
 
@@ -108,6 +116,7 @@ struct CommandResult {
     command: String,
     outcome: String,
     detail: Option<String>,
+    diagnostic: Option<CommandDiagnostic>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -291,9 +300,16 @@ pub(super) fn run() -> Result<(), String> {
         let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
         let command = format_command("git", &arg_refs, &root);
         match run_status("git", &git_args_owned(&root, &args)) {
-            Ok(()) => record_pass(&mut report, &command),
+            Ok(diagnostic) => record_diagnostic_pass(&mut report, &command, diagnostic, &root),
             Err(error) => {
-                return fail_with_report(&root, &mut report, error.kind, command, error.message);
+                return fail_with_diagnostic_report(
+                    &root,
+                    &mut report,
+                    error.kind,
+                    command,
+                    error.message,
+                    error.diagnostic,
+                );
             }
         }
     }
@@ -331,6 +347,17 @@ fn fail_with_report(
     command: impl Into<String>,
     detail: impl Into<String>,
 ) -> Result<(), String> {
+    fail_with_diagnostic_report(root, report, kind, command, detail, None)
+}
+
+fn fail_with_diagnostic_report(
+    root: &Path,
+    report: &mut PrecommitReport,
+    kind: PrecommitFailureKind,
+    command: impl Into<String>,
+    detail: impl Into<String>,
+    diagnostic: Option<Box<CommandDiagnostic>>,
+) -> Result<(), String> {
     let detail = detail.into();
     let command = command.into();
     report.status = kind.status().to_string();
@@ -348,6 +375,9 @@ fn fail_with_report(
         }
     }
     record_failure(report, &command, &detail);
+    if let Some(entry) = report.commands.last_mut() {
+        entry.diagnostic = diagnostic.map(|value| redact_diagnostic(*value, root));
+    }
     let report_error = write_report(root, report).err();
     match report_error {
         Some(error) => Err(format!(
@@ -369,8 +399,8 @@ fn run_clippy(
         root,
     );
     match run_status("cargo", &args) {
-        Ok(()) => {
-            record_pass(report, &command);
+        Ok(diagnostic) => {
+            record_diagnostic_pass(report, &command, diagnostic, root);
             Ok(())
         }
         Err(error) => {
@@ -379,7 +409,14 @@ fn run_clippy(
                     .skipped
                     .push(format!("Clippy for {package} was not run"));
             }
-            fail_with_report(root, report, error.kind, command, error.message)
+            fail_with_diagnostic_report(
+                root,
+                report,
+                error.kind,
+                command,
+                error.message,
+                error.diagnostic,
+            )
         }
     }
 }
@@ -864,24 +901,26 @@ fn cargo_bytes(args: &[String], context: &str) -> Result<Vec<u8>, PrecommitError
     ))
 }
 
-fn run_status(program: &str, args: &[String]) -> Result<(), PrecommitError> {
+fn run_status(program: &str, args: &[String]) -> Result<CommandDiagnostic, PrecommitError> {
     // Same no-cap shared-runner path as `cargo_bytes` (#4150).
-    let output = capture_output_without_timeout(program, args, &[], "precommit command").map_err(
-        |error| {
-            PrecommitError::new(
-                PrecommitFailureKind::Infrastructure,
-                format!("{program} {} could not run: {error}", args.join(" ")),
-            )
-        },
-    )?;
+    let captured = capture_output_without_timeout(program, args, &[], "precommit command");
+    let diagnostic = CommandDiagnostic::captured(program, args, &captured);
+    let output = captured.map_err(|error| {
+        PrecommitError::new(
+            PrecommitFailureKind::Infrastructure,
+            format!("{program} {} could not run: {error}", args.join(" ")),
+        )
+        .with_diagnostic(diagnostic.clone())
+    })?;
     let Some(status) = output.status else {
         return Err(PrecommitError::new(
             PrecommitFailureKind::Infrastructure,
             format!("{program} {} produced no process status", args.join(" ")),
-        ));
+        )
+        .with_diagnostic(diagnostic));
     };
     if status.success() {
-        return Ok(());
+        return Ok(diagnostic);
     }
     let detail = [output.stdout.trim(), output.stderr.trim()]
         .into_iter()
@@ -899,7 +938,28 @@ fn run_status(program: &str, args: &[String]) -> Result<(), PrecommitError> {
                 format!(": {detail}")
             }
         ),
-    ))
+    )
+    .with_diagnostic(diagnostic))
+}
+
+fn redact_diagnostic(mut diagnostic: CommandDiagnostic, root: &Path) -> CommandDiagnostic {
+    let root_text = root.to_string_lossy().replace('\\', "/");
+    for arg in &mut diagnostic.argv {
+        *arg = arg.replace('\\', "/").replace(&root_text, "$REPO");
+    }
+    diagnostic
+}
+
+fn record_diagnostic_pass(
+    report: &mut PrecommitReport,
+    command: &str,
+    diagnostic: CommandDiagnostic,
+    root: &Path,
+) {
+    record_pass(report, command);
+    if let Some(entry) = report.commands.last_mut() {
+        entry.diagnostic = Some(redact_diagnostic(diagnostic, root));
+    }
 }
 
 fn record_pass(report: &mut PrecommitReport, command: &str) {
@@ -907,6 +967,7 @@ fn record_pass(report: &mut PrecommitReport, command: &str) {
         command: command.to_string(),
         outcome: "pass".to_string(),
         detail: None,
+        diagnostic: None,
     });
 }
 
@@ -915,6 +976,7 @@ fn record_failure(report: &mut PrecommitReport, command: &str, detail: &str) {
         command: command.to_string(),
         outcome: "failed".to_string(),
         detail: Some(detail.to_string()),
+        diagnostic: None,
     });
 }
 
@@ -1025,6 +1087,12 @@ fn report_markdown(report: &PrecommitReport) -> String {
     for command in &report.commands {
         out.push_str(&format!("- `{}`: `{}`\n", command.command, command.outcome));
     }
+    out.push_str(&format!("\n## Child command diagnostics\n\n{COMMAND_DIAGNOSTIC_DISCLOSURE}\n\nCapture scope: diff checks and selected Clippy children only. Metadata, aggregate policy gates and their children have unavailable diagnostics here. Argv retains argument boundaries with repository-root substitution `$REPO`. HEAD/base and changed paths are context, not an immutable digest of dirty source.\n\n"));
+    for command in &report.commands {
+        if let Some(diagnostic) = &command.diagnostic {
+            out.push_str(&format!("- {}\n", diagnostic.render()));
+        }
+    }
     if matches!(
         report.failure_kind,
         Some(PrecommitFailureKind::Infrastructure)
@@ -1102,6 +1170,153 @@ mod tests {
     }
 
     #[test]
+    fn successful_child_retains_command_diagnostics() -> Result<(), String> {
+        let args = vec!["--version".to_string()];
+        let observation = run_status("git", &args).map_err(|error| error.message)?;
+        let json = serde_json::to_value(observation).map_err(|error| error.to_string())?;
+        require(
+            json["program"] == "git" && json["argv"] == serde_json::json!(args),
+            format!("successful child lost actual argv: {json}"),
+        )?;
+        require(
+            json["outcome"] == "pass",
+            "successful child outcome missing",
+        )?;
+        require(
+            json["elapsed_ms"].is_number() && json["status"].is_string(),
+            "successful child lost measured duration or native status",
+        )?;
+        require(
+            json["cargo_progress"].is_null(),
+            "non-Cargo child gained Cargo evidence",
+        )
+    }
+
+    #[test]
+    fn failed_child_retains_native_diagnostics_and_report_binding() -> Result<(), String> {
+        let fixture = TestRepo::new()?;
+        let args = vec!["--definitely-not-a-git-option".to_string()];
+        let error = run_status("git", &args)
+            .err()
+            .ok_or("invalid git option passed")?;
+        require(
+            matches!(error.kind, PrecommitFailureKind::SourceOrPolicy),
+            "gate classification changed",
+        )?;
+        let diagnostic = error
+            .diagnostic
+            .as_ref()
+            .ok_or("failed child diagnostic missing")?;
+        require(
+            diagnostic.outcome == "failed"
+                && diagnostic.elapsed_ms.is_some()
+                && diagnostic.status.is_some(),
+            "failed child evidence missing",
+        )?;
+        require(diagnostic.argv == args, "failed child argv changed")?;
+        let mut report = sample_report("running");
+        let original = error.message.clone();
+        let result = fail_with_diagnostic_report(
+            &fixture.path,
+            &mut report,
+            error.kind,
+            "git invalid",
+            error.message,
+            error.diagnostic,
+        );
+        require(
+            result == Err(original),
+            "diagnostics changed the gate error",
+        )?;
+        let json: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(fixture.path.join(REPORT_JSON)).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        require(
+            json["commands"][0]["diagnostic"]["outcome"] == "failed",
+            "published report lost failed row",
+        )?;
+        let mut canonical = report.clone();
+        canonical.report_digest.clear();
+        let digest = Sha256::digest(serde_json::to_vec(&canonical).map_err(|e| e.to_string())?);
+        require(
+            json["report_digest"] == format!("sha256:{digest:x}"),
+            "diagnostics were not digest-bound",
+        )?;
+        require(
+            report_markdown(&report).contains("outcome=failed"),
+            "Markdown diagnostic missing",
+        )
+    }
+
+    #[test]
+    fn diagnostic_report_io_failure_preserves_execution_and_original_failure() -> Result<(), String>
+    {
+        let fixture = TestRepo::new()?;
+        // A regular file at the directory path fails deterministically, even
+        // when privileged hosts could bypass read-only permission bits.
+        fixture.write("target/ripr", "not a report directory")?;
+        let mut report = sample_report("pass");
+        let observation = run_status("git", &["--version".to_string()]).map_err(|e| e.message)?;
+        record_diagnostic_pass(&mut report, "git --version", observation, &fixture.path);
+        require(
+            write_report(&fixture.path, &report).is_err(),
+            "successful execution falsely published diagnostics",
+        )?;
+        require(
+            report.commands.len() == 1 && report.commands[0].outcome == "pass",
+            "I/O changed executed commands",
+        )?;
+        let error = run_status("git", &["--definitely-not-a-git-option".to_string()])
+            .err()
+            .ok_or("invalid git passed")?;
+        let original = error.message.clone();
+        let failure = fail_with_diagnostic_report(
+            &fixture.path,
+            &mut report,
+            error.kind,
+            "git invalid",
+            error.message,
+            error.diagnostic,
+        )
+        .err()
+        .ok_or("failed execution passed after I/O error")?;
+        require(
+            failure.contains(&original) && failure.contains("failed to publish current report"),
+            "original failure or I/O failure hidden",
+        )?;
+        require(
+            matches!(
+                report.failure_kind,
+                Some(PrecommitFailureKind::SourceOrPolicy)
+            ) && report.commands.len() == 2,
+            "I/O changed native failure classification or child count",
+        )?;
+        require(
+            !fixture.path.join(REPORT_JSON).exists(),
+            "missing report masqueraded as current proof",
+        )
+    }
+
+    #[test]
+    fn capture_failure_retains_unavailable_evidence() -> Result<(), String> {
+        let error = run_status("ripr-5090-missing-child", &[])
+            .err()
+            .ok_or("missing child succeeded")?;
+        require(
+            matches!(error.kind, PrecommitFailureKind::Infrastructure),
+            "capture error changed classification",
+        )?;
+        let diagnostic = error.diagnostic.ok_or("unavailable row missing")?;
+        require(
+            diagnostic.outcome == "capture_unavailable"
+                && diagnostic.elapsed_ms.is_none()
+                && diagnostic.status.is_none(),
+            "capture error gained execution evidence",
+        )
+    }
+
+    #[test]
     fn precommit_report_distinguishes_policy_failure_from_unavailable_command() -> Result<(), String>
     {
         let mut report = sample_report("running");
@@ -1144,7 +1359,9 @@ mod tests {
     #[test]
     fn precommit_step_waits_for_slow_success_without_a_wall_clock_cap() -> Result<(), String> {
         let args = vec!["-c".to_string(), "sleep 1; exit 0".to_string()];
-        run_status("sh", &args).map_err(|error| error.message)
+        run_status("sh", &args)
+            .map(|_| ())
+            .map_err(|error| error.message)
     }
 
     #[test]

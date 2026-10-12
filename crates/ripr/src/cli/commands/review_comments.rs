@@ -20,7 +20,8 @@ use crate::cli::commands_options::ReviewCommentsOptions;
 use crate::cli::help;
 use crate::cli::parse::expect_value;
 use crate::cli::suggest::unknown_argument;
-use crate::config::{CheckInputExplicit, apply_to_check_input, load_for_root};
+use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
+use crate::domain::LanguageId;
 use crate::output;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
@@ -31,9 +32,11 @@ use super::write_text_file;
 const DEFAULT_REVIEW_COMMENTS_TIMEOUT_MS: u64 = 120_000;
 
 /// Default ceiling on the union of analyzable workspace files and changed
-/// owner-attribution inputs. Match the current diff/repo family default
-/// (raised in #4972 after this repository grew beyond 800 files), while
-/// remaining below the 1,600–1,700-file external failure shapes in #3768.
+/// owner-attribution inputs. Match the repo-scope default and the diff
+/// narrowing threshold (raised in #4972 after this repository grew beyond
+/// 800 files) and stay below the 1,600–1,700-file external failure shapes
+/// in #3768. Guidance indexes the whole workspace, so it does not follow
+/// the 10,000-file diff memory guard.
 /// This is input admission, not an RSS bound or evidence that admitted
 /// execution will complete on every runner.
 const REVIEW_GUIDANCE_MAX_INDEX_FILES_DEFAULT: usize = 1200;
@@ -581,9 +584,8 @@ fn review_comments_with_admission(
     })
     .map_err(|error| {
         if error.is_git_invocation_timeout()
-            || (analysis::cancellation::is_cancellation_error(&error.to_string())
-                && cancellation.abort_kind()
-                    == Some(analysis::cancellation::AnalysisAbortKind::DeadlineExceeded))
+            || cancellation.observed_abort()
+                == Some(analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
         {
             record_review_comments_timeout(&mut receipt, &receipt_path, "diff_discovery")
         } else {
@@ -624,9 +626,8 @@ fn review_comments_with_admission(
         analysis::analyzable_corpus_payload_size(&input.root, &config, &owner_files)
     })
     .map_err(|error| {
-        if analysis::cancellation::is_cancellation_error(&error)
-            && cancellation.abort_kind()
-                == Some(analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
+        if cancellation.observed_abort()
+            == Some(analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
         {
             record_review_comments_timeout(&mut receipt, &receipt_path, "language_facts")
         } else {
@@ -682,9 +683,8 @@ fn review_comments_with_admission(
         )
     })
     .map_err(|error| {
-        if analysis::cancellation::is_cancellation_error(&error)
-            && cancellation.abort_kind()
-                == Some(analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
+        if cancellation.observed_abort()
+            == Some(analysis::cancellation::AnalysisAbortKind::DeadlineExceeded)
         {
             record_review_comments_timeout(&mut receipt, &receipt_path, "canonical_analysis")
         } else {
@@ -733,6 +733,35 @@ fn review_comments_with_admission(
              not evaluated: seams on changed lines and in changed owners already filled all {} \
              review slots",
             output::review_comments::DEFAULT_REVIEW_MAX_SUMMARY_ITEMS
+        ));
+    }
+    // #6832 disclosure: the base/head review-comments path is seam-scoped.
+    // Preview-language findings are not seams, so they are never projected as
+    // comments here; without this warning an empty report is indistinguishable
+    // from "no findings". Name the working gap-ledger route so the exclusion
+    // is actionable. The `--gap-ledger` route itself renders those records and
+    // returns above, so it never carries this warning.
+    let preview_language_files = preview_language_changed_files(&working_set, &config);
+    if !preview_language_files.is_empty() {
+        let listed = preview_language_files
+            .iter()
+            .take(5)
+            .cloned()
+            .collect::<Vec<_>>();
+        let extra = preview_language_files.len().saturating_sub(listed.len());
+        selection.warnings.push(format!(
+            "preview_language_findings_not_projected: the base/head review-comments path is \
+             seam-scoped (Rust); findings for the changed preview-language files ({}{}) are not \
+             projected as comments here, so zero comments does not mean no findings for them. \
+             Run `ripr check --base <base-ref> --json` at the head checkout for preview-language \
+             evidence, then `ripr reports gap-ledger --check-output <check-output.json> --root .` \
+             and rerun review-comments with `--gap-ledger` to render preview-language repair cards.",
+            listed.join(", "),
+            if extra > 0 {
+                format!(", and {extra} more")
+            } else {
+                String::new()
+            }
         ));
     }
     enforce_review_comments_deadline(
@@ -810,6 +839,41 @@ fn review_comments_with_admission(
     println!("Wrote {}", options.out.display());
     println!("Wrote {}", markdown_path.display());
     Ok(())
+}
+
+/// Changed working-set files that belong to an ENABLED preview language
+/// (Python, TypeScript/JavaScript), displayed with forward slashes.
+///
+/// The base/head review-comments path is seam-scoped: findings for
+/// preview-language files are never projected as comments, because preview
+/// findings are not seams (#6832). The caller discloses this exclusion so an
+/// empty report is distinguishable from "no findings"; a file of a DISABLED
+/// preview language is not listed (the run never claimed that language).
+fn preview_language_changed_files(
+    working_set: &AgentBriefResolvedWorkingSet,
+    config: &RiprConfig,
+) -> Vec<String> {
+    let enabled = config.languages().enabled();
+    let python_enabled = enabled.contains(&LanguageId::Python);
+    let typescript_enabled =
+        enabled.contains(&LanguageId::TypeScript) || enabled.contains(&LanguageId::JavaScript);
+    if !python_enabled && !typescript_enabled {
+        return Vec::new();
+    }
+    working_set
+        .files
+        .iter()
+        .filter(|file| {
+            let ext = file.extension().and_then(|ext| ext.to_str());
+            let is_python = ext == Some("py");
+            let is_typescript = matches!(
+                ext,
+                Some("ts" | "tsx" | "js" | "jsx" | "mjs" | "cjs" | "mts" | "cts")
+            );
+            (is_python && python_enabled) || (is_typescript && typescript_enabled)
+        })
+        .map(|path| path.display().to_string().replace('\\', "/"))
+        .collect()
 }
 
 fn parse_review_comments_options(args: &[String]) -> Result<ReviewCommentsOptions, String> {
@@ -1315,6 +1379,230 @@ mod tests {
     }
 
     #[test]
+    fn preview_language_changed_files_filters_by_enabled_language_and_extension() {
+        // Feature-independent discriminator pin (#6832): the disclosure lists
+        // only changed files whose EXTENSION belongs to an ENABLED preview
+        // language; disabled-language files and non-preview files stay out.
+        let working_set = AgentBriefResolvedWorkingSet {
+            source: crate::app::agent_brief::AgentBriefWorkingSetSource::Base,
+            files: vec![
+                PathBuf::from("src/pricing.py"),
+                PathBuf::from("src/lib.ts"),
+                PathBuf::from("src/app.mjs"),
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("README.md"),
+            ],
+            changed_lines: Vec::new(),
+            changed_owners: Vec::new(),
+            enclosing_owners: Vec::new(),
+            base: Some("HEAD~1".to_string()),
+            diff: None,
+            seam_id: None,
+        };
+
+        let python_only = RiprConfig {
+            languages: crate::config::LanguagesConfig {
+                enabled: vec![LanguageId::Python],
+                ..Default::default()
+            },
+            ..RiprConfig::default()
+        };
+        assert_eq!(
+            preview_language_changed_files(&working_set, &python_only),
+            vec!["src/pricing.py".to_string()]
+        );
+
+        let typescript_only = RiprConfig {
+            languages: crate::config::LanguagesConfig {
+                enabled: vec![LanguageId::TypeScript],
+                ..Default::default()
+            },
+            ..RiprConfig::default()
+        };
+        assert_eq!(
+            preview_language_changed_files(&working_set, &typescript_only),
+            vec!["src/lib.ts".to_string(), "src/app.mjs".to_string()]
+        );
+
+        // Default config enables Rust only: nothing to disclose.
+        assert!(preview_language_changed_files(&working_set, &RiprConfig::default()).is_empty());
+    }
+
+    #[test]
+    #[cfg(feature = "lang-python")]
+    fn review_comments_discloses_preview_language_exclusion_on_python_diffs() -> Result<(), String>
+    {
+        // #6832: the base/head review-comments path is seam-scoped, so a
+        // Python diff produces zero comments even when the diff-scoped check
+        // has actionable evidence. The empty report must disclose WHY (the
+        // preview exclusion) and name the working gap-ledger route instead of
+        // reading as "no findings".
+        let root = unique_command_test_dir("review-comments-preview-disclosure");
+        std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+        std::fs::write(
+            root.join("ripr.toml"),
+            "[languages]\nenabled = [\"python\"]\n",
+        )
+        .map_err(|err| format!("write ripr.toml: {err}"))?;
+        std::fs::write(
+            root.join("src/pricing.py"),
+            "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+        )
+        .map_err(|err| format!("write src/pricing.py: {err}"))?;
+
+        let out = root.join("target/ripr/review/comments.json");
+        review_comments_with_diff_loader(
+            &args(&[
+                "--root",
+                &root.display().to_string(),
+                "--base",
+                "HEAD~1",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_diff_root, _base, _head| {
+                Ok("diff --git a/src/pricing.py b/src/pricing.py\n--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -2 +2 @@\n-    if amount > threshold:\n+    if amount >= threshold:\n".to_string())
+            },
+        )?;
+
+        let rendered_json = std::fs::read_to_string(&out)
+            .map_err(|err| format!("read review comments JSON: {err}"))?;
+        let value: serde_json::Value = serde_json::from_str(&rendered_json)
+            .map_err(|err| format!("parse review comments JSON: {err}"))?;
+        assert_eq!(value["summary"]["comments"], 0);
+        let warnings = value["warnings"]
+            .as_array()
+            .ok_or("warnings must be an array")?;
+        let disclosure = warnings
+            .iter()
+            .find(|warning| {
+                warning["message"].as_str().is_some_and(|message| {
+                    message.starts_with("preview_language_findings_not_projected:")
+                })
+            })
+            .ok_or("expected a preview_language_findings_not_projected warning on a Python diff")?;
+        let message = disclosure["message"]
+            .as_str()
+            .ok_or("warning message must be a string")?;
+        assert!(
+            message.contains("src/pricing.py"),
+            "the disclosure must name the changed preview-language file: {message}"
+        );
+        assert!(
+            message.contains("seam-scoped"),
+            "the disclosure must name the seam-scoped cause: {message}"
+        );
+        assert!(
+            message.contains("reports gap-ledger --check-output")
+                && message.contains("--gap-ledger"),
+            "the disclosure must name the working ledger route: {message}"
+        );
+
+        // The markdown surface shares the pre-existing warnings-omission
+        // property of every review-comments warning kind (pinned by the
+        // boundary_gap pr-guidance goldens), so the JSON `warnings` array is
+        // the disclosure contract here.
+
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn review_comments_no_preview_disclosure_without_enabled_preview_language_changed()
+    -> Result<(), String> {
+        // Controls (#6832): the disclosure fires only when an ENABLED preview
+        // language has a changed file. A Rust-only repo with a Rust diff, and
+        // a Rust repo whose diff touches a .py file it never enabled, must
+        // stay free of the warning.
+        let run_case = |label: &str,
+                        config_text: Option<&str>,
+                        source: (&str, &str),
+                        diff: &str|
+         -> Result<serde_json::Value, String> {
+            let root = unique_command_test_dir(label);
+            std::fs::create_dir_all(root.join("src"))
+                .map_err(|err| format!("create src: {err}"))?;
+            if let Some(config_text) = config_text {
+                std::fs::write(root.join("ripr.toml"), config_text)
+                    .map_err(|err| format!("write ripr.toml: {err}"))?;
+            }
+            std::fs::write(root.join(source.0), source.1)
+                .map_err(|err| format!("write {}: {err}", source.0))?;
+            let out = root.join("target/ripr/review/comments.json");
+            review_comments_with_diff_loader(
+                &args(&[
+                    "--root",
+                    &root.display().to_string(),
+                    "--base",
+                    "HEAD~1",
+                    "--head",
+                    "HEAD",
+                    "--out",
+                    &out.display().to_string(),
+                ]),
+                |_diff_root, _base, _head| Ok(diff.to_string()),
+            )?;
+            let rendered = std::fs::read_to_string(&out)
+                .map_err(|err| format!("read review comments JSON: {err}"))?;
+            let value: serde_json::Value = serde_json::from_str(&rendered)
+                .map_err(|err| format!("parse review comments JSON: {err}"))?;
+            std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
+            Ok(value)
+        };
+
+        // Control 1: Rust-only repo, Rust diff — default config, no warning.
+        let rust_case = run_case(
+            "review-comments-no-preview-rust",
+            None,
+            (
+                "src/lib.rs",
+                "pub fn discounted_total(amount: i32) -> i32 {\n    if amount > 10 { amount - 1 } else { amount }\n}\n",
+            ),
+            "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-    if amount >= 10 { amount - 1 } else { amount }\n+    if amount > 10 { amount - 1 } else { amount }\n",
+        )?;
+        let rust_warnings = rust_case["warnings"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !rust_warnings.iter().any(|warning| {
+                warning["message"].as_str().is_some_and(|message| {
+                    message.contains("preview_language_findings_not_projected")
+                })
+            }),
+            "a Rust-only diff must not carry the preview disclosure: {rust_warnings:?}"
+        );
+
+        // Control 2: Python file changed but Python is NOT enabled — the run
+        // never claimed that language, so no disclosure.
+        let disabled_case = run_case(
+            "review-comments-no-preview-disabled",
+            Some("[languages]\nenabled = [\"rust\"]\n"),
+            (
+                "src/pricing.py",
+                "def apply_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+            ),
+            "diff --git a/src/pricing.py b/src/pricing.py\n--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -2 +2 @@\n-    if amount > threshold:\n+    if amount >= threshold:\n",
+        )?;
+        let disabled_warnings = disabled_case["warnings"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !disabled_warnings.iter().any(|warning| {
+                warning["message"].as_str().is_some_and(|message| {
+                    message.contains("preview_language_findings_not_projected")
+                })
+            }),
+            "a diff in a DISABLED preview language must not carry the disclosure: {disabled_warnings:?}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn review_comments_scopes_diff_fast_path_to_changed_files_and_immediate_callers()
     -> Result<(), String> {
         let root = unique_command_test_dir("review-comments-diff-scope");
@@ -1720,6 +2008,156 @@ mod tests {
         }
         if out.exists() || out.with_extension("md").exists() {
             return Err("cancelled inventory published review artifacts".to_string());
+        }
+        Ok(())
+    }
+
+    /// Pair of `review_comments_canonical_deadline_cancellation_records_timeout`.
+    /// That test pins `DeadlineExceeded` → `limited_timeout` at this phase.
+    /// This one pins an ordinary inventory builder error at the same phase to
+    /// `failed`, so a regression that labels every `canonical_analysis` error
+    /// as a timeout cannot hide behind the timeout suite (#6804).
+    #[cfg(unix)]
+    #[test]
+    fn review_comments_ordinary_canonical_analysis_failure_records_failed() -> Result<(), String> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let root = unique_command_test_dir("review-canonical-ordinary-failure");
+        let unreadable = root.join("src/unreadable.rs");
+
+        struct Fixture {
+            root: PathBuf,
+            unreadable: PathBuf,
+        }
+        impl Drop for Fixture {
+            fn drop(&mut self) {
+                let _ = std::fs::set_permissions(
+                    &self.unreadable,
+                    std::fs::Permissions::from_mode(0o644),
+                );
+                let _ = std::fs::remove_dir_all(&self.root);
+            }
+        }
+        let fixture = Fixture { root, unreadable };
+
+        std::fs::create_dir_all(fixture.root.join("src"))
+            .map_err(|error| format!("create canonical ordinary-failure fixture: {error}"))?;
+        std::fs::write(
+            fixture.root.join("Cargo.toml"),
+            "[package]\nname = \"review_canonical_ordinary_failure\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
+        )
+        .map_err(|error| format!("write canonical ordinary-failure manifest: {error}"))?;
+        std::fs::write(
+            fixture.root.join("src/lib.rs"),
+            "pub fn value() -> i32 { 1 }\n",
+        )
+        .map_err(|error| format!("write canonical ordinary-failure source: {error}"))?;
+        std::fs::write(&fixture.unreadable, "pub fn unused() -> i32 { 0 }\n")
+            .map_err(|error| format!("write unreadable workspace source: {error}"))?;
+        std::fs::set_permissions(&fixture.unreadable, std::fs::Permissions::from_mode(0o000))
+            .map_err(|error| format!("chmod unreadable workspace source: {error}"))?;
+
+        std::fs::metadata(&fixture.unreadable).map_err(|error| {
+            format!("census uses metadata; unreadable fixture must still be stattable: {error}")
+        })?;
+        if std::fs::read(&fixture.unreadable).is_ok() {
+            // Mode 000 that remains readable (typically euid 0) cannot
+            // produce the builder error. Passing here would be a
+            // zero-subject green for the receipt assertions below.
+            return Err(
+                "chmod 000 remained readable; this host cannot produce the ordinary-failure stimulus"
+                    .to_string(),
+            );
+        }
+
+        // The changed file stays readable so language_facts census and
+        // owner attribution complete. The sibling workspace file is still
+        // discovered, so canonical inventory's builder is the first read
+        // that fails. No injected clock; the failure is the chmod.
+        let out = fixture.root.join("target/ripr/review/comments.json");
+        let result = review_comments_with_diff_loader(
+            &args(&[
+                "--root",
+                &fixture.root.display().to_string(),
+                "--base",
+                "BASE",
+                "--head",
+                "HEAD",
+                "--out",
+                &out.display().to_string(),
+            ]),
+            |_root, _base, _head| {
+                Ok("diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> i32 { 0 }\n+pub fn value() -> i32 { 1 }\n".to_string())
+            },
+        );
+        let error = match result {
+            Ok(()) => {
+                return Err(
+                    "ordinary canonical_analysis builder error completed instead of failing"
+                        .to_string(),
+                );
+            }
+            Err(error) => error,
+        };
+        if !error.contains("read src/unreadable.rs failed") || error.contains("timed out") {
+            return Err(format!(
+                "canonical_analysis must surface the builder read error, got: {error}"
+            ));
+        }
+
+        let receipt_path = out.with_file_name("run-receipt.json");
+        let receipt: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(&receipt_path)
+                .map_err(|error| format!("read ordinary canonical failure receipt: {error}"))?,
+        )
+        .map_err(|error| format!("parse ordinary canonical failure receipt: {error}"))?;
+        if receipt.get("status").and_then(serde_json::Value::as_str) != Some("failed") {
+            return Err(format!(
+                "ordinary canonical_analysis failure must record status failed, not a timeout: {receipt}"
+            ));
+        }
+        if receipt
+            .get("active_phase")
+            .and_then(serde_json::Value::as_str)
+            != Some("canonical_analysis")
+        {
+            return Err(format!(
+                "ordinary builder error must stay on canonical_analysis: {receipt}"
+            ));
+        }
+        if receipt
+            .get("last_completed_phase")
+            .and_then(serde_json::Value::as_str)
+            != Some("language_facts")
+        {
+            return Err(format!(
+                "ordinary builder error must follow completed language_facts: {receipt}"
+            ));
+        }
+        if receipt["limitations"][0]["category"] != "analysis_failed" {
+            return Err(format!(
+                "ordinary failure limitation must stay analysis_failed: {receipt}"
+            ));
+        }
+        let Some(repair_route) = receipt["limitations"][0]["repair_route"].as_str() else {
+            return Err(format!(
+                "ordinary failure receipt must carry the builder error: {receipt}"
+            ));
+        };
+        if !repair_route.contains("read src/unreadable.rs failed")
+            || repair_route.contains("timed out")
+        {
+            return Err(format!("receipt must carry the builder error: {receipt}"));
+        }
+        if repair_route != error {
+            return Err(format!(
+                "returned error and receipt repair_route diverged: {error} vs {repair_route}"
+            ));
+        }
+        if out.exists() || out.with_extension("md").exists() {
+            return Err(
+                "ordinary canonical_analysis failure published review artifacts".to_string(),
+            );
         }
         Ok(())
     }

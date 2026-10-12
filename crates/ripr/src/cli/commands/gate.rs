@@ -46,11 +46,6 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
     }
 
     let options = parse_gate_options(rest)?;
-    if let Some(warning) =
-        default_visible_only_warning(options.mode_explicit, !std::io::stderr().is_terminal())
-    {
-        eprintln!("{warning}");
-    }
     // Surface the missing-input requirement directly instead of burying it
     // inside the gate-decision.json config_errors array (#2589 review).
     if options.input.pr_guidance.is_none()
@@ -62,6 +57,16 @@ pub(in crate::cli) fn gate(args: &[String]) -> Result<(), CommandError> {
         ));
     }
     let report = output::gate::build_gate_decision_report(&options.input)?;
+    // Mode disclosure is only meaningful after a completed evaluation (#7447).
+    // A config_error report is a written fail-closed artifact, not a mode
+    // decision: the run never applied visible-only to findings.
+    if let Some(warning) = default_visible_only_warning_for_completed_report(
+        options.mode_explicit,
+        !std::io::stderr().is_terminal(),
+        output::gate::gate_decision_status(&report),
+    ) {
+        eprintln!("{warning}");
+    }
     let rendered_json = output::gate::render_gate_decision_json(&report)?;
     let rendered_md = output::gate::render_gate_decision_markdown(&report);
     write_text_file(&options.out, &rendered_json)?;
@@ -224,7 +229,7 @@ fn parse_gate_options(args: &[String]) -> Result<GateOptions, String> {
     })
 }
 
-const DEFAULT_VISIBLE_ONLY_WARNING: &str = "ripr: gate evaluate is using default mode visible-only; it records advisory evidence and never blocks. Pass --mode acknowledgeable, --mode baseline-check, or --mode calibrated-gate to opt into blocking policy.";
+const DEFAULT_VISIBLE_ONLY_WARNING: &str = "ripr: gate evaluate is using default mode visible-only; it records advisory evidence and never blocks on findings, but exception-policy violations still can. Pass --mode acknowledgeable, --mode baseline-check, or --mode calibrated-gate to opt into blocking policy.";
 
 fn default_visible_only_warning(
     mode_explicit: bool,
@@ -234,6 +239,18 @@ fn default_visible_only_warning(
         Some(DEFAULT_VISIBLE_ONLY_WARNING)
     } else {
         None
+    }
+}
+
+fn default_visible_only_warning_for_completed_report(
+    mode_explicit: bool,
+    non_interactive: bool,
+    status: &str,
+) -> Option<&'static str> {
+    if status == GATE_STATUS_CONFIG_ERROR {
+        None
+    } else {
+        default_visible_only_warning(mode_explicit, non_interactive)
     }
 }
 
@@ -404,6 +421,22 @@ mod tests {
     }
 
     #[test]
+    fn default_visible_only_warning_says_findings_never_block_but_exception_policy_still_can() {
+        assert!(
+            DEFAULT_VISIBLE_ONLY_WARNING.contains("never blocks on findings"),
+            "visible-only warning must qualify that findings do not block: {DEFAULT_VISIBLE_ONLY_WARNING}"
+        );
+        assert!(
+            DEFAULT_VISIBLE_ONLY_WARNING.contains("exception-policy violations still can"),
+            "visible-only warning must disclose that exception-policy can still block: {DEFAULT_VISIBLE_ONLY_WARNING}"
+        );
+        assert!(
+            !DEFAULT_VISIBLE_ONLY_WARNING.contains("and never blocks."),
+            "unqualified 'never blocks' contradicts exception-policy blocking in visible-only: {DEFAULT_VISIBLE_ONLY_WARNING}"
+        );
+    }
+
+    #[test]
     fn default_visible_only_warning_requires_omitted_mode_and_non_interactive_use() {
         assert_eq!(
             default_visible_only_warning(false, true),
@@ -411,6 +444,22 @@ mod tests {
         );
         assert_eq!(default_visible_only_warning(false, false), None);
         assert_eq!(default_visible_only_warning(true, true), None);
+        assert_eq!(
+            default_visible_only_warning_for_completed_report(
+                false,
+                true,
+                GATE_STATUS_CONFIG_ERROR
+            ),
+            None
+        );
+        assert_eq!(
+            default_visible_only_warning_for_completed_report(false, true, "advisory"),
+            Some(DEFAULT_VISIBLE_ONLY_WARNING)
+        );
+        assert_eq!(
+            default_visible_only_warning_for_completed_report(false, true, GATE_STATUS_BLOCKED),
+            Some(DEFAULT_VISIBLE_ONLY_WARNING)
+        );
         assert_eq!(
             parse_gate_options(&args(&["--label", "--mode"])).map(|options| options.mode_explicit),
             Ok(false)

@@ -18,7 +18,7 @@ Support-tier impact:
 
 - Opt-in improvement for TypeScript preview analysis: when
   `[typescript] resolve_tsconfig_paths = true` is set in `.ripr.toml`,
-  `@/owner`-style aliased imports can now be credited as owner↔test links
+  `@/owner`-style aliased imports can now be credited as ownerâ†”test links
   instead of silently producing `no_static_path`. Language status stays
   Preview; no tier change.
   Claim boundaries and tier labels remain governed by the canonical ledger in
@@ -40,7 +40,7 @@ The TypeScript adapter resolves import specifiers relative-only.
 for any specifier that does not start with `./` or `../`. Consequently,
 a test that imports the owner via a tsconfig `paths` alias (e.g.
 `import { applyDiscount } from '@/owner'`) is NEVER credited as an
-owner↔test link — the finding stays `no_static_path` with an empty
+ownerâ†”test link â€” the finding stays `no_static_path` with an empty
 `related_tests` list. This is a false result: the test may have a strong
 `toBe` oracle that would otherwise flip the finding to `exposed`.
 
@@ -63,10 +63,10 @@ OFF preserves the existing conservative behavior.
 `root/tsconfig.json` then `root/jsconfig.json`. It is **fail-closed** on
 every ambiguity:
 
-- Missing file, JSONC parse error, or missing `compilerOptions.baseUrl` → `None`.
-- `extends` or `references` present → `None` (no transitive following).
+- Missing file, JSONC parse error, or missing `compilerOptions.baseUrl` â†’ `None`.
+- `extends` or `references` present â†’ `None` (no transitive following).
 - Empty or multi-entry `paths` value array, or a template with more than one
-  `*` → retain the literal/single-wildcard key as an unresolved blocker. A
+  `*` â†’ retain the literal/single-wildcard key as an unresolved blocker. A
   broader alias must not take over the blocked key's imports.
 
 `TsAliasMap::resolve(specifier) -> Option<PathBuf>` returns a workspace-
@@ -79,7 +79,7 @@ relative path ONLY when ALL of:
 4. The value template has at most one `*`.
 5. After substituting the captured `*`, the candidate path resolves to
    EXACTLY ONE existing workspace file (`.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/`.mjs`/`.cjs`).
-   Zero or >1 matches → `None`. Ambiguity is never broken by suffix
+   Zero or >1 matches â†’ `None`. Ambiguity is never broken by suffix
    preference: two existing candidates for one alias (`src/owner.mts` and
    `src/owner.cts`) resolve to `None`, and a near-miss suffix that is not a
    routed source extension is not a candidate.
@@ -93,10 +93,10 @@ with the `ConfigUnparseable` gap; the advice no longer asks for strict JSON.
 ### 3. Resolver threading
 
 `Option<&TsAliasMap>` is threaded through:
-- `normalized_relative_import_module` — for non-relative specifiers, consults
+- `normalized_relative_import_module` â€” for non-relative specifiers, consults
   alias map before returning `None`; on success substitutes the resolved
   workspace-relative path into the existing relative-resolution pipeline.
-- `ReExportIndex::build` and `ReExportIndex::resolve_to_owner` — so re-export
+- `ReExportIndex::build` and `ReExportIndex::resolve_to_owner` â€” so re-export
   chains also benefit from alias resolution.
 - All downstream callers: `import_source_matches_owner`,
   `owner_name_shadowed_by_unrelated_import`, `owner_call_relation`,
@@ -155,7 +155,7 @@ Given:
 - Test imports owner from `@/owner`.
 - `resolve_tsconfig_paths = true`.
 
-Then: alias map retains the multi-entry key as a blocker → resolution returns `None` →
+Then: alias map retains the multi-entry key as a blocker â†’ resolution returns `None` â†’
 `finding.class == NoStaticPath`, AND
 `typescript_limitation: typescript_path_alias_unresolved` IS emitted.
 
@@ -202,19 +202,19 @@ follow `extends` or `references`.
 ### Resolution decision tree
 
 ```
-specifier starts with "./" or "../"  →  existing relative resolver (no change)
-alias_map is None (flag OFF)         →  None (fail-closed, no guessing)
+specifier starts with "./" or "../"  â†’  existing relative resolver (no change)
+alias_map is None (flag OFF)         â†’  None (fail-closed, no guessing)
 alias_map is Some:
-  specifier matches a literal key    →  select it, including a blocked key
-  otherwise matching glob keys      →  select unique longest prefix
-  longest-prefix tie / no match      →  None
+  specifier matches a literal key    â†’  select it, including a blocked key
+  otherwise matching glob keys      â†’  select unique longest prefix
+  longest-prefix tie / no match      â†’  None
 selected key:
-  unsupported template              →  None (no broader-key fallback)
-  supported template                →  expand, then unique_file_for
+  unsupported template              â†’  None (no broader-key fallback)
+  supported template                â†’  expand, then unique_file_for
 unique_file_for:
-  0 files found                      →  None
-  1 file found                       →  Some(workspace-relative path)
-  2+ files found                     →  None (ambiguous, fail-closed)
+  0 files found                      â†’  None
+  1 file found                       â†’  Some(workspace-relative path)
+  2+ files found                     â†’  None (ambiguous, fail-closed)
 ```
 
 Relative-resolver amendment (#4546): the bare specifiers `.` and `..`
@@ -234,8 +234,8 @@ import whose in-root join lies under the root `tsconfig.json`'s own
 exists at the join and no file module exists for it, maps back through the
 `tsc` emit layout: the `outDir` prefix is replaced by the root file's own
 `rootDir` and the emitted extension by its
-source extension (`.js` → `.ts`/`.tsx`, `.jsx` → `.tsx`, `.mjs` → `.mts`,
-`.cjs` → `.cts`, extensionless → `.ts`/`.tsx`). It is accepted only when
+source extension (`.js` â†’ `.ts`/`.tsx`, `.jsx` â†’ `.tsx`, `.mjs` â†’ `.mts`,
+`.cjs` â†’ `.cts`, extensionless â†’ `.ts`/`.tsx`). It is accepted only when
 exactly one such source file exists. The config is read once per run as
 JSONC; `extends` is not followed, but the root file's own `outDir`/`rootDir`
 override any extended value, so they are read even when `extends` is
@@ -259,26 +259,26 @@ It does NOT fire for:
   match the owner.
 - Namespace imports (`import * as X from '...'`) which do not pinpoint a
   single exported name.
-- Tests that were already credited as owner↔test links.
+- Tests that were already credited as ownerâ†”test links.
 
 ## Required Evidence
 
 Unit tests in `crates/ripr/src/analysis/language/typescript/tests.rs`:
 
-1. `tsconfig_alias_resolution_flag_on_credits_test_as_exposed` — POSITIVE
-   (AC-1): tsconfig with single-`*` alias, unique file on disk, flag ON →
+1. `tsconfig_alias_resolution_flag_on_credits_test_as_exposed` â€” POSITIVE
+   (AC-1): tsconfig with single-`*` alias, unique file on disk, flag ON â†’
    `class: exposed`, 1 related test, NO alias limitation.
 
 2. `tsconfig_alias_resolution_flag_off_stays_no_static_path_with_disclosure`
-   — DEFAULT-OFF CONTROL (AC-2): identical setup, no alias map → `class:
+   â€” DEFAULT-OFF CONTROL (AC-2): identical setup, no alias map â†’ `class:
    no_static_path`, `typescript_path_alias_unresolved` present in evidence.
 
-3. `tsconfig_alias_resolution_multi_entry_value_fails_closed` — AMBIGUOUS
-   FAIL-CLOSED (AC-3): multi-entry value array, flag ON → alias blocked
-   without falling back to a broader key → `class: no_static_path`, disclosure present.
+3. `tsconfig_alias_resolution_multi_entry_value_fails_closed` â€” AMBIGUOUS
+   FAIL-CLOSED (AC-3): multi-entry value array, flag ON â†’ alias blocked
+   without falling back to a broader key â†’ `class: no_static_path`, disclosure present.
 
-4. `tsconfig_alias_non_owner_import_emits_no_limitation` — NON-MATCH
-   NEGATIVE (AC-4): third-party import `lodash/cloneDeep`, name mismatch →
+4. `tsconfig_alias_non_owner_import_emits_no_limitation` â€” NON-MATCH
+   NEGATIVE (AC-4): third-party import `lodash/cloneDeep`, name mismatch â†’
    NO `typescript_path_alias_unresolved` emitted.
 
 Alias-precedence controls (AC-5) in
@@ -291,7 +291,7 @@ nonempty extracted owners and tests.
 
 ## Non-Goals
 
-- Following `extends` or `references` chains — single-hop only.
+- Following `extends` or `references` chains â€” single-hop only.
 - Full TypeScript project-graph or per-package tsconfig resolution.
 - Node.js module resolution (bare specifier without paths alias).
 - Dynamic or computed paths keys.
@@ -306,7 +306,7 @@ nonempty extracted owners and tests.
 | `crates/ripr/src/config.rs` | `RawTypescriptConfig`; `typescript` field in `RawConfig` |
 | `crates/ripr/src/config/model.rs` | `TypescriptConfig` struct + accessor |
 | `crates/ripr/src/analysis/mod.rs` | `resolve_tsconfig_paths: bool` field in `AnalysisOptions` |
-| `crates/ripr/src/app/check/options_builder.rs` | Wire config → `AnalysisOptions` |
+| `crates/ripr/src/app/check/options_builder.rs` | Wire config â†’ `AnalysisOptions` |
 | `crates/ripr/src/analysis/language/typescript/tsconfig.rs` | NEW: alias loader |
 | `crates/ripr/src/analysis/language/typescript/related_tests.rs` | Thread `Option<&TsAliasMap>` |
 | `crates/ripr/src/analysis/language/typescript/classifier.rs` | Thread alias map; collect alias limitations |
@@ -322,7 +322,7 @@ nonempty extracted owners and tests.
 tsconfig:  {"compilerOptions":{"baseUrl":".","paths":{"@/*":["src/*"]}}}
 test:      import { applyDiscount } from '@/owner';
            expect(applyDiscount(100, 10)).toBe(90);
-result:    class: no_static_path  ← alias not resolved, test dropped silently
+result:    class: no_static_path  â† alias not resolved, test dropped silently
 ```
 
 ### After (flag ON, alias resolved)
@@ -342,7 +342,7 @@ result:    class: no_static_path  (unchanged)
            evidence includes: typescript_limitation: typescript_path_alias_unresolved
 ```
 
-### Control (third-party import — no disclosure)
+### Control (third-party import â€” no disclosure)
 
 ```
 test:      import { cloneDeep } from 'lodash';  // "cloneDeep" != owner "applyDiscount"
@@ -370,17 +370,17 @@ result:    NO typescript_path_alias_unresolved limitation emitted
 
 ## Implementation Mapping
 
-- `crates/ripr/src/analysis/language/typescript/tsconfig.rs` — `TsAliasMap`, `load_alias_map`, `parse_alias_map`, `GlobEntry`, `TsAliasMap::resolve`, `TsAliasMap::unique_file_for`
-- `crates/ripr/src/analysis/language/typescript/related_tests.rs` — `normalized_relative_import_module` (non-relative arm), all downstream callers threaded with `alias_map`
-- `crates/ripr/src/analysis/language/typescript/static_limit.rs` — `alias_gap_for_unresolved_import`
-- `crates/ripr/src/analysis/language/typescript/classifier.rs` — `classify_change` alias limitation collection; `#[allow(clippy::too_many_arguments)]`
-- `crates/ripr/src/analysis/language/typescript/mod.rs` — alias map construction in `analyze_diff`
-- `crates/ripr/src/config.rs` + `crates/ripr/src/config/model.rs` — `RawTypescriptConfig`, `TypescriptConfig`
-- `crates/ripr/src/analysis/mod.rs` — `resolve_tsconfig_paths: bool` in `AnalysisOptions`
+- `crates/ripr/src/analysis/language/typescript/tsconfig.rs` â€” `TsAliasMap`, `load_alias_map`, `parse_alias_map`, `GlobEntry`, `TsAliasMap::resolve`, `TsAliasMap::unique_file_for`
+- `crates/ripr/src/analysis/language/typescript/related_tests.rs` â€” `normalized_relative_import_module` (non-relative arm), all downstream callers threaded with `alias_map`
+- `crates/ripr/src/analysis/language/typescript/static_limit.rs` â€” `alias_gap_for_unresolved_import`
+- `crates/ripr/src/analysis/language/typescript/classifier.rs` â€” `classify_change` alias limitation collection; `#[allow(clippy::too_many_arguments)]`
+- `crates/ripr/src/analysis/language/typescript/mod.rs` â€” alias map construction in `analyze_diff`
+- `crates/ripr/src/config.rs` + `crates/ripr/src/config/model.rs` â€” `RawTypescriptConfig`, `TypescriptConfig`
+- `crates/ripr/src/analysis/mod.rs` â€” `resolve_tsconfig_paths: bool` in `AnalysisOptions`
 
 ## Later Amendment
 
-RIPR-SPEC-0234 (2026-10-04) records the workspace package resolution of
+RIPR-SPEC-0243 (2026-10-04) records the workspace package resolution of
 #4554 in the TypeScript reach chain. A non-relative specifier that names
 an in-workspace package's `package.json` `name` resolves through that
 manifest to exactly one indexed workspace source, after `paths` and
@@ -389,7 +389,7 @@ name fails closed.
 
 ## Metrics
 
-- `tsconfig_alias_flag_on_exposed` — flag ON + unique resolution → `exposed` (AC-1)
-- `tsconfig_alias_flag_off_disclosure` — flag OFF → `no_static_path` + disclosure limitation (AC-2)
-- `tsconfig_alias_multi_entry_fail_closed` — multi-entry value → fail-closed + disclosure (AC-3)
-- `tsconfig_alias_non_owner_no_disclosure` — third-party import → no disclosure (AC-4)
+- `tsconfig_alias_flag_on_exposed` â€” flag ON + unique resolution â†’ `exposed` (AC-1)
+- `tsconfig_alias_flag_off_disclosure` â€” flag OFF â†’ `no_static_path` + disclosure limitation (AC-2)
+- `tsconfig_alias_multi_entry_fail_closed` â€” multi-entry value â†’ fail-closed + disclosure (AC-3)
+- `tsconfig_alias_non_owner_no_disclosure` â€” third-party import â†’ no disclosure (AC-4)

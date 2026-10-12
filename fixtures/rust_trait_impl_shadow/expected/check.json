@@ -1,0 +1,95 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/rust_trait_impl_shadow/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:16d2c5c97b79d278c086890f2c1550378745f67b11d20b3a446f74a6d3e8b9c1","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:return_value:b6bd8eab",
+      "canonical_gap_id": "gap:rust:src/lib.rs:impl Render for Sample::render:return_value:return_value:string_from_lit",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:impl Render for Sample::render:return_value:return_value:string_from_lit",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "impl Render for Sample::render",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "string_from_lit"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.66,
+      "probe": {
+        "id": "probe:src_lib.rs:return_value:b6bd8eab",
+        "family": "return_value",
+        "delta": "value",
+        "file": "./src/lib.rs",
+        "line": 7,
+        "expression": "String::from(\"\")"
+       },
+      "ripr": {
+        "reach": {"state":"weak","confidence":"low","summary":"No test is seen calling render; tests share only its file or a name token: render_is_empty"},
+        "infect": {"state":"yes","confidence":"medium","summary":"Reachable tests can plausibly activate this changed behavior"},
+        "propagate": {"state":"yes","confidence":"high","summary":"Complete propagation witness reaches returned value: String::from(\"\")"},
+        "observe": {"state":"yes","confidence":"medium","summary":"A related test observes a value or effect near the changed behavior"},
+        "discriminate": {"state":"yes","confidence":"medium","summary":"Strong oracle found: exact value or pattern assertion"}
+       },
+      "evidence_path": ["reach weak: No test is seen calling render; tests share only its file or a name token: render_is_empty", "infection yes: Reachable tests can plausibly activate this changed behavior", "propagation yes: Complete propagation witness reaches returned value: String::from(\"\")", "observation yes: A related test observes a value or effect near the changed behavior", "discriminator not established (weakly_exposed); related oracle: Strong oracle found: exact value or pattern assertion", "local flow reaches returned value: String::from(\"\") (line 7)", "related test src/lib.rs:28 render_is_empty uses strong exact value oracle: assert_eq!(Sample.render(), String::from(\"\"));", "source assertion argument value \"\" at line 29"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"String::from(\"\")","line":7}
+      ],
+      "evidence": ["A related test observes a value or effect near the changed behavior", "Complete propagation witness reaches returned value: String::from(\"\")", "No test is seen calling render; tests share only its file or a name token: render_is_empty", "Reachable tests can plausibly activate this changed behavior", "Strong oracle found: exact value or pattern assertion", "static limitation: exact oracle established; no assertion repair is indicated"],
+      "missing": [],
+      "assertion_texts": {
+        "29": "assert_eq!(Sample.render(), String::from(\"\"));"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 29,
+            "value": "\"\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 29,
+          "value": "\"\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "render_is_empty",
+          "file": "src/lib.rs",
+          "line": 28,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(Sample.render(), String::from(\"\"));",
+          "relation_reason": "weak_token_substring",
+          "relation_confidence": "low"
+        }
+      ],
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}

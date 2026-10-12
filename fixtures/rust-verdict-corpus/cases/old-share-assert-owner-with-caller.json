@@ -1,0 +1,51 @@
+{
+  "case_id": "old-share-assert-owner-with-caller",
+  "subject_id": "authored-old-errors",
+  "diff": "cases/old-share-assert-owner-with-caller.diff",
+  "anchor": {
+    "file": "src/checks.rs",
+    "line": 10
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "assertion_shaped_owner_with_production_caller",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "assert!(den > 1, \"empty denominator\");",
+        "mutated_line": "assert!(den > 1, \"empty denominator\");",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a denominator of 1 panics"
+      },
+      {
+        "replacement": "assert!(den > 4, \"empty denominator\");",
+        "mutated_line": "assert!(den > 4, \"empty denominator\");",
+        "outcome": "tests_failed",
+        "failing_test": "checks::tests::quarter_share",
+        "equivalence_review": "not equivalent: a denominator of 4 panics"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "quarter_share only calls share(1, 4), so den > 1 still passes while den > 4 panics on a denominator of 4. Spec cells: RIPR-SPEC-0133 (assert-only fn with a production caller).",
+  "labeling_observation": {
+    "ripr_commit": "e19e16c",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

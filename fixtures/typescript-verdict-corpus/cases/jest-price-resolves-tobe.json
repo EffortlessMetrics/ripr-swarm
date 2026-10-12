@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-price-resolves-tobe",
+  "subject_id": "authored-ts-jest-checkout",
+  "diff": "cases/jest-price-resolves-tobe.diff",
+  "anchor": {
+    "file": "src/price.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "jest_await_expect_resolves_tobe",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "return 2 / base;",
+        "mutated_line": "return 2 / base;",
+        "outcome": "tests_failed",
+        "failing_test": "price doubles the base",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "await expect(...).resolves.toBe(20) pins the doubled price, so the 2 / base mutant fails it. ripr reports exposed on the anchor, the ideal credit.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

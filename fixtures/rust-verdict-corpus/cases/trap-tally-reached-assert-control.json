@@ -1,0 +1,59 @@
+{
+  "case_id": "trap-tally-reached-assert-control",
+  "subject_id": "authored-trap-kit",
+  "diff": "cases/trap-tally-reached-assert-control.diff",
+  "anchor": {
+    "file": "src/probes_checked.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_after_untaken_early_return",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "base * 8",
+        "mutated_line": "base * 8",
+        "outcome": "tests_failed",
+        "failing_test": "probes_checked::tests::tally_is_eighteen",
+        "equivalence_review": "not equivalent: replaces `9 * base` with `base * 8`, which changes the result"
+      },
+      {
+        "replacement": "base + 9",
+        "mutated_line": "base + 9",
+        "outcome": "tests_failed",
+        "failing_test": "probes_checked::tests::tally_is_eighteen",
+        "equivalence_review": "not equivalent: replaces `9 * base` with `base + 9`, which changes the result"
+      },
+      {
+        "replacement": "base * 10",
+        "mutated_line": "base * 10",
+        "outcome": "tests_failed",
+        "failing_test": "probes_checked::tests::tally_is_eighteen",
+        "equivalence_review": "not equivalent: replaces `9 * base` with `base * 10`, which changes the result"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Negative control for trap-steps-early-return: the same shape with the guard tally(2) > 1000, which no listed value takes, so the assert tally(2) == 18 runs and fails for each mutant. A value above 1000 would also escape it.",
+  "labeling_observation": {
+    "ripr_commit": "6487826",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

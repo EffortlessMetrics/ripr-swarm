@@ -1,0 +1,51 @@
+{
+  "case_id": "grid-arith-property",
+  "subject_id": "authored-grid-arith",
+  "diff": "cases/grid-arith-property.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "property_invariant_loop",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "qty + unit",
+        "mutated_line": "qty + unit",
+        "outcome": "tests_failed",
+        "failing_test": "tests::zero_quantity_costs_nothing",
+        "equivalence_review": "not equivalent: zero_quantity_costs_nothing fails on it"
+      },
+      {
+        "replacement": "qty / unit",
+        "mutated_line": "qty / unit",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: order_cost(2, 4) is 2 instead of 8; with qty 0 both give 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: arithmetic (operands swapped; mutants replace the operator, as cargo-mutants does) x property_invariant_loop. The test checks an invariant over a loop of inputs, not exact outputs; 1 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

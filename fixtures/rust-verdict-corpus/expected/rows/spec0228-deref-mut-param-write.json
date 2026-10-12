@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0228-deref-mut-param-write",
+  "subject_id": "authored-spec0228-7",
+  "origin": "authored",
+  "anchor": "src/lib.rs:2",
+  "behavior_family": "deref_mut_param_assign",
+  "test_shape": "free_fn_mut_ref_then_assert_eq",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

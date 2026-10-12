@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:static_unknown:c075f160",
+      "canonical_gap_id": "gap:rust:src/lib.rs:sibling_a:static_unknown:static_unknown:let_end=input.trim_end_.len",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:sibling_a:static_unknown:static_unknown:let_end=input.trim_end_.len",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "sibling_a",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "let_end=input.trim_end_.len"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:static_unknown:c075f160",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/binding_predicate_scope_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 2,
         "expression": "let end = input.trim_end().len();"
        },
@@ -60,6 +72,18 @@
     },
     {
       "id": "probe:src_lib.rs:static_unknown:14b67539",
+      "canonical_gap_id": "gap:rust:src/lib.rs:shadowed:static_unknown:static_unknown:let_end=3",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:shadowed:static_unknown:static_unknown:let_end=3",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "shadowed",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "let_end=3"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
@@ -67,7 +91,7 @@
         "id": "probe:src_lib.rs:static_unknown:14b67539",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/binding_predicate_scope_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 12,
         "expression": "let end = 3;"
        },
@@ -109,6 +133,18 @@
     },
     {
       "id": "probe:src_lib.rs:static_unknown:61eb9e44",
+      "canonical_gap_id": "gap:rust:src/lib.rs:mutated:static_unknown:static_unknown:let_mut_end=seed+1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:mutated:static_unknown:static_unknown:let_mut_end=seed+1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "mutated",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "let_mut_end=seed+1"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
@@ -116,7 +152,7 @@
         "id": "probe:src_lib.rs:static_unknown:61eb9e44",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/binding_predicate_scope_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 21,
         "expression": "let mut end = seed + 1;"
        },
@@ -158,6 +194,18 @@
     },
     {
       "id": "probe:src_lib.rs:static_unknown:36cb5bcb",
+      "canonical_gap_id": "gap:rust:src/lib.rs:documented:static_unknown:static_unknown:let_end=delim.len_utf8+1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:documented:static_unknown:static_unknown:let_end=delim.len_utf8+1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "documented",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "let_end=delim.len_utf8+1"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
@@ -165,7 +213,7 @@
         "id": "probe:src_lib.rs:static_unknown:36cb5bcb",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/binding_predicate_scope_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 27,
         "expression": "let end = delim.len_utf8() + 1;"
        },
@@ -207,6 +255,18 @@
     },
     {
       "id": "probe:src_lib.rs:static_unknown:b52439fa",
+      "canonical_gap_id": "gap:rust:src/lib.rs:destructured:static_unknown:static_unknown:let_end_other=pair.0+1_pair.1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:destructured:static_unknown:static_unknown:let_end_other=pair.0+1_pair.1",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "destructured",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "let_end_other=pair.0+1_pair.1"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
@@ -214,7 +274,7 @@
         "id": "probe:src_lib.rs:static_unknown:b52439fa",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/binding_predicate_scope_controls/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 34,
         "expression": "let (end, other) = (pair.0 + 1, pair.1);"
        },

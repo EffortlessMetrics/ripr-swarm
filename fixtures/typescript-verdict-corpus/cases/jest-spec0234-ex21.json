@@ -1,0 +1,44 @@
+{
+  "case_id": "jest-spec0234-ex21",
+  "subject_id": "authored-ts-jest-relations",
+  "diff": "cases/jest-spec0234-ex21.diff",
+  "anchor": {
+    "file": "src/priceUnobserved.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_owner_called_unrelated_assertion",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return amount - 20;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: behavior_change edit (the spec's diff); changes the returned/passed value for amount > 100"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test calls `priceUnobserved(150)` and discards the result, then asserts `expect(1 + 1).toBe(2)`; the edit changes the discarded value so the test still passes. ripr reports `weakly_exposed` with the oracle observing the unrelated `1 + 1`, a correct gap. (matches spec: weakly_exposed). Spec cells: RIPR-SPEC-0243 example 21",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

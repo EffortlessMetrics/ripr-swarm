@@ -1,0 +1,44 @@
+{
+  "case_id": "config-port-zero",
+  "subject_id": "authored-config",
+  "diff": "cases/config-port-zero.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 70
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "match_arm",
+  "test_shape": "integration_test_off_boundary",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Err(_) => Err(ConfigError::InvalidPort {",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: parse_port(\"0\") returns Ok(0) instead of InvalidPort"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "ports_must_be_numeric checks 9000 and a non-numeric value but never 0, so accepting port 0 passes. ripr reports weakly_exposed on the match arm, the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "62fb7aaa5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

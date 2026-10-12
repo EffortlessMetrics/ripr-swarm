@@ -39,7 +39,9 @@ The TypeScript preview adapter:
 - finds the `parseUser` owner in `src/parser.ts`,
 - finds the related test in `tests/parser.test.ts`,
 - classifies the bare `toThrow()` assertion as `broad_error` with weak
-  strength,
+  strength; because the changed line is a predicate and a broad error does
+  not match that family (RIPR-SPEC-0104), the related-test row shows no
+  family-relevant oracle (RIPR-SPEC-0224),
 - keeps the finding preview-labeled and advisory.
 
 ## Must Not

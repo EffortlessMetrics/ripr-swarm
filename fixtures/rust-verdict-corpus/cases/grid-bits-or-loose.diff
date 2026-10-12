@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 133a718..26b837d 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -37,7 +37,7 @@ pub fn pack(hi: u8, lo: u8) -> u16 {
+ }
+ 
+ pub fn with_flag(base: u8) -> u8 {
+-    base | 0x80
++    0x80 | base
+ }
+ 
+ #[cfg(test)]

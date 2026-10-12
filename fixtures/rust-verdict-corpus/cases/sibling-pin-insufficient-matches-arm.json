@@ -1,0 +1,51 @@
+{
+  "case_id": "sibling-pin-insufficient-matches-arm",
+  "subject_id": "authored-sibling-pin",
+  "diff": "cases/sibling-pin-insufficient-matches-arm.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_path",
+  "test_shape": "match_arm_matches_pins_sibling_variant",
+  "hard_case": "The only test reaches withdraw and pins an error inside a match arm, but with `assert!(matches!(e, PayError::Limit))`, a sibling of the changed Insufficient variant. The line-level exact_value fact shares only the PayError qualifier with the changed line; with the PR #6786 sibling gate disabled, that qualifier confirms the error_path finding as exposed (observed: credited, exposed).",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(PayError::Limit);",
+        "mutated_line": "return Err(PayError::Limit);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: an overdraw under the limit reports Limit"
+      },
+      {
+        "replacement": "return Ok(0);",
+        "mutated_line": "return Ok(0);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: an overdraw succeeds"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "No test overdraws under the limit; the match-arm assertion pins Limit, a sibling variant, so the Insufficient return is never observed. Spec cells: RIPR-SPEC-0106 Part B, RIPR-SPEC-0175.",
+  "labeling_observation": {
+    "ripr_commit": "4ea7a8b",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

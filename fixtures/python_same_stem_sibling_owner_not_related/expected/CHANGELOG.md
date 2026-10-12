@@ -173,7 +173,43 @@ Updated:
 ## Pending — python_same_stem_sibling_owner_not_related (15)
 
 Reason:
-RIPR-SPEC-0233 rule 4: observed_sink is the assertion that earns credit, not the last-ranked one; class unchanged (#6600)
+RIPR-SPEC-0140: issue 5988 populates identity.config_identity from the canonical finding-affecting config fingerprint whenever a ripr.toml is loaded, so fixtures that load one record it (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (16)
+
+Reason:
+RIPR-SPEC-0140: issue 5988 review repair publishes the fingerprint of the exact loaded ripr.toml text in identity.config_identity, so fixtures that load one record the text fingerprint (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (17)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (18)
+
+Reason:
+RIPR-SPEC-0238 rule 4: the finding reports the assertion that credited (the boundary row), class unchanged (#6600)
 
 Command:
 `cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`

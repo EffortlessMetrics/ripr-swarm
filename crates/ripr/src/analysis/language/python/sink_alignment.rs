@@ -32,7 +32,7 @@ pub(super) struct SinkAlignment {
     pub(super) oracle_alignment: String,
     pub(super) alignment_reason: String,
     /// The assertion that credited the alignment, when one did. The finding
-    /// reports it as its related test's oracle (RIPR-SPEC-0233 rule 4).
+    /// reports it as its related test's oracle (RIPR-SPEC-0238 rule 4).
     pub(super) credited: Option<CreditedAssertion>,
 }
 
@@ -57,6 +57,17 @@ impl SinkAlignment {
             self.oracle_alignment.as_str(),
             "direct" | "alias" | "changed_sink_token"
         ) || self.alignment_reason == "module_owner_no_sink_token"
+    }
+
+    /// The same read-out with a non-delegatable reason: a related row has
+    /// no family-relevant assertion (`no_family_relevant_assertion`) or now
+    /// shows a different assertion than the strength-only pick
+    /// (`other_behavior_assertion_passed_over`), #5572. Only the surfaced
+    /// finding fields use it; the classifier decided from `observes()` first,
+    /// and the gap ledger never delegates either reason.
+    pub(super) fn with_reason(mut self, reason: &str) -> Self {
+        self.alignment_reason = reason.to_string();
+        self
     }
 
     /// The alignment surfaced when the classifier did not reach a strong-oracle
@@ -215,7 +226,7 @@ pub(super) fn dict_changed_keys_and_values(
 /// comparison. Conservative — when in doubt it returns `true` (credit stands) so a
 /// genuine discriminator is never dropped; it only returns `false` for an oracle
 /// that observes purely a sibling key or an aggregate.
-fn oracle_observes_changed_dict_element(
+pub(super) fn oracle_observes_changed_dict_element(
     oracle: &str,
     changed_keys: &[String],
     changed_values: &[String],
@@ -502,11 +513,11 @@ pub(super) fn classify_sink_alignment_with_old(
         .iter()
         .max_by_key(|test| test.oracle_strength.rank())
         .and_then(|test| test.oracle.clone());
-    // RIPR-SPEC-0233 rule 6: an error-path change is observed only by an
+    // RIPR-SPEC-0238 rule 6: an error-path change is observed only by an
     // `exact_error_variant` assertion that itself credits a branch; a strong
     // value assertion never runs the changed raise.
     let error_path = matches!(classify_probe_shape(line_text).0, ProbeFamily::ErrorPath);
-    // RIPR-SPEC-0233 rule 4: every strong assertion of every strong related
+    // RIPR-SPEC-0238 rule 4: every strong assertion of every strong related
     // test is read, and each credit branch must hold on one assertion.
     let mut units = alignment_units(&strong_tests, all_tests, error_path, effect.as_ref());
     units.extend(alignment_units(
@@ -533,7 +544,7 @@ pub(super) fn classify_sink_alignment_with_old(
     // method on an unrelated class (`PaymentProcessor.validate` vs owner
     // `TokenValidator.validate`) shares the token `validate` yet is a different
     // entity, so it credits only on a bound receiver. The class token is not
-    // identity alone either (RIPR-SPEC-0233 rule 9): `other.total() ==
+    // identity alone either (RIPR-SPEC-0238 rule 9): `other.total() ==
     // Cart.LIMIT` names the class but runs `total` on another receiver.
     // Free-function names are their own identity.
     let is_method_owner = matches!(
@@ -935,7 +946,7 @@ type CreditBranch<'f, 'a> = (
     &'f dyn Fn(&AlignmentUnit<'a>) -> bool,
 );
 
-/// One strong assertion the alignment gates read (RIPR-SPEC-0233 rule 4).
+/// One strong assertion the alignment gates read (RIPR-SPEC-0238 rule 4).
 struct AlignmentUnit<'a> {
     related: &'a RelatedTest,
     test: Option<&'a PythonTest>,

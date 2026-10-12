@@ -83,7 +83,7 @@ fn collect_with_item_assertions(
     for item in items {
         if let Some(mut assertion) = assertion_from_expr(&item.context_expr, source) {
             // An exception assertion compares no operand: what it observes is
-            // the call its `with` body makes (RIPR-SPEC-0233 rule 4), so the
+            // the call its `with` body makes (RIPR-SPEC-0238 rule 4), so the
             // gates read the item together with that body.
             if assertion.oracle_shape == PythonOracleShape::ExceptionAssertion
                 && let (Some(first), Some(last)) = (body.first(), body.last())
@@ -119,7 +119,7 @@ fn assertion_from_assert(
         oracle_for_assert_expr(assert_stmt.test.as_ref(), source);
     PythonAssertion {
         text: text_for_range(source, assert_stmt.range).trim().to_string(),
-        // The failure message observes nothing (RIPR-SPEC-0233 rule 4).
+        // The failure message observes nothing (RIPR-SPEC-0238 rule 4).
         gate_text: format!(
             "assert {}",
             assert_gate_expr(assert_stmt.test.as_ref(), source)
@@ -231,7 +231,7 @@ fn oracle_for_compare(
     source: &str,
 ) -> (OracleKind, OracleStrength, PythonOracleShape) {
     let has_exact = compare.ops.iter().any(|op| matches!(op, ast::CmpOp::Eq));
-    // RIPR-SPEC-0233 rule 1: `==` pins a value only when every operator in the
+    // RIPR-SPEC-0238 rule 1: `==` pins a value only when every operator in the
     // chain is `==` and the compared operands are not one token sequence
     // (`owner(1) == owner(1)` runs the changed code on both sides).
     let all_exact = compare.ops.iter().all(|op| matches!(op, ast::CmpOp::Eq));
@@ -343,7 +343,7 @@ fn oracle_for_call(
     if matches!(last_segment, "assertEqual" | "assertDictEqual")
         && compared_operands(call).is_some_and(|(first, second)| same_tokens(source, first, second))
     {
-        // RIPR-SPEC-0233 rule 1: comparing an expression with itself pins nothing.
+        // RIPR-SPEC-0238 rule 1: comparing an expression with itself pins nothing.
         return Some((
             OracleKind::RelationalCheck,
             OracleStrength::Weak,
@@ -464,7 +464,7 @@ fn compared_operands(call: &ast::ExprCall) -> Option<(&Expr, &Expr)> {
 }
 
 /// Whether two expressions are the same token sequence, ignoring whitespace
-/// outside string literals (RIPR-SPEC-0233 rule 1).
+/// outside string literals (RIPR-SPEC-0238 rule 1).
 fn same_tokens(source: &str, left: &Expr, right: &Expr) -> bool {
     let left = text_for_range(source, left.range());
     let right = text_for_range(source, right.range());
@@ -505,7 +505,7 @@ fn keyword_value<'a>(call: &'a ast::ExprCall, name: &str) -> Option<&'a Expr> {
         .map(|keyword| &keyword.value)
 }
 
-/// RIPR-SPEC-0233 rule 2: a literal message pattern that admits any message
+/// RIPR-SPEC-0238 rule 2: a literal message pattern that admits any message
 /// (`''`, `.*`, `.+`, `^`, `$`, `^.*$`, `(?s).*`), or an alternation that can
 /// admit both the old and the new message (`'empty|blank'`), pins only the
 /// exception class. A bare name reads as the string literal it is bound to

@@ -1,0 +1,53 @@
+{
+  "case_id": "checkout-minimum-same-file-const",
+  "subject_id": "authored-checkout",
+  "diff": "cases/checkout-minimum-same-file-const.diff",
+  "anchor": {
+    "file": "src/limits.rs",
+    "line": 16
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "boundary_via_same_file_const",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "count <= MIN_ORDER",
+        "mutated_line": "count <= MIN_ORDER",
+        "outcome": "tests_failed",
+        "failing_test": "limits::tests::the_minimum_is_exclusive",
+        "equivalence_review": "not equivalent: exactly MIN_ORDER counts as below"
+      },
+      {
+        "replacement": "count < MIN_ORDER - 1",
+        "mutated_line": "count < MIN_ORDER - 1",
+        "outcome": "tests_failed",
+        "failing_test": "limits::tests::the_minimum_is_exclusive",
+        "equivalence_review": "not equivalent: MIN_ORDER - 1 is no longer below"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test asserts both sides of the boundary with MIN_ORDER - 1 and MIN_ORDER, so each boundary shift fails it. Spec cells: RIPR-SPEC-0001.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "propagation_unknown",
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

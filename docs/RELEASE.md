@@ -245,6 +245,22 @@ release and dogfood evidence. This does not change the installed binary or
 library API, but removing either surface is a release-contract change that must
 be reviewed against `cargo package -p ripr --list` and this document.
 
+The published `cli_help_hierarchy` target must compile and run from the
+extracted package without repository-root documentation. It keeps 16 rendered
+help and synthetic-document cases; its shared helper is packaged under
+`tests/common/help_contract.rs`. Seven live repository-guide audits belong to
+the unpublished `xtask` target `ripr_public_guide_contract`, which also checks a
+real Cargo archive and rejects removal of the shared test helper:
+
+```bash
+cargo test -p ripr --test cli_help_hierarchy
+cargo test -p xtask --test ripr_public_guide_contract
+```
+
+These focused checks establish the help target's package boundary. Other
+packaged test targets retain their own asset requirements and are not qualified
+by this check.
+
 The example paths are enumerated rather than globbed as `examples/**` on
 purpose. `ripr` runs against the sample workspace during tests and writes a
 fact cache into `crates/ripr/examples/sample/target/`. That directory is
@@ -374,7 +390,15 @@ every release, permanently. The first post-release commit moves the package
 version to the next development version while the constant stays. Between
 the release commit and verified publication, a dev-built generator self-pins
 a version whose archive is not up yet — publish promptly, and refresh CI
-with the previous release until publication verifies.
+with the previous release until publication verifies. `cargo xtask release-readiness
+--version <version>` checks the constant as `init-pin-version`. Once CHANGELOG.md has
+the `## <version>` heading the cut's fold writes, a stable release fails until
+the constant equals the version; before the fold, the lag is the normal
+development state and the check warns, so main's push CI stays green, but a
+constant already at or past the version fails because development generators
+would pin an unpublished release. An unreadable CHANGELOG.md fails. A release
+candidate fails unless the constant names a release older than its stable
+target.
 
 ```bash
 cargo install ripr --version 0.8.0 --locked --root target/ripr/install-smoke-cratesio --force

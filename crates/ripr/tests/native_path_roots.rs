@@ -174,7 +174,16 @@ fn parse_json(bytes: &[u8], what: &str) -> Result<serde_json::Value, String> {
     })
 }
 
-fn same_file(reported: &str, expected: &Path) -> bool {
+/// #5996: a reported location is workspace-relative () or a
+/// plain absolute path — resolve the relative spelling against the analyzed
+/// root before comparing with the fixture file.
+fn same_file(reported: &str, root: &Path, expected: &Path) -> bool {
+    let reported_path = Path::new(reported);
+    let reported = if reported_path.is_absolute() {
+        reported_path.to_path_buf()
+    } else {
+        root.join(reported_path)
+    };
     match (fs::canonicalize(reported), fs::canonicalize(expected)) {
         (Ok(left), Ok(right)) => left == right,
         _ => false,
@@ -216,7 +225,7 @@ fn assert_check_reports_the_changed_file(root: &Path) -> Result<(), String> {
         if file.starts_with(r"\\?\") {
             return Err(format!("finding exposes a verbatim Windows path: {file}"));
         }
-        if !same_file(file, &expected) {
+        if !same_file(file, root, &expected) {
             return Err(format!(
                 "finding file {file:?} is not {}",
                 expected.display()

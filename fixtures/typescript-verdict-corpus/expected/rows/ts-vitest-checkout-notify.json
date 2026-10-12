@@ -1,0 +1,22 @@
+{
+  "case_id": "ts-vitest-checkout-notify",
+  "subject_id": "authored-ts-vitest-cart",
+  "origin": "authored",
+  "anchor": "src/cart.ts:43",
+  "behavior_family": "call_argument",
+  "test_shape": "vitest_to_have_been_called_with",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

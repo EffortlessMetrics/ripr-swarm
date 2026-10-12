@@ -1,0 +1,44 @@
+{
+  "case_id": "ts-nodetest-gold-discount-rate",
+  "subject_id": "authored-ts-nodetest-pricing",
+  "diff": "cases/ts-nodetest-gold-discount-rate.diff",
+  "anchor": {
+    "file": "src/pricing.ts",
+    "line": 23
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "node_assert_ok_relational",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "Node.js v22.22.0 (node:test, --experimental-strip-types), x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return Math.floor((subtotalCents * 20) / 100);",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the gold discount on 1000 cents is 200 instead of 100"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "\"gold members get a discount\" asserts only assert.ok(discountCents(\"gold\", 1000) > 0), a smoke oracle under RIPR-SPEC-0027, so doubling the gold rate passes. ripr's weakly_exposed is the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

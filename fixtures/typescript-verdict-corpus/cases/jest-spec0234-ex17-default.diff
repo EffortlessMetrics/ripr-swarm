@@ -1,0 +1,12 @@
+diff --git a/src/priceDefault.ts b/src/priceDefault.ts
+index 0000000..1111111 100644
+--- a/src/priceDefault.ts
++++ b/src/priceDefault.ts
+@@ -1,6 +1,6 @@
+ export default function priceDefault(amount: number): number {
+   if (amount > 100) {
+-    return amount - 10;
++    return amount - 20;
+   }
+   return amount;
+ }

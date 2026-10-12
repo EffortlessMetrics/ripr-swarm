@@ -1,0 +1,21 @@
+//! A word and field counter with a build-script limit, an out-of-line test
+//! module and a test-only included fixture.
+
+/// The line limit the build script sets.
+pub fn limit() -> usize {
+    env!("TALLY_LIMIT").parse().unwrap_or(0)
+}
+
+pub fn count_words(text: &str) -> usize {
+    text.split_whitespace().count()
+}
+
+pub fn count_fields(line: &str) -> usize {
+    line.split(',').count()
+}
+
+#[cfg(test)]
+include!("fixture.rs");
+
+#[cfg(test)]
+mod tests;

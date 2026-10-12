@@ -1,0 +1,10 @@
+diff --git a/src/lib.rs b/src/lib.rs
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -8,5 +8,5 @@
+     Config {
+         retries,
+-        name: std::string::String::new(),
++        name: render(retries),
+     }
+ }

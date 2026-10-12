@@ -733,44 +733,6 @@ line = 12311
 column = 5
 
 [[allow]]
-id = "panic-0060"
-path = "crates/ripr/tests/cli_smoke.rs"
-family = "unwrap"
-classification = "test_only"
-explanation = "RIPR-SPEC-0112 smoke test: run ripr check --base HEAD --json; canonical fail-fast pattern for binary integration tests"
-owner = "core/cli"
-expires = "2027-12-31"
-
-[allow.selector]
-kind = "method_call"
-container = "check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure"
-callee = "unwrap"
-receiver_fingerprint = "std::process::Command::new(bin) .args([\"check\", \"--root\", &root_str, \"--base\", \"HEAD\", \"--json\"]) .output()"
-
-[allow.last_seen]
-line = 12319
-column = 18
-
-[[allow]]
-id = "panic-0061"
-path = "crates/ripr/tests/cli_smoke.rs"
-family = "unwrap"
-classification = "test_only"
-explanation = "RIPR-SPEC-0112 smoke test: run ripr check --base HEAD (human); canonical fail-fast pattern for binary integration tests"
-owner = "core/cli"
-expires = "2027-12-31"
-
-[allow.selector]
-kind = "method_call"
-container = "check_base_head_with_uncommitted_edit_shows_unanalyzed_working_tree_disclosure"
-callee = "unwrap"
-receiver_fingerprint = "std::process::Command::new(bin) .args([\"check\", \"--root\", &root_str, \"--base\", \"HEAD\"]) .output()"
-
-[allow.last_seen]
-line = 12329
-column = 24
-
-[[allow]]
 id = "panic-0062"
 path = "crates/ripr/tests/cli_smoke.rs"
 family = "unwrap"

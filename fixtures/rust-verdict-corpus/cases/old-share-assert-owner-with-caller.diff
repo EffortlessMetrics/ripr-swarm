@@ -1,0 +1,12 @@
+diff --git a/src/checks.rs b/src/checks.rs
+--- a/src/checks.rs
++++ b/src/checks.rs
+@@ -7,7 +7,7 @@
+ }
+ 
+ fn check_share(num: u32, den: u32) {
+-    assert!(den > 0, "empty denominator");
++    assert!(den >= 1, "empty denominator");
+     let _ = num;
+ }
+ 

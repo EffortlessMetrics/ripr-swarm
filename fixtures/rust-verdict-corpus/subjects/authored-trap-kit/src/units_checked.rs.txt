@@ -1,0 +1,21 @@
+pub mod celsius {
+    pub fn snap(value: u32) -> u32 {
+        (value + 5) / 10 * 10
+    }
+}
+
+pub mod fahrenheit {
+    pub fn snap(value: u32) -> u32 {
+        (value + 6) / 12 * 12
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::celsius::snap;
+
+    #[test]
+    fn snap_rounds_to_the_unit() {
+        assert_eq!(snap(17), 20);
+    }
+}

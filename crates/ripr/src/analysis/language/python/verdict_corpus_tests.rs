@@ -1,5 +1,5 @@
 //! Positive and negative pins for the Python verdict rules the verdict
-//! corpus found missing (#6599, #6600, #6601; RIPR-SPEC-0233).
+//! corpus found missing (#6599, #6600, #6601; RIPR-SPEC-0238).
 //!
 //! Each rule gets a test that must credit `exposed` and an alternate that
 //! must not, so a rule that stops firing and a rule that over-fires both fail
@@ -559,6 +559,19 @@ fn a_parametrize_mark_does_not_stand_in_for_example_rows() -> Result<(), String>
     assert_eq!(
         passed_class(
             "import pytest\n\n\n@pytest.mark.parametrize(\"bonus\", [0])\n@given(st.integers(0, 100))\ndef test_passed(bonus, score):\n    assert passed(score + bonus) == (score >= 50)\n"
+        )?,
+        ExposureClass::StaticUnknown
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unreadable_example_row_does_not_lift_the_property_limit() -> Result<(), String> {
+    // `@example(*[49])` binds nothing ripr reads, so the boundary is still
+    // fed only by the strategy and the property-based limit stays.
+    assert_eq!(
+        passed_class(
+            "@given(st.integers(0, 100))\n@example(*[49])\ndef test_passed(score):\n    assert passed(score) == (score >= 50)\n"
         )?,
         ExposureClass::StaticUnknown
     );

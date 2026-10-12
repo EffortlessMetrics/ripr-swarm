@@ -5,7 +5,7 @@ use super::{
 };
 use crate::agent::loop_commands::display_path;
 use crate::output::markdown::{
-    PowershellForm, powershell_command, powershell_form, push_context_command,
+    PowershellForm, code_span, powershell_command, powershell_form, push_context_command,
 };
 use crate::output::start_here_state::{
     START_HERE_PREVIEW_LIMITED, normalize_start_here_output_state,
@@ -140,8 +140,7 @@ pub(super) fn start_here_cli_summary(
                 }
             }
             if let Some(command) = string_path(selected, &["static_recheck_command"]) {
-                out.push_str(&format!("{STATIC_RECHECK_LABEL}: `{command}`\n"));
-                push_recovery_powershell_variant(&mut out, STATIC_RECHECK_LABEL, &command);
+                push_recovery_command(&mut out, STATIC_RECHECK_LABEL, &command);
                 out.push_str(&format!(
                     "{RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n"
                 ));
@@ -160,8 +159,7 @@ pub(super) fn start_here_cli_summary(
                 out.push_str(&format!("Missing artifact: {label} at `{path}`\n"));
             }
             if let Some(command) = string_path(selected, &["regeneration_command"]) {
-                out.push_str(&format!("Regeneration command: `{command}`\n"));
-                push_recovery_powershell_variant(&mut out, "Regeneration command", &command);
+                push_recovery_command(&mut out, "Regeneration command", &command);
             }
             if let Some(also_missing) = selected.get("also_missing").and_then(Value::as_array) {
                 for artifact in also_missing {
@@ -171,8 +169,7 @@ pub(super) fn start_here_cli_summary(
                         string_path(artifact, &["path"]).unwrap_or_else(|| "unknown".to_string());
                     out.push_str(&format!("Also missing: {label} at `{path}`\n"));
                     if let Some(command) = string_path(artifact, &["regeneration_command"]) {
-                        out.push_str(&format!("Then run: `{command}`\n"));
-                        push_recovery_powershell_variant(&mut out, "Then run", &command);
+                        push_recovery_command(&mut out, "Then run", &command);
                     }
                 }
             }
@@ -191,8 +188,7 @@ pub(super) fn start_here_cli_summary(
                 out.push_str(&format!("Recovery reason: {message}\n"));
             }
             if let Some(command) = string_path(selected, &["next_command"]) {
-                out.push_str(&format!("Next command: `{command}`\n"));
-                push_recovery_powershell_variant(&mut out, "Next command", &command);
+                push_recovery_command(&mut out, "Next command", &command);
             }
             out.push_str("Receipt path: `not_applicable`\n");
         }
@@ -304,11 +300,53 @@ fn render_preflight_markdown(packet: &Value, out: &mut String) {
         .unwrap_or("unknown");
     out.push_str(&format!("Status: `{status}`\n"));
     out.push_str(&format!("Mode: `{mode}`\n"));
-    if let Some(command) = preflight.get("next_command").and_then(Value::as_str) {
+    let recovery_commands = preflight
+        .get("recovery_commands")
+        .and_then(Value::as_array)
+        .filter(|commands| !commands.is_empty());
+    if recovery_commands.is_none()
+        && let Some(command) = preflight.get("next_command").and_then(Value::as_str)
+    {
         out.push_str(&format!(
             "Next command: {}\n",
             markdown_code_or_text(command)
         ));
+    }
+    // The producer carries guidance and executable commands separately, so
+    // quoting is never recovered from prose. Legacy JSON remains unchanged.
+    if let Some(commands) = recovery_commands {
+        if let Some(guidance) = preflight.get("recovery_guidance").and_then(Value::as_str) {
+            out.push_str(&format!("Recovery: {guidance}\n"));
+        }
+        for (index, command) in commands.iter().filter_map(Value::as_str).enumerate() {
+            out.push('\n');
+            if command.contains(['\r', '\n']) {
+                out.push_str(&format!(
+                    "Recovery step {} unavailable: use a single-line root/ref alias and rerun first-pr.\n",
+                    index + 1
+                ));
+                continue;
+            }
+            let label = format!("Recovery step {}", index + 1);
+            out.push_str(&format!("{label}:\n{}\n", code_span(command)));
+            match powershell_form(command) {
+                PowershellForm::Translated(line) => {
+                    out.push_str(&format!("{label} (PowerShell):\n{}\n", code_span(&line)));
+                    out.push_str("The first form is written for Bash; cmd.exe is not supported.\n");
+                }
+                PowershellForm::SameAsBash => {
+                    out.push_str(
+                        "It runs unchanged in Bash and PowerShell; cmd.exe is not supported.\n",
+                    );
+                }
+                PowershellForm::Unavailable => {
+                    out.push_str(&format!(
+                        "{}; use the Bash form. cmd.exe is not supported.\n",
+                        crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE
+                    ));
+                }
+            }
+        }
     }
     out.push('\n');
     if let Some(checks) = preflight.get("checks").and_then(Value::as_array) {
@@ -413,8 +451,7 @@ fn render_top_gap_markdown(selected: &Value, out: &mut String) {
         .get("static_recheck_command")
         .and_then(Value::as_str)
     {
-        out.push_str(&format!("- {STATIC_RECHECK_LABEL}: `{command}`\n"));
-        push_recovery_powershell_variant(out, &format!("- {STATIC_RECHECK_LABEL}"), command);
+        push_recovery_command(out, &format!("- {STATIC_RECHECK_LABEL}"), command);
         out.push_str(&format!(
             "- {RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n"
         ));
@@ -557,20 +594,43 @@ fn push_shell_command_pair(
     }
 }
 
-/// Append the PowerShell form of one funnel recovery command (#3870).
+/// Append one funnel recovery command with its per-shell forms (#3870,
+/// #7387).
 ///
-/// The bash line stays authoritative and byte-identical. When the shared
-/// translator rewrites the command (a real `>` redirect becomes a guarded
-/// BOM-free UTF-8 write), the variant is printed so stock Windows
-/// PowerShell does not manufacture UTF-16 artifacts that readers reject.
-/// Commands the translator leaves unchanged render no second line.
-fn push_recovery_powershell_variant(out: &mut String, label: &str, command: &str) {
+/// When the shared translator rewrites the command for PowerShell (a real
+/// `>` redirect or POSIX single-quote quoting becomes a guarded BOM-free
+/// UTF-8 write), both forms print, each labeled for its shell: the Bash form
+/// is no longer left unlabeled above a "(PowerShell)" variant, so a
+/// top-to-bottom reader on stock Windows PowerShell is not handed a
+/// `>`-redirect line their shell turns into UTF-16 output that downstream
+/// readers reject. The Bash form always prints first, on every host: the
+/// `(PowerShell)` label pairs the variant with the command line immediately
+/// before it, which is a reader and paste-extractor contract asserted by
+/// `crates/ripr/tests/printed_command_paste.rs`, so host-dependent
+/// reordering would mis-paste the raw Bash form into PowerShell. Commands
+/// that run unchanged in both shells stay unlabeled (a "(Bash)" label would
+/// falsely claim shell-specific semantics), and untranslatable compounds
+/// keep their numbered-step variant, with the Bash line labeled only when a
+/// variant was actually emitted.
+fn push_recovery_command(out: &mut String, label: &str, command: &str) {
     match powershell_command(command) {
         Some(line) if line != command => {
-            out.push_str(&format!("{label} (PowerShell): `{line}`\n"));
+            let bash = format!("{label} (Bash): `{command}`");
+            let powershell = format!("{label} (PowerShell): `{line}`");
+            out.push_str(&format!("{bash}\n{powershell}\n"));
         }
-        None => push_compound_powershell_variant(out, label, command),
-        Some(_) => {}
+        None => {
+            let mut variant = String::new();
+            push_compound_powershell_variant(&mut variant, label, command);
+            if variant.is_empty() {
+                out.push_str(&format!("{label}: `{command}`\n"));
+            } else {
+                let bash = format!("{label} (Bash): `{command}`");
+                out.push_str(&format!("{bash}\n"));
+                out.push_str(&variant);
+            }
+        }
+        Some(_) => out.push_str(&format!("{label}: `{command}`\n")),
     }
 }
 
@@ -631,8 +691,7 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
     out.push_str(&format!("- Missing artifact: {label}\n"));
     out.push_str(&format!("- Artifact path: `{path}`\n"));
     if let Some(command) = selected.get("regeneration_command").and_then(Value::as_str) {
-        out.push_str(&format!("- Regeneration command: `{command}`\n"));
-        push_recovery_powershell_variant(out, "- Regeneration command", command);
+        push_recovery_command(out, "- Regeneration command", command);
     }
     if let Some(also_missing) = selected.get("also_missing").and_then(Value::as_array) {
         for artifact in also_missing {
@@ -643,8 +702,7 @@ fn render_missing_artifact_markdown(selected: &Value, out: &mut String) {
             let path = artifact.get("path").and_then(Value::as_str).unwrap_or("");
             out.push_str(&format!("- Also missing: {label} at `{path}`\n"));
             if let Some(command) = artifact.get("regeneration_command").and_then(Value::as_str) {
-                out.push_str(&format!("- Then run: `{command}`\n"));
-                push_recovery_powershell_variant(out, "- Then run", command);
+                push_recovery_command(out, "- Then run", command);
             }
         }
     }
@@ -692,8 +750,7 @@ fn render_blocked_markdown(selected: &Value, out: &mut String) {
         .unwrap_or("First-run packet is blocked by unavailable evidence.");
     out.push_str(&format!("- Reason: {message}\n"));
     if let Some(command) = selected.get("next_command").and_then(Value::as_str) {
-        out.push_str(&format!("- Next command: `{command}`\n"));
-        push_recovery_powershell_variant(out, "- Next command", command);
+        push_recovery_command(out, "- Next command", command);
     }
 }
 
@@ -721,6 +778,71 @@ mod tests {
     }
 
     #[test]
+    fn preflight_recovery_preserves_markdown_backticks_and_discloses_unsupported_forms() {
+        let command = "ripr first-pr --root 'owner'\\''s `repo`' --base HEAD --head HEAD";
+        let packet = serde_json::json!({
+            "preflight": {
+                "status": "needs_attention", "mode": "write",
+                "recovery_commands": [command, "ripr first-pr --root $(whoami)"],
+            },
+        });
+        let mut out = String::new();
+        render_preflight_markdown(&packet, &mut out);
+        assert!(
+            out.contains(&crate::output::markdown::code_span(command)),
+            "{out}"
+        );
+        assert!(out.contains("Recovery step 1 (PowerShell):"), "{out}");
+        assert!(!out.contains("Recovery step 2 (PowerShell):"), "{out}");
+        assert!(
+            out.contains(crate::output::markdown::POWERSHELL_UNAVAILABLE_DISCLOSURE),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn preflight_recovery_keeps_legacy_and_withholds_multiline_commands() {
+        let legacy = serde_json::json!({
+            "preflight": {
+                "status": "needs_attention", "mode": "write",
+                "next_command": "Choose a head, then rerun `ripr first-pr`.",
+            },
+        });
+        let mut out = String::new();
+        render_preflight_markdown(&legacy, &mut out);
+        assert!(
+            out.contains("Next command: Choose a head, then rerun `ripr first-pr`."),
+            "{out}"
+        );
+        assert!(!out.contains("Recovery step"), "{out}");
+
+        let packet = serde_json::json!({
+            "preflight": {
+                "status": "needs_attention", "mode": "write",
+                "next_command": "legacy prose",
+                "recovery_guidance": "Commit PR work before rerunning.",
+                "recovery_commands": ["ripr first-pr --root .", "ripr first-pr --root 'line\nbreak'"],
+            },
+        });
+        out.clear();
+        render_preflight_markdown(&packet, &mut out);
+        assert!(
+            out.contains("Recovery: Commit PR work before rerunning."),
+            "{out}"
+        );
+        assert!(
+            out.contains("It runs unchanged in Bash and PowerShell"),
+            "{out}"
+        );
+        assert!(
+            out.contains("Recovery step 2 unavailable: use a single-line root/ref alias"),
+            "{out}"
+        );
+        assert!(!out.contains("line break"), "{out}");
+        assert!(!out.contains("legacy prose"), "{out}");
+    }
+
+    #[test]
     fn cli_summary_renders_stable_separators() {
         let (json_path, markdown_path) = mixed_separator_paths();
         let packet = serde_json::json!({
@@ -745,28 +867,52 @@ mod tests {
     }
 
     #[test]
-    fn cli_summary_pairs_redirect_regeneration_with_powershell_form() {
+    fn cli_summary_pairs_redirect_regeneration_with_labeled_shell_forms() {
         let bash = "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json";
         let summary = start_here_cli_summary(
             &missing_artifact_packet(bash),
             Path::new("target/ripr/reports/start-here.json"),
             Path::new("target/ripr/reports/start-here.md"),
         );
-        assert!(summary.contains(&format!("Regeneration command: `{bash}`")));
+        assert!(summary.contains(&format!("Regeneration command (Bash): `{bash}`")));
         assert!(summary.contains("Regeneration command (PowerShell): `"));
         assert!(summary.contains("WriteAllText"));
         assert!(summary.contains("UTF8Encoding"));
+        assert!(!summary.contains("Regeneration command: `"), "{summary}");
     }
 
     #[test]
-    fn markdown_pairs_redirect_regeneration_with_powershell_bullet() {
+    fn recovery_command_pair_keeps_bash_first_on_every_host() -> Result<(), String> {
+        // #7387: both labeled forms print, but the Bash form must stay
+        // first on every host — the `(PowerShell)` label pairs the variant
+        // with the command line before it (paste-extractor contract in
+        // crates/ripr/tests/printed_command_paste.rs), so host-dependent
+        // reordering mis-pastes the raw Bash form into PowerShell. Resolve
+        // both label positions so a missing form fails the test instead of
+        // passing vacuously on `None < Some(_)`.
+        let bash = "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json";
+        let mut out = String::new();
+        push_recovery_command(&mut out, "Regeneration command", bash);
+        let bash_at = out
+            .find("Regeneration command (Bash):")
+            .ok_or_else(|| out.clone())?;
+        let powershell_at = out
+            .find("Regeneration command (PowerShell):")
+            .ok_or_else(|| out.clone())?;
+        assert!(bash_at < powershell_at, "{out}");
+        Ok(())
+    }
+
+    #[test]
+    fn markdown_pairs_redirect_regeneration_with_labeled_shell_bullets() {
         let bash = "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json";
         let selected = serde_json::json!({"regeneration_command": bash});
         let mut out = String::new();
         render_missing_artifact_markdown(&selected, &mut out);
-        assert!(out.contains(&format!("- Regeneration command: `{bash}`")));
+        assert!(out.contains(&format!("- Regeneration command (Bash): `{bash}`")));
         assert!(out.contains("- Regeneration command (PowerShell): `"));
         assert!(out.contains("WriteAllText"));
+        assert!(!out.contains("- Regeneration command: `"), "{out}");
     }
 
     #[test]
@@ -778,7 +924,7 @@ mod tests {
             Path::new("target/ripr/reports/start-here.json"),
             Path::new("target/ripr/reports/start-here.md"),
         );
-        assert!(summary.contains(&format!("Regeneration command: `{bash}`")));
+        assert!(summary.contains(&format!("Regeneration command (Bash): `{bash}`")));
         assert!(summary.contains("Regeneration command (PowerShell 1/2): `"));
         assert!(summary.contains("Regeneration command (PowerShell 2/2): `"));
         assert!(summary.contains("WriteAllText"));

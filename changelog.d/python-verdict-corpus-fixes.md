@@ -1,4 +1,5 @@
-- Python verdicts follow RIPR-SPEC-0233: a self-comparison, a mixed `==`
+<!-- section: Fixed -->
+- Python verdicts follow RIPR-SPEC-0238: a self-comparison, a mixed `==`
   chain or a `match=` pattern that accepts any message no longer credits
   `exposed`; credit comes from one assertion that observes the owner, in any
   position; a method owner is credited only through a bound receiver; and an

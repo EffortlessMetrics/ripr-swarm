@@ -430,6 +430,7 @@ mod tests {
             },
             stop_conditions: Vec::new(),
             next_action: None,
+            canonical_next_action: None,
             selected_basis: None,
             rejected_alternatives: Vec::new(),
             attempt: None,
