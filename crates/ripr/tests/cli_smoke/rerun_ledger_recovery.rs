@@ -727,3 +727,232 @@ fn rerun_legacy_unbound_roots_require_current_complete_source_subject() -> TestR
     }
     Ok(())
 }
+
+/// The public production API loads the default ledger, validates its root,
+/// paths, commands, typed specs and source subject, then projects diagnostics.
+/// Filter by the ledger source so unrelated diff or seam output cannot stand
+/// in for admission of this actual producer artifact.
+fn root_binding_lsp_diagnostics(
+    root: &Path,
+) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+    let batches = ripr::lsp::workspace_diagnostic_batches(root)?;
+    let mut selected = Vec::new();
+    for batch in batches {
+        for diagnostic in batch.diagnostics {
+            if diagnostic
+                .data
+                .as_ref()
+                .and_then(|data| data.get("source"))
+                .and_then(serde_json::Value::as_str)
+                == Some("gap_decision_ledger")
+            {
+                selected.push(serde_json::json!({
+                    "uri": batch.uri.as_str(),
+                    "diagnostic": diagnostic,
+                }));
+            }
+        }
+    }
+    Ok(selected)
+}
+
+fn assert_root_binding_lsp_selected(
+    selected: &[serde_json::Value],
+    ledger: &serde_json::Value,
+) -> TestResult {
+    assert_eq!(
+        selected.len(),
+        1,
+        "expected the real ledger diagnostic: {selected:?}"
+    );
+    let diagnostic = &selected[0]["diagnostic"];
+    let data = &diagnostic["data"];
+    assert_eq!(data["source"], "gap_decision_ledger");
+    assert_eq!(data["canonical_gap_id"], ROOT_BINDING_GAP);
+    assert_eq!(data["gap_id"], ledger["records"][0]["gap_id"]);
+    assert_eq!(data["anchor"]["file"], "src/lib.rs");
+    assert_eq!(data["anchor"]["owner"], "src/lib.rs::discounted_total");
+    assert_eq!(data["anchor"]["line"], 2);
+    assert_eq!(diagnostic["range"]["start"]["line"], 1);
+    assert_eq!(data["gap_state"], "actionable");
+    assert!(
+        selected[0]["uri"]
+            .as_str()
+            .ok_or("missing projected URI")?
+            .ends_with("/src/lib.rs")
+    );
+    assert!(
+        !data["verification_commands"]
+            .as_array()
+            .ok_or("missing admitted verification commands")?
+            .is_empty()
+    );
+    assert!(
+        data["receipt_command"]
+            .as_str()
+            .is_some_and(|command| !command.is_empty())
+    );
+    Ok(())
+}
+
+/// Shared admission contract for a Unix symlink root and an ordinary Windows
+/// root whose CLI producer uses the canonical extended-prefix spelling.
+fn root_binding_lsp_alias_contract(
+    fixture: &RootBindingFixture,
+    ledger: &serde_json::Value,
+    selected_root: &Path,
+) -> TestResult {
+    let physical_root = fixture.root.canonicalize()?;
+    assert_eq!(selected_root.canonicalize()?, physical_root);
+    assert_ne!(selected_root.as_os_str(), physical_root.as_os_str());
+    for root in [&fixture.root, &fixture.foreign] {
+        // Give the public API's normal default-base resolver a real local
+        // main ref. No source bytes, records or source stamp are altered.
+        run_git(root, &["branch", "-M", "main"])?;
+    }
+    let physical = root_binding_lsp_diagnostics(&physical_root)?;
+    assert_root_binding_lsp_selected(&physical, ledger)?;
+    // At least one genuine producer display carries A's absolute native
+    // root. The alias case therefore passes through command-root validation
+    // as well as report-root comparison, rather than testing `--root .` only.
+    let mut has_bound_verify = false;
+    for command in ledger["records"][0]["verification_commands"]
+        .as_array()
+        .ok_or("missing producer verification commands")?
+    {
+        let command = command.as_str().ok_or("verification command is not text")?;
+        if !command.starts_with("ripr ") {
+            continue;
+        }
+        let args = printed_ripr_args(command)?;
+        for pair in args.windows(2).filter(|pair| pair[0] == "--root") {
+            let root_arg = Path::new(&pair[1]);
+            if root_arg.is_absolute() && root_arg.canonicalize()? == physical_root {
+                has_bound_verify = true;
+            }
+        }
+    }
+    assert!(
+        has_bound_verify,
+        "the real producer must exercise an absolute command root"
+    );
+
+    // B's own real default producer is a nonempty positive control before
+    // copying A's unchanged ledger bytes into B's default artifact location.
+    let captured = root_binding_probe(
+        &fixture.foreign,
+        &["check", "--format", "repo-exposure-json"],
+    )?;
+    assert!(captured.status.success(), "B capture failed: {captured:?}");
+    let inventory: serde_json::Value = serde_json::from_slice(&captured.stdout)?;
+    assert_eq!(
+        inventory["seams"]
+            .as_array()
+            .ok_or("missing B seams")?
+            .len(),
+        1
+    );
+    assert_eq!(
+        inventory["seams"][0]["evidence_record"]["canonical_gap_id"],
+        ROOT_BINDING_GAP
+    );
+    std::fs::write(fixture.foreign.join("repo-exposure.json"), captured.stdout)?;
+    let produced = root_binding_probe(
+        &fixture.foreign,
+        &[
+            "reports",
+            "gap-ledger",
+            "--repo-exposure",
+            "repo-exposure.json",
+        ],
+    )?;
+    assert!(produced.status.success(), "B producer failed: {produced:?}");
+    let foreign_ledger = fixture
+        .foreign
+        .join("target/ripr/reports/gap-decision-ledger.json");
+    let b_ledger: serde_json::Value = serde_json::from_slice(&std::fs::read(&foreign_ledger)?)?;
+    assert_eq!(b_ledger["source_subject"], ledger["source_subject"]);
+    assert_root_binding_lsp_selected(
+        &root_binding_lsp_diagnostics(&fixture.foreign.canonicalize()?)?,
+        &b_ledger,
+    )?;
+    let original_bytes = std::fs::read(&fixture.ledger)?;
+    std::fs::write(&foreign_ledger, &original_bytes)?;
+    let alias = root_binding_lsp_diagnostics(selected_root)?;
+    let foreign = root_binding_lsp_diagnostics(&fixture.foreign)?;
+
+    // Retain LSP's existing relative `.` and missing-root compatibility.
+    // Only metadata changes; all real records and analysis-time stamps stay.
+    let mut legacy_counts = Vec::new();
+    for report_root in [Some("."), None] {
+        let mut legacy = ledger.clone();
+        let object = legacy.as_object_mut().ok_or("ledger is not an object")?;
+        match report_root {
+            Some(root) => {
+                object.insert("root".to_string(), serde_json::json!(root));
+            }
+            None => {
+                object.remove("root");
+            }
+        }
+        std::fs::write(&fixture.ledger, serde_json::to_vec(&legacy)?)?;
+        let current = root_binding_lsp_diagnostics(selected_root)?;
+        legacy_counts.push(current.len());
+        assert_root_binding_lsp_selected(&current, ledger)?;
+        legacy
+            .as_object_mut()
+            .ok_or("ledger is not an object")?
+            .remove("source_subject");
+        std::fs::write(&fixture.ledger, serde_json::to_vec(&legacy)?)?;
+        assert!(
+            root_binding_lsp_diagnostics(selected_root)?.is_empty(),
+            "an unstamped legacy artifact must remain unverifiable"
+        );
+    }
+    // A foreign verification-command root remains rejected even when the
+    // report's portable root is admissible and source bytes still match.
+    let mut foreign_command = ledger.clone();
+    foreign_command["root"] = serde_json::json!(".");
+    foreign_command["records"][0]["verification_commands"] = serde_json::json!([format!(
+        "ripr agent verify --root '{}' --before before.json --after after.json --json",
+        fixture.foreign.display()
+    )]);
+    std::fs::write(&fixture.ledger, serde_json::to_vec(&foreign_command)?)?;
+    assert!(
+        root_binding_lsp_diagnostics(selected_root)?.is_empty(),
+        "the alias repair must not admit commands bound to B"
+    );
+    std::fs::write(&fixture.ledger, &original_bytes)?;
+    eprintln!(
+        "LSP native-root admission observations: physical_A={}, selected_alias_A={}, own_B=1, foreign_ledger_B={}, legacy_current={legacy_counts:?}",
+        physical.len(),
+        alias.len(),
+        foreign.len()
+    );
+    assert_root_binding_lsp_selected(&alias, ledger)?;
+    assert!(
+        foreign.is_empty(),
+        "byte-identical B must refuse A's producer ledger: {foreign:?}"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn lsp_real_gap_ledger_admits_symlink_selected_root_and_refuses_foreign_checkout() -> TestResult {
+    let (fixture, ledger) = root_binding_fixture("lsp-ledger-symlink-root")?;
+    let alias = fixture.scratch.join("editor-selected-alias");
+    std::os::unix::fs::symlink(&fixture.root, &alias)?;
+    assert!(std::fs::symlink_metadata(&alias)?.file_type().is_symlink());
+    root_binding_lsp_alias_contract(&fixture, &ledger, &alias)
+}
+
+#[cfg(windows)]
+#[test]
+fn lsp_real_gap_ledger_admits_native_root_beside_canonical_prefix_and_refuses_foreign_checkout()
+-> TestResult {
+    let (fixture, ledger) = root_binding_fixture("lsp-ledger-native-prefix-root")?;
+    // No symlink privilege is needed: the producer's canonical Windows root
+    // and the editor's ordinary native path refer to this accessible fixture.
+    root_binding_lsp_alias_contract(&fixture, &ledger, &fixture.root)
+}
