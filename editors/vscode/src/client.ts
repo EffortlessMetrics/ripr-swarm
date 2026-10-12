@@ -973,16 +973,21 @@ export class RiprClientController {
     if (!isRiprFileDocument(document)) {
       return;
     }
-    this.dirtyRiprDocuments.delete(document.uri.toString());
-    if (this.client && this.dirtyRiprDocuments.size === 0 && this.status.kind === 'stale') {
-      // #7340: closing an unsaved buffer without saving starts no refresh —
-      // the on-disk file is unchanged, and didClose is not one of the
-      // refresh triggers — so claiming a queued analysis would leave a
-      // spinning 'queued' state that nothing resolves until an unrelated
-      // event overwrites it. The truthful state is the last completed one:
-      // current diagnostics still describe the saved workspace. Restore it
-      // when known; before the first completed refresh there is nothing to
-      // restore, so report the paused state with the real refresh triggers.
+    const closedWasDirty = this.dirtyRiprDocuments.delete(document.uri.toString());
+    if (this.client && closedWasDirty && this.dirtyRiprDocuments.size === 0 && this.status.kind === 'stale') {
+      // #7340: for a no-save close the on-disk file is byte-identical to the
+      // analyzed snapshot, so the last completed state still describes current
+      // diagnostics. Restore it instead of claiming a queued analysis: the
+      // did_close-triggered refresh is debounced and can silently no-op (no
+      // configured root, configuration failure), in which case a 'queued'
+      // claim would spin until an unrelated event overwrote it — the defect
+      // this fixes. A typed cancelled or superseded refresh can also leave
+      // 'stale' with no dirty buffer, so only a close that actually discards
+      // a dirty buffer restores the completed state. When the close-triggered
+      // refresh does run, its started/completed log lines supersede this
+      // restored status. Before the first completed refresh there is nothing
+      // to restore, so report the paused state with the real refresh
+      // triggers.
       const closedUnsaved = `Closed unsaved ${document.languageId} buffer without saving: ${document.uri.fsPath}`;
       const restored = this.lastCompletedStatus;
       this.updateStatus(restored
@@ -1621,12 +1626,12 @@ export class RiprClientController {
     }
     if (message.startsWith('ripr analysis refresh completed')) {
       const completed = this.statusAfterRefreshCompleted(message);
-      if (this.dirtyRiprDocuments.size === 0) {
-        // Remember the clean completed state so closing an unsaved buffer
-        // without saving can restore it instead of inventing a queue that
-        // no close-path refresh will resolve (#7340).
-        this.lastCompletedStatus = completed;
-      }
+      // A completed refresh always describes the saved workspace — dirty
+      // buffers are unsaved client-side state, not analysis input — so keep
+      // the newest completed status even while documents are dirty. Closing
+      // the last dirty buffer without saving then restores the freshest
+      // snapshot instead of an older generation (#7340).
+      this.lastCompletedStatus = completed;
       this.updateStatus(completed);
       void this.refreshFirstUsefulActionStatus();
       return;

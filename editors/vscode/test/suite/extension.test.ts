@@ -3992,9 +3992,10 @@ suite('Extension Smoke', () => {
 
       context.controller.markWorkspaceStale(document);
       context.controller.markWorkspaceClosed(document);
-      // #7340: a no-save close starts no refresh, so the status must not
-      // claim a queued analysis; it restores the last completed state
-      // (diagnostics describe the saved workspace) and names the close.
+      // #7340: for a no-save close the on-disk file is unchanged, so the
+      // status restores the last completed state (diagnostics describe the
+      // saved workspace) and names the close instead of claiming a queued
+      // analysis.
       assert.ok(context.status.text.includes('ripr: diagnostics'));
       assert.ok(String(context.status.tooltip).includes(document.uri.fsPath));
       await context.controller.showStatus();
@@ -4013,13 +4014,36 @@ suite('Extension Smoke', () => {
       context.controller.markWorkspaceStale(document);
       context.controller.markWorkspaceClosed(document);
       // No refresh has completed yet, so there is no completed state to
-      // restore; the status must still not claim a queue that no close-path
-      // refresh will start.
+      // restore; the status must still not claim a queued analysis that a
+      // debounced did_close refresh may silently never resolve.
       assert.ok(context.status.text.includes('ripr: ready'));
       assert.ok(String(context.status.tooltip).includes(document.uri.fsPath));
       assert.ok(String(context.status.tooltip).includes('without saving'));
       await context.controller.showStatus();
       assert.ok(context.infoMessages.at(-1)?.includes('saved workspace'));
+    } finally {
+      await context.dispose();
+    }
+  });
+
+  test('closing a clean buffer leaves a stale status from a cancelled refresh unchanged', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      const document = await vscode.workspace.openTextDocument(workspaceFileUri('src/lib.rs'));
+
+      // A typed cancelled refresh sets 'stale' without any dirty buffer; the
+      // close path must not overwrite that failure state with a completed or
+      // ready status, because the closed document was never dirty.
+      context.client.emitNotification('ripr/analysisStatus', {
+        schema_version: '0.1', tool: 'ripr', kind: 'analysis_status', state: 'cancelled',
+        retry_command: 'ripr.refresh'
+      });
+      assert.ok(context.status.text.includes('ripr: stale'));
+
+      context.controller.markWorkspaceClosed(document);
+      assert.ok(context.status.text.includes('ripr: stale'));
+      assert.ok(String(context.status.tooltip).includes('retained evidence is stale'));
     } finally {
       await context.dispose();
     }
