@@ -76,6 +76,8 @@ fn check_ignores_init_config_warning(root: &Path) -> Option<String> {
     let shown_root = output::path::human_path(root);
     let shown_resolved = output::path::human_path(&resolved_root);
     let shown_config = output::path::human_path(&root.join(CONFIG_FILE_NAME));
+    let quoted_root = crate::agent::loop_commands::shell_arg(&shown_root);
+    let quoted_resolved = crate::agent::loop_commands::shell_arg(&shown_resolved);
     let resolved_as = match reason {
         super::check::ImplicitRootReason::Workspace => {
             format!("the workspace root `{shown_resolved}`")
@@ -92,8 +94,20 @@ fn check_ignores_init_config_warning(root: &Path) -> Option<String> {
             format!("the git top level `{shown_resolved}`")
         }
     };
+    let resolved_config = resolved_root.join(CONFIG_FILE_NAME);
+    let init_recovery = match path_is_occupied(&resolved_config) {
+        Ok(true) => {
+            let shown_resolved_config = output::path::human_path(&resolved_config);
+            format!(
+                "The file check will load is `{shown_resolved_config}`; review or edit that file (`ripr init --root {quoted_resolved} --force` resets customizations)."
+            )
+        }
+        Ok(false) | Err(_) => format!(
+            "Re-run `ripr init --root {quoted_resolved}` to write the file check will load."
+        ),
+    };
     Some(format!(
-        "ripr: warning: `ripr check` from `{shown_root}` resolves to {resolved_as} and will ignore `{shown_config}`. Re-run `ripr init --root {shown_resolved}` to write the file check will load, or pass `ripr check --root {shown_root}` to analyze this directory with this file."
+        "ripr: warning: `ripr check` from `{shown_root}` resolves to {resolved_as} and will ignore `{shown_config}`. {init_recovery} Or pass `ripr check --root {quoted_root}` to analyze this directory with this file."
     ))
 }
 
@@ -702,6 +716,9 @@ mod tests {
         })?;
         let shown_workspace = output::path::human_path(&workspace);
         let shown_config = output::path::human_path(&member.join(CONFIG_FILE_NAME));
+        let quoted_workspace = crate::agent::loop_commands::shell_arg(&shown_workspace);
+        let quoted_member =
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(&member));
         assert!(
             warning.contains("resolves to the workspace root"),
             "{warning}"
@@ -710,15 +727,77 @@ mod tests {
         assert!(warning.contains("will ignore"), "{warning}");
         assert!(warning.contains(&shown_config), "{warning}");
         assert!(
-            warning.contains(&format!("ripr init --root {shown_workspace}")),
+            warning.contains(&format!("ripr init --root {quoted_workspace}`")),
             "{warning}"
         );
         assert!(
-            warning.contains(&format!(
-                "ripr check --root {}",
-                output::path::human_path(&member)
-            )),
+            warning.contains(&format!("ripr check --root {quoted_member}")),
             "{warning}"
+        );
+        std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    /// Copy-paste recovery must keep a space in `--root` as one argument
+    /// (#5188 convention via `shell_arg`).
+    #[test]
+    fn check_ignores_init_config_warning_quotes_spaced_recovery_roots() -> Result<(), String> {
+        let (workspace, member) = workspace_with_member("spaced ws")?;
+        assert!(
+            workspace
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains(' ')),
+            "fixture name must contain a space: {}",
+            workspace.display()
+        );
+        let warning = check_ignores_init_config_warning(&member).ok_or_else(|| {
+            "a spaced workspace member must still warn that check will ignore ./ripr.toml"
+                .to_string()
+        })?;
+        let quoted_workspace =
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(&workspace));
+        let quoted_member =
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(&member));
+        assert!(quoted_workspace.starts_with('\''), "{quoted_workspace}");
+        assert!(quoted_member.starts_with('\''), "{quoted_member}");
+        assert!(
+            warning.contains(&format!("ripr init --root {quoted_workspace}`")),
+            "{warning}"
+        );
+        assert!(
+            warning.contains(&format!("ripr check --root {quoted_member}")),
+            "{warning}"
+        );
+        std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    /// When the workspace already has `ripr.toml`, a bare `ripr init --root`
+    /// fails without `--force`. Name the loaded file instead of advertising
+    /// a command that cannot run.
+    #[test]
+    fn check_ignores_init_config_warning_names_an_existing_workspace_config() -> Result<(), String>
+    {
+        let (workspace, member) = workspace_with_member("ws-existing-config")?;
+        write(&workspace.join(CONFIG_FILE_NAME), "[analysis]\n")?;
+        let warning = check_ignores_init_config_warning(&member).ok_or_else(|| {
+            "a member init must still warn when the workspace already has ripr.toml".to_string()
+        })?;
+        let shown_workspace_config = output::path::human_path(&workspace.join(CONFIG_FILE_NAME));
+        let quoted_workspace =
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(&workspace));
+        assert!(warning.contains("will ignore"), "{warning}");
+        assert!(warning.contains(&shown_workspace_config), "{warning}");
+        assert!(warning.contains("review or edit that file"), "{warning}");
+        assert!(
+            warning.contains(&format!("ripr init --root {quoted_workspace} --force")),
+            "{warning}"
+        );
+        assert!(warning.contains("resets customizations"), "{warning}");
+        assert!(
+            !warning.contains(&format!("Re-run `ripr init --root {quoted_workspace}`")),
+            "a doomed no-force init must not be the recovery: {warning}"
         );
         std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())
