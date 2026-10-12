@@ -1,0 +1,52 @@
+{
+  "case_id": "mined-doctest-only-read-u16",
+  "subject_id": "authored-mined-wire",
+  "diff": "cases/mined-doctest-only-read-u16.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "doctest_only_oracle",
+  "hard_case": "The only test is the doc example on read_u16, which `cargo test` runs as a doctest. Mined from bytes, where 35 of 38 try_get_* methods appear in no file under tests/ and are pinned only by doc examples (e.g. https://github.com/tokio-rs/bytes/blob/7930d93d583757e922014312d4aa3e58a415131f/src/buf/buf_impl.rs#L1368).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "u16::from_le_bytes([bytes[0], bytes[1]])",
+        "mutated_line": "u16::from_le_bytes([bytes[0], bytes[1]])",
+        "outcome": "tests_failed",
+        "failing_test": "src/lib.rs - read_u16 (line 8)",
+        "equivalence_review": "not equivalent: [0x12, 0x34] reads as 0x3412"
+      },
+      {
+        "replacement": "u16::from_be_bytes([bytes[1], bytes[0]])",
+        "mutated_line": "u16::from_be_bytes([bytes[1], bytes[0]])",
+        "outcome": "tests_failed",
+        "failing_test": "src/lib.rs - read_u16 (line 8)",
+        "equivalence_review": "not equivalent: [0x12, 0x34] reads as 0x3412"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The doc example asserts read_u16(&[0x12, 0x34]) == 0x1234 and `cargo test` runs it, so both byte-order mutants fail the doctest; no unit test calls read_u16.",
+  "labeling_observation": {
+    "ripr_commit": "da6a44d",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

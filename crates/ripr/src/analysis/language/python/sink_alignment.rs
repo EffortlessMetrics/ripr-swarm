@@ -40,6 +40,17 @@ impl SinkAlignment {
         ) || self.alignment_reason == "module_owner_no_sink_token"
     }
 
+    /// The same read-out with a non-delegatable reason: a related row has
+    /// no family-relevant assertion (`no_family_relevant_assertion`) or now
+    /// shows a different assertion than the strength-only pick
+    /// (`other_behavior_assertion_passed_over`), #5572. Only the surfaced
+    /// finding fields use it; the classifier decided from `observes()` first,
+    /// and the gap ledger never delegates either reason.
+    pub(super) fn with_reason(mut self, reason: &str) -> Self {
+        self.alignment_reason = reason.to_string();
+        self
+    }
+
     /// The alignment surfaced when the classifier did not reach a strong-oracle
     /// branch (no-static-path, static-limit, heuristic-only, or weak-oracle
     /// findings never compute owner alignment). `changed_sink` is retained
@@ -195,7 +206,7 @@ pub(super) fn dict_changed_keys_and_values(
 /// comparison. Conservative — when in doubt it returns `true` (credit stands) so a
 /// genuine discriminator is never dropped; it only returns `false` for an oracle
 /// that observes purely a sibling key or an aggregate.
-fn oracle_observes_changed_dict_element(
+pub(super) fn oracle_observes_changed_dict_element(
     oracle: &str,
     changed_keys: &[String],
     changed_values: &[String],
@@ -518,7 +529,10 @@ pub(super) fn classify_sink_alignment_with_old(
         .next()
         .unwrap_or(owner.name.as_str());
     let mut alias_tokens: Vec<String> = Vec::new();
-    for test in all_tests {
+    for test in all_tests
+        .iter()
+        .filter(|test| super::test_activation::activation_control(test).is_none())
+    {
         for import in &test.imports {
             // For a method/classmethod owner the bare method name is not directly
             // importable, so only the owner's CLASS alias is identity-bearing.
@@ -649,6 +663,7 @@ pub(super) fn classify_sink_alignment_with_old(
             all_tests
                 .iter()
                 .filter(|test| test.name == related.name && test.file == related.file)
+                .filter(|test| super::test_activation::activation_control(test).is_none())
                 .any(|test| {
                     let callees = owner_module_callees(test, owner);
                     callees

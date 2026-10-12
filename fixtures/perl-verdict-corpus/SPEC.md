@@ -1,6 +1,6 @@
 # Fixture Corpus: perl-verdict-corpus
 
-Spec: RIPR-SPEC-0238
+Spec: RIPR-SPEC-0245
 
 ## Given
 
@@ -23,15 +23,16 @@ edit; their rates are reported apart from producer-packet rates.
 `cargo xtask verdict-corpus check --language perl` applies each edit to a
 run-owned copy of its subject, runs `ripr check --json --perl-facts
 <packet>` with the `lang-perl` build, and projects the anchored findings to
-one verdict. Perl findings carry `unresolved_subject` currentness (#3280),
-so this corpus counts them.
+one verdict. The pinned producer writes zero-based lines (#3221), so ripr
+leaves its findings `unresolved_subject` (#6586) and this corpus counts them.
+`check-all` runs it with every other corpus.
 
 ## Then
 
 Each case scores as ideal, abstained, false actionable, false exposed, or
 false silent against its label; contradictions inside ripr's own output are
-counted; producer and edited-packet rates are reported apart; and the
-report must equal `expected/report.json`.
+counted; producer and edited-packet rates are reported apart; and each row
+must equal its `expected/rows/<case>.json`.
 
 ## Must Not
 
@@ -41,10 +42,10 @@ report must equal `expected/report.json`.
 
 ## Refreshing
 
-When a ripr change moves a verdict, `check` fails and names the first
-differing line. Read `target/ripr/reports/verdict-corpus/perl/report.md`.
-A row marked `changed_since_labeling` must be re-checked against its
-labeling notes before the expected report is refreshed with
-`cargo xtask verdict-corpus report --language perl --out fixtures/perl-verdict-corpus/expected`.
+When a ripr change moves a verdict, `check` fails and names each drifted
+row. Read `target/ripr/reports/verdict-corpus/perl/report.md`. A row marked
+`changed_since_labeling` must be re-checked against its labeling notes
+before the rows are refreshed with
+`cargo xtask verdict-corpus bless --language perl`.
 A new producer pin regenerates every producer packet and relabels each case
 whose packet bytes moved.

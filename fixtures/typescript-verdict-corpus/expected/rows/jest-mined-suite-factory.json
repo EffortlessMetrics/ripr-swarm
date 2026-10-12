@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-mined-suite-factory",
+  "subject_id": "authored-ts-jest-mined",
+  "origin": "authored",
+  "anchor": "src/average.ts:5",
+  "behavior_family": "return_value",
+  "test_shape": "jest_tests_inside_suite_factory",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

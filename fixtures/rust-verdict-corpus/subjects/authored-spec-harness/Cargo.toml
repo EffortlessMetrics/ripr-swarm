@@ -1,0 +1,17 @@
+[package]
+name = "harness"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[dev-dependencies]
+assert_cmd = "=2.2.2"
+libtest-mimic = "=0.8.2"
+
+[[test]]
+name = "trials"
+harness = false
+
+[workspace]
+members = ["xtask"]

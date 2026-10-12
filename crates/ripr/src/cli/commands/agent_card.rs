@@ -10,8 +10,9 @@
 //!
 //! #5007 (RIPR-SPEC-0202): the adapter also owns the typed-refusal envelope.
 //! Every deliberate named refusal of the handoff — seam-not-found,
-//! policy-omitted, witness-unavailable, identity-unnameable, and
-//! budget-overflow — renders one versioned `agent_card_refusal` document on
+//! policy-omitted, witness-unavailable, identity-unnameable,
+//! budget-overflow, and incomplete-inventory — renders one versioned
+//! `agent_card_refusal` document on
 //! stderr under `--json` and maps to the decision exit code 3, so an
 //! orchestrator branches on the exit status and the typed `error.kind`
 //! alone. Human prose stays the non-authority rendering of the kind; the
@@ -37,6 +38,17 @@ use super::agent::unknown_seam_id_hint;
 const AGENT_CARD_REFUSAL_SCHEMA_VERSION: &str = "0.1";
 
 pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandError> {
+    print!("{}", agent_card_stdout(options)?);
+    Ok(())
+}
+
+/// The card command's stdout document without printing it: the pretty JSON
+/// card under `--json`, the human prose lines otherwise. Shared by
+/// `ripr agent card` (prints immediately) and the task-first `ripr repair`
+/// façade, which holds the whole start+card stdout until both succeed so a
+/// post-publication card refusal keeps stdout empty (#7032). Byte-identical
+/// to what [`run_agent_card`] writes on success.
+pub(super) fn agent_card_stdout(options: AgentCardOptions) -> Result<String, CommandError> {
     ensure_command_root(&options.root, "agent card")?;
     let card = match render_agent_card(&options) {
         Ok(card) => card,
@@ -49,7 +61,11 @@ pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandErr
             // after the envelope, as the human rendering.
             if options.json {
                 match render_agent_card_refusal(&options, kind, &message) {
-                    Ok(rendered) => eprint!("{rendered}"),
+                    // A JSON document, not report text: bidi characters become
+                    // JSON escapes so the envelope stays parseable (#6309).
+                    Ok(rendered) => {
+                        ::std::eprint!("{}", crate::terminal_text::json_terminal_safe(rendered))
+                    }
                     Err(render_error) => eprintln!("ripr: {render_error}"),
                 }
             }
@@ -60,16 +76,19 @@ pub(super) fn run_agent_card(options: AgentCardOptions) -> Result<(), CommandErr
         }
     };
     if options.json {
-        let rendered = output::json::render_pretty_with_newline(&card, "agent card")?;
-        print!("{rendered}");
-        return Ok(());
+        return Ok(output::json::render_pretty_with_newline(
+            &card,
+            "agent card",
+        )?);
     }
     let packet_command =
         crate::app::repair_card_handoff::bound_packet_command(&options.root, &options.seam_id);
-    for line in agent_card_prose_lines(&card, &packet_command) {
-        println!("{line}");
+    let mut rendered = String::new();
+    for line in agent_card_prose_lines(&card, &packet_command, Some(&options.root)) {
+        rendered.push_str(&line);
+        rendered.push('\n');
     }
-    Ok(())
+    Ok(rendered)
 }
 
 /// Render the versioned typed-refusal document of an `agent card` refusal:
@@ -123,7 +142,9 @@ fn refusal_remedy_route(
         AgentCardRefusalKind::WitnessUnavailable => {
             format!("ripr check --root {root} --json")
         }
-        AgentCardRefusalKind::IdentityUnnameable | AgentCardRefusalKind::BudgetOverflow => {
+        AgentCardRefusalKind::IdentityUnnameable
+        | AgentCardRefusalKind::BudgetOverflow
+        | AgentCardRefusalKind::IncompleteInventory => {
             crate::app::repair_card_handoff::bound_packet_command(root_path, seam_id)
         }
     }
@@ -131,9 +152,16 @@ fn refusal_remedy_route(
 
 fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, AgentCardError> {
     let config = load_for_root(&options.root).map_err(AgentCardError::operational)?;
-    let (classified, _) =
+    let (classified, limit_info) =
         analysis::inventory_classified_seams_at_with_config(&options.root, &config)
             .map_err(AgentCardError::operational)?;
+    if let Some(refusal) = truncated_inventory_refusal(&limit_info, &options.seam_id) {
+        // #7179 review: a capped candidate inventory can omit a nested
+        // same-kind sibling, so most-specific selection could credit this
+        // outer seam with an inner seam's finding. The card refuses instead
+        // of binding against an incomplete candidate set.
+        return Err(refusal);
+    }
     let entry = classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == options.seam_id)
@@ -166,7 +194,34 @@ fn render_agent_card(options: &AgentCardOptions) -> Result<RepairCardV1, AgentCa
         ));
     }
 
-    crate::app::repair_card_handoff::repair_card_for_entry(entry, &options.root, &config)
+    crate::app::repair_card_handoff::repair_card_for_entry(
+        entry,
+        &options.root,
+        &config,
+        &classified,
+    )
+}
+
+/// The typed refusal for a truncated seam candidate inventory: `Some` only
+/// when the repo seam limit cut the inventory, because the card's sibling
+/// join (#7179) needs every same-kind candidate to pick the most-specific
+/// span. `None` keeps the complete-inventory behavior byte-identical.
+fn truncated_inventory_refusal(
+    limit_info: &Option<crate::analysis::SeamLimitInfo>,
+    seam_id: &str,
+) -> Option<AgentCardError> {
+    limit_info.as_ref().map(|limit| {
+        AgentCardError::refusal(
+            AgentCardRefusalKind::IncompleteInventory,
+            format!(
+                "agent card seam_id {seam_id} was refused: the seam candidate inventory was \
+                 truncated by the repo seam limit ({} of {} seams analyzed), so nested same-kind \
+                 siblings may be missing and the card refuses to bind. Raise or clear \
+                 RIPR_REPO_EXPOSURE_SEAM_LIMIT and re-run, or retrieve the full packet.",
+                limit.analyzed, limit.total
+            ),
+        )
+    })
 }
 
 /// The default human output: the card's typed fields, in card order,
@@ -188,7 +243,14 @@ fn wire_name<T: serde::Serialize>(value: &T) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-pub(crate) fn agent_card_prose_lines(card: &RepairCardV1, packet_command: &str) -> Vec<String> {
+/// `paste_root` binds the canonical next-action block to the selected
+/// repository for copy/paste (#3999); measurement callers with no checkout
+/// pass `None` and keep the portable render.
+pub(crate) fn agent_card_prose_lines(
+    card: &RepairCardV1,
+    packet_command: &str,
+    paste_root: Option<&std::path::Path>,
+) -> Vec<String> {
     let mut lines = Vec::new();
     lines.push(format!("Repair card {}", card.repair_card_id));
     lines.push(format!("  schema: {}", card.schema_version));
@@ -249,14 +311,30 @@ pub(crate) fn agent_card_prose_lines(card: &RepairCardV1, packet_command: &str) 
         };
         lines.push(rendered);
     }
-    match &card.next_action {
+    // The next-action section renders the canonical decision (#6304), so the
+    // human prose and the wire DTO share one authority. Cards minted before
+    // the canonical field keep the legacy reference-only rendering.
+    match &card.canonical_next_action {
         Some(action) => {
-            lines.push(format!("  next action: {} ({})", action.display, action.command_id));
+            let block = match paste_root {
+                Some(root) => {
+                    crate::output::next_action::render_next_action_human_at_root(action, root)
+                }
+                None => crate::output::next_action::render_next_action_human(action),
+            };
+            for line in block.lines() {
+                lines.push(line.to_string());
+            }
         }
-        None => lines.push(format!(
-            "  next action: none (instruction {:?} with repair_ready={} exposes no bounded route; inspect the detail references below)",
-            card.instruction.state, card.readiness.repair_ready
-        )),
+        None => match &card.next_action {
+            Some(action) => {
+                lines.push(format!("  next action: {} ({})", action.display, action.command_id));
+            }
+            None => lines.push(format!(
+                "  next action: none (instruction {:?} with repair_ready={} exposes no bounded route; inspect the detail references below)",
+                card.instruction.state, card.readiness.repair_ready
+            )),
+        },
     }
     if !card.allowed_files.is_empty() || !card.forbidden_files.is_empty() {
         lines.push(format!(
@@ -352,6 +430,11 @@ mod tests {
                 "budget_overflow",
                 "ripr agent packet --root ",
             ),
+            (
+                AgentCardRefusalKind::IncompleteInventory,
+                "incomplete_inventory",
+                "ripr agent packet --root ",
+            ),
         ] {
             let options = AgentCardOptions {
                 root: std::path::PathBuf::from("."),
@@ -393,13 +476,49 @@ mod tests {
             // the process working directory or a bare seam.
             if matches!(
                 expected_kind,
-                "policy_omitted" | "identity_unnameable" | "budget_overflow"
+                "policy_omitted"
+                    | "identity_unnameable"
+                    | "budget_overflow"
+                    | "incomplete_inventory"
             ) && !remedy.contains("--seam-id seam-a")
             {
                 return Err(format!(
                     "{expected_kind}: remedy must carry the asked-for seam id: {remedy}"
                 ));
             }
+        }
+        Ok(())
+    }
+
+    /// #7179 review: a truncated candidate inventory refuses the card with
+    /// the typed `incomplete_inventory` kind and names the governing limit;
+    /// a complete inventory keeps the existing behavior (no refusal).
+    #[test]
+    fn truncated_inventory_refuses_and_complete_inventory_does_not() -> Result<(), String> {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+        if truncated_inventory_refusal(&None, "seam-a").is_some() {
+            return Err("a complete inventory must not refuse the card".to_string());
+        }
+        let limit = SeamLimitInfo {
+            analyzed: 1,
+            total: 4,
+            source: SeamLimitSource::Configured,
+        };
+        let Some(AgentCardError::Refusal { kind, message }) =
+            truncated_inventory_refusal(&Some(limit), "seam-a")
+        else {
+            return Err("a truncated inventory must refuse the card".to_string());
+        };
+        if kind != AgentCardRefusalKind::IncompleteInventory {
+            return Err(format!("wrong refusal kind: {:?}", kind));
+        }
+        if !message.contains("RIPR_REPO_EXPOSURE_SEAM_LIMIT")
+            || !message.contains("1 of 4")
+            || !message.contains("seam-a")
+        {
+            return Err(format!(
+                "refusal must name the limit and the seam: {message}"
+            ));
         }
         Ok(())
     }
@@ -429,6 +548,176 @@ mod tests {
         if !packet.starts_with("ripr agent packet --root ") || !packet.contains("--seam-id seam-a")
         {
             return Err("packet remedy must bind the invocation root and seam id".to_string());
+        }
+        Ok(())
+    }
+
+    fn prose_test_card() -> RepairCardV1 {
+        use crate::domain::{
+            CardCurrentnessGoal, EditCageGoal, FixInstructionState, FocusedExecutionGoal,
+            MutationConfirmationGoal, REPAIR_CARD_CLAIM_BOUNDARY, REPAIR_CARD_SCHEMA_VERSION,
+            RepairCardDoneWhen, RepairCardReadinessFacts, RepairCardSnapshot,
+            RepairCardSnapshotCurrentness, RepairCardSubject, StaticMovementGoal,
+        };
+        RepairCardV1 {
+            schema_version: REPAIR_CARD_SCHEMA_VERSION.to_string(),
+            repair_card_id: String::new(),
+            snapshot: RepairCardSnapshot {
+                workspace_identity: "workspace:demo".to_string(),
+                repository_head: "abc123".to_string(),
+                currentness: RepairCardSnapshotCurrentness::Current,
+            },
+            subject: RepairCardSubject {
+                seam_id: "seam:demo".to_string(),
+                canonical_gap_id: None,
+                finding_id: None,
+            },
+            instruction: crate::domain::FixInstructionSummary {
+                state: FixInstructionState::FixSiteReady,
+                has_fix_site: true,
+                has_suggested_assertion: false,
+                limitation_kinds: Vec::new(),
+            },
+            readiness: RepairCardReadinessFacts {
+                repair_ready: true,
+                required_evidence: Vec::new(),
+                present_evidence: Vec::new(),
+                missing_evidence: Vec::new(),
+            },
+            changed_behavior: "expr".to_string(),
+            exact_blocker: None,
+            selected_target: None,
+            assertion_goal: None,
+            assertion_goal_detail: None,
+            candidate_value: None,
+            allowed_files: Vec::new(),
+            forbidden_files: Vec::new(),
+            done_when: RepairCardDoneWhen {
+                static_movement: StaticMovementGoal::ClosedBySelectedRoute,
+                focused_test_execution: FocusedExecutionGoal::VerifiedPass,
+                edit_cage: EditCageGoal::Compliant,
+                mutation_confirmation: MutationConfirmationGoal::NotRequested,
+                currentness: CardCurrentnessGoal::Current,
+            },
+            stop_conditions: Vec::new(),
+            next_action: None,
+            canonical_next_action: None,
+            selected_basis: None,
+            rejected_alternatives: Vec::new(),
+            attempt: None,
+            claim_boundary: REPAIR_CARD_CLAIM_BOUNDARY.to_string(),
+            limitations: Vec::new(),
+            detail_references: Vec::new(),
+            detail_summary: crate::domain::RepairCardDetailSummary::default(),
+            complete_evidence_digest: String::new(),
+        }
+    }
+
+    fn prose_test_decision() -> Result<crate::domain::CanonicalNextActionV1, String> {
+        use crate::domain::{
+            CommandRole, NextActionClass, NextActionCommandRef, NextActionCurrentness,
+            NextActionDiffSource, NextActionProducer, NextActionSubject, NextActionTransition,
+        };
+        crate::domain::CanonicalNextActionV1::new(
+            NextActionProducer::RepairCard,
+            NextActionSubject {
+                root: "workspace:demo".to_string(),
+                diff_source: NextActionDiffSource::Committed {
+                    base: None,
+                    head: Some("abc123".to_string()),
+                },
+                item: Some("seam:demo".to_string()),
+            },
+            NextActionCurrentness {
+                head_expected: Some("abc123".to_string()),
+                head_observed: Some("abc123".to_string()),
+                config_expected: None,
+                config_observed: None,
+            },
+            NextActionClass::RunCommand,
+            Some(NextActionCommandRef {
+                command_id: "ripr:agent:packet".to_string(),
+                role: CommandRole::Inspection,
+                display: "ripr agent packet --seam-id seam:demo --json".to_string(),
+            }),
+            None,
+            Some(NextActionTransition {
+                from_state: "fix_site_ready".to_string(),
+                to_state: "packet_inspected".to_string(),
+            }),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    /// #6304: the card prose renders the canonical decision's block, so the
+    /// human section and the wire DTO share one authority.
+    #[test]
+    fn prose_renders_the_canonical_block() -> Result<(), String> {
+        let mut card = prose_test_card();
+        card.canonical_next_action = Some(prose_test_decision()?);
+        let lines =
+            agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json", None);
+        let text = lines.join("\n");
+        for expected in [
+            "  next action: run_command",
+            "  producer: repair_card",
+            "  subject: seam:demo @ workspace:demo (committed @ abc123)",
+            "  command: ripr:agent:packet [inspection]: ripr agent packet --seam-id seam:demo --json",
+            "  transition: fix_site_ready -> packet_inspected",
+        ] {
+            if !text.contains(expected) {
+                return Err(format!("prose lost its canonical line: {expected}\n{text}"));
+            }
+        }
+        if text.contains("exposes no bounded route") {
+            return Err(format!(
+                "canonical prose kept the legacy refusal line:\n{text}"
+            ));
+        }
+        // A paste root binds the block's routes (#3999); without one the
+        // portable DTO spelling is preserved for measurement.
+        let lines = agent_card_prose_lines(
+            &card,
+            "ripr agent packet --seam-id seam:demo --json",
+            Some(std::path::Path::new("/repo/checkout")),
+        );
+        let text = lines.join("\n");
+        let expected = format!(
+            "  command: ripr:agent:packet [inspection]: ripr agent packet --root {} --seam-id seam:demo --json",
+            crate::agent::loop_commands::bound_root("/repo/checkout")
+        );
+        if !text.contains(&expected) {
+            return Err(format!("paste root did not bind the block:\n{text}"));
+        }
+        Ok(())
+    }
+
+    /// Cards minted before the canonical field keep the legacy
+    /// reference-only rendering.
+    #[test]
+    fn prose_falls_back_without_canonical_action() -> Result<(), String> {
+        let mut card = prose_test_card();
+        card.next_action = Some(crate::domain::RepairCardCommandRef {
+            command_id: "ripr:agent:packet".to_string(),
+            role: "inspection".to_string(),
+            display: "ripr agent packet --seam-id seam:demo --json".to_string(),
+        });
+        let lines =
+            agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json", None);
+        let text = lines.join("\n");
+        if !text.contains(
+            "  next action: ripr agent packet --seam-id seam:demo --json (ripr:agent:packet)",
+        ) {
+            return Err(format!("legacy reference line lost:\n{text}"));
+        }
+
+        let card = prose_test_card();
+        let lines =
+            agent_card_prose_lines(&card, "ripr agent packet --seam-id seam:demo --json", None);
+        let text = lines.join("\n");
+        if !text.contains("  next action: none (instruction FixSiteReady") {
+            return Err(format!("legacy refusal line lost:\n{text}"));
         }
         Ok(())
     }

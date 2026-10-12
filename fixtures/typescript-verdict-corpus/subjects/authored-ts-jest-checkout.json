@@ -1,0 +1,141 @@
+{
+  "subject_id": "authored-ts-jest-checkout",
+  "origin": "authored",
+  "version_label": "authored@2026-10-04",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "jest.config.js",
+      "sha256": "06ffef8b53b4cb850f7bf2691d6fe2f3ad3bce674d2aa636ad1e29dcd22152a5"
+    },
+    {
+      "path": "package.json",
+      "sha256": "0aa73662e117dbe818a363d69a5188f7249c0d8ebfc1fe569fe333c085445575"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/age.ts",
+      "sha256": "b9709d6e2614b56ce621a6282dd6de28c2fd8eb741b70f43275abeff6147ab05"
+    },
+    {
+      "path": "src/cents.ts",
+      "sha256": "cbbbec8a4cc3221e88b0fa7c94d0145a1009493bd8a9661a0ae5b2298deda45f"
+    },
+    {
+      "path": "src/coupon.ts",
+      "sha256": "285e0657397567579dcdc507aa7d6cb44cf875f07868d2503f89a9008399f808"
+    },
+    {
+      "path": "src/discount.ts",
+      "sha256": "f01e59702de0e427e6e5136b26a67ad14a7d3ea87a041569e0f84a82d5146fb7"
+    },
+    {
+      "path": "src/invoice.ts",
+      "sha256": "678ba395adcb96f552fbf5ea73f20f050f3b33f6b49babc81000bfbdc4566875"
+    },
+    {
+      "path": "src/notify.ts",
+      "sha256": "5b5d713cf1e6832f6d1ab9de0c05288250ca7c5d2995fd0ec66c8c6d9740bfb2"
+    },
+    {
+      "path": "src/order.ts",
+      "sha256": "5f3c5cbe93c8f6e7e83847af38284a17889074506feb6d8ad62a4aa187b7e89d"
+    },
+    {
+      "path": "src/price.ts",
+      "sha256": "aa897b3a44881a163ce3b3f2392144d5807d2987be9d058aeff2670b8abc1660"
+    },
+    {
+      "path": "src/quantity.ts",
+      "sha256": "c46c4e0dbe13d34bf86c79580b6b4162ecfc85000de392503fa765baf4db4554"
+    },
+    {
+      "path": "src/receipt.ts",
+      "sha256": "5c6e7e31231fe9d63880ea05c0e71e2ee230eb54530bf2cbbb9aa8d20d9e36c9"
+    },
+    {
+      "path": "src/shipping.ts",
+      "sha256": "9048cef2980fb602097ff6a5b5aab548f3c5997dfa7d5ad8996416bb094c355e"
+    },
+    {
+      "path": "src/sku.ts",
+      "sha256": "5af6a8501ff4f69f313b1abd1d8e9de338e93d1a4074088a53d8682b2ac32a86"
+    },
+    {
+      "path": "src/stock.ts",
+      "sha256": "dcbcd46d68d90a825c9d964c8565038bfe4e4b4860437da54037d722b84892a6"
+    },
+    {
+      "path": "src/tax.ts",
+      "sha256": "ddc4ca1bf9377d46a98c53901dc846829278af5f0929d7044539222d9f618c6e"
+    },
+    {
+      "path": "src/tier.ts",
+      "sha256": "8f1b22c08f223337b0ffa7ecfc85c111e762f806dea683fa3cbeb36ded673c93"
+    },
+    {
+      "path": "test/age.test.ts",
+      "sha256": "84da6687764e1342e156ce28798554d930be2bfcd10805634cc264ea7ee07825"
+    },
+    {
+      "path": "test/cents.test.ts",
+      "sha256": "e992125422d1d8323817f4f15948aaa7dd4cb8bcadc5883bac734a6eaa0b4941"
+    },
+    {
+      "path": "test/coupon.test.ts",
+      "sha256": "ef717331a983829e7715924ac1b32686fea1d4106a25ed53734b1944bb3eef93"
+    },
+    {
+      "path": "test/discount.test.ts",
+      "sha256": "cec6e9355e28814bfe5f8ca67ca97147fb8773b229887f44398983aba75069b5"
+    },
+    {
+      "path": "test/invoice.test.ts",
+      "sha256": "785587d029c90f11c2b3ca68b8f6c028a8416394ea64cc93aef60039799dcb09"
+    },
+    {
+      "path": "test/notify.test.ts",
+      "sha256": "cab7285812246b220437eee55d051fca9e06ec365aaf552e88634700c1102602"
+    },
+    {
+      "path": "test/order.test.ts",
+      "sha256": "a7bada60981377876eb75b9a6a07e81f5c2e0bb7bca64695af4da7bca3b9b9ea"
+    },
+    {
+      "path": "test/price.test.ts",
+      "sha256": "d35c50104db869abc5ab6b4199bf7d00328103d09770a44884bc7e576a304418"
+    },
+    {
+      "path": "test/quantity.test.ts",
+      "sha256": "f23bea9aa36e8c64472882ece88775f4a22d03dbc783d41abcc00e69a58ae866"
+    },
+    {
+      "path": "test/receipt.test.ts",
+      "sha256": "092989aa13cb2b83aff8dd2cc1dceaa06c18edc78fb60c609f35dc47007f31af"
+    },
+    {
+      "path": "test/shipping.test.ts",
+      "sha256": "12ca96cbe58f9880cb28570d3fc6fe92c19721eea90ce5e1a62d0962ff088e17"
+    },
+    {
+      "path": "test/sku.test.ts",
+      "sha256": "ca8ffdfc3c577ff42cd8f11176b8687840631d31fe3a315b5464a4aae9f30580"
+    },
+    {
+      "path": "test/stock.test.ts",
+      "sha256": "369da0ae8145bc2cfe65c7fb13d294abb638c729d0dbdd8cc39e95f690d1dcca"
+    },
+    {
+      "path": "test/tier.test.ts",
+      "sha256": "8d5ab7d2661754c4b1252840496db27df7ee71cc20ed90582d8735c9d0efc907"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "f6cc3423554323dafa1e27b7726571abbb8f612680393f198b11ce352aace598"
+    }
+  ]
+}

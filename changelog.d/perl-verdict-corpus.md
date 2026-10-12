@@ -6,5 +6,5 @@
   RIPR-SPEC-0235 packet shapes the producer does not emit yet are marked
   `edited_producer` and reported apart. Producer-packet false-verdict,
   false-actionable, false-exposed, false-silent and abstention rates are on
-  the trust scoreboard. The check runs by hand and at re-bless time; no CI
-  lane runs it yet (RIPR-SPEC-0238, #6612).
+  the trust scoreboard, and `verdict-corpus check-all` gates the corpus with
+  the others (RIPR-SPEC-0245, #6612).

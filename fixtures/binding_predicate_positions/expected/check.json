@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:predicate:63305cee",
+      "canonical_gap_id": "gap:rust:src/lib.rs:admission:predicate_boundary:predicate:open",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:admission:predicate_boundary:predicate:open",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "admission",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "open"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.48,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:predicate:63305cee",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_predicate_positions/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 3,
         "expression": "if open {"
        },
@@ -60,6 +72,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:5b99002c",
+      "canonical_gap_id": "gap:rust:src/lib.rs:band_label:predicate_boundary:predicate:match_band",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:band_label:predicate_boundary:predicate:match_band",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "band_label",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "match_band"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.48,
@@ -67,7 +91,7 @@
         "id": "probe:src_lib.rs:predicate:5b99002c",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_predicate_positions/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 12,
         "expression": "match band {"
        },
@@ -109,6 +133,18 @@
     },
     {
       "id": "probe:src_lib.rs:predicate:511faf7c",
+      "canonical_gap_id": "gap:rust:src/lib.rs:within:predicate_boundary:predicate:margin==value",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:within:predicate_boundary:predicate:margin==value",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "within",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "margin==value"
+
+      },
       "classification": "no_static_path",
       "severity": "warning",
       "confidence": 0.35,
@@ -116,7 +152,7 @@
         "id": "probe:src_lib.rs:predicate:511faf7c",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/binding_predicate_positions/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 20,
         "expression": "margin > value"
        },

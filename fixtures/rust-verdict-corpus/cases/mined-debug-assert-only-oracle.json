@@ -1,0 +1,52 @@
+{
+  "case_id": "mined-debug-assert-only-oracle",
+  "subject_id": "authored-mined-codec",
+  "diff": "cases/mined-debug-assert-only-oracle.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "production_debug_assert_as_only_oracle",
+  "hard_case": "The test asserts only the output length. The production debug_assert! on the index is the sole oracle: under the debug test profile a wider mask trips it. rust-base64 and url keep such debug_asserts on their decode paths.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let index = (b & 0x0f) as usize;",
+        "mutated_line": "let index = (b & 0x0f) as usize;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::encode_runs_over_every_byte",
+        "equivalence_review": "not equivalent: bytes 8 and 255 index past the alphabet and trip the debug_assert"
+      },
+      {
+        "replacement": "let index = (b % 9) as usize;",
+        "mutated_line": "let index = (b % 9) as usize;",
+        "outcome": "tests_failed",
+        "failing_test": "tests::encode_runs_over_every_byte",
+        "equivalence_review": "not equivalent: byte 8 yields index 8 and trips the debug_assert"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "encode_runs_over_every_byte feeds 8 and 255, so either mutant makes the production debug_assert! panic in the debug test profile; the length assert alone would not notice. The label depends on debug assertions being on: under `cargo test --release` both mutants pass.",
+  "labeling_observation": {
+    "ripr_commit": "f46c5e5",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,19 @@
+//! Repository automation: bumps a release counter.
+
+fn bump(version: u32) -> u32 {
+    version + 1
+}
+
+fn main() {
+    println!("{}", bump(1));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bump_adds_one() {
+        assert_eq!(bump(4), 5);
+    }
+}

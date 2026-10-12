@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..c4d0ae9 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -87,7 +87,7 @@ pub fn quote(items: u32) -> Quote {
+ /// An owner whose test shadows the result before reading the field.
+ pub fn bundle(items: u32) -> Quote {
+     Quote {
+-        total: items * 15,
++        total: 15 * items,
+         items,
+     }
+ }

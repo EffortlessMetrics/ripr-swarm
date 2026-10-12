@@ -238,6 +238,13 @@ fn cfg_attr_introduced_path_attributes_are_detected() {
     assert!(super::attributes_conditionally_introduce_path([
         "#[ cfg_attr( test , path = \"late.rs\" ) ]",
     ]));
+    // Raw-identifier spelling of the introduced attribute (#7161).
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(windows, r#path = \"windows.rs\")]",
+    ]));
+    assert!(super::attributes_conditionally_introduce_path([
+        "#[cfg_attr(feature = \"x\", r#path)]",
+    ]));
 }
 
 /// Controls: cfg_attr without a `path` introduction, direct `#[path]`,
@@ -254,6 +261,9 @@ fn non_path_cfg_attr_shapes_are_not_path_introductions() {
     // A direct `#[path]` is unconditional, not a conditional introduction.
     assert!(!super::attributes_conditionally_introduce_path([
         "#[path = \"direct.rs\"]",
+    ]));
+    assert!(!super::attributes_conditionally_introduce_path([
+        "#[r#path = \"direct.rs\"]",
     ]));
     // The word `path` inside an opaque literal or a predicate value cannot
     // manufacture an introduction.
@@ -443,4 +453,14 @@ fn test_build_availability_refuses_raw_attribute_heads() {
     ] {
         assert_eq!(attribute_test_build_availability(text), None, "{text}");
     }
+}
+
+#[test]
+fn rust_ident_name_strips_one_raw_identifier_prefix() {
+    assert_eq!(super::rust_ident_name("path"), "path");
+    assert_eq!(super::rust_ident_name("r#path"), "path");
+    assert_eq!(super::rust_ident_name("cfg_attr"), "cfg_attr");
+    assert_eq!(super::rust_ident_name("r#type"), "type");
+    assert_eq!(super::rust_ident_name("rpath"), "rpath");
+    assert_eq!(super::rust_ident_name(""), "");
 }

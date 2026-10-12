@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-spec0234-ex30",
+  "subject_id": "authored-ts-jest-relations",
+  "diff": "cases/jest-spec0234-ex30.diff",
+  "anchor": {
+    "file": "src/save.ts",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "side_effect",
+  "test_shape": "jest_mock_fn_tohavebeencalledwith",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "db.write(v + 2);",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "save",
+        "equivalence_review": "not equivalent: behavior_change edit (the spec's diff); changes the returned/passed value for amount > 100"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test passes `{ write: jest.fn() }` to `save(db, 1)` and pins `expect(db.write).toHaveBeenCalledWith(2)`; the edit `v + 1` -> `v + 2` calls write(3) and the test fails. ripr reports `weakly_exposed` with a `mock_expectation`/medium oracle (gap_state advisory), so the exact argument pin is under-credited. (matches spec: mock_expectation / medium, weakly_exposed). Spec cells: RIPR-SPEC-0243 example 30",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

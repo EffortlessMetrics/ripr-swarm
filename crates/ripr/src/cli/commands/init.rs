@@ -21,7 +21,20 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
     // an existing `ripr.toml` without `--force`, and a root that is not a
     // directory.
     let plan = init_plan(&options)?;
+    // #7465: `init` writes `./ripr.toml` at `--root` (default `.`) with no
+    // workspace walk, while `ripr check` from the same path resolves to the
+    // enclosing workspace and never loads this file. Say so before the user
+    // treats the write as the policy `check` will apply.
+    if let Some(warning) = check_ignores_init_config_warning(&options.root) {
+        eprintln!("{warning}");
+    }
     if let Some(warning) = unanalyzed_root_warning(&options.root) {
+        eprintln!("{warning}");
+    }
+    // #5252 item 7: `init` into a non-repo wrote branch-based configuration
+    // with no hint that no branch exists there. Advisory like the root
+    // warning, in both dry-run and real runs.
+    if let Some(warning) = non_git_root_warning(&options.root) {
         eprintln!("{warning}");
     }
     // #5208: an unreleased generator cannot pin itself — that version does
@@ -42,6 +55,60 @@ pub(in crate::cli) fn init(args: &[String]) -> Result<(), String> {
         return Ok(());
     }
     apply_init_plan(&plan)
+}
+
+/// Warn when the planned `ripr.toml` sits where implicit `ripr check` will
+/// not load it.
+///
+/// `init` keeps `--root` as given (default `.`). Implicit `check` calls
+/// `resolve_project_root` from the current directory and rebinds to an
+/// enclosing `[workspace]` (or other project root) when that path differs.
+/// Config discovery then walks only ancestors of *that* resolved root, so a
+/// file written in a workspace member is skipped with no other signal. This
+/// warning reuses that resolver read-only; it does not retarget the write
+/// (#7468 owns check/doctor/pilot config identity).
+fn check_ignores_init_config_warning(root: &Path) -> Option<String> {
+    let (resolved_root, reason) = super::check::resolve_project_root(root).ok()??;
+    let current = std::fs::canonicalize(root).ok()?;
+    if resolved_root == current {
+        return None;
+    }
+    let shown_root = output::path::human_path(root);
+    let shown_resolved = output::path::human_path(&resolved_root);
+    let shown_config = output::path::human_path(&root.join(CONFIG_FILE_NAME));
+    let quoted_root = crate::agent::loop_commands::shell_arg(&shown_root);
+    let quoted_resolved = crate::agent::loop_commands::shell_arg(&shown_resolved);
+    let resolved_as = match reason {
+        super::check::ImplicitRootReason::Workspace => {
+            format!("the workspace root `{shown_resolved}`")
+        }
+        super::check::ImplicitRootReason::Package => {
+            format!("the nearest crate root `{shown_resolved}`")
+        }
+        super::check::ImplicitRootReason::PnpmWorkspace
+        | super::check::ImplicitRootReason::PackageJsonWorkspaces
+        | super::check::ImplicitRootReason::UvWorkspace => {
+            format!("the workspace root `{shown_resolved}`")
+        }
+        super::check::ImplicitRootReason::GitTopLevel => {
+            format!("the git top level `{shown_resolved}`")
+        }
+    };
+    let resolved_config = resolved_root.join(CONFIG_FILE_NAME);
+    let init_recovery = match path_is_occupied(&resolved_config) {
+        Ok(true) => {
+            let shown_resolved_config = output::path::human_path(&resolved_config);
+            format!(
+                "The file check will load is `{shown_resolved_config}`; review or edit that file (`ripr init --root {quoted_resolved} --force` resets customizations)."
+            )
+        }
+        Ok(false) | Err(_) => format!(
+            "Re-run `ripr init --root {quoted_resolved}` to write the file check will load."
+        ),
+    };
+    Some(format!(
+        "ripr: warning: `ripr check` from `{shown_root}` resolves to {resolved_as} and will ignore `{shown_config}`. {init_recovery} Or pass `ripr check --root {quoted_root}` to analyze this directory with this file."
+    ))
 }
 
 /// Warn before configuring ripr for a repository it cannot analyze: a Go or
@@ -66,6 +133,40 @@ fn unanalyzed_root_warning(root: &Path) -> Option<String> {
         "ripr: warning: the root `{}` has {found} source and no Rust, TypeScript/JavaScript or Python source. ripr does not analyze these languages, so `ripr check` and this configuration will report their changes as not analyzed.",
         output::path::human_path(root)
     ))
+}
+
+/// Warn before configuring a directory that is not a Git work tree: the
+/// generated workflow and Next steps assume branch-based analysis, which has
+/// no branch to compare outside a repository. The verdict is doctor's
+/// three-way work-tree probe: only an established outside is named as one.
+/// A refused repository keeps its repair instead of being told it lies
+/// outside a repository, and a probe that never answered says Git could
+/// not confirm the state. Advisory either way: the configuration is
+/// written regardless.
+fn non_git_root_warning(root: &Path) -> Option<String> {
+    non_git_root_warning_for_probe(root, output::doctor::work_tree_probe(root))
+}
+
+/// The warning dispatch, split from the probe call so every wording branch
+/// pins without arranging a refused Git or a missing binary.
+fn non_git_root_warning_for_probe(
+    root: &Path,
+    probe: Option<output::doctor::WorkTreeProbe>,
+) -> Option<String> {
+    use output::doctor::WorkTreeProbe;
+    let shown = output::path::human_path(root);
+    match probe {
+        Some(WorkTreeProbe::Inside) => None,
+        Some(WorkTreeProbe::Outside) => Some(format!(
+            "ripr: warning: the root `{shown}` is not inside a Git work tree. The generated configuration analyzes branches against their default branch, so `ripr check` has no branch to compare until this directory is inside a repository."
+        )),
+        Some(WorkTreeProbe::Refused(repair)) => Some(format!(
+            "ripr: warning: Git could not confirm the root `{shown}` is inside a work tree ({repair}). The generated configuration analyzes branches against their default branch, so confirm the directory is inside a repository or `ripr check` has no branch to compare."
+        )),
+        None => Some(format!(
+            "ripr: warning: Git could not confirm the root `{shown}` is inside a work tree (the probe did not answer; Git may be unavailable or the spawn timed out). The generated configuration analyzes branches against their default branch, so confirm the directory is inside a repository or `ripr check` has no branch to compare."
+        )),
+    }
 }
 
 /// What `ripr init` would do to one file.
@@ -128,7 +229,7 @@ fn init_plan(options: &InitOptions) -> Result<Vec<InitTarget>, String> {
 
     if path_is_occupied(&config_path)? && !options.force && options.ci.is_none() {
         return Err(format!(
-            "{} already exists; rerun `ripr init --force` to overwrite it",
+            "{} already exists; rerun `ripr init --force` to overwrite it (resets customizations). Preview with `--force --dry-run`; `ripr init --ci github --force` refreshes the workflow and keeps the config",
             config_path.display()
         ));
     }
@@ -454,8 +555,8 @@ mod tests {
             "the workflow must pin bash for every job:\n{workflow}"
         );
         assert!(
-            workflow.contains("<<< \"$operation\""),
-            "bash-only syntax (a here-string) the pin protects"
+            workflow.contains("IFS=$'\\t'"),
+            "bash-only syntax (ANSI-C quoting) the pin protects"
         );
     }
 
@@ -548,9 +649,9 @@ mod tests {
             "macOS-ARM64) target=aarch64-apple-darwin ;;",
             r#"asset="ripr-server-v$version-$target.tar.gz""#,
             r#"url="https://github.com/EffortlessMetrics/ripr/releases/download/v$version/$asset""#,
-            r#"curl -fsSL --retry 3 -o "$RUNNER_TEMP/$asset.sha256" "$url.sha256"; then"#,
+            r#"curl -fsSL --retry 3 -O "$url.sha256"; then"#,
             r#"if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then"#,
-            r#"echo "$bin_dir" >> "$GITHUB_PATH""#,
+            r#"echo "$RUNNER_TEMP/ripr-bin" >> "$GITHUB_PATH""#,
         ] {
             assert!(install.contains(needle), "install step missing {needle}");
         }
@@ -579,6 +680,152 @@ mod tests {
         Ok(root)
     }
 
+    fn write_package_manifest(path: &Path, name: &str) -> Result<(), String> {
+        write(
+            path,
+            &format!("[package]\nname = \"{name}\"\nversion = \"0.0.0\"\n"),
+        )
+    }
+
+    fn git_init_fixture(root: &Path) -> Result<(), String> {
+        crate::git::run_git(root, &["init", "-q"])
+            .map_err(|err| format!("git init failed: {err}"))?;
+        Ok(())
+    }
+
+    fn workspace_with_member(label: &str) -> Result<(PathBuf, PathBuf), String> {
+        let workspace = temp_root(label)?;
+        git_init_fixture(&workspace)?;
+        write(
+            &workspace.join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/alpha\"]\n",
+        )?;
+        let member = workspace.join("crates/alpha");
+        std::fs::create_dir_all(&member).map_err(|err| format!("mkdir member: {err}"))?;
+        write_package_manifest(&member.join("Cargo.toml"), "alpha")?;
+        Ok((workspace, member))
+    }
+
+    /// #7465: `init` from a workspace member writes `./ripr.toml`, but
+    /// implicit `check` rebinds to the workspace and never loads that file.
+    #[test]
+    fn check_ignores_init_config_warning_names_a_workspace_member() -> Result<(), String> {
+        let (workspace, member) = workspace_with_member("ws-member")?;
+        let warning = check_ignores_init_config_warning(&member).ok_or_else(|| {
+            "init from a workspace member must warn that check will ignore ./ripr.toml".to_string()
+        })?;
+        let shown_workspace = output::path::human_path(&workspace);
+        let shown_config = output::path::human_path(&member.join(CONFIG_FILE_NAME));
+        let quoted_workspace = crate::agent::loop_commands::shell_arg(&shown_workspace);
+        let quoted_member =
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(&member));
+        assert!(
+            warning.contains("resolves to the workspace root"),
+            "{warning}"
+        );
+        assert!(warning.contains(&shown_workspace), "{warning}");
+        assert!(warning.contains("will ignore"), "{warning}");
+        assert!(warning.contains(&shown_config), "{warning}");
+        assert!(
+            warning.contains(&format!("ripr init --root {quoted_workspace}`")),
+            "{warning}"
+        );
+        assert!(
+            warning.contains(&format!("ripr check --root {quoted_member}")),
+            "{warning}"
+        );
+        std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    /// Copy-paste recovery must keep a space in `--root` as one argument
+    /// (#5188 convention via `shell_arg`).
+    #[test]
+    fn check_ignores_init_config_warning_quotes_spaced_recovery_roots() -> Result<(), String> {
+        let (workspace, member) = workspace_with_member("spaced ws")?;
+        assert!(
+            workspace
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.contains(' ')),
+            "fixture name must contain a space: {}",
+            workspace.display()
+        );
+        let warning = check_ignores_init_config_warning(&member).ok_or_else(|| {
+            "a spaced workspace member must still warn that check will ignore ./ripr.toml"
+                .to_string()
+        })?;
+        let quoted_workspace =
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(&workspace));
+        let quoted_member =
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(&member));
+        assert!(quoted_workspace.starts_with('\''), "{quoted_workspace}");
+        assert!(quoted_member.starts_with('\''), "{quoted_member}");
+        assert!(
+            warning.contains(&format!("ripr init --root {quoted_workspace}`")),
+            "{warning}"
+        );
+        assert!(
+            warning.contains(&format!("ripr check --root {quoted_member}")),
+            "{warning}"
+        );
+        std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    /// When the workspace already has `ripr.toml`, a bare `ripr init --root`
+    /// fails without `--force`. Name the loaded file instead of advertising
+    /// a command that cannot run.
+    #[test]
+    fn check_ignores_init_config_warning_names_an_existing_workspace_config() -> Result<(), String>
+    {
+        let (workspace, member) = workspace_with_member("ws-existing-config")?;
+        write(&workspace.join(CONFIG_FILE_NAME), "[analysis]\n")?;
+        let warning = check_ignores_init_config_warning(&member).ok_or_else(|| {
+            "a member init must still warn when the workspace already has ripr.toml".to_string()
+        })?;
+        let shown_workspace_config = output::path::human_path(&workspace.join(CONFIG_FILE_NAME));
+        let quoted_workspace =
+            crate::agent::loop_commands::shell_arg(&output::path::human_path(&workspace));
+        assert!(warning.contains("will ignore"), "{warning}");
+        assert!(warning.contains(&shown_workspace_config), "{warning}");
+        assert!(warning.contains("review or edit that file"), "{warning}");
+        assert!(
+            warning.contains(&format!("ripr init --root {quoted_workspace} --force")),
+            "{warning}"
+        );
+        assert!(warning.contains("resets customizations"), "{warning}");
+        assert!(
+            !warning.contains(&format!("Re-run `ripr init --root {quoted_workspace}`")),
+            "a doomed no-force init must not be the recovery: {warning}"
+        );
+        std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    /// Init at the workspace root writes the file implicit `check` loads.
+    #[test]
+    fn check_ignores_init_config_warning_stays_quiet_at_the_workspace_root() -> Result<(), String> {
+        let (workspace, _member) = workspace_with_member("ws-root")?;
+        assert_eq!(check_ignores_init_config_warning(&workspace), None);
+        std::fs::remove_dir_all(&workspace).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    /// A standalone crate is both the init root and the implicit check root.
+    /// Git-init the fixture so the walk cannot adopt an enclosing workspace
+    /// (this checkout's `[workspace]` sits above `temp_dir()`).
+    #[test]
+    fn check_ignores_init_config_warning_stays_quiet_for_a_standalone_crate() -> Result<(), String>
+    {
+        let root = temp_root("solo-crate")?;
+        git_init_fixture(&root)?;
+        write_package_manifest(&root.join("Cargo.toml"), "solo")?;
+        assert_eq!(check_ignores_init_config_warning(&root), None);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
     #[test]
     fn unanalyzed_root_warning_names_go_only_repositories() -> Result<(), String> {
         let root = temp_root("go-only")?;
@@ -597,6 +844,66 @@ mod tests {
         assert_eq!(unanalyzed_root_warning(&root), None);
         std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
         Ok(())
+    }
+
+    /// #5252 item 7: a real repository stays quiet. (The warns half cannot
+    /// be pinned at unit level: the unit-test temp root sits inside the
+    /// checkout's work tree under test, so only the smoke test's
+    /// outside-the-checkout fixture with its git-pinned precondition can
+    /// carry it.)
+    #[test]
+    fn non_git_root_warning_stays_quiet_inside_a_work_tree() -> Result<(), String> {
+        let root = temp_root("git-quiet")?;
+        // The shared git runner, not a raw `Command`: the process policy
+        // counts spawns per file, test code included.
+        crate::git::run_git(&root, &["init", "-q"])
+            .map_err(|err| format!("git init failed: {err}"))?;
+        assert_eq!(non_git_root_warning(&root), None);
+        std::fs::remove_dir_all(&root).map_err(|err| format!("cleanup: {err}"))?;
+        Ok(())
+    }
+
+    #[test]
+    fn non_git_root_warning_names_only_the_established_outside() {
+        use output::doctor::WorkTreeProbe;
+        let root = Path::new("some-dir");
+
+        let outside =
+            non_git_root_warning_for_probe(root, Some(WorkTreeProbe::Outside)).unwrap_or_default();
+        assert!(
+            outside.contains("is not inside a Git work tree"),
+            "{outside}"
+        );
+
+        // A refused repository keeps its repair; it is never told it lies
+        // outside a repository.
+        let refused = non_git_root_warning_for_probe(
+            root,
+            Some(WorkTreeProbe::Refused(
+                "run `git config --global --add safe.directory /srv/repo`".to_string(),
+            )),
+        )
+        .unwrap_or_default();
+        assert!(refused.contains("could not confirm"), "{refused}");
+        assert!(refused.contains("safe.directory"), "{refused}");
+        assert!(
+            !refused.contains("is not inside a Git work tree"),
+            "{refused}"
+        );
+
+        // A probe that never answered says so instead of claiming a state.
+        let silent = non_git_root_warning_for_probe(root, None).unwrap_or_default();
+        assert!(silent.contains("could not confirm"), "{silent}");
+        assert!(silent.contains("did not answer"), "{silent}");
+        assert!(
+            !silent.contains("is not inside a Git work tree"),
+            "{silent}"
+        );
+
+        assert_eq!(
+            non_git_root_warning_for_probe(root, Some(WorkTreeProbe::Inside)),
+            None
+        );
     }
 
     fn options(root: &Path) -> InitOptions {
@@ -651,7 +958,14 @@ mod tests {
             Ok(_) => return Err("an existing config without --force must block".to_string()),
             Err(message) => {
                 assert!(message.contains("already exists"), "{message}");
-                assert!(message.contains("--force"), "{message}");
+                assert!(message.contains("ripr init --force"), "{message}");
+                assert!(message.contains("resets customizations"), "{message}");
+                assert!(message.contains("--force --dry-run"), "{message}");
+                assert!(
+                    message.contains("ripr init --ci github --force"),
+                    "{message}"
+                );
+                assert!(message.contains("keeps the config"), "{message}");
             }
         }
 
@@ -738,7 +1052,17 @@ mod tests {
 
         match init_plan(&opts) {
             Ok(_) => return Err("an existing workflow without --force must block".to_string()),
-            Err(message) => assert!(message.contains("already exists"), "{message}"),
+            Err(message) => {
+                assert!(message.contains("already exists"), "{message}");
+                assert!(
+                    message.contains("ripr init --ci github --force"),
+                    "{message}"
+                );
+                assert!(
+                    !message.contains("resets customizations"),
+                    "config-overwrite wording must not leak into the workflow hint: {message}"
+                );
+            }
         }
 
         let _ = std::fs::remove_dir_all(&root);

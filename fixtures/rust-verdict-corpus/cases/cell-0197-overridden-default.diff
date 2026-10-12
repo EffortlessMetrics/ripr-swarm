@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8840c6e..28bc371 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -128,7 +128,7 @@ pub trait Reader {
+     fn base(&self) -> u32;
+ 
+     fn next_word(&mut self) -> u32 {
+-        self.base() * 3
++        3 * self.base()
+     }
+ }
+ 

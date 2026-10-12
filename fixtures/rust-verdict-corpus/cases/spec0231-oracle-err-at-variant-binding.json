@@ -1,0 +1,55 @@
+{
+  "case_id": "spec0231-oracle-err-at-variant-binding",
+  "subject_id": "authored-spec0231-22",
+  "diff": "cases/spec0231-oracle-err-at-variant-binding.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_return",
+  "test_shape": "matches_err_at_variant",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "return Err(E::Big);",
+        "mutated_line": "return Err(E::Big);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::check_twenty_is_bad",
+        "equivalence_review": "not equivalent: the variant changes to Big"
+      },
+      {
+        "replacement": "return Ok(x);",
+        "mutated_line": "return Ok(x);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::check_twenty_is_bad",
+        "equivalence_review": "not equivalent: check(20) succeeds"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Err(e @ E::Bad) pins the variant of a two-variant enum. Spec cells: RIPR-SPEC-0231 example 22 (unchanged; control).",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#22"
+  ]
+}

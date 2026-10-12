@@ -1,0 +1,6 @@
+use crate::fines::fine;
+
+#[test]
+fn fine_is_seventy_four() {
+    assert_eq!(fine(2), 74);
+}

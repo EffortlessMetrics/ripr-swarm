@@ -41,7 +41,11 @@ exercised boundary from a missing one.
   the #3294 relation) covers the predicate line. Exact equality under
   any row observes the boundary: the missing-discriminator fact
   disappears, `end == start` joins the observed values, and the
-  infection stage can reach `yes` at the changed boundary.
+  infection stage can reach `yes` at the changed boundary. When the
+  evaluator refuses the chain, the operand stays unresolved: since
+  #6674 the boundary reads `infection_unknown` with `Changed boundary
+  input is unresolved` (RIPR-SPEC-0001) instead of a missing
+  `end == start` discriminator with `observed end values: unknown`.
 - Char literals in test-call arguments are extracted as exact inputs
   (lifetimes are not).
 

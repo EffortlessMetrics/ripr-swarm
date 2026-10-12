@@ -1,0 +1,11 @@
+diff --git a/src/price.ts b/src/price.ts
+index 0000000..1111111 100644
+--- a/src/price.ts
++++ b/src/price.ts
+@@ -5,5 +5,5 @@ export function shipping(subtotal: number): number {
+ }
+ 
+ export function price(subtotal: number, fee: number): number {
+-  return subtotal + fee + shipping(subtotal) + FLAT;
++  return subtotal + shipping(subtotal) + FLAT;
+ }

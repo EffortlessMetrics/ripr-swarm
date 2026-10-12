@@ -1,9 +1,41 @@
 # PR Plan
 
-The PR Plan workflow (`.github/workflows/pr-plan.yml`) is the LEM forecast
-lane. It runs on opened, synchronized, reopened, labeled, and unlabeled pull
-requests as an **advisory** signal: it does not block merges, and it does not
-gate any required check.
+The automatic PR Plan placeholder is retired under #4987. It ran on five PR
+activity events, checked out full history, recorded a best-effort changed-file
+list, echoed ledger presence, and wrote a constant advisory summary. It had no
+decision output or downstream qualification consumer.
+
+This removes modest hosted fan-out; it does not establish dramatic savings or
+complete #4987's broader workflow inventory and maturity work. Required Ready
+qualification is unchanged. Existing `cargo xtask pr-ready`, `check-fast`,
+`precommit`, and `check-pr` own local candidate shaping.
+
+## Local advisory diagnostic
+
+For an optional inspection, run this Bash recipe from the repository root.
+Set `base` and `head` explicitly to the refs or immutable SHAs you intend to
+compare; fetch missing refs first. The three-dot diff lists the head's changes
+since the merge base, matching the former diagnostic's comparison semantics.
+
+```bash
+(
+  set -euo pipefail
+  base=origin/main
+  head=HEAD
+  base_sha=$(git rev-parse --verify "${base}^{commit}")
+  head_sha=$(git rev-parse --verify "${head}^{commit}")
+  printf 'Base: %s\nHead: %s\nChanged files:\n' "$base_sha" "$head_sha"
+  git diff --name-only "$base_sha...$head_sha"
+  printf '\nCI economics ledgers:\n'
+  ls policy/ci-budget.toml policy/ci-lane-whitelist.toml policy/ci-risk-packs.toml
+)
+```
+
+Missing refs, a missing merge base, Git errors, or absent ledgers exit nonzero;
+an empty successful diff means no changed files. Ledger presence does not
+validate policy contents. This diagnostic writes no forecast, selects no lanes,
+and supplies no required check or readiness decision. It has no hosted workflow
+or artifact upload.
 
 ## What it should do (target state)
 
@@ -20,19 +52,10 @@ The forecast is intentionally *coarse*: per-lane base LEM x runner multiplier,
 summed across selected lanes. Once `ci-actuals.json` data exists, the forecast
 can be replaced by learned per-lane estimates.
 
-## What this PR ships
-
-This PR ships:
-
-- The workflow YAML at `.github/workflows/pr-plan.yml`.
-- A budget entry in `policy/workflow_allowlist.txt`.
-- This document.
-
-The job currently emits a structural advisory output (changed-file list,
-ledger-presence check, step-summary placeholder). It uploads the changed-file
-artifact only on failure or when the PR is labeled `full-ci`, so ordinary PRs
-keep the advisory signal without paying for routine artifact retention. The
-forecast logic is deferred to the follow-up PR that adds `cargo xtask ci plan`.
+The numeric planner (`cargo xtask ci plan`) and `target/ci/ci-plan.json` are
+planned contracts, not installed functionality. A future implementation must
+establish decision value and choose its maturity boundary before earning any
+automatic execution; retirement does not relocate the placeholder to Ready.
 
 ## Output schema (target)
 
@@ -65,14 +88,14 @@ advisory threshold.
 
 | Stage                                    | Posture                |
 | ---------------------------------------- | ---------------------- |
-| Initial workflow                         | structural advisory    |
-| Follow-up: `xtask ci plan` wired         | numeric advisory       |
-| `ci-actuals.json` upload                 | numeric advisory       |
-| Soft budget guard                        | warn / fail-on-ceiling |
+| Optional local diagnostic (current)       | changed files / presence only |
+| Future: `xtask ci plan`                   | planned numeric advisory |
+| Future: `ci-actuals.json` upload           | planned numeric advisory |
+| Future: soft budget guard                | planned; enforcement remains off |
 
 ## Override and acknowledgement
 
-Labels documented in `docs/CI.md` (labels section):
+Future forecast effects of labels documented in `docs/CI.md` (labels section):
 
 - `full-ci` expects release-band forecast; the guard suppresses the
   warning.
@@ -84,7 +107,7 @@ Labels documented in `docs/CI.md` (labels section):
 
 ## Why advisory first
 
-A blocking forecast on day one would either be too loose to catch real
+A future blocking forecast on day one would either be too loose to catch real
 overspend or too tight and reject ordinary PRs. Running the forecast in
 advisory mode for at least two weeks gives the learned-estimate path
 enough data to base a credible threshold on, and lets reviewers calibrate

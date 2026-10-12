@@ -44,9 +44,9 @@
           ]
         },
         "verification_commands": [
-          "ripr agent verify --root . --json"
+          "ripr agent verify --root <root> --json"
         ],
-        "receipt_command": "ripr agent receipt --root . --json",
+        "receipt_command": "ripr agent receipt --root <root> --json",
         "authority_boundary": "preview advisory"
       }
     }

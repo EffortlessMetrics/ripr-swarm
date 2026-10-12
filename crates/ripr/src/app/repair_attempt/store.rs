@@ -291,9 +291,7 @@ pub(crate) fn resolve_repair_attempt_store(
             ));
         }
         let canonical_relative = relative_locator(&canonical_root, &canonical_store)?;
-        if canonical_relative != relative
-            && !equivalent_windows_drive_spelling(&relative, &canonical_relative)
-        {
+        if canonical_relative != relative {
             return Err(format!(
                 "repair attempt store {} is a symlink, junction, or case-fold alias of `{}`; store identity uses the concrete contained locator, and aliases are rejected",
                 display_path(&requested),
@@ -339,9 +337,7 @@ pub(crate) fn resolve_repair_attempt_store(
                 ));
             }
             let canonical_relative = relative_locator(&canonical_root, &canonical_store)?;
-            if canonical_relative != relative
-                && !equivalent_windows_drive_spelling(&relative, &canonical_relative)
-            {
+            if canonical_relative != relative {
                 let _ = std::fs::remove_dir_all(&cleaned);
                 return Err(format!(
                     "repair attempt store {} is a symlink, junction, or case-fold alias of `{}`; store identity uses the concrete contained locator, and aliases are rejected",
@@ -413,13 +409,39 @@ fn validate_explicit_locator(path: &Path) -> Result<(), String> {
 fn is_unsupported_unc(text: &str) -> bool {
     let trimmed = text.trim();
     let bytes = trimmed.as_bytes();
-    if bytes.starts_with(br"\\") {
-        return true;
+    let unc_shape = bytes.starts_with(br"\\") || (cfg!(windows) && bytes.starts_with(b"//"));
+    if !unc_shape {
+        return false;
     }
-    if cfg!(windows) && bytes.starts_with(b"//") {
-        return true;
+    // A verbatim local-volume spelling is not a network share: canonicalized
+    // repository roots and resolved store paths carry the verbatim drive form
+    // on Windows, so it flows into containment instead of failing as UNC
+    // (#6855). Verbatim UNC, device, and volume-GUID spellings stay
+    // unsupported.
+    if cfg!(windows) && is_verbatim_disk_path(trimmed) {
+        return false;
     }
-    false
+    true
+}
+
+/// Whether `text` names a local volume through the verbatim drive form (two
+/// separators, `?`, one separator, a drive letter, a colon, one separator),
+/// in either slash style. Byte-level so no verbatim literal with a drive
+/// prefix is committed to tracked source.
+fn is_verbatim_disk_path(text: &str) -> bool {
+    fn is_separator(byte: u8) -> bool {
+        byte == b'\\' || byte == b'/'
+    }
+
+    let bytes = text.as_bytes();
+    bytes.len() >= 7
+        && is_separator(bytes[0])
+        && is_separator(bytes[1])
+        && bytes[2] == b'?'
+        && is_separator(bytes[3])
+        && bytes[4].is_ascii_alphabetic()
+        && bytes[5] == b':'
+        && is_separator(bytes[6])
 }
 
 fn is_drive_relative(text: &str) -> bool {
@@ -486,10 +508,6 @@ fn relative_locator(root: &Path, path: &Path) -> Result<String, String> {
     Ok(locator)
 }
 
-fn equivalent_windows_drive_spelling(left: &str, right: &str) -> bool {
-    cfg!(windows) && left.eq_ignore_ascii_case(right)
-}
-
 fn canonicalize_no_escape(path: &Path) -> Result<PathBuf, String> {
     path.canonicalize().map_err(|error| {
         format!(
@@ -529,9 +547,7 @@ fn validate_prepare_ancestors(canonical_root: &Path, cleaned: &Path) -> Result<(
                 let lexical_rel = relative_locator(canonical_root, &lexical).unwrap_or_default();
                 let canonical_rel =
                     relative_locator(canonical_root, &canonical).unwrap_or_default();
-                if lexical_rel != canonical_rel
-                    && !equivalent_windows_drive_spelling(&lexical_rel, &canonical_rel)
-                {
+                if lexical_rel != canonical_rel {
                     return Err(format!(
                         "repair attempt store {} is a symlink, junction, or case-fold alias of `{canonical_rel}`; store identity uses the concrete contained locator, and aliases are rejected",
                         display_path(cleaned)
@@ -788,6 +804,7 @@ mod tests {
     fn foreign_cwd_still_resolves_against_the_selected_root() -> Result<(), String> {
         let root = test_root("foreign-cwd")?;
         let elsewhere = test_root("elsewhere")?;
+        let _cwd = crate::testing::cwd_lock::hold_cwd();
         let previous = std::env::current_dir().map_err(|error| error.to_string())?;
         let result = (|| {
             std::env::set_current_dir(&elsewhere).map_err(|error| error.to_string())?;
@@ -927,6 +944,7 @@ mod tests {
     #[test]
     fn unc_and_drive_relative_locators_fail_closed() -> Result<(), String> {
         assert!(is_unsupported_unc(r"\\server\share\attempts"));
+        assert!(is_unsupported_unc(r"\\?\UNC\server\share"));
         // Drive-letter prefixes are assembled at runtime: check-local-context
         // forbids a contiguous drive-letter path literal in tracked source.
         let drive_relative = format!("{}:attempts", 'C');
@@ -934,12 +952,29 @@ mod tests {
         assert!(is_drive_relative(&drive_relative));
         assert!(!is_drive_relative(&drive_absolute));
         assert!(!is_drive_relative("target/ripr/repair-attempts"));
+        if cfg!(windows) {
+            // A verbatim local-volume spelling is not a share: canonicalized
+            // roots and resolved store paths carry it on Windows (#6855).
+            let verbatim_disk = format!(r"\\?\{}:\attempts", 'C');
+            let verbatim_forward = format!("//?/{}:/attempts", 'C');
+            assert!(!is_unsupported_unc(&verbatim_disk));
+            assert!(!is_unsupported_unc(&verbatim_forward));
+            validate_explicit_locator(Path::new(&verbatim_disk))
+                .map_err(|error| format!("verbatim disk spelling was rejected: {error}"))?;
+        }
         let error = match validate_explicit_locator(Path::new(r"\\server\share")) {
             Err(error) => error,
             Ok(()) => return Err("unc locator was accepted".to_string()),
         };
         if !error.contains("UNC") {
             return Err(format!("unc error was opaque: {error}"));
+        }
+        let error = match validate_explicit_locator(Path::new(r"\\?\UNC\server\share")) {
+            Err(error) => error,
+            Ok(()) => return Err("verbatim UNC locator was accepted".to_string()),
+        };
+        if !error.contains("UNC") {
+            return Err(format!("verbatim UNC error was opaque: {error}"));
         }
         let drive = format!("{}:relative", 'D');
         let error = match validate_explicit_locator(Path::new(&drive)) {

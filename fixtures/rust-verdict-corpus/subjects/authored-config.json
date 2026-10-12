@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-config",
+  "origin": "authored",
+  "version_label": "authored@d2138f3",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "db62da76c86ede8271abd1e6aafacab9ab76858b8eb92bd30eb00c29827a00c2"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "b90d9efc9fbe488eba4ec1dd0d8616c8d5ca393afc099cccc5b4ec24c7b8b0d2"
+    },
+    {
+      "path": "tests/config.rs",
+      "sha256": "b53f22ae50d8c644eb28d8d9f8f64044e84ed8e43de98a69a99f2f1872c21c6e"
+    }
+  ]
+}

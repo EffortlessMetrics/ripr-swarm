@@ -56,7 +56,11 @@ even when every related test row pins the exact state.
   `weakly_exposed` (`observed final_state values: unknown`) to
   `exposed` (per-row exact states, boundary equality observed on one
   row), and the removal experiment — the scanner branch disabled in
-  the helper authority — regresses it to `weakly_exposed`.
+  the helper authority — regresses it to `infection_unknown` with
+  `Changed boundary input is unresolved` naming `final_state` (the
+  RIPR-SPEC-0001 unresolved boundary input rule, #6674; before #6674 it
+  regressed to `weakly_exposed` with `observed final_state values:
+  unknown`).
 - Authority unit tests: exact final-state resolution over string and
   qualified-path states, wildcard-vs-explicit arm precedence, the
   step bound refusing beyond-limit inputs while resolving at the
@@ -66,8 +70,11 @@ even when every related test row pins the exact state.
   pattern, next, and initializer positions).
 - The fixture corpus: `scanner_positive` (exposed with the hop
   provenance) and `scanner_controls` (step-bound, computed-argument,
-  computed next-state, and bare-identifier controls stay
-  `weakly_exposed` with no scanner hop or invented state).
+  computed next-state, and bare-identifier controls stay at their
+  fail-closed class with no scanner hop or invented state: since #6674
+  that is `infection_unknown` with `Changed boundary input is
+  unresolved`, not a missing-discriminator gap that asks for an input
+  the tests may already supply).
 - Golden blast radius measured; `cargo xtask goldens check` and
   `cargo xtask dogfood` green otherwise.
 
@@ -110,9 +117,9 @@ local-with-call-initializer operand jump); fixtures
 - No `while` loops, no data-dependent loop bounds, no break/continue,
   no nested loops, no recursion, no state mutation outside the match,
   no non-literal arms (each a named refusal, not a partial credit).
-- No new limitation-disclosure surface: a refusal keeps the existing
-  `unknown` operand wording, matching the #3295 `Unsupported`
-  precedent.
+- No new limitation-disclosure surface: a refusal leaves the operand
+  unresolved, matching the #3295 `Unsupported` precedent; the shared
+  RIPR-SPEC-0001 unresolved boundary input wording names it.
 - No enum-type semantics: qualified-path states compare as normalized
   text tokens, and the right-hand operand still binds only through the
   existing literal machinery (a bare path operand on the right remains

@@ -1,0 +1,16 @@
+pub fn lookup(k: u32) -> Option<u32> {
+    if k == 1 {
+        return Some(3);
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lookup_one_is_three() {
+        assert!(matches!(lookup(1), Some(x @ 3)));
+    }
+}

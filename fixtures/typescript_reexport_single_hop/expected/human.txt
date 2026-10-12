@@ -18,7 +18,7 @@ Start here:
   Static exposure: exposed (info, confidence 0.60)
   Changed behavior: return false;
   Discriminator (observed, advisory): Related test reaches `isRawNetworkError` with a `exact_value` oracle. Static evidence suggests the changed behavior is observed under an exact-value or exact-error-variant…
-  Related test (1 of 2): test/util.test.ts:3 isRawNetworkError returns true for network fetch errors
+  Related test (1 of 2 matched rows): test/util.test.ts:3 isRawNetworkError returns true for network fetch errors
   Next step: TypeScript preview advisory: changed behavior is observed under a strong oracle; verify the assertion targets the changed boundary value.
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator yes
     - reach yes: 2 related test(s) found for owner `isRawNetworkError`
@@ -26,8 +26,8 @@ Start here:
     - 6 more detail line(s) in --format human-full
 
 Next: drill into the top finding:
-  ripr explain --root fixtures/typescript_reexport_single_hop/input --diff fixtures/typescript_reexport_single_hop/diff.patch --mode fast probe:src_util.ts:typescript_preview:5a933676
-  ripr context --root fixtures/typescript_reexport_single_hop/input --diff fixtures/typescript_reexport_single_hop/diff.patch --mode fast --at probe:src_util.ts:typescript_preview:5a933676
+  ripr explain --root <cwd>/fixtures/typescript_reexport_single_hop/input --diff <cwd>/fixtures/typescript_reexport_single_hop/diff.patch --mode fast probe:src_util.ts:typescript_preview:5a933676
+  ripr context --root <cwd>/fixtures/typescript_reexport_single_hop/input --diff <cwd>/fixtures/typescript_reexport_single_hop/diff.patch --mode fast --at probe:src_util.ts:typescript_preview:5a933676
 
 More:
   Full evidence: rerun with --format human-full

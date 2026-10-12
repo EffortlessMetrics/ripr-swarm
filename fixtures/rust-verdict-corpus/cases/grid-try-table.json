@@ -1,0 +1,52 @@
+{
+  "case_id": "grid-try-table",
+  "subject_id": "authored-grid-try",
+  "diff": "cases/grid-try-table.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 11
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "error_propagation_question_mark",
+  "test_shape": "table_driven_loop",
+  "hard_case": "The assert_eq! inside a for loop over literal rows is admitted since #5328 (RIPR-SPEC-0197 constant-row tables). It still reads weakly_exposed because the pin is on parse_percent(text).ok(), which discards the error, and the error_path probe needs an exact error variant, as in grid-try-exact.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "let value: u8 = text.trim_end_matches('%').parse().unwrap_or(0);",
+        "mutated_line": "let value: u8 = text.trim_end_matches('%').parse().unwrap_or(0);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::percent_table",
+        "equivalence_review": "not equivalent: percent_table fails on it"
+      },
+      {
+        "replacement": "let value: u8 = text.trim_end_matches('%').parse().unwrap_or(100);",
+        "mutated_line": "let value: u8 = text.trim_end_matches('%').parse().unwrap_or(100);",
+        "outcome": "tests_failed",
+        "failing_test": "tests::percent_table",
+        "equivalence_review": "not equivalent: percent_table fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Grid cell: `?` propagation (turbofish moved to a type annotation; mutants swallow the error with a default) x table_driven_loop. The test loops over a table of (input, expected) rows and assert_eqs each; 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0227, RIPR-SPEC-0197.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

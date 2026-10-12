@@ -1,0 +1,298 @@
+//! Spec cells the corpus had no runtime-truth case for: oracle confirmation
+//! (RIPR-SPEC-0094), non-escaping sinks (RIPR-SPEC-0096), owner-result field
+//! bindings (RIPR-SPEC-0005) and owner-return identity traps (RIPR-SPEC-0197).
+
+pub const SCALE_FACTOR: i64 = 10;
+pub const MULTIPLIER: u32 = 3;
+
+/// Return value whose test expectation names the same constant.
+pub fn compute_score(x: i64) -> i64 {
+    x * SCALE_FACTOR
+}
+
+/// Return value whose weak assert names the constant and whose exact assert does not.
+pub fn bonus(points: u32) -> u32 {
+    points * MULTIPLIER
+}
+
+/// Logs through the `log` facade; its only test is a smoke call.
+pub fn report(amount: u32) {
+    log::info!("amount is {}", amount * 9);
+}
+
+/// Logs through the `log` facade; its test captures and checks the record.
+pub fn audit(amount: u32) {
+    log::info!("audited {}", amount * 7);
+}
+
+/// Prints to stderr; the test pins only the returned flag.
+pub fn warn_low(stock: u32) -> bool {
+    if stock < 3 {
+        eprintln!("low stock: {}", stock * 2);
+        true
+    } else {
+        false
+    }
+}
+
+/// Pushes into a scratch vector that is dropped on return.
+pub fn tally(values: &[u32]) -> u32 {
+    let mut scratch = Vec::new();
+    let mut total = 0;
+    for &v in values {
+        scratch.push(v * 2);
+        total += v;
+    }
+    total
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct StoreError;
+
+#[derive(Default)]
+pub struct Ledger {
+    pub entries: Vec<u32>,
+}
+
+impl Ledger {
+    fn persist(&mut self, value: u32) -> Result<(), StoreError> {
+        if value > 1_000 {
+            return Err(StoreError);
+        }
+        self.entries.push(value);
+        Ok(())
+    }
+
+    /// Drops the persist result, but persist has already stored the value.
+    pub fn record(&mut self, amount: u32) {
+        drop(self.persist(amount * 9));
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Quote {
+    pub total: u32,
+    pub items: u32,
+}
+
+pub const PRICE: u32 = 10;
+
+pub fn quote(items: u32) -> Quote {
+    Quote {
+        total: items * PRICE,
+        items,
+    }
+}
+
+/// An owner whose test shadows the result before reading the field.
+pub fn bundle(items: u32) -> Quote {
+    Quote {
+        total: items * 15,
+        items,
+    }
+}
+
+/// A production wrapper around the owner's result.
+pub fn with_tax(q: Quote) -> Quote {
+    Quote {
+        total: q.total + q.total / 10,
+        ..q
+    }
+}
+
+/// Two same-named constructor owners in one package.
+pub mod retail {
+    use super::Quote;
+
+    pub fn price_quote(items: u32) -> Quote {
+        Quote {
+            total: items * 12,
+            items,
+        }
+    }
+}
+
+pub mod wholesale {
+    use super::Quote;
+
+    pub fn price_quote(items: u32) -> Quote {
+        Quote {
+            total: items * 8,
+            items,
+        }
+    }
+}
+
+/// A trait default method that the only tested impl overrides.
+pub trait Reader {
+    fn base(&self) -> u32;
+
+    fn next_word(&mut self) -> u32 {
+        self.base() * 3
+    }
+}
+
+pub struct Fixed;
+
+impl Reader for Fixed {
+    fn base(&self) -> u32 {
+        1
+    }
+
+    fn next_word(&mut self) -> u32 {
+        7
+    }
+}
+
+/// The same shape where the tested impl keeps the default.
+pub trait Counter {
+    fn step(&self) -> u32;
+
+    fn advance(&self) -> u32 {
+        self.step() * 4
+    }
+}
+
+pub struct Unit;
+
+impl Counter for Unit {
+    fn step(&self) -> u32 {
+        2
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum HalfError {
+    Negative,
+}
+
+fn validate(x: i32) -> Result<i32, HalfError> {
+    if x < 0 {
+        Err(HalfError::Negative)
+    } else {
+        Ok(x)
+    }
+}
+
+/// Changed `Ok(..)` exit; the test only takes the `?` exit.
+pub fn checked_half(x: i32) -> Result<i32, HalfError> {
+    Ok(validate(x)? >> 1)
+}
+
+/// Same shape; the test takes the `Ok(..)` exit.
+pub fn checked_third(x: i32) -> Result<i32, HalfError> {
+    Ok(validate(x)? / 3)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    struct Capture(Mutex<Vec<String>>);
+
+    impl log::Log for Capture {
+        fn enabled(&self, _: &log::Metadata) -> bool {
+            true
+        }
+        fn log(&self, record: &log::Record) {
+            if let Ok(mut lines) = self.0.lock() {
+                lines.push(record.args().to_string());
+            }
+        }
+        fn flush(&self) {}
+    }
+
+    fn capture() -> &'static Capture {
+        static LOGGER: OnceLock<&'static Capture> = OnceLock::new();
+        LOGGER.get_or_init(|| {
+            let logger: &'static Capture = Box::leak(Box::new(Capture(Mutex::new(Vec::new()))));
+            let _ = log::set_logger(logger);
+            log::set_max_level(log::LevelFilter::Info);
+            logger
+        })
+    }
+
+    #[test]
+    fn score_scales_by_the_factor() {
+        assert_eq!(compute_score(3), 3 * SCALE_FACTOR);
+    }
+
+    #[test]
+    fn bonus_beats_the_multiplier_and_is_twelve() {
+        let b = bonus(4);
+        assert!(b > MULTIPLIER);
+        assert_eq!(b, 12);
+    }
+
+    #[test]
+    fn report_runs() {
+        report(5);
+    }
+
+    #[test]
+    fn audit_logs_the_scaled_amount() {
+        let logger = capture();
+        audit(6);
+        let lines = logger.0.lock().map(|l| l.clone()).unwrap_or_default();
+        assert!(lines.iter().any(|l| l == "audited 42"), "{lines:?}");
+    }
+
+    #[test]
+    fn low_stock_is_flagged() {
+        assert!(warn_low(1));
+        assert!(!warn_low(5));
+    }
+
+    #[test]
+    fn tally_sums_the_values() {
+        assert_eq!(tally(&[1, 2, 3]), 6);
+    }
+
+    #[test]
+    fn record_stores_the_scaled_amount() {
+        let mut ledger = Ledger::default();
+        ledger.record(5);
+        assert_eq!(ledger.entries, vec![45]);
+    }
+
+    #[test]
+    fn taxed_quote_adds_a_tenth() {
+        let q = with_tax(quote(3));
+        assert_eq!(q.total, 33);
+    }
+
+    #[test]
+    fn overridden_bundle_keeps_its_item_count() {
+        let q = bundle(3);
+        let q = Quote { total: 99, ..q };
+        assert_eq!(q.total, 99);
+        assert_eq!(q.items, 3);
+    }
+
+    #[test]
+    fn retail_quote_charges_twelve_each() {
+        use super::retail::*;
+        assert_eq!(price_quote(3).total, 36);
+    }
+
+    #[test]
+    fn fixed_reader_returns_its_own_word() {
+        assert_eq!(Fixed.next_word(), 7);
+    }
+
+    #[test]
+    fn unit_counter_advances_by_eight() {
+        assert_eq!(Unit.advance(), 8);
+    }
+
+    #[test]
+    fn negative_half_is_refused() {
+        assert_eq!(checked_half(-4), Err(HalfError::Negative));
+    }
+
+    #[test]
+    fn third_of_nine_is_three() {
+        assert_eq!(checked_third(9), Ok(3));
+    }
+}

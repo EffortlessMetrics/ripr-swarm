@@ -1,0 +1,22 @@
+{
+  "case_id": "trap-quota-sibling-arm",
+  "subject_id": "authored-trap-kit",
+  "origin": "authored",
+  "anchor": "src/modes.rs:9",
+  "behavior_family": "match_arm",
+  "test_shape": "sibling_arm_shared_enum_qualifier",
+  "hard_case": true,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
