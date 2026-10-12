@@ -13,3 +13,11 @@
   reading at weak. A seam whose only test was `assert_ne!(score(2), 0)`
   counted as strongly gripped in the repo audit; it is now weakly gripped
   (#6670).
+- Oracle strength: more inequality spellings read `relational_check` /
+  weak instead of an exact kind: a `matches!` operand that is negated or
+  compared against `false` inside an equality
+  (`assert_eq!(matches!(r, Err(E::X)), false)`), a negated pattern beside a
+  top-level `||`, `*assert_ne!` macros such as `soft_assert_ne!`, and
+  helpers named `assert_unequal`, `assert_noteq`, `assert_inequal` or
+  `assert_different`. `mock.assert_not_called()` and `assert_not_sent(..)`
+  keep their `mock_expectation` / medium reading (#6670).

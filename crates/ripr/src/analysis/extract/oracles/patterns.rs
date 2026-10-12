@@ -273,11 +273,13 @@ pub(super) fn is_whole_object_equality_assertion(line: &str) -> bool {
     (line.contains("assert_eq!") || line.contains("assert_ne!")) && line.contains('{')
 }
 
-/// RIPR-SPEC-0231 rule 1: `assert_ne!` and `debug_assert_ne!` only show the
-/// value differs from one alternative, so they never pin an exact value.
+/// RIPR-SPEC-0231 rule 1: `assert_ne!`, `debug_assert_ne!` and any other
+/// macro spelled `*assert_ne!` (`soft_assert_ne!`, `prop_assert_ne!`) only
+/// show the value differs from one alternative, so they never pin an exact
+/// value. Any such invocation outside strings and comments counts, which
+/// fails closed for a macro written after a path or binding.
 pub(super) fn is_inequality_macro_assertion(line: &str) -> bool {
-    let trimmed = line.trim_start();
-    trimmed.starts_with("assert_ne!") || trimmed.starts_with("debug_assert_ne!")
+    mask_comments_and_strings(line).contains("assert_ne!")
 }
 
 /// An `assert_ne!` operand written as a struct literal (`Config { .. }`),
@@ -345,9 +347,16 @@ fn unwrap_parentheses(mut text: &str) -> &str {
 /// other conjuncts (`None` when the condition is not such a chain, and an
 /// empty string when every conjunct is a negated pattern). A negated pattern
 /// pins nothing, so the remaining conjuncts carry the assertion's reading.
+///
+/// `&&` binds tighter than `||`, so a condition with any top-level `||` is not
+/// a conjunct chain and returns `None` (the caller then caps it).
 pub(super) fn negated_pattern_conjunct_rest(line: &str) -> Option<String> {
     let (macro_name, condition) = boolean_assertion_macro_condition(line)?;
-    let conjuncts = split_top_level_conjuncts(unwrap_parentheses(condition.trim()));
+    let condition = unwrap_parentheses(condition.trim());
+    if has_top_level_disjunction(condition) {
+        return None;
+    }
+    let conjuncts = split_top_level_conjuncts(condition);
     if conjuncts.len() < 2
         || !conjuncts
             .iter()
@@ -392,6 +401,65 @@ fn split_top_level_conjuncts(condition: &str) -> Vec<&str> {
     parts
 }
 
+/// Whether `condition` has `||` outside any delimiter, string or comment.
+fn has_top_level_disjunction(condition: &str) -> bool {
+    let masked = mask_comments_and_strings(condition);
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    let mut index = 0;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            b'|' if depth == 0 && bytes.get(index + 1) == Some(&b'|') => return true,
+            _ => {}
+        }
+        index += 1;
+    }
+    false
+}
+
+/// RIPR-SPEC-0231 rule 1: an equality whose operand is a negated `matches!`,
+/// or a `matches!` compared against `false`, only excludes the pattern
+/// (`assert_eq!(matches!(r, Err(E::X)), false)`,
+/// `assert!(matches!(r, Err(E::X)) == false)`), so it never reads as the
+/// variant. Covers the equality macros and a top-level `==` in a boolean
+/// assertion condition. A negated operand against anything, even `false`,
+/// fails closed rather than being read through.
+pub(super) fn contains_negated_pattern_operand(line: &str) -> bool {
+    if let Some(arguments) = equality_assertion_arguments(line)
+        && let (Some(left), Some(right)) = (arguments.first(), arguments.get(1))
+    {
+        return is_negated_pattern_equality(left, right);
+    }
+    let Some((_, condition)) = boolean_assertion_macro_condition(line) else {
+        return false;
+    };
+    let condition = unwrap_parentheses(condition.trim());
+    let Some((operator, width)) = top_level_comparison_operator(condition) else {
+        return false;
+    };
+    if condition.get(operator..operator + width) != Some("==") {
+        return false;
+    }
+    let left = condition.get(..operator).unwrap_or_default();
+    let right = condition.get(operator + width..).unwrap_or_default();
+    is_negated_pattern_equality(left, right)
+}
+
+fn is_negated_pattern_equality(left: &str, right: &str) -> bool {
+    let is_pattern = |operand: &str| {
+        let operand = unwrap_parentheses(operand.trim());
+        is_complete_macro_invocation(operand, "matches!")
+            || is_complete_macro_invocation(operand, "assert_matches!")
+    };
+    let is_false = |operand: &str| unwrap_parentheses(operand.trim()) == "false";
+    is_negated_pattern_condition(left)
+        || is_negated_pattern_condition(right)
+        || (is_pattern(left) && is_false(right))
+        || (is_false(left) && is_pattern(right))
+}
+
 /// Whether a boolean assertion's condition negates a `matches!` anywhere,
 /// for example inside `||` or a nested group. Such a condition cannot be read
 /// conjunct by conjunct, so the caller caps it at the inequality strength.
@@ -429,11 +497,36 @@ pub(super) fn is_inequality_named_assertion_helper(line: &str) -> bool {
         return false;
     }
     custom_assertion_helper_name(trimmed).is_some_and(|name| {
-        name.starts_with("assert_")
-            && name
-                .split('_')
-                .any(|segment| matches!(segment, "ne" | "not" | "neq"))
+        name.starts_with("assert_") && name.split('_').any(is_inequality_name_segment)
     })
+}
+
+/// One `_`-separated helper-name segment that spells inequality.
+fn is_inequality_name_segment(segment: &str) -> bool {
+    matches!(
+        segment,
+        "ne" | "neq"
+            | "not"
+            | "noteq"
+            | "notequal"
+            | "nonequal"
+            | "unequal"
+            | "inequal"
+            | "differ"
+            | "differs"
+            | "different"
+            | "distinct"
+    )
+}
+
+/// Whether an inequality-named helper reads as an observed side effect or a
+/// mock verification rather than a value comparison: a mock receiver's
+/// `.assert_*` call, or a helper whose own name carries a side-effect token
+/// (`assert_not_sent`). An argument such as `state` does not count.
+pub(super) fn is_observer_named_assertion_helper(line: &str) -> bool {
+    is_mock_expectation_line(line)
+        || custom_assertion_helper_name(line.trim_start())
+            .is_some_and(|name| is_side_effect_observer_assertion(&name))
 }
 
 /// An `ensure!` condition whose only comparison is `!=`. One `==` anywhere
@@ -468,10 +561,8 @@ pub(super) fn is_duplicative_comparison(condition: &str) -> bool {
 }
 
 pub(super) fn is_exact_value_assertion(line: &str) -> bool {
-    line.contains("assert_eq!")
-        || line.contains("assert_ne!")
-        || line.contains("assert_matches!")
-        || line.contains("matches!")
+    // `assert_ne!` is owned by RIPR-SPEC-0231 rule 1 and never exact.
+    line.contains("assert_eq!") || line.contains("assert_matches!") || line.contains("matches!")
 }
 
 pub(super) fn contains_exact_comparison(condition: &str) -> bool {
@@ -586,22 +677,29 @@ pub(super) fn is_custom_assertion_helper(line: &str) -> bool {
         && trimmed.contains('(')
 }
 
+/// Whether a custom `assert_*` helper call has the argument count of a value
+/// comparison: two or more arguments for a free function, or at least one
+/// for a `.assert_*` method whose receiver is the other side.
+pub(super) fn is_comparison_shaped_custom_assertion(line: &str) -> bool {
+    is_custom_assertion_helper(line)
+        && custom_assertion_arguments(line).is_some_and(|arguments| {
+            if line.contains(".assert_") {
+                !arguments.is_empty()
+            } else {
+                arguments.len() >= 2
+            }
+        })
+}
+
 pub(super) fn is_clear_exact_custom_assertion_helper(line: &str) -> bool {
-    if !is_custom_assertion_helper(line) {
+    // Inequality wins: `assert_noteq` ends with `eq` but pins nothing.
+    if !is_custom_assertion_helper(line) || is_inequality_named_assertion_helper(line) {
         return false;
     }
     let Some(name) = custom_assertion_helper_name(line) else {
         return false;
     };
-    let Some(arguments) = custom_assertion_arguments(line) else {
-        return false;
-    };
-    let argument_count_supports_exact = if line.contains(".assert_") {
-        !arguments.is_empty()
-    } else {
-        arguments.len() >= 2
-    };
-    argument_count_supports_exact
+    is_comparison_shaped_custom_assertion(line)
         && (name.contains("_eq")
             || name.contains("_equal")
             || name.contains("_matches")

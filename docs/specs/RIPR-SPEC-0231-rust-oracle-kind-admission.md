@@ -173,21 +173,35 @@ Two pattern terms are used below.
   `p` is.
 
 1. **Inequality is never exact.** At steps 0, 1, 5 and 10, an inequality
-   assigns `relational_check` / weak, whatever its operands: `assert_ne!`,
-   `!=` in an `ensure!` condition, a negated `!matches!(..)` (which today
-   reads `exact_error_variant` / strong at step 1 when its pattern is
-   `Err(E::X)`), and a custom helper whose name has a `ne`, `not` or `neq`
-   segment that step 10 admits today. At step 4, every `assert_ne!` assigns
-   weak strength: a struct-literal operand keeps the `whole_object_equality`
-   kind, as RIPR-SPEC-0225 says, with no field credit; any other `{` (a
-   closure or block operand) assigns `relational_check`. A negated pattern
+   assigns `relational_check` / weak, whatever its operands: `assert_ne!`
+   (and any `*assert_ne!` spelling such as `soft_assert_ne!`), `!=` in an
+   `ensure!` condition, a negated `!matches!(..)` (which today reads
+   `exact_error_variant` / strong at step 1 when its pattern is
+   `Err(E::X)`), a `matches!` equality operand that is negated or compared
+   against `false` (`assert_eq!(matches!(r, Err(E::X)), false)`,
+   `assert!(matches!(r, Err(E::X)) == false)`), and a custom helper whose
+   name has a `ne`, `neq`, `not`, `noteq`, `notequal`, `nonequal`,
+   `unequal`, `inequal`, `differ`, `differs`, `different` or `distinct`
+   segment that step 10 admits today; such a name never earns step 10's
+   clear-exact credit. A `!=` in a boolean assertion condition is rule 1's
+   inequality only when `!=` is the condition's only comparison
+   (`ensure!(a != b)`); a condition that also has an `==` anywhere outside
+   strings and comments keeps the reading that `==` earns
+   (`ensure!(score == 4 && other != 1)` is `exact_value` / strong). At
+   step 4, every `assert_ne!` assigns weak strength: a struct-literal
+   operand keeps the `whole_object_equality` kind, as RIPR-SPEC-0225 says,
+   with no field credit; any other `{` (a closure or block operand) assigns
+   `relational_check`. A negated pattern
    assertion takes rule 1 before rules 2 and 3. A negated pattern is an
    inequality only when it is the whole condition; in a top-level `&&` chain
-   the other conjuncts decide the reading, and anywhere else (`||`, a nested
-   group) the reading is capped at weak. An inequality-named helper is
-   recognized before any exact-kind step, so a `matches!(.., Err(E::X))`
-   argument cannot lend it a kind, and the cap keeps a reading already below
-   weak. No probe-family strength override in reveal lifts an inequality
+   with no top-level `||` the other conjuncts decide the reading, and
+   anywhere else (`||` at any level, a nested group) the reading is capped
+   at weak. An inequality-named helper is recognized before any exact-kind
+   step, so a `matches!(.., Err(E::X))` argument cannot lend it a kind, and
+   the cap keeps a reading already below weak. A mock verification or a
+   helper whose own name carries a side-effect token
+   (`mock.assert_not_called()`, `assert_not_sent(..)`) keeps its
+   `mock_expectation` / medium reading. No probe-family strength override in reveal lifts an inequality
    above its classified strength.
 2. **Patterns with bindings are not variant pins.** At steps 0 and 1, a
    `matches!` or `assert_matches!` whose `Err(..)` inner pattern is
@@ -477,6 +491,12 @@ rejected alternative. Any can be reversed later without touching the rest.
   `probe_relative_oracle_strength_never_promotes_an_inequality` and fixture
   `fixtures/inequality_struct_assertion_not_exact` show example 14's struct
   inequality stays weak under every probe family.
+  `spec_0231_rule_1_negated_matches_operand_in_equality_is_weak`,
+  `spec_0231_rule_1_negated_conjunct_respects_or_precedence`,
+  `spec_0231_rule_1_inequality_spellings_are_weak` and
+  `spec_0231_rule_1_inequality_helper_keeps_observer_readings` pin the
+  negated or `false`-compared `matches!` operand, the `||` boundary, the
+  helper and `*assert_ne!` spellings, and the observer exemption.
 - Planned: one classifier unit test per remaining acceptance example (rules
   2 to 6).
 - Rule 7: `exact_membership_any_assertion_admits_exact_equality` and
