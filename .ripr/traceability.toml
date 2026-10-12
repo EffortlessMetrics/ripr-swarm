@@ -8050,7 +8050,7 @@ spec = "docs/specs/RIPR-SPEC-0149-back-sync-verifier.md"
 tests = [
   "xtask/src/reports/back_sync.rs::tests::abbreviated_inputs_are_rejected",
   "xtask/src/reports/back_sync.rs::tests::synthetic_graph_adversarial_cases_invoke_verifier",
-  "xtask/src/reports/back_sync.rs::tests::unfolded_changelog_fragment_at_k_is_refused",
+  "xtask/src/reports/back_sync.rs::tests::unfolded_changelog_fragment_in_released_source_is_refused",
 ]
 fixtures = []
 code = [

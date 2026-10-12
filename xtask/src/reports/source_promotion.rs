@@ -979,8 +979,13 @@ fn version_side(root: &Path, parent: &str, version: &str) -> VersionSide {
 }
 
 fn unfolded_changelog_fragments(root: &Path, treeish: &str) -> Result<Vec<String>, String> {
-    let listing = git(root, &["ls-tree", "--name-only", treeish, "changelog.d/"])?;
-    Ok(crate::policy::unfolded_fragment_paths(listing.lines()))
+    // NUL-delimited so a quoted non-ASCII name cannot slip past the path
+    // filter (#4006).
+    let listing = git(
+        root,
+        &["ls-tree", "-z", "--name-only", treeish, "changelog.d/"],
+    )?;
+    Ok(crate::policy::unfolded_fragment_paths(listing.split('\0')))
 }
 
 /// A reviewed join tree is the folded tree: a fragment still in it would
@@ -1955,6 +1960,13 @@ mod tests {
             .map_err(|error| format!("system clock before epoch: {error}"))?
             .as_nanos();
         let root = std::env::temp_dir().join(format!("ripr-preflight-fragments-{nonce}"));
+        struct RemoveOnDrop(PathBuf);
+        impl Drop for RemoveOnDrop {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = RemoveOnDrop(root.clone());
         let source = root.join("source");
         let swarm = root.join("swarm");
         fs::create_dir_all(&source).map_err(|error| error.to_string())?;
@@ -1985,6 +1997,12 @@ mod tests {
             "<!-- section: Fixed -->\n- x (#7000).\n",
         )
         .map_err(|error| error.to_string())?;
+        // Git C-quotes this name without `-z`; it must still be listed.
+        fs::write(
+            swarm.join("changelog.d/7002-caf\u{e9}.md"),
+            "<!-- section: Fixed -->\n- z (#7002).\n",
+        )
+        .map_err(|error| error.to_string())?;
         test_git(&swarm, &["add", "changelog.d"])?;
         test_git(&swarm, &["commit", "--quiet", "-m", "fragment"])?;
         let swarm_parent = test_git_output(&swarm, &["rev-parse", "HEAD"])?;
@@ -2007,6 +2025,7 @@ mod tests {
                 "--quiet",
                 "--cached",
                 "changelog.d/7000-left-behind.md",
+                "changelog.d/7002-caf\u{e9}.md",
             ],
         )?;
         let folded_tree = test_git_output(&swarm, &["write-tree"])?;
@@ -2031,8 +2050,11 @@ mod tests {
             source_remote: "EffortlessMetrics/ripr".to_string(),
             swarm_remote: "EffortlessMetrics/ripr-swarm".to_string(),
         };
-        let result = (|| {
-            let fragment = vec!["changelog.d/7000-left-behind.md".to_string()];
+        let fragment = vec![
+            "changelog.d/7000-left-behind.md".to_string(),
+            "changelog.d/7002-caf\u{e9}.md".to_string(),
+        ];
+        {
             let receipt = build_receipt(&options(None))?;
             let swarm_side = &receipt.version_state.swarm.unfolded_changelog_fragments;
             let source_side = &receipt.version_state.source.unfolded_changelog_fragments;
@@ -2042,7 +2064,7 @@ mod tests {
                 ));
             }
             if !render_markdown(&receipt)
-                .contains("unfolded-fragments=Some([\"changelog.d/7000-left-behind.md\"])")
+                .contains(&format!("unfolded-fragments=Some({fragment:?})"))
             {
                 return Err("Markdown omitted the swarm parent's unfolded fragment".to_string());
             }
@@ -2055,10 +2077,8 @@ mod tests {
             }
             build_receipt(&options(Some(folded_tree.clone())))
                 .map_err(|error| format!("folded reviewed tree was refused: {error}"))?;
-            Ok(())
-        })();
-        let _ = fs::remove_dir_all(&root);
-        result
+        }
+        Ok(())
     }
 
     #[test]

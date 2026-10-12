@@ -139,7 +139,6 @@ pub(crate) fn unfolded_fragment_paths<'a>(
     let prefix = format!("{FRAGMENT_DIR}/");
     let mut paths: Vec<String> = tree_paths
         .into_iter()
-        .map(str::trim)
         .filter(|path| path.starts_with(&prefix) && *path != readme)
         .map(str::to_string)
         .collect();

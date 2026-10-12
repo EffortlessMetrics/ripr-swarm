@@ -350,10 +350,13 @@ fn build_receipt(options: &Options) -> Result<Receipt, String> {
     if !changelog_reachable || !release_doc_reachable {
         return Err("K must retain version-bound CHANGELOG.md and docs/RELEASE.md".to_string());
     }
-    let unfolded = unfolded_changelog_fragments(&swarm_root, &options.join)?;
+    // Only the released source tree is checked: K's swarm parent keeps
+    // moving after the cut, so fragments it carries belong to the next
+    // release and are expected in K.
+    let unfolded = unfolded_changelog_fragments(&source_root, &options.source_release_head)?;
     if !unfolded.is_empty() {
         return Err(format!(
-            "K retains unfolded changelog.d fragments {unfolded:?}; the release notes miss them. Fold them into CHANGELOG.md and delete them (changelog.d/README.md)"
+            "SOURCE_RELEASE_HEAD shipped unfolded changelog.d fragments {unfolded:?}; the released CHANGELOG.md misses them. Fold them in a source release-copy fix-forward (changelog.d/README.md)"
         ));
     }
     let authority_paths =
@@ -595,12 +598,16 @@ fn path_contains_version_entry(
     Ok(text.lines().any(|line| line.trim() == marker))
 }
 
-/// Fragments left in `changelog.d/` at K never reached the released
-/// `CHANGELOG.md` (#6341).
+/// Fragments left in `changelog.d/` at the released source head never
+/// reached the released `CHANGELOG.md` (#6341). NUL-delimited so a quoted
+/// non-ASCII name cannot slip past the path filter (#4006).
 fn unfolded_changelog_fragments(root: &Path, commit: &str) -> Result<Vec<String>, String> {
-    let listing = git(root, &["ls-tree", "--name-only", commit, "changelog.d/"])
-        .map_err(|error| format!("changelog fragment probe failed: {error}"))?;
-    Ok(crate::policy::unfolded_fragment_paths(listing.lines()))
+    let listing = git(
+        root,
+        &["ls-tree", "-z", "--name-only", commit, "changelog.d/"],
+    )
+    .map_err(|error| format!("changelog fragment probe failed: {error}"))?;
+    Ok(crate::policy::unfolded_fragment_paths(listing.split('\0')))
 }
 
 fn required_development_surfaces() -> Vec<String> {
@@ -935,33 +942,55 @@ mod tests {
     }
 
     #[test]
-    fn unfolded_changelog_fragment_at_k_is_refused() -> Result<(), String> {
+    fn unfolded_changelog_fragment_in_released_source_is_refused() -> Result<(), String> {
         let (root, mut options) = verifier_fixture("back-sync-unfolded-fragment")?;
         let _cleanup = Cleanup(root.clone());
         let swarm = root.join("swarm");
-        // README.md alone is the folded state and must still verify.
-        rebind_k_with(
-            &swarm,
-            &mut options,
-            &[("changelog.d/README.md", "# Fragments\n")],
-        )?;
-        build_receipt(&options)?;
+        let source = root.join("source");
+        // Rolling swarm development keeps adding fragments for the next
+        // release; K carrying them must still verify.
         rebind_k_with(
             &swarm,
             &mut options,
             &[(
-                "changelog.d/7000-left-behind.md",
-                "<!-- section: Fixed -->\n- x (#7000).\n",
+                "changelog.d/7001-next-release.md",
+                "<!-- section: Fixed -->\n- y (#7001).\n",
             )],
         )?;
+        build_receipt(&options)?;
+        // A released source head that still holds a fragment shipped
+        // release notes without it.
+        write_fixture_file(
+            &source,
+            "changelog.d/7000-left-behind.md",
+            "<!-- section: Fixed -->\n- x (#7000).\n",
+        )?;
+        git(&source, &["add", "changelog.d"])?;
+        git(
+            &source,
+            &["commit", "--quiet", "-m", "release with fragment"],
+        )?;
+        let released = git(&source, &["rev-parse", "HEAD"])?.trim().to_string();
+        git(&source, &["tag", "-f", "v0.11.0"])?;
+        git(
+            &swarm,
+            &[
+                "fetch",
+                "--quiet",
+                source.to_string_lossy().as_ref(),
+                &released,
+            ],
+        )?;
+        options.source_release_head = released;
+        rebind_k_with(&swarm, &mut options, &[])?;
         if !verifier_error_contains(&options, "changelog.d/7000-left-behind.md")? {
-            return Err("K with an unfolded fragment was accepted by verifier".to_string());
+            return Err("a released source head with a fragment was accepted".to_string());
         }
         Ok(())
     }
 
     /// Commit `files` on the swarm side and rebind K, its tree and the
-    /// release receipt to a join over that commit.
+    /// release receipt to a join of that commit with SOURCE_RELEASE_HEAD.
     fn rebind_k_with(
         swarm: &Path,
         options: &mut Options,
@@ -972,7 +1001,10 @@ mod tests {
             write_fixture_file(swarm, path, body)?;
             git(swarm, &["add", path])?;
         }
-        git(swarm, &["commit", "--quiet", "-m", "k content"])?;
+        git(
+            swarm,
+            &["commit", "--quiet", "--allow-empty", "-m", "k content"],
+        )?;
         let commit = git(swarm, &["rev-parse", "HEAD"])?.trim().to_string();
         let tree = git(swarm, &["rev-parse", &format!("{commit}^{{tree}}")])?
             .trim()
