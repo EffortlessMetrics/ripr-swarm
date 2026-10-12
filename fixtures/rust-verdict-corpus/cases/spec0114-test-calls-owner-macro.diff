@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index b33b432..063bff8 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,5 +9,5 @@ macro_rules! call_inner {
+ 
+ #[doc(hidden)]
+ pub fn inner(x: u32) -> u32 {
+-    x * 3
++    3 * x
+ }

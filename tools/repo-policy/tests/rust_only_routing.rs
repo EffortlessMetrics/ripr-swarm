@@ -220,6 +220,98 @@ impl Drop for Fixture {
     }
 }
 
+fn verify_guarded_rust_only_steps(source: &str) -> TestResult {
+    let steps = source.split("\n      - ").collect::<Vec<_>>();
+    for (header, command) in [
+        ("uses: dtolnay/rust-toolchain@1.95.0", None),
+        ("uses: Swatinem/rust-cache@v2", None),
+        (
+            "name: Prepare locked owner-return fixture dependencies",
+            Some(
+                "cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml",
+            ),
+        ),
+        (
+            "name: Test --no-default-features --features lang-rust",
+            Some(
+                "cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast",
+            ),
+        ),
+    ] {
+        let matching = steps
+            .iter()
+            .filter(|step| step.lines().next() == Some(header))
+            .collect::<Vec<_>>();
+        let [step] = matching.as_slice() else {
+            return Err(format!("expected one guarded Rust step: {header}").into());
+        };
+        let guards = step
+            .lines()
+            .map(str::trim)
+            .filter(|line| line.starts_with("if:"))
+            .collect::<Vec<_>>();
+        if guards != ["if: steps.surface.outputs.rust == 'true'"] {
+            return Err(format!("Rust surface guard must belong to step: {header}").into());
+        }
+        if let Some(command) = command {
+            let runs = step
+                .lines()
+                .map(str::trim)
+                .filter(|line| line.starts_with("run:"))
+                .collect::<Vec<_>>();
+            if runs != [format!("run: {command}")] {
+                return Err(format!("exact command must belong to guarded step: {header}").into());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn rust_step_contract_refuses_missing_guards_and_misplaced_commands() -> TestResult {
+    let source = job("rust-only-features")?;
+    verify_guarded_rust_only_steps(source)?;
+    for header in [
+        "uses: dtolnay/rust-toolchain@1.95.0",
+        "uses: Swatinem/rust-cache@v2",
+        "name: Prepare locked owner-return fixture dependencies",
+        "name: Test --no-default-features --features lang-rust",
+    ] {
+        let prefix =
+            format!("\n      - {header}\n        if: steps.surface.outputs.rust == 'true'\n");
+        assert!(
+            source.contains(&prefix),
+            "production guarded step setup: {header}"
+        );
+        let missing = source.replacen(&prefix, &format!("\n      - {header}\n"), 1);
+        assert!(
+            verify_guarded_rust_only_steps(&missing).is_err(),
+            "{header}"
+        );
+        let weakened = source.replacen(
+            &prefix,
+            &format!("\n      - {header}\n        if: always()\n"),
+            1,
+        );
+        assert!(
+            verify_guarded_rust_only_steps(&weakened).is_err(),
+            "{header}"
+        );
+    }
+    for command in [
+        "cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml",
+        "cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast",
+    ] {
+        let moved = source.replacen(
+            &format!("        run: {command}"),
+            "        run: echo misplaced-command",
+            1,
+        ) + &format!("\n      - name: Unrelated step\n        run: {command}\n");
+        assert!(verify_guarded_rust_only_steps(&moved).is_err(), "{command}");
+    }
+    Ok(())
+}
+
 #[test]
 fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
     let detector = job("rust-only-features")?;
@@ -264,15 +356,7 @@ fn event_commit_bindings_are_exact_and_history_is_available() -> TestResult {
             .any(|line| line.trim_start().starts_with("ref:")),
         "checkout retains the synthetic integration commit"
     );
-    assert_eq!(
-        detector
-            .matches("if: steps.surface.outputs.rust == 'true'")
-            .count(),
-        3
-    );
-    assert!(detector.contains(
-        "run: cargo test -p ripr --locked --no-default-features --features lang-rust --no-fail-fast"
-    ));
+    verify_guarded_rust_only_steps(detector)?;
     Ok(())
 }
 

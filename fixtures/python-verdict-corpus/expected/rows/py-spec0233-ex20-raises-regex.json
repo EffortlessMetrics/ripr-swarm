@@ -1,0 +1,22 @@
+{
+  "case_id": "py-spec0233-ex20-raises-regex",
+  "subject_id": "authored-py-pytest-spec0233",
+  "origin": "authored",
+  "anchor": "src/subject.py:86",
+  "behavior_family": "error_message",
+  "test_shape": "unittest_assert_raises_regex_callable",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

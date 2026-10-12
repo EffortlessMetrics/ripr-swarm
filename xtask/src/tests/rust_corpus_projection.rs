@@ -126,7 +126,7 @@ fn genuine_rust_capture(root: &Path) -> ProofResult<Value> {
     let corpus = &value["source_subject"]["corpus"];
     require(
         corpus["scope"] == "rust_workspace"
-            && corpus["cache_schema_version"] == "1.63"
+            && corpus["cache_schema_version"] == "1.64"
             && corpus["files_content_hash"].as_str().is_some_and(|hash| {
                 hash.len() == 16
                     && hash
@@ -443,7 +443,152 @@ fn genuine_workspace_producer_preserves_current_corpus_and_native_bounded_projec
             )
         },
     )
-    // This proves shared xtask generation, not full LSP admission. Its
-    // verify_command_source is the real fallback, which the inherited LSP
-    // canonical-source-only guard currently rejects before corpus validation.
+    // This proves genuine generation. Framed consumer qualification reads
+    // these exact fields and bytes; source/corpus currentness and full LSP
+    // admission remain independently checked at the shared consumer boundary.
+}
+
+#[test]
+fn genuine_workspace_projection_regeneration_retains_nonempty_fallback_and_corpus_authority()
+-> ProofResult {
+    let fixture = OwnedCorpusRoot::new("related-provenance-regeneration")?;
+    let workspace = &fixture.path;
+    pricing_files(&workspace.join("crates/ordinary_shop"))?;
+    write(
+        &workspace.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/ordinary_shop\"]\nresolver = \"3\"\n",
+    )?;
+    fixture_git::fixture_git_ok(workspace, &["init"])?;
+    fixture_git::fixture_git_ok(workspace, &["config", "user.name", "RIPR proof"])?;
+    fixture_git::fixture_git_ok(workspace, &["config", "user.email", "ripr@example.invalid"])?;
+    write(
+        &workspace.join(".git/info/exclude"),
+        "/target/\n/crates/ordinary_shop/target/\n",
+    )?;
+    fixture_git::fixture_git_ok(workspace, &["add", "Cargo.toml", "crates"])?;
+    fixture_git::fixture_git_ok(
+        workspace,
+        &["commit", "-m", "workspace related-target provenance"],
+    )?;
+    fixture_git::fixture_git_ok(workspace, &["branch", "-M", "main"])?;
+    let original_head = fixture_git::fixture_git_output(workspace, &["rev-parse", "HEAD"])?;
+    let captured = genuine_rust_capture(workspace)?;
+    let original = actionable_projection(workspace, &captured)?;
+    let seam = &captured["seams"][0];
+    let packets = original["packets"]
+        .as_array()
+        .ok_or("original queue omitted packets")?;
+    require(
+        seam["seam_id"] == "49bdd89bd71dd5b9"
+            && seam["grip_class"] == "weakly_gripped"
+            && packets.len() == 1
+            && packets[0]["canonical_gap_id"] == "gap:ba9f4264c3029d1c"
+            && packets[0]["primary_anchor"]["file"] == "crates/ordinary_shop/src/lib.rs"
+            && packets[0]["primary_anchor"]["line"] == 2
+            && packets[0]["public_projection_eligible"] == true
+            && packets[0]["projection_exclusion_reasons"] == json!([])
+            && packets[0]["verify_command_source"] == "related_test_or_observer.name"
+            && packets[0]["verify_command"]
+                == "cargo test -p ordinary_shop above_threshold_discounts",
+        || {
+            format!(
+                "regeneration needs the exact genuine nonempty bounded fallback before stimulus: {captured}; {original}"
+            )
+        },
+    )?;
+    let saved = workspace.join("target/provenance-proof");
+    write(
+        &saved.join("original.repo-exposure.json"),
+        &captured.to_string(),
+    )?;
+    let installed = workspace.join("target/ripr/reports/actionable-gaps.json");
+    let original_bytes = std::fs::read(&installed).map_err(|error| error.to_string())?;
+    std::fs::write(saved.join("original.actionable-gaps.json"), &original_bytes)
+        .map_err(|error| error.to_string())?;
+    let named = original["source_subject"]["files"]
+        .as_array()
+        .ok_or("original named subject missing")?;
+    let mut named_bytes = Vec::new();
+    for file in named {
+        let path = file["path"].as_str().ok_or("named subject path missing")?;
+        named_bytes.push((
+            path.to_string(),
+            std::fs::read(workspace.join(path)).map_err(|error| error.to_string())?,
+        ));
+    }
+    let added_relative = "crates/ordinary_shop/tests/unclaimed_control.rs";
+    let added = workspace.join(added_relative);
+    let added_bytes = "#[test]\nfn unrelated_control() {\n    assert_eq!(2 + 2, 4);\n}\n";
+    require(
+        !added.exists() && named.iter().all(|file| file["path"] != added_relative),
+        || "stimulus must add an actual unclaimed test, not alter an old named subject".into(),
+    )?;
+    write(&added, added_bytes)?;
+    require(
+        fixture_git::fixture_git_output(workspace, &["rev-parse", "HEAD"])? == original_head,
+        || "unclaimed test addition must leave HEAD unchanged".into(),
+    )?;
+    for (path, bytes) in &named_bytes {
+        require(
+            std::fs::read(workspace.join(path)).map_err(|error| error.to_string())? == *bytes,
+            || format!("unclaimed test stimulus changed original named bytes: {path}"),
+        )?;
+    }
+    let recaptured = genuine_rust_capture(workspace)?;
+    let regenerated = actionable_projection(workspace, &recaptured)?;
+    let regenerated_packets = regenerated["packets"]
+        .as_array()
+        .ok_or("regenerated queue omitted packets")?;
+    require(
+        recaptured["seams"][0]["seam_id"] == "49bdd89bd71dd5b9"
+            && recaptured["seams"][0]["grip_class"] == "weakly_gripped"
+            && regenerated_packets.len() == 1
+            && regenerated_packets[0] == packets[0]
+            && regenerated["source_subject"]["files"] == original["source_subject"]["files"]
+            && regenerated["source_subject"]["corpus"] == recaptured["source_subject"]["corpus"]
+            && regenerated["source_subject"]["corpus"]["files_content_hash"]
+                != original["source_subject"]["corpus"]["files_content_hash"],
+        || {
+            format!(
+                "real regeneration must restore the same meaningful packet while recapturing actual corpus authority: {recaptured}; {regenerated}"
+            )
+        },
+    )?;
+    write(
+        &saved.join("regenerated.repo-exposure.json"),
+        &recaptured.to_string(),
+    )?;
+    let regenerated_bytes = std::fs::read(&installed).map_err(|error| error.to_string())?;
+    std::fs::write(
+        saved.join("regenerated.actionable-gaps.json"),
+        regenerated_bytes,
+    )
+    .map_err(|error| error.to_string())?;
+    write(&saved.join("unclaimed_control.rs"), added_bytes)?;
+    write(
+        &saved.join("producer-projection-plan.json"),
+        &json!({
+            "fixture_root": workspace,
+            "head": original_head.trim(),
+            "seam_id": "49bdd89bd71dd5b9",
+            "canonical_gap_id": "gap:ba9f4264c3029d1c",
+            "stimulus_path": added_relative,
+            "stimulus_file": "target/provenance-proof/unclaimed_control.rs",
+            "original_capture": "target/provenance-proof/original.repo-exposure.json",
+            "original_queue": "target/provenance-proof/original.actionable-gaps.json",
+            "regenerated_capture": "target/provenance-proof/regenerated.repo-exposure.json",
+            "regenerated_queue": "target/provenance-proof/regenerated.actionable-gaps.json"
+        })
+        .to_string(),
+    )?;
+    // The optional framed consumer replays exactly this saved corpus change.
+    // Both queues above are genuine unchanged projector outputs, not consumer-
+    // authored stamps. Their capture chronology remains in this test.
+    std::fs::remove_file(&added).map_err(|error| error.to_string())?;
+    std::fs::write(&installed, original_bytes).map_err(|error| error.to_string())?;
+    write(
+        &workspace.join("target/corpus-proof/actual-rust-capture.json"),
+        &captured.to_string(),
+    )?;
+    Ok(())
 }

@@ -1,0 +1,52 @@
+{
+  "case_id": "py-unittest-fee-waiver-mixin",
+  "subject_id": "authored-py-unittest-accounts",
+  "diff": "cases/py-unittest-fee-waiver-mixin.diff",
+  "anchor": {
+    "file": "accounts/ledger.py",
+    "line": 32
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "unittest_same_file_mixin_boundary_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python3 -m unittest",
+    "toolchain": "Python 3.11.15, unittest, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "if balance_cents > FEE_WAIVER_BALANCE_CENTS:",
+        "mutated_line": "if balance_cents > FEE_WAIVER_BALANCE_CENTS:",
+        "outcome": "tests_failed",
+        "failing_test": "tests.test_ledger.TestFees.test_fee_waived_exactly_at_waiver_balance",
+        "equivalence_review": "not equivalent: a 10000-cent balance pays the 300 fee"
+      },
+      {
+        "replacement": "if balance_cents >= FEE_WAIVER_BALANCE_CENTS - 1:",
+        "mutated_line": "if balance_cents >= FEE_WAIVER_BALANCE_CENTS - 1:",
+        "outcome": "tests_failed",
+        "failing_test": "tests.test_ledger.TestFees.test_fee_waived_exactly_at_waiver_balance",
+        "equivalence_review": "not equivalent: a 9999-cent balance has its fee waived"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The boundary test lives on the same-file mixin FeeChecks, which TestFees inherits alongside unittest.TestCase (RIPR-SPEC-0028, #4562); it pins 9999 and 10000 with self.assertEqual, so both shifts fail. ripr reports weakly_exposed, a false actionable verdict.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

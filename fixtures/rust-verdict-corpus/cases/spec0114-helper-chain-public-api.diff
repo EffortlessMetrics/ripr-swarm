@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index dc5c3c2..e929038 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -17,6 +17,6 @@ impl Req {
+ 
+ mod compare {
+     pub(crate) fn matches_greater(min: u32, version: u32) -> bool {
+-        version > min
++        min < version
+     }
+ }
