@@ -169,6 +169,45 @@ fn is_unwritable_output_dir(err: &io::Error) -> bool {
     )
 }
 
+/// Windows `ERROR_SHARING_VIOLATION` / `ERROR_LOCK_VIOLATION`: the transient
+/// holder codes (editor, search indexer, sync client, antivirus) behind a
+/// locked report write (#7389). Plain constants, not `cfg`-gated, so the
+/// host-explicit message builder stays testable on every platform; only the
+/// `windows` flag admits the hint.
+const WINDOWS_ERROR_SHARING_VIOLATION: i32 = 32;
+const WINDOWS_ERROR_LOCK_VIOLATION: i32 = 33;
+
+fn is_windows_lock_violation(err: &io::Error) -> bool {
+    err.raw_os_error().is_some_and(|code| {
+        code == WINDOWS_ERROR_SHARING_VIOLATION || code == WINDOWS_ERROR_LOCK_VIOLATION
+    })
+}
+
+/// Format a failed human-facing output-file write (#7389). The path renders
+/// through the shared human renderer — one forward-slash spelling, verbatim
+/// prefix stripped — so the error line matches the paths the surrounding run
+/// already printed, and a Windows sharing/lock violation names the likely
+/// transient holder class and the retry step instead of leaving the raw
+/// `(os error 32)` text as the only clue.
+pub(crate) fn write_failure_message(path: &Path, err: &io::Error) -> String {
+    write_failure_message_for_host(path, err, cfg!(windows))
+}
+
+/// [`write_failure_message`] with the host made explicit so both answers are
+/// testable anywhere (#4378 pattern).
+pub(crate) fn write_failure_message_for_host(path: &Path, err: &io::Error, windows: bool) -> String {
+    let mut message = format!(
+        "failed to write {}: {err}",
+        crate::output::path::human_path_text(&path.to_string_lossy(), windows)
+    );
+    if windows && is_windows_lock_violation(err) {
+        message.push_str(
+            "; the file is likely held open by another program (an editor, search indexer, sync client, or antivirus) — close it there or wait for the scan to finish, then rerun the same command",
+        );
+    }
+    message
+}
+
 #[cfg(test)]
 mod tests {
     use super::{append_line, write};
@@ -420,6 +459,42 @@ mod output_dir_tests {
         let err = io::Error::new(io::ErrorKind::NotADirectory, "Not a directory");
         let message = create_output_dir_error(Path::new("target/ripr/reports"), &err, "--out-dir");
         assert!(!message.contains("write elsewhere"), "{message}");
+    }
+
+    #[test]
+    fn write_failure_renders_human_path_and_names_lock_holder() {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shape is assembled from parts.
+        let drive = "F:";
+        let verbatim = format!(
+            r"\\?\{drive}\tmp\ripr-audit-scratch\target\ripr\reports\start-here.md"
+        );
+        let path = Path::new(&verbatim);
+        let locked = io::Error::from_raw_os_error(32);
+        let windows = super::write_failure_message_for_host(path, &locked, true);
+        assert!(
+            windows.contains(&format!(
+                "failed to write {drive}/tmp/ripr-audit-scratch/target/ripr/reports/start-here.md:"
+            )),
+            "{windows}"
+        );
+        assert!(!windows.contains(r"\\?\"), "{windows}");
+        assert!(!windows.contains('\\'), "{windows}");
+        assert!(windows.contains("likely held open by another program"), "{windows}");
+        assert!(windows.contains("rerun the same command"), "{windows}");
+        // ERROR_LOCK_VIOLATION (33) gets the same hint.
+        let lock_violation = io::Error::from_raw_os_error(33);
+        let hinted = super::write_failure_message_for_host(path, &lock_violation, true);
+        assert!(hinted.contains("likely held open by another program"), "{hinted}");
+        // Other OS codes keep the raw error without a invented diagnosis.
+        let other = io::Error::from_raw_os_error(28);
+        let plain = super::write_failure_message_for_host(path, &other, true);
+        assert!(plain.starts_with("failed to write F:/"), "{plain}");
+        assert!(!plain.contains("likely held open"), "{plain}");
+        // Non-Windows hosts render the text unchanged and never add the hint.
+        let unix = super::write_failure_message_for_host(path, &locked, false);
+        assert!(unix.contains(&format!("failed to write {verbatim}:")), "{unix}");
+        assert!(!unix.contains("likely held open"), "{unix}");
     }
 
     #[cfg(target_os = "linux")]
