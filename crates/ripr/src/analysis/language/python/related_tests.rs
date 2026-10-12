@@ -1,9 +1,8 @@
 use super::assertion_selection::{PythonAssertionFocus, select_relevant_assertion};
 use super::source_utils::normalized_path;
 use super::{
-    PythonImport, PythonOracleShape, PythonOwner, PythonTest, first_python_string_literal,
-    line_prefix_before, python_callee_start_has_boundary, python_prefix_hides_code,
-    python_string_literal_value,
+    PythonImport, PythonOwner, PythonTest, first_python_string_literal, line_prefix_before,
+    python_callee_start_has_boundary, python_prefix_hides_code, python_string_literal_value,
 };
 use crate::domain::{ExposureClass, OracleKind, OracleStrength, OwnerKind, RelatedTest};
 use std::collections::BTreeMap;
@@ -524,13 +523,13 @@ pub(super) fn test_may_reach_owner_class(
 }
 
 /// RIPR-SPEC-0238 rule 13: an exception assertion passed the owner as its
-/// callable (`assertRaisesRegex(KeyError, 'empty', parse, '')`) calls it; its
-/// gate text spells that call.
+/// callable (`assertRaisesRegex(KeyError, 'empty', parse, '')`) calls it.
 fn exception_assertion_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
     test.assertions.iter().any(|assertion| {
-        assertion.oracle_shape == PythonOracleShape::ExceptionAssertion
-            && assertion.gate_text != assertion.text
-            && body_calls_owner(&assertion.gate_text, owner)
+        assertion
+            .callable_call
+            .as_deref()
+            .is_some_and(|call| body_calls_owner(call, owner))
     })
 }
 

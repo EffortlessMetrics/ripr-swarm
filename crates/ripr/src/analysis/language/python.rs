@@ -320,6 +320,10 @@ struct PythonAssertion {
     /// operands without `msg`, and an exception assertion's `with` item
     /// together with its body. `text` stays the reported oracle.
     gate_text: String,
+    /// The call a callable-form exception assertion makes
+    /// (`assertRaisesRegex(E, 'm', check, 20, n=3)` calls `check(20, n=3)`;
+    /// RIPR-SPEC-0238 rule 13), with every argument it passes on.
+    callable_call: Option<String>,
     line: usize,
     oracle_kind: OracleKind,
     oracle_strength: OracleStrength,

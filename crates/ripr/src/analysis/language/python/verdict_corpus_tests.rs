@@ -895,6 +895,11 @@ fn a_bound_exception_compared_by_value_pins_the_error() -> Result<(), String> {
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    exc, expected = other_error, \"'empty'\"\n    assert str(exc.value) == expected\n",
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    print(exc := other_error)\n    assert str(exc.value) == \"'empty'\"\n",
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    setattr(exc.value, \"args\", (\"empty\",))\n    assert str(exc.value) == \"'empty'\"\n",
+        // A method call in an assigned value, a call passed the error inside
+        // an assert, or an alias of the error.
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    _ = exc.value.__init__(\"empty\")\n    assert str(exc.value) == \"'empty'\"\n",
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert setattr(exc.value, \"args\", (\"empty\",)) is None\n    assert str(exc.value) == \"'empty'\"\n",
+        "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    msg = str(exc.value)\n    assert str(exc.value) == msg\n",
         // The other operand reads the error too, so the comparison can hold
         // for any message.
         "def test_parse():\n    with pytest.raises(KeyError) as exc:\n        parse(\"\")\n    assert str(exc.value) == repr(exc.value)\n",
@@ -1113,6 +1118,29 @@ fn an_inactive_term_names_the_missing_discriminator_and_its_inputs() -> Result<(
             .map(|fact| fact.value.as_str())
             .collect::<Vec<_>>(),
         ["subtotal_cents = 6000"]
+    );
+    Ok(())
+}
+
+const BIG_DEFAULT: &str =
+    "def check(code, n=15):\n    if n > 15:\n        raise KeyError(\"big\")\n    return code\n";
+const BIG_DEFAULT_OLD: &str = "    if n >= 15:";
+
+#[test]
+fn the_callable_form_passes_its_keyword_arguments_on() -> Result<(), String> {
+    // `check("b", n=20)` is the call: binding the default `n=15` instead
+    // would place the input on the changed boundary.
+    assert_eq!(
+        classify(
+            BIG_DEFAULT,
+            2,
+            BIG_DEFAULT_OLD,
+            &test_module(
+                "import unittest\n\nfrom src.shop import check",
+                "class CheckTest(unittest.TestCase):\n    def test_check(self):\n        self.assertRaisesRegex(KeyError, \"big\", check, \"b\", n=20)\n",
+            ),
+        )?,
+        ExposureClass::WeaklyExposed
     );
     Ok(())
 }

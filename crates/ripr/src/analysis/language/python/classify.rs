@@ -274,7 +274,9 @@ pub(super) fn classify_change_with_context(
     // A removed or added additive call term changes the result only where the
     // term is nonzero (#6733). When every strong related call gives it the
     // value 0, a strong oracle passes either way.
-    let inactive_term = (static_limit.is_none() && boundary_gap.is_none())
+    let inactive_term = (static_limit.is_none()
+        && boundary_gap.is_none()
+        && !no_behavior.multi_line_def_header_line)
         .then(|| {
             old_line_text.and_then(|old| {
                 python_inactive_term_evidence(

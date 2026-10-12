@@ -222,13 +222,18 @@ fn statement_touches_name(stmt: &Stmt, name: &str, source: &SourceText<'_>) -> b
         return true;
     }
     let rooted = |expr: &Expr| target_rooted_at(expr, name);
+    // An assigned value that reads the error can alias it
+    // (`msg = str(N.value)` then `assert str(N.value) == msg`).
+    let reads = |value: &Expr| mentions_name(source, value, name);
     match stmt {
-        Stmt::Assign(assign) => assign.targets.iter().any(rooted),
-        Stmt::AugAssign(assign) => rooted(&assign.target),
-        Stmt::AnnAssign(assign) => rooted(&assign.target),
+        Stmt::Assign(assign) => assign.targets.iter().any(rooted) || reads(&assign.value),
+        Stmt::AugAssign(assign) => rooted(&assign.target) || reads(&assign.value),
+        Stmt::AnnAssign(assign) => {
+            rooted(&assign.target) || assign.value.as_deref().is_some_and(reads)
+        }
         Stmt::Delete(delete) => delete.targets.iter().any(rooted),
-        Stmt::Expr(expr_stmt) => calls_into(expr_stmt.value.as_ref(), name, true),
-        Stmt::Assert(assert_stmt) => calls_into(assert_stmt.test.as_ref(), name, false),
+        Stmt::Expr(expr_stmt) => calls_into(expr_stmt.value.as_ref(), name),
+        Stmt::Assert(assert_stmt) => calls_into(assert_stmt.test.as_ref(), name),
         Stmt::Pass(_) => false,
         // A nested block may rebind the name in a way the scan does not follow.
         _ => true,
@@ -245,16 +250,18 @@ fn target_rooted_at(expr: &Expr, name: &str) -> bool {
 }
 
 /// Whether `expr` holds a method call on `name` (or on an attribute reached
-/// through it), or, with `arguments`, any call passed such a value. Reads
+/// through it), or a call other than a pure read (`str`, `repr`, `len`,
+/// `type`, `isinstance`) passed such a value. Reads
 /// through the expression shapes an `assert` usually holds; anything else
 /// counts as touching, which only withholds credit.
-fn calls_into(expr: &Expr, name: &str, arguments: bool) -> bool {
-    let recurse = |expr: &Expr| calls_into(expr, name, arguments);
+fn calls_into(expr: &Expr, name: &str) -> bool {
+    let recurse = |expr: &Expr| calls_into(expr, name);
     match expr {
         Expr::Call(call) => {
             matches!(call.func.as_ref(), Expr::Attribute(attribute)
                 if expr_root_name(attribute.value.as_ref()) == Some(name))
-                || (arguments
+                || (!matches!(call.func.as_ref(), Expr::Name(callee)
+                        if matches!(callee.id.as_str(), "str" | "repr" | "len" | "type" | "isinstance"))
                     && call
                         .args
                         .iter()
@@ -314,6 +321,7 @@ fn assertion_from_assert(
         oracle_for_assert_expr(assert_stmt.test.as_ref(), source);
     PythonAssertion {
         text: text_for_range(source, assert_stmt.range).trim().to_string(),
+        callable_call: None,
         // The failure message observes nothing (RIPR-SPEC-0238 rule 4).
         gate_text: format!(
             "assert {}",
@@ -362,16 +370,25 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
     // Rule 13: the callable form calls its callable, so the gates read that
     // call as they read the body of the `with` form.
     if let Some((callable, arguments)) = exception_assertion_callable(call) {
+        // Both unittest and pytest pass keyword arguments on to the callable
+        // (`match=` included in pytest's callable form).
         let arguments = arguments
             .iter()
             .map(|argument| text_for_range(source, argument.range()).trim().to_string())
+            .chain(
+                call.keywords
+                    .iter()
+                    .map(|keyword| text_for_range(source, keyword.range()).trim().to_string()),
+            )
             .collect::<Vec<_>>()
             .join(", ");
+        let callable_call = format!(
+            "{}({arguments})",
+            text_for_range(source, callable.range()).trim()
+        );
         return Some(PythonAssertion {
-            gate_text: format!(
-                "{text}\n{}({arguments})",
-                text_for_range(source, callable.range()).trim()
-            ),
+            gate_text: format!("{text}\n{callable_call}"),
+            callable_call: Some(callable_call),
             text,
             line: line_for_range_start(source, call.range),
             oracle_kind,
@@ -392,6 +409,7 @@ fn assertion_from_expr(expr: &Expr, source: &SourceText<'_>) -> Option<PythonAss
     Some(PythonAssertion {
         text,
         gate_text,
+        callable_call: None,
         line: line_for_range_start(source, call.range),
         oracle_kind,
         oracle_strength,

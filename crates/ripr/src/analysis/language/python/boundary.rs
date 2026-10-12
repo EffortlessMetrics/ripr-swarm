@@ -670,27 +670,14 @@ fn strong_owner_call_rows_with_gaps(
         }
         // The test body, plus the call each callable-form exception assertion
         // makes (RIPR-SPEC-0238 rule 13: `assertRaisesRegex(E, 'm', owner, 20)`
-        // calls `owner(20)`), which its gate text spells on its last line. The
-        // last line of a `with` item's gate text is already in the body, so
-        // reading it again only repeats a row.
+        // calls `owner(20)`).
         let mut sources = vec![(candidate.test.line, candidate.test.body_text.as_str())];
-        sources.extend(
-            candidate
-                .test
-                .assertions
-                .iter()
-                .filter(|assertion| {
-                    assertion.oracle_shape == super::PythonOracleShape::ExceptionAssertion
-                        && assertion.gate_text != assertion.text
-                })
-                .filter_map(|assertion| {
-                    assertion
-                        .gate_text
-                        .rsplit('\n')
-                        .next()
-                        .map(|call| (assertion.line, call))
-                }),
-        );
+        sources.extend(candidate.test.assertions.iter().filter_map(|assertion| {
+            assertion
+                .callable_call
+                .as_deref()
+                .map(|call| (assertion.line, call))
+        }));
         let mut candidate_rows = 0usize;
         for name in owner_call_names(owner, candidate.test, method_call) {
             for (first_line, text) in &sources {

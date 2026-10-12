@@ -469,7 +469,8 @@ the rule; ripr still reports only what the static shape shows.
     `match=` included, to the callable rather than checking the message,
     so `pytest.raises(E, f, ..., match=...)` is `broad_error` / weak, whatever
     the callable is. A lambda or any other expression in that position is
-    not read as a relation. The call the callable form makes binds its
+    not read as a relation. The call the callable form makes, with the
+    positional and keyword arguments both frameworks pass on, binds its
     literal arguments for the boundary rule and rule 20 like a written
     call: `assertRaisesRegex(KeyError, 'big', check, 20)` places `n` at 20.
 14. **A bound exception compared by value pins the error.** A `with` item
@@ -487,9 +488,10 @@ the rule; ripr still reports only what the static shape shows.
     statement in between may assign `N`, or an attribute or subscript
     reached through it (`N.value.args = ('blank',)`), alone or in a tuple,
     list or starred target or by a walrus, or call a method on `N` or on
-    such an attribute, or pass either to a call
-    (`setattr(N.value, ...)`); a compound statement in between also ends
-    the search. The joined comparison text omits its failure message. A comparison inside the `with` body
+    such an attribute, or pass either to a call other than `str`, `repr`, `len`, `type` or
+    `isinstance` (`setattr(N.value, ...)`), or assign a value that reads
+    `N` (`msg = str(N.value)` would alias it); a compound statement in
+    between also ends the search. The joined comparison text omits its failure message. A comparison inside the `with` body
     does not count: it runs only when nothing is raised. Rule 1 applies
     to that comparison first: a tautology does not promote. The value
     assertion keeps its own table row. The promoted item, its `with`
@@ -592,9 +594,10 @@ mutant calibrates the rule; ripr reports only the static shape.
     the file's only definition of that name, undecorated and not `async`;
     the owner must not bind the name or take it as a parameter; and no
     related test may patch, `setattr` or assign an attribute of that name.
-    The term may not sit in a string, a comment or a `def` header, and at
-    the end of a line the line's brackets must balance with no `\`
-    continuation. The term's argument for `P` must resolve in each strong
+    On the changed line the term may not sit in a string, a comment or a
+    `def` header, and the rule does not run on a line of a multi-line
+    `def` header (docstring lines produce no finding at all); at the end
+    of a line the line's brackets must balance with no `\` continuation. The term's argument for `P` must resolve in each strong
     owner call the boundary rule reads: a literal, such a constant, or an
     owner parameter that call binds to a literal and that the owner body
     never rebinds (a body with a `for`, a comprehension, a lambda, a
@@ -608,7 +611,12 @@ mutant calibrates the rule; ripr reports only the static shape.
     unresolved call, any nonzero value (a float `0.0` changes an integer's
     type, so it is nonzero here), or no analyzable call leaves the verdict
     to the other rules. The rule reads one call deep and does not run for
-    a method owner.
+    a method owner. Known limits, each of which can withhold credit from a
+    term a test does activate: a callee rebound by a module-level
+    assignment or import rather than a `def`, a callee patched by a
+    fixture, `setUp` or class decorator rather than in the related test
+    itself, a string spanning several lines, brackets opened on an
+    earlier line, and an owner call made through a test helper.
 
 ### Verdict ladder
 
