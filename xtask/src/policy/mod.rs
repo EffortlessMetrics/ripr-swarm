@@ -1,3 +1,4 @@
+mod all;
 mod allow_attributes;
 mod ci_lane_whitelist;
 mod covered_by;
@@ -22,6 +23,7 @@ mod test_inventory;
 mod text_encoding;
 mod workflows;
 
+pub(crate) use all::check_policy_all;
 pub(crate) use allow_attributes::check_allow_attributes;
 pub(crate) use ci_lane_whitelist::check_ci_lane_whitelist;
 pub(crate) use covered_by::check_covered_by;

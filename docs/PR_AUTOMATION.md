@@ -858,7 +858,19 @@ file-surface checks, spec format, fixture contract validation, and Droid
 workflow invariant checks. It should not run release packaging, marketplace
 packaging, real mutation work, or slow full-matrix checks.
 
-The current `precommit` command runs:
+For local policy triage, `cargo xtask check-policy-all` runs nine independent
+source/Git scans in precommit-relative order: static-language, no-panic-family,
+allow-attributes, local-context, covered-by, executable-files, process-policy,
+network-policy, and lint-policy. It runs every selected check even after a
+failure, preserves each leaf report/error, and writes
+`target/ripr/reports/check-policy-all.md` with every outcome and failure's rerun
+command. Any leaf error or aggregate report-write error returns nonzero.
+`check-file-policy` is excluded because it can compile tests. The selected
+leaf scans invoke no Cargo build/test/Clippy children; `cargo xtask` still
+compiles the driver when needed. This is a local workflow improvement; existing
+precommit/check-fast behavior and hosted gate routing remain unchanged.
+
+The precommit inventory is:
 
 ```bash
 cargo fmt --check
