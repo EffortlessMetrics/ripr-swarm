@@ -22606,7 +22606,18 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
 
     // Premise of the dead-end: the committed-history listing the miss
     // message suggests names zero occurrences of the worktree finding.
-    let committed = run_ripr(&["check", "--root", &root_str, "--base", "HEAD~1", "--json"]);
+    // `--committed` pins committed content: plain `ripr check` would
+    // default to worktree analysis on this dirty repository and see the
+    // uncommitted finding.
+    let committed = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD~1",
+        "--committed",
+        "--json",
+    ]);
     assert_success(&committed);
     if String::from_utf8_lossy(&committed.stdout).contains(&finding_id) {
         return Err("the committed listing must not contain the worktree finding".to_string());
