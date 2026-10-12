@@ -169,7 +169,7 @@ impl TypeMentionIndex {
                 reached.insert(method.id.0.as_str());
                 index.add_function_mentions(method, true);
                 index.add_function_trait_uses(method);
-                let calls = calls_after_definition(&method.name, method.start_line, &method.calls);
+                let calls = calls_after_definition(&method.name, &method.calls);
                 let mut callees = reach.functions_reached_from(calls, MAX_TRANSITIVE_DEPTH);
                 sort_functions(&mut callees);
                 for callee in callees {

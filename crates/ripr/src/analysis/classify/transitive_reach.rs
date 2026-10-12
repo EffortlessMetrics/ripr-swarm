@@ -1533,11 +1533,11 @@ fn is_ascii_ident_byte(byte: u8) -> bool {
 }
 
 fn calls_of(f: &FunctionSummary) -> impl Iterator<Item = &CallFact> {
-    calls_after_definition(&f.name, f.start_line, &f.calls)
+    calls_after_definition(&f.name, &f.calls)
 }
 
 fn test_calls(test: &TestFact) -> impl Iterator<Item = &CallFact> {
-    calls_after_definition(&test.name, test.start_line, &test.calls)
+    calls_after_definition(&test.name, &test.calls)
 }
 
 /// `calls` without the function's own declaration (`fn build(&self)`), which
@@ -1551,15 +1551,16 @@ fn test_calls(test: &TestFact) -> impl Iterator<Item = &CallFact> {
 /// Call facts keep one fact per name and line, so on a one-line function
 /// (`fn parse() { assert!(parse("1").is_ok()) }`) the fact stands for both
 /// the declaration and the call; it is dropped only when every `name(` on
-/// the declaration line is a declaration.
+/// its line is a declaration. The line is not matched against the
+/// function's start line: that line can be an attribute (`#[derive(..)]`
+/// above a derive entry), so the declaration fact sits on a later line.
 pub(in crate::analysis) fn calls_after_definition<'c>(
     name: &'c str,
-    start_line: usize,
     calls: &'c [CallFact],
 ) -> impl Iterator<Item = &'c CallFact> + 'c {
-    calls.iter().filter(move |call| {
-        !(call.line == start_line && call.name == name && only_declares(&call.text, name))
-    })
+    calls
+        .iter()
+        .filter(move |call| !(call.name == name && only_declares(&call.text, name)))
 }
 
 /// Whether every call-shaped `name(` in `line` follows `fn`.
@@ -1659,7 +1660,7 @@ mod declaration_tests {
             call(1, "parse", "fn parse() -> u32 {"),
             call(2, "parse", "parse(1)"),
         ];
-        let kept: Vec<_> = calls_after_definition("parse", 1, &calls)
+        let kept: Vec<_> = calls_after_definition("parse", &calls)
             .map(|c| c.line)
             .collect();
         assert_eq!(kept, vec![2]);
@@ -1668,18 +1669,19 @@ mod declaration_tests {
             "parse",
             "#[test] fn parse() { assert!(parse(\"1\").is_ok()); }",
         )];
-        assert_eq!(calls_after_definition("parse", 1, &one_line).count(), 1);
+        assert_eq!(calls_after_definition("parse", &one_line).count(), 1);
         let delegating = [call(
             1,
             "build",
             "fn build(&self) -> X { self.inner.build() }",
         )];
-        assert_eq!(calls_after_definition("build", 1, &delegating).count(), 1);
-        // `fn build_all(` is not `fn build(`, and a same-named call on a
-        // later line stays.
+        assert_eq!(calls_after_definition("build", &delegating).count(), 1);
+        // `fn build_all(` is not `fn build(`.
         let other = [call(1, "build", "fn build_all() { build() }")];
-        assert_eq!(calls_after_definition("build", 1, &other).count(), 1);
-        assert_eq!(calls_after_definition("build", 3, &other).count(), 1);
+        assert_eq!(calls_after_definition("build", &other).count(), 1);
+        // The declaration fact can sit below an attribute line.
+        let attributed = [call(2, "build", "fn build(&self) -> X {")];
+        assert_eq!(calls_after_definition("build", &attributed).count(), 0);
     }
 }
 
