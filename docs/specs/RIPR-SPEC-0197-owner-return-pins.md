@@ -751,8 +751,24 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    A bounded read-only `cargo metadata --offline --locked --format-version 1`
    dependency receipt must resolve the owning package's nonoptional regular
    extern binding `anyhow` to that exact package ID; spelling or a manifest
-   version requirement alone is insufficient. No renamed dependency, path/git
-   package, replacement/patch, alternate source or unresolved graph qualifies.
+   version requirement alone is insufficient. Before this query, capture both
+   legacy `config` and `config.toml` at every `.cargo` directory from the query
+   working directory through its filesystem ancestors, plus both files in the
+   effective `CARGO_HOME` (or Cargo's default home). Bind present bytes and
+   absent-file identities; unreadable files, indeterminate home/ancestry or
+   unresolved config paths refuse the receipt. Parse every present file, not
+   just the winning precedence entry. Initially reject any `[source]`, `paths`,
+   `[patch]` or `[replace]` entry, or config `[env]` entry setting a `CARGO_*`
+   variable. Reject ambient `CARGO_SOURCE_*`, `CARGO_REGISTRIES_*` and
+   `CARGO_REGISTRY_*` variables; never print their values. This intentionally
+   refuses even unused alternate-source settings. The metadata command has no
+   `--config` arguments; an analysis requiring unobservable consumer CLI config
+   overrides is outside this slice. Cargo's executable and ordinary registry
+   cache integrity remain stated instrument assumptions, not simulated proof.
+   Snapshot effective-home and relevant environment/config identities before
+   and after metadata; any change refuses credit. No renamed dependency,
+   path/git package, replacement/patch in any owning/workspace manifest,
+   alternate source or unresolved graph qualifies.
    One unconditional module import is exactly `use anyhow::{Result, ensure};`
    (member order immaterial), without aliases or globs. No item, import,
    `extern crate`, macro definition, local binding or opaque macro can compete
@@ -811,6 +827,7 @@ not observations on the current source):
 | Shadowed ensure or swallowed helper Result | one test passes | no new receipt or exposure |
 | Shadowed owner, rebound actual, unrelated equal numeric local/sink | one test passes | no new receipt or exposure |
 | Aliased/unresolved owner or macro/import/dependency identity | may fail | no new receipt or exposure |
+| Workspace/ancestor/CARGO_HOME/env source replacement, unreadable config or warm-cache config mutation | may pass | no new receipt or exposure, including canonical-looking metadata/lock identities |
 | Refused/ambiguous out-of-line parent, disabled/ignored/panic-expected test | not reliable | no new receipt or exposure |
 | Existing rule-7 assert_eq helpers and numeric assert_eq control | matched controls retained | accepted admission unchanged; no generic numeric propagation change |
 
