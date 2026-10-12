@@ -45,11 +45,20 @@ pub fn collect_context_with_config(
         false,
         false,
     )
+    // Public String compatibility wrapper: the typed core owns the
+    // refusal families (#7331); Display is a pure projection, so callers
+    // see the same prose either way.
+    .map_err(|err| err.to_string())
 }
 
 /// [`collect_context_with_config`] over the working tree when `worktree` is
 /// set (`ripr context --worktree`), so a finding `ripr check --worktree`
 /// listed from uncommitted edits can be selected.
+///
+/// The typed core owns the refusal families (#7331): pipeline failures stay
+/// untyped (the honest `analysis_failed` fallback), while the
+/// selector-not-found branch is `SelectorMiss` — usage-class, so the CLI
+/// keeps it prose-only instead of enveloping it.
 pub(crate) fn collect_context_with_config_and_worktree(
     input: CheckInput,
     selector: &str,
@@ -57,7 +66,7 @@ pub(crate) fn collect_context_with_config_and_worktree(
     config: &RiprConfig,
     worktree: bool,
     mode_explicit: bool,
-) -> Result<String, String> {
+) -> Result<String, crate::core_error::CoreError> {
     let input = CheckInput {
         format: OutputFormat::Json,
         ..input
@@ -75,9 +84,8 @@ pub(crate) fn collect_context_with_config_and_worktree(
             Some(navigation.explain_command(&finding.id)),
             &output.root,
         )),
-        None => Err(super::explain::no_finding_matched(
-            selector,
-            &navigation.list_command(),
+        None => Err(crate::core_error::CoreError::selector_miss(
+            super::explain::no_finding_matched(selector, &navigation.list_command()),
         )),
     }
 }
@@ -89,6 +97,11 @@ pub(crate) fn collect_context_with_config_and_worktree(
 /// `max_related_tests` is a render-time knob: it is not part of the artifact
 /// identity and is honored fresh, including beyond the `check --json`
 /// render cap, because the artifact stores the uncapped related-tests list.
+///
+/// The typed error carries the refusal family (`check_artifact_unusable`,
+/// #7331) so the CLI refusal envelope names it; the selector-not-found
+/// branch is `SelectorMiss` — usage-class, so the CLI keeps it prose-only
+/// instead of enveloping it (no artifact defect is claimed).
 pub(crate) fn collect_context_from_artifact(
     input: CheckInput,
     selector: &str,
@@ -96,8 +109,8 @@ pub(crate) fn collect_context_from_artifact(
     config: &RiprConfig,
     artifact_path: &Path,
     asserted_base: Option<&str>,
-) -> Result<String, String> {
-    let findings = super::check_artifact::load_findings_for_reuse(
+) -> Result<String, crate::core_error::CoreError> {
+    let findings = super::check_artifact::load_findings_for_reuse_core(
         artifact_path,
         &input,
         config,
@@ -115,9 +128,8 @@ pub(crate) fn collect_context_from_artifact(
             // renders against it like every fresh route (#5996).
             input.root.as_path(),
         )),
-        None => Err(super::explain::no_finding_matched(
-            selector,
-            "ripr check --json",
+        None => Err(crate::core_error::CoreError::selector_miss(
+            super::explain::no_finding_matched(selector, "ripr check --json"),
         )),
     }
 }

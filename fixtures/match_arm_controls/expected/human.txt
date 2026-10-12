@@ -26,8 +26,6 @@ Start here:
 Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/match_arm_controls/input --diff <cwd>/fixtures/match_arm_controls/diff.patch --mode fast probe:src_lib.rs:predicate:659cd128
   ripr context --root <cwd>/fixtures/match_arm_controls/input --diff <cwd>/fixtures/match_arm_controls/diff.patch --mode fast --at probe:src_lib.rs:predicate:659cd128
-Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/match_arm_controls/input --at src/lib.rs:14
 
 Hidden:
   3 lower-priority finding(s) omitted from default human output.

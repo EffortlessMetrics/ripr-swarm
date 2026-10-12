@@ -680,25 +680,33 @@ fn push_seam_actions(
         context.diagnostic,
         Some(context.snapshot),
     ));
-    actions.push(copy_agent_loop_command_action(
-        AGENT_BRIEF_COMMAND_TITLE,
-        COPY_AGENT_BRIEF_COMMAND,
-        "copy_agent_brief_command",
-        agent_loop_command_target(
-            context.snapshot,
-            context.diagnostic,
-            context.seam,
-            "agent_brief",
-            loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
-            loop_commands::agent_brief_command(
-                &root,
-                context.seam.seam.id().as_str(),
+    // Gate rather than reroute or annotate: the brief command refuses
+    // static-limitation seams (opaque and `*_unknown`) with an empty brief
+    // and a named omission warning (#6775, #7126). Matching that refusal
+    // here keeps the editor from advertising a handoff that will not
+    // populate. The packet action stays so `inspect_static_limitation`
+    // remains copyable.
+    if !context.seam.class.is_static_limitation() {
+        actions.push(copy_agent_loop_command_action(
+            AGENT_BRIEF_COMMAND_TITLE,
+            COPY_AGENT_BRIEF_COMMAND,
+            "copy_agent_brief_command",
+            agent_loop_command_target(
+                context.snapshot,
+                context.diagnostic,
+                context.seam,
+                "agent_brief",
                 loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
+                loop_commands::agent_brief_command(
+                    &root,
+                    context.seam.seam.id().as_str(),
+                    loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
+                ),
             ),
-        ),
-        context.diagnostic,
-        Some(context.snapshot),
-    ));
+            context.diagnostic,
+            Some(context.snapshot),
+        ));
+    }
     actions.push(copy_agent_loop_command_action(
         AFTER_SNAPSHOT_COMMAND_TITLE,
         COPY_AFTER_SNAPSHOT_COMMAND,
@@ -2863,6 +2871,7 @@ mod tests {
     fn action_artifact() -> ValidatedGapArtifact {
         ValidatedGapArtifact {
             kind: GapArtifactKind::GapDecisionLedger,
+            corpus_currentness: None,
             root: Some(".".to_string()),
             identities: vec![GapArtifactIdentity {
                 canonical_gap_id: Some("gap:py:pricing".to_string()),
@@ -2950,6 +2959,7 @@ mod tests {
             analysis_outcome: None,
             diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
@@ -2960,6 +2970,7 @@ mod tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
         }
     }
 

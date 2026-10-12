@@ -46,7 +46,7 @@
       "limited"
     ]
   },
-  "reasoning": "too_many_digits_are_refused asserts only is_err(), so it notices an Ok but not a wrong variant or payload. Spec cells: RIPR-SPEC-0001 error path family; RIPR-SPEC-0107.",
+  "reasoning": "too_many_digits_are_refused asserts only is_err(), so it notices an Ok but not a wrong variant or payload. Spec cells: RIPR-SPEC-0001 error path family; RIPR-SPEC-0107; RIPR-SPEC-0227 example 11.",
   "labeling_observation": {
     "ripr_commit": "b0c6ef6",
     "full_checkout_verdict": "gap",
@@ -55,5 +55,8 @@
       "weakly_exposed"
     ],
     "excerpt_parity": "matched"
-  }
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0227#11"
+  ]
 }

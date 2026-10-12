@@ -165,3 +165,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — rust_field_construction_token_coincidence (15)
+
+Reason:
+RIPR-SPEC-0122 #5471: stub route printed only when the resolver yields a stub, with --kind; refusal or nothing otherwise (merge re-bless)
+
+Command:
+`cargo xtask goldens bless rust_field_construction_token_coincidence --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

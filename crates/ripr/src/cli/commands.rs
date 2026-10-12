@@ -162,18 +162,8 @@ pub(super) fn outcome(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_outcome_options(args)?;
-    let before_json = crate::bounded_input::read_to_string(&options.before).map_err(|err| {
-        format!(
-            "read {} failed: {err}",
-            output::outcome::display_path(&options.before)
-        )
-    })?;
-    let after_json = crate::bounded_input::read_to_string(&options.after).map_err(|err| {
-        format!(
-            "read {} failed: {err}",
-            output::outcome::display_path(&options.after)
-        )
-    })?;
+    let before_json = read_calibration_text(&options.before, SnapshotCaptureKind::Outcome)?;
+    let after_json = read_calibration_text(&options.after, SnapshotCaptureKind::Outcome)?;
     let report = output::outcome::targeted_test_outcome_report_from_json(
         &before_json,
         &after_json,
@@ -553,6 +543,10 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
             options.root
         ));
     }
+    // Persist the producer's selected directory, not a label that a consumer
+    // would resolve in its own invocation directory (#7382).
+    let selected_root = std::fs::canonicalize(&options.root)
+        .map_err(|error| format!("resolve gap-ledger root {} failed: {error}", options.root))?;
     let records_path = ledger_source_path(options.source.path())?;
     // An unreadable source means the command could not complete for the same
     // reason: refuse before writing a `blocked` ledger.
@@ -564,13 +558,22 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
             )
         })?;
     let input = output::gap_decision_ledger::GapDecisionLedgerInput {
-        root: options.root,
+        // `root` is consumed as a native path. Display escaping would turn
+        // a literal `%` into a different directory named `%25` (#7382).
+        root: selected_root
+            .to_str()
+            .ok_or_else(|| {
+                format!(
+                    "reports gap-ledger root {} resolves to a non-UTF-8 path; select a UTF-8 repository root",
+                    options.root
+                )
+            })?
+            .to_string(),
         generated_at: gap_decision_ledger_generated_at()?,
         source_kind: options.source.kind(),
         records_path,
         records_json: Ok(records_json),
     };
-    let selected_root = PathBuf::from(&input.root);
     let mut report = output::gap_decision_ledger::build_gap_decision_ledger_report(input);
     output::gap_decision_ledger::stamp_gap_decision_ledger_source_subject(
         &mut report,
@@ -1184,13 +1187,10 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
     }
 
     let options = parse_calibrate_cargo_mutants_options(rest)?;
-    let repo_exposure_json = crate::bounded_input::read_to_string(&options.repo_exposure_json)
-        .map_err(|err| {
-            format!(
-                "read {} failed: {err}",
-                output::outcome::display_path(&options.repo_exposure_json)
-            )
-        })?;
+    let repo_exposure_json = read_calibration_text(
+        &options.repo_exposure_json,
+        SnapshotCaptureKind::RepoExposure,
+    )?;
     let mutants_json = read_calibration_mutants_json(&options.mutants_json)?;
     let report = output::mutation_calibration::mutation_calibration_report_from_json(
         &repo_exposure_json,
@@ -1287,21 +1287,21 @@ fn read_calibration_mutants_json(path: &Path) -> Result<String, String> {
         }
 
         if outcomes_exists {
-            return read_calibration_text(&outcomes_path);
+            return read_calibration_text(&outcomes_path, SnapshotCaptureKind::CargoMutants);
         }
         if mutants_exists {
-            return read_calibration_text(&mutants_path);
+            return read_calibration_text(&mutants_path, SnapshotCaptureKind::CargoMutants);
         }
         return Err(format!(
             "{} is a directory but contains neither outcomes.json nor mutants.json",
             output::outcome::display_path(path)
         ));
     }
-    read_calibration_text(path)
+    read_calibration_text(path, SnapshotCaptureKind::CargoMutants)
 }
 
 fn read_json_value(path: &Path) -> Result<serde_json::Value, String> {
-    let text = read_calibration_text(path)?;
+    let text = read_calibration_text(path, SnapshotCaptureKind::CargoMutants)?;
     serde_json::from_str(&text).map_err(|err| {
         format!(
             "failed to parse JSON from {}: {err}",
@@ -1310,9 +1310,45 @@ fn read_json_value(path: &Path) -> Result<serde_json::Value, String> {
     })
 }
 
-fn read_calibration_text(path: &Path) -> Result<String, String> {
-    crate::bounded_input::read_to_string(path)
-        .map_err(|err| format!("read {} failed: {err}", output::outcome::display_path(path)))
+/// Capture command named when a snapshot path is missing, so first-run
+/// `outcome` / `calibrate cargo-mutants` do not stop on a raw OS error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SnapshotCaptureKind {
+    Outcome,
+    RepoExposure,
+    CargoMutants,
+}
+
+fn snapshot_capture_hint(kind: SnapshotCaptureKind, displayed_path: &str) -> String {
+    // Quote after `display_path`: the NotFound prefix stays human-readable,
+    // but the pasted redirect must remain one shell token (#7349, #5188).
+    let quoted_path = crate::agent::loop_commands::shell_arg(displayed_path);
+    match kind {
+        SnapshotCaptureKind::Outcome => format!(
+            "Run `ripr check --format repo-exposure-json > {quoted_path}` first, or pass a `ripr check --json` output."
+        ),
+        SnapshotCaptureKind::RepoExposure => {
+            format!("Run `ripr check --format repo-exposure-json > {quoted_path}` first.")
+        }
+        SnapshotCaptureKind::CargoMutants => {
+            "Run `cargo mutants` first, then pass its output directory or `outcomes.json`."
+                .to_string()
+        }
+    }
+}
+
+fn read_calibration_text(path: &Path, kind: SnapshotCaptureKind) -> Result<String, String> {
+    crate::bounded_input::read_to_string(path).map_err(|err| {
+        let displayed = output::outcome::display_path(path);
+        if err.kind() == std::io::ErrorKind::NotFound {
+            format!(
+                "read {displayed} failed: not found. {}",
+                snapshot_capture_hint(kind, &displayed)
+            )
+        } else {
+            format!("read {displayed} failed: {err}")
+        }
+    })
 }
 
 fn parse_outcome_options(args: &[String]) -> Result<OutcomeOptions, String> {
@@ -2768,20 +2804,78 @@ struct DiffOptions {
     explicit: CheckInputExplicit,
 }
 
+/// The `ripr diff --json` refusal envelope keys its document with the diff
+/// report's schema version (#7331). Owner: the `DiffReport.schema_version`
+/// literal in `output/diff_report.rs` (pinned there by the output-contract
+/// version gate), mirrored here because the report value exists only on the
+/// success path.
+const DIFF_REFUSAL_SCHEMA_VERSION: &str = "0.1";
+
 pub(super) fn diff(args: &[String]) -> Result<(), String> {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         help::print_diff_help();
         return Ok(());
     }
     let options = parse_diff_options(args)?;
-    let config = load_for_root(&options.root)?;
+    let json = matches!(options.format, DiffReportFormat::Json);
+    // #7331: every post-argv-parse failure of a JSON diff run writes the
+    // shared refusal envelope (the diff report's own schema version) to
+    // stdout before the prose error reaches stderr. Argv usage errors above
+    // stay prose-only. Config loading comes first and has no merged mode
+    // yet, so its refusal names the parsed mode.
+    let config = load_for_root(&options.root).map_err(|err| {
+        let error = crate::cli::commands_context::config_load_refusal(&options.root, err);
+        if !json {
+            return error.to_string();
+        }
+        crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(options.mode.as_str()),
+            &options.root,
+            options.base.as_deref(),
+            error,
+        )
+    })?;
+    // Effective mode after config merging: `run_diff_check_from_file`
+    // applies `config.analysis.mode()` unless `--mode` was explicit, and a
+    // later refusal must name the mode the check actually ran with, not
+    // the pre-merge default (#7331 review).
+    let effective_mode = if options.explicit.mode {
+        options.mode.clone()
+    } else {
+        config
+            .analysis
+            .mode()
+            .cloned()
+            .unwrap_or_else(|| options.mode.clone())
+    };
+    let refuse = |error: crate::core_error::CoreError| -> String {
+        if !json {
+            return error.to_string();
+        }
+        crate::cli::commands_context::refuse_json_envelope(
+            DIFF_REFUSAL_SCHEMA_VERSION,
+            "diff",
+            Some(effective_mode.as_str()),
+            &options.root,
+            options.base.as_deref(),
+            error,
+        )
+    };
     // #3952 / RIPR-SPEC-0084: an omitted --base resolves the repository's
     // default branch through the same authority as `ripr check`, and an
     // explicit one is verified there, instead of assuming `origin/main`.
-    let base = analysis::resolve_effective_base(&options.root, options.base.as_deref(), None)?;
-    let diff_text = analysis::load_diff_range(&options.root, &base, &options.head)?;
+    // The typed core keeps the refusal identity (`base_unresolvable` /
+    // `repository_root_unusable`) that the String wrapper would flatten
+    // (#7331); Display is a pure projection, so stderr prose is unchanged.
+    let base = analysis::resolve_effective_base_core(&options.root, options.base.as_deref(), None)
+        .map_err(&refuse)?;
+    let diff_text = analysis::load_diff_range(&options.root, &base, &options.head)
+        .map_err(|err| refuse(crate::core_error::CoreError::from(err)))?;
     let changed_files = diff_changed_files_from_text(&diff_text);
-    let diff_file = crate::app::temp_diff::write_temporary_diff_file(&diff_text)?;
+    let diff_file = crate::app::temp_diff::write_temporary_diff_file(&diff_text)
+        .map_err(|err| refuse(crate::core_error::CoreError::from(err)))?;
 
     let check_result = run_diff_check_from_file(&options, &base, &config, &diff_file);
     let _ = std::fs::remove_file(&diff_file);
@@ -2790,7 +2884,7 @@ pub(super) fn diff(args: &[String]) -> Result<(), String> {
     if let Some(parent) = diff_file.parent() {
         let _ = std::fs::remove_dir(parent);
     }
-    let output = check_result?;
+    let output = check_result.map_err(|err| refuse(crate::core_error::CoreError::from(err)))?;
 
     let report = output::diff_report::build_diff_report(
         &output,
@@ -6799,21 +6893,83 @@ language = "rust"
         std::fs::write(&before, outcome_before_json())
             .map_err(|err| format!("write before snapshot: {err}"))?;
 
-        let missing_before = outcome(&args(&[
-            "--before",
-            &dir.join("missing-before.json").display().to_string(),
-            "--after",
-            &dir.join("missing-after.json").display().to_string(),
-        ]));
-        assert!(matches!(missing_before, Err(message) if message.contains("read")));
+        let missing_before_path = dir.join("missing-before.json");
+        let missing_before_display = output::outcome::display_path(&missing_before_path);
+        let missing_before = err_message(
+            outcome(&args(&[
+                "--before",
+                &missing_before_path.display().to_string(),
+                "--after",
+                &dir.join("missing-after.json").display().to_string(),
+            ])),
+            "missing --before must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &missing_before,
+            &missing_before_display,
+            &format!("ripr check --format repo-exposure-json > {missing_before_display}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            missing_before.contains("ripr check --json"),
+            "outcome snapshots also accept check JSON:\n{missing_before}"
+        );
 
-        let missing_after = outcome(&args(&[
-            "--before",
-            &before.display().to_string(),
-            "--after",
-            &dir.join("missing-after.json").display().to_string(),
-        ]));
-        assert!(matches!(missing_after, Err(message) if message.contains("read")));
+        let missing_after_path = dir.join("missing-after.json");
+        let missing_after_display = output::outcome::display_path(&missing_after_path);
+        let missing_after = err_message(
+            outcome(&args(&[
+                "--before",
+                &before.display().to_string(),
+                "--after",
+                &missing_after_path.display().to_string(),
+            ])),
+            "missing --after must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &missing_after,
+            &missing_after_display,
+            &format!("ripr check --format repo-exposure-json > {missing_after_display}"),
+            &["cargo mutants"],
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn outcome_non_not_found_read_error_keeps_raw_io_and_omits_capture_hint() -> Result<(), String>
+    {
+        let dir = unique_command_test_dir("outcome-invalid-utf8");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let before = dir.join("before.json");
+        let after = dir.join("after.json");
+        std::fs::write(&before, [0xff, 0xfe])
+            .map_err(|err| format!("write invalid before: {err}"))?;
+        std::fs::write(&after, outcome_after_json())
+            .map_err(|err| format!("write after snapshot: {err}"))?;
+
+        let message = err_message(
+            outcome(&args(&[
+                "--before",
+                &before.display().to_string(),
+                "--after",
+                &after.display().to_string(),
+            ])),
+            "invalid UTF-8 must fail",
+        )?;
+        let displayed = output::outcome::display_path(&before);
+        assert!(
+            message.starts_with(&format!("read {displayed} failed:")),
+            "{message}"
+        );
+        assert!(
+            !message.contains("not found"),
+            "non-NotFound must keep the raw I/O reason:\n{message}"
+        );
+        assert!(
+            !message.contains("ripr check --format repo-exposure-json"),
+            "capture hint is NotFound-only:\n{message}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
     }
@@ -6898,6 +7054,278 @@ language = "rust"
         assert!(rendered.contains(r#""static_gap_and_runtime_signal": 1"#));
         let _ = std::fs::remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[test]
+    fn calibrate_missing_inputs_name_the_caller_capture_command() -> Result<(), String> {
+        let dir = unique_command_test_dir("calibrate-missing");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let repo = dir.join("repo-exposure.json");
+        std::fs::write(&repo, calibration_repo_json())
+            .map_err(|err| format!("write repo exposure: {err}"))?;
+
+        let missing_mutants = dir.join("missing-mutants.json");
+        let missing_mutants_display = output::outcome::display_path(&missing_mutants);
+        let mutants_message = err_message(
+            calibrate(&args(&[
+                "cargo-mutants",
+                "--mutants-json",
+                &missing_mutants.display().to_string(),
+                "--repo-exposure-json",
+                &repo.display().to_string(),
+            ])),
+            "missing --mutants-json must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &mutants_message,
+            &missing_mutants_display,
+            "cargo mutants",
+            &[
+                "ripr check --format repo-exposure-json",
+                "ripr check --json",
+            ],
+        );
+
+        let missing_repo = dir.join("missing-repo-exposure.json");
+        let missing_repo_display = output::outcome::display_path(&missing_repo);
+        let repo_message = err_message(
+            calibrate(&args(&[
+                "cargo-mutants",
+                "--mutants-json",
+                &missing_mutants.display().to_string(),
+                "--repo-exposure-json",
+                &missing_repo.display().to_string(),
+            ])),
+            "missing --repo-exposure-json must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &repo_message,
+            &missing_repo_display,
+            &format!("ripr check --format repo-exposure-json > {missing_repo_display}"),
+            &["cargo mutants", "ripr check --json"],
+        );
+
+        let empty_dir = dir.join("empty-mutants-out");
+        std::fs::create_dir_all(&empty_dir).map_err(|err| format!("create empty dir: {err}"))?;
+        let directory_message = err_message(
+            calibrate(&args(&[
+                "cargo-mutants",
+                "--mutants-json",
+                &empty_dir.display().to_string(),
+                "--repo-exposure-json",
+                &repo.display().to_string(),
+            ])),
+            "empty cargo-mutants directory must fail",
+        )?;
+        assert!(
+            directory_message
+                .contains("is a directory but contains neither outcomes.json nor mutants.json"),
+            "{directory_message}"
+        );
+        assert!(
+            !directory_message.contains("Run `cargo mutants` first"),
+            "directory contents error is not NotFound:\n{directory_message}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn read_calibration_text_names_capture_command_per_kind() -> Result<(), String> {
+        let missing = PathBuf::from("definitely-missing-snapshot.json");
+        let outcome = err_message(
+            read_calibration_text(&missing, SnapshotCaptureKind::Outcome),
+            "missing outcome snapshot must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &outcome,
+            "definitely-missing-snapshot.json",
+            "ripr check --format repo-exposure-json > definitely-missing-snapshot.json",
+            &["cargo mutants"],
+        );
+        assert!(
+            outcome.contains("ripr check --json"),
+            "outcome kind must mention check JSON:\n{outcome}"
+        );
+
+        let repo = err_message(
+            read_calibration_text(&missing, SnapshotCaptureKind::RepoExposure),
+            "missing repo-exposure snapshot must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &repo,
+            "definitely-missing-snapshot.json",
+            "ripr check --format repo-exposure-json > definitely-missing-snapshot.json",
+            &["cargo mutants", "ripr check --json"],
+        );
+
+        let mutants = err_message(
+            read_calibration_text(&missing, SnapshotCaptureKind::CargoMutants),
+            "missing cargo-mutants snapshot must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &mutants,
+            "definitely-missing-snapshot.json",
+            "cargo mutants",
+            &[
+                "ripr check --format repo-exposure-json",
+                "ripr check --json",
+            ],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn read_calibration_text_quotes_spaced_not_found_redirect_and_keeps_plain_path_bare()
+    -> Result<(), String> {
+        use crate::agent::loop_commands::shell_arg;
+
+        let plain = PathBuf::from("definitely-missing-snapshot.json");
+        let plain_display = output::outcome::display_path(&plain);
+        assert_eq!(
+            shell_arg(&plain_display),
+            plain_display,
+            "control path must stay a bare shell token"
+        );
+        let plain_message = err_message(
+            read_calibration_text(&plain, SnapshotCaptureKind::Outcome),
+            "plain missing outcome snapshot must fail",
+        )?;
+        assert_missing_snapshot_named_capture(
+            &plain_message,
+            &plain_display,
+            &format!("ripr check --format repo-exposure-json > {plain_display}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            !plain_message.contains(&format!("> '{plain_display}'")),
+            "unambiguous redirect must stay unquoted:\n{plain_message}"
+        );
+
+        let spaced = PathBuf::from("missing snapshot.json");
+        let spaced_display = output::outcome::display_path(&spaced);
+        let quoted = shell_arg(&spaced_display);
+        assert_ne!(
+            quoted, spaced_display,
+            "a space must force quoting of the redirect token"
+        );
+        assert!(
+            spaced_display.contains(' '),
+            "fixture path must contain a space: {spaced_display}"
+        );
+
+        let outcome = err_message(
+            read_calibration_text(&spaced, SnapshotCaptureKind::Outcome),
+            "spaced missing outcome snapshot must fail",
+        )?;
+        assert!(
+            outcome.starts_with(&format!("read {spaced_display} failed: not found.")),
+            "NotFound prefix stays unquoted:\n{outcome}"
+        );
+        assert_missing_snapshot_named_capture(
+            &outcome,
+            &spaced_display,
+            &format!("ripr check --format repo-exposure-json > {quoted}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            !outcome.contains(&format!("> {spaced_display}`")),
+            "spaced redirect must not stay bare:\n{outcome}"
+        );
+
+        let repo = err_message(
+            read_calibration_text(&spaced, SnapshotCaptureKind::RepoExposure),
+            "spaced missing repo-exposure snapshot must fail",
+        )?;
+        assert!(
+            repo.starts_with(&format!("read {spaced_display} failed: not found.")),
+            "RepoExposure prefix stays unquoted:\n{repo}"
+        );
+        assert_missing_snapshot_named_capture(
+            &repo,
+            &spaced_display,
+            &format!("ripr check --format repo-exposure-json > {quoted}"),
+            &["cargo mutants", "ripr check --json"],
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn outcome_not_found_quotes_spaced_capture_redirect() -> Result<(), String> {
+        use crate::agent::loop_commands::shell_arg;
+
+        let dir = unique_command_test_dir("outcome-spaced");
+        std::fs::create_dir_all(&dir).map_err(|err| format!("create temp dir: {err}"))?;
+        let missing_before = dir.join("missing before.json");
+        let displayed = output::outcome::display_path(&missing_before);
+        let quoted = shell_arg(&displayed);
+        assert!(
+            displayed.contains(' '),
+            "CLI fixture path must contain a space: {displayed}"
+        );
+        assert_ne!(quoted, displayed);
+
+        let message = err_message(
+            outcome(&args(&[
+                "--before",
+                &missing_before.display().to_string(),
+                "--after",
+                &dir.join("after.json").display().to_string(),
+            ])),
+            "spaced missing --before must fail",
+        )?;
+        assert!(
+            message.starts_with(&format!("read {displayed} failed: not found.")),
+            "CLI NotFound prefix stays unquoted:\n{message}"
+        );
+        assert_missing_snapshot_named_capture(
+            &message,
+            &displayed,
+            &format!("ripr check --format repo-exposure-json > {quoted}"),
+            &["cargo mutants"],
+        );
+        assert!(
+            !message.contains(&format!("> {displayed}`")),
+            "CLI spaced redirect must not stay bare:\n{message}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        Ok(())
+    }
+
+    fn err_message<T: std::fmt::Debug>(
+        result: Result<T, String>,
+        context: &str,
+    ) -> Result<String, String> {
+        match result {
+            Err(message) => Ok(message),
+            Ok(value) => Err(format!("{context}; got Ok({value:?})")),
+        }
+    }
+
+    fn assert_missing_snapshot_named_capture(
+        message: &str,
+        displayed_path: &str,
+        expected_command: &str,
+        forbidden: &[&str],
+    ) {
+        assert!(
+            message.starts_with(&format!("read {displayed_path} failed: not found.")),
+            "{message}"
+        );
+        assert!(
+            !message.contains("os error"),
+            "NotFound must name the capture command instead of a raw OS error:\n{message}"
+        );
+        assert!(
+            message.contains(expected_command),
+            "expected {expected_command:?} in:\n{message}"
+        );
+        for fragment in forbidden {
+            assert!(
+                !message.contains(fragment),
+                "caller-specific hint must not include {fragment:?}:\n{message}"
+            );
+        }
     }
 
     #[test]

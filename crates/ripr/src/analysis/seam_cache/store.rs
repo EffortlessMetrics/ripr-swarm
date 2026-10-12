@@ -18,7 +18,7 @@ use crate::analysis::seam_classification::reset_classified_seam_clone_count;
 use serde::Serialize;
 use std::io::{self, Write};
 use std::ops::Range;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[cfg(test)]
 std::thread_local! {
@@ -29,6 +29,8 @@ std::thread_local! {
     static FAIL_AFTER_PARK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static AFTER_COMMIT_HOOK: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
         const { std::cell::RefCell::new(None) };
+    static LOCK_WAIT_OVERRIDE: std::cell::Cell<Option<std::time::Duration>> =
+        const { std::cell::Cell::new(None) };
     static PLAN_MODEL_MISMATCHES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static MODEL_SKEW: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -114,14 +116,34 @@ pub(super) fn publish_classified_generation(
         return Err("classified seam cache encoded shard ceiling must be positive".to_string());
     }
     crate::analysis::cancellation::checkpoint()?;
-    match plan_publication(
+    let plan = plan_publication(
         key,
         seams,
         limit_info,
         lexical_fallback_files,
         record_limit,
         byte_ceiling,
-    )? {
+    )?;
+    if let PublicationPlan::SkipOversized {
+        index,
+        encoded_bytes,
+    } = plan
+    {
+        return Ok(oversized_skip_status(index, encoded_bytes, byte_ceiling));
+    }
+    // One writer per key from the first mutation through cleanup, so the
+    // stat-then-remove and rollback-restore windows cannot interleave.
+    let _publication_lock = match acquire_publication_lock(cache, key)? {
+        PublicationLock::Held(lock) => Some(lock),
+        PublicationLock::Unsupported => None,
+        PublicationLock::Busy => {
+            return Ok(CacheStoreStatus {
+                label: PUBLICATION_BUSY_LABEL.to_string(),
+                advisory: None,
+            });
+        }
+    };
+    match plan {
         PublicationPlan::SkipOversized {
             index,
             encoded_bytes,
@@ -138,6 +160,74 @@ pub(super) fn publish_classified_generation(
             record_limit,
             ranges,
         ),
+    }
+}
+
+const PUBLICATION_BUSY_LABEL: &str = "skipped_publication_busy";
+const PUBLICATION_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+const PUBLICATION_LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+
+fn publication_lock_wait() -> std::time::Duration {
+    #[cfg(test)]
+    if let Some(wait) = LOCK_WAIT_OVERRIDE.with(std::cell::Cell::get) {
+        return wait;
+    }
+    PUBLICATION_LOCK_WAIT
+}
+
+/// Holds the advisory lock until dropped. The OS also releases it when the
+/// file closes or the process dies, so a crashed writer never leaves a stale lock.
+struct PublicationLockGuard(std::fs::File);
+
+impl Drop for PublicationLockGuard {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+enum PublicationLock {
+    Held(PublicationLockGuard),
+    /// Another writer holds the key past the wait; skip rather than race it.
+    Busy,
+    /// The lock file or the filesystem cannot lock; publish as before.
+    Unsupported,
+}
+
+/// Take the per-key advisory publication lock in the sharded layer directory.
+/// Readers never lock. A cache that cannot lock (read-only mount, a
+/// filesystem without advisory locks) keeps the unlocked behavior, since
+/// cache writes are best effort. Cancellation is checked while waiting.
+fn acquire_publication_lock(
+    cache: &RepoSeamFactCache,
+    key: &RepoSeamCacheKey,
+) -> Result<PublicationLock, String> {
+    let stem = key.filename();
+    let stem = stem.strip_suffix(".json").unwrap_or(stem.as_str());
+    let name = format!("{stem}.lock");
+    if std::fs::create_dir_all(&cache.sharded_dir).is_err() {
+        return Ok(PublicationLock::Unsupported);
+    }
+    let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(cache.sharded_dir.join(name))
+    else {
+        return Ok(PublicationLock::Unsupported);
+    };
+    let deadline = std::time::Instant::now() + publication_lock_wait();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(PublicationLock::Held(PublicationLockGuard(file))),
+            Err(std::fs::TryLockError::WouldBlock) => {
+                if std::time::Instant::now() >= deadline {
+                    return Ok(PublicationLock::Busy);
+                }
+                crate::analysis::cancellation::checkpoint()?;
+                std::thread::sleep(PUBLICATION_LOCK_POLL);
+            }
+            Err(std::fs::TryLockError::Error(_)) => return Ok(PublicationLock::Unsupported),
+        }
     }
 }
 
@@ -621,12 +711,50 @@ fn remove_replaced_generation_files(
             continue;
         }
         if let Ok(path) = resolve_sharded_cache_file(sharded_dir, &shard.file) {
+            if !has_no_symlinked_ancestor(sharded_dir, &path) {
+                continue;
+            }
             let _ = std::fs::remove_file(&path);
             if let Some(parent) = path.parent().filter(|parent| *parent != sharded_dir) {
                 let _ = std::fs::remove_dir(parent);
             }
         }
     }
+}
+
+/// True when `root` and no directory between it and `path` (exclusive) is a
+/// symlink, so a delete through `path` cannot leave the cache. An unreadable
+/// component counts as unsafe: cleanup is best effort, so it skips.
+fn has_no_symlinked_ancestor(root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(root) else {
+        return false;
+    };
+    // The entry directory itself must be a real directory, or every descendant
+    // check below would run inside the symlink target.
+    match std::fs::symlink_metadata(root) {
+        Ok(meta) if meta.file_type().is_dir() => {}
+        _ => return false,
+    }
+    let mut current = root.to_path_buf();
+    let mut components = relative.components().peekable();
+    while let Some(component) = components.next() {
+        // Defense in depth: the caller resolves the path, but a `..` or root
+        // component must never reach a delete, including as the last component.
+        if !matches!(component, Component::Normal(_)) {
+            return false;
+        }
+        // The last component is the file itself; `remove_file` unlinks a symlink
+        // there without following it.
+        if components.peek().is_none() {
+            return true;
+        }
+        current.push(component);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_dir() => {}
+            _ => return false,
+        }
+    }
+    true
 }
 
 struct UnpublishedGeneration {
@@ -1117,6 +1245,7 @@ mod tests {
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "discriminate"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         ClassifiedSeam {
@@ -1946,6 +2075,81 @@ mod tests {
     }
 
     #[test]
+    fn publication_skips_while_another_writer_holds_the_key_lock() -> Result<(), String> {
+        let (dir, cache, key, seams) = sharded_fixture("publication-lock", 6)?;
+        LOCK_WAIT_OVERRIDE.with(|wait| wait.set(Some(std::time::Duration::from_millis(50))));
+        std::fs::create_dir_all(&cache.sharded_dir).map_err(|err| err.to_string())?;
+        let stem = key.filename();
+        let stem = stem.strip_suffix(".json").unwrap_or(stem.as_str());
+        let lock_path = cache.sharded_dir.join(format!("{stem}.lock"));
+        let holder = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .map_err(|err| err.to_string())?;
+        holder
+            .try_lock()
+            .map_err(|err| format!("fixture must take the key lock: {err:?}"))?;
+        let busy = cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        assert_eq!(busy.label, PUBLICATION_BUSY_LABEL);
+        assert!(
+            busy.advisory.is_none(),
+            "another writer is publishing this key, so no next step is owed"
+        );
+        assert!(
+            !cache.sharded_manifest_path(&key).exists() && !cache.entry_path(&key).exists(),
+            "a skipped publication must not mutate the cache"
+        );
+        holder.unlock().map_err(|err| err.to_string())?;
+        // The lock file stays behind; an unlocked leftover must not block a writer.
+        assert!(lock_path.exists());
+        let stored = cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        assert_ne!(stored.label, PUBLICATION_BUSY_LABEL);
+        round_trip(&cache, &key, &seams)?;
+        LOCK_WAIT_OVERRIDE.with(|wait| wait.set(None));
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn publication_skips_a_competing_publisher_inside_the_commit_window() -> Result<(), String> {
+        // Writer B publishes the same key from inside writer A's sharded
+        // commit window (via the after-commit hook, while A still holds
+        // the key lock): B must see Busy and mutate nothing, and A must
+        // complete with its own seams intact.
+        let (dir, cache, key, seams) = sharded_fixture("publication-race", 6)?;
+        LOCK_WAIT_OVERRIDE.with(|wait| wait.set(Some(std::time::Duration::from_millis(50))));
+        let cache = std::rc::Rc::new(cache);
+        let cache_b = std::rc::Rc::clone(&cache);
+        let key_b = key.clone();
+        let rival = vec![classified_with_pad("rival-publisher")];
+        let seen = std::rc::Rc::new(std::cell::RefCell::new(None));
+        let seen_b = std::rc::Rc::clone(&seen);
+        after_next_manifest_commit(Box::new(move || {
+            let status = cache_b.store_classified_seams_with_record_and_byte_limits(
+                &key_b, &rival, None, 2, 1_000_000,
+            );
+            *seen_b.borrow_mut() = Some(status.map(|status| status.label));
+        }));
+        let stored = cache
+            .store_classified_seams_with_record_and_byte_limits(&key, &seams, None, 2, 1_000_000)?;
+        assert_ne!(stored.label, PUBLICATION_BUSY_LABEL);
+        let seen_label = seen.borrow().clone().transpose()?;
+        assert_eq!(
+            seen_label.as_deref(),
+            Some(PUBLICATION_BUSY_LABEL),
+            "the competing publish must have run inside the commit window and seen Busy"
+        );
+        round_trip(&cache, &key, &seams)?;
+        LOCK_WAIT_OVERRIDE.with(|wait| wait.set(None));
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
     fn single_entry_published_after_a_sharded_commit_is_kept() -> Result<(), String> {
         let (dir, cache, key, seams) = sharded_fixture("newer-single", 6)?;
         let newer = vec![classified_with_pad("newer-single")];
@@ -2110,6 +2314,83 @@ mod tests {
         }
         ignore_remove_dir_all(&dir);
         Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_generation_cleanup_does_not_follow_a_symlinked_generation_directory()
+    -> Result<(), String> {
+        let dir = isolated_dir("cleanup-symlink");
+        ignore_remove_dir_all(&dir);
+        let outside = isolated_dir("cleanup-symlink-outside");
+        ignore_remove_dir_all(&outside);
+        let real = dir.join("g1-1-0");
+        std::fs::create_dir_all(&real).map_err(|err| err.to_string())?;
+        std::fs::write(real.join("shard-00000.json"), b"old").map_err(|err| err.to_string())?;
+        std::fs::create_dir_all(&outside).map_err(|err| err.to_string())?;
+        std::fs::write(outside.join("victim.json"), b"must survive")
+            .map_err(|err| err.to_string())?;
+        std::os::unix::fs::symlink(&outside, dir.join("g2-2-0")).map_err(|err| err.to_string())?;
+        let refs = ["g1-1-0/shard-00000.json", "g2-2-0/victim.json"]
+            .iter()
+            .enumerate()
+            .map(|(index, file)| ShardedCacheShardRef {
+                index,
+                file: (*file).to_string(),
+                seams: 1,
+            })
+            .collect();
+        let previous = ShardedCacheManifest::new(empty_key(), 2, 2, refs, None, Vec::new());
+        remove_replaced_generation_files(&dir, &previous, "3-3-0");
+        assert!(
+            !real.join("shard-00000.json").exists(),
+            "a file in a real generation directory is still removed"
+        );
+        assert!(
+            outside.join("victim.json").exists(),
+            "a file reached through a symlinked generation directory must survive"
+        );
+        ignore_remove_dir_all(&dir);
+        ignore_remove_dir_all(&outside);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn replaced_generation_cleanup_does_not_follow_a_symlinked_entry_directory()
+    -> Result<(), String> {
+        let base = isolated_dir("cleanup-symlink-root");
+        ignore_remove_dir_all(&base);
+        let outside = base.join("outside");
+        std::fs::create_dir_all(outside.join("g1-1-0")).map_err(|err| err.to_string())?;
+        std::fs::write(outside.join("g1-1-0/victim.json"), b"must survive")
+            .map_err(|err| err.to_string())?;
+        let entry = base.join("entry");
+        std::os::unix::fs::symlink(&outside, &entry).map_err(|err| err.to_string())?;
+        let refs = vec![ShardedCacheShardRef {
+            index: 0,
+            file: "g1-1-0/victim.json".to_string(),
+            seams: 1,
+        }];
+        let previous = ShardedCacheManifest::new(empty_key(), 2, 1, refs, None, Vec::new());
+        remove_replaced_generation_files(&entry, &previous, "3-3-0");
+        assert!(
+            outside.join("g1-1-0/victim.json").exists(),
+            "a symlinked entry directory must not be a delete root"
+        );
+        ignore_remove_dir_all(&base);
+        Ok(())
+    }
+
+    #[test]
+    fn symlink_guard_rejects_parent_and_root_components() {
+        let root = Path::new("/cache/sharded");
+        assert!(!has_no_symlinked_ancestor(root, &root.join("g1/../x.json")));
+        assert!(!has_no_symlinked_ancestor(root, &root.join("g1/..")));
+        assert!(!has_no_symlinked_ancestor(
+            root,
+            Path::new("/elsewhere/x.json")
+        ));
     }
 
     #[test]

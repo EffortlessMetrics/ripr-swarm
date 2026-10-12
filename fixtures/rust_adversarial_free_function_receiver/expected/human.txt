@@ -26,7 +26,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/rust_adversarial_free_function_receiver/input --diff <cwd>/fixtures/rust_adversarial_free_function_receiver/diff.patch --mode fast probe:src_lib.rs:return_value:5518343a
   ripr context --root <cwd>/fixtures/rust_adversarial_free_function_receiver/input --diff <cwd>/fixtures/rust_adversarial_free_function_receiver/diff.patch --mode fast --at probe:src_lib.rs:return_value:5518343a
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/rust_adversarial_free_function_receiver/input --at src/lib.rs:16
+  ripr agent stub --root <cwd>/fixtures/rust_adversarial_free_function_receiver/input --at src/lib.rs:16 --kind return_value
 
 Hidden:
   All 1 omitted finding(s) are base-side evidence, not candidate edit targets.

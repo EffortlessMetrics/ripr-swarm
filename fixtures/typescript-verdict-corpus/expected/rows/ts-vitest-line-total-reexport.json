@@ -1,0 +1,22 @@
+{
+  "case_id": "ts-vitest-line-total-reexport",
+  "subject_id": "authored-ts-vitest-cart",
+  "origin": "authored",
+  "anchor": "src/cart.ts:12",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "vitest_to_be_through_index_reexport",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

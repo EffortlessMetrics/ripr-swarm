@@ -1,4 +1,5 @@
 use crate::agent::loop_commands::shell_arg;
+use crate::app::test_stub::StubRouteDecision;
 use crate::app::{CheckDiffProvenance, CheckOutput, FindingDrillIn};
 use crate::config::RiprConfig;
 use crate::domain::{
@@ -287,16 +288,21 @@ pub(crate) fn render_human_triage(
                     .and_then(|ext| ext.to_str())
                     == Some("rs")
             {
-                // `--at` resolves against `--root`, so name the file
-                // relative to it, not as the checkout-relative display path.
-                let location = &finding.probe.location.file;
-                let relative = location.strip_prefix(&output.root).unwrap_or(location);
-                let file = display_path(relative);
-                let command = navigation
-                    .stub_command(file.trim_start_matches("./"), finding.probe.location.line);
-                out.push_str("Write a test for it:\n");
-                out.push_str(&format!("  {command}\n"));
-                super::push_powershell_variant(out, "  ", &command);
+                // #5471: only when the check pipeline ran the stub's own
+                // resolver for this finding and it produced a stub; a refusal
+                // prints its reason, and no decision prints nothing.
+                match navigation.stub_route_for(&finding.id) {
+                    Some(StubRouteDecision::Stub { file, line, kind }) => {
+                        let command = navigation.stub_command(file, *line, kind);
+                        out.push_str("Write a test for it:\n");
+                        out.push_str(&format!("  {command}\n"));
+                        super::push_powershell_variant(out, "  ", &command);
+                    }
+                    Some(StubRouteDecision::Refused { reason }) => {
+                        out.push_str(&format!("No test stub here: {reason}\n"));
+                    }
+                    None => {}
+                }
             }
         }
     }
@@ -413,7 +419,9 @@ pub(crate) fn canonical_next_action_for_triage(
             navigation.explain_command(&finding.id)
         }
         (Some(finding), None) => finding.id.clone(),
-        (None, _) => scope.clone(),
+        // No inspect target: omit a followable route rather than publishing
+        // a scope descriptor such as `no_scope` as if it were a command.
+        (None, _) => String::new(),
     };
     let mut alternatives: Vec<NextActionAlternative> = Vec::new();
     for omitted in triage.omitted.iter().take(2) {
@@ -438,10 +446,11 @@ pub(crate) fn canonical_next_action_for_triage(
         producer: NextActionProducer::CheckTopResult,
         root,
         // The diff-source mode comes from the producer's declared
-        // provenance, never from base presence: a `--worktree` run
-        // resolves a base yet analyzes the live tree, while a supplied
-        // scope has no base yet is fixed replayable content, not the
-        // live tree.
+        // provenance of the effective analysis source (#7257), never
+        // from base presence and never re-inferred here: a `--worktree`
+        // run or dirty-default worktree run resolves a base yet analyzes
+        // the live tree, while a supplied scope has no base yet is fixed
+        // replayable content, not the live tree.
         diff_source: match provenance {
             CheckDiffProvenance::Worktree => NextActionDiffSource::WorkingTree { head: None },
             CheckDiffProvenance::SuppliedScope => NextActionDiffSource::Committed {
@@ -523,7 +532,7 @@ fn check_case_or_fallback(
     canonical_next_action_for_triage(triage, output, drill_in, provenance)
         .ok()
         .and_then(|action| match action.stop() {
-            Some(NextActionStop::CheckTriage { case }) => Some(*case),
+            Some(NextActionStop::CheckTriage { case, .. }) => Some(*case),
             _ => None,
         })
         .unwrap_or_else(|| check_case_for_triage(triage, output))
@@ -1095,7 +1104,15 @@ mod tests {
             return Err("omitted alternative lost its identity".to_string());
         }
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case }) if *case == NextActionCheckCase::TopGap => {}
+            Some(NextActionStop::CheckTriage { case, detail_route })
+                if *case == NextActionCheckCase::TopGap =>
+            {
+                if !detail_route.contains("finding:top") {
+                    return Err(format!(
+                        "top gap must carry the selected inspect route, got {detail_route}"
+                    ));
+                }
+            }
             other => return Err(format!("top gap stop is wrong: {other:?}")),
         }
         Ok(())
@@ -1126,8 +1143,15 @@ mod tests {
         }
         // No navigation: the restart route replays the bound root.
         match action.stop() {
-            Some(NextActionStop::CheckTriage { case })
-                if *case == NextActionCheckCase::ScopeMissing => {}
+            Some(NextActionStop::CheckTriage { case, detail_route })
+                if *case == NextActionCheckCase::ScopeMissing =>
+            {
+                if !detail_route.is_empty() {
+                    return Err(format!(
+                        "missing scope must not publish a scope label as an inspect route, got {detail_route}"
+                    ));
+                }
+            }
             other => return Err(format!("scope stop is wrong: {other:?}")),
         }
         Ok(())
@@ -1232,6 +1256,62 @@ mod tests {
         Ok(())
     }
 
+    /// #7257: the pre-fix producer chose provenance from
+    /// `worktree_explicitly_provided`. A dirty-default run has that flag
+    /// false and `worktree_run` true; the adapter must not hide that the
+    /// flag-only selector yields committed history.
+    #[test]
+    fn worktree_flag_selector_misattributes_dirty_default_as_committed_history()
+    -> Result<(), String> {
+        let worktree_explicitly_provided = false;
+        let worktree_run = true;
+        let supplied_scope = false;
+        let flag_only = if worktree_explicitly_provided {
+            CheckDiffProvenance::Worktree
+        } else if supplied_scope {
+            CheckDiffProvenance::SuppliedScope
+        } else {
+            CheckDiffProvenance::CommittedHistory
+        };
+        if flag_only != CheckDiffProvenance::CommittedHistory {
+            return Err("flag-only selector must still misattribute the dirty default".to_string());
+        }
+        let effective = CheckDiffProvenance::from_effective_source(worktree_run, supplied_scope);
+        if effective != CheckDiffProvenance::Worktree {
+            return Err("effective source must be the working tree".to_string());
+        }
+
+        let top = test_finding("finding:top");
+        let triage = HumanTriage {
+            state: HumanTriageState::TopGap,
+            selected: Some(&top),
+            omitted: Vec::new(),
+        };
+        let output = test_output(vec![top.clone()]);
+        let misattributed = canonical_next_action_for_triage(&triage, &output, None, flag_only)?;
+        match &misattributed.subject().diff_source {
+            NextActionDiffSource::Committed { .. } => {}
+            other => {
+                return Err(format!(
+                    "flag-only provenance must claim committed history: {other:?}"
+                ));
+            }
+        }
+        let bound = canonical_next_action_for_triage(&triage, &output, None, effective)?;
+        match &bound.subject().diff_source {
+            NextActionDiffSource::WorkingTree { .. } => {}
+            other => {
+                return Err(format!(
+                    "effective provenance must claim the working tree: {other:?}"
+                ));
+            }
+        }
+        if bound.subject().item != misattributed.subject().item {
+            return Err("item identity must not depend on provenance".to_string());
+        }
+        Ok(())
+    }
+
     #[test]
     fn check_adapter_never_fails_a_triage_state() -> Result<(), String> {
         // The renderer's defensive fallback exists only for producer bugs:
@@ -1259,7 +1339,7 @@ mod tests {
             .map_err(|error| format!("{} must project: {error}", state.as_str()))?;
             let fallback = check_case_for_triage(&triage, &output);
             match action.stop() {
-                Some(NextActionStop::CheckTriage { case }) if *case == fallback => {}
+                Some(NextActionStop::CheckTriage { case, .. }) if *case == fallback => {}
                 other => {
                     return Err(format!(
                         "{} projection disagrees with its case: {other:?}",

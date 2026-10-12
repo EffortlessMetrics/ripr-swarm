@@ -220,50 +220,149 @@ fn lexical_attributes_before<'source>(
     attributes
 }
 
-/// Same walk as `lexical_attributes_before`, but a multi-line attribute
-/// (`#[cfg(\n    any()\n)]`) is joined into one complete attribute so the
-/// cfg-availability check sees the whole gate (#6293). Only used for the
-/// compile-out decision; an attribute it cannot close fails open to the
-/// pre-existing single-line behavior.
+/// Collects the attributes immediately preceding `start_line` so the
+/// compile-out check sees a multi-line gate (`#[cfg(\n    any()\n)]`) the
+/// same way a one-line gate is seen (#6293, #7043).
+///
+/// The scan is a single forward pass over a byte-bounded suffix of the
+/// prefix: comments and blank lines are skipped, complete `#[...]` forms
+/// are split with the shared bracket authority, and other code resets the
+/// trailing sequence. An unclosed `#[` stops the scan (fail open) instead
+/// of walking the rest of the file. This path is independent of
+/// [`join_leading_attribute`]'s 32-line bound, which still governs
+/// cfg-test *module* detection.
 fn lexical_gate_attributes_before(lines: &[&str], start_line: usize) -> Vec<String> {
-    // Real attributes span a handful of lines; past this bound an unclosed
-    // tail is treated as ordinary code instead of joining unrelated lines.
-    const MAX_JOINED_LINES: usize = 32;
-    let mut index = start_line.saturating_sub(1).min(lines.len());
-    let mut attributes = Vec::new();
+    // Real gates are small; this bound keeps an unclosed `#[` and a long
+    // run of `]`-ending junk linear in the budget rather than the file.
+    const MAX_GATE_SCAN_BYTES: usize = 8 * 1024;
+    let function_index = start_line.saturating_sub(1).min(lines.len());
+    let window_start = lexical_gate_scan_window_start(lines, function_index, MAX_GATE_SCAN_BYTES);
+    lines
+        .get(window_start..function_index)
+        .map(collect_trailing_gate_attributes)
+        .unwrap_or_default()
+}
 
-    while index > 0 {
-        index -= 1;
-        let trimmed = lines[index].trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if trimmed.starts_with("#[") {
-            attributes.push(trimmed.to_string());
-            continue;
-        }
-        if !trimmed.ends_with(']') {
-            break;
-        }
-        let earliest = index.saturating_sub(MAX_JOINED_LINES - 1);
-        let Some(head) = (earliest..index)
-            .rev()
-            .find(|&candidate| lines[candidate].trim().starts_with("#["))
-        else {
+fn lexical_gate_scan_window_start(lines: &[&str], end: usize, max_bytes: usize) -> usize {
+    let mut consumed = 0usize;
+    let mut start = end;
+    while start > 0 {
+        let previous = start - 1;
+        let Some(line) = lines.get(previous) else {
             break;
         };
-        let joined = lines[head..=index].join("\n");
-        match cfg_predicates::split_leading_attribute(&joined) {
-            Some((attribute, remainder)) if remainder.trim().is_empty() => {
-                attributes.push(attribute.to_string());
-                index = head;
+        let line_bytes = line.len().saturating_add(1);
+        if consumed.saturating_add(line_bytes) > max_bytes {
+            break;
+        }
+        consumed += line_bytes;
+        start = previous;
+    }
+    start
+}
+
+fn collect_trailing_gate_attributes(lines: &[&str]) -> Vec<String> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+    let joined = lines.join("\n");
+    let bytes = joined.as_bytes();
+    let mut index = 0usize;
+    let mut attributes = Vec::new();
+    while index < bytes.len() {
+        index = skip_whitespace_and_comments(bytes, index);
+        if index >= bytes.len() {
+            break;
+        }
+        let Some(rest) = joined.get(index..) else {
+            break;
+        };
+        if rest.starts_with("#[") || rest.starts_with("#![") {
+            match cfg_predicates::split_leading_attribute(rest) {
+                Some((attribute, remainder)) => {
+                    attributes.push(attribute.to_string());
+                    let next = joined.len().saturating_sub(remainder.len());
+                    if next <= index {
+                        break;
+                    }
+                    index = next;
+                }
+                None => {
+                    // Unclosed `#[`: do not rescan from every later `#`
+                    // (that would be quadratic). Fail open for this region.
+                    attributes.clear();
+                    break;
+                }
             }
-            _ => break,
+            continue;
+        }
+        attributes.clear();
+        let next = skip_line(bytes, index);
+        if next <= index {
+            break;
+        }
+        index = next;
+    }
+    attributes
+}
+
+fn skip_whitespace_and_comments(bytes: &[u8], mut index: usize) -> usize {
+    while let Some(&byte) = bytes.get(index) {
+        if byte.is_ascii_whitespace() {
+            index += 1;
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'/') {
+            index += 2;
+            while bytes.get(index).is_some_and(|current| *current != b'\n') {
+                index += 1;
+            }
+            continue;
+        }
+        if byte == b'/' && bytes.get(index + 1) == Some(&b'*') {
+            match skip_nested_block_comment(bytes, index) {
+                Some(next) => {
+                    index = next;
+                    continue;
+                }
+                None => break,
+            }
+        }
+        break;
+    }
+    index
+}
+
+fn skip_nested_block_comment(bytes: &[u8], index: usize) -> Option<usize> {
+    let mut depth = 1usize;
+    let mut cursor = index.checked_add(2)?;
+    while cursor < bytes.len() {
+        let current = bytes.get(cursor).copied()?;
+        let next = bytes.get(cursor + 1).copied();
+        if current == b'/' && next == Some(b'*') {
+            depth = depth.saturating_add(1);
+            cursor = cursor.checked_add(2)?;
+        } else if current == b'*' && next == Some(b'/') {
+            cursor = cursor.checked_add(2)?;
+            depth = depth.checked_sub(1)?;
+            if depth == 0 {
+                return Some(cursor);
+            }
+        } else {
+            cursor += 1;
         }
     }
+    None
+}
 
-    attributes.reverse();
-    attributes
+fn skip_line(bytes: &[u8], mut index: usize) -> usize {
+    while let Some(&byte) = bytes.get(index) {
+        index += 1;
+        if byte == b'\n' {
+            break;
+        }
+    }
+    index
 }
 
 /// Line walk that preserves producer-owned cfg-test evidence roles. The

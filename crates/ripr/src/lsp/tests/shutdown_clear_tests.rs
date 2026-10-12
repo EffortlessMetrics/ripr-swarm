@@ -305,18 +305,169 @@ where
     }
 }
 
-/// Poll `ripr.collectWorkspaceStatus` until `predicate` holds, stashing
-/// every non-response message (folder transitions publish no request,
-/// so the bounded poll is the synchronization point and the stash is
-/// the transition drain).
-async fn poll_workspace_status_stashing(
+fn drain_from(drain: &[serde_json::Value], start: usize) -> &[serde_json::Value] {
+    drain.get(start..).unwrap_or(&[])
+}
+
+fn tracked_uri_publishes(
+    drain: &[serde_json::Value],
+    start: usize,
+    tracked: &[String],
+) -> Vec<(String, usize)> {
+    drain_from(drain, start)
+        .iter()
+        .filter_map(publish_diagnostics_of)
+        .filter(|(uri, _)| tracked.contains(uri))
+        .collect()
+}
+
+fn tracked_uris_have_empty_publish(
+    drain: &[serde_json::Value],
+    start: usize,
+    tracked: &[String],
+) -> bool {
+    let publishes = tracked_uri_publishes(drain, start, tracked);
+    tracked.iter().all(|uri| {
+        publishes
+            .iter()
+            .any(|(published, count)| published == uri && *count == 0)
+    })
+}
+
+/// Root-change clears must empty each tracked URI exactly once after the
+/// `workspace/workspaceFolders` response. Pre-response traffic is not
+/// the clear, and a second or nonempty publish in this slice is a
+/// duplicate rather than SETUP success.
+fn assert_tracked_cleared_exactly_once(
+    drain: &[serde_json::Value],
+    start: usize,
+    tracked: &[String],
+) -> Result<(), String> {
+    let publishes = tracked_uri_publishes(drain, start, tracked);
+    let mut missing = Vec::new();
+    let mut duplicated = Vec::new();
+    let mut nonempty = Vec::new();
+    for uri in tracked {
+        let hits: Vec<usize> = publishes
+            .iter()
+            .filter(|(published, _)| published == uri)
+            .map(|(_, count)| *count)
+            .collect();
+        let empties = hits.iter().filter(|count| **count == 0).count();
+        if hits.iter().any(|count| *count != 0) {
+            nonempty.push((uri.clone(), hits.clone()));
+        }
+        if empties == 0 {
+            missing.push(uri.clone());
+        } else if empties > 1 {
+            duplicated.push((uri.clone(), empties));
+        }
+    }
+    if missing.is_empty() && duplicated.is_empty() && nonempty.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "SETUP: root change must empty every tracked URI once; missing {missing:?}, duplicated {duplicated:?}, nonempty {nonempty:?} (transition drain: {publishes:?})"
+    ))
+}
+
+/// Answer a server-to-client request so a liveness-bounded round-trip
+/// cannot stall the root-change handler before its empty publishes land.
+/// Notifications (no `id`) and client-bound responses are left alone.
+async fn answer_server_request_if_needed(
+    writer: &mut tokio::io::WriteHalf<tokio::io::DuplexStream>,
+    message: &serde_json::Value,
+    workspace_folders: &serde_json::Value,
+) -> Result<(), String> {
+    let Some(method) = message.get("method").and_then(serde_json::Value::as_str) else {
+        return Ok(());
+    };
+    let Some(id) = message.get("id").cloned() else {
+        return Ok(());
+    };
+    let result = match method {
+        "workspace/workspaceFolders" => workspace_folders.clone(),
+        "workspace/configuration" => serde_json::json!([]),
+        "workspace/codeLens/refresh"
+        | "workspace/diagnostic/refresh"
+        | "client/registerCapability"
+        | "client/unregisterCapability"
+        | "window/workDoneProgress/create" => serde_json::Value::Null,
+        _ => return Ok(()),
+    };
+    write_lsp_message(
+        writer,
+        serde_json::json!({"jsonrpc": "2.0", "id": id, "result": result}),
+    )
+    .await
+}
+
+/// Wait until every tracked URI has an empty `publishDiagnostics` on the
+/// drain. Folder-change empties travel the notification path; they are
+/// not ordered with request/response traffic, so a `root_changed` status
+/// poll is not the capture window (#6981). Server-to-client requests are
+/// answered as they arrive so those round-trips cannot stall the handler.
+async fn drain_until_tracked_uris_cleared(
     client: &mut ShutdownClearClient,
-    description: &str,
-    predicate: impl Fn(&serde_json::Value) -> bool,
-) -> Result<(serde_json::Value, Vec<serde_json::Value>), String> {
-    let mut stashed = Vec::new();
+    drain: &mut Vec<serde_json::Value>,
+    start: usize,
+    tracked: &[String],
+    workspace_folders: &serde_json::Value,
+) -> Result<(), String> {
+    if tracked_uris_have_empty_publish(drain, start, tracked) {
+        return Ok(());
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    while !tracked_uris_have_empty_publish(drain, start, tracked) {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        let message =
+            match tokio::time::timeout(remaining, read_lsp_message(&mut client.reader)).await {
+                Ok(Ok(message)) => message,
+                Ok(Err(err)) => return Err(err),
+                Err(_) => break,
+            };
+        answer_server_request_if_needed(&mut client.writer, &message, workspace_folders).await?;
+        drain.push(message);
+    }
+    if tracked_uris_have_empty_publish(drain, start, tracked) {
+        return Ok(());
+    }
+    let publishes = tracked_uri_publishes(drain, start, tracked);
+    let missing: Vec<String> = tracked
+        .iter()
+        .filter(|uri| {
+            !publishes
+                .iter()
+                .any(|(published, count)| published == *uri && *count == 0)
+        })
+        .cloned()
+        .collect();
+    Err(format!(
+        "SETUP: root change must empty every tracked URI once; missing {missing:?} (transition drain: {publishes:?})"
+    ))
+}
+
+/// After the empty publishes are observed, confirm the folder transition
+/// installed B. Status is not the capture window (#6981); it is a
+/// post-condition so a clear that never selects B cannot pass SETUP.
+/// Non-response traffic — including later `publishDiagnostics` — is
+/// retained on `drain` so a duplicate clear during this poll cannot
+/// vanish before the shutdown assertion.
+async fn assert_status_root_changed_to(
+    client: &mut ShutdownClearClient,
+    expected_root: &str,
+    workspace_folders: &serde_json::Value,
+    drain: &mut Vec<serde_json::Value>,
+) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
     let mut last = serde_json::Value::Null;
-    for _ in 0..60 {
+    while !deadline
+        .saturating_duration_since(tokio::time::Instant::now())
+        .is_zero()
+    {
         let id = client.request_id();
         write_lsp_message(
             &mut client.writer,
@@ -328,28 +479,37 @@ async fn poll_workspace_status_stashing(
             }),
         )
         .await?;
-        let messages = read_until_responses(&mut client.reader, &[id]).await?;
-        let response = messages
-            .iter()
-            .find(|message| is_awaited_response(message, &[id]))
-            .cloned()
-            .ok_or_else(|| "workspace status response missing".to_string())?;
-        if response.get("error").is_some() {
-            return Err(format!("workspace status failed: {response}"));
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let message =
+                match tokio::time::timeout(remaining, read_lsp_message(&mut client.reader)).await {
+                    Ok(Ok(message)) => message,
+                    Ok(Err(err)) => return Err(err),
+                    Err(_) => break,
+                };
+            answer_server_request_if_needed(&mut client.writer, &message, workspace_folders)
+                .await?;
+            if !is_awaited_response(&message, &[id]) {
+                drain.push(message);
+                continue;
+            }
+            if message.get("error").is_some() {
+                return Err(format!("workspace status failed: {message}"));
+            }
+            last = message["result"]["analysis_status"].clone();
+            if status_root_state(&last) == Some("root_changed")
+                && last["effective_root"].as_str() == Some(expected_root)
+            {
+                return Ok(());
+            }
+            break;
         }
-        stashed.extend(
-            messages
-                .into_iter()
-                .filter(|message| !is_awaited_response(message, &[id])),
-        );
-        last = response["result"]["analysis_status"].clone();
-        if predicate(&last) {
-            return Ok((last, stashed));
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     Err(format!(
-        "workspace status never satisfied {description}; last status: {last}"
+        "SETUP: root change must select B ({expected_root}) with root_changed; last status: {last}"
     ))
 }
 
@@ -592,84 +752,58 @@ fn shutdown_after_root_change_publishes_no_duplicates() -> Result<(), String> {
             .await?;
             let (folders_request, mut transition_drain) =
                 read_request_stashing(&mut client.reader, "workspace/workspaceFolders").await?;
+            let folders_result = serde_json::json!([workspace_folder_json(&uri_b)]);
             write_lsp_message(
                 &mut client.writer,
                 serde_json::json!({
                     "jsonrpc": "2.0",
                     "id": folders_request["id"].clone(),
-                    "result": [workspace_folder_json(&uri_b)]
+                    "result": folders_result.clone()
                 }),
             )
             .await?;
-            let expected_b = server_path_text(&root_b_path);
-            let (status, mut stashed) = poll_workspace_status_stashing(
+            // Wait for the empty publishes themselves. A `root_changed`
+            // status poll races the notification path (#6981): under
+            // sibling `lsp::tests` load the poll can match before the
+            // clears are readable, and a drain that does not answer
+            // server-to-client requests can then stall until its budget
+            // expires with an empty capture. Count only traffic after
+            // this folders response so a pre-response empty cannot
+            // stand in for the root-change clear.
+            let post_response_start = transition_drain.len();
+            drain_until_tracked_uris_cleared(
                 &mut client,
-                "changed-root selection on B",
-                |status| {
-                    status_root_state(status) == Some("root_changed")
-                        && status["effective_root"].as_str() == Some(expected_b.as_str())
-                },
+                &mut transition_drain,
+                post_response_start,
+                &tracked,
+                &folders_result,
             )
             .await?;
-            let _ = status;
-            transition_drain.append(&mut stashed);
-            // A polled `root_changed` status can arrive before the
-            // transition's clear notifications: the status travels the
-            // request/response path while the clears travel the
-            // notification path, and the two are not ordered with each
-            // other. Matching the status therefore must not assert the
-            // clears were already observed (#6988: the clear for the
-            // tracked URI was sent but still in flight when the status
-            // matched). Drain (bounded) until every tracked URI shows
-            // its empty clear; the missing-check below still fails when
-            // a clear never arrives.
-            let clear_deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-            while tracked.iter().any(|uri| {
-                !transition_drain
-                    .iter()
-                    .filter_map(publish_diagnostics_of)
-                    .any(|(published, count)| published == *uri && count == 0)
-            }) {
-                let remaining =
-                    clear_deadline.saturating_duration_since(tokio::time::Instant::now());
-                if remaining.is_zero() {
-                    break;
-                }
-                let message =
-                    match tokio::time::timeout(remaining, read_lsp_message(&mut client.reader))
-                        .await
-                    {
-                        Ok(Ok(message)) => message,
-                        _ => break,
-                    };
-                transition_drain.push(message);
-            }
-            let transition_publishes: Vec<(String, usize)> = transition_drain
+            assert_tracked_cleared_exactly_once(&transition_drain, post_response_start, &tracked)?;
+            let mut status_span = Vec::new();
+            assert_status_root_changed_to(
+                &mut client,
+                &server_path_text(&root_b_path),
+                &folders_result,
+                &mut status_span,
+            )
+            .await?;
+            let post_clear_publishes: Vec<(String, usize)> = status_span
                 .iter()
                 .filter_map(publish_diagnostics_of)
+                .filter(|(uri, _)| tracked.contains(uri))
                 .collect();
-            let mut missing = Vec::new();
-            for uri in &tracked {
-                let cleared = transition_publishes
-                    .iter()
-                    .any(|(published, count)| published == uri && *count == 0);
-                if !cleared {
-                    missing.push(uri.clone());
-                }
-            }
-            if !missing.is_empty() {
+            if !post_clear_publishes.is_empty() {
                 return Err(format!(
-                    "SETUP: root change must empty every tracked URI once; missing {missing:?} (transition drain: {transition_publishes:?})"
+                    "root change republished tracked URIs after the empty capture: {post_clear_publishes:?}"
                 ));
             }
             let shutdown_id = client.fire_shutdown().await?;
             let shutdown_span = read_until_responses(&mut client.reader, &[shutdown_id]).await?;
-            let shutdown_publishes: Vec<(String, usize)> = shutdown_span
+            let duplicates: Vec<(String, usize)> = status_span
                 .iter()
+                .chain(shutdown_span.iter())
                 .filter_map(publish_diagnostics_of)
-                .collect();
-            let duplicates: Vec<(String, usize)> = shutdown_publishes
-                .into_iter()
                 .filter(|(uri, _)| tracked.contains(uri))
                 .collect();
             if !duplicates.is_empty() {

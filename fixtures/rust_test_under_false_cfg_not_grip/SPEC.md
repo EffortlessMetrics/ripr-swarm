@@ -31,7 +31,7 @@ The test is not discovered. Reach is `no` and the finding is `no_static_path`
 ## Known limits
 
 Not covered here, and stated so the fixture is not read as a broader claim:
-this fixture runs on the parser-backed path and pins only `cfg(any())`. On the
-lexical fallback, a gate attribute is missed when it spans more than 32 lines
-or is separated from the function by a non-attribute line such as a comment.
-The test then stays discovered (fail open). Tracked in #7043.
+this fixture runs on the parser-backed path and pins only `cfg(any())`. The
+lexical fallback's former 32-line window and comment-between misses are pinned
+by the `test_styles` lexical controls (#7043). An unclosed `#[`, or a gate past
+that scan's byte budget, still fails open.

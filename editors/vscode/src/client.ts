@@ -113,6 +113,13 @@ export const RIPR_DOCUMENT_SELECTORS: Array<{ language: string; scheme: 'file' }
 const SHOW_OUTPUT_ACTION = 'Show Output';
 const SELECT_WORKSPACE_ROOT_ACTION = 'Select Workspace Root';
 
+// Palette invocations of diagnostic-scoped commands arrive without the
+// payload a code action carries. Say how to invoke them with a target
+// instead of reporting evidence the handler never evaluated (#2083, #7341).
+// Platform-neutral: Quick Fix is Ctrl+. on Windows/Linux and Cmd+. on macOS.
+const DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE =
+  'ripr targeted-test commands run from a ripr diagnostic: open a file with ripr diagnostics, use Quick Fix (Ctrl+. or Cmd+.) on one, and pick the targeted-test command from there.';
+
 const RIPR_FILE_LANGUAGES = new Set(RIPR_DOCUMENT_SELECTORS.map((selector) => selector.language));
 // Editor selector language -> ripr.toml [languages] enablement name. The
 // server's `typescript` entry covers the JavaScript variants
@@ -449,6 +456,14 @@ export class RiprClientController {
     detail: 'Open a workspace or run ripr: Restart Server.',
     nextStep: 'Open a workspace folder, then run ripr: Restart Server.'
   };
+  /**
+   * The last refresh-completed status observed with no unsaved routed
+   * documents (#7340). Closing an unsaved buffer without saving starts no
+   * refresh — the on-disk file is unchanged — so the close path restores
+   * this state instead of claiming a queued analysis that nothing will
+   * start. Reset whenever the session stops.
+   */
+  private lastCompletedStatus: RiprStatusState | undefined;
   private workspaceRoot: string | undefined;
   /**
    * Session-scoped workspace folder picked through `ripr: Select Workspace
@@ -915,6 +930,7 @@ export class RiprClientController {
     this.typedAnalysisStatusState = undefined;
     this.firstUsefulAction = undefined;
     this.dirtyRiprDocuments.clear();
+    this.lastCompletedStatus = undefined;
     this.clearAttemptStatusBar();
     this.updateStatus({
       kind: 'stopped',
@@ -957,14 +973,34 @@ export class RiprClientController {
     if (!isRiprFileDocument(document)) {
       return;
     }
-    this.dirtyRiprDocuments.delete(document.uri.toString());
-    if (this.client && this.dirtyRiprDocuments.size === 0 && this.status.kind === 'stale') {
-      this.updateStatus({
-        kind: 'analysisQueued',
-        summary: 'ripr saved-workspace analysis is queued after close.',
-        detail: `Closed unsaved ${document.languageId} buffer: ${document.uri.fsPath}`,
-        nextStep: 'Wait for ripr to refresh diagnostics.'
-      });
+    const closedWasDirty = this.dirtyRiprDocuments.delete(document.uri.toString());
+    if (this.client && closedWasDirty && this.dirtyRiprDocuments.size === 0 && this.status.kind === 'stale') {
+      // #7340: for a no-save close the on-disk file is byte-identical to the
+      // analyzed snapshot, so the last completed state still describes current
+      // diagnostics. Restore it instead of claiming a queued analysis: the
+      // did_close-triggered refresh is debounced and can silently no-op (no
+      // configured root, configuration failure), in which case a 'queued'
+      // claim would spin until an unrelated event overwrote it — the defect
+      // this fixes. A typed cancelled or superseded refresh can also leave
+      // 'stale' with no dirty buffer, so only a close that actually discards
+      // a dirty buffer restores the completed state. When the close-triggered
+      // refresh does run, its started/completed log lines supersede this
+      // restored status. Before the first completed refresh there is nothing
+      // to restore, so report the paused state with the real refresh
+      // triggers.
+      const closedUnsaved = `Closed unsaved ${document.languageId} buffer without saving: ${document.uri.fsPath}`;
+      const restored = this.lastCompletedStatus;
+      this.updateStatus(restored
+        ? {
+            ...restored,
+            detail: [restored.detail, closedUnsaved].filter((line): line is string => Boolean(line)).join('\n')
+          }
+        : {
+            kind: 'ready',
+            summary: 'ripr diagnostics describe the saved workspace.',
+            detail: closedUnsaved,
+            nextStep: 'Open or save a Rust or enabled preview-language file to refresh diagnostics.'
+          });
     }
   }
 
@@ -1159,6 +1195,10 @@ export class RiprClientController {
   }
 
   async copySuggestedAssertion(target?: RiprSuggestedAssertionTarget): Promise<void> {
+    if (!target) {
+      this.runtime.showInformationMessage(DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE);
+      return;
+    }
     const assertion = typeof target?.assertion === 'string' ? target.assertion.trim() : '';
     if (!assertion) {
       this.runtime.showInformationMessage('No ripr suggested assertion is available for this diagnostic.');
@@ -1175,6 +1215,10 @@ export class RiprClientController {
   }
 
   async copyTargetedTestBrief(target?: RiprTargetedTestBriefTarget): Promise<void> {
+    if (!target) {
+      this.runtime.showInformationMessage(DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE);
+      return;
+    }
     const brief = typeof target?.brief === 'string' ? target.brief.trim() : '';
     if (!brief) {
       this.runtime.showInformationMessage('No ripr targeted test brief is available for this diagnostic.');
@@ -1381,6 +1425,10 @@ export class RiprClientController {
   }
 
   async openRelatedTest(target?: RiprRelatedTestTarget): Promise<void> {
+    if (!target) {
+      this.runtime.showInformationMessage(DIAGNOSTIC_SCOPED_COMMAND_GUIDANCE);
+      return;
+    }
     const uri = uriFromTarget(target);
     if (!uri) {
       this.runtime.showInformationMessage('No ripr related test location is available for this diagnostic.');
@@ -1577,7 +1625,16 @@ export class RiprClientController {
       return;
     }
     if (message.startsWith('ripr analysis refresh completed')) {
-      this.updateStatus(this.statusAfterRefreshCompleted(message));
+      const completed = this.statusAfterRefreshCompleted(message);
+      // Remember the saved-workspace result so closing an unsaved buffer
+      // without saving can restore it instead of inventing a queue that no
+      // close-path refresh may resolve (#7340). A completed refresh always
+      // describes the saved workspace — dirty buffers are unsaved client-side
+      // state — so store the clean completion form even while documents are
+      // dirty; the dirty-buffer overlay applies to the visible status only
+      // and must not survive into the restored close-path status.
+      this.lastCompletedStatus = statusFromRefreshCompletedMessage(message);
+      this.updateStatus(completed);
       void this.refreshFirstUsefulActionStatus();
       return;
     }

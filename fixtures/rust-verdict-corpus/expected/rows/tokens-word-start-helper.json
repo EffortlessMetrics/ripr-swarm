@@ -8,13 +8,13 @@
   "hard_case": false,
   "truth": "partially_discriminated",
   "ideal_verdict": "gap",
-  "observed_verdict": "limited",
+  "observed_verdict": "gap",
   "followed_retarget": false,
-  "changed_since_labeling": true,
+  "changed_since_labeling": false,
   "observed_classifications": [
     "weakly_exposed"
   ],
-  "outcome": "abstained",
+  "outcome": "ideal",
   "contradictions": [],
   "findings_scored": 1,
   "findings_contradicted": 0,

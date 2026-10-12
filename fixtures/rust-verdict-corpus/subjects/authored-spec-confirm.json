@@ -10,6 +10,10 @@
       "sha256": "6406c6476d68eed4074967b3d503263cad8c67d85c99e5519e9cf9828bd17fb7"
     },
     {
+      "path": "Cargo.lock",
+      "sha256": "664780b5dd56bf113800c79ad0bedd9a081be1083acbeb4af2a587d8c4c84be5"
+    },
+    {
       "path": "src/lib.rs",
       "sha256": "92395bee6f80b2156a20528f7b469548d03321986ce697812d64e042cd36f8c5"
     }

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 133a718..331effc 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -12,7 +12,7 @@ pub fn chunk_size(hex: &[u8]) -> Result<u64, ChunkError> {
+     let mut count = 0;
+     for &b in hex {
+         count += 1;
+-        if count > 16 {
++        if 16 < count {
+             return Err(ChunkError::TooLong);
+         }
+         let digit = (b as char).to_digit(16).ok_or(ChunkError::BadDigit)?;

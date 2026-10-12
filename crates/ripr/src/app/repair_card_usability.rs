@@ -92,6 +92,7 @@ fn classified_entry() -> ClassifiedSeam {
             discriminate: stage(StageState::No),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         },
         class: SeamGripClass::WeaklyGripped,

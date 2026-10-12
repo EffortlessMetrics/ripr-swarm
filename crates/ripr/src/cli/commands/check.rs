@@ -7,15 +7,15 @@
 
 use crate::analysis;
 use crate::app::{self, CheckInput, OutputFormat};
-use crate::cli::commands_context::ensure_command_root;
+use crate::cli::commands_context::{
+    config_load_refusal, ensure_command_root, write_stdout_chunked,
+};
 use crate::cli::help;
 use crate::cli::parse::{
     disclose_attached_terminal_stdin_read, expect_value, parse_format, parse_mode,
 };
 use crate::cli::suggest::unknown_argument;
-use crate::config::{
-    CheckInputExplicit, RiprConfig, apply_to_check_input, config_discovered_for_root, load_for_root,
-};
+use crate::config::{CheckInputExplicit, RiprConfig, apply_to_check_input, load_for_root};
 use crate::core_error::CoreError;
 use crate::git::WorkTreeRootProbe;
 use crate::output;
@@ -46,13 +46,12 @@ Use --format json for diff-scoped findings, or --format repo-exposure-summary-js
 fn validate_repo_scope_diff_inputs(
     input: &CheckInput,
     base_explicitly_provided: bool,
-) -> Result<(), String> {
+) -> Result<(), crate::core_error::CoreError> {
     if let Some(diff) = input.diff_file.as_deref() {
         if diff != Path::new("-") && !diff.is_file() {
-            return Err(format!(
-                "check: --diff {} is not a readable file",
-                diff.display()
-            ));
+            // Untyped on purpose: a missing `--diff` names no analysis
+            // stage, matching the diff-scoped loader's fallback identity.
+            return Err(format!("check: --diff {} is not a readable file", diff.display()).into());
         }
         return Ok(());
     }
@@ -71,10 +70,10 @@ fn validate_repo_scope_diff_inputs(
     if output.status.success() {
         Ok(())
     } else {
-        Err(format!(
+        Err(crate::core_error::CoreError::base_unresolvable(format!(
             "check: base revision {base:?} does not resolve to a commit in {}",
             input.root.display()
-        ))
+        )))
     }
 }
 
@@ -304,29 +303,16 @@ fn select_output_format(
     Ok(())
 }
 
-/// Typed refusal for a [`load_for_root`] failure (#6834).
+/// Refusal exit for a post-argv-parse `check` failure (#6834, widened #7332).
 ///
-/// A present-but-unloadable config entry is `config_invalid`. No config
-/// entry anywhere means automatic language detection refused (e.g. Python
-/// markers in a Rust-only binary), not a broken file: the untyped fallback
-/// makes no claim, while `config_invalid` would misdirect to
-/// `analysis/config-load` (#6952 review).
-fn config_load_refusal(root: &Path, err: String) -> CoreError {
-    if config_discovered_for_root(root) {
-        CoreError::config_invalid(err)
-    } else {
-        CoreError::from(err)
-    }
-}
-
-/// Refusal exit for a post-argv-parse `check` failure (#6834).
-///
-/// When `format` is [`OutputFormat::Json`], writes the refusal document to
-/// stdout first — the frozen scope-guard envelope for the two guards, the
-/// structural [`CoreError::check_refusal`] envelope for everything else —
-/// then returns the unchanged prose error for stderr. Other formats return
-/// the prose untouched. Every `?` and `return Err` in [`check`] below the
-/// argv parser routes through here; argv usage errors return before the
+/// Machine-readable formats write a refusal document to stdout first — the
+/// frozen scope-guard envelope or the structural [`CoreError::check_refusal`]
+/// envelope for JSON (#6834), and each machine format's own refusal shape
+/// for SARIF, GitHub annotations, badge JSON, repo-exposure JSON, and
+/// agent-seam-packets JSON (#7332) — then the unchanged prose error returns
+/// for stderr. Human formats and formats without an honest refusal shape
+/// return the prose untouched. Every `?` and `return Err` in [`check`] below
+/// the argv parser routes through here; argv usage errors return before the
 /// envelope snapshot exists and stay prose-only.
 fn refuse_check(
     envelope_input: &CheckInput,
@@ -334,17 +320,10 @@ fn refuse_check(
     error: impl Into<CoreError>,
 ) -> String {
     let error = error.into();
-    if !matches!(format, OutputFormat::Json) {
-        return error.to_string();
-    }
-    let display = error.to_string();
-    let rendered =
-        match output::limited_check::render_diff_scope_limited_check_json(envelope_input, &display)
-        {
-            Ok(Some(rendered)) => Ok(rendered),
-            Ok(None) => output::limited_check::render_check_failure_json(envelope_input, &error),
-            Err(render) => Err(render),
-        };
+    let rendered = match machine_refusal_document(envelope_input, format, &error) {
+        Some(rendered) => rendered,
+        None => return error.to_string(),
+    };
     match rendered {
         Ok(document) => {
             if let Err(write) = write_stdout_chunked(&document) {
@@ -354,6 +333,65 @@ fn refuse_check(
         Err(render) => return render,
     }
     error.to_string()
+}
+
+/// The refusal document for a machine-readable `check` format (#7332).
+///
+/// Every machine format named by the output contract gets a document
+/// parseable as that format, carrying the same typed identity and repair
+/// route; human formats and machine formats without an honest refusal shape
+/// return `None` and stay prose-only (the named limitation lives in
+/// `docs/EXIT_CODES.md`). Formats are matched explicitly — a new machine
+/// format must decide its refusal shape here instead of silently inheriting
+/// the zero-byte gap.
+fn machine_refusal_document(
+    envelope_input: &CheckInput,
+    format: OutputFormat,
+    error: &CoreError,
+) -> Option<Result<String, String>> {
+    let notice = error.refusal_notice();
+    match format {
+        OutputFormat::Json => {
+            let display = error.to_string();
+            Some(
+                match output::limited_check::render_diff_scope_limited_check_json(
+                    envelope_input,
+                    &display,
+                ) {
+                    Ok(Some(rendered)) => Ok(rendered),
+                    Ok(None) => {
+                        output::limited_check::render_check_failure_json(envelope_input, error)
+                    }
+                    Err(render) => Err(render),
+                },
+            )
+        }
+        // SARIF: a schema-valid run whose only signal is a
+        // tool-configuration notification — uploadable to code scanning,
+        // which an empty stream is not.
+        OutputFormat::Sarif => Some(Ok(output::sarif::render_refusal_sarif(
+            &notice,
+            &envelope_input.root,
+            envelope_input.base.as_deref(),
+        ))),
+        // GitHub: one workflow-command error annotation, escaped like every
+        // other line of the format.
+        OutputFormat::Github => Some(Ok(output::github::render_refusal(&notice))),
+        // Badge JSON: the degraded-state convention (warn + lightgrey,
+        // zeroed counts, named message) applied to a refused run.
+        OutputFormat::BadgeJson => Some(Ok(output::badge::render_native_json(
+            &output::badge::refusal_badge_summary(&notice),
+        ))),
+        // Repo-exposure and agent-seam-packets JSON: the format's own
+        // run_status/limitations envelope with `refused` and zeroed arrays.
+        OutputFormat::RepoExposureJson => {
+            Some(Ok(output::repo_exposure::render_refusal_json(&notice)))
+        }
+        OutputFormat::AgentSeamPacketsJson => {
+            Some(Ok(output::agent_seam_packets::render_refusal_json(&notice)))
+        }
+        _ => None,
+    }
 }
 
 pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
@@ -977,7 +1015,8 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
                         input.mode.as_str().to_string(),
                         input.base.clone(),
                         &config,
-                    )?;
+                    )?
+                    .with_rust_corpus_key(report.corpus_key.as_ref());
                 let stdout = std::io::stdout();
                 let mut handle = stdout.lock();
                 output::repo_exposure::write_repo_exposure_json_with_context(
@@ -1162,24 +1201,39 @@ pub(in crate::cli) fn check(args: &[String]) -> Result<(), String> {
     // carries `--worktree` into its drill-in commands, so `explain` and
     // `context` analyze the same uncommitted edits and the block never needs
     // an artifact to stay executable (#4321).
-    let drill_in = app::FindingDrillIn::Commands(app::finding_navigation_with_worktree(
+    let navigation = app::finding_navigation_with_worktree(
         &limited_check_input,
         write_artifact.as_deref(),
         explicit.mode,
         worktree_run,
-    ));
+    );
+    // #5471: only the default human render prints the `ripr agent stub`
+    // route, and only as the stub resolver decides it for that finding. The
+    // resolver reads the files on disk, so a check of other bytes (a
+    // candidate tree, or HEAD content behind uncommitted edits) prints no
+    // route: it could stub an expression the finding never saw.
+    let analyzed_live_files = candidate_tree.is_none() && !output.unanalyzed_working_tree;
+    let navigation = if matches!(format, OutputFormat::Human) && analyzed_live_files {
+        navigation.with_stub_route(app::test_stub::check_stub_route(
+            &limited_check_input.root,
+            &config,
+            &output,
+        ))
+    } else {
+        navigation
+    };
+    let drill_in = app::FindingDrillIn::Commands(navigation);
     // #4945: repo seam-driven formats run their walks inside the render arms,
     // so the sink threads through rendering to bracket those walks with
     // repo-scope stage boundaries; diff-scoped arms ignore it.
     // The canonical triage adapter binds its diff-source mode from this
-    // declared provenance (#6304): base presence cannot identify it.
-    let provenance = if worktree_explicitly_provided {
-        app::CheckDiffProvenance::Worktree
-    } else if input_diff_file_is_some || candidate_tree.is_some() {
-        app::CheckDiffProvenance::SuppliedScope
-    } else {
-        app::CheckDiffProvenance::CommittedHistory
-    };
+    // declared provenance (#6304/#7257): the effective analysis source,
+    // never the `--worktree` flag alone and never base presence. A dirty
+    // default shares `worktree_run` with explicit `--worktree`.
+    let provenance = app::CheckDiffProvenance::from_effective_source(
+        worktree_run,
+        input_diff_file_is_some || candidate_tree.is_some(),
+    );
     write_stdout_chunked(
         &app::render_check_with_config_and_navigation_and_progress(
             &output,
@@ -1265,29 +1319,6 @@ fn zero_findings_diff_hedge(
         return None;
     }
     Some(generic.to_string())
-}
-
-/// Write `text` to stdout in bounded chunks.
-///
-/// A single large write to a Windows console or pipe can fail with
-/// `os error 87` ("the parameter is incorrect"); chunking keeps every
-/// underlying write small enough to avoid that limit. Write errors are
-/// returned as `Err` rather than panicking, so a failed write surfaces as
-/// a normal CLI error instead of aborting the process.
-fn write_stdout_chunked(text: &str) -> Result<(), String> {
-    use std::io::Write;
-    const CHUNK: usize = 16 * 1024;
-    let stdout = std::io::stdout();
-    let mut handle = stdout.lock();
-    for chunk in text.as_bytes().chunks(CHUNK) {
-        handle
-            .write_all(chunk)
-            .map_err(|err| format!("write to stdout failed: {err}"))?;
-    }
-    handle
-        .flush()
-        .map_err(|err| format!("flush stdout failed: {err}"))?;
-    Ok(())
 }
 
 fn render_check_gap_ledger_badge(
@@ -1508,6 +1539,7 @@ mod tests {
         unique_repo_relative_test_dir,
     };
     use super::*;
+    use crate::config::config_discovered_for_root;
 
     #[test]
     fn check_refuses_two_output_selections_that_disagree() -> Result<(), String> {

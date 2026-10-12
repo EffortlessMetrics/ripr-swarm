@@ -358,6 +358,7 @@ const CONTRACTS: &[VerificationContract] = &[
             "analysis_outcome",
             "findings",
             "finding_alignment",
+            "canonical_next_action",
         ],
     },
     VerificationContract {

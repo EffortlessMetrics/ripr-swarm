@@ -310,5 +310,38 @@
       "language": "rust",
       "source_currentness": "candidate_current"
     }
-  ]
+  ],
+  "canonical_next_action": {
+    "schema_version": "canonical_next_action.v1",
+    "producer": "check_top_result",
+    "subject": {
+      "root": "fixtures/weak_error_oracle/input",
+      "diff_source": {
+        "committed": {
+          "base": "origin/main",
+          "head": null
+        }
+      },
+      "item": "probe:src_lib.rs:error_path:99b06ce7"
+    },
+    "currentness": {
+      "head_expected": null,
+      "head_observed": null,
+      "config_expected": null,
+      "config_observed": null
+    },
+    "action_class": "inspect_details",
+    "stop": {
+      "kind": "check_triage",
+      "case": "top_gap",
+      "detail_route": "ripr explain --root fixtures/weak_error_oracle/input --base origin/main probe:src_lib.rs:error_path:99b06ce7"
+    },
+    "alternatives": [
+      {
+        "label": "considered finding probe:src_lib.rs:return_value:e21dcccc",
+        "route": "ripr explain --root fixtures/weak_error_oracle/input --base origin/main probe:src_lib.rs:return_value:e21dcccc"
+      }
+    ],
+    "non_claim": "Advisory selection from producer-bound state; it does not execute, complete, or prove the repair, and the display string is never execution authority."
+  }
 }

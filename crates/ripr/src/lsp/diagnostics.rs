@@ -1032,8 +1032,11 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // but their producer-backed advisory evidence still belongs in the editor.
     // Stale, cache-limited, incomplete, partial, and degraded runs remain
     // status-only. See RIPR-SPEC-0076 diagnostics policy.
-    let gap_artifact_report =
-        validate_workspace_gap_artifact_report(&root, config.repo_config().languages().enabled());
+    let gap_artifact_report = validate_workspace_gap_artifact_report(
+        &root,
+        config.repo_config().languages().enabled(),
+        config.repo_config(),
+    );
     component_outcomes.push(cache_component_outcome(&gap_artifact_report.rejections));
 
     let (causal_projection, causal_projection_warning) = CausalDeltaArtifact::load_optional(&root);
@@ -1055,8 +1058,11 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
     // the typed component outcome and the diagnostic projection share one
     // interpretation (#1939, #1997). An absent ledger is a normal state and
     // records no outcome.
-    let (gap_ledger, gap_ledger_outcome) =
-        load_gap_ledger_records(&root, config.repo_config().languages().enabled());
+    let (gap_ledger, gap_ledger_outcome) = load_gap_ledger_records(
+        &root,
+        config.repo_config().languages().enabled(),
+        config.repo_config(),
+    );
     if let Some(outcome) = gap_ledger_outcome {
         component_outcomes.push(outcome);
     }
@@ -1092,9 +1098,10 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             .languages()
             .enabled()
             .contains(&LanguageId::Rust);
-    let (raw_seams, seam_outcome) = if defer_seam_inventory {
+    let (raw_seams, repair_card_candidate_seams, seam_outcome) = if defer_seam_inventory {
         (
             Vec::new(),
+            None,
             ComponentOutcome::deferred(
                 AnalysisComponent::SeamInventory,
                 "interactive_refresh_deferral",
@@ -1102,15 +1109,24 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
             ),
         )
     } else if !seam_inventory_enabled {
-        (Vec::new(), seam_inventory_not_enabled_outcome(config))
+        (Vec::new(), None, seam_inventory_not_enabled_outcome(config))
     } else {
         match inventory_classified_seams_at_with_config(&root, config.repo_config()) {
-            Ok((seams, _)) => (
-                seams,
-                ComponentOutcome::complete(AnalysisComponent::SeamInventory),
-            ),
+            // #7179 review: the repair-card sibling join needs the complete
+            // raw inventory. A capped run can omit a nested same-kind sibling,
+            // so the card projection fails closed (`None`) instead of binding
+            // against an incomplete candidate set.
+            Ok((seams, limit_info)) => {
+                let repair_card_candidate_seams = limit_info.is_none().then(|| seams.clone());
+                (
+                    seams,
+                    repair_card_candidate_seams,
+                    ComponentOutcome::complete(AnalysisComponent::SeamInventory),
+                )
+            }
             Err(err) => (
                 Vec::new(),
+                None,
                 ComponentOutcome::failed(
                     AnalysisComponent::SeamInventory,
                     "seam_inventory_failed",
@@ -1237,6 +1253,7 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         analysis_outcome,
         diagnostic_profile: config.diagnostic_profile,
         classified_seams,
+        repair_card_candidate_seams,
         gap_artifacts: gap_artifact_report.artifacts,
         gap_artifact_rejections: gap_artifact_report.rejections,
         harness_facts,
@@ -1247,6 +1264,9 @@ pub(super) fn workspace_diagnostics_with_config_and_open_rust_paths_and_progress
         partial_scope,
         component_outcomes,
         out_of_scope_test_file_findings,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::from_preview_advisories(
+            &output.preview_language_advisories,
+        ),
     };
     Ok(WorkspaceDiagnostics { snapshot, batches })
 }
@@ -1389,6 +1409,7 @@ fn git_timeout_limited_diagnostics(
         analysis_outcome: None,
         diagnostic_profile: config.diagnostic_profile,
         classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         // Limited runs disclose the run-status limitation instead of
@@ -1407,6 +1428,7 @@ fn git_timeout_limited_diagnostics(
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
     };
     WorkspaceDiagnostics {
         snapshot,
@@ -1492,6 +1514,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         analysis_outcome: None,
         diagnostic_profile: config.diagnostic_profile,
         classified_seams: Vec::new(),
+        repair_card_candidate_seams: None,
         gap_artifacts: Vec::new(),
         gap_artifact_rejections: Vec::new(),
         // Limited runs disclose the run-status limitation instead of
@@ -1510,6 +1533,7 @@ pub(super) fn oversized_diff_limited_diagnostics(
         partial_scope: None,
         component_outcomes,
         out_of_scope_test_file_findings: 0,
+        unavailable_adapter: super::state::UnavailableAdapterCoverage::default(),
     };
     WorkspaceDiagnostics { snapshot, batches }
 }
@@ -1564,7 +1588,9 @@ pub(super) fn derive_run_status_with_outcome(
     if rejections.iter().any(|r| {
         matches!(
             r,
-            GapArtifactRejection::StaleArtifact | GapArtifactRejection::StaleSubject(_)
+            GapArtifactRejection::StaleArtifact
+                | GapArtifactRejection::StaleSubject(_)
+                | GapArtifactRejection::StaleCorpus
         )
     }) {
         return "stale";
@@ -1636,12 +1662,22 @@ fn cache_component_outcome(rejections: &[GapArtifactRejection]) -> ComponentOutc
             true,
             SOURCE_SUBJECT_RECOVERY,
         )
+    } else if rejections.contains(&GapArtifactRejection::StaleCorpus) {
+        ComponentOutcome::limited(
+            AnalysisComponent::Cache,
+            "stale_corpus",
+            format!(
+                "gap artifact rejections: {kinds}; the analyzed Rust source/test corpus changed"
+            ),
+            true,
+            SOURCE_SUBJECT_RECOVERY,
+        )
     } else if let Some(reason) = unverifiable_subject {
         ComponentOutcome::limited(
             AnalysisComponent::Cache,
             "unverifiable_subject",
             format!(
-                "gap artifact rejections: {kinds}; {reason}: the gap artifacts cannot be matched to the current source files"
+                "gap artifact rejections: {kinds}; {reason}: the gap artifacts cannot be matched to the current analyzed source inputs"
             ),
             true,
             SOURCE_SUBJECT_RECOVERY,
@@ -1659,7 +1695,7 @@ fn cache_component_outcome(rejections: &[GapArtifactRejection]) -> ComponentOutc
 
 /// Recovery route for a gap artifact whose `source_subject` stamp no longer
 /// matches, or cannot be matched to, the workspace files (#4544).
-const SOURCE_SUBJECT_RECOVERY: &str = "regenerate the gap artifacts for the current source: ripr reports gap-ledger (gap-decision-ledger.json) or cargo xtask lane1-evidence-audit (actionable-gaps.json)";
+pub(super) const SOURCE_SUBJECT_RECOVERY: &str = "regenerate from fresh analysis in the selected workspace: capture ripr check --format repo-exposure-json as target/ripr/reports/repo-exposure.json, then ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json; or cargo xtask lane1-evidence-audit for actionable-gaps.json";
 
 /// Read, validate, and parse the gap decision ledger once per refresh so the
 /// typed component outcome and the diagnostic projection share a single
@@ -1668,12 +1704,12 @@ const SOURCE_SUBJECT_RECOVERY: &str = "regenerate the gap artifacts for the curr
 /// a normal state and records no outcome.
 /// Recovery route for a ledger whose `source_subject` stamp no longer
 /// matches, or cannot be matched to, the workspace files (#4544).
-const SOURCE_SUBJECT_LEDGER_RECOVERY: &str =
-    "regenerate the gap decision ledger for the current source with ripr reports gap-ledger";
+const SOURCE_SUBJECT_LEDGER_RECOVERY: &str = "regenerate from fresh analysis in the selected workspace: capture ripr check --format repo-exposure-json as target/ripr/reports/repo-exposure.json, then ripr reports gap-ledger --repo-exposure target/ripr/reports/repo-exposure.json";
 
 fn load_gap_ledger_records(
     root: &Path,
     enabled_languages: &[LanguageId],
+    repo_config: &crate::config::RiprConfig,
 ) -> (Option<(PathBuf, Vec<GapRecord>)>, Option<ComponentOutcome>) {
     const RECOVERY: &str = "run ripr check to regenerate the gap decision ledger";
     let failed = |kind: &'static str, message: String| {
@@ -1713,6 +1749,7 @@ fn load_gap_ledger_records(
     let context = GapArtifactValidationContext {
         root,
         enabled_languages,
+        repo_config,
     };
     match validate_gap_artifact(&artifact, &context) {
         Ok(validated) if validated.kind == GapArtifactKind::GapDecisionLedger => {}
@@ -1736,6 +1773,19 @@ fn load_gap_ledger_records(
                 )),
             );
         }
+        Err(GapArtifactRejection::StaleCorpus) => {
+            return (
+                None,
+                Some(ComponentOutcome::failed(
+                    AnalysisComponent::GapLedger,
+                    "stale_corpus",
+                    "gap diagnostics withheld: the analyzed Rust source/test corpus changed"
+                        .to_string(),
+                    true,
+                    SOURCE_SUBJECT_LEDGER_RECOVERY,
+                )),
+            );
+        }
         Err(GapArtifactRejection::UnverifiableSubject(reason)) => {
             return (
                 None,
@@ -1743,7 +1793,7 @@ fn load_gap_ledger_records(
                     AnalysisComponent::GapLedger,
                     "unverifiable_subject",
                     format!(
-                        "gap diagnostics withheld: {reason}: the gap decision ledger cannot be matched to the current source files"
+                        "gap diagnostics withheld: {reason}: the gap decision ledger cannot be matched to the current analyzed source inputs"
                     ),
                     true,
                     SOURCE_SUBJECT_LEDGER_RECOVERY,
@@ -2233,7 +2283,11 @@ fn append_gap_record_diagnostics(
     enabled_languages: &[LanguageId],
     grouped: &mut BTreeMap<Uri, Vec<Diagnostic>>,
 ) {
-    let (gap_ledger, _) = load_gap_ledger_records(root, enabled_languages);
+    let (gap_ledger, _) = load_gap_ledger_records(
+        root,
+        enabled_languages,
+        &crate::config::RiprConfig::default(),
+    );
     if let Some((ledger_path, records)) = gap_ledger {
         append_gap_record_diagnostics_with_causal(root, &ledger_path, &records, grouped, None);
     }
@@ -2524,11 +2578,11 @@ fn non_empty(value: &str) -> Option<&str> {
     }
 }
 
-/// Per-class severity for seam diagnostics. WARNING for the headline-
-/// eligible classes (the agent should act); INFORMATION for `Opaque`
-/// (visible but advisory). `StronglyGripped`, `Intentional`, and
-/// `Suppressed` produce no diagnostic — `diagnostic_for_classified_seam`
-/// returns `None` for those.
+/// Per-class severity for seam diagnostics, owned by `SeverityConfig`:
+/// WARNING for gap classes (the agent should act); INFORMATION for static
+/// limitations (opaque and the `*_unknown` classes: visible but advisory,
+/// #6775). `StronglyGripped`, `Intentional`, and `Suppressed` produce no
+/// diagnostic — `diagnostic_for_classified_seam` returns `None` for those.
 pub(super) fn diagnostic_severity_for_grip_class(
     class: SeamGripClass,
 ) -> Option<DiagnosticSeverity> {
@@ -3149,6 +3203,7 @@ mod seam_diagnostic_tests {
             discriminate: stage(StageState::Weak),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         ClassifiedSeam {
@@ -3457,7 +3512,7 @@ mod seam_diagnostic_tests {
     fn append_gap_record_diagnostics_reads_default_ledger() -> Result<(), String> {
         let root = temp_gap_root()?;
         let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
-        let contents = gap_ledger_json(vec![gap_record(true)]).to_string();
+        let contents = gap_ledger_json(&root, vec![gap_record(true)]).to_string();
         fs::write(&ledger_path, contents)
             .map_err(|err| format!("write {} failed: {err}", ledger_path.display()))?;
 
@@ -3490,7 +3545,7 @@ mod seam_diagnostic_tests {
         let root = temp_gap_root()?;
         let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
 
-        let mut stale = gap_ledger_json(vec![gap_record(true)]);
+        let mut stale = gap_ledger_json(&root, vec![gap_record(true)]);
         stale["status"] = serde_json::json!("stale");
         fs::write(&ledger_path, stale.to_string())
             .map_err(|err| format!("write stale ledger failed: {err}"))?;
@@ -3536,7 +3591,7 @@ mod seam_diagnostic_tests {
             "non-ledger gap artifact must not publish diagnostics"
         );
 
-        let mut wrong_root = gap_ledger_json(vec![gap_record(true)]);
+        let mut wrong_root = gap_ledger_json(&root, vec![gap_record(true)]);
         wrong_root["root"] = serde_json::json!("/other/workspace");
         fs::write(&ledger_path, wrong_root.to_string())
             .map_err(|err| format!("write wrong-root ledger failed: {err}"))?;
@@ -3549,7 +3604,7 @@ mod seam_diagnostic_tests {
         let mut disabled_record = gap_record(true);
         disabled_record.language = "python".to_string();
         disabled_record.language_status = "preview".to_string();
-        let disabled = gap_ledger_json(vec![disabled_record]);
+        let disabled = gap_ledger_json(&root, vec![disabled_record]);
         fs::write(&ledger_path, disabled.to_string())
             .map_err(|err| format!("write disabled-language ledger failed: {err}"))?;
         append_gap_record_diagnostics(&root, &[LanguageId::Rust], &mut grouped);
@@ -3611,11 +3666,15 @@ mod seam_diagnostic_tests {
             );
             let mut record = gap_record(true);
             record.regeneration_commands = vec![display.clone()];
-            let contents = gap_ledger_json(vec![record]).to_string();
+            let contents = gap_ledger_json(&root, vec![record]).to_string();
             fs::write(root.join(DEFAULT_GAP_DECISION_LEDGER_OUT), &contents)
                 .map_err(|err| format!("write ledger failed: {err}"))?;
 
-            let (records, _) = load_gap_ledger_records(&root, &[LanguageId::Rust]);
+            let (records, _) = load_gap_ledger_records(
+                &root,
+                &[LanguageId::Rust],
+                &crate::config::RiprConfig::default(),
+            );
             let Some((_, records)) = records else {
                 return Err("a usable ledger must return its records".to_string());
             };
@@ -3672,7 +3731,11 @@ mod seam_diagnostic_tests {
         let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
 
         // Absent ledger: a normal state that records no outcome.
-        let (records, outcome) = load_gap_ledger_records(&root, &[LanguageId::Rust]);
+        let (records, outcome) = load_gap_ledger_records(
+            &root,
+            &[LanguageId::Rust],
+            &crate::config::RiprConfig::default(),
+        );
         if records.is_some() || outcome.is_some() {
             return Err("an absent ledger must record no outcome".to_string());
         }
@@ -3680,10 +3743,14 @@ mod seam_diagnostic_tests {
         // Usable ledger: parsed records plus a complete outcome.
         fs::write(
             &ledger_path,
-            gap_ledger_json(vec![gap_record(true)]).to_string(),
+            gap_ledger_json(&root, vec![gap_record(true)]).to_string(),
         )
         .map_err(|err| format!("write ledger failed: {err}"))?;
-        let (records, outcome) = load_gap_ledger_records(&root, &[LanguageId::Rust]);
+        let (records, outcome) = load_gap_ledger_records(
+            &root,
+            &[LanguageId::Rust],
+            &crate::config::RiprConfig::default(),
+        );
         let Some((_, records)) = records else {
             return Err("a usable ledger must return its records".to_string());
         };
@@ -3703,7 +3770,11 @@ mod seam_diagnostic_tests {
         // message, and the recovery route — no records.
         fs::write(&ledger_path, "{not json")
             .map_err(|err| format!("write malformed ledger failed: {err}"))?;
-        let (records, outcome) = load_gap_ledger_records(&root, &[LanguageId::Rust]);
+        let (records, outcome) = load_gap_ledger_records(
+            &root,
+            &[LanguageId::Rust],
+            &crate::config::RiprConfig::default(),
+        );
         let outcome =
             outcome.ok_or_else(|| "a malformed ledger must record an outcome".to_string())?;
         if records.is_some()
@@ -3738,7 +3809,11 @@ mod seam_diagnostic_tests {
         });
         fs::write(&ledger_path, first_action.to_string())
             .map_err(|err| format!("write wrong-kind ledger failed: {err}"))?;
-        let (records, outcome) = load_gap_ledger_records(&root, &[LanguageId::Rust]);
+        let (records, outcome) = load_gap_ledger_records(
+            &root,
+            &[LanguageId::Rust],
+            &crate::config::RiprConfig::default(),
+        );
         let outcome =
             outcome.ok_or_else(|| "a wrong-kind ledger must record an outcome".to_string())?;
         if records.is_some()
@@ -3749,11 +3824,15 @@ mod seam_diagnostic_tests {
         }
 
         // A stale ledger surfaces the validation rejection code as the kind.
-        let mut stale = gap_ledger_json(vec![gap_record(true)]);
+        let mut stale = gap_ledger_json(&root, vec![gap_record(true)]);
         stale["status"] = serde_json::json!("stale");
         fs::write(&ledger_path, stale.to_string())
             .map_err(|err| format!("write stale ledger failed: {err}"))?;
-        let (records, outcome) = load_gap_ledger_records(&root, &[LanguageId::Rust]);
+        let (records, outcome) = load_gap_ledger_records(
+            &root,
+            &[LanguageId::Rust],
+            &crate::config::RiprConfig::default(),
+        );
         let outcome = outcome.ok_or_else(|| "a stale ledger must record an outcome".to_string())?;
         if records.is_some()
             || outcome.state.as_str() != "failed"
@@ -3840,9 +3919,9 @@ mod seam_diagnostic_tests {
     /// A ledger stamped as the producer stamps it (#4544). The fixture files
     /// are absent under every test root, so the stamp records `null` digests
     /// and stays current until a test creates one of them.
-    fn gap_ledger_json(records: Vec<GapRecord>) -> serde_json::Value {
+    fn gap_ledger_json(root: &Path, records: Vec<GapRecord>) -> serde_json::Value {
         crate::output::gap_source_subject::with_source_subject_for_test(
-            Path::new("/ripr-absent-fixture-root"),
+            root,
             unstamped_gap_ledger_json(records),
         )
     }
@@ -3873,9 +3952,13 @@ mod seam_diagnostic_tests {
     }
 
     fn ledger_outcome(root: &Path) -> Result<ComponentOutcome, String> {
-        load_gap_ledger_records(root, &[LanguageId::Rust])
-            .1
-            .ok_or_else(|| "a present ledger must record an outcome".to_string())
+        load_gap_ledger_records(
+            root,
+            &[LanguageId::Rust],
+            &crate::config::RiprConfig::default(),
+        )
+        .1
+        .ok_or_else(|| "a present ledger must record an outcome".to_string())
     }
 
     /// #4544: the ledger's `source_subject` stamp gates projection. Unchanged
@@ -3916,7 +3999,11 @@ mod seam_diagnostic_tests {
             if ledger_outcome(&root)?.state.as_str() != "complete" {
                 return Err("an unchanged workspace must keep a complete outcome".to_string());
             }
-            let report = validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust]);
+            let report = validate_workspace_gap_artifact_report(
+                &root,
+                &[LanguageId::Rust],
+                &crate::config::RiprConfig::default(),
+            );
             if !report.rejections.is_empty() {
                 return Err(format!("unexpected rejections: {:?}", report.rejections));
             }
@@ -3937,7 +4024,11 @@ mod seam_diagnostic_tests {
             {
                 return Err(format!("unexpected stale-subject outcome: {outcome:?}"));
             }
-            let report = validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust]);
+            let report = validate_workspace_gap_artifact_report(
+                &root,
+                &[LanguageId::Rust],
+                &crate::config::RiprConfig::default(),
+            );
             if report.rejections
                 != vec![GapArtifactRejection::StaleSubject(
                     "src/pricing.rs".to_string(),
@@ -3968,7 +4059,11 @@ mod seam_diagnostic_tests {
             if published_gap_diagnostics(&root) != 0 {
                 return Err("a deleted related test must withhold the gap".to_string());
             }
-            let report = validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust]);
+            let report = validate_workspace_gap_artifact_report(
+                &root,
+                &[LanguageId::Rust],
+                &crate::config::RiprConfig::default(),
+            );
             if report.rejections
                 != vec![GapArtifactRejection::StaleSubject(
                     "tests/pricing.rs".to_string(),
@@ -3990,7 +4085,11 @@ mod seam_diagnostic_tests {
             if outcome.kind != Some("unverifiable_subject") || !outcome.is_degraded() {
                 return Err(format!("unexpected unstamped outcome: {outcome:?}"));
             }
-            let report = validate_workspace_gap_artifact_report(&root, &[LanguageId::Rust]);
+            let report = validate_workspace_gap_artifact_report(
+                &root,
+                &[LanguageId::Rust],
+                &crate::config::RiprConfig::default(),
+            );
             if report.rejections
                 != vec![GapArtifactRejection::UnverifiableSubject(
                     "source_subject_missing",
@@ -5696,6 +5795,7 @@ mod delivery_tests {
             analysis_outcome: None,
             diagnostic_profile: LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: HarnessFactsOnSnapshot::NotRegistered,
@@ -5706,6 +5806,7 @@ mod delivery_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: crate::lsp::state::UnavailableAdapterCoverage::default(),
         })
     }
 

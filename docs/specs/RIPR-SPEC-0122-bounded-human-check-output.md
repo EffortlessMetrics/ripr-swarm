@@ -206,11 +206,46 @@ line; longer guidance wraps onto four-space continuation lines.
 After the drill-in commands, a selected Rust finding that is not `exposed` and
 whose probe family is `predicate`, `return_value`, `error_path`, or
 `match_arm` gets one more block, `Write a test for it:`, naming
-`ripr agent stub --root <root> --at <file>:<line>` (#5355). That command
+`ripr agent stub --root <root> --at <file>:<line> --kind <family>` (#5355,
+#5471), where `<family>` is the finding's probe family. That command
 resolves the finding location to the gap in the same function and prints a
-compiling test stub, or a named refusal. The line is a route, not a claim
-that a stub exists: side-effect, call-deletion, field-construction, and
-static-unknown families never get it, because the stub producer refuses them.
+compiling test stub, or a named refusal. Side-effect, call-deletion,
+field-construction, and static-unknown families never get the block, because
+the stub producer refuses them.
+
+The check pipeline runs that same `--at` resolver for the selected finding
+before rendering (#5471), with the configuration `ripr agent stub` loads for
+the same root. For a file under the root and a `--kind`, which the printed
+route always carries, that resolver reads the seams of
+that one file from a parse of the file alone, with no workspace index, test
+evidence, or seam classification: `check` already judged the location a gap,
+so the stub is not re-judged by a second classifier. (A bare `--at`, with no
+finding vouching for the location, classifies that one file and tries only
+its reported gaps.) Candidates are the seams
+on the finding line, then the seams in the same function nearest first,
+limited to seams whose kind matches `--kind` (the one seam kind each of the
+four families names: `predicate` boundary, `return_value`, `error_path` error
+variant, `match_arm`), so a seam of another kind never answers for the
+finding. Two equally near seams of that kind whose source spans do not nest
+(`a > 10 && b > 20`) are refused with their seam IDs rather than guessed, and
+the stub is placed inline (integration-file placement needs classified
+evidence and stays with `--seam-id`). The block is printed only when the
+resolver produces a stub. When it refuses, the block is replaced by one line,
+`No test stub here: <reason>`, naming the producer's refusal. When the
+function has no seam of that kind, or the location is refused as ambiguous,
+nothing is printed. The resolver reads the files on disk, so a check
+that analyzed other bytes (`--candidate-tree`, or a committed-history diff
+that read HEAD content behind uncommitted edits) prints no route, and neither
+does a finding whose expression is not on disk in the function holding its
+line (a `--diff` patch that disagrees with the checkout, or a removed line). Only the
+default human format runs the resolver; JSON and `human-full` output are
+unchanged.
+
+When the file has seams but the function has none of the requested family,
+a direct `ripr agent stub --at FILE:LINE --kind FAMILY` refusal names
+`FAMILY`, rather than the internal seam kind (#6689). Its `nearest:`
+suggestions are filtered to that family before the five-entry limit is
+applied. If the file contains only other families, the suggestions are empty.
 
 The stub producer covers free functions and methods of inherent or trait
 impls at module level whose generics are lifetimes only; a trait-impl method
@@ -398,6 +433,9 @@ suggested write cannot fail on the same missing base.
 
 ## Test Mapping
 
+- `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_refusal_preserves_the_requested_probe_family`
+- `crates/ripr/tests/agent_stub_compiles.rs::kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub`
+- `crates/ripr/tests/agent_stub_compiles.rs::kind_not_found_without_a_matching_family_suggests_no_other_seams`
 - `crates/ripr/src/output/human.rs::tests::bounded_human_output_caps_many_findings_and_reports_omitted_count`
 - `crates/ripr/src/output/human.rs::tests::terminal_safe_escapes_controls_and_bidi_but_keeps_lines_and_tabs`
 - `crates/ripr/tests/hostile_repos.rs::terminal_control_bytes_in_repo_text_never_reach_the_terminal`
@@ -454,6 +492,7 @@ suggested write cannot fail on the same missing base.
 | Finding digest renderer | `crates/ripr/src/output/human/sections.rs` |
 | Format dispatch | `crates/ripr/src/output/render.rs` |
 | Repo-scope warning and suppression-policy wording | `crates/ripr/src/cli/commands.rs` |
+| Kind-scoped agent-stub not-found guidance | `crates/ripr/src/app/test_stub.rs` |
 | CLI help | `crates/ripr/src/cli/help/core.rs` |
 | First-pr missing-packet recovery | `crates/ripr/src/output/first_pr.rs` |
 | First-pr command options | `crates/ripr/src/output/first_pr/options.rs` |

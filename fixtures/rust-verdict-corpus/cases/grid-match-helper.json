@@ -9,7 +9,7 @@
   "edit_kind": "behavior_preserving_rewrite",
   "behavior_family": "match_arm",
   "test_shape": "helper_wrapped_assert",
-  "hard_case": "The helper's assert_eq! is admitted, but its arguments are helper parameters, which RIPR-SPEC-0229 leaves unresolved, so the arm reads observation_unverified (#6482).",
+  "hard_case": "The helper's assert_eq! is admitted (RIPR-SPEC-0197 rule 7, #6482), but the diff reorders the arm's alternatives, and RIPR-SPEC-0229 never credits selection of a changed pattern, so the arm reads observation_unverified.",
   "truth": {
     "state": "discriminated",
     "method": "runtime_mutant_kill",

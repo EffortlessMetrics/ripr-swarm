@@ -49,11 +49,12 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    AnalyzedRevisions, load_diff, load_diff_range_with_deadline_core,
+    AnalyzedRevisions, load_diff, load_diff_core, load_diff_range_with_deadline_core,
     load_diff_with_effective_base_core, load_worktree_diff,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
     probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
-    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
+    resolve_effective_base_core, working_tree_has_tracked_changes,
+    working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -67,7 +68,7 @@ pub(crate) use generated_rust_corpus::{CorpusPayloadSize, analyzable_corpus_payl
 pub(crate) use language::{
     DIFF_SCOPE_OVERSIZED_PREFIX, JAVASCRIPT_SOURCE_EXTENSIONS, TYPESCRIPT_SOURCE_EXTENSIONS,
     TsJsSourceKind, is_diff_scope_oversized, is_generated_rust_file_with_patterns,
-    is_ts_js_source_extension, ts_js_source_kind,
+    is_ts_js_source_extension, route, ts_js_source_kind,
 };
 pub use language::{
     PARTIAL_DIFF_LANGUAGE_TIER_VERSION, PARTIAL_DIFF_SELECTION_VERSION, PartialDiffScope,
@@ -90,12 +91,13 @@ pub(crate) use seam_inventory::{
     ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory,
     ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
     apply_pilot_seam_budget, classify_seams_in_files_at_with_config, diff_only_rust_files,
+    file_seams_without_evidence_at_with_config,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,
     inventory_diff_scoped_classified_seams_at_with_config,
     inventory_diff_scoped_streamed_seams_at_with_config, inventory_seams_at_with_config,
-    pilot_seam_budget, workspace_cache_key_at_with_config,
+    pilot_seam_budget, seam_kind_for_probe_family, workspace_cache_key_at_with_config,
 };
 pub(crate) use seams::{RepoSeam, RequiredDiscriminator};
 pub(crate) use syntax::fn_signature::{owner_fn_line_span, rust_source_parses_cleanly};

@@ -61,8 +61,14 @@ mod bounded_read;
 mod bun_bridge;
 mod classifier;
 mod discovery;
+mod dropped_term_guard;
+mod error_payload_guard;
+mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
+mod literal_matcher_guard;
+mod match_object_guard;
+mod mock_payload_guard;
 mod module_entries;
 #[cfg(test)]
 mod new_declaration_tests;
@@ -81,6 +87,7 @@ mod paths;
 mod probe_shape;
 mod related_tests;
 mod static_limit;
+mod table_rows;
 #[cfg(test)]
 mod tests;
 mod tests_extract;
@@ -102,6 +109,12 @@ pub(crate) use bounded_read::*;
 pub(crate) use bun_bridge::*;
 pub(crate) use classifier::*;
 pub(crate) use discovery::*;
+pub(crate) use dropped_term_guard::*;
+pub(crate) use error_payload_guard::*;
+pub(crate) use instance_class_guard::*;
+pub(crate) use literal_matcher_guard::*;
+pub(crate) use match_object_guard::*;
+pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
 pub(crate) use oracle::*;
 pub(crate) use owners::*;
@@ -111,6 +124,7 @@ pub(crate) use paths::*;
 pub(crate) use probe_shape::*;
 pub(crate) use related_tests::*;
 pub(crate) use static_limit::*;
+pub(crate) use table_rows::*;
 pub(crate) use tests_extract::*;
 #[cfg(test)]
 pub(crate) use tsconfig::load_alias_map;
@@ -501,10 +515,16 @@ impl TypeScriptAdapter {
                 {
                     continue;
                 }
+                let old_line_text = changed
+                    .removed_lines
+                    .iter()
+                    .find(|removed| removed.new_side_line == added.line)
+                    .map(|removed| removed.text.as_str());
                 if let Some(mut finding) = classify_change_with_alias_state(
                     &changed.path,
                     added.line,
                     &added.text,
+                    old_line_text,
                     &all_owners,
                     &all_tests,
                     Some(&options.root),

@@ -51,7 +51,8 @@ impl LiveDiffSource {
 /// reports uncommitted work (a staged or unstaged tracked edit; untracked
 /// files never count, because the working-tree diff cannot contain them); a
 /// clean or untracked-only tree, or a probe that could not run, keeps
-/// committed history. An explicit `--base` does not change this: the base
+/// committed history, as does an unborn or dangling `HEAD` (its staged files
+/// read as additions, and the committed-history loader owns that refusal). An explicit `--base` does not change this: the base
 /// names where the diff starts, not where it ends.
 pub(crate) fn select_live_diff_source(
     root: &Path,

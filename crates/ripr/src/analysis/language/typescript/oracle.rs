@@ -24,7 +24,14 @@ pub(crate) fn oracle_for_matcher(matcher: &str) -> (OracleKind, OracleStrength) 
         | "toBeLessThan"
         | "toBeLessThanOrEqual"
         | "toHaveLength"
-        | "toHaveProperty" => (OracleKind::RelationalCheck, OracleStrength::Weak),
+        | "toHaveProperty"
+        // RIPR-SPEC-0249: passes for any instance of the class or a subclass;
+        // a predicate change can read it strong (`ts_instance_class_facts`).
+        | "toBeInstanceOf"
+        // RIPR-SPEC-0250: passes whatever fields the object leaves unlisted;
+        // a changed returned field it lists can read strong
+        // (`ts_match_object_facts`).
+        | "toMatchObject" => (OracleKind::RelationalCheck, OracleStrength::Weak),
         _ => (OracleKind::Unknown, OracleStrength::Unknown),
     }
 }
@@ -160,7 +167,25 @@ pub(crate) fn collect_assertions_in_statements_with_bindings(
     receiver: Option<&str>,
     bindings: &TypeScriptAssertionBindings,
 ) -> Vec<TypeScriptAssertion> {
-    let context = AssertionContext { receiver, bindings };
+    collect_callback_assertions(statements, source, receiver, bindings, true)
+}
+
+/// Like [`collect_assertions_in_statements_with_bindings`] for a callback
+/// body; `returns_to_runner` is `false` when the callback's return value is
+/// discarded (a `forEach` callback), so a `return p.then(...)` inside it
+/// floats (RIPR-SPEC-0246 rule 2).
+pub(crate) fn collect_callback_assertions(
+    statements: &oxc_allocator::Vec<'_, Statement<'_>>,
+    source: &SourceText<'_>,
+    receiver: Option<&str>,
+    bindings: &TypeScriptAssertionBindings,
+    returns_to_runner: bool,
+) -> Vec<TypeScriptAssertion> {
+    let context = AssertionContext {
+        receiver,
+        bindings,
+        returns_to_runner,
+    };
     let mut out = Vec::new();
     for stmt in statements {
         collect_expect_assertions_in_statement(stmt, source, &context, &mut out);
@@ -173,6 +198,8 @@ pub(crate) fn collect_assertions_in_statements_with_bindings(
 pub(crate) struct AssertionContext<'a> {
     receiver: Option<&'a str>,
     bindings: &'a TypeScriptAssertionBindings,
+    /// Whether a `return` here hands its value to the test runner.
+    returns_to_runner: bool,
 }
 
 /// Try chai's BDD `expect(...).to.equal(...)` shape (only when the file binds
@@ -186,7 +213,13 @@ fn assertion_from_expression_any(
     context: &AssertionContext<'_>,
 ) -> Option<TypeScriptAssertion> {
     chai_expect_assertion_from_expression(expr, source, context.bindings)
-        .or_else(|| expect_assertion_from_expression(expr, source))
+        .or_else(|| {
+            context
+                .bindings
+                .runner_expect_reachable()
+                .then(|| expect_assertion_from_expression(expr, source))
+                .flatten()
+        })
         .or_else(|| {
             context
                 .receiver
@@ -210,13 +243,29 @@ pub(crate) fn collect_expect_assertions_in_statement(
                 assertion_from_expression_any(&expr_stmt.expression, source, context)
             {
                 out.push(assertion);
+            } else {
+                collect_nested_callback_assertions(
+                    &expr_stmt.expression,
+                    false,
+                    source,
+                    context,
+                    out,
+                );
             }
         }
         Statement::ReturnStatement(return_stmt) => {
-            if let Some(argument) = &return_stmt.argument
-                && let Some(assertion) = assertion_from_expression_any(argument, source, context)
-            {
-                out.push(assertion);
+            if let Some(argument) = &return_stmt.argument {
+                if let Some(assertion) = assertion_from_expression_any(argument, source, context) {
+                    out.push(assertion);
+                } else {
+                    collect_nested_callback_assertions(
+                        argument,
+                        context.returns_to_runner,
+                        source,
+                        context,
+                        out,
+                    );
+                }
             }
         }
         Statement::IfStatement(if_stmt) => {
@@ -279,6 +328,262 @@ pub(crate) fn collect_expect_assertions_in_statement(
     }
 }
 
+/// RIPR-SPEC-0246 rule 2: the three nested callbacks whose assertions run
+/// before the test settles, read as the test's own assertions.
+/// - `[<literal>, ...].forEach((v) => body)`: one case per element, `v`
+///   replaced by the element, as RIPR-SPEC-0243 rule 11 reads a table row.
+/// - `return p.then((v) => body)` / `await p.then(...)`: the runner awaits
+///   the promise, so the body runs with `v` replaced by `(p)`, the value the
+///   assertion observes.
+/// - `await t.test(name, [options,] (t2) => body)` on the test's own
+///   receiver: node:test runs the awaited subtest inside the test.
+///
+/// Anything else, a callback that is not awaited or returned, or one the row
+/// reader refuses, collects nothing (fail closed).
+fn collect_nested_callback_assertions(
+    expr: &Expression<'_>,
+    returned: bool,
+    source: &SourceText<'_>,
+    context: &AssertionContext<'_>,
+    out: &mut Vec<TypeScriptAssertion>,
+) {
+    let (expr, awaited) = match expr.get_inner_expression() {
+        Expression::AwaitExpression(await_expr) => {
+            (await_expr.argument.get_inner_expression(), true)
+        }
+        other => (other, false),
+    };
+    let Expression::CallExpression(call) = expr else {
+        return;
+    };
+    let Some(member) = call.callee.as_member_expression() else {
+        return;
+    };
+    let Some(method) = member.static_property_name() else {
+        return;
+    };
+    let text: &str = source;
+    match method {
+        "forEach" => {
+            let [callback] = call.arguments.as_slice() else {
+                return;
+            };
+            // `forEach` does not await an async callback: its failures
+            // reject a promise nobody waits for.
+            if callback_is_async_or_generator(callback) {
+                return;
+            }
+            let Expression::ArrayExpression(array) = member.object().get_inner_expression() else {
+                return;
+            };
+            if array.elements.is_empty() || array.elements.len() > 64 {
+                return;
+            }
+            let mut rows = Vec::new();
+            for element in &array.elements {
+                let Some(cell) = element.as_expression().filter(|cell| is_literal_cell(cell))
+                else {
+                    return;
+                };
+                let span = cell.span();
+                // A cell spanning lines would shift the re-parsed
+                // assertion lines (as `literal_table_rows` refuses).
+                let Some(cell_text) = text
+                    .get(span.start as usize..span.end as usize)
+                    .filter(|cell_text| !cell_text.contains(['\n', '\r']))
+                else {
+                    return;
+                };
+                rows.push(vec![cell_text.to_string()]);
+            }
+            if let Some(assertions) =
+                callback_case_assertions(callback, &rows, source, context.bindings, false)
+            {
+                out.extend(assertions);
+            }
+        }
+        "then" if returned || awaited => {
+            // A rejection handler can swallow the changed behavior.
+            let [callback] = call.arguments.as_slice() else {
+                return;
+            };
+            let span = member.object().span();
+            let Some(receiver) = text.get(span.start as usize..span.end as usize) else {
+                return;
+            };
+            // A multi-line receiver, or an earlier promise step that may
+            // replace the owner's value, is not substituted. The step is
+            // matched as a whole word so a computed `["then"]` member is
+            // refused too; an argument named `then` is a refused miss.
+            if receiver.contains(['\n', '\r'])
+                || receiver
+                    .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+                    .any(|word| matches!(word, "then" | "catch" | "finally"))
+                || receiver_chain_has_computed_member(member.object())
+            {
+                return;
+            }
+            if let Some(body) = callback_body_text(callback, text)
+                && receiver_identifiers(receiver)
+                    .any(|name| !scan_body_lexical_facts(body, name).declarations.is_empty())
+            {
+                return;
+            }
+            if callback_parameter_count(callback) == Some(0) {
+                if let Some(statements) = function_body_statements_from_argument(callback) {
+                    collect_expect_assertions_from_statement_vec(statements, source, context, out);
+                }
+            } else if let Some(assertions) = callback_case_assertions(
+                callback,
+                &[vec![format!("({receiver})")]],
+                source,
+                context.bindings,
+                true,
+            ) {
+                out.extend(assertions);
+            }
+        }
+        "test" if awaited => {
+            let Expression::Identifier(object) = member.object().get_inner_expression() else {
+                return;
+            };
+            if context.receiver != Some(object.name.as_str()) {
+                return;
+            }
+            let Some((callback, leading)) = call.arguments.split_last() else {
+                return;
+            };
+            // A name, then at most an options object that does not skip or
+            // mark the subtest todo (a todo failure does not fail the parent).
+            if leading.is_empty()
+                || leading.len() > 2
+                || !leading
+                    .iter()
+                    .enumerate()
+                    .all(|(index, argument)| subtest_leading_argument_runs(argument, index == 0))
+            {
+                return;
+            }
+            let Some(statements) = function_body_statements_from_argument(callback) else {
+                return;
+            };
+            let subtest = AssertionContext {
+                receiver: first_plain_parameter(callback),
+                bindings: context.bindings,
+                returns_to_runner: true,
+            };
+            collect_expect_assertions_from_statement_vec(statements, source, &subtest, out);
+        }
+        _ => {}
+    }
+}
+
+/// `true` when the receiver's member chain has a computed step
+/// (`p["th" + "en"](...)`): its name cannot be read, so it may be a promise
+/// step that replaces the owner's value. Array literals in call arguments
+/// are not on the chain and stay allowed.
+fn receiver_chain_has_computed_member(receiver: &Expression<'_>) -> bool {
+    let mut expr = receiver.get_inner_expression();
+    loop {
+        expr = match expr {
+            Expression::ComputedMemberExpression(_) => return true,
+            Expression::CallExpression(call) => call.callee.get_inner_expression(),
+            Expression::StaticMemberExpression(member) => member.object.get_inner_expression(),
+            Expression::PrivateFieldExpression(member) => member.object.get_inner_expression(),
+            Expression::ChainExpression(chain) => match &chain.expression {
+                oxc_ast::ast::ChainElement::ComputedMemberExpression(_) => return true,
+                oxc_ast::ast::ChainElement::CallExpression(call) => {
+                    call.callee.get_inner_expression()
+                }
+                oxc_ast::ast::ChainElement::StaticMemberExpression(member) => {
+                    member.object.get_inner_expression()
+                }
+                oxc_ast::ast::ChainElement::PrivateFieldExpression(member) => {
+                    member.object.get_inner_expression()
+                }
+                _ => return true,
+            },
+            Expression::AwaitExpression(_) => return true,
+            _ => return false,
+        };
+    }
+}
+
+/// `true` for an `async` or generator arrow or function callback.
+fn callback_is_async_or_generator(callback: &oxc_ast::ast::Argument<'_>) -> bool {
+    match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => arrow.r#async,
+        oxc_ast::ast::Argument::FunctionExpression(function) => {
+            function.r#async || function.generator
+        }
+        _ => true,
+    }
+}
+
+/// The source text of an arrow or function callback's body.
+fn callback_body_text<'s>(callback: &oxc_ast::ast::Argument<'_>, text: &'s str) -> Option<&'s str> {
+    let span = match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => arrow.body.span,
+        oxc_ast::ast::Argument::FunctionExpression(function) => function.body.as_ref()?.span,
+        _ => return None,
+    };
+    text.get(span.start as usize..span.end as usize)
+}
+
+/// The identifiers a `.then` receiver reads, so a body that re-declares one
+/// of them refuses the substitution.
+fn receiver_identifiers(receiver: &str) -> impl Iterator<Item = &str> {
+    receiver
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '$'))
+        .filter(|word| word.chars().next().is_some_and(|c| !c.is_ascii_digit()))
+}
+
+/// A subtest name (a string or template literal) or an options object
+/// without `skip` or `todo`.
+fn subtest_leading_argument_runs(argument: &oxc_ast::ast::Argument<'_>, first: bool) -> bool {
+    match argument {
+        oxc_ast::ast::Argument::StringLiteral(_) | oxc_ast::ast::Argument::TemplateLiteral(_) => {
+            first
+        }
+        oxc_ast::ast::Argument::ObjectExpression(object) if !first => {
+            object.properties.iter().all(|property| match property {
+                oxc_ast::ast::ObjectPropertyKind::ObjectProperty(property) => !matches!(
+                    property.key.static_name().as_deref(),
+                    Some("skip" | "todo") | None
+                ),
+                oxc_ast::ast::ObjectPropertyKind::SpreadProperty(_) => false,
+            })
+        }
+        _ => false,
+    }
+}
+
+/// The number of parameters of an arrow or function callback.
+fn callback_parameter_count(callback: &oxc_ast::ast::Argument<'_>) -> Option<usize> {
+    match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => {
+            Some(arrow.params.items.len() + usize::from(arrow.params.rest.is_some()))
+        }
+        oxc_ast::ast::Argument::FunctionExpression(function) => {
+            Some(function.params.items.len() + usize::from(function.params.rest.is_some()))
+        }
+        _ => None,
+    }
+}
+
+/// The callback's first parameter when it is a plain identifier.
+fn first_plain_parameter<'a>(callback: &'a oxc_ast::ast::Argument<'a>) -> Option<&'a str> {
+    let params = match callback {
+        oxc_ast::ast::Argument::ArrowFunctionExpression(arrow) => &arrow.params,
+        oxc_ast::ast::Argument::FunctionExpression(function) => &function.params,
+        _ => return None,
+    };
+    match &params.items.first()?.pattern {
+        oxc_ast::ast::BindingPattern::BindingIdentifier(ident) => Some(ident.name.as_str()),
+        _ => None,
+    }
+}
+
 pub(crate) fn collect_expect_assertions_from_statement_vec(
     statements: &oxc_allocator::Vec<'_, Statement<'_>>,
     source: &SourceText<'_>,
@@ -321,6 +626,13 @@ pub(crate) fn expect_assertion_from_expression(
     let error_payload = error_payload_from_assertion(matcher, async_modifier, outer_call, source);
     let (oracle_kind, oracle_strength) = if error_payload.is_some() {
         (OracleKind::ExactErrorVariant, OracleStrength::Strong)
+    } else if matcher == "toMatchObject" && async_modifier == Some("rejects") {
+        // An error object this extraction could not read stays unresolved
+        // (RIPR-SPEC-0250 reads only the returned object).
+        (OracleKind::Unknown, OracleStrength::Unknown)
+    } else if inline_snapshot_is_literal(matcher, outer_call) {
+        // RIPR-SPEC-0247 rule 3: the expected text is written in the test.
+        (OracleKind::Snapshot, OracleStrength::Strong)
     } else {
         oracle_for_matcher(matcher)
     };
@@ -336,7 +648,10 @@ pub(crate) fn expect_assertion_from_expression(
     // is a concrete resolvable literal. Detect dynamic args to emit the
     // typescript_dynamic_assertion_unresolved limitation.
     let (expected_value_or_variant, has_dynamic_matcher_arg) =
-        extract_matcher_expected_value(matcher, &error_payload, outer_call, source);
+        match instance_class_argument(matcher, async_modifier, outer_call) {
+            Some(class) => (Some(class), false),
+            None => extract_matcher_expected_value(matcher, &error_payload, outer_call, source),
+        };
 
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, matcher);
@@ -469,7 +784,27 @@ pub(crate) struct TypeScriptAssertionBindings {
     chai_expects: Vec<String>,
     /// Identifiers bound to the chai module (`chai.expect`, `chai.assert`).
     chai_modules: Vec<String>,
+    /// What the bare name `expect` reaches (RIPR-SPEC-0243 rule 3).
+    expect_binding: ExpectBinding,
 }
+
+/// What the identifier `expect` names in a test body (RIPR-SPEC-0243 rule 3).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum ExpectBinding {
+    /// Not bound in the file: the runner global.
+    #[default]
+    Global,
+    /// Imported from a test runner, or destructured from the Vitest test
+    /// context parameter.
+    Runner,
+    /// Bound to anything else: a local declaration, another parameter, or an
+    /// import from another module (chai's `expect` is read by its own step).
+    Other,
+}
+
+/// Modules whose `expect` export is the Jest/Vitest-style matcher API.
+const RUNNER_EXPECT_MODULES: [&str; 4] =
+    ["vitest", "@jest/globals", "@playwright/test", "bun:test"];
 
 impl TypeScriptAssertionBindings {
     /// Collect the assertion-library bindings of a file from its extracted
@@ -488,6 +823,19 @@ impl TypeScriptAssertionBindings {
                 import.namespace,
                 &import.local,
             );
+            if import.local == "expect" {
+                bindings.expect_binding = if !import.namespace
+                    && import.imported.as_deref() == Some("expect")
+                    && RUNNER_EXPECT_MODULES.contains(&import.source.as_str())
+                {
+                    ExpectBinding::Runner
+                } else {
+                    ExpectBinding::Other
+                };
+            }
+        }
+        if statements.iter().any(statement_declares_expect) {
+            bindings.expect_binding = ExpectBinding::Other;
         }
         for stmt in statements {
             let Statement::VariableDeclaration(decl) = stmt else {
@@ -580,7 +928,25 @@ impl TypeScriptAssertionBindings {
                 .filter(|local| !is_shadowed(local))
                 .cloned()
                 .collect(),
+            expect_binding: if is_shadowed("expect") {
+                ExpectBinding::Other
+            } else {
+                self.expect_binding
+            },
         }
+    }
+
+    /// These bindings with `expect` destructured from the Vitest test
+    /// context parameter (`test("x", ({ expect }) => ...)`).
+    pub(crate) fn with_context_expect(mut self) -> Self {
+        self.expect_binding = ExpectBinding::Runner;
+        self
+    }
+
+    /// Whether a bare `expect(...)` call reaches the Jest/Vitest matcher API
+    /// (RIPR-SPEC-0243 rule 3).
+    pub(crate) fn runner_expect_reachable(&self) -> bool {
+        self.expect_binding != ExpectBinding::Other
     }
 
     /// Whether `name` is the local name of any recorded binding.
@@ -749,9 +1115,37 @@ pub(crate) fn module_assert_assertion_from_expression(
         }
         _ => return None,
     };
-    let (oracle_kind, oracle_strength) = oracle_for_assert_method(method, flavor);
+    let (mut oracle_kind, mut oracle_strength) = oracle_for_assert_method(method, flavor);
     if matches!(oracle_kind, OracleKind::Unknown) {
         return None;
+    }
+    // RIPR-SPEC-0243 rule 10: `node:assert` `throws` / `rejects` whose
+    // second argument is an anchored regex or an all-literal object with a
+    // string `message` pins the error. chai's `assert.throws` signature
+    // differs and keeps the broad reading.
+    let error_payload = match method {
+        "throws" | "rejects" if flavor != AssertFlavor::Chai => call
+            .arguments
+            .get(1)
+            .and_then(|arg| node_assert_error_payload(method == "rejects", arg, source)),
+        _ => None,
+    };
+    if error_payload.is_some() {
+        oracle_kind = OracleKind::ExactErrorVariant;
+        oracle_strength = OracleStrength::Strong;
+    }
+    // RIPR-SPEC-0247 rule 2: loose `==` equality against a literal that
+    // coercion cannot reach pins the value as strict equality does.
+    let loose_equality = matches!(method, "equal" | "deepEqual")
+        && matches!(oracle_kind, OracleKind::RelationalCheck);
+    if loose_equality
+        && call
+            .arguments
+            .get(1)
+            .is_some_and(|expected| loose_equality_pins_literal(expected, method == "deepEqual"))
+    {
+        oracle_kind = OracleKind::ExactValue;
+        oracle_strength = OracleStrength::Strong;
     }
     // Argument order is (actual, expected[, message]). Only equality and
     // relational methods carry an expected argument; a truthiness or error
@@ -769,6 +1163,10 @@ pub(crate) fn module_assert_assertion_from_expression(
         expected_argument_metadata(expected_arg, source);
     let oracle_confidence =
         derive_oracle_confidence(&oracle_strength, &expected_value_or_variant, method);
+    let rendered_call = match &error_payload {
+        Some(payload) => format!("{callee_text}(..., {})", payload.expected),
+        None => format!("{callee_text}(...)"),
+    };
     Some(TypeScriptAssertion {
         matcher: method.to_string(),
         argument_count: call.arguments.len(),
@@ -776,13 +1174,146 @@ pub(crate) fn module_assert_assertion_from_expression(
         oracle_kind,
         oracle_strength,
         mock_payload: None,
-        error_payload: None,
+        error_payload,
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
         oracle_confidence,
-        rendered_call: Some(format!("{callee_text}(...)")),
+        rendered_call: Some(rendered_call),
     })
+}
+
+/// The exact error payload of a `node:assert` `throws` / `rejects` second
+/// argument (RIPR-SPEC-0243 rule 10): a regex literal anchored with `^` and
+/// `$` and no top-level alternation, or an all-literal object whose
+/// `message` is a string literal. Anything else stays broad.
+fn node_assert_error_payload(
+    rejects: bool,
+    arg: &Argument<'_>,
+    source: &str,
+) -> Option<TypeScriptErrorPayload> {
+    if let Some(expected) = anchored_regex_payload_text(arg, source) {
+        return Some(TypeScriptErrorPayload {
+            expected,
+            kind: if rejects {
+                TypeScriptErrorPayloadKind::AssertRejectsRegex
+            } else {
+                TypeScriptErrorPayloadKind::AssertThrowsRegex
+            },
+        });
+    }
+    let Argument::ObjectExpression(object) = arg else {
+        return None;
+    };
+    let has_message = object.properties.iter().any(|property| match property {
+        ObjectPropertyKind::ObjectProperty(property) => {
+            property.key.static_name().as_deref() == Some("message")
+                && matches!(property.value, Expression::StringLiteral(_))
+        }
+        ObjectPropertyKind::SpreadProperty(_) => false,
+    });
+    if !has_message {
+        return None;
+    }
+    let expected = safe_error_object_payload_text(arg, source)?;
+    Some(TypeScriptErrorPayload {
+        expected,
+        kind: if rejects {
+            TypeScriptErrorPayloadKind::AssertRejectsObject
+        } else {
+            TypeScriptErrorPayloadKind::AssertThrowsObject
+        },
+    })
+}
+
+/// Source text of a regex literal argument whose pattern is anchored with
+/// `^` and an unescaped `$`, carries no unescaped `|` outside a character
+/// class, and has no flags other than `u` (RIPR-SPEC-0243 rule 10). A flag
+/// such as `i` would let the regex admit text ripr does not compare.
+pub(crate) fn anchored_regex_payload_text(arg: &Argument<'_>, source: &str) -> Option<String> {
+    let Argument::RegExpLiteral(_) = arg else {
+        return None;
+    };
+    let text = source_text_for_argument(arg, source)?;
+    let (pattern, flags) = split_regex_literal(&text)?;
+    if !flags.chars().all(|flag| flag == 'u') || !regex_pattern_is_anchored(pattern) {
+        return None;
+    }
+    Some(text)
+}
+
+/// Split `/pattern/flags` into its pattern and flags.
+pub(crate) fn split_regex_literal(text: &str) -> Option<(&str, &str)> {
+    let body = text.strip_prefix('/')?;
+    let close = body.rfind('/')?;
+    Some((&body[..close], &body[close + 1..]))
+}
+
+/// Whether a regex pattern starts with `^`, ends with an unescaped `$`, and
+/// has no unescaped `|` outside a character class and no repeated wildcard
+/// (`.*`, `.+`, `.{0,}`, `[\s\S]*`, `\S+`, `(?:.)*`): `/^.*$/` admits every
+/// message, as a broad check does.
+fn regex_pattern_is_anchored(pattern: &str) -> bool {
+    let Some(inner) = pattern
+        .strip_prefix('^')
+        .and_then(|rest| rest.strip_suffix('$'))
+    else {
+        return false;
+    };
+    let mut escaped = false;
+    let mut in_class = false;
+    // The previous atom was `.`, a character class, an escaped class such
+    // as `\S`, or a group.
+    let mut wildcard_atom = false;
+    for ch in inner.chars() {
+        if escaped {
+            escaped = false;
+            wildcard_atom = ch.is_ascii_alphabetic();
+            continue;
+        }
+        if in_class {
+            if ch == '\\' {
+                escaped = true;
+            } else if ch == ']' {
+                in_class = false;
+                wildcard_atom = true;
+            }
+            continue;
+        }
+        match ch {
+            '\\' => escaped = true,
+            '[' => in_class = true,
+            '|' => return false,
+            '*' | '+' | '{' if wildcard_atom => return false,
+            _ => {}
+        }
+        wildcard_atom = ch == '.' || ch == ')';
+    }
+    // A trailing lone backslash would escape the closing `$`.
+    !escaped
+}
+
+/// Whether a top-level statement declares the name `expect` (`const`,
+/// `let`, `var`, `function` or `class`).
+fn statement_declares_expect(stmt: &Statement<'_>) -> bool {
+    match stmt {
+        Statement::VariableDeclaration(decl) => decl.declarations.iter().any(|declarator| {
+            declarator
+                .id
+                .get_binding_identifiers()
+                .iter()
+                .any(|ident| ident.name.as_str() == "expect")
+        }),
+        Statement::FunctionDeclaration(function) => function
+            .id
+            .as_ref()
+            .is_some_and(|id| id.name.as_str() == "expect"),
+        Statement::ClassDeclaration(class) => class
+            .id
+            .as_ref()
+            .is_some_and(|id| id.name.as_str() == "expect"),
+        _ => false,
+    }
 }
 
 /// `(expected literal text, is dynamic)` for an optional expected argument.
@@ -878,10 +1409,27 @@ pub(crate) fn chai_expect_assertion_from_expression(
     let expect_text = bindings.chai_expect_text(&expect_call.callee)?;
     chain.reverse();
     let negated = chain.contains(&"not");
-    let (oracle_kind, oracle_strength) =
+    let (mut oracle_kind, mut oracle_strength) =
         oracle_for_chai_terminal(terminal, terminal_call.is_some(), negated);
     if matches!(oracle_kind, OracleKind::Unknown) {
         return None;
+    }
+    // RIPR-SPEC-0243 rule 10: a non-negated chai `throw` with exactly one
+    // string-literal argument matches the message as a substring, as Jest's
+    // `toThrow("...")` does, so it pins the error the same way.
+    let error_payload = terminal_call
+        .filter(|call| {
+            !negated && matches!(oracle_kind, OracleKind::BroadError) && call.arguments.len() == 1
+        })
+        .and_then(|call| call.arguments.first())
+        .and_then(|arg| safe_error_literal_payload_text(arg, source))
+        .map(|expected| TypeScriptErrorPayload {
+            expected,
+            kind: TypeScriptErrorPayloadKind::ChaiThrowLiteral,
+        });
+    if error_payload.is_some() {
+        oracle_kind = OracleKind::ExactErrorVariant;
+        oracle_strength = OracleStrength::Strong;
     }
     let observed_expression = expect_call
         .arguments
@@ -905,7 +1453,11 @@ pub(crate) fn chai_expect_assertion_from_expression(
     }
     rendered.push('.');
     rendered.push_str(terminal);
-    if terminal_call.is_some() {
+    if let Some(payload) = &error_payload {
+        rendered.push('(');
+        rendered.push_str(&payload.expected);
+        rendered.push(')');
+    } else if terminal_call.is_some() {
         rendered.push_str("(...)");
     }
     let span_start = terminal_call.map_or(terminal_member.span.start, |call| call.span.start);
@@ -916,7 +1468,7 @@ pub(crate) fn chai_expect_assertion_from_expression(
         oracle_kind,
         oracle_strength,
         mock_payload: None,
-        error_payload: None,
+        error_payload,
         observed_expression,
         expected_value_or_variant,
         has_dynamic_matcher_arg,
@@ -975,9 +1527,15 @@ pub(crate) fn mock_payload_from_assertion(
 ) -> Option<TypeScriptMockPayload> {
     let target = safe_mock_target_text(expect_call.arguments.first()?, source)?;
     match matcher {
-        "toHaveBeenCalledWith" if matcher_call.arguments.len() == 1 => {
-            let expected =
-                safe_mock_expected_argument_text(matcher_call.arguments.first()?, source)?;
+        // Every argument must be a literal; the payload text joins them as
+        // written (RIPR-SPEC-0247 rule 1 reads two-argument calls too).
+        "toHaveBeenCalledWith" if !matcher_call.arguments.is_empty() => {
+            let expected = matcher_call
+                .arguments
+                .iter()
+                .map(|argument| safe_mock_expected_argument_text(argument, source))
+                .collect::<Option<Vec<_>>>()?
+                .join(", ");
             Some(TypeScriptMockPayload {
                 target,
                 expected,
@@ -1049,6 +1607,35 @@ pub(crate) fn error_payload_from_assertion(
                 expected,
                 kind: TypeScriptErrorPayloadKind::RejectsMatchObject,
             })
+        }
+        _ => None,
+    }
+}
+
+/// RIPR-SPEC-0249: the class a value `toBeInstanceOf(Class)` names, when
+/// the argument is one PascalCase identifier. `.rejects` observes the error,
+/// not the returned value, so it names none.
+fn instance_class_argument(
+    matcher: &str,
+    async_modifier: Option<&str>,
+    matcher_call: &oxc_ast::ast::CallExpression<'_>,
+) -> Option<String> {
+    if matcher != "toBeInstanceOf"
+        || async_modifier == Some("rejects")
+        || matcher_call.arguments.len() != 1
+    {
+        return None;
+    }
+    match matcher_call.arguments.first()? {
+        Argument::Identifier(ident)
+            if ident
+                .name
+                .as_str()
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_uppercase()) =>
+        {
+            Some(ident.name.to_string())
         }
         _ => None,
     }
@@ -1290,11 +1877,13 @@ pub(crate) fn assertion_oracle_text(assertion: &TypeScriptAssertion) -> String {
     if let Some(mock_payload) = &assertion.mock_payload {
         return mock_payload.oracle_text();
     }
-    if let Some(error_payload) = &assertion.error_payload {
-        return error_payload.oracle_text();
-    }
+    // chai and `node:assert` render their own call (with its real receiver
+    // and any rule-10 payload); only the Jest shape leaves it unset.
     if let Some(rendered_call) = &assertion.rendered_call {
         return rendered_call.clone();
+    }
+    if let Some(error_payload) = &assertion.error_payload {
+        return error_payload.oracle_text();
     }
     if is_execution_context_assertion_matcher(&assertion.matcher) {
         return format!("t.{}(...)", assertion.matcher);

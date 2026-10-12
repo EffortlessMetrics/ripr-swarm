@@ -269,9 +269,10 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
   evaluate (feature, target, custom atoms) keeps the test. `cfg_attr`
   composition is evaluated by the shared cfg authority. The direct
   `cfg(any())` case is pinned by `fixtures/rust_test_under_false_cfg_not_grip`.
-  Not pinned by it: on the lexical fallback only, a gate is missed (the test
-  stays discovered, failing open) when it is longer than 32 lines or separated
-  from the function by a non-attribute line such as a comment (#7043).
+  On the lexical fallback, a bounded balanced scan that skips comments joins
+  a function's own gate, so a never-true cfg longer than 32 lines or separated
+  by a comment is still not credited (#7043). An unclosed `#[`, or a gate past
+  that scan's byte budget, still fails open (the test stays discovered).
 - `#3273`'s inline `#[cfg(test)]` controls and `#3286`'s helper-evidence
   regression tests remain green.
 - Module-tree seeding (#4435): an undeclared `src` file and an undeclared

@@ -42,8 +42,13 @@ The MCP surface is read-only. It exposes tools `ripr_workspace_status`,
 `ripr://snapshot/{snapshot_id}`, `ripr://gap/{canonical_id}`,
 `ripr://repair-attempt/{attempt_id}`, `ripr://receipt/{receipt_id}`, and
 `ripr://repair-card/{canonical_id}`.
-`ripr_refresh` runs one bounded static analysis per call through the same
-shared check authority as `ripr check`; the other tools read the committed
+`ripr_refresh` analyzes the committed default-branch diff through the shared
+check authority. In this snapshot, staged and unstaged tracked edits and
+untracked files are outside the analyzed scope. `ripr check` defaults to the
+working tree when staged or unstaged tracked edits exist; shared check
+authority does not mean identical input. Use `ripr check --committed` for
+committed input, or `ripr check --worktree --format json` for staged and
+unstaged tracked edits outside MCP. The other tools read the committed
 snapshot and never re-run analysis. `ripr_prepare_repair` evaluates producer
 repair-readiness facts and may create one in-memory session repair
 transaction; `ripr_get_repair_attempt` and `ripr_get_receipt_status` read

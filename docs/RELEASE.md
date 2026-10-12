@@ -245,6 +245,22 @@ release and dogfood evidence. This does not change the installed binary or
 library API, but removing either surface is a release-contract change that must
 be reviewed against `cargo package -p ripr --list` and this document.
 
+The published `cli_help_hierarchy` target must compile and run from the
+extracted package without repository-root documentation. It keeps 16 rendered
+help and synthetic-document cases; its shared helper is packaged under
+`tests/common/help_contract.rs`. Seven live repository-guide audits belong to
+the unpublished `xtask` target `ripr_public_guide_contract`, which also checks a
+real Cargo archive and rejects removal of the shared test helper:
+
+```bash
+cargo test -p ripr --test cli_help_hierarchy
+cargo test -p xtask --test ripr_public_guide_contract
+```
+
+These focused checks establish the help target's package boundary. Other
+packaged test targets retain their own asset requirements and are not qualified
+by this check.
+
 The example paths are enumerated rather than globbed as `examples/**` on
 purpose. `ripr` runs against the sample workspace during tests and writes a
 fact cache into `crates/ripr/examples/sample/target/`. That directory is

@@ -3721,8 +3721,17 @@ fn extract_tests_recognizes_test_each_table_calls() {
     );
     assert_eq!(tests.len(), 1);
     assert_eq!(tests[0].name, "discounts %#");
-    assert_eq!(tests[0].assertions.len(), 1);
-    assert_eq!(tests[0].assertions[0].matcher, "toBe");
+    // An inline literal table reads one concrete assertion per row.
+    assert_eq!(tests[0].assertions.len(), 2);
+    assert!(tests[0].assertions.iter().all(|a| a.matcher == "toBe"));
+    assert_eq!(
+        tests[0]
+            .assertions
+            .iter()
+            .map(|a| a.expected_value_or_variant.as_deref())
+            .collect::<Vec<_>>(),
+        vec![Some("90"), Some("140")]
+    );
     assert!(tests[0].body_text.contains("applyDiscount("));
 }
 
@@ -3758,6 +3767,7 @@ fn extract_tests_records_safe_mock_payload_shapes() {
     expect(sink.record).toHaveBeenCalledWith("ready");
     expect(sink.record).toHaveBeenCalledWith({ status: "ok" });
     expect(sink.record).toHaveBeenCalledTimes(1);
+    expect(sink.record).toHaveBeenCalledWith("ready", 2);
 });
 "#,
     );
@@ -3778,6 +3788,7 @@ fn extract_tests_records_safe_mock_payload_shapes() {
             Some("expect(sink.record).toHaveBeenCalledWith(\"ready\")".to_string()),
             Some("expect(sink.record).toHaveBeenCalledWith({ status: \"ok\" })".to_string()),
             Some("expect(sink.record).toHaveBeenCalledTimes(1)".to_string()),
+            Some("expect(sink.record).toHaveBeenCalledWith(\"ready\", 2)".to_string()),
         ]
     );
 }
@@ -3790,7 +3801,7 @@ fn extract_tests_keeps_ambiguous_mock_payload_shapes_unbounded() {
     expect(sink.record).toHaveBeenCalledWith(status);
     expect(sink.record).toHaveBeenCalledWith({ status });
     expect(sink.record).toHaveBeenCalledWith(...args);
-    expect(sink.record).toHaveBeenCalledWith("ready", "extra");
+    expect(sink.record).toHaveBeenCalledWith("ready", status);
     expect(sink[method]).toHaveBeenCalledWith("ready");
     expect(getSink()).toHaveBeenCalledTimes(1);
 });
@@ -15737,12 +15748,21 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
 
 mod commonjs_export_tests;
 mod directory_specifier_tests;
+mod dropped_term_tests;
+mod error_payload_tests;
+mod instance_class_tests;
+mod literal_matcher_tests;
 mod loop_declared_tests;
+mod match_object_tests;
 mod mock_form_tests;
+mod mocked_callee_tests;
 mod module_entry_tests;
+mod nested_callback_tests;
 mod out_dir_specifier_tests;
 mod reexport_chain_tests;
 mod scope_receiver_tests;
+mod spec0243_owner_tests;
+mod table_case_tests;
 
 /// #4769: an unresolved import of a workspace package by name is a package
 /// manifest question. The limitation names that manifest instead of telling

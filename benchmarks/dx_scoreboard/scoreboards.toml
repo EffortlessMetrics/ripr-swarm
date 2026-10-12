@@ -10,6 +10,8 @@
 #   file:<path>       read from a committed receipt in this repository
 #   verdict-corpus:<dir>#<rate>
 #                     derived from a verdict corpus's committed expected rows
+#                     (`spec_example_coverage.coverage` is derived from the
+#                     corpus cases, spec-coverage.toml, and docs/specs)
 #   ingest:<kind>     supplied by `--ingest <file>` from another harness
 #   pending           no instrument yet; always reported as not_measured
 #
@@ -252,6 +254,72 @@ regression_floor = 0
 runner_dependent = false
 source = "verdict-corpus:fixtures/rust-verdict-corpus#false_exposed_rate"
 pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
+
+# TypeScript verdict corpus (RIPR-SPEC-0245). Every TypeScript case is
+# authored to cover a test-library oracle or reach rule (RIPR-SPEC-0243) under
+# jest, vitest, mocha with chai or node:test, so these describe those cells,
+# not real-world code. One more wrong case out of 62 discriminated (0.016) or
+# 39 not fully discriminated (0.026) exceeds the floor and regresses.
+
+[[metric]]
+id = "trust.verdict_corpus_typescript_false_actionable"
+board = "trust"
+title = "Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0.05
+regression_pct = 0
+regression_floor = 0.01
+runner_dependent = false
+source = "verdict-corpus:fixtures/typescript-verdict-corpus#false_actionable_rate"
+pending_reason = "the rates are derived from fixtures/typescript-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language typescript` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_typescript_false_exposed"
+board = "trust"
+title = "Authored TypeScript edits the project's tests miss that ripr credits as caught"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/typescript-verdict-corpus#false_exposed_rate"
+pending_reason = "the rates are derived from fixtures/typescript-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language typescript` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_typescript_false_silent"
+board = "trust"
+title = "Authored TypeScript edits the project's tests miss that ripr reports as fine"
+unit = "ratio"
+direction = "lower_is_better"
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/typescript-verdict-corpus#false_silent_rate"
+pending_reason = "the rates are derived from fixtures/typescript-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language typescript` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_spec_example_coverage"
+board = "trust"
+title = "In-scope numbered spec acceptance examples (minus waived) that a runtime-labeled verdict-corpus case cites"
+unit = "ratio"
+direction = "higher_is_better"
+# Coverage, not correctness: the verdict rates above say whether ripr is
+# right on the covered cases. `verdict-corpus check` separately fails when
+# the covered count falls below the floor in spec-coverage.toml. Scoping in
+# a new spec lowers this displayed rate without lowering the count. The
+# committed `metrics/dx-scoreboard/baseline.json` snapshot does not yet
+# include this metric, so `--gate` reports it incomparable rather than as a
+# regression. The hard gate remains the ledger floor; seeding that snapshot
+# is a separate receipt refresh, not this producer.
+target = 1.0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/rust-verdict-corpus#spec_example_coverage.coverage"
+pending_reason = "coverage is derived from fixtures/rust-verdict-corpus cases, spec-coverage.toml, and docs/specs; restore the corpus from main; `cargo xtask verdict-corpus check` gates the covered count against the floor in spec-coverage.toml"
 
 [[metric]]
 id = "trust.discriminator_claim_agreement"

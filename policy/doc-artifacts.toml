@@ -554,7 +554,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0117-rust-macro-reach-limitation.md"
 status = "accepted"
 owner = "product-swarm"
-standalone_reason = "Rust macro-reach limitation (P3 macro-boundary slice, closes #1292 partially): when no_static_path has no related tests and the 0114 lexical transitive walk does not find a path, name a same-repo macro boundary as static_limit_kind=rust_macro_reach_unresolved only when the macro definition lexically mentions the changed owner; fail-closed (classification stays no_static_path, witness is not related_tests, no macro expansion, no repair packet, no schema_version bump)."
+standalone_reason = "Rust macro-reach limitation (P3 macro-boundary slice, closes #1292 partially): when no_static_path has no related tests and the 0114 lexical transitive walk does not find a path, name a same-repo macro boundary as static_limit_kind=rust_macro_reach_unresolved only when the macro definition lexically mentions the changed owner; fail-closed (classification stays no_static_path, witness is not related_tests, no general macro expansion (bounded same-file test generators are indexed, #5334), no repair packet, no schema_version bump)."
 
 [[artifact]]
 id = "RIPR-SPEC-0118"
@@ -1206,6 +1206,14 @@ owner = "product-eval"
 standalone_reason = "Records the labeled Rust verdict corpus: one-line edits in pinned real crates labeled by running mutants against each crate's own tests, a fixed truth-to-verdict table, and cargo xtask verdict-corpus, which scores ripr's anchored verdicts and reports false-verdict and contradiction rates without running mutation testing or network access."
 
 [[artifact]]
+id = "RIPR-SPEC-0245"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0245-per-language-verdict-corpora.md"
+status = "proposed"
+owner = "product-eval"
+standalone_reason = "Lets the RIPR-SPEC-0219 verdict corpus commands act on one fixtures/<language>-verdict-corpus directory selected with --language, keeps the cargo-replay label rules to the Rust corpus, gives each language's committed rows their own regression gate, and defines the authored TypeScript corpus across jest, vitest, mocha with chai and node:test."
+
+[[artifact]]
 id = "RIPR-SPEC-0220"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0220-vscode-shared-attempt-status.md"
@@ -1245,6 +1253,14 @@ owner = "test-infra"
 standalone_reason = "Issue #1704 (slice #1794) records the read-only deterministic multi-campaign work-portfolio compiler contract: cargo xtask work portfolio|candidates|explain compile one versioned WorkPortfolioSnapshotV1 from immutable captured inputs with per-source observation identity and freshness, closed RIPR-SPEC-0218 lifecycle dispositions, closed candidate-kind vocabulary, exact next durable transitions, named blockers and external authorities, duplicate-family / claim-collision / unregistered-branch / path-disjoint shared-contract conflict edges, lane capacity, explicitly sourced advisory readiness only, and the eight ordered ranking factors from #1704 with no hidden score; missing, stale or unavailable inputs degrade to partial/not_proven and never fabricate readiness; fixed inputs give byte-stable normalized JSON independent of input ordering and checkout-root spelling with volatile timestamps and request ids outside the portable identity digest; bounded output reports selected/omitted/total with stable retrieval commands; filters never change candidate identity or authority; no command mutates GitHub, branches, worktrees, claims, specs, campaigns or source; no default campaign is required or synthesized; and a blocked, complete or low-ranked campaign never hides unrelated eligible work."
 
 [[artifact]]
+id = "RIPR-SPEC-0244"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0244-selected-work-identity.md"
+status = "proposed"
+owner = "test-infra"
+standalone_reason = "Issue #1706 (delivery slice PR A) records the shared selected-work identity and portfolio-basis contract: cargo xtask work selection check validates committed SelectedWorkIdentityV1 packets against a PortfolioBasisV1 compiled by the RIPR-SPEC-0234 compiler from immutable captured inputs; PortfolioBasisV1 reuses the #1704 repository identity, source observation and confidence DTOs and binds snapshot identity, completeness, unavailable sources and selection policy/version; SelectedWorkIdentityV1 binds subject identities in stable string forms, the selected lifecycle action from the closed #1704 candidate-kind vocabulary, accepted requirement/spec/slice references, zero or more source-linked campaign references that grant no authority (standalone work representable), basis SHA and expected head, the live overlap set that must stay visible before mutation, the role/context/budget profile and claim boundary plus stop conditions, with no repository-wide default campaign, mutable agent assignment, CI wait state or progress percentage and deny_unknown_fields rejecting additions; wrong repository/issue/action/basis/worktree/head identities fail visibly with exact recompile/reconcile routes; legacy_active_goal_ref/legacy_current_work_item_ref resolve read-only to historical campaign references, emit migration posture, grant no write/readiness/merge/closeout authority, and a legacy packet attempting writer authorization fails with reject_legacy_authority; the eight #1646 plan dispositions freeze as WorkPlanDispositionV1 for the PR C planning consumer; twelve captured corpus scenarios with provenance digests pin every required fixture; human and JSON projections derive from one check DTO and agree; and no consumer migrates in this slice."
+
+[[artifact]]
 id = "RIPR-SPEC-0231"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0231-rust-oracle-kind-admission.md"
@@ -1267,6 +1283,54 @@ path = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
 status = "proposed"
 owner = "product-analysis"
 standalone_reason = "Makes the Python adapter's assertion table, per-test oracle selection, error-path gate, reach order, static-limit precedence and verdict ladder normative, and closes order-dependent and substring-driven over-credit."
+
+[[artifact]]
+id = "RIPR-SPEC-0246"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0246-typescript-corpus-oracle-amendments.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Amends the TypeScript oracle rules from corpus mutation evidence: copy-for-identity changes need an identity matcher, and three nested callbacks that run before the test settles are collected."
+
+[[artifact]]
+id = "RIPR-SPEC-0251"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0251-typescript-default-import-owner-local.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads a renamed TypeScript default import of the owner as the owner in the observation guard, amending the RIPR-SPEC-0243 non-goal from corpus mutation evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0250"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads TypeScript toMatchObject from corpus mutation evidence: a match-object pin discriminates a change to a returned field it lists."
+
+[[artifact]]
+id = "RIPR-SPEC-0249"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0249-typescript-instance-class-pin.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads TypeScript toBeInstanceOf from corpus mutation evidence: a class pin discriminates a predicate change whose paths return classes the owner module keeps apart."
+
+[[artifact]]
+id = "RIPR-SPEC-0248"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0248-typescript-dropped-additive-term.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Withdraws TypeScript exposed credit from corpus mutation evidence: a change that only adds or drops one additive term needs a tested input where the term is non-zero."
+
+[[artifact]]
+id = "RIPR-SPEC-0247"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0247-typescript-literal-matcher-strength.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Amends the TypeScript matcher strengths from corpus mutation evidence: a literal mock-call payload on a test-local mock, loose equality against a coercion-safe literal, and a literal inline snapshot read exact."
 
 [[artifact]]
 id = "RIPR-SPEC-0243"
@@ -1378,7 +1442,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md"
 status = "proposed"
 owner = "product-analysis"
-standalone_reason = "Records the check --json refusal-envelope contract (#6834): a parsed-but-refused invocation emits a parseable envelope whose typed identity is carried in analysis_scope.run_status/basis/limitation and run_limitations[0].category/run_status/basis, with the repair route and the verbatim stderr diagnostic bound by test; caller-supplied root/base are echoed; argv usage errors stay prose-only; file-loaded config redacts only caller-unsupplied values."
+standalone_reason = "Records the check --json refusal-envelope contract (#6834): a parsed-but-refused invocation emits a parseable envelope whose typed identity is carried in analysis_scope.run_status/basis/limitation and run_limitations[0].category/run_status/basis, with the repair route and the verbatim stderr diagnostic bound by test; caller-supplied root/base are echoed; argv usage errors stay prose-only; file-loaded config redacts only caller-unsupplied values. Amended (#7331/#7332): the same envelope covers diff/rerun/context/agent brief/agent packet --json keyed with each command's own schema_version (adding check_artifact_unusable, gap_ledger_unusable, and seam_id_unknown identities), and the machine check formats sarif/github/badge-json/repo-exposure-json/agent-seam-packets-json render per-format refusal documents instead of zero bytes."
 
 [[artifact]]
 id = "RIPR-SPEC-0242"

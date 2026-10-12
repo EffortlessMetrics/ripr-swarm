@@ -1,0 +1,12 @@
+diff --git a/src/coupon.ts b/src/coupon.ts
+index 0000000..1111111 100644
+--- a/src/coupon.ts
++++ b/src/coupon.ts
+@@ -1,6 +1,6 @@
+ export function parseCoupon(code: string): number {
+   if (!code.startsWith("SAVE")) {
+-    throw new Error("unknown coupon prefix");
++    throw new Error("unknown coupon " + "prefix");
+   }
+   return Number(code.slice(4));
+ }

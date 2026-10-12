@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index f0ab98d..4f59456 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -13,7 +13,7 @@ pub fn is_stale(manifest: &Manifest) -> bool {
+ }
+ 
+ pub fn needs_upgrade(manifest: &Manifest) -> bool {
+-    manifest.version < CURRENT - 2
++    CURRENT - 2 > manifest.version
+ }
+ 
+ pub fn shipping_fee(weight: u32) -> u32 {

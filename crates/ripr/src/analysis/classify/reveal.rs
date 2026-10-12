@@ -8,6 +8,7 @@ use super::propagation_witness::{
 };
 use super::reach::{invokes_opaque_macro, is_proximity_only};
 use super::rust_string_literals;
+use super::text::changed_error_variant;
 use crate::analysis::classifier::oracle_binds_sink_identity;
 use crate::domain::*;
 
@@ -179,7 +180,11 @@ pub(in crate::analysis) fn reveal_outcome(
         StageEvidence::new(
             StageState::Weak,
             Confidence::Medium,
-            PROXIMITY_CONFIRMATION_WITHHELD,
+            if matches!(probe.family, ProbeFamily::MatchArm) {
+                PROXIMITY_CONFIRMATION_WITHHELD
+            } else {
+                PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
+            },
         )
     } else {
         build_discriminate_evidence(
@@ -200,6 +205,8 @@ pub(in crate::analysis) fn reveal_outcome(
 }
 
 const PROXIMITY_CONFIRMATION_WITHHELD: &str = "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm (observation_unverified)";
+
+const PROXIMITY_VARIANT_CONFIRMATION_WITHHELD: &str = "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed error variant; a test that only shares its file or module pins that variant on another function's result (observation_unverified)";
 
 struct RevealAssertionAnalysis {
     related: Vec<RelatedTest>,
@@ -544,6 +551,17 @@ fn analyze_related_assertions(
             && !is_proximity_only(*reason)
     });
 
+    let names_shared_variant = matches!(probe.family, ProbeFamily::MatchArm)
+        || (matches!(
+            probe.family,
+            ProbeFamily::ErrorPath | ProbeFamily::ReturnValue
+        ) && (changed_error_variant(&probe.expression).is_some()
+            // A change confined to the payload line of a multiline
+            // `Err::<T, E>(\n E::X,\n)` leaves only `E::X,` in the probe
+            // expression; the enclosing constructor is in the analysis
+            // expression (#7094 review).
+            || error_construction_path.is_some()));
+
     for (test, reason) in related_tests {
         let relation_reason = Some(*reason);
         let relation_confidence = Some(reason.confidence());
@@ -558,7 +576,13 @@ fn analyze_related_assertions(
         // `matches!(Unit::from_str(..), Ok(Unit::Fortnight))` confirmed the
         // `seconds` arm, so the arm's verdict followed edits to a test that
         // never runs `seconds`.
-        let confirms_observation = !(matches!(probe.family, ProbeFamily::MatchArm)
+        //
+        // An exact error variant (`Err(PayError::Limit)`) is the same kind of
+        // shared enum value: a same-file `matches!(refund(..),
+        // Err(PayError::Limit))` must not confirm `deposit_cap`'s
+        // `return Err(PayError::Limit)` while another test reaches
+        // `deposit_cap` (#7063).
+        let confirms_observation = !(names_shared_variant
             && owner_reaching_related
             && is_proximity_only(*reason)
             && !invokes_opaque_macro(&test.body)
@@ -1065,11 +1089,25 @@ fn expected_computed_through_owner(
     owner: &str,
     reaches_owner: &dyn Fn(Option<&str>, &str) -> bool,
 ) -> bool {
-    if !text.contains("assert_eq!") {
-        return false;
-    }
-    let Some([left, right]) = assertion_comparison_operands(text) else {
-        return false;
+    // RIPR-SPEC-0197: `assert!(a == b)` and its Err-return guard twin
+    // compare the same operands an `assert_eq!` would.
+    // Selected the way the pin selects (#7094 follow-up): a guard reads its
+    // condition and a plain `assert!` its comparison, so an `assert_eq!`
+    // spelled in a message, comment or guard body cannot switch the reader.
+    let equality;
+    let reads_equality = crate::analysis::extract::err_return_guard_twin(text).is_some()
+        || super::owner_pin::is_plain_macro(text, "assert");
+    let [left, right] = if !reads_equality && text.contains("assert_eq!") {
+        let Some(operands) = assertion_comparison_operands(text) else {
+            return false;
+        };
+        operands
+    } else {
+        equality = super::owner_pin::equality_condition_operands(text);
+        let Some([left, right]) = &equality else {
+            return false;
+        };
+        [left.as_str(), right.as_str()]
     };
     let reaches = |operand: &str| {
         called_paths(operand)
@@ -6384,6 +6422,175 @@ return Err(\"typed pin\".into());
         assert_eq!(may_reach.state, StageState::Yes, "{}", may_reach.summary);
     }
 
+    /// #7063: an exact error variant is shared by every function returning
+    /// that enum, so a same-file pin of another function's
+    /// `Err(PayError::Limit)` cannot confirm this owner's
+    /// `return Err(PayError::Limit)` while a test that calls the owner is
+    /// related. Alone, the same-file test still confirms, as for #6297.
+    #[test]
+    fn error_variant_proximity_test_cannot_confirm_beside_reaching_test() {
+        let reaching = test_with_assertions(
+            "a_small_deposit_is_accepted",
+            vec![oracle(
+                "assert_eq!(deposit_cap(100), Ok(100));",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let other_owner = test_with_assertions(
+            "a_large_refund_hits_the_limit",
+            vec![oracle(
+                "assert!(matches!(refund(20_000), Err(PayError::Limit)));",
+                OracleKind::ExactErrorVariant,
+                OracleStrength::Strong,
+            )],
+        );
+        for (family, expression) in [
+            (ProbeFamily::ErrorPath, "return Err(PayError::Limit);"),
+            (
+                ProbeFamily::ErrorPath,
+                "return Err::<i64, PayError>(PayError::Limit);",
+            ),
+            (
+                ProbeFamily::ReturnValue,
+                "return Err::<i64, PayError>(PayError::Limit);",
+            ),
+            (
+                ProbeFamily::ErrorPath,
+                "let v = amount.checked_mul(2).ok_or(PayError::Limit)?;",
+            ),
+        ] {
+            let probe = probe(family, expression);
+            let (_, beside, _) = reveal_evidence(
+                &probe,
+                &[
+                    (&reaching, RelationReason::DirectOwnerCall),
+                    (&other_owner, RelationReason::SameTestFile),
+                ],
+            );
+            assert_ne!(
+                beside.state,
+                StageState::Yes,
+                "{expression}: {}",
+                beside.summary
+            );
+            assert_eq!(
+                beside.summary, PROXIMITY_VARIANT_CONFIRMATION_WITHHELD,
+                "{expression}"
+            );
+            let (_, alone, _) =
+                reveal_evidence(&probe, &[(&other_owner, RelationReason::SameTestFile)]);
+            assert_eq!(
+                alone.state,
+                StageState::Yes,
+                "{expression}: {}",
+                alone.summary
+            );
+
+            // A same-file test that may run the owner keeps confirming.
+            let (_, may_reach, _, _) = reveal_evidence_with_expression(
+                &probe,
+                &probe.expression,
+                &[
+                    (&reaching, RelationReason::DirectOwnerCall),
+                    (&other_owner, RelationReason::SameTestFile),
+                ],
+                &[],
+                &|_, _| false,
+                &|_, _| false,
+                &ReturnOracleAdmission {
+                    owner_return_pin: &|_, _| false,
+                    assertion_admitted: &|_, _| true,
+                    proximity_may_reach_owner: &|test| test.name == "a_large_refund_hits_the_limit",
+                    owner_parameters: &[],
+                    expected_reaches_owner: &|_, _| false,
+                    effect_state_carried: &|_, _| true,
+                },
+                None,
+            );
+            assert_eq!(
+                may_reach.state,
+                StageState::Yes,
+                "{expression}: {}",
+                may_reach.summary
+            );
+        }
+
+        // A change confined to the payload line of a multiline turbofish
+        // leaves only `PayError::Limit,` in the probe expression; the guard
+        // reads the enclosing constructor from the analysis expression.
+        let payload_probe = probe(ProbeFamily::ErrorPath, "PayError::Limit,");
+        let (_, payload_beside, _, _) = reveal_evidence_with_expression(
+            &payload_probe,
+            "return Err::<i64, PayError>(\n    PayError::Limit,\n);",
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&other_owner, RelationReason::SameTestFile),
+            ],
+            &[],
+            &|_, _| false,
+            &|_, _| false,
+            &ReturnOracleAdmission {
+                owner_return_pin: &|_, _| false,
+                assertion_admitted: &|_, _| true,
+                proximity_may_reach_owner: &|_| false,
+                owner_parameters: &[],
+                expected_reaches_owner: &|_, _| false,
+                effect_state_carried: &|_, _| true,
+            },
+            None,
+        );
+        assert_ne!(
+            payload_beside.state,
+            StageState::Yes,
+            "{}",
+            payload_beside.summary
+        );
+        assert_eq!(
+            payload_beside.summary,
+            PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
+        );
+
+        // A custom `MyErr::<E>(E::X)` constructor names no `Result::Err`
+        // variant, so the guard does not apply to it.
+        let custom_probe = probe(
+            ProbeFamily::ReturnValue,
+            "return MyErr::<PayError>(PayError::Limit);",
+        );
+        let (_, custom_beside, _) = reveal_evidence(
+            &custom_probe,
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&other_owner, RelationReason::SameTestFile),
+            ],
+        );
+        assert_ne!(
+            custom_beside.summary,
+            PROXIMITY_VARIANT_CONFIRMATION_WITHHELD
+        );
+
+        // A return value that names no error variant keeps the #4486
+        // same-file credit beside a reaching test.
+        let ok_probe = probe(ProbeFamily::ReturnValue, "return Ok(amount + 1);");
+        let same_file_ok = test_with_assertions(
+            "refund_adds_one",
+            vec![oracle(
+                "assert_eq!(refund(1), Ok(amount + 1));",
+                OracleKind::ExactValue,
+                OracleStrength::Strong,
+            )],
+        );
+        let (_, ok_beside, _) = reveal_evidence(
+            &ok_probe,
+            &[
+                (&reaching, RelationReason::DirectOwnerCall),
+                (&same_file_ok, RelationReason::SameTestFile),
+            ],
+        );
+        assert_ne!(ok_beside.summary, PROXIMITY_VARIANT_CONFIRMATION_WITHHELD);
+        assert_eq!(ok_beside.state, StageState::Yes, "{}", ok_beside.summary);
+    }
+
     /// MatchArm: assertion containing the specific VARIANT token confirms the arm.
     #[test]
     fn match_arm_variant_token_match_keeps_discriminate_yes() {
@@ -7172,6 +7379,31 @@ return Err(\"typed pin\".into());
             "tax",
             &reaches
         ));
+        // RIPR-SPEC-0197: `assert!(a == b)` and an Err-return guard twin
+        // compare the same operands an `assert_eq!` would.
+        for text in [
+            "assert!(sub + tax(sub) == invoice(3, 100));",
+            "if invoice(3, 100) != sub + tax(sub) { return Err(..) }",
+            // An `assert_eq!` spelled in a message, comment or guard body
+            // does not switch the reader away from the compared operands.
+            "assert!(tax(300) == invoice(3, 100) - 300, \"assert_eq! equivalent\");",
+            "if tax(300) != invoice(3, 100) - 300 {\n    // was assert_eq!(tax(300), 24)\n    return Err(..)\n}",
+        ] {
+            assert!(
+                expected_computed_through_owner(text, "tax", &reaches),
+                "{text}"
+            );
+        }
+        for text in [
+            "assert!(tax(300) == 24);",
+            "if tax(300) != 24 { return Err(..) }",
+            "assert!(tax(300) >= invoice(3, 100));",
+        ] {
+            assert!(
+                !expected_computed_through_owner(text, "tax", &reaches),
+                "{text}"
+            );
+        }
         assert_eq!(constructed_field_name("storage,"), Some("storage"));
         assert_eq!(
             constructed_field_name("total_cents: shipping + subtotal,"),

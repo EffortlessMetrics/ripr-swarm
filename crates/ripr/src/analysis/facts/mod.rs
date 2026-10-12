@@ -9,6 +9,7 @@ pub(crate) mod drop_in;
 mod harness_registry;
 mod includes;
 mod index;
+mod macro_generated_tests;
 pub(crate) mod member_crates;
 mod model;
 mod parameterized_tests;
@@ -20,6 +21,22 @@ pub(crate) use test_styles::BUILT_IN_TEST_ATTRIBUTE_PATHS;
 use std::path::{Path, PathBuf};
 
 use crate::config::TestHarnessRegistration;
+
+/// Normalize local roles in reconstructed source with the same authorities as
+/// ordinary indexing. External composition is intentionally supplied separately
+/// by the caller's indexed context, rather than guessed from an isolated file.
+pub(crate) fn normalize_reconstructed_source_roles(
+    index: &mut RustIndex,
+    root: &Path,
+    registrations: &[TestHarnessRegistration],
+) -> Result<(), String> {
+    parameterized_tests::promote_explicit_test_case_functions(index);
+    index.refresh_memberships()?;
+    test_styles::normalize_index_test_styles(index)?;
+    index.refresh_memberships()?;
+    harness_registry::apply_registrations(index, root, registrations);
+    index.finalize()
+}
 
 pub fn build_index(root: &Path, files: &[PathBuf]) -> Result<model::RustIndex, String> {
     build_index_with_test_harnesses(root, files, &[])
@@ -41,6 +58,13 @@ pub fn build_index_with_test_harnesses(
     })?;
     index_phase("index_test_styles", || {
         test_styles::normalize_index_test_styles(&mut index)?;
+        index.refresh_memberships()
+    })?;
+    // #5334: same-file macro_rules! test generators, expanded in one
+    // bounded shape. After the style normalizer, which rebuilds
+    // tests from parsed functions and has none for a generated test.
+    index_phase("index_macro_generated_tests", || {
+        macro_generated_tests::register_macro_generated_tests(&mut index);
         index.refresh_memberships()
     })?;
     // Composition runs strictly after the normalizer: the normalizer
@@ -132,6 +156,13 @@ fn post_process_cached_index(
     })?;
     index_phase("index_test_styles", || {
         test_styles::normalize_index_test_styles(&mut cached.index)?;
+        cached.index.refresh_memberships()
+    })?;
+    // #5334: same-file macro_rules! test generators, expanded in one
+    // bounded shape. After the style normalizer, which rebuilds
+    // tests from parsed functions and has none for a generated test.
+    index_phase("index_macro_generated_tests", || {
+        macro_generated_tests::register_macro_generated_tests(&mut cached.index);
         cached.index.refresh_memberships()
     })?;
     index_phase("index_role_composition", || {

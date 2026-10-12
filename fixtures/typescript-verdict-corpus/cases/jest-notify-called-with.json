@@ -1,0 +1,52 @@
+{
+  "case_id": "jest-notify-called-with",
+  "subject_id": "authored-ts-jest-checkout",
+  "diff": "cases/jest-notify-called-with.diff",
+  "anchor": {
+    "file": "src/notify.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect",
+  "test_shape": "jest_tohavebeencalledwith_injected_fn",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "send(\"\" + id + \" shipped\");",
+        "mutated_line": "send(\"\" + id + \" shipped\");",
+        "outcome": "tests_failed",
+        "failing_test": "shipment announcement names the order",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      },
+      {
+        "replacement": "send(\"order \" + id + \"\");",
+        "mutated_line": "send(\"order \" + id + \"\");",
+        "outcome": "tests_failed",
+        "failing_test": "shipment announcement names the order",
+        "equivalence_review": "not equivalent: the failing test observes the difference"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "toHaveBeenCalledWith(\"order 7 shipped\") pins the message, so both string mutants fail it. ripr reports weakly_exposed on the anchor, a false actionable gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

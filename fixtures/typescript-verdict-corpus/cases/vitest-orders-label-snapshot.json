@@ -1,0 +1,72 @@
+{
+  "case_id": "vitest-orders-label-snapshot",
+  "subject_id": "authored-ts-vitest-orders",
+  "diff": "cases/vitest-orders-label-snapshot.diff",
+  "anchor": {
+    "file": "src/label.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "vitest_tomatchsnapshot_committed_snap",
+  "hard_case": "snapshot oracle lives in test/__snapshots__/label.test.ts.snap; only qty 3 is exercised",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "node 22.22.0; vitest 5.0.3; typescript 5.9; @stryker-mutator/core 10.0.0 (vitest runner)",
+    "mutants": [
+      {
+        "replacement": "const units = qty !== 1 ? \"units\" : \"\";",
+        "mutated_line": "const units = qty !== 1 ? \"units\" : \"\";",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: qty 1 would render an empty unit word; no test uses qty 1 (NoCoverage)"
+      },
+      {
+        "replacement": "const units = true ? \"units\" : \"unit\";",
+        "mutated_line": "const units = true ? \"units\" : \"unit\";",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: qty 1 would render \"units\""
+      },
+      {
+        "replacement": "const units = false ? \"units\" : \"unit\";",
+        "mutated_line": "const units = false ? \"units\" : \"unit\";",
+        "outcome": "tests_failed",
+        "failing_test": "renders the label",
+        "equivalence_review": "not equivalent: qty 3 renders \"unit\""
+      },
+      {
+        "replacement": "const units = qty === 1 ? \"units\" : \"unit\";",
+        "mutated_line": "const units = qty === 1 ? \"units\" : \"unit\";",
+        "outcome": "tests_failed",
+        "failing_test": "renders the label",
+        "equivalence_review": "not equivalent: qty 3 renders \"unit\""
+      },
+      {
+        "replacement": "const units = qty !== 1 ? \"\" : \"unit\";",
+        "mutated_line": "const units = qty !== 1 ? \"\" : \"unit\";",
+        "outcome": "tests_failed",
+        "failing_test": "renders the label",
+        "equivalence_review": "not equivalent: qty 3 renders an empty unit word"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test compares shippingLabel(\"Widget\", 3) with the committed snapshot \"Widget (3 units)\" (a hand-mutated label was checked to fail `vitest run` without rewriting the .snap). Mutants that change the qty-3 output fail; the ones that only change the qty-1 branch survive, so truth is partial. ripr reports weakly_exposed with typescript_snapshot_discriminator_unresolved, a gap verdict.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

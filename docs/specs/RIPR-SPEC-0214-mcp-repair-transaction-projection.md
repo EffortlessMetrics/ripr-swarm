@@ -310,6 +310,9 @@ read-only and without execution authority (ADR 0022):
   pre-refresh typed failures.
 - `crates/ripr/tests/mcp_sdk.rs`, `crates/ripr/tests/mcp_stdio.rs` —
   hosted wire interop controls.
+  `resource_reads_match_tools_after_refresh` pins repair-attempt and
+  receipt tool/resource parsed-document equality on a prepared B4
+  session transaction (#7145).
 
 ## Implementation Mapping
 

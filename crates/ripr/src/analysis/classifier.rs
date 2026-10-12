@@ -2,13 +2,15 @@ mod evidence;
 mod finding;
 mod owner;
 
+pub(in crate::analysis) use evidence::OwnerCallerNames;
 pub(in crate::analysis) use finding::oracle_binds_sink_identity;
 
 use self::evidence::ClassifiedProbeEvidence;
 use self::finding::build_finding;
 use self::owner::resolve_owner_function;
 use super::classify::{
-    DependencyEdgeContext, ProbeContext, RelatedTestCandidateIndex,
+    DependencyEdgeContext, HelperChain, ProbeContext, RelatedTestCandidateIndex,
+    ambiguous_helper_entry_called_by_tests, confidence_score,
     find_related_tests_with_candidate_index, is_assertion_shaped_owner,
 };
 use super::probes::parser_expression_for_probe;
@@ -42,10 +44,13 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     let owner_fn = resolve_owner_function(probe, index);
     // #3296: one chain resolution per probe, shared by the relation
     // stage and the activation rows (single authority, single scan).
-    let helper_chain = owner_fn.and_then(|owner| {
-        let chain = super::classify::resolve_chain(&owner.name, index, workspace_complete, &[]);
-        (!chain.hops.is_empty()).then_some(chain)
-    });
+    // Empty-hop chains stay off the relation/activation path (fail closed)
+    // but the uniqueness stop is kept so #7080 can abstain as unknown.
+    let resolved_chain = owner_fn
+        .map(|owner| super::classify::resolve_chain(&owner.name, index, workspace_complete, &[]));
+    let helper_chain = resolved_chain
+        .clone()
+        .filter(|chain| !chain.hops.is_empty());
     let related_tests = find_related_tests_with_candidate_index(
         probe,
         owner_fn,
@@ -71,7 +76,8 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     .with_helper_chain(helper_chain)
     .with_file_use_statements(candidate_index.file_use_statements())
     .with_owner_pin_syntax(candidate_index.owner_pin_syntax())
-    .with_test_value_facts(candidate_index.test_value_facts());
+    .with_test_value_facts(candidate_index.test_value_facts())
+    .with_owner_caller_names(candidate_index.owner_caller_names());
     let reveal_expression = parser_expression_for_probe(
         index,
         &probe.location.file,
@@ -83,14 +89,98 @@ pub(in crate::analysis) fn classify_probe_with_candidate_index(
     let evidence = ClassifiedProbeEvidence::gather(&context, reveal_expression);
     let class = evidence.classify(context.probe);
 
-    build_finding(&context, class, evidence)
+    let mut finding = build_finding(&context, class, evidence);
+    if let Some(chain) = resolved_chain.as_ref() {
+        withhold_helper_uniqueness_as_unknown(&mut finding, chain, index);
+    }
+    finding
+}
+
+/// #7080: a helper chain refused only because an entry name is not unique
+/// is not "no test reaches the owner". Relation stays refused (fail closed);
+/// when a test actually calls that ambiguous name, the finding abstains as
+/// `static_unknown` and names the function. A uniqueness stop that no test
+/// enters, including a unique wrapper of a non-unique helper, a
+/// receiver/foreign path that only shares the bare name (`req.parse()`,
+/// `req.r#parse()`, `foreign::r#parse()`), or a type-qualified sibling of
+/// the uniqueness-stop hop (`B::parse` when the hop is `A::parse`), stays
+/// `no_static_path` (#7270 / #7268). After the class rewrite, reach is an
+/// identity-unknown stage (not `no`) and the stop reason names callee
+/// identity rather than a missing probe shape (#7272).
+fn withhold_helper_uniqueness_as_unknown(
+    finding: &mut Finding,
+    chain: &HelperChain,
+    index: &RustIndex,
+) {
+    if finding.class != ExposureClass::NoStaticPath {
+        return;
+    }
+    let Some(entry) = ambiguous_helper_entry_called_by_tests(chain, index) else {
+        return;
+    };
+    finding.class = ExposureClass::StaticUnknown;
+    finding.ripr.reach = StageEvidence::new(
+        StageState::Unknown,
+        Confidence::Low,
+        format!(
+            "ripr cannot tell which `{entry}` a test calls because that name is not unique in the workspace"
+        ),
+    );
+    let ripr = &finding.ripr;
+    finding.confidence = finding.confidence.min(confidence_score(
+        &ripr.reach,
+        &ripr.infect,
+        &ripr.propagate,
+        &ripr.reveal.observe,
+        &ripr.reveal.discriminate,
+        &finding.class,
+    ));
+    finding
+        .stop_reasons
+        .retain(|reason| *reason != StopReason::StaticProbeUnknown);
+    if !finding
+        .stop_reasons
+        .contains(&StopReason::HelperIdentityUnresolved)
+    {
+        finding
+            .stop_reasons
+            .push(StopReason::HelperIdentityUnresolved);
+    }
+    finding.missing = vec![format!(
+        "helper chain abstains: `{entry}` is not a unique function in the workspace"
+    )];
+    finding.activation.missing_discriminators.clear();
+    finding.recommended_next_step = Some(format!(
+        "ripr cannot tell which `{entry}` a test calls because that name is not unique in the workspace, so it does not claim that no test reaches this change. Disambiguate the function, or add a test that calls a unique owner, only if none already does."
+    ));
+    finding
+        .evidence
+        .retain(|line| !line.contains("No static test path"));
+    finding.evidence.push(format!(
+        "helper_chain_uniqueness: `{entry}` is not a unique function in the workspace; tests call that name"
+    ));
+    finding.evidence.extend([
+        format!("{LIMITATION_LAST_ESTABLISHED_EDGE_PREFIX}tests call `{entry}`"),
+        format!(
+            "{LIMITATION_FIRST_UNRESOLVED_EDGE_PREFIX}which `{entry}` definition the tests invoke"
+        ),
+        format!("{LIMITATION_ANALYZER_ROUTE_PREFIX}analysis/classify/helper-transfer"),
+        format!(
+            "{LIMITATION_NON_CLAIM_PREFIX}no missing test is established; the helper-chain relation stays refused"
+        ),
+    ]);
+    for test in &mut finding.related_tests {
+        if test.miss == Some(RelatedTestMiss::NoCallPath) {
+            test.miss = None;
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::analysis::classify::{recommended_next_step, stop_reasons};
-    use crate::analysis::facts::FunctionSourceRole;
+    use crate::analysis::facts::{FunctionImplContext, FunctionSourceRole};
     use crate::analysis::rust_index::{
         CallFact, FileFacts, FunctionSummary, LiteralFact, OracleFact, ProbeShapeFact,
         ProbeShapeKind, ReturnFact, TestSummary, extract_identifier_tokens,
@@ -187,6 +277,785 @@ mod tests {
         assert_eq!(finding.class, ExposureClass::NoStaticPath);
         assert_eq!(finding.ripr.reach.state, StageState::No);
         assert!(finding.related_tests.is_empty());
+    }
+
+    fn function_with_calls(file: &str, name: &str, calls: &[(&str, &str)]) -> FunctionSummary {
+        let mut owner = function(file, name);
+        owner.calls = calls
+            .iter()
+            .map(|(callee, text)| CallFact {
+                line: 2,
+                name: callee.to_string(),
+                text: text.to_string(),
+            })
+            .collect();
+        owner
+    }
+
+    fn test_calling(file: &str, name: &str, callee: &str, text: &str) -> TestSummary {
+        TestSummary {
+            name: name.to_string(),
+            file: PathBuf::from(file),
+            start_line: 1,
+            end_line: 4,
+            body: format!("{text};").into(),
+            calls: vec![CallFact {
+                line: 1,
+                name: callee.to_string(),
+                text: text.to_string(),
+            }],
+            assertions: Vec::new(),
+            literals: Vec::new(),
+            attrs: vec![],
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+        }
+    }
+
+    fn uniqueness_parse_index(call_text: &str) -> RustIndex {
+        RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "digit_after_wildcard",
+                "parse",
+                call_text,
+            )],
+            ..Default::default()
+        })
+    }
+
+    /// `A::parse` hops to unique `op`; `B::parse` makes the name non-unique.
+    /// Distinct `Impl` contexts so a qualified sibling is not the hop (#7268).
+    fn uniqueness_qualified_hop_index(call_text: &str) -> RustIndex {
+        let mut hop = function_with_calls("src/a.rs", "parse", &[("op", "op(bytes)")]);
+        hop.impl_context = FunctionImplContext::Impl {
+            self_type: "A".to_string(),
+        };
+        let mut sibling = function("src/b.rs", "parse");
+        sibling.impl_context = FunctionImplContext::Impl {
+            self_type: "B".to_string(),
+        };
+        RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![function("src/op.rs", "op"), hop, sibling],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "digit_after_wildcard",
+                "parse",
+                call_text,
+            )],
+            ..Default::default()
+        })
+    }
+
+    fn assert_uniqueness_unknown_identity_stage(finding: &Finding, entry: &str) {
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert_eq!(finding.ripr.reach.state, StageState::Unknown);
+        assert_ne!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            finding.ripr.reach.summary.contains(&format!("`{entry}`"))
+                && finding.ripr.reach.summary.contains("not unique"),
+            "{}",
+            finding.ripr.reach.summary
+        );
+        assert!(
+            finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved),
+            "{:?}",
+            finding.stop_reasons
+        );
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::StaticProbeUnknown),
+            "{:?}",
+            finding.stop_reasons
+        );
+        assert!(
+            finding
+                .evidence
+                .iter()
+                .all(|line| !line.contains("No static test path")),
+            "{:?}",
+            finding.evidence
+        );
+        let gloss = StopReason::HelperIdentityUnresolved.describe();
+        assert!(
+            gloss.contains("workspace function") && gloss.contains("not unique"),
+            "{gloss}"
+        );
+        assert!(!gloss.contains("probe"), "{gloss}");
+    }
+
+    fn helper_probe(file: &str, owner: &str) -> Probe {
+        Probe {
+            id: ProbeId(format!("probe:{file}:{owner}")),
+            location: SourceLocation::new(file, 2, 1),
+            owner: Some(SymbolId(format!("{file}::{owner}"))),
+            family: ProbeFamily::Predicate,
+            delta: DeltaKind::Control,
+            before: None,
+            after: Some("bytes.get(1) == Some(&b'=')".to_string()),
+            expression: "bytes.get(1) == Some(&b'=')".to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        }
+    }
+
+    // #7080: tests call the non-unique helper-chain entry; the relation stays
+    // refused, but the finding must not read as "no test reaches the owner".
+    #[test]
+    fn given_helper_chain_refused_for_non_unique_entry_when_tests_call_it_then_static_unknown() {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "digit_after_wildcard",
+                "parse",
+                "parse(\">=1.0\")",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_uniqueness_unknown_identity_stage(&finding, "parse");
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason != Some(RelationReason::HelperOwnerCall)),
+            "uniqueness refusal stays fail-closed: {:?}",
+            finding.related_tests
+        );
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("`parse`") && line.contains("not a unique function")),
+            "{:?}",
+            finding.missing
+        );
+        assert!(
+            finding
+                .recommended_next_step
+                .as_deref()
+                .is_some_and(|step| {
+                    step.contains("`parse`") && !step.contains("no static test path")
+                }),
+            "{:?}",
+            finding.recommended_next_step
+        );
+    }
+
+    // #7080 negative: tests call a unique wrapper of a non-unique helper.
+    #[test]
+    fn given_helper_chain_refused_for_non_unique_callee_when_tests_call_a_unique_wrapper_then_no_static_path()
+     {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/internal.rs", "inner"),
+                function("src/lib.rs", "inner"),
+                function_with_calls("src/lib.rs", "outer", &[("inner", "internal::inner(a, b)")]),
+            ],
+            tests: vec![test_calling(
+                "tests/it.rs",
+                "outer_returns_difference",
+                "outer",
+                "outer(10, 3)",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(
+            &helper_probe("src/internal.rs", "inner"),
+            &index,
+            true,
+            None,
+        );
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved)
+        );
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("No static test path")),
+            "{:?}",
+            finding.missing
+        );
+    }
+
+    // #7080: `req.parse()` shares the bare name with the non-unique helper
+    // but is not that entry; hiding the gap as `static_unknown` would
+    // drop it from exposure review.
+    #[test]
+    fn given_helper_chain_refused_for_non_unique_entry_when_tests_only_call_a_receiver_then_no_static_path()
+     {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "parses_on_the_value",
+                "parse",
+                "req.parse()",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("No static test path")),
+            "{:?}",
+            finding.missing
+        );
+    }
+
+    // #7270: `req.r#parse()` is the same receiver call with a raw-identifier
+    // method spelling. `CallFact.name` is still `parse`; the `r#` must not
+    // make `named_entry_kinds` treat it as a free workspace `parse`.
+    #[test]
+    fn given_helper_chain_refused_when_tests_only_call_a_raw_ident_receiver_then_no_static_path() {
+        let index = uniqueness_parse_index(r#"req.r#parse(">=1.0")"#);
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved)
+        );
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason != Some(RelationReason::HelperOwnerCall)),
+            "relation stays refused: {:?}",
+            finding.related_tests
+        );
+    }
+
+    // #7270: `foreign::r#parse()` is a foreign-qualified path, not a
+    // workspace free `parse`. Pin Free like the `foreign::Parser::<u8>::parse`
+    // control: Unknown would still admit any TypePath.
+    #[test]
+    fn given_helper_chain_refused_when_tests_only_call_a_raw_ident_foreign_path_then_no_static_path()
+     {
+        let mut parse = function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]);
+        parse.impl_context = FunctionImplContext::Free;
+        let mut twin = function("src/other.rs", "parse");
+        twin.impl_context = FunctionImplContext::Free;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![function("src/op.rs", "op"), parse, twin],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "from_foreign_parser",
+                "parse",
+                r#"foreign::r#parse(">=1.0")"#,
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved)
+        );
+    }
+
+    // #7270 / retain #7080: bare `r#parse(...)` is the same identifier as
+    // `parse(...)` and still enters the uniqueness rewrite.
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_bare_raw_ident_parse_then_static_unknown() {
+        let index = uniqueness_parse_index(r#"r#parse(">=1.0")"#);
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_uniqueness_unknown_identity_stage(&finding, "parse");
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("`parse`") && line.contains("not a unique function")),
+            "{:?}",
+            finding.missing
+        );
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason != Some(RelationReason::HelperOwnerCall)),
+            "uniqueness refusal stays fail-closed: {:?}",
+            finding.related_tests
+        );
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_spaced_receiver_then_no_static_path() {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "parses_on_the_value",
+                "parse",
+                "req. parse()",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_a_local_parse_binding_then_no_static_path() {
+        let mut local = test_calling(
+            "tests/req.rs",
+            "uses_local_parse",
+            "parse",
+            "parse(\">=1.0\")",
+        );
+        local.nested_fn_names = vec!["parse".to_string()];
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![local],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    // #7080: CallFact.text is the original line. A receiver plus a string
+    // that contains `parse(` must not hide the gap as static_unknown.
+    #[test]
+    fn given_helper_chain_refused_when_receiver_shares_line_with_parse_string_then_no_static_path()
+    {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "parses_on_the_value",
+                "parse",
+                r#"req.parse(); assert_eq!(message, "parse(")"#,
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_foreign_qualified_from_str_then_no_static_path() {
+        let mut from_str =
+            function_with_calls("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let mut twin = function("src/other_from_str.rs", "from_str");
+        twin.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+                from_str,
+                twin,
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "from_json",
+                "from_str",
+                r#"serde_json::from_str(">=1.0")"#,
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_wrapper_only_foreign_qualifies_parse_then_no_static_path() {
+        let mut parse = function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]);
+        parse.impl_context = FunctionImplContext::Free;
+        let mut twin = function("src/other.rs", "parse");
+        twin.impl_context = FunctionImplContext::Free;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                parse,
+                twin,
+                function_with_calls(
+                    "src/from_str.rs",
+                    "from_str",
+                    &[("parse", "serde_json::parse(text)")],
+                ),
+                function("src/other_from_str.rs", "from_str"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "from_req",
+                "from_str",
+                "VersionReq::from_str(\">=1.0\")",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_parse_after_match_then_static_unknown() {
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "digit_after_wildcard",
+                "parse",
+                r#"match parse(">=1.0") { _ => {} }"#,
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_call_text_is_fn_item_then_no_static_path() {
+        let mut parse = function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]);
+        parse.impl_context = FunctionImplContext::Free;
+        let mut twin = function("src/other.rs", "parse");
+        twin.impl_context = FunctionImplContext::Free;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![function("src/op.rs", "op"), parse, twin],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "parse",
+                "parse",
+                "fn parse() { prop_assert_eq!(super::parse(1), 1); }",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_generic_qualified_parse_then_no_static_path() {
+        let mut parse = function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]);
+        parse.impl_context = FunctionImplContext::Free;
+        let mut twin = function("src/other.rs", "parse");
+        twin.impl_context = FunctionImplContext::Free;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![function("src/op.rs", "op"), parse, twin],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "from_foreign_parser",
+                "parse",
+                "foreign::Parser::<u8>::parse(value)",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_same_line_has_foreign_then_workspace_from_str_then_static_unknown()
+     {
+        let mut from_str =
+            function_with_calls("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let mut twin = function("src/other_from_str.rs", "from_str");
+        twin.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        for text in [
+            r#"serde_json::from_str(a); VersionReq::from_str(b)"#,
+            r#"VersionReq::from_str(b); serde_json::from_str(a)"#,
+        ] {
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![
+                    function("src/op.rs", "op"),
+                    function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                    function("src/other.rs", "parse"),
+                    from_str.clone(),
+                    twin.clone(),
+                ],
+                tests: vec![test_calling("tests/req.rs", "from_req", "from_str", text)],
+                ..Default::default()
+            });
+            let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+            assert_eq!(finding.class, ExposureClass::StaticUnknown, "{text}");
+        }
+    }
+
+    // #7268: `B::parse` is a distinct entity from the uniqueness-stop hop
+    // `A::parse`. Crediting it as the ambiguous entry hides a real gap.
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_qualified_sibling_of_hop_then_no_static_path() {
+        let index = uniqueness_qualified_hop_index(r#"B::parse(">=1.0")"#);
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+        assert_eq!(finding.ripr.reach.state, StageState::No);
+        assert!(
+            !finding
+                .stop_reasons
+                .contains(&StopReason::HelperIdentityUnresolved)
+        );
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason != Some(RelationReason::HelperOwnerCall)),
+            "relation stays refused: {:?}",
+            finding.related_tests
+        );
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("No static test path")),
+            "{:?}",
+            finding.missing
+        );
+    }
+
+    // #7268 / retain #7080: an Impl-qualified hop must still abstain when
+    // tests call the unresolved bare name. Without a Free fallback this
+    // would regress to no_static_path.
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_bare_parse_of_qualified_hop_then_static_unknown()
+    {
+        let index = uniqueness_qualified_hop_index(r#"parse(">=1.0")"#);
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert!(
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("`parse`") && line.contains("not a unique function")),
+            "{:?}",
+            finding.missing
+        );
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason != Some(RelationReason::HelperOwnerCall)),
+            "uniqueness refusal stays fail-closed: {:?}",
+            finding.related_tests
+        );
+    }
+
+    // #7268: a call that targets the hop itself still enters the uniqueness
+    // rewrite. Relation stays refused (name uniqueness / not a free-function
+    // site); do not claim HelperOwnerCall.
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_qualified_hop_then_static_unknown() {
+        let index = uniqueness_qualified_hop_index(r#"A::parse(">=1.0")"#);
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+        assert!(
+            finding
+                .related_tests
+                .iter()
+                .all(|test| test.relation_reason != Some(RelationReason::HelperOwnerCall)),
+            "uniqueness refusal stays fail-closed: {:?}",
+            finding.related_tests
+        );
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_associated_sibling_of_wrapping_from_str_then_no_static_path()
+     {
+        let mut wrapping =
+            function_with_calls("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        wrapping.impl_context = FunctionImplContext::Free;
+        let mut associated = function("src/version_req.rs", "from_str");
+        associated.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+                wrapping,
+                associated,
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "from_req",
+                "from_str",
+                "VersionReq::from_str(\">=1.0\")",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_tests_import_foreign_from_str_then_no_static_path() {
+        let mut imported = test_calling(
+            "tests/req.rs",
+            "from_json",
+            "from_str",
+            "from_str(\">=1.0\")",
+        );
+        imported.body = "use serde_json::from_str;\nfrom_str(\">=1.0\")".into();
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+                function_with_calls("src/from_str.rs", "from_str", &[("parse", "parse(text)")]),
+                function("src/other_from_str.rs", "from_str"),
+            ],
+            tests: vec![imported],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_foreign_import_and_qualified_from_str_then_static_unknown() {
+        let mut imported = test_calling(
+            "tests/req.rs",
+            "from_req",
+            "from_str",
+            "VersionReq::from_str(\">=1.0\")",
+        );
+        imported.body = "use serde_json::from_str;\nVersionReq::from_str(\">=1.0\")".into();
+        let mut from_str =
+            function_with_calls("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        from_str.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let mut twin = function("src/other_from_str.rs", "from_str");
+        twin.impl_context = FunctionImplContext::Impl {
+            self_type: "VersionReq".to_string(),
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+                from_str,
+                twin,
+            ],
+            tests: vec![imported],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::StaticUnknown);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_wrapper_imports_foreign_parse_then_no_static_path() {
+        let mut wrapping =
+            function_with_calls("src/from_str.rs", "from_str", &[("parse", "parse(text)")]);
+        wrapping.body = "use serde_json::parse;\nparse(text)".into();
+        wrapping.impl_context = FunctionImplContext::Free;
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            functions: vec![
+                function("src/op.rs", "op"),
+                function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                function("src/other.rs", "parse"),
+                wrapping,
+                function("src/other_from_str.rs", "from_str"),
+            ],
+            tests: vec![test_calling(
+                "tests/req.rs",
+                "from_req",
+                "from_str",
+                "from_str(\">=1.0\")",
+            )],
+            ..Default::default()
+        });
+        let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+
+        assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    }
+
+    #[test]
+    fn given_helper_chain_refused_when_tests_call_spaced_or_turbofish_parse_then_static_unknown() {
+        for text in [r#"parse (">=1.0")"#, r#"parse::<&str>(">=1.0")"#] {
+            let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+                functions: vec![
+                    function("src/op.rs", "op"),
+                    function_with_calls("src/parse.rs", "parse", &[("op", "op(bytes)")]),
+                    function("src/other.rs", "parse"),
+                ],
+                tests: vec![test_calling(
+                    "tests/req.rs",
+                    "digit_after_wildcard",
+                    "parse",
+                    text,
+                )],
+                ..Default::default()
+            });
+            let finding = classify_probe(&helper_probe("src/op.rs", "op"), &index, true, None);
+            assert_eq!(finding.class, ExposureClass::StaticUnknown, "{text}");
+        }
     }
 
     #[test]
@@ -1400,6 +2269,81 @@ fn far_above_threshold_discounts() {
         );
     }
 
+    /// #7135: a trailing operator or `capacity` on a direct collection read
+    /// must not confirm the push. Ordinary `len()`, index, and whole-collection
+    /// assertions keep credit.
+    #[test]
+    fn direct_collection_trailing_operator_and_capacity_stay_weakly_exposed() {
+        for assertion in [
+            "assert_eq!(items.capacity() >= 1, true);",
+            "assert_eq!(items.is_empty() || true, true);",
+            "assert_eq!(items.len() * 0, 0);",
+        ] {
+            let finding = collection_push_finding(assertion);
+            assert_eq!(
+                finding.class,
+                ExposureClass::WeaklyExposed,
+                "{assertion} must fall back to weakly_exposed: {:?}",
+                finding.class
+            );
+            assert!(
+                finding
+                    .ripr
+                    .reveal
+                    .discriminate
+                    .summary
+                    .contains("observation_unverified"),
+                "{assertion} must not confirm the collection: {}",
+                finding.ripr.reveal.discriminate.summary
+            );
+        }
+
+        for assertion in [
+            "assert_eq!(items.len(), 1);",
+            "assert_eq!(items[0], 20);",
+            "assert_eq!(items, vec![20u32]);",
+        ] {
+            let finding = collection_push_finding(assertion);
+            assert!(
+                !finding
+                    .ripr
+                    .reveal
+                    .discriminate
+                    .summary
+                    .contains("observation_unverified"),
+                "{assertion} must keep collection credit: {}",
+                finding.ripr.reveal.discriminate.summary
+            );
+            assert_eq!(
+                finding.ripr.reveal.discriminate.state,
+                StageState::Yes,
+                "{assertion} must keep strong discrimination: {:?}",
+                finding.ripr.reveal.discriminate
+            );
+        }
+    }
+
+    fn collection_push_finding(assertion: &str) -> Finding {
+        let source = "pub fn record(items: &mut Vec<u32>, x: u32) {\n    items.push(x);\n}\n";
+        let tests = format!(
+            "use demo::record;\n#[test]\nfn observes() {{\n    let mut items = Vec::new();\n    record(&mut items, 20);\n    {assertion}\n}}\n"
+        );
+        let index = parser_backed_index(&[("src/lib.rs", source), ("tests/record.rs", &tests)]);
+        let probe = Probe {
+            id: ProbeId("probe:src_lib_rs:2:side_effect".to_string()),
+            location: SourceLocation::new("src/lib.rs", 2, 5),
+            owner: Some(SymbolId("src/lib.rs::record".to_string())),
+            family: ProbeFamily::SideEffect,
+            delta: DeltaKind::Effect,
+            before: Some("items.push(x + 1)".to_string()),
+            after: Some("items.push(x)".to_string()),
+            expression: "items.push(x)".to_string(),
+            expected_sinks: vec![],
+            required_oracles: vec![],
+        };
+        classify_probe(&probe, &index, true, None)
+    }
+
     #[test]
     fn given_boundary_predicate_when_equal_value_exists_then_activation_has_no_missing_boundary() {
         let function = FunctionSummary {
@@ -1791,6 +2735,7 @@ fn far_above_threshold_discounts() {
                         end_byte: 1_074,
                         kind: ProbeShapeKind::CallDeletion,
                         text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".into(),
+                        value_consumed: false,
                     }],
                     ..FileFacts::default()
                 },
@@ -1853,6 +2798,7 @@ fn far_above_threshold_discounts() {
                         end_byte: 1_074,
                         kind: ProbeShapeKind::CallDeletion,
                         text: "watchdog_reason(\n    \"run-missing\",\n    receipt,\n)".into(),
+                        value_consumed: false,
                     }],
                     ..FileFacts::default()
                 },

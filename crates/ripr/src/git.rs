@@ -304,6 +304,10 @@ fn git_command(root: &Path, args: &[&str]) -> Command {
     command
         .current_dir(root)
         .args(UNTRUSTED_REPOSITORY_CONFIG)
+        // #6837: even status and path-only diff inventories can read the
+        // user's orderfile. A stale path must not abort repair/currentness;
+        // an empty value still tries to open a file, so use Git's null device.
+        .args(["-c", "diff.orderFile=/dev/null"])
         .args(args);
     command
 }

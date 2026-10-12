@@ -170,6 +170,18 @@ unresolved, token matching does not confirm the arm either: only a resolved
 selecting call with an exact oracle confirms, and otherwise the finding
 stays below `exposed`.
 
+### An unchanged arm body adds no finding
+
+When only an arm's head changed (`"warning" | "warn" => Ok(Level::Warn)`
+from `"warn" => Ok(Level::Warn)`), the line carries the arm finding alone.
+The arm's return value lies in text the old and new lines share, so a
+`return_value` finding would ask for a discriminator of a value the edit
+never touched (#7074). The same holds on any line where another parser
+shape holds the whole edit, such as `if 256 <= len { return Err(..) }` from
+`if len >= 256 { .. }`. A return value is kept when the edit touches it, or
+when no other shape on the line holds the edit, so a changed line never
+loses its only finding.
+
 ### Decisions
 
 Steven delegated these choices on 2026-10-04 ("make reasonable documented
@@ -347,6 +359,10 @@ the diff changes `None => 1` to `None => 0`.
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
   helper).
+- `crates/ripr/src/analysis/probes/diff.rs` unit tests: an arm-head edit
+  drops the unchanged return value; a body edit, or a line with no other
+  shape holding the edit, keeps it. Verdict corpus case
+  `config-log-level-warn`.
 - Planned: fixtures for examples 3, 7, 8 and 9 once ranges and `let`
   arguments are implemented.
 
@@ -363,7 +379,8 @@ the diff changes `None => 1` to `None => 0`.
 - `crates/ripr/src/analysis/classify/reveal.rs`: selection confirmation and
   the selection-outranks-tokens gate.
 - `crates/ripr/src/analysis/probes/diff.rs`: a changed arm pairs with the
-  removed arm of the same pattern.
+  removed arm of the same pattern; a return value the edit left untouched
+  is dropped when another shape on the line holds the edit.
 - `crates/ripr/src/domain/probe.rs` (`input_boundary_fact`) and
   `crates/ripr/src/output/related_test_miss.rs`: an examined test of a named
   arm misses an input (`missing_input`, "no test input selects arm"), not an

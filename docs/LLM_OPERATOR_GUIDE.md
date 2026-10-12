@@ -64,7 +64,7 @@ Generated GitHub CI also uploads these paths under the `ripr-reports` artifact.
 It keeps compatibility copies of the packet and brief JSON under
 `target/ripr/agent/`.
 
-## Ordinary path: `ripr agent repair`
+## Ordinary path: the repair transaction
 
 For Rust, ignore Cargo's entire `target/` directory before starting (for example
 `/target/` in `.gitignore`, or an equivalent Git exclude rule). The before phase
@@ -73,7 +73,11 @@ workflow artifacts or an attempt if it is missing. This keeps the focused Cargo
 test's build output separate from the enforced test-only edit surface.
 
 For one named gap, the repair transaction writes the snapshot, packet, verify,
-and receipt artifacts above for you:
+and receipt artifacts above for you. The ordinary spelling is task-first —
+`ripr repair` starts the attempt, `ripr continue` runs its after phase, and
+`ripr status` reports state and the next action; the explicit-phase spelling
+below is the advanced route over the same services, and the commands the tool
+prints may use it:
 
 ```bash
 ripr agent repair --root . --seam-id <seam-id> --phase before

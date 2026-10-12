@@ -120,7 +120,8 @@ Receipt provenance records:
 - `ripr_version`;
 - `repo_root`;
 - `config_fingerprint` when `ripr.toml` exists and can be read without running
-  analysis;
+  analysis; a present but unreadable `ripr.toml` (including a dangling
+  symlink) is an error, not a missing fingerprint;
 - `command_template_version`;
 - `generated_at`;
 - before, after, and verify artifact paths plus SHA-256 hashes;
@@ -475,6 +476,14 @@ interprets it through the receipt owner (`output::agent_receipt`):
   be reconstructed, and the warning names the new-attempt command for the seam
   in case its gap is still open.
 
+Repair inventories and Git currentness probes ignore the user's
+`diff.orderFile`: a dangling orderfile must not abort the before phase or the
+after phase, including when the focused test edit was committed between phases.
+A live orderfile leaves the same static result. Dirty production input still
+refuses with its path and commit/restore recovery, without publishing an attempt.
+Successful static repair evidence stays advisory and records that verification
+was not run (#6837).
+
 An after phase that refuses after selecting its attempt records the refusal on
 the attempt (`last_after_refusal`, owned by `app::repair_attempt`): the final
 error followed by the cause and recovery the after phase printed (for example
@@ -620,6 +629,9 @@ it does not execute the command or grant edit authority.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_smoke/repair_orderfile.rs::repair_completes_despite_user_orderfile`
+- `crates/ripr/tests/cli_smoke/repair_orderfile.rs::dirty_production_requires_recovery_despite_user_orderfile`
+
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_reports_missing_artifacts_and_next_commands`
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_recovers_seam_id_from_receipt`
 - `crates/ripr/src/app/agent_status.rs::tests::agent_status_recovers_seam_id_from_verify_packet_or_brief`
@@ -658,6 +670,8 @@ it does not execute the command or grant edit authority.
 - `crates/ripr/src/output/agent_workflow.rs::tests::workflow_json_is_structured_and_advisory`
 - `crates/ripr/src/output/agent_workflow.rs::tests::workflow_markdown_lists_commands_and_boundaries`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_json_selects_changed_seam`
+- `crates/ripr/src/cli/commands_agent_support.rs::tests::dangling_ripr_toml_symlink_is_present_not_built_in_defaults`
+- `crates/ripr/src/cli/commands_agent_support.rs::tests::unreadable_ripr_toml_lookup_is_not_built_in_defaults`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_guidance_covers_improved_state`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_guidance_covers_changed_state`
 - `crates/ripr/src/output/agent_receipt.rs::tests::agent_receipt_guidance_covers_regressed_state`

@@ -21,7 +21,7 @@ use crate::output::typescript_preview_card::{
 };
 use std::path::Path;
 
-use super::evidence_lines::{evidence_path_lines, weakness_lines};
+use super::evidence_lines::{JsonPointerWording, evidence_path_lines, weakness_lines};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
 
 pub(crate) fn render_finding_digest_with_config(
@@ -124,12 +124,15 @@ pub(crate) fn render_finding_digest_with_config(
         out.push_str(&format!("  {label}: {}\n", one_line(missing)));
     }
     if let Some(test) = finding.related_tests.first() {
-        // #4320: the digest shows only the first related test; carry the total
-        // so the reader knows how much reaching-test evidence exists (the
-        // evidence window in the full form discloses the same bound).
+        // #4320: the digest shows only the first related-test row; carry the
+        // total so the reader knows how much reaching-test evidence exists
+        // (the evidence window in the full form discloses the same bound).
+        // #6807: that total is matched related-test rows (one assertion, plus
+        // examined-miss rows), not distinct tests. Name the unit so a packed
+        // finding with 81 rows cannot read as 81 tests.
         let related_tests_total = finding.related_tests_total();
         let label = if related_tests_total > 1 {
-            format!("Related test (1 of {related_tests_total})")
+            format!("Related test (1 of {related_tests_total} matched rows)")
         } else {
             "Related test".to_string()
         };
@@ -173,7 +176,9 @@ pub(crate) fn render_finding_digest_with_config(
             out.push('\n');
         }
     }
-    let evidence = evidence_path_lines(finding);
+    // The digest prints only the first two evidence lines, so either wording
+    // renders the same text here; the check flag keeps the historical form.
+    let evidence = evidence_path_lines(finding, JsonPointerWording::CheckFlag);
     if !evidence.is_empty() {
         // #4324: evidence ordering is pipeline-ordered (reach, infection,
         // propagation, observation, discriminator), so the positional 2-line
@@ -336,6 +341,7 @@ pub(crate) fn render_finding_with_config(
     finding: &Finding,
     config: &RiprConfig,
     root: &Path,
+    wording: JsonPointerWording,
 ) -> String {
     let mut out = String::new();
     let severity = config.severity().for_exposure(&finding.class).as_str();
@@ -417,7 +423,7 @@ pub(crate) fn render_finding_with_config(
     ));
 
     out.push_str("\nEvidence\n");
-    for line in evidence_path_lines(finding) {
+    for line in evidence_path_lines(finding, wording) {
         if is_wrappable_advisory_prose(&line) {
             out.push_str(&wrap_human_prose(&line, "  - ", "    "));
         } else {

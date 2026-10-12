@@ -17,7 +17,7 @@
 //! and LSP surfaces (which require a usable git workspace root) see the same
 //! behavior change the CLI surface sees through `--diff`.
 
-use crate::run::{capture_output_with_timeout, run, run_output, run_output_owned_with_envs};
+use crate::run::{capture_output_with_timeout, run, run_output};
 use serde_json::{Value, json};
 use std::collections::{HashMap, VecDeque};
 use std::fs;
@@ -56,6 +56,12 @@ const STATIC_CLASSES: [&str; 7] = [
     "static_unknown",
 ];
 const UNKNOWN_CLASSES: [&str; 3] = ["infection_unknown", "propagation_unknown", "static_unknown"];
+// `run_status`/`category` the check renderer carries in top-level
+// `run_limitations[]` when the findings-array byte budget engages (#5203).
+// Mirrors `crates/ripr/src/output/json/report.rs::FINDINGS_BOUND_RUN_STATUS`,
+// which is `pub(crate)` to the product and unreachable from xtask; the bench
+// re-reads the wire string the same way the gate predicate does.
+const FINDINGS_BOUND_RUN_STATUS: &str = "limited_findings_bound";
 // Deterministically generated mid corpus layout (spec: 20 packages x 25 files).
 const MID_PACKAGES: usize = 20;
 const MID_SRC_FILES: usize = 20;
@@ -408,6 +414,23 @@ fn pinned_git_env() -> Vec<(&'static str, &'static str)> {
     ]
 }
 
+/// Repository-routing environment variables removed from every corpus git
+/// child. With `GIT_DIR` inherited, `git init -q` REINITIALIZES the pointed
+/// repository and every later corpus git call (`-C corpus_root`
+/// notwithstanding) operates on that repository instead of the corpus one —
+/// a parent that exports `GIT_DIR` (`git bisect run`, CI wrappers) made the
+/// corpus commits land in, and point the `main` branch of, the enclosing
+/// checkout (#7292). The corpus operations must always create and use their
+/// own repository at `corpus_root`, so the inherited routing is stripped.
+const CORPUS_GIT_REMOVED_ENVS: [&str; 6] = [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_COMMON_DIR",
+];
+
 fn os_dev_null() -> &'static str {
     if cfg!(windows) { "NUL" } else { "/dev/null" }
 }
@@ -499,7 +522,15 @@ fn git_args(
     for value in args {
         all.push((*value).to_string());
     }
-    run_output_owned_with_envs("git", &all, envs)
+    let output = crate::run::capture_process_output_isolated(
+        "git",
+        &all,
+        &[],
+        &CORPUS_GIT_REMOVED_ENVS,
+        envs,
+    )
+    .map_err(|error| error.message)?;
+    Ok(String::from_utf8_lossy(&output).into_owned())
 }
 
 /// Corpus `tiny`: derived from the checked-in sample bytes. The checked-in
@@ -2343,6 +2374,10 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
     let mut repair_bearing_seen = false;
     let mut complete = true;
     let mut max_limitations: usize = 0;
+    let mut max_run_limitations: usize = 0;
+    let mut envelopes_findings_bound: u64 = 0;
+    let mut reported: u64 = 0;
+    let mut reported_known = true;
     let mut alignment_state = "alignment_absent";
     let mut raw_signals: Option<u64> = None;
     let mut canonical_items: Option<u64> = None;
@@ -2359,6 +2394,31 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
             .and_then(Value::as_array)
         {
             max_limitations = max_limitations.max(limitations.len());
+        }
+        // The emitted `findings` array can be a byte-budget prefix of the
+        // analyzed set (#5203); the cap is disclosed in top-level
+        // `run_limitations`, never in the analysis_outcome path above, so M4
+        // must read both (#7016).
+        if let Some(limitations) = envelope.get("run_limitations").and_then(Value::as_array) {
+            max_run_limitations = max_run_limitations.max(limitations.len());
+            if limitations.iter().any(|entry| {
+                entry.get("run_status").and_then(Value::as_str) == Some(FINDINGS_BOUND_RUN_STATUS)
+                    || entry.get("category").and_then(Value::as_str)
+                        == Some(FINDINGS_BOUND_RUN_STATUS)
+            }) {
+                envelopes_findings_bound += 1;
+            }
+        }
+        // Same pointer M1 reads per sample, so the pooled reported
+        // denominator reconciles with the M1 rows above it. Unknown when any
+        // pooled envelope omits it — never a fake zero.
+        if let Some(count) = envelope
+            .pointer("/summary/findings")
+            .and_then(Value::as_u64)
+        {
+            reported = reported.saturating_add(count);
+        } else {
+            reported_known = false;
         }
         if let Some(summary) = envelope.pointer("/finding_alignment/summary") {
             raw_signals = summary.get("raw_signals").and_then(Value::as_u64);
@@ -2439,6 +2499,10 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
         "state": state,
         "envelopes_pooled": envelopes.len(),
         "findings_total": total,
+        "findings_reported": if envelopes.is_empty() || !reported_known { json!(null) } else {
+            json!(reported)
+        },
+        "envelopes_findings_bound": envelopes_findings_bound,
         "class_histogram": Value::Object(classes),
         "actionable_intent_fraction": fraction(actionable_intent),
         "evidence_path_fraction": fraction(with_evidence_path),
@@ -2449,6 +2513,7 @@ fn actionability_metrics(envelopes: &[Value]) -> Value {
         "unknown_class_findings": unknown_total,
         "analysis_complete_all_envelopes": complete,
         "max_typed_limitations": max_limitations,
+        "max_run_limitations": max_run_limitations,
         "repair_readiness": {
             "findings_with_repair_packet_ready": if repair_bearing_seen { json!(repair_ready) } else {
                 json!("named_absence: check envelope carries no repair-bearing field on this run")
@@ -2761,7 +2826,10 @@ fn identity_overlay(binary: &Path, corpora: &[Corpus]) -> Result<Value, String> 
             // same HEAD with different worktree changes cannot share an
             // identity.
             (None, Some(base)) => {
-                let diff = run_output("git", &["diff", base])
+                let diff = canonical(&corpus.root)
+                    .and_then(|root| {
+                        git_args(&root.display().to_string(), &[], &[], &["diff", base])
+                    })
                     .map_err(|err| format!("repo diff for digest: {err}"))?;
                 crate::blind_journey::sha256_hex(diff.as_bytes())
             }
@@ -3074,8 +3142,10 @@ fn receipt_markdown(receipt: &Value, previous: Option<&Value>) -> String {
     if let Some(corpora) = receipt["m4"].as_object() {
         for (corpus, body) in corpora {
             out.push_str(&format!(
-                "- **{corpus}**: findings_total {}, classes {}, actionable_intent {}, evidence_path {}, related_tests {}, unknown_disclosed {} (of {} unknown-class), analysis_complete {}, max_limitations {}, alignment {}/{} ({})\n",
+                "- **{corpus}**: findings_total {} (reported {}), findings_bound_envelopes {}, classes {}, actionable_intent {}, evidence_path {}, related_tests {}, unknown_disclosed {} (of {} unknown-class), analysis_complete {}, max_limitations {}, max_run_limitations {}, alignment {}/{} ({})\n",
                 body["findings_total"],
+                body["findings_reported"],
+                body["envelopes_findings_bound"],
                 body["class_histogram"],
                 body["actionable_intent_fraction"],
                 body["evidence_path_fraction"],
@@ -3084,6 +3154,7 @@ fn receipt_markdown(receipt: &Value, previous: Option<&Value>) -> String {
                 body["unknown_class_findings"],
                 body["analysis_complete_all_envelopes"],
                 body["max_typed_limitations"],
+                body["max_run_limitations"],
                 body["finding_alignment"]["raw_signals"],
                 body["finding_alignment"]["canonical_items"],
                 body["finding_alignment"]["state"],
@@ -3170,6 +3241,229 @@ mod tests {
 
     fn sample(args: &[&str]) -> Vec<String> {
         args.iter().map(|value| (*value).to_string()).collect()
+    }
+
+    /// Unique scratch root for the corpus-git routing tests.
+    fn corpus_git_test_root(label: &str) -> Result<std::path::PathBuf, String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-bench-corpus-git-{label}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos())
+                .unwrap_or(0)
+        ));
+        fs::create_dir_all(&root)
+            .map_err(|error| format!("create corpus git test root: {error}"))?;
+        Ok(root)
+    }
+
+    fn corpus_git(root: &std::path::Path, args: &[&str]) -> Result<String, String> {
+        let mut all: Vec<String> = vec!["-C".to_string(), root.display().to_string()];
+        all.extend(args.iter().map(|value| (*value).to_string()));
+        crate::run::capture_process_output_isolated("git", &all, &[], &[], &[])
+            .map(|output| String::from_utf8_lossy(&output).into_owned())
+            .map_err(|error| format!("corpus git {args:?}: {}", error.message))
+    }
+
+    /// Seeds an "enclosing checkout": a git repository with one commit whose
+    /// HEAD id the tests pin as the damage witness.
+    fn seed_foreign_repo(root: &std::path::Path) -> Result<String, String> {
+        fs::create_dir_all(root).map_err(|error| format!("create foreign repo: {error}"))?;
+        corpus_git(root, &["init", "-q", "--initial-branch", "main"])?;
+        corpus_git(root, &["config", "user.email", "bench@example.invalid"])?;
+        corpus_git(root, &["config", "user.name", "ripr bench corpus tests"])?;
+        fs::write(root.join("README"), "enclosing checkout\n")
+            .map_err(|error| format!("write readme: {error}"))?;
+        corpus_git(root, &["add", "."])?;
+        corpus_git(root, &["commit", "-q", "-m", "outer base"])?;
+        corpus_git(root, &["rev-parse", "HEAD"])
+    }
+
+    /// #7292 discriminating pair, negative witness first: with `GIT_DIR`
+    /// inherited, the exact corpus-creation sequence the harness runs
+    /// (`init`, `symbolic-ref HEAD bench-base`, `add -A`, `commit`) operates
+    /// on the GIT_DIR-pointed repository, replacing the enclosing checkout's
+    /// unborn bench-base HEAD with a corpus commit. This is the corruption
+    /// the `git bisect run` parent produced on the shared repository.
+    #[test]
+    fn inherited_git_dir_redirects_the_corpus_sequence_without_removals() -> Result<(), String> {
+        let root = corpus_git_test_root("negative")?;
+        let foreign_head = seed_foreign_repo(&root.join("outer"))?;
+        let corpus = root.join("corpus");
+        fs::create_dir_all(&corpus).map_err(|error| format!("create corpus dir: {error}"))?;
+        fs::write(corpus.join("Cargo.toml"), "[package]\nname = \"c\"\n")
+            .map_err(|error| format!("write corpus: {error}"))?;
+
+        let git_dir = root.join("outer").join(".git").display().to_string();
+        let poison = [("GIT_DIR", git_dir.as_str())];
+        let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
+        all.push("init".to_string());
+        all.push("-q".to_string());
+        let _ = crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &[],
+            &pinned_git_env(),
+        );
+        let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
+        all.extend(
+            ["symbolic-ref", "HEAD", "refs/heads/bench-base"]
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
+        let _ = crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &[],
+            &pinned_git_env(),
+        );
+        let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
+        all.push("add".to_string());
+        all.push("-A".to_string());
+        let _ = crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &[],
+            &pinned_git_env(),
+        );
+        let mut all: Vec<String> = vec![
+            "-c".to_string(),
+            "user.name=ripr bench corpus".to_string(),
+            "-c".to_string(),
+            "user.email=bench@ripr.invalid".to_string(),
+            "-C".to_string(),
+            corpus.display().to_string(),
+        ];
+        all.push("commit".to_string());
+        all.push("-q".to_string());
+        all.push("-m".to_string());
+        all.push("ripr bench corpus base".to_string());
+        let commit = crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &[],
+            &pinned_git_env(),
+        );
+
+        // Without removals the sequence corrupts the pointed repository: the
+        // unborn bench-base branch got the corpus commit, so the outer HEAD
+        // no longer resolves to the seeded base (it moved to the corpus
+        // commit or the branch was left unborn).
+        let outer = root.join("outer");
+        let mut all: Vec<String> = vec!["-C".to_string(), outer.display().to_string()];
+        all.extend(
+            ["rev-parse", "HEAD"]
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
+        let corrupted_head =
+            crate::run::capture_process_output_isolated("git", &all, &[], &[], &[])
+                .map(|output| String::from_utf8_lossy(&output).trim().to_string())
+                .unwrap_or_else(|_| "<unresolvable>".to_string());
+        let _ = commit;
+        let _ = fs::remove_dir_all(&root);
+        assert_ne!(
+            corrupted_head,
+            foreign_head.trim().to_string(),
+            "negative witness failed: the GIT_DIR-pointed repository was NOT corrupted, so this \
+             test no longer reproduces the #7292 corpus-creation hazard"
+        );
+        Ok(())
+    }
+
+    /// #7292 positive witness: with the corpus routing env removed, the same
+    /// sequence initializes its own repository at `corpus_root` and leaves
+    /// the `GIT_DIR`-pointed repository untouched.
+    #[test]
+    fn corpus_git_routing_env_keeps_the_sequence_inside_the_corpus() -> Result<(), String> {
+        let root = corpus_git_test_root("positive")?;
+        let foreign_head = seed_foreign_repo(&root.join("outer"))?;
+        let corpus = root.join("corpus");
+        fs::create_dir_all(&corpus).map_err(|error| format!("create corpus dir: {error}"))?;
+        fs::write(corpus.join("Cargo.toml"), "[package]\nname = \"c\"\n")
+            .map_err(|error| format!("write corpus: {error}"))?;
+
+        let git_dir = root.join("outer").join(".git").display().to_string();
+        let poison = [("GIT_DIR", git_dir.as_str())];
+        let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
+        all.extend(["init", "-q"].iter().map(|value| (*value).to_string()));
+        crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &CORPUS_GIT_REMOVED_ENVS,
+            &pinned_git_env(),
+        )
+        .map_err(|error| format!("corpus init: {}", error.message))?;
+        let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
+        all.extend(
+            ["symbolic-ref", "HEAD", "refs/heads/bench-base"]
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
+        crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &CORPUS_GIT_REMOVED_ENVS,
+            &pinned_git_env(),
+        )
+        .map_err(|error| format!("corpus symbolic-ref: {}", error.message))?;
+        let mut all: Vec<String> = vec!["-C".to_string(), corpus.display().to_string()];
+        all.extend(["add", "-A"].iter().map(|value| (*value).to_string()));
+        crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &CORPUS_GIT_REMOVED_ENVS,
+            &pinned_git_env(),
+        )
+        .map_err(|error| format!("corpus add: {}", error.message))?;
+        let mut all: Vec<String> = vec![
+            "-c".to_string(),
+            "user.name=ripr bench corpus".to_string(),
+            "-c".to_string(),
+            "user.email=bench@ripr.invalid".to_string(),
+            "-C".to_string(),
+            corpus.display().to_string(),
+        ];
+        all.extend(
+            ["commit", "-q", "-m", "ripr bench corpus base"]
+                .iter()
+                .map(|value| (*value).to_string()),
+        );
+        crate::run::capture_process_output_isolated(
+            "git",
+            &all,
+            &poison,
+            &CORPUS_GIT_REMOVED_ENVS,
+            &pinned_git_env(),
+        )
+        .map_err(|error| format!("corpus commit: {}", error.message))?;
+
+        let untouched_head = corpus_git(&root.join("outer"), &["rev-parse", "HEAD"])?;
+        let corpus_head = corpus_git(&corpus, &["rev-parse", "HEAD"])?;
+        let corpus_branch = corpus_git(&corpus, &["symbolic-ref", "--short", "HEAD"])?;
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(
+            untouched_head.trim(),
+            foreign_head.trim(),
+            "the GIT_DIR-pointed repository must stay untouched by corpus creation"
+        );
+        assert_eq!(
+            corpus_branch.trim(),
+            "bench-base",
+            "the corpus repository must carry the pinned base branch"
+        );
+        assert!(
+            !corpus_head.trim().is_empty(),
+            "the corpus repository must hold the base commit"
+        );
+        Ok(())
     }
 
     /// A real exit(1) status: `ExitStatus::default()` reports success on
@@ -3785,6 +4079,147 @@ mod tests {
         );
     }
 
+    /// #7016: M4 pools the emitted `findings` prefix, but a byte-budget-capped
+    /// envelope reports the analyzed total in `summary.findings` and discloses
+    /// the cap in top-level `run_limitations`. M4 must forward both — the
+    /// emitted-vs-reported denominator and the limitation — instead of
+    /// presenting the capped subset as complete.
+    #[test]
+    fn m4_discloses_findings_bound_population() {
+        let capped = json!({
+            "summary": { "findings": 112 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "run_limitations": [{
+                "category": "limited_findings_bound",
+                "run_status": "limited_findings_bound",
+                "basis": "check_findings_byte_budget",
+                "downstream_consumable": false,
+                "message": "rendered 2 of 112 findings within the findings-array byte budget (default 1000000-byte budget; set RIPR_CHECK_FINDINGS_BYTES to override, =0 for the full set)",
+                "repair_route": "output/check-findings-budget",
+            }],
+            "findings": [
+                { "classification": "weakly_exposed" },
+                { "classification": "static_unknown", "stop_reasons": ["no related test file resolved"] },
+            ],
+        });
+        let uncapped = json!({
+            "summary": { "findings": 3 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+            ],
+        });
+        let m4 = actionability_metrics(&[capped, uncapped]);
+        assert_eq!(
+            m4["findings_total"], 5,
+            "findings_total stays the emitted denominator"
+        );
+        assert_eq!(
+            m4["findings_reported"], 115,
+            "the reported denominator sums summary.findings"
+        );
+        assert_eq!(
+            m4["envelopes_findings_bound"], 1,
+            "only the capped envelope discloses the bound"
+        );
+        assert_eq!(
+            m4["max_run_limitations"], 1,
+            "top-level run_limitations must be read"
+        );
+        assert_eq!(
+            m4["max_typed_limitations"], 0,
+            "the analysis_outcome path is unchanged"
+        );
+        assert_eq!(
+            m4["analysis_complete_all_envelopes"], true,
+            "the analysis completed; only rendering is bounded"
+        );
+    }
+
+    /// #7016 control: an unbounded population reports equal denominators and
+    /// no bound, and a missing `summary.findings` reads as unknown (null),
+    /// never a fake zero.
+    #[test]
+    fn m4_reports_full_denominator_when_unbounded() {
+        let envelope = json!({
+            "summary": { "findings": 2 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [
+                { "classification": "weakly_exposed" },
+                { "classification": "weakly_exposed" },
+            ],
+        });
+        let m4 = actionability_metrics(&[envelope]);
+        assert_eq!(m4["findings_total"], 2);
+        assert_eq!(m4["findings_reported"], 2);
+        assert_eq!(m4["envelopes_findings_bound"], 0);
+        assert_eq!(m4["max_run_limitations"], 0);
+
+        let no_summary = json!({
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [{ "classification": "weakly_exposed" }],
+        });
+        let m4 = actionability_metrics(&[no_summary]);
+        assert_eq!(m4["findings_total"], 1);
+        assert!(
+            m4["findings_reported"].is_null(),
+            "unreported denominators stay null, never 0"
+        );
+    }
+
+    /// #7016 follow-up: the M4 Markdown receipt discloses the capped
+    /// population — reported-vs-emitted denominators, the bound-envelope
+    /// count, and run-limitation counts — so a dropped or misordered
+    /// placeholder fails here, not in a published receipt.
+    #[test]
+    fn m4_markdown_discloses_findings_bound_population() {
+        let capped = json!({
+            "summary": { "findings": 112 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "run_limitations": [{
+                "category": "limited_findings_bound",
+                "run_status": "limited_findings_bound",
+                "basis": "check_findings_byte_budget",
+                "downstream_consumable": false,
+                "message": "rendered 2 of 112 findings",
+                "repair_route": "output/check-findings-budget",
+            }],
+            "findings": [
+                { "classification": "weakly_exposed" },
+                { "classification": "static_unknown", "stop_reasons": ["no related test file resolved"] },
+            ],
+        });
+        let uncapped = json!({
+            "summary": { "findings": 3 },
+            "analysis_outcome": { "analysis_complete": true, "outcome": { "limitations": [] } },
+            "findings": [
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+                { "classification": "exposed" },
+            ],
+        });
+        let receipt = json!({
+            "status": "pass",
+            "identity": {},
+            "m4": { "tiny": actionability_metrics(&[capped, uncapped]) },
+        });
+        let markdown = receipt_markdown(&receipt, None);
+        assert!(
+            markdown.contains("findings_total 5 (reported 115)"),
+            "the M4 line discloses the emitted-vs-reported denominators:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("findings_bound_envelopes 1"),
+            "the M4 line discloses the bound-envelope count:\n{markdown}"
+        );
+        assert!(
+            markdown.contains("max_run_limitations 1"),
+            "the M4 line discloses run-limitation counts:\n{markdown}"
+        );
+    }
+
     fn test_corpus(expects_findings: bool) -> Corpus {
         Corpus {
             id: CorpusId::Tiny,
@@ -4028,6 +4463,142 @@ mod tests {
         Ok(())
     }
 
+    fn repo_identity_fixture(root: &Path) -> Result<Corpus, String> {
+        write_corpus_file(
+            root,
+            "Cargo.toml",
+            "[package]\nname = \"bench_repo_identity\"\nversion = \"0.0.0\"\n",
+        )?;
+        write_corpus_file(
+            root,
+            "src/lib.rs",
+            "pub fn fixture_value() -> u32 { 1729 }\n",
+        )?;
+        commit_corpus_base(root)?;
+        let root = canonical(root)?;
+        let root_text = root.display().to_string();
+        let base = trimmed_output(run_output("git", &["-C", &root_text, "rev-parse", "HEAD"])?);
+        write_corpus_file(
+            &root,
+            "src/lib.rs",
+            "pub fn fixture_value() -> u32 { 1730 }\n",
+        )?;
+        commit_corpus_after_state(&root)?;
+        assert_eq!(
+            trimmed_output(run_output(
+                "git",
+                &["-C", &root_text, "rev-list", "--count", "HEAD"]
+            )?),
+            "2",
+            "the fixture must have two real commits before testing identity"
+        );
+        assert_eq!(
+            trimmed_output(run_output(
+                "git",
+                &["-C", &root_text, "rev-parse", "HEAD~1"]
+            )?),
+            base,
+            "the fixture parent must resolve to its captured before-state"
+        );
+        assert_ne!(
+            trimmed_output(run_output("git", &["-C", &root_text, "rev-parse", "HEAD"])?),
+            base,
+            "the after-state must be a separate commit"
+        );
+        Ok(Corpus {
+            id: CorpusId::Repo,
+            root,
+            diff_path: None,
+            base: Some(base),
+            kind: "head_parent_fallback",
+            expects_findings: false,
+            tree_removed_after_run: false,
+        })
+    }
+
+    /// RIPR-SPEC-0221: the repo input pin covers the selected corpus's
+    /// resolved-base diff, while source_sha continues to identify the harness.
+    #[test]
+    fn repo_input_digest_uses_fixture_history_and_dirty_worktree() -> Result<(), String> {
+        let scratch =
+            std::env::temp_dir().join(format!("ripr-bench-repo-identity-{}", unix_stamp()));
+        let _cleanup = DirGuard::new(scratch.clone());
+        let mut repo = repo_identity_fixture(&scratch.join("repo corpus"))?;
+        let root_text = repo.root.display().to_string();
+        let base_sha = repo.base.clone().ok_or("fixture base missing")?;
+        let harness_sha = trimmed_output(run_output("git", &["rev-parse", "HEAD"])?);
+        let fixture_sha =
+            trimmed_output(run_output("git", &["-C", &root_text, "rev-parse", "HEAD"])?);
+        assert_ne!(
+            harness_sha, fixture_sha,
+            "the fixture must differ from the harness"
+        );
+        let binary = scratch.join("ripr-under-test.bin");
+        fs::write(&binary, b"binary bytes").map_err(|err| err.to_string())?;
+        let mut clean_digest = String::new();
+
+        for after in [1730, 1731] {
+            if after == 1731 {
+                write_corpus_file(
+                    &repo.root,
+                    "src/lib.rs",
+                    "pub fn fixture_value() -> u32 { 1731 }\n",
+                )?;
+            }
+            // Independent argv construction: do not let a wrong git_args
+            // root make the expected digest and the recorded digest agree.
+            let diff = run_output("git", &["-C", &root_text, "diff", &base_sha])?;
+            assert!(diff.contains("diff --git a/src/lib.rs b/src/lib.rs"));
+            assert!(diff.contains("-pub fn fixture_value() -> u32 { 1729 }"));
+            assert!(diff.contains(&format!("+pub fn fixture_value() -> u32 {{ {after} }}")));
+            let expected = crate::blind_journey::sha256_hex(diff.as_bytes());
+            if after == 1730 {
+                clean_digest = expected.clone();
+            } else {
+                assert_ne!(
+                    expected, clean_digest,
+                    "dirty fixture edits must move the input pin"
+                );
+            }
+            // HEAD~1 first gives a wrong-root implementation a resolvable
+            // ambient ref in a full clone: RED must be a digest mismatch,
+            // rather than a fixture setup or unknown-base failure.
+            for base in ["HEAD~1", base_sha.as_str()] {
+                repo.base = Some(base.to_string());
+                let overlay = identity_overlay(&binary, std::slice::from_ref(&repo))?;
+                assert_eq!(
+                    overlay["source_sha"], harness_sha,
+                    "source_sha identifies the harness"
+                );
+                let entry = overlay
+                    .pointer("/corpora/repo")
+                    .ok_or("corpora.repo missing")?;
+                assert_eq!(entry["base"], base);
+                assert_eq!(
+                    entry["input_digest"].as_str(),
+                    Some(expected.as_str()),
+                    "repo input digest must hash the fixture-local diff for {base}, after={after}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn repo_input_digest_preserves_invalid_base_error() -> Result<(), String> {
+        let scratch = std::env::temp_dir().join(format!("ripr-bench-repo-error-{}", unix_stamp()));
+        let _cleanup = DirGuard::new(scratch.clone());
+        let mut repo = repo_identity_fixture(&scratch.join("repo corpus"))?;
+        repo.base = Some("refs/heads/missing-identity-base".to_string());
+        let binary = scratch.join("ripr-under-test.bin");
+        fs::write(&binary, b"binary bytes").map_err(|err| err.to_string())?;
+        let error = identity_overlay(&binary, &[repo])
+            .err()
+            .ok_or("invalid base must fail")?;
+        assert!(error.starts_with("repo diff for digest:"), "{error}");
+        Ok(())
+    }
+
     /// #5971: the identity overlay must record the corpus tree digest the
     /// spec promises (CORPORA C2 "both digests are recorded") — the diff
     /// digest cannot see the oracle-mix test files, and the DirGuard deletes
@@ -4114,15 +4685,10 @@ mod tests {
         );
 
         // A live-checkout corpus records the null digest with its note.
-        let repo = Corpus {
-            id: CorpusId::Repo,
-            root: tree.clone(),
-            diff_path: None,
-            base: Some("HEAD~1".to_string()),
-            kind: "head_parent_fallback",
-            expects_findings: false,
-            tree_removed_after_run: false,
-        };
+        // This case owns real history independently of the harness checkout;
+        // the synthetic .git above only exercises tree-digest exclusion.
+        let mut repo = repo_identity_fixture(&base.join("repo corpus"))?;
+        repo.base = Some("HEAD~1".to_string());
         let repo_overlay = identity_overlay(&binary, &[repo])?;
         let repo_entry = repo_overlay
             .pointer("/corpora/repo")

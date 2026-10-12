@@ -314,7 +314,7 @@ runs the verify and receipt plumbing, binds the receipt, and writes it to
 test has landed sees no repository movement between its phases and refuses
 the receipt. Because this section's rerun happens after the test has landed,
 the commands below close out with the bare receipt instead; the
-**First-hour repair path: `ripr agent repair`** section below is where a
+**First-hour repair path: the repair transaction** section below is where a
 bound receipt is produced end to end.
 
 The lower-level commands stay available as the explicit-control fallback
@@ -390,12 +390,15 @@ ripr calibrate cargo-mutants \
 Runtime mutation vocabulary stays in the calibration report. The normal
 targeted-test receipt remains a static evidence movement receipt.
 
-## First-hour repair path: `ripr agent repair`
+## First-hour repair path: the repair transaction
 
 Steps 1-8 above compose the loop from its lower-level commands. For one named
 gap, the bounded repair transaction is the faster path — it runs the
 snapshot, packet, verify, and receipt plumbing for you and owns attempt
-identity:
+identity. The ordinary spelling is task-first (`ripr repair` starts,
+`ripr continue` continues, `ripr status` reports); the explicit-phase
+spelling below is the advanced route over the same services, and the commands
+the tool prints may use it:
 
 ```bash
 ripr agent repair --root . --seam-id <seam-id> --phase before

@@ -2,13 +2,15 @@
 //! RIPR-SPEC-0005 (and the agent-packet shape in
 //! `docs/OUTPUT_SCHEMA.md` § "Agent Seam Packets").
 //!
-//! Packets are emitted for actionable classes:
+//! Packets are emitted for queue-visible classes
+//! (`repair_packet_queue_visible`):
 //!
-//! - Headline-eligible classes (`Ungripped`, `WeaklyGripped`,
-//!   `ReachableUnrevealed`, the four `*_unknown` classes) emit a
-//!   `task: "write_targeted_test"` packet.
-//! - `Opaque` emits a conservative `task: "inspect_static_limitation"`
-//!   packet so the agent at least sees the static boundary.
+//! - Gap classes (`Ungripped`, `WeaklyGripped`, `ReachableUnrevealed`)
+//!   emit a `task: "write_targeted_test"` packet when the producer-owned
+//!   repair route is ready, else `task: "inspect_static_limitation"`.
+//! - Static limitations (the four `*_unknown` classes and `Opaque`) emit
+//!   a conservative `task: "inspect_static_limitation"` packet so the
+//!   agent at least sees the static boundary that hides evidence (#6775).
 //!
 //! `StronglyGripped`, `Intentional`, and `Suppressed` produce no
 //! packet — there is nothing for the agent to do.
@@ -30,6 +32,7 @@ use crate::agent::loop_commands::{
     WORKFLOW_BEFORE_SNAPSHOT_ARTIFACT, agent_receipt_command, agent_verify_command,
     check_analysis_outcome_command, check_repo_exposure_command, shell_arg,
 };
+use crate::analysis::ClassifiedSeam;
 use crate::analysis::canonical_gap::{CanonicalGapIdentity, canonical_gap_identities};
 use crate::analysis::repair_route::{
     NewTestKind, RepairTargetSelection, cross_language_test_target_unresolved,
@@ -39,7 +42,6 @@ use crate::analysis::seams::{
     ExpectedSink, OwnerCallShape, RequiredDiscriminator, SeamGripClass, SeamKind,
 };
 use crate::analysis::test_grip_evidence::{RelatedTestGrip, TestGripEvidence};
-use crate::analysis::{ClassifiedSeam, SeamLimitInfo, SeamLimitSource};
 use crate::analysis_outcome::AnalysisOutcome;
 pub(crate) use crate::app::AGENT_SEAM_PACKET_SCHEMA_VERSION;
 use crate::app::analysis_outcome_artifact::analysis_outcome_projection;
@@ -58,6 +60,7 @@ use crate::output::receipt_lifecycle::{
     RECEIPT_GAP_MISMATCH, RECEIPT_MOVEMENT_IMPROVED, RECEIPT_MOVEMENT_UNCHANGED, RECEIPT_STALE,
     normalize_receipt_lifecycle_state, receipt_lifecycle_state_from_movement,
 };
+use crate::output::repo_exposure::RepoExposureLimit;
 use crate::repair_guidance::{
     AssertionBasis, AssertionGuidance, AssertionGuidanceView, AssertionKind, AssertionState,
     DiscriminatorAvailability, DiscriminatorState, GapRouteGuidanceFacts, GuidanceReason,
@@ -156,25 +159,26 @@ fn push_analysis_outcome_projection(
     out.push_str(",\n");
 }
 
-/// Render every actionable `ClassifiedSeam` in `classified` as an agent
+/// Render every queue-visible `ClassifiedSeam` in `classified` as an agent
 /// packet, returning a JSON object with a `packets` array. Strongly-gripped,
-/// intentional, and suppressed seams are skipped. `Opaque` seams emit a
-/// conservative `inspect_static_limitation` packet so the agent at least
-/// sees the static boundary that hides evidence.
+/// intentional, and suppressed seams are skipped. Static-limitation seams
+/// (opaque and the `*_unknown` classes) emit a conservative
+/// `inspect_static_limitation` packet so the agent at least sees the static
+/// boundary that hides evidence.
 ///
 /// When `limit_info` is `Some`, the artifact carries a `limitations[]` block
-/// so consumers know the output is bounded and can opt out via the env var.
+/// so consumers know which cap bounded the output and how to lift that cap.
 #[cfg(test)]
 pub(crate) fn render_agent_seam_packets_json(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
 ) -> String {
     render_agent_seam_packets_json_with_causal(classified, limit_info, None)
 }
 
 pub(crate) fn render_agent_seam_packets_json_with_causal(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
 ) -> String {
     render_agent_seam_packets_json_with_causal_and_outcome(
@@ -188,7 +192,7 @@ pub(crate) fn render_agent_seam_packets_json_with_causal(
 
 pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
     analysis_outcome: Option<&AnalysisOutcome>,
     analysis_outcome_required: bool,
@@ -209,7 +213,7 @@ pub(crate) fn render_agent_seam_packets_json_with_causal_and_outcome(
 /// snapshot to the wrong repository when pilot ran with `--root X` (#5324).
 pub(crate) fn render_agent_seam_packets_json_for_root(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
     root: &str,
 ) -> String {
@@ -236,9 +240,26 @@ pub(crate) enum PacketCommandContext<'a> {
     },
 }
 
+/// Render an agent-seam-packets refusal document (#7332) for a run that
+/// never analyzed. Keeps the format's own envelope conventions:
+/// `scope: "repo"`, the `run_status`/`limitations[]` pair (here `refused`
+/// with the typed refusal identity as the limitation category), and an
+/// empty `packets` array with `packets_total: 0` — parseable as
+/// `agent-seam-packets-json`, never zero bytes, and no `next` block because
+/// there is no packet to act on.
+pub(crate) fn render_refusal_json(notice: &crate::core_error::RefusalNotice) -> String {
+    format!(
+        "{{\n  \"schema_version\": \"{}\",\n  \"scope\": \"repo\",\n  \"run_status\": \"refused\",\n  \"limitations\": [\n    {{\n      \"category\": \"{}\",\n      \"repair_route\": \"{}\",\n      \"message\": \"{}\"\n    }}\n  ],\n  \"packets_total\": 0,\n  \"packets\": []\n}}\n",
+        AGENT_SEAM_PACKET_SCHEMA_VERSION,
+        notice.identity,
+        notice.repair_route,
+        crate::output::json::escape(&notice.message),
+    )
+}
+
 fn render_agent_seam_packets_json_with_root(
     classified: &[ClassifiedSeam],
-    limit_info: Option<&SeamLimitInfo>,
+    limit_info: Option<RepoExposureLimit<'_>>,
     causal_projection: Option<&CausalDeltaArtifact>,
     analysis_outcome: Option<&AnalysisOutcome>,
     analysis_outcome_required: bool,
@@ -260,31 +281,25 @@ fn render_agent_seam_packets_json_with_root(
     }
 
     // run_status mirrors the repo-exposure pattern: "complete" when nothing
-    // was capped, "seam_limit_applied" when the pilot budget fired.
+    // was capped, "seam_limit_applied" when either cap fired.
     match limit_info {
         None => out.push_str("  \"run_status\": \"complete\",\n"),
         Some(_) => out.push_str("  \"run_status\": \"seam_limit_applied\",\n"),
     }
 
-    if let Some(info) = limit_info {
-        let repair_route = match info.source {
-            SeamLimitSource::Default => {
-                "Set RIPR_PILOT_SEAM_BUDGET=0 to render packets for all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-            }
-            SeamLimitSource::Configured => {
-                "Remove or raise RIPR_PILOT_SEAM_BUDGET to render packets for more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`)."
-            }
-        };
+    if let Some(limit) = limit_info {
+        let info = limit.info();
+        let repair_route = limit.repair_route();
         out.push_str("  \"limitations\": [\n");
         out.push_str("    {\n");
-        out.push_str("      \"category\": \"pilot_seam_budget_applied\",\n");
+        out.push_str(&format!("      \"category\": \"{}\",\n", limit.category()));
         out.push_str(&format!("      \"seams_analyzed\": {},\n", info.analyzed));
         out.push_str(&format!("      \"seams_total\": {},\n", info.total));
         out.push_str(&format!(
             "      \"limit_source\": \"{}\",\n",
             info.source.as_str()
         ));
-        out.push_str("      \"control\": \"RIPR_PILOT_SEAM_BUDGET\",\n");
+        out.push_str(&format!("      \"control\": \"{}\",\n", limit.control()));
         out.push_str(&format!(
             "      \"repair_route\": \"{}\"\n",
             crate::output::json::escape(repair_route)
@@ -515,11 +530,16 @@ pub(crate) fn render_agent_seam_packet_json_with_context(
 /// stdout gets the attempt identity, the retained manifest, and the exact
 /// `--phase after` command — the same facts the stderr narration names —
 /// so the before → edit → after loop closes without reading stderr.
+/// `baseline_ambiguous` marks an attempt the capture already knows it
+/// cannot score (#7204): the rendered document discloses it and the plain
+/// summary replaces the after-edit directive with the ambiguity warning
+/// and the clean-state restart route.
 pub(crate) struct BeforePhaseAttemptContinuation {
     pub(crate) attempt_id: String,
     pub(crate) manifest_path: String,
     pub(crate) next_command: String,
     pub(crate) packet_path: String,
+    pub(crate) baseline_ambiguous: bool,
 }
 
 /// Augment one rendered agent-packet envelope with the additive
@@ -554,15 +574,18 @@ pub(crate) fn render_before_phase_attempt_stdout(
             "rendered agent packet envelope already carries a repair_attempt block".to_string(),
         );
     }
-    object.insert(
-        "repair_attempt".to_string(),
-        json!({
-            "attempt_id": continuation.attempt_id,
-            "manifest_path": continuation.manifest_path,
-            "next_command": continuation.next_command,
-            "packet_path": continuation.packet_path,
-        }),
-    );
+    let mut attempt_block = json!({
+        "attempt_id": continuation.attempt_id,
+        "manifest_path": continuation.manifest_path,
+        "next_command": continuation.next_command,
+        "packet_path": continuation.packet_path,
+    });
+    // #7204: additive and present only when true, so every scorable
+    // attempt's stdout bytes stay exactly as before.
+    if continuation.baseline_ambiguous {
+        attempt_block["baseline_ambiguous"] = json!(true);
+    }
+    object.insert("repair_attempt".to_string(), attempt_block);
     let mut rendered = serde_json::to_string_pretty(&value)
         .map_err(|error| format!("render before-phase attempt stdout failed: {error}"))?;
     rendered.push('\n');
@@ -3457,6 +3480,43 @@ mod tests {
     use crate::repair_guidance::{GuidanceReason, GuidanceRecovery};
     use std::path::PathBuf;
 
+    #[test]
+    fn refusal_document_keeps_the_packet_envelope_with_no_packets() -> Result<(), String> {
+        // #7332: a refused agent-seam-packets run parses as
+        // agent-seam-packets-json — the format's own run_status/limitations
+        // pair, packets_total 0, an empty packets array, and no `next` block
+        // because there is no packet to act on.
+        let notice = crate::core_error::CoreError::gap_ledger_unusable(
+            "read gap ledger nope.json failed: missing",
+        )
+        .refusal_notice();
+        let rendered = render_refusal_json(&notice);
+        let value: serde_json::Value =
+            serde_json::from_str(&rendered).map_err(|err| format!("parse refusal JSON: {err}"))?;
+        for (pointer, expected) in [
+            ("/schema_version", AGENT_SEAM_PACKET_SCHEMA_VERSION),
+            ("/scope", "repo"),
+            ("/run_status", "refused"),
+            ("/limitations/0/category", "gap_ledger_unusable"),
+            ("/limitations/0/repair_route", "analysis/gap-ledger"),
+        ] {
+            let actual = value.pointer(pointer).and_then(serde_json::Value::as_str);
+            if actual != Some(expected) {
+                return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+            }
+        }
+        if value["packets_total"] != 0 {
+            return Err(format!("packets_total must be 0: {value}"));
+        }
+        if value["packets"].as_array().map(Vec::len) != Some(0) {
+            return Err(format!("packets must be empty: {value}"));
+        }
+        if value.get("next").is_some() {
+            return Err(format!("a refused run must not grow a next block: {value}"));
+        }
+        Ok(())
+    }
+
     fn stage(state: StageState) -> StageEvidence {
         StageEvidence::new(state, Confidence::Medium, "test stage")
     }
@@ -3643,6 +3703,7 @@ mod tests {
                 discriminate: stage(StageState::No),
                 observed_values: Vec::new(),
                 missing_discriminators: Vec::new(),
+                statically_contradicted_related_tests: 0,
                 new_test_target: None,
             },
             class,
@@ -3720,6 +3781,7 @@ mod tests {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         };
         ClassifiedSeam {
             seam,
@@ -3740,6 +3802,7 @@ mod tests {
             discriminate: stage(StageState::No),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         ClassifiedSeam {
@@ -3761,6 +3824,7 @@ mod tests {
             discriminate: stage(StageState::Yes),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         ClassifiedSeam {
@@ -7117,16 +7181,18 @@ mod tests {
     // -- Pilot seam budget disclosure tests ----------------------------------
 
     #[test]
-    fn no_limit_info_emits_run_status_complete() {
+    fn no_limit_info_emits_run_status_complete() -> Result<(), String> {
         let json = render_agent_seam_packets_json(&[weakly_gripped_classified()], None);
-        assert!(
-            json.contains("\"run_status\": \"complete\""),
-            "expected run_status=complete when no limit_info: {json}"
-        );
-        assert!(
-            !json.contains("\"limitations\""),
-            "expected no limitations block when no limit_info: {json}"
-        );
+        let doc: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        assert_eq!(doc["run_status"], "complete", "{doc}");
+        assert!(doc.get("limitations").is_none(), "{doc}");
+        let packets = doc["packets"]
+            .as_array()
+            .ok_or("packets must be an array")?;
+        assert_eq!(packets.len(), 1, "{doc}");
+        assert_eq!(doc["packets_total"], packets.len(), "{doc}");
+        Ok(())
     }
 
     #[test]
@@ -7137,8 +7203,10 @@ mod tests {
             total: 23_113,
             source: SeamLimitSource::Default,
         };
-        let json =
-            render_agent_seam_packets_json(&[weakly_gripped_classified()], Some(&limit_info));
+        let json = render_agent_seam_packets_json(
+            &[weakly_gripped_classified()],
+            Some(RepoExposureLimit::PilotBudget(&limit_info)),
+        );
         assert!(
             json.contains("\"run_status\": \"seam_limit_applied\""),
             "expected run_status=seam_limit_applied: {json}"
@@ -7170,22 +7238,110 @@ mod tests {
     }
 
     #[test]
-    fn limit_info_configured_source_emits_configured_repair_route() {
+    fn limit_info_configured_source_emits_configured_repair_route() -> Result<(), String> {
         use crate::analysis::{SeamLimitInfo, SeamLimitSource};
         let limit_info = SeamLimitInfo {
             analyzed: 500,
             total: 1_000,
             source: SeamLimitSource::Configured,
         };
-        let json = render_agent_seam_packets_json(&[], Some(&limit_info));
-        assert!(
-            json.contains("Remove or raise RIPR_PILOT_SEAM_BUDGET"),
-            "expected configured repair route in disclosure: {json}"
+        let json =
+            render_agent_seam_packets_json(&[], Some(RepoExposureLimit::PilotBudget(&limit_info)));
+        let doc: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        assert_eq!(doc["run_status"], "seam_limit_applied", "{doc}");
+        assert_eq!(
+            doc["limitations"],
+            serde_json::json!([{
+                "category": "pilot_seam_budget_applied",
+                "seams_analyzed": 500,
+                "seams_total": 1_000,
+                "limit_source": "configured",
+                "control": "RIPR_PILOT_SEAM_BUDGET",
+                "repair_route": "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
+            }]),
+            "{doc}"
         );
-        assert!(
-            json.contains("\"limit_source\": \"configured\""),
-            "expected limit_source=configured: {json}"
-        );
+        assert_eq!(doc["packets_total"], 0, "{doc}");
+        assert_eq!(doc["packets"], serde_json::json!([]), "{doc}");
+        Ok(())
+    }
+
+    // #7186: expected strings are authored independently of the shared
+    // authority; packet admission must not substitute its own denominator.
+    #[test]
+    fn packet_limit_disclosure_names_the_applied_cap() -> Result<(), String> {
+        use crate::analysis::{SeamLimitInfo, SeamLimitSource};
+
+        for (source, source_name, inventory, category, control, route) in [
+            (
+                SeamLimitSource::Default,
+                "default",
+                true,
+                "repo_seam_limit_applied",
+                "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+                "Set RIPR_REPO_EXPOSURE_SEAM_LIMIT=0 to analyze all seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`).",
+            ),
+            (
+                SeamLimitSource::Configured,
+                "configured",
+                true,
+                "repo_seam_limit_applied",
+                "RIPR_REPO_EXPOSURE_SEAM_LIMIT",
+                "Remove or raise RIPR_REPO_EXPOSURE_SEAM_LIMIT to analyze more seams, or scope the run to a change with `ripr check --base <REV>` (or `ripr check --diff <PATH>`).",
+            ),
+            (
+                SeamLimitSource::Default,
+                "default",
+                false,
+                "pilot_seam_budget_applied",
+                "RIPR_PILOT_SEAM_BUDGET",
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget.",
+            ),
+            (
+                SeamLimitSource::Configured,
+                "configured",
+                false,
+                "pilot_seam_budget_applied",
+                "RIPR_PILOT_SEAM_BUDGET",
+                "Set RIPR_PILOT_SEAM_BUDGET=0 to disable the pilot artifact budget, or raise it to render more seams in the pilot artifacts.",
+            ),
+        ] {
+            let info = SeamLimitInfo {
+                analyzed: 2,
+                total: 9,
+                source,
+            };
+            let limit = if inventory {
+                RepoExposureLimit::Inventory(&info)
+            } else {
+                RepoExposureLimit::PilotBudget(&info)
+            };
+            let subjects = [weakly_gripped_classified(), strongly_gripped_classified()];
+            let rendered =
+                render_agent_seam_packets_json_for_root(&subjects, Some(limit), None, ".");
+            let doc: serde_json::Value =
+                serde_json::from_str(&rendered).map_err(|error| error.to_string())?;
+            assert_eq!(doc["run_status"], "seam_limit_applied", "{doc}");
+            assert_eq!(
+                doc["limitations"],
+                serde_json::json!([{
+                    "category": category,
+                    "seams_analyzed": 2,
+                    "seams_total": 9,
+                    "limit_source": source_name,
+                    "control": control,
+                    "repair_route": route,
+                }]),
+                "{doc}"
+            );
+            let packets = doc["packets"]
+                .as_array()
+                .ok_or("packets must be an array")?;
+            assert_eq!(packets.len(), 1, "{doc}");
+            assert_eq!(doc["packets_total"], packets.len(), "{doc}");
+        }
+        Ok(())
     }
 
     // RIPR-SPEC-0103 fixtures: error-seam exemplar kind-gate.

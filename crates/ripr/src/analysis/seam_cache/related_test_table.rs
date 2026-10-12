@@ -125,6 +125,7 @@ fn seam_ref(classified: &ClassifiedSeam, related_tests: Vec<u32>) -> SeamRef<'_>
         discriminate,
         observed_values,
         missing_discriminators,
+        statically_contradicted_related_tests: _,
         new_test_target,
     } = evidence;
     SeamRef {
@@ -335,6 +336,7 @@ pub(super) fn deserialize<'de, D: Deserializer<'de>>(
                 discriminate,
                 observed_values,
                 missing_discriminators,
+                statically_contradicted_related_tests: 0,
                 new_test_target,
             },
             class,
@@ -410,6 +412,7 @@ pub(super) mod tests {
             discriminate: StageEvidence::new(StageState::No, Confidence::Low, "discriminate"),
             observed_values: Vec::new(),
             missing_discriminators: Vec::new(),
+            statically_contradicted_related_tests: 0,
             new_test_target: None,
         };
         ClassifiedSeam {

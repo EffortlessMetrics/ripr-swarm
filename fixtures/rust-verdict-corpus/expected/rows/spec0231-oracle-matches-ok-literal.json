@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0231-oracle-matches-ok-literal",
+  "subject_id": "authored-spec0231-6",
+  "origin": "authored",
+  "anchor": "src/lib.rs:5",
+  "behavior_family": "ok_payload_value",
+  "test_shape": "matches_ok_literal",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

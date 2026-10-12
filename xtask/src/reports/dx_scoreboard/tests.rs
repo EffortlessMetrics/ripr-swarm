@@ -1,12 +1,15 @@
 #[cfg(unix)]
 use super::measure::linked_target;
 use super::measure::{
-    PasteVerdict, Probe, builds_ripr_from_source, check_contradictions, classify_replay,
-    contradiction_outcome, extract_commands, hostile_outcome, parse_test_result, probe_result,
-    repo_exposure_contradictions, rss_sample,
+    CHECK_SCHEMA_VERSION, CheckAdmission, CheckSubject, OUTCOME_CLAIM_BOUNDARY, PRODUCER_TOOL,
+    PasteVerdict, Probe, WARM_CHECK_MODE, admit_check_document, builds_ripr_from_source,
+    check_args_without_explicit_mode, check_contradictions, classify_replay, contradiction_outcome,
+    extract_commands, hostile_outcome, parse_test_result, permissive_json_exit_zero, probe_result,
+    record_warm_check, repo_exposure_contradictions, rss_sample, scan_check_contradictions,
+    warm_check_args, warm_check_subject,
 };
 use super::*;
-use crate::run::{MeasuredOutput, TimedOutput};
+use crate::run::{MeasuredOutput, TimedOutput, capture_output_measured};
 
 /// The committed config, resolved from the crate root so a test that moves
 /// the working directory cannot break the lookup.
@@ -405,7 +408,7 @@ fn classify_replay_separates_bound_unbound_and_split_roots() {
 }
 
 #[test]
-fn contradiction_rules_fire_only_on_self_inconsistent_rows() {
+fn contradiction_rules_fire_only_on_self_inconsistent_rows() -> Result<(), String> {
     let exposure = json!({"seams": [
         {"file": "a.rs", "line": 1, "evidence": {"reach": "no"}, "related_tests_total": 81},
         {"file": "b.rs", "line": 2, "evidence": {"reach": "no"}, "related_tests_total": 0},
@@ -420,10 +423,14 @@ fn contradiction_rules_fire_only_on_self_inconsistent_rows() {
         {"id": "p3", "classification": "weakly_exposed", "related_tests_total": 3,
          "evidence": ["Related tests were found, but no assertion appears to observe the changed value"]},
     ]});
-    let (count, examples) = check_contradictions(&check);
+    let (count, examples) = check_contradictions(&check)?;
     assert_eq!(count, 2);
     assert!(examples.iter().any(|e| e.starts_with("R2 p1")));
     assert!(examples.iter().any(|e| e.starts_with("R3 p2")));
+    assert!(
+        check_contradictions(&json!({})).is_err_and(|err| err.contains("missing a findings array"))
+    );
+    Ok(())
 }
 
 #[test]
@@ -977,13 +984,36 @@ fn mutation_spot_check_receipt_maps_agreement_and_join_coverage() -> Result<(), 
 
 #[test]
 fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<(), String> {
-    // The metric block mirrors scoreboards.toml (25% / 30 s floor on install,
-    // 25% / 60 s on time to first result) but is inlined so the test stays
-    // hermetic: update both copies when those thresholds change.
-    let config = parse_config(&MINIMAL.replace(
-        "[[metric]]\nid = \"first_run.friction_events\"",
-        "[[metric]]\nid = \"first_run.install_seconds\"\nboard = \"first_run\"\ntitle = \"i\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 120\nregression_pct = 25\nregression_floor = 30\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.time_to_first_useful_result_s\"\nboard = \"first_run\"\ntitle = \"t\"\nunit = \"s\"\ndirection = \"lower_is_better\"\ntarget = 300\nregression_pct = 25\nregression_floor = 60\nrunner_dependent = true\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.unknown_verdicts\"\nboard = \"first_run\"\ntitle = \"u\"\nunit = \"cases\"\ndirection = \"lower_is_better\"\ntarget = 0\nregression_pct = 0\nregression_floor = 0\nrunner_dependent = false\nsource = \"ingest:first-run\"\n\n[[metric]]\nid = \"first_run.friction_events\"",
+    // Slack is max(baseline * regression_pct/100, regression_floor) from the
+    // committed first_run.install_seconds row. Hard-coding 158 s / 170 s here
+    // would keep passing after those margins change.
+    let config = parse_config(include_str!(
+        "../../../../benchmarks/dx_scoreboard/scoreboards.toml"
     ))?;
+    let install = config
+        .metric
+        .iter()
+        .find(|metric| metric.id == "first_run.install_seconds")
+        .ok_or("first_run.install_seconds missing from scoreboards.toml")?;
+    if install.regression_additive {
+        return Err(
+            "first_run.install_seconds uses additive slack; this test derives max(pct, floor)"
+                .to_string(),
+        );
+    }
+    if !install.runner_dependent {
+        return Err("first_run.install_seconds must be runner_dependent".to_string());
+    }
+    let pct = install.regression_pct;
+    let floor = install.regression_floor;
+    // The receipt also emits time_to_first_useful_result_s, which moves with
+    // install duration. Gate only the parsed install metric so a larger
+    // install slack cannot fail the other row.
+    let mut gate_config = config.clone();
+    gate_config
+        .metric
+        .retain(|metric| metric.id == "first_run.install_seconds");
+    let boards = vec!["first_run".to_string()];
     let with_install = |secs: f64| -> Result<Vec<Sample>, String> {
         let mut receipt = first_run_receipt(true);
         let steps = receipt["setup"]
@@ -996,30 +1026,50 @@ fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<()
         }
         parse_ingest(&receipt, &config)
     };
+    let baseline_samples = parse_ingest(&first_run_receipt(true), &config)?;
+    let baseline_secs = baseline_samples
+        .iter()
+        .find(|sample| sample.metric == "first_run.install_seconds")
+        .and_then(|sample| match sample.outcome {
+            SampleOutcome::Value(value) => Some(value),
+            _ => None,
+        })
+        .ok_or("first_run receipt did not yield a completed install_seconds sample")?;
+    let slack = (baseline_secs * pct / 100.0).max(floor);
+    if slack < 1.0 {
+        return Err(
+            "first_run.install_seconds slack is under 1 s; cannot place \
+             just-inside/just-outside samples"
+                .to_string(),
+        );
+    }
+    // Stay 1 s off the allowed worsening so an exact-boundary sample cannot
+    // fail from floating-point rounding of pct * baseline.
+    let inside = baseline_secs + slack - 1.0;
+    let outside = baseline_secs + slack + 1.0;
     let baseline = build_report(
-        &config,
-        &all_boards(),
-        &with_install(128.0)?,
+        &gate_config,
+        &boards,
+        &baseline_samples,
         &context("runner-a"),
         None,
         false,
     );
     let gate = |secs: f64, runner: &str| -> Result<Value, String> {
         Ok(build_report(
-            &config,
-            &all_boards(),
+            &gate_config,
+            &boards,
             &with_install(secs)?,
             &context(runner),
             Some(&baseline),
             true,
         ))
     };
-    // 128 s allows the larger of 25% (32 s) and the 30 s floor: 160 s passes.
     assert_eq!(
-        gate(158.0, "runner-a")?["gate"]["status"].as_str(),
+        gate(inside, "runner-a")?["gate"]["status"].as_str(),
         Some("pass")
     );
-    let slower = gate(170.0, "runner-a")?;
+    let slower = gate(outside, "runner-a")?;
     assert_eq!(slower["gate"]["status"].as_str(), Some("fail"));
     assert!(
         gate_failure_message(&slower).contains("first_run.install_seconds"),
@@ -1028,7 +1078,7 @@ fn a_slower_install_fails_the_gate_against_a_same_runner_baseline() -> Result<()
     );
     // A different runner class is never compared for a wall-time metric.
     assert_eq!(
-        gate(170.0, "runner-b")?["gate"]["status"].as_str(),
+        gate(outside, "runner-b")?["gate"]["status"].as_str(),
         Some("pass")
     );
     Ok(())
@@ -2496,8 +2546,13 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
         let Some(reference) = metric.source.strip_prefix("verdict-corpus:") else {
             continue;
         };
-        seen += 1;
         let (dir, rate) = reference.split_once('#').ok_or("no #rate")?;
+        // Coverage is not a field on `expected_report()`; the dedicated pin
+        // below owns that pointer (#7134).
+        if rate.starts_with("spec_example_coverage") {
+            continue;
+        }
+        seen += 1;
         let report = super::super::verdict_corpus::expected_report(&root.join(dir))?;
         let expected = serde_json::to_value(&report).map_err(|err| err.to_string())?;
         let numerator = expected[rate]["numerator"]
@@ -2520,7 +2575,10 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
             sample.detail
         );
     }
-    assert_eq!(seen, 5, "the five trust rates read the corpus rows");
+    assert_eq!(
+        seen, 8,
+        "the five Rust and three TypeScript trust rates read the corpus rows"
+    );
 
     // A corpus that cannot be read is not measured, never a perfect rate.
     let mut missing = config
@@ -2560,6 +2618,906 @@ fn verdict_corpus_sources_derive_each_rate_from_the_committed_rows() -> Result<(
         "{:?} {}",
         sample.outcome,
         sample.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn spec_example_coverage_resolves_from_the_committed_fixtures() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let config = load_config(&committed_config())?;
+    let metric = config
+        .metric
+        .iter()
+        .find(|metric| metric.id == "trust.verdict_corpus_spec_example_coverage")
+        .cloned()
+        .ok_or("trust.verdict_corpus_spec_example_coverage missing")?;
+    let reference = metric
+        .source
+        .strip_prefix("verdict-corpus:")
+        .ok_or_else(|| {
+            format!(
+                "expected a live verdict-corpus source, got {}",
+                metric.source
+            )
+        })?;
+    let (dir, pointer) = reference.split_once('#').ok_or("no #pointer")?;
+    assert_eq!(
+        pointer, "spec_example_coverage.coverage",
+        "{}",
+        metric.source
+    );
+
+    let mut absolute = metric.clone();
+    absolute.source = format!("verdict-corpus:{}#{pointer}", root.join(dir).display());
+    let sample = verdict_corpus_sample(
+        &absolute,
+        absolute.source.trim_start_matches("verdict-corpus:"),
+    );
+    let SampleOutcome::Value(rate) = sample.outcome else {
+        return Err(format!(
+            "expected a measured coverage rate, got {:?} {}",
+            sample.outcome, sample.detail
+        ));
+    };
+
+    // Independent of the coverage function: the ledger floor is the covered
+    // count `verdict-corpus check` protects, so a live board reading must
+    // report that numerator rather than `not_measured`.
+    let ledger = fs::read_to_string(root.join(dir).join("spec-coverage.toml"))
+        .map_err(|err| err.to_string())?;
+    let floor: usize = ledger
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("floor = ")?.parse().ok())
+        .ok_or("spec-coverage.toml has no floor")?;
+    assert!(
+        sample.detail.contains(&format!("{pointer}: {floor}/")),
+        "board must report the ledger floor as the covered count: {}",
+        sample.detail
+    );
+    assert!(
+        rate > 0.0 && rate <= 1.0,
+        "coverage rate {rate} from {}",
+        sample.detail
+    );
+
+    // A corpus without a ledger is a failed instrument, not a silent 0 or 1.
+    let isolated = crate::tests::temp_dir("dx-spec-example-coverage-no-ledger");
+    crate::tests::write(
+        &isolated.join("corpus.json"),
+        r#"{"schema_version":"ripr_verdict_corpus.v1","kind":"ripr_verdict_corpus","spec":"RIPR-SPEC-0219","description":"x","label_method":"x","verdict_projection":"x","non_claims":[]}"#,
+    );
+    fs::create_dir(isolated.join("subjects")).map_err(|err| err.to_string())?;
+    fs::create_dir(isolated.join("cases")).map_err(|err| err.to_string())?;
+    let missing_ledger = format!("{}#spec_example_coverage.coverage", isolated.display());
+    let failed = verdict_corpus_sample(&absolute, &missing_ledger);
+    assert!(
+        matches!(failed.outcome, SampleOutcome::Failed),
+        "{:?} {}",
+        failed.outcome,
+        failed.detail
+    );
+    assert!(
+        failed.detail.contains("spec-coverage.toml"),
+        "{}",
+        failed.detail
+    );
+    Ok(())
+}
+
+#[test]
+fn file_sources_point_at_committed_receipts() -> Result<(), String> {
+    // A `file:` source whose path is missing renders `not_measured` with a
+    // restore hint that can never work (#6638 review: the coverage metric
+    // pointed at `expected/report.json`, deleted by the rows layout in
+    // #6658). Coverage now has a live `verdict-corpus:` producer (#7134).
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let config = load_config(&committed_config())?;
+    let mut seen = 0;
+    for metric in &config.metric {
+        let Some(reference) = metric.source.strip_prefix("file:") else {
+            continue;
+        };
+        seen += 1;
+        let (path, _pointer) = reference.split_once('#').unwrap_or((reference, ""));
+        if !root.join(path).is_file() {
+            return Err(format!(
+                "metric `{}` reads `{path}`, which is not a committed file",
+                metric.id
+            ));
+        }
+    }
+    assert_eq!(seen, 1, "the committed file-backed receipts");
+    Ok(())
+}
+
+fn admission_subject() -> CheckSubject {
+    CheckSubject {
+        root: "/tmp/corpus-a".to_string(),
+        mode: "draft".to_string(),
+        base: "HEAD~1".to_string(),
+        head: Some("abc123".to_string()),
+    }
+}
+
+fn complete_check_json(findings: usize) -> Value {
+    let kind = if findings == 0 {
+        "complete_no_findings"
+    } else {
+        "complete_with_findings"
+    };
+    let finding_rows: Vec<Value> = (0..findings)
+        .map(|index| {
+            json!({
+                "id": format!("p{index}"),
+                "classification": "weakly_exposed",
+                "related_tests_total": 1,
+                "evidence": []
+            })
+        })
+        .collect();
+    json!({
+        "schema_version": CHECK_SCHEMA_VERSION,
+        "tool": PRODUCER_TOOL,
+        "mode": "draft",
+        "root": "/tmp/corpus-a",
+        "base": "HEAD~1",
+        "head": { "source": "commit", "commit": "abc123" },
+        "summary": { "findings": findings },
+        "findings": finding_rows,
+        "analysis_outcome": {
+            "analysis_complete": true,
+            "outcome": {
+                "schema_version": "0.1",
+                "kind": kind,
+                "identity": {
+                    "base_revision": "HEAD~1"
+                },
+                "counts": {
+                    "changed_file_count": 1,
+                    "changed_line_count": 1,
+                    "candidate_line_count": 1,
+                    "probe_count": 1,
+                    "finding_count": findings
+                },
+                "limitations": [],
+                "claim_boundary": OUTCOME_CLAIM_BOUNDARY
+            }
+        }
+    })
+}
+
+fn repo_sample(metric: &str, outcome: SampleOutcome, detail: String) -> Sample {
+    Sample {
+        metric: metric.to_string(),
+        repo: Some("serde".to_string()),
+        outcome,
+        detail,
+    }
+}
+
+type WarmRecord = (Vec<Sample>, Option<(usize, Vec<String>)>, Vec<&'static str>);
+
+fn record_pair(
+    warmup: Result<MeasuredOutput, String>,
+    measured: Result<Option<MeasuredOutput>, String>,
+) -> WarmRecord {
+    let mut samples = Vec::new();
+    let mut contradictions = None;
+    let mut missing = Vec::new();
+    let subject = admission_subject();
+    record_warm_check(
+        &repo_sample,
+        &subject,
+        warmup,
+        measured,
+        &mut samples,
+        &mut contradictions,
+        &mut missing,
+    );
+    (samples, contradictions, missing)
+}
+
+#[cfg(unix)]
+fn capture_stub_stdout(stdout: &str) -> Result<MeasuredOutput, String> {
+    static STUB_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = crate::tests::temp_dir(&format!(
+        "dx-check-admission-stub-{}",
+        STUB_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    let payload = dir.join("stdout.json");
+    let script = dir.join("ripr-stub");
+    crate::tests::write(&payload, stdout);
+    crate::tests::write(&script, &format!("#!/bin/sh\ncat {}\n", payload.display()));
+    use std::os::unix::fs::PermissionsExt as _;
+    let mut permissions = std::fs::metadata(&script)
+        .map_err(|err| format!("stat stub: {err}"))?
+        .permissions();
+    permissions.set_mode(0o755);
+    std::fs::set_permissions(&script, permissions).map_err(|err| format!("chmod stub: {err}"))?;
+    capture_output_measured(
+        &script.display().to_string(),
+        &[
+            "check".to_string(),
+            "--format".to_string(),
+            "json".to_string(),
+        ],
+        None,
+        &[],
+        std::time::Duration::from_secs(5),
+        "dx-scoreboard admission stub",
+    )
+}
+
+fn speed_ms(samples: &[Sample]) -> Option<&Sample> {
+    samples
+        .iter()
+        .find(|sample| sample.metric == "speed.warm_check_ms")
+}
+
+fn speed_rss(samples: &[Sample]) -> Option<&Sample> {
+    samples
+        .iter()
+        .find(|sample| sample.metric == "speed.warm_check_peak_rss_mb")
+}
+
+fn warm_check_pair(samples: &[Sample]) -> Result<(&Sample, &Sample), String> {
+    Ok((
+        speed_ms(samples).ok_or("speed.warm_check_ms missing")?,
+        speed_rss(samples).ok_or("speed.warm_check_peak_rss_mb missing")?,
+    ))
+}
+
+/// MINIMAL plus the RSS sibling so a gated report can see both Failed samples.
+fn warm_check_gate_config() -> Result<super::Config, String> {
+    parse_config(&format!(
+        "{MINIMAL}
+[[metric]]
+id = \"speed.warm_check_peak_rss_mb\"
+board = \"speed\"
+title = \"Warm check RSS\"
+unit = \"MB\"
+direction = \"lower_is_better\"
+target = 512
+regression_pct = 15
+regression_floor = 64
+runner_dependent = true
+source = \"measured\"
+per_repo = true
+"
+    ))
+}
+
+fn both_incomplete(ms: &Sample, rss: &Sample) -> bool {
+    matches!(ms.outcome, SampleOutcome::Incomplete(_))
+        && matches!(rss.outcome, SampleOutcome::Incomplete(_))
+}
+
+fn failed_instrument_ids(report: &Value) -> Vec<String> {
+    report["gate"]["failed_instruments"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect()
+}
+
+/// #7275: `Ok(warmup), Err(capture)` is a broken instrument, not Incomplete
+/// warmup timings. `--gate` must fail even with no baseline.
+#[test]
+fn a_measured_capture_error_fails_both_warm_check_metrics_and_the_gate() -> Result<(), String> {
+    let warmup = measured(false, Some(64 * 1024 * 1024));
+    let (samples, _, missing) = record_pair(Ok(warmup), Err("pipe drain failed".to_string()));
+    let (ms, rss) = warm_check_pair(&samples)?;
+    assert!(
+        matches!(ms.outcome, SampleOutcome::Failed),
+        "measured capture error must not keep warmup duration as Incomplete: {:?}",
+        ms.outcome
+    );
+    assert!(
+        matches!(rss.outcome, SampleOutcome::Failed),
+        "measured capture error must not keep warmup RSS as Incomplete: {:?}",
+        rss.outcome
+    );
+    assert!(
+        ms.detail
+            .contains("measured capture failed: pipe drain failed"),
+        "{}",
+        ms.detail
+    );
+    assert_eq!(rss.detail, "pipe drain failed");
+    assert!(
+        missing.contains(&"warm check JSON"),
+        "capture error must keep trust incomplete: {missing:?}"
+    );
+
+    let config = warm_check_gate_config()?;
+    let gated = build_report(
+        &config,
+        &all_boards(),
+        &samples,
+        &context("runner-a"),
+        None,
+        true,
+    );
+    assert_eq!(gated["gate"]["status"].as_str(), Some("fail"));
+    let failed = failed_instrument_ids(&gated);
+    assert!(
+        failed.contains(&"speed.warm_check_ms".to_string()),
+        "{failed:?}"
+    );
+    assert!(
+        failed.contains(&"speed.warm_check_peak_rss_mb".to_string()),
+        "{failed:?}"
+    );
+    Ok(())
+}
+
+/// Timeout (warmup timed out → measured run not taken) and an explicit
+/// `Ok(None)` stay Incomplete. Incomplete does not fail `--gate` without a
+/// baseline — that is why the capture-error arm must be Failed instead.
+#[test]
+fn timeout_and_unmeasured_second_run_stay_incomplete() -> Result<(), String> {
+    let timed_out = measured(true, Some(64 * 1024 * 1024));
+    let (timeout_samples, _, _) = record_pair(Ok(timed_out), Ok(None));
+    let (timeout_ms, timeout_rss) = warm_check_pair(&timeout_samples)?;
+    assert!(
+        both_incomplete(timeout_ms, timeout_rss),
+        "timeout must stay Incomplete, got {:?} / {:?}",
+        timeout_ms.outcome,
+        timeout_rss.outcome
+    );
+    assert!(
+        timeout_ms.detail.contains("measured run not taken"),
+        "{}",
+        timeout_ms.detail
+    );
+
+    let warmup = measured(false, Some(64 * 1024 * 1024));
+    let (skipped_samples, _, _) = record_pair(Ok(warmup), Ok(None));
+    let (skipped_ms, skipped_rss) = warm_check_pair(&skipped_samples)?;
+    assert!(
+        both_incomplete(skipped_ms, skipped_rss),
+        "measured run not taken must stay Incomplete, got {:?} / {:?}",
+        skipped_ms.outcome,
+        skipped_rss.outcome
+    );
+    assert!(
+        skipped_ms.detail.contains("measured run not taken"),
+        "{}",
+        skipped_ms.detail
+    );
+
+    let config = warm_check_gate_config()?;
+    let gated = build_report(
+        &config,
+        &all_boards(),
+        &skipped_samples,
+        &context("runner-a"),
+        None,
+        true,
+    );
+    assert_eq!(
+        gated["gate"]["status"].as_str(),
+        Some("no_baseline"),
+        "Incomplete without a baseline must not fail --gate: {}",
+        gated["gate"]
+    );
+    assert!(
+        failed_instrument_ids(&gated).is_empty(),
+        "{}",
+        gated["gate"]
+    );
+    Ok(())
+}
+
+#[test]
+fn restoring_the_permissive_predicate_admits_empty_json() {
+    let subject = admission_subject();
+    assert!(permissive_json_exit_zero(false, true, "{}"));
+    assert!(permissive_json_exit_zero(false, true, "null"));
+    assert!(!admit_check_document(&json!({}), &subject).is_complete());
+    assert!(!admit_check_document(&json!(null), &subject).is_complete());
+}
+
+#[cfg(unix)]
+#[test]
+fn an_injected_empty_json_child_cannot_beat_a_valid_warm_baseline() -> Result<(), String> {
+    let empty = capture_stub_stdout("{}")?;
+    assert!(
+        permissive_json_exit_zero(empty.output.timed_out, true, &empty.output.stdout),
+        "the old predicate must still accept the injected child so the discriminator is live"
+    );
+    let (samples, contradictions, missing) =
+        record_pair(Ok(empty), Ok(Some(capture_stub_stdout("{}")?)));
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    assert!(
+        matches!(warm.outcome, SampleOutcome::Incomplete(_)),
+        "empty JSON must keep raw timing as incomplete, got {:?}",
+        warm.outcome
+    );
+    assert!(
+        contradictions.is_none(),
+        "invalid JSON must not contribute a contradiction count: {contradictions:?}"
+    );
+    assert!(
+        missing.contains(&"warm check JSON"),
+        "invalid JSON must keep trust incomplete: {missing:?}"
+    );
+
+    let config = parse_config(MINIMAL)?;
+    let baseline = build_report(
+        &config,
+        &all_boards(),
+        &[sample(
+            "speed.warm_check_ms",
+            Some("serde"),
+            SampleOutcome::Value(8_000.0),
+        )],
+        &context("runner-a"),
+        None,
+        false,
+    );
+    let rejected = build_report(
+        &config,
+        &all_boards(),
+        &samples,
+        &context("runner-a"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(rejected["gate"]["status"].as_str(), Some("fail"));
+    assert!(
+        render_markdown(&rejected).contains("incomplete")
+            || gate_failure_message(&rejected).contains("did not complete"),
+        "{}",
+        render_markdown(&rejected)
+    );
+
+    let permissive = build_report(
+        &config,
+        &all_boards(),
+        &[sample(
+            "speed.warm_check_ms",
+            Some("serde"),
+            SampleOutcome::Value(5.0),
+        )],
+        &context("runner-a"),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(
+        permissive["gate"]["status"].as_str(),
+        Some("pass"),
+        "the old Value(5) admission would beat the baseline; the new predicate must not"
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_valid_complete_child_is_admitted_as_warm_success() -> Result<(), String> {
+    let stdout = complete_check_json(1).to_string();
+    let (samples, contradictions, missing) = record_pair(
+        Ok(capture_stub_stdout(&stdout)?),
+        Ok(Some(capture_stub_stdout(&stdout)?)),
+    );
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    assert!(
+        matches!(warm.outcome, SampleOutcome::Value(_)),
+        "{:?} {}",
+        warm.outcome,
+        warm.detail
+    );
+    assert!(missing.is_empty(), "{missing:?}");
+    assert_eq!(contradictions.as_ref().map(|(count, _)| *count), Some(0));
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failed_warmup_does_not_establish_a_warm_population() -> Result<(), String> {
+    let empty = capture_stub_stdout("{}")?;
+    let valid = capture_stub_stdout(&complete_check_json(1).to_string())?;
+    let (samples, _, _) = record_pair(Ok(empty), Ok(Some(valid)));
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    assert!(
+        matches!(warm.outcome, SampleOutcome::Incomplete(_)),
+        "{:?}",
+        warm.outcome
+    );
+    assert!(
+        warm.detail
+            .contains("warm-up did not establish a valid warm population"),
+        "{}",
+        warm.detail
+    );
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn a_complete_empty_workload_is_admitted() -> Result<(), String> {
+    let stdout = complete_check_json(0).to_string();
+    let (samples, _, missing) = record_pair(
+        Ok(capture_stub_stdout(&stdout)?),
+        Ok(Some(capture_stub_stdout(&stdout)?)),
+    );
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    assert!(
+        matches!(warm.outcome, SampleOutcome::Value(_)),
+        "{:?} {}",
+        warm.outcome,
+        warm.detail
+    );
+    assert!(missing.is_empty(), "{missing:?}");
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn an_incomplete_check_document_cannot_clean_trust() -> Result<(), String> {
+    let warmup = complete_check_json(1).to_string();
+    let mut incomplete = complete_check_json(1);
+    incomplete["analysis_outcome"]["analysis_complete"] = json!(false);
+    incomplete["analysis_outcome"]["outcome"]["kind"] = json!("partial_with_limitations");
+    let (samples, contradictions, missing) = record_pair(
+        Ok(capture_stub_stdout(&warmup)?),
+        Ok(Some(capture_stub_stdout(&incomplete.to_string())?)),
+    );
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    assert!(
+        matches!(warm.outcome, SampleOutcome::Incomplete(_)),
+        "{:?}",
+        warm.outcome
+    );
+    assert!(
+        contradictions.is_none(),
+        "rejected analysis must not contribute a contradiction count: {contradictions:?}"
+    );
+    assert!(
+        missing.contains(&"warm check JSON"),
+        "rejected analysis must keep trust incomplete: {missing:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn truncated_findings_keep_speed_and_hold_trust() {
+    let mut document = complete_check_json(1);
+    document["run_limitations"] = json!([{
+        "category": "limited_findings_bound",
+        "run_status": "limited_findings_bound"
+    }]);
+    let subject = admission_subject();
+    let admission = admit_check_document(&document, &subject);
+    assert!(
+        matches!(
+            admission,
+            CheckAdmission::Complete {
+                rendering_truncated: true,
+                ..
+            }
+        ),
+        "expected complete-with-truncation, got {admission:?}"
+    );
+    assert!(
+        scan_check_contradictions(&document).is_err_and(|err| err.contains("rendering prefix"))
+    );
+}
+
+fn argv_mode(args: &[String]) -> Option<&str> {
+    args.windows(2)
+        .find_map(|pair| (pair[0] == "--mode").then_some(pair[1].as_str()))
+}
+
+fn mode_mismatch(actual: &str, expected: &str) -> String {
+    format!("producer mode `{actual}` does not match expected `{expected}`")
+}
+
+fn complete_for(subject: &CheckSubject) -> Value {
+    let mut document = complete_check_json(0);
+    document["mode"] = json!(&subject.mode);
+    document["root"] = json!(&subject.root);
+    document["base"] = json!(&subject.base);
+    if let Some(head) = &subject.head {
+        document["head"] = json!({ "source": "commit", "commit": head });
+    }
+    document["analysis_outcome"]["outcome"]["identity"]["base_revision"] = json!(&subject.base);
+    document
+}
+
+fn warm_check_mode_checkout(
+    label: &str,
+    ripr_toml: Option<&str>,
+) -> Result<(PathBuf, String), String> {
+    let dir = crate::tests::temp_dir(label);
+    crate::tests::write(
+        &dir.join("Cargo.toml"),
+        "[package]\nname = \"dx-warm-check-mode\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    );
+    crate::tests::write(&dir.join("src/lib.rs"), "pub fn n() -> u8 { 1 }\n");
+    let git = |args: &[&str]| super::measure::git(Some(&dir), args);
+    git(&["init", "--quiet"])?;
+    git(&["config", "core.autocrlf", "false"])?;
+    git(&["config", "user.name", "t"])?;
+    git(&["config", "user.email", "t@t"])?;
+    git(&["config", "commit.gpgsign", "false"])?;
+    fs::write(dir.join(".git/info/exclude"), "/target/\n").map_err(|err| err.to_string())?;
+    git(&["add", "Cargo.toml", "src/lib.rs"])?;
+    git(&["commit", "--quiet", "-m", "a"])?;
+    crate::tests::write(&dir.join("src/lib.rs"), "pub fn n() -> u8 { 2 }\n");
+    git(&["add", "src/lib.rs"])?;
+    git(&["commit", "--quiet", "-m", "b"])?;
+    if let Some(text) = ripr_toml {
+        crate::tests::write(&dir.join("ripr.toml"), text);
+    }
+    let head = git(&["rev-parse", "HEAD"])?.trim().to_string();
+    if head.is_empty() {
+        return Err("empty HEAD".to_string());
+    }
+    Ok((dir, head))
+}
+
+fn scoreboard_test_ripr_binary() -> Result<String, String> {
+    static BINARY: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
+    BINARY
+        .get_or_init(|| {
+            // `cargo test -p xtask` runs with cwd at the xtask package, so a
+            // relative `target/debug/ripr` lookup misses the workspace binary
+            // that `cargo build -p ripr` actually writes.
+            crate::run::run("cargo", &["build", "-p", "ripr"]).map(|_| ())?;
+            let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("..")
+                .canonicalize()
+                .map_err(|err| format!("workspace root: {err}"))?;
+            let target = match std::env::var_os("CARGO_TARGET_DIR") {
+                Some(dir) => {
+                    let path = PathBuf::from(dir);
+                    if path.is_absolute() {
+                        path
+                    } else {
+                        workspace.join(path)
+                    }
+                }
+                None => workspace.join("target"),
+            };
+            let binary = target
+                .join("debug")
+                .join(format!("ripr{}", std::env::consts::EXE_SUFFIX));
+            binary
+                .canonicalize()
+                .map(|path| path.display().to_string())
+                .map_err(|err| {
+                    format!(
+                        "ripr binary {} missing after cargo build -p ripr: {err}",
+                        binary.display()
+                    )
+                })
+        })
+        .clone()
+}
+
+fn run_measured_check(args: &[String], cache: &Path) -> Result<MeasuredOutput, String> {
+    let binary = scoreboard_test_ripr_binary()?;
+    let cache_text = cache.display().to_string();
+    capture_output_measured(
+        &binary,
+        args,
+        None,
+        &[("RIPR_CACHE_DIR", cache_text.as_str())],
+        std::time::Duration::from_mins(2),
+        "dx-scoreboard warm-check mode binding",
+    )
+}
+
+fn produced_check_json(measured: &MeasuredOutput) -> Result<Value, String> {
+    if measured.output.timed_out {
+        return Err(format!(
+            "check timed out; stderr:\n{}",
+            measured.output.stderr
+        ));
+    }
+    if measured.output.stderr.contains("unknown mode") {
+        return Err(format!(
+            "CLI rejected --mode; stderr:\n{}",
+            measured.output.stderr
+        ));
+    }
+    serde_json::from_str(measured.output.stdout.trim()).map_err(|err| {
+        format!(
+            "check stdout is not JSON ({err}); status={:?}; stderr:\n{}\nstdout:\n{}",
+            measured.output.status, measured.output.stderr, measured.output.stdout
+        )
+    })
+}
+
+fn record_with_subject(
+    subject: &CheckSubject,
+    warmup: Result<MeasuredOutput, String>,
+    measured: Result<Option<MeasuredOutput>, String>,
+) -> WarmRecord {
+    let mut samples = Vec::new();
+    let mut contradictions = None;
+    let mut missing = Vec::new();
+    record_warm_check(
+        &repo_sample,
+        subject,
+        warmup,
+        measured,
+        &mut samples,
+        &mut contradictions,
+        &mut missing,
+    );
+    (samples, contradictions, missing)
+}
+
+/// #7273: the measured argv and the admission subject name the same draft
+/// mode by construction. The pre-repair argv is retained so restoring it
+/// fails this discriminator without a real checkout.
+#[test]
+fn warm_check_args_and_subject_share_an_explicit_draft_mode() {
+    let args = warm_check_args("/tmp/corpus-a", "HEAD~1");
+    let subject = warm_check_subject(
+        "/tmp/corpus-a".to_string(),
+        "HEAD~1".to_string(),
+        Some("abc123".to_string()),
+    );
+    assert_eq!(argv_mode(&args), Some(WARM_CHECK_MODE));
+    assert_eq!(subject.mode, WARM_CHECK_MODE);
+    assert_eq!(argv_mode(&args), Some(subject.mode.as_str()));
+    assert_ne!(
+        args,
+        check_args_without_explicit_mode("/tmp/corpus-a", "HEAD~1"),
+        "restoring the pre-#7273 argv (no --mode) must fail this discriminator"
+    );
+    assert!(
+        admit_check_document(&complete_for(&subject), &subject).is_complete(),
+        "a complete draft document must still admit against the production subject"
+    );
+}
+
+/// Production-path: a checkout `ripr.toml` with a non-draft mode cannot
+/// retarget the measured command. A no-config checkout still admits as
+/// draft. Changing only `check_args` or only the subject string fails.
+#[test]
+fn a_non_draft_checkout_config_still_produces_a_draft_warm_check_sample() -> Result<(), String> {
+    let binary = scoreboard_test_ripr_binary()?;
+    let help = capture_output_measured(
+        &binary,
+        &["check".to_string(), "--help".to_string()],
+        None,
+        &[],
+        std::time::Duration::from_secs(15),
+        "dx-scoreboard confirm check --mode is accepted",
+    )?;
+    let help_text = format!("{}\n{}", help.output.stdout, help.output.stderr);
+    assert!(
+        help_text.contains("--mode") && help_text.contains("draft"),
+        "ripr check must accept --mode draft; help was:\n{help_text}"
+    );
+
+    let (fast_root, fast_head) = warm_check_mode_checkout(
+        "dx-warm-check-mode-fast",
+        Some("[analysis]\nmode = \"fast\"\n"),
+    )?;
+    let fast_root_text = fast_root.display().to_string();
+    let fast_cache = fast_root.join("target/ripr/cache-fast");
+    let fast_subject = warm_check_subject(
+        fast_root_text.clone(),
+        "HEAD~1".to_string(),
+        Some(fast_head),
+    );
+    let production_args = warm_check_args(&fast_root_text, "HEAD~1");
+    assert_eq!(argv_mode(&production_args), Some(WARM_CHECK_MODE));
+
+    let fast_with_flag = run_measured_check(&production_args, &fast_cache)?;
+    let fast_with_flag_json = produced_check_json(&fast_with_flag)?;
+    assert_eq!(
+        fast_with_flag_json["mode"].as_str(),
+        Some(WARM_CHECK_MODE),
+        "explicit --mode draft must override [analysis].mode = \"fast\"; got {}",
+        fast_with_flag_json
+    );
+    let fast_admission = admit_check_document(&fast_with_flag_json, &fast_subject);
+    assert!(
+        !fast_admission
+            .reason()
+            .contains(&mode_mismatch("fast", WARM_CHECK_MODE)),
+        "a complete sample must not be rejected as the wrong subject: {}",
+        fast_admission.reason()
+    );
+    assert!(
+        admit_check_document(&complete_for(&fast_subject), &fast_subject).is_complete(),
+        "a complete draft document for this checkout must admit"
+    );
+
+    let (samples, _, _) = record_with_subject(
+        &fast_subject,
+        Ok(fast_with_flag),
+        Ok(Some(run_measured_check(&production_args, &fast_cache)?)),
+    );
+    let warm = speed_ms(&samples).ok_or("warm check sample missing")?;
+    match &warm.outcome {
+        SampleOutcome::Value(_) => {}
+        SampleOutcome::Incomplete(_) => {
+            assert!(
+                !warm
+                    .detail
+                    .contains(&mode_mismatch("fast", WARM_CHECK_MODE)),
+                "incomplete must name a non-mode reason, got {}",
+                warm.detail
+            );
+        }
+        other => {
+            return Err(format!(
+                "expected Value or Incomplete for an explicit-draft run, got {other:?} {}",
+                warm.detail
+            ));
+        }
+    }
+
+    let (plain_root, plain_head) = warm_check_mode_checkout("dx-warm-check-mode-plain", None)?;
+    let plain_root_text = plain_root.display().to_string();
+    let plain_cache = plain_root.join("target/ripr/cache-plain");
+    let plain_subject = warm_check_subject(
+        plain_root_text.clone(),
+        "HEAD~1".to_string(),
+        Some(plain_head),
+    );
+    let plain_json = produced_check_json(&run_measured_check(
+        &warm_check_args(&plain_root_text, "HEAD~1"),
+        &plain_cache,
+    )?)?;
+    assert_eq!(
+        plain_json["mode"].as_str(),
+        Some(WARM_CHECK_MODE),
+        "a checkout without analysis-mode config must still emit draft; got {plain_json}"
+    );
+    assert!(
+        !admit_check_document(&plain_json, &plain_subject)
+            .reason()
+            .contains(&mode_mismatch("fast", WARM_CHECK_MODE)),
+        "{}",
+        admit_check_document(&plain_json, &plain_subject).reason()
+    );
+    assert!(admit_check_document(&complete_for(&plain_subject), &plain_subject).is_complete());
+
+    let legacy_args = check_args_without_explicit_mode(&fast_root_text, "HEAD~1");
+    assert_eq!(argv_mode(&legacy_args), None);
+    let legacy_json = produced_check_json(&run_measured_check(&legacy_args, &fast_cache)?)?;
+    assert_eq!(
+        legacy_json["mode"].as_str(),
+        Some("fast"),
+        "without --mode the producer must inherit [analysis].mode = \"fast\"; got {legacy_json}"
+    );
+    let legacy_admission = admit_check_document(&legacy_json, &fast_subject);
+    assert!(
+        !legacy_admission.is_complete(),
+        "a fast document must not admit against the draft subject"
+    );
+    assert!(
+        legacy_admission
+            .reason()
+            .contains(&mode_mismatch("fast", WARM_CHECK_MODE)),
+        "expected wrong-subject rejection, got {}",
+        legacy_admission.reason()
+    );
+
+    let mut wrong_subject = fast_subject.clone();
+    wrong_subject.mode = "fast".to_string();
+    let draft_document = complete_for(&fast_subject);
+    assert!(
+        !admit_check_document(&draft_document, &wrong_subject).is_complete(),
+        "changing only the subject mode must fail admission"
+    );
+    assert!(
+        admit_check_document(&draft_document, &wrong_subject)
+            .reason()
+            .contains(&mode_mismatch(WARM_CHECK_MODE, "fast")),
+        "{}",
+        admit_check_document(&draft_document, &wrong_subject).reason()
     );
     Ok(())
 }

@@ -146,11 +146,15 @@ acknowledged, what stayed advisory, and why.
 `config_error` for malformed command-line arguments, unreadable required files,
 or invalid policy values.
 
-When `ripr gate evaluate` omits `--mode` and stderr is non-interactive, the CLI
-must print a warning that the default is `visible-only`, that it records
-advisory evidence, and that it never blocks. The warning must not change the
-decision, exit status, JSON, or Markdown report. An explicit
-`--mode visible-only` suppresses the warning; blocking modes remain opt-in.
+When a completed `ripr gate evaluate` omits `--mode` and stderr is
+non-interactive, the CLI must print a warning that the default is
+`visible-only`, that it records advisory evidence, that findings never
+block, and that exception-policy violations still can.
+Missing-input usage errors and `config_error` reports must not print that
+warning: those runs never applied the default mode to findings. The warning
+must not change the decision, exit status, JSON, or Markdown report. An
+explicit `--mode visible-only` suppresses the warning; blocking modes remain
+opt-in.
 
 ## Labels And Acknowledgement
 

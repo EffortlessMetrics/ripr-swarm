@@ -114,7 +114,7 @@ Editor & Agent:
   ripr agent brief --root . (--diff PATH|--base REV|--files PATHS|--seam-id ID) --json   [advanced]
   ripr agent packet --root . (--seam-id ID | --gap-ledger PATH --gap-id ID) --json   [advanced]
   ripr agent card --root . --seam-id ID [--json]   [advanced]
-  ripr agent stub --root . (--seam-id ID | --at FILE:LINE) [--write] [--json]   [advanced]
+  ripr agent stub --root . (--seam-id ID | --at FILE:LINE [--kind FAMILY]) [--write] [--json]   [advanced]
   ripr agent verify --root . --before before.json --after after.json --json   [advanced]
   ripr agent verify-execute --root . --packet packet.json --result-json result.json --authorize --json   [advanced]
   ripr agent receipt --root . --verify-json agent-verify.json --seam-id ID --json   [advanced]

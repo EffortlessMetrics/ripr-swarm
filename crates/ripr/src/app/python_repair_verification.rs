@@ -872,7 +872,8 @@ fn write_after_verification_snapshot(root: &Path) -> Result<(String, String), St
         "ready".to_string(),
         None,
         &config,
-    )?;
+    )?
+    .with_rust_corpus_key(report.corpus_key.as_ref());
     let path = root.join(AFTER_VERIFICATION_SNAPSHOT_REL);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)

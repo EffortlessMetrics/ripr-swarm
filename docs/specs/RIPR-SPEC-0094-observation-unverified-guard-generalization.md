@@ -12,6 +12,7 @@ Linked issues:
 - #4404
 - #4486
 - #6297
+- #7063
 
 Linked PRs:
 
@@ -220,10 +221,17 @@ direct-sink authority: a bare-identifier collection mutation such as
 `items.push(5)` whose receiver is a passed mutable collection.
 
 Confirmation for that family requires the assertion's **primary observed
-subject** to be that same receiver:
+subject** to be that same receiver, and to end there:
 
 - `assert_eq!(items, expected)` observes `items` and retains useful evidence.
-- `assert_eq!(items.len(), 1)` observes a read of `items`.
+- `assert_eq!(items.len(), 1)` and `assert_eq!(items[0], 5)` observe a read of
+  `items`.
+- `assert_eq!(items[..], expected)` observes a whole-slice read of `items`.
+- `assert_eq!(items.capacity() >= 1, true)`,
+  `assert_eq!(items.is_empty() || true, true)`, and
+  `assert_eq!(items.len() * 0, 0)` do **not** observe `items`: a trailing
+  operator after the first read is not a discriminator, and `capacity` is not
+  a value-read. They stay `observation_unverified` / `weakly_exposed` (#7135).
 - `assert_eq!(other, expected)` and `assert_eq!(other, items)` observe
   `other` and stay `observation_unverified`.
 - `assert_eq!(items.clear(), ())` and `assert_eq!(items.push(1), ())` observe
@@ -242,6 +250,8 @@ with delivered CallDeletion goldens.
 Proof: `mutating_collection_a_while_asserting_b_stays_unverified`,
 `asserting_affected_collection_retains_confirmation_in_either_order`,
 `direct_collection_push_completes_effect_target_and_rejects_wrong_observer`,
+`collection_subject_must_end_after_root_index_or_value_read`,
+`direct_collection_trailing_operator_and_capacity_stay_weakly_exposed`,
 `direct_collection_state_write_requires_complete_witness`,
 `cache_insert_call_deletion_keeps_legacy_syntax_propagation`, and
 `direct_collection_mutation_discriminates_actual_observer_not_sibling_collection`.
@@ -414,8 +424,16 @@ Without this rule a same-file
 `Unit::Fortnight =>` arm of an unrelated `seconds` function `exposed`, and
 rewriting only that assertion moved the arm to `weakly_exposed`.
 
-The rule is scoped to match arms. A return-value token names the changed
-expression itself, and the #4486 same-file credit stays for other families.
+The rule covers match arms and, since #7063, an exact error variant. An
+`error_path` or `return_value` probe whose changed expression constructs
+`Err(E::Variant)` (including the turbofish form `Err::<T, E>(E::Variant)`)
+or returns it through `.ok_or(E::Variant)?` (the RIPR-SPEC-0106 identity
+owner, `changed_error_variant`) names a variant every function returning `E` shares, so a same-file
+`assert!(matches!(refund(20_000), Err(PayError::Limit)))` cannot confirm
+`deposit_cap`'s `return Err(PayError::Limit)` beside a test that calls
+`deposit_cap`. Its summary names the error variant instead of the arm. Any
+other return-value token names the changed expression itself, and the #4486
+same-file credit stays for other families.
 
 When the arm stays unconfirmed and such a test was withheld, the discriminator
 summary says that a test which only shares the file or module cannot confirm

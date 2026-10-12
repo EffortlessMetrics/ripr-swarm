@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:tax:return_value:return_value:subtotal*8/100
   Changed behavior: subtotal * 8 / 100
   Missing discriminator: No strong discriminator was detected
-  Related test (1 of 2): src/lib.rs:14 tax_is_owed (assertion too weak to tell the old behavior from the new)
+  Related test (1 of 2 matched rows): src/lib.rs:14 tax_is_owed (assertion too weak to tell the old behavior from the new)
   Next step: Replace broad assertions with exact equality or a property that constrains the changed returned value.
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator weak
     - reach yes: Related tests appear to reach tax: tax_is_owed, subtotal_multiplies
@@ -27,7 +27,7 @@ Next: drill into the top finding:
   ripr explain --root <cwd>/fixtures/owner_parameter_token_coincidence/input --diff <cwd>/fixtures/owner_parameter_token_coincidence/diff.patch --mode fast probe:src_lib.rs:return_value:df11903a
   ripr context --root <cwd>/fixtures/owner_parameter_token_coincidence/input --diff <cwd>/fixtures/owner_parameter_token_coincidence/diff.patch --mode fast --at probe:src_lib.rs:return_value:df11903a
 Write a test for it:
-  ripr agent stub --root <cwd>/fixtures/owner_parameter_token_coincidence/input --at src/lib.rs:6
+  ripr agent stub --root <cwd>/fixtures/owner_parameter_token_coincidence/input --at src/lib.rs:6 --kind return_value
 
 More:
   Full evidence: rerun with --format human-full
