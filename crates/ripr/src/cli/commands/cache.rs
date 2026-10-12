@@ -196,11 +196,14 @@ fn render_status_for_host(
             format!("Entries: {}", status.entry_count),
         ];
         if let Some(real) = real_dir {
+            // #7343: the alias line is human output like the `Cache dir:`
+            // header, so it renders through the shared human path owner; JSON
+            // `real_cache_dir` above keeps `Path::display` identity.
             lines.push(format!(
                 "Real dir: {} (inspected through the symlink/junction alias; \
                  ripr check reads and writes the cache through it, while \
                  `ripr cache clear` requires the real path)",
-                real.display()
+                output::path::human_path_text(&real.to_string_lossy(), windows)
             ));
         }
         if status.foreign_entry_count > 0 {
@@ -730,6 +733,67 @@ mod tests {
         }
         if cache_dir_human_line_for_host(cache_dir, true) != expected {
             return Err("cache clear header helper drifted from status renderer".to_string());
+        }
+        Ok(())
+    }
+
+    /// #7343: the human `Real dir:` alias line rendered `Path::display()` of a
+    /// canonical Windows path while the `Cache dir:` header next to it already
+    /// stripped the verbatim prefix (#7326), so one screen showed two
+    /// spellings of one directory. The alias line now routes through the same
+    /// shared human renderer; JSON `real_cache_dir` keeps `Path::display`.
+    #[test]
+    fn render_status_human_real_dir_strips_windows_verbatim_prefix() -> Result<(), String> {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shape is assembled from parts.
+        let drive = "F:";
+        let verbatim = format!(r"\\?\{drive}\code\myrepo\target\ripr\cache");
+        let real_dir = PathBuf::from(format!(r"{drive}\code\myrepo\target\ripr\cache"));
+        let cache_dir = Path::new(&verbatim);
+        let status = CacheStatus {
+            state: "ok",
+            total_size_bytes: 0,
+            entry_count: 0,
+            foreign_entry_count: 0,
+            foreign_total_size_bytes: 0,
+        };
+        let human = render_status_for_host(cache_dir, Some(&real_dir), &status, false, true)?;
+        let real_line = human
+            .lines()
+            .find(|line| line.starts_with("Real dir: "))
+            .unwrap_or("");
+        if !real_line.starts_with(&format!("Real dir: {drive}/code/myrepo/target/ripr/cache")) {
+            return Err(format!("Windows human Real dir leaked verbatim spelling: {human}"));
+        }
+        if real_line.contains(r"\\?\") || real_line.contains('\\') {
+            return Err(format!(
+                "Windows human Real dir must use plain forward-slash spelling: {human}"
+            ));
+        }
+        let unix = render_status_for_host(cache_dir, Some(&real_dir), &status, false, false)?;
+        let unix_line = unix
+            .lines()
+            .find(|line| line.starts_with("Real dir: "))
+            .unwrap_or("");
+        if !unix_line.starts_with(&format!(
+            "Real dir: {}",
+            real_dir.display()
+        )) {
+            return Err(format!(
+                "Unix human Real dir must keep the real path spelling: {unix}"
+            ));
+        }
+        let json = render_status_for_host(cache_dir, Some(&real_dir), &status, true, true)?;
+        let value: serde_json::Value =
+            serde_json::from_str(&json).map_err(|error| error.to_string())?;
+        if value
+            .get("real_cache_dir")
+            .and_then(serde_json::Value::as_str)
+            != Some(real_dir.display().to_string().as_str())
+        {
+            return Err(format!(
+                "JSON real_cache_dir must keep Path::display identity, got: {json}"
+            ));
         }
         Ok(())
     }
