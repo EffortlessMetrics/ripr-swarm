@@ -296,6 +296,13 @@ impl ClassifiedProbeEvidence {
             (Some(owner), Some(chain))
                 if matches!(propagate.state, StageState::Yes | StageState::Weak)
                     && helper_only_reach(&context.related_tests)
+                    // #6614: reach resting on a local-macro argument hop
+                    // abstains only under an exact pin of a caller; a weak
+                    // oracle there keeps its own gap.
+                    && !crate::analysis::classify::macro_hop_reach_without_exact_pin(
+                        chain,
+                        &context.related_tests,
+                    )
                     && if effect_family {
                         !chain_passes_effect_target_to_observed_hops(
                             owner,

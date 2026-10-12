@@ -2261,6 +2261,11 @@ pub(in crate::analysis) fn computed_input_parameters(
     let Some(chain) = helper_chain else {
         return Vec::new();
     };
+    // #6614: a macro-argument hop binds no argument, so no parameter
+    // value crosses it.
+    if chain.hops.iter().any(|hop| hop.through_macro) {
+        return Vec::new();
+    }
     let Some(entry) = chain.hops.last() else {
         return Vec::new();
     };
@@ -2316,6 +2321,10 @@ fn helper_transferred_rows(
     related_tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<Vec<ParameterValue>> {
+    // #6614: a macro-argument hop binds no argument rows.
+    if chain.hops.iter().any(|hop| hop.through_macro) {
+        return Vec::new();
+    }
     let Some(entry) = chain.hops.last() else {
         return Vec::new();
     };
@@ -5864,11 +5873,13 @@ assert_eq!(input.amount, 100);"#
                     caller: inner.clone(),
                     call_text: format!("score({owner_argument})"),
                     arguments: vec![owner_argument.to_string()],
+                    through_macro: false,
                 },
                 super::super::helper_transfer::HelperHop {
                     caller: entry.clone(),
                     call_text: "inner(x)".to_string(),
                     arguments: vec!["x".to_string()],
+                    through_macro: false,
                 },
             ],
             stop_above: None,
