@@ -832,6 +832,13 @@ fn root_binding_lsp_alias_contract(
     selected_root: &Path,
 ) -> TestResult {
     let physical_root = fixture.root.canonicalize()?;
+    // Canonical Windows roots carry the extended namespace prefix used by
+    // the producer metadata. The LSP's local file-URI surface requires an
+    // ordinary drive spelling, so retain canonical identity only for equality.
+    #[cfg(windows)]
+    let physical_consumer_root = root_binding_windows_local_drive_root(&physical_root)?;
+    #[cfg(not(windows))]
+    let physical_consumer_root = physical_root.clone();
     assert_eq!(selected_root.canonicalize()?, physical_root);
     assert_ne!(selected_root.as_os_str(), physical_root.as_os_str());
     for root in [&fixture.root, &fixture.foreign] {
@@ -839,12 +846,12 @@ fn root_binding_lsp_alias_contract(
         // main ref. No source bytes, records or source stamp are altered.
         run_git(root, &["branch", "-M", "main"])?;
     }
-    let physical = root_binding_lsp_diagnostics(&physical_root)?;
+    let physical = root_binding_lsp_diagnostics(&physical_consumer_root)?;
     assert_root_binding_lsp_selected(&physical, ledger)?;
     // The real default producer retains portable `--root .` displays. LSP
     // command validation admits that route, then bind_portable_command binds
     // the projected command to this selected workspace for copying/pasting.
-    assert_root_binding_lsp_bound_verify_root(&physical, &physical_root)?;
+    assert_root_binding_lsp_bound_verify_root(&physical, &physical_consumer_root)?;
 
     // B's own real default producer is a nonempty positive control before
     // copying A's unchanged ledger bytes into B's default artifact location.
@@ -881,14 +888,18 @@ fn root_binding_lsp_alias_contract(
         .join("target/ripr/reports/gap-decision-ledger.json");
     let b_ledger: serde_json::Value = serde_json::from_slice(&std::fs::read(&foreign_ledger)?)?;
     assert_eq!(b_ledger["source_subject"], ledger["source_subject"]);
+    #[cfg(windows)]
+    let foreign_consumer_root = root_binding_windows_local_drive_root(&fixture.foreign)?;
+    #[cfg(not(windows))]
+    let foreign_consumer_root = fixture.foreign.canonicalize()?;
     assert_root_binding_lsp_selected(
-        &root_binding_lsp_diagnostics(&fixture.foreign.canonicalize()?)?,
+        &root_binding_lsp_diagnostics(&foreign_consumer_root)?,
         &b_ledger,
     )?;
     let original_bytes = std::fs::read(&fixture.ledger)?;
     std::fs::write(&foreign_ledger, &original_bytes)?;
     let alias = root_binding_lsp_diagnostics(selected_root)?;
-    let foreign = root_binding_lsp_diagnostics(&fixture.foreign)?;
+    let foreign = root_binding_lsp_diagnostics(&foreign_consumer_root)?;
 
     // Retain LSP's existing relative `.` and missing-root compatibility.
     // Only metadata changes; all real records and analysis-time stamps stay.
@@ -958,11 +969,38 @@ fn lsp_real_gap_ledger_admits_symlink_selected_root_and_refuses_foreign_checkout
 }
 
 #[cfg(windows)]
+fn root_binding_windows_local_drive_root(
+    root: &Path,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+    use std::path::{Component, Prefix};
+    let Some(Component::Prefix(prefix)) = root.components().next() else {
+        return Err("Windows fixture must have a local drive prefix".into());
+    };
+    let drive = match prefix.kind() {
+        Prefix::Disk(drive) | Prefix::VerbatimDisk(drive) => drive,
+        _ => return Err("network and device roots are not local file-URI fixture inputs".into()),
+    };
+    assert!(root.is_absolute(), "Windows fixture must be drive-absolute");
+    let mut ordinary = std::path::PathBuf::from(format!("{}:\\", char::from(drive)));
+    ordinary.push(root.components().skip(2).collect::<std::path::PathBuf>());
+    assert!(
+        matches!(ordinary.components().next(), Some(Component::Prefix(prefix)) if matches!(prefix.kind(), Prefix::Disk(_)))
+    );
+    assert_eq!(ordinary.canonicalize()?, root.canonicalize()?);
+    Ok(ordinary)
+}
+
+#[cfg(windows)]
 #[test]
 fn lsp_real_gap_ledger_admits_native_root_beside_canonical_prefix_and_refuses_foreign_checkout()
 -> TestResult {
     let (fixture, ledger) = root_binding_fixture("lsp-ledger-native-prefix-root")?;
     // No symlink privilege is needed: the producer's canonical Windows root
-    // and the editor's ordinary native path refer to this accessible fixture.
-    root_binding_lsp_alias_contract(&fixture, &ledger, &fixture.root)
+    // and the editor's ordinary native path refer to this accessible fixture,
+    // including a temp directory supplied in an already-verbatim spelling.
+    let selected_root = root_binding_windows_local_drive_root(&fixture.root)?;
+    assert!(
+        matches!(fixture.root.canonicalize()?.components().next(), Some(std::path::Component::Prefix(prefix)) if matches!(prefix.kind(), std::path::Prefix::VerbatimDisk(_)))
+    );
+    root_binding_lsp_alias_contract(&fixture, &ledger, &selected_root)
 }
