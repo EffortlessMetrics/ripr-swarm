@@ -20,8 +20,9 @@ Start here:
   Next step: The changed owner is an assertion helper (its body is dominated by assert*/expect calls
     and nothing outside tests calls it); inspect the inputs and behavior this helper checks,
     including any existing boundary or negative-path assertions. Add or strengthen a test only if
-    this inspection finds a gap. Compare the original and changed implementations with a focused
-    `cargo test` run. Static classification may remain unknown.
+    this inspection finds a gap. Compare the original and changed implementations with a focused run
+    using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static
+    classification may remain unknown.
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator unknown
     - reach yes: Related tests appear to reach assert_workspace_source_paths_are_stable: workspace_source_paths_are_stable
     - infection unknown: Predicate changed, but no literal boundary was visible in the changed expression

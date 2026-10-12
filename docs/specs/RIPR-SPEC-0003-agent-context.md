@@ -49,9 +49,12 @@ Existing producer-specific limitation advice remains authoritative.
 
 Rust guidance follows the actual stop reasons: trace computed inputs (including
 default/empty cases), inspect macro output/effects, or inspect a changed
-declaration and the behavior consuming it. Inspect existing assertions first;
-add or strengthen a test only when that inspection establishes a gap. Compare
-the original and changed implementations with a focused `cargo test` run.
+declaration and the behavior consuming it. Inspect what the related test
+actually checks without presupposing that an assertion exists. Inspect any
+existing assertion before adding or strengthening a test, and do so only when
+that inspection establishes a gap. Compare the original and changed
+implementations with the project's configured test runner (`cargo test` for
+ordinary Cargo tests); custom harnesses can require their own selector arguments.
 The static classification may remain unknown. Neither macro expansion nor
 fixture/builder value mapping is unlocked by choosing a wider analysis mode or
 an undocumented `ripr.toml` key.

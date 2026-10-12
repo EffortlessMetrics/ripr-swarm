@@ -20,8 +20,9 @@ Start here:
   Next step: Trace the related test input through the local or computed operand, including
     default/empty cases, to check whether the change matters. ripr.toml does not support
     fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap.
-    Compare the original and changed implementations with a focused `cargo test` run. Static
-    classification may remain unknown.
+    Compare the original and changed implementations with a focused run using the project's
+    configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain
+    unknown.
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator not established
     - reach yes: Related tests appear to reach via_map_or_else: map_or_else_boundary_stays_unresolved
     - infection unknown: The only literals ripr reads in related tests are char literals ['x'], which ripr does not compare with the changed numeric boundary [1]; activation/infection…

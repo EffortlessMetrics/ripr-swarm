@@ -35,6 +35,13 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
         std::fs::create_dir_all(&scratch)?;
         for (name, id, class, reason, required) in [
             (
+                "propagate_stdout_macro",
+                "probe:src_lib.rs:call_deletion:75eda2b6",
+                "propagation_unknown",
+                "proc_macro_opaque",
+                vec!["macro", "output or effect", "original and changed"],
+            ),
+            (
                 "helper_chain_one_hop",
                 "probe:src_lib.rs:predicate:ac178c7f",
                 "infection_unknown",
@@ -45,13 +52,6 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                     "ripr.toml",
                     "does not support",
                 ],
-            ),
-            (
-                "propagate_stdout_macro",
-                "probe:src_lib.rs:call_deletion:75eda2b6",
-                "propagation_unknown",
-                "proc_macro_opaque",
-                vec!["macro", "output or effect", "original and changed"],
             ),
             (
                 "constant_declaration_probe_reconciliation",
@@ -83,6 +83,18 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                     .find(|f| f["id"] == id)
                     .ok_or("literal fixture finding absent")?;
                 assert_eq!(finding["classification"], class, "{name}/{mode}");
+                if name == "propagate_stdout_macro" {
+                    assert_eq!(finding["ripr"]["observe"]["state"], "no");
+                    assert_eq!(finding["ripr"]["discriminate"]["state"], "no");
+                    let related = finding["related_tests"]
+                        .as_array()
+                        .ok_or("no related tests")?;
+                    assert_eq!(related.len(), 1);
+                    assert_eq!(related[0]["name"], "report_does_not_panic");
+                    assert_eq!(related[0]["oracle_strength"], "none");
+                    assert_eq!(related[0]["oracle"], "");
+                    assert_eq!(related[0]["miss"], "no_assertion");
+                }
                 assert!(
                     finding["stop_reasons"]
                         .as_array()
@@ -107,6 +119,20 @@ fn unknown_explain_real_reasons_have_supported_actions_in_every_mode() -> TestRe
                 for need in &required {
                     assert!(step.contains(need), "{name}/{mode} missing {need}: {step}");
                 }
+                if name == "propagate_stdout_macro" {
+                    assert!(
+                        step.contains("what the related test actually checks"),
+                        "{step}"
+                    );
+                    assert!(step.contains("If it has an assertion"), "{step}");
+                    assert!(!step.contains("an existing test observes"), "{step}");
+                    assert!(!step.contains("inspect its exact assertion"), "{step}");
+                }
+                assert!(step.contains("project's configured test runner"), "{step}");
+                assert!(
+                    step.contains("`cargo test` for ordinary Cargo tests"),
+                    "{step}"
+                );
                 assert!(step.contains("cargo test"), "{step}");
                 assert!(step.contains("may remain unknown"), "{step}");
                 assert!(

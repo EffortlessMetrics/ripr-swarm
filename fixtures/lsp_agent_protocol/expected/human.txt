@@ -19,8 +19,8 @@ Start here:
   Related test: src/lib.rs:10 boundary_is_observed
   Next step: Inspect the changed behavior and its existing tests; ripr has not established a test
     gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and
-    changed implementations with a focused `cargo test` run. Static classification may remain
-    unknown.
+    changed implementations with a focused run using the project's configured test runner (`cargo
+    test` for ordinary Cargo tests). Static classification may remain unknown.
   Evidence: reach yes · infection unknown · propagation unknown · observation yes · discriminator unknown
     - reach yes: Related tests appear to reach agent_protocol_boundary: boundary_is_observed
     - infection unknown: Changed syntax is not mapped to a high-confidence probe family

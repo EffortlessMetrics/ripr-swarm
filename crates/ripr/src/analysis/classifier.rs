@@ -1231,7 +1231,7 @@ mod tests {
     }
 
     #[test]
-    fn given_static_unknown_probe_in_unreached_owner_then_next_step_asks_for_a_test_first() {
+    fn given_static_unknown_probe_in_unreached_owner_then_next_step_discloses_reach_limit() {
         let probe = Probe {
             id: ProbeId("probe:src_lib_rs:2:static_unknown".to_string()),
             location: SourceLocation::new("src/lib.rs", 2, 1),
@@ -1244,8 +1244,8 @@ mod tests {
             expected_sinks: vec![],
             required_oracles: vec![],
         };
-        // Nothing in the workspace names `score`: no test can run the
-        // change, so the finding is a plain missing test (#4428).
+        // Nothing in this index names `score`: no static test path is
+        // admitted, so the finding retains the no-path disclosure (#4428).
         let uncalled = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "score")],
             ..Default::default()
@@ -1263,7 +1263,7 @@ mod tests {
 
         // A production caller names `score`, so a test may reach it through a
         // chain static evidence does not follow: the shape stays unknown and
-        // the next step asks for a reaching test first.
+        // the next step discloses the reach limitation before inspection guidance.
         let unreached = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "score")],
             files: BTreeMap::from([(
@@ -1286,11 +1286,11 @@ mod tests {
                 .recommended_next_step
                 .as_deref()
                 .is_some_and(|step| step.starts_with("No static test path reaches this change")),
-            "unreached unknown must ask for a test first: {:?}",
+            "unreached unknown must disclose the reach limitation first: {:?}",
             finding.recommended_next_step
         );
 
-        // Control: a reached owner keeps the escalation guidance.
+        // Control: a reached owner keeps the uncertainty inspection guidance.
         let reached = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
             functions: vec![function("src/lib.rs", "score")],
             tests: vec![test(
@@ -1305,7 +1305,7 @@ mod tests {
         assert_eq!(
             finding.recommended_next_step.as_deref(),
             Some(
-                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused `cargo test` run. Static classification may remain unknown."
+                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
             )
         );
     }
@@ -2517,14 +2517,14 @@ fn far_above_threshold_discounts() {
             )
             .as_deref(),
             Some(
-                "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused `cargo test` run. Static classification may remain unknown."
+                "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
             )
         );
         assert_eq!(
             recommended_next_step(&predicate_probe, &ExposureClass::StaticUnknown, false, &[])
                 .as_deref(),
             Some(
-                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused `cargo test` run. Static classification may remain unknown."
+                "Inspect the changed behavior and its existing tests; ripr has not established a test gap. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown."
             )
         );
     }

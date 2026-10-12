@@ -318,7 +318,7 @@ fn uncertainty_next_step(
     } else {
         match class {
             ExposureClass::InfectionUnknown => "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings.",
-            ExposureClass::PropagationUnknown => "Trace the changed value to the output or effect an existing test observes, and inspect its exact assertion.",
+            ExposureClass::PropagationUnknown => "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes.",
             _ => "Inspect the changed behavior and its existing tests; ripr has not established a test gap.",
         }.to_string()
     };
@@ -335,10 +335,10 @@ fn uncertainty_next_step(
                 "A related test mentions a fixture, builder, or generator; inspect its produced input before deciding another case is needed."
             }
             StopReason::AsyncBoundaryOpaque => {
-                "If a task boundary is involved, check that the existing test waits for completion and asserts the resulting effect."
+                "If a task boundary is involved, check whether related tests wait for completion and what resulting effects they check."
             }
             StopReason::FeatureUnknown => {
-                "Check the intended Cargo feature/cfg settings and whether the gated test and assertion actually run."
+                "Check the intended Cargo feature/cfg settings and whether any relevant gated tests or assertions actually run."
             }
             StopReason::DynamicDispatchUnresolved => {
                 "Identify the receiver and implementation the existing test uses at the unresolved call."
@@ -365,7 +365,7 @@ fn uncertainty_next_step(
             added.push(action);
         }
     }
-    step.push_str(" Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused `cargo test` run. Static classification may remain unknown.");
+    step.push_str(" Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.");
     step
 }
 

@@ -88,8 +88,8 @@
       "stop_reasons": ["proc_macro_opaque"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Trace the changed value to the output or effect an existing test observes, and inspect its exact assertion. Inspect the macro invocation and the output or effect it produces; ripr does not expand the macro. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused `cargo test` run. Static classification may remain unknown.",
-      "suggested_next_action": "Trace the changed value to the output or effect an existing test observes, and inspect its exact assertion. Inspect the macro invocation and the output or effect it produces; ripr does not expand the macro. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused `cargo test` run. Static classification may remain unknown.",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Inspect the macro invocation and the output or effect it produces; ripr does not expand the macro. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Inspect the macro invocation and the output or effect it produces; ripr does not expand the macro. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     },
@@ -172,8 +172,8 @@
       "stop_reasons": ["proc_macro_opaque"],
       "oracle_kind": "unknown",
       "oracle_strength": "none",
-      "recommended_next_step": "Trace the changed value to the output or effect an existing test observes, and inspect its exact assertion. Inspect the macro invocation and the output or effect it produces; ripr does not expand the macro. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused `cargo test` run. Static classification may remain unknown.",
-      "suggested_next_action": "Trace the changed value to the output or effect an existing test observes, and inspect its exact assertion. Inspect the macro invocation and the output or effect it produces; ripr does not expand the macro. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused `cargo test` run. Static classification may remain unknown.",
+      "recommended_next_step": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Inspect the macro invocation and the output or effect it produces; ripr does not expand the macro. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Trace the changed value to its output or effect, and inspect what the related test actually checks. If it has an assertion, inspect exactly what that assertion observes. Inspect the macro invocation and the output or effect it produces; ripr does not expand the macro. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
       "language": "rust",
       "source_currentness": "candidate_current"
     }

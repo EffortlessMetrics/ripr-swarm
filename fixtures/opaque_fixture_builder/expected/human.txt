@@ -22,7 +22,8 @@ Start here:
     fixture/builder value mappings. A related test mentions a fixture, builder, or generator;
     inspect its produced input before deciding another case is needed. Add or strengthen a test only
     if this inspection finds a gap. Compare the original and changed implementations with a focused
-    `cargo test` run. Static classification may remain unknown.
+    run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static
+    classification may remain unknown.
   Evidence: reach yes · infection unknown · propagation yes · observation yes · discriminator not established
     - reach yes: Related tests appear to reach discounted_total: fixture_builder_case_has_no_discount
     - infection unknown: Related tests pass no literal ripr can compare with the changed boundary [100] (inputs are strings, computed values or fixtures); activation/infection is unknown
