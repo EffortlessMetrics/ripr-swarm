@@ -20,6 +20,7 @@ pub(super) struct GapArtifactValidationContext<'a> {
 pub(super) enum GapArtifactCorpusCurrentness {
     CurrentRustWorkspace,
     PreviewOrMixedUnavailable,
+    EmptyActionableQueueUnavailable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -101,6 +102,11 @@ impl ValidatedGapArtifact {
                 "preview_or_mixed_language",
                 "unavailable",
                 Some("preview_or_mixed_corpus_provenance_unavailable"),
+            ),
+            GapArtifactCorpusCurrentness::EmptyActionableQueueUnavailable => (
+                "empty_actionable_queue",
+                "unavailable",
+                Some("empty_actionable_queue_corpus_scope_unavailable"),
             ),
         };
         Some(serde_json::json!({
@@ -361,6 +367,15 @@ pub(super) fn validate_source_subject(
         artifact.get("source_subject"),
         &required,
     ))?;
+
+    if kind == GapArtifactKind::ActionableGaps && items.is_empty() {
+        // The kind validator already requires the existing complete zero-count
+        // queue contract. Preserve that no-action admission without claiming
+        // that an empty language population proves a current Rust corpus.
+        return Ok(Some(
+            GapArtifactCorpusCurrentness::EmptyActionableQueueUnavailable,
+        ));
+    }
 
     // Inspect the complete raw population, including no-action records and
     // every packet finding. A missing language cannot select a weaker scope
@@ -3651,9 +3666,12 @@ mod tests {
     #[test]
     fn command_root_accepts_quoted_workspace_path() {
         let workspace = root();
-        let command = "ripr agent verify --root \"/workspace\" --json";
+        let command = format!(
+            "ripr agent verify --root \"{}\" --json",
+            workspace.display()
+        );
 
-        assert!(command_payload_is_safe(&workspace, command));
+        assert!(command_payload_is_safe(&workspace, &command));
     }
 
     #[test]

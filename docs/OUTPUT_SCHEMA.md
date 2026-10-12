@@ -17705,8 +17705,18 @@ uses `rust_workspace`, `current`, and `null`; preview/mixed admission uses
 `preview_or_mixed_language`, `unavailable`, and
 `preview_or_mixed_corpus_provenance_unavailable`. No admitted affected
 artifacts yields an empty array. This does not promote preview support.
+The existing complete zero-count empty actionable queue remains admissible
+without a vacuous Rust claim: its row uses `empty_actionable_queue`,
+`unavailable`, and `empty_actionable_queue_corpus_scope_unavailable`.
 Complete preview/mixed corpus provenance is separately tracked in
 [#7452](https://github.com/EffortlessMetrics/ripr-swarm/issues/7452).
+The Rust classified inventory also emits explicit `language: "rust"` and
+`language_status: "stable"` on its evidence-record raw findings, which the
+existing actionable-gap projector preserves. File extensions, canonical gap
+IDs and an attached Rust hash do not substitute for a complete typed language
+population. Persisted ledger producer labels that are missing or relative
+cannot recover an aggregate frame; the xtask writer's explicitly bound local
+analysis invocation uses its known producer root.
 
 Rejected artifacts publish no gap diagnostics, and the repair-packet and
 gap-context commands return a `not_actionable_or_incomplete` sentinel whose

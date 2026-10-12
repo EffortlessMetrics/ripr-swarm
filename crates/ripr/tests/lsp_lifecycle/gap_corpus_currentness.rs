@@ -928,9 +928,12 @@ fn passive_corpus_cannot_bypass_rust_currentness_with_missing_or_unknown_languag
     install(root, &original)?;
     assert_current_action(&framed_status(root)?)?;
     let original_head = head(root)?;
-    for (label, language) in [
-        ("removed-language", None),
-        ("unknown-language", Some("unknown_language")),
+    for (label, language, unsupported_string) in [
+        ("removed-language", None, false),
+        ("null-language", Some(Value::Null), false),
+        ("number-language", Some(json!(7)), false),
+        ("object-language", Some(json!({"name": "rust"})), false),
+        ("unknown-language", Some(json!("unknown_language")), true),
     ] {
         let mut ambiguous = original.clone();
         ambiguous
@@ -948,7 +951,7 @@ fn passive_corpus_cannot_bypass_rust_currentness_with_missing_or_unknown_languag
             .ok_or("real record must be an object")?;
         match language {
             Some(language) => {
-                record.insert("language".into(), json!(language));
+                record.insert("language".into(), language.clone());
             }
             None => {
                 record.remove("language");
@@ -969,15 +972,70 @@ fn passive_corpus_cannot_bypass_rust_currentness_with_missing_or_unknown_languag
             "language scope control changed actual HEAD".into()
         })?;
         install(root, &ambiguous)?;
-        assert_corpus_refused(
-            &framed_status(root)?,
-            "unverifiable_subject",
-            Some("source_subject_corpus_scope_missing"),
-        )
+        let status = framed_status(root)?;
+        if unsupported_string {
+            // Preserve the pre-existing unsupported string language contract.
+            // The corpus gate must not downgrade malformed native schema.
+            assert_unsupported_language_refused(&status)
+        } else {
+            assert_corpus_refused(
+                &status,
+                "unverifiable_subject",
+                Some("source_subject_corpus_scope_missing"),
+            )
+        }
         .map_err(|error| format!("{label}: {error}"))?;
     }
     install(root, &original)?;
     assert_current_action(&framed_status(root)?)
+}
+
+fn assert_unsupported_language_refused(status: &Value) -> ProofResult {
+    require(
+        status["run_status"] == "cache_limited"
+            && status["diagnostics"]["gap_artifacts"] == 0
+            && status["diagnostics"]["gap_artifact_rejections"] == 1
+            && status["diagnostics"]["actionable_gap_artifacts"] == 0
+            && status["diagnostics"]["actionable_diagnostics"] == 0
+            && status["top_actionable_packet"].is_null()
+            && status["gap_artifact_currentness"] == json!([])
+            && status["top_limitation"]["category"] == "malformed_artifact"
+            && status["top_limitation"]["repair_route"] == "regenerate_gap_artifacts",
+        || {
+            format!(
+                "unsupported language strings must retain malformed-artifact refusal and no actions: {status}"
+            )
+        },
+    )?;
+    let components = status["analysis_status"]["components"]
+        .as_array()
+        .ok_or("unsupported language refusal omitted components")?;
+    require(
+        components.iter().any(|component| {
+            component["component"] == "gap_ledger"
+                && component["state"] == "failed"
+                && component["kind"] == "malformed_artifact"
+        }) && components.iter().any(|component| {
+            component["component"] == "cache"
+                && component["state"] == "limited"
+                && component["kind"] == "gap_artifact_rejected"
+        }),
+        || {
+            format!(
+                "unsupported language must preserve existing named schema/ledger rejection: {status}"
+            )
+        },
+    )?;
+    for collection in ["selected", "omitted"] {
+        let items = status["diagnostic_budget"][collection]
+            .as_array()
+            .ok_or("unsupported language refusal omitted diagnostic evidence")?;
+        require(
+            !items.iter().any(|item| item["canonical_id"] == GAP),
+            || format!("unsupported-language gap must not remain {collection}: {status}"),
+        )?;
+    }
+    Ok(())
 }
 
 #[cfg(feature = "lang-python")]
@@ -998,7 +1056,7 @@ fn real_preview_and_mixed_scope_ledgers(root: &Path) -> ProofResult<(Value, Valu
     )
     .map_err(|error| error.to_string())?;
     std::fs::write(root.join("src/pricing.py"),
-        "def calculate_discount(amount, threshold):\n    if amount > threshold:\n        return amount - 10\n    return amount\n")
+        "def calculate_discount(amount, threshold):\n    if amount != threshold:\n        return amount - 10\n    return amount\n")
         .map_err(|error| error.to_string())?;
     std::fs::write(root.join("tests/test_pricing.py"),
         "from src.pricing import calculate_discount\n\n\ndef test_calculate_discount_smoke():\n    result = calculate_discount(125, 100)\n    assert result\n")
@@ -1016,10 +1074,10 @@ fn real_preview_and_mixed_scope_ledgers(root: &Path) -> ProofResult<(Value, Valu
     fixture_git::fixture_git_ok(root, &["commit", "-m", "Python pricing base"])?;
     let python_base = head(root)?;
     std::fs::write(root.join("src/pricing.py"),
-        "def calculate_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n")
+        "def calculate_discount(amount, threshold):\n    if amount == threshold:\n        return amount - 10\n    return amount\n")
         .map_err(|error| error.to_string())?;
     fixture_git::fixture_git_ok(root, &["add", "src/pricing.py"])?;
-    fixture_git::fixture_git_ok(root, &["commit", "-m", "include Python equality boundary"])?;
+    fixture_git::fixture_git_ok(root, &["commit", "-m", "change Python equality predicate"])?;
 
     let rust_capture = capture(root)?;
     let rust_corpus = captured_corpus(&rust_capture)?.clone();
@@ -1032,7 +1090,7 @@ fn real_preview_and_mixed_scope_ledgers(root: &Path) -> ProofResult<(Value, Valu
         root,
         &["diff", &python_base, "HEAD", "--", "src/pricing.py"],
     )?;
-    require(python_diff.contains("+    if amount >= threshold:"), || {
+    require(python_diff.contains("+    if amount == threshold:"), || {
         format!(
             "Python-only producer stimulus must contain the real changed boundary: {python_diff}"
         )
@@ -1060,6 +1118,27 @@ fn real_preview_and_mixed_scope_ledgers(root: &Path) -> ProofResult<(Value, Valu
         || {
             format!(
                 "real Python-only diff must produce nonempty typed Python preview records: {python_ledger}"
+            )
+        },
+    )?;
+    // The original >= preview stimulus emitted a quoted canonical gap ID
+    // containing >, which the existing command validator rejects even in a
+    // quoted data argument. Use the genuine == producer instead; do not strip
+    // receipt fields, rename canonical identities, or weaken command safety.
+    require(
+        python_records.iter().all(|record| {
+            let id = record["canonical_gap_id"].as_str().unwrap_or_default();
+            record["receipt_command"].as_str().is_some_and(|command| {
+                id.ends_with("predicate:amount==threshold")
+                    && command.contains("ripr receipt write --gap")
+                    && command.contains(id)
+                    && !command.contains('<')
+                    && !command.contains('>')
+            })
+        }),
+        || {
+            format!(
+                "the genuine Python producer must retain its complete equality receipt route: {python_ledger}"
             )
         },
     )?;
@@ -1353,7 +1432,12 @@ fn unknown_corpus_language_precedes_known_preview_in_both_record_orders() -> Pro
     install(root, &mixed)?;
     assert_preview_corpus_unavailable(&framed_status(root)?)?;
     let original_head = head(root)?;
-    for language in [None, Some("unknown_language")] {
+    for language in [
+        None,
+        Some(Value::Null),
+        Some(json!(7)),
+        Some(json!("unknown_language")),
+    ] {
         for preview_first in [false, true] {
             let mut ambiguous = mixed.clone();
             let records = ambiguous["records"]
@@ -1366,12 +1450,12 @@ fn unknown_corpus_language_precedes_known_preview_in_both_record_orders() -> Pro
                 let object = record
                     .as_object_mut()
                     .ok_or("native Rust record must be an object")?;
-                match language {
+                match language.as_ref() {
                     None => {
                         object.remove("language");
                     }
                     Some(language) => {
-                        object.insert("language".into(), json!(language));
+                        object.insert("language".into(), language.clone());
                     }
                 }
             }
@@ -1403,11 +1487,15 @@ fn unknown_corpus_language_precedes_known_preview_in_both_record_orders() -> Pro
             )?;
             install(root, &ambiguous)?;
             let status = framed_status(root)?;
-            assert_corpus_refused(
-                &status,
-                "unverifiable_subject",
-                Some("source_subject_corpus_scope_missing"),
-            )?;
+            if language.as_ref().is_some_and(Value::is_string) {
+                assert_unsupported_language_refused(&status)?;
+            } else {
+                assert_corpus_refused(
+                    &status,
+                    "unverifiable_subject",
+                    Some("source_subject_corpus_scope_missing"),
+                )?;
+            }
             require(status["gap_artifact_currentness"] == json!([]), || {
                 format!(
                     "refused unknown scope must not inherit a preview or current Rust admitted row: {status}"
