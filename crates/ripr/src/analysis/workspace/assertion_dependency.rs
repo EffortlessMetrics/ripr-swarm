@@ -136,6 +136,25 @@ fn environment_allowed(env: &BTreeMap<String, String>) -> bool {
     })
 }
 
+// Capture flag changes for currentness without interpreting compiler flags.
+fn environment_identity_inputs(env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    env.iter()
+        .filter(|(key, _)| {
+            key.starts_with("CARGO_")
+                || matches!(
+                    key.as_str(),
+                    "PATH"
+                        | "HOME"
+                        | "USERPROFILE"
+                        | "RUSTUP_HOME"
+                        | "RUSTUP_TOOLCHAIN"
+                        | "RUSTFLAGS"
+                )
+        })
+        .map(|(key, value)| (format!("env:{key}"), digest(value.as_bytes())))
+        .collect()
+}
+
 fn snapshot(root: &Path) -> Option<BTreeMap<String, String>> {
     let root = root.canonicalize().ok()?;
     let env = std::env::vars_os()
@@ -159,15 +178,7 @@ fn snapshot(root: &Path) -> Option<BTreeMap<String, String>> {
     let mut identities = BTreeMap::new();
     identities.insert("effective-home".into(), home.to_str()?.into());
     identities.insert("effective-home-resolved".into(), directory_identity(&home)?);
-    for (key, value) in env.iter().filter(|(key, _)| {
-        key.starts_with("CARGO_")
-            || matches!(
-                key.as_str(),
-                "PATH" | "HOME" | "USERPROFILE" | "RUSTUP_HOME" | "RUSTUP_TOOLCHAIN"
-            )
-    }) {
-        identities.insert(format!("env:{key}"), digest(value.as_bytes()));
-    }
+    identities.extend(environment_identity_inputs(&env));
     let mut configs = vec![home.join("config"), home.join("config.toml")];
     let mut manifests = Vec::new();
     for dir in root.ancestors() {
@@ -488,6 +499,21 @@ mod tests {
             ("CARGO_TARGET_DIR".into(), "target".into())
         ])));
         Ok(())
+    }
+
+    #[test]
+    fn flag_identity_changes_are_bound_without_flag_interpretation() {
+        let empty = BTreeMap::new();
+        for key in ["RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS"] {
+            let first = BTreeMap::from([(key.into(), "--cfg harmless_a".into())]);
+            let second = BTreeMap::from([(key.into(), "--cfg harmless_b".into())]);
+            let identity = environment_identity_inputs(&first);
+            assert!(identity.contains_key(&format!("env:{key}")));
+            assert_ne!(identity, environment_identity_inputs(&empty));
+            assert_ne!(identity, environment_identity_inputs(&second));
+            // Hash binding is not an approval or interpretation of the flags.
+            assert!(environment_allowed(&first));
+        }
     }
 
     #[test]

@@ -841,6 +841,18 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    identity; otherwise this narrow result must bypass classified reuse. A
    generation bump alone cannot make changed dependency inputs safe.
 
+Compiler-flag boundary: ambient `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`
+and readable Cargo configuration flags are identity-bound, but their compiler
+semantics are not interpreted. A changed flag input invalidates receipt/cache
+currentness; hashing does not establish that arbitrary flags preserve execution
+or qualify a compiler wrapper, custom sysroot or nonstandard harness. The adapter
+assumes ordinary Rust/compiler/libtest semantics in addition to Cargo executable
+and ordinary registry-cache integrity. Independent review reported three harmless
+flag controls preserving the 7-to-8 discriminator and no reproduced flag-based
+false promotion in this closed grammar. Other flag combinations remain untested;
+that discussion is not resolved by these limited observations. Installed
+comparison receipts must name their actual flag context and retain this limit.
+
 Acceptance/control matrix:
 
 | Subject | Runtime with answer 8 | Required static result |
