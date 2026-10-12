@@ -203,28 +203,38 @@ pub(super) fn classify_change_with_context(
                 _ => true,
             }
         });
+    // A mock assertion that pins the arguments of the call the changed line
+    // makes observes that call exactly, so it ranks as a strong oracle for this
+    // change (see `effect_alignment.rs`); elsewhere it stays medium.
+    let mock_pins_changed_call = alignment.observes()
+        && alignment
+            .credited
+            .as_ref()
+            .is_some_and(|credited| matches!(credited.kind, OracleKind::MockExpectation));
     let strongest_strength = related
         .iter()
         .map(|test| test.oracle_strength.rank())
+        .chain(mock_pins_changed_call.then(|| OracleStrength::Strong.rank()))
         .max()
         .unwrap_or(0);
-    let strongest_kind = related
-        .iter()
-        .max_by_key(|test| test.oracle_strength.rank())
-        .map(|test| test.oracle_kind.clone())
+    let strongest_kind = alignment
+        .credited
+        .as_ref()
+        .filter(|_| alignment.observes())
+        .map(|credited| credited.kind.clone())
+        .or_else(|| {
+            related
+                .iter()
+                .max_by_key(|test| test.oracle_strength.rank())
+                .map(|test| test.oracle_kind.clone())
+        })
         .unwrap_or(OracleKind::Unknown);
     // A raise / error-path change is discriminated only by an oracle that observes the
-    // RAISED exception (`pytest.raises` / `assertRaises`). A strong normal-path value
-    // oracle reaches the owner but never triggers the changed raise — e.g.
-    // `raise ValueError` -> `KeyError` on an `if not text:` branch, with a test that
-    // only calls `parse("42")` — so it does not discriminate the change (#1290 Class C).
-    // Require an exception-observing oracle for an ErrorPath change before crediting
-    // `exposed`; otherwise it falls through to the strong-but-orthogonal weak branch.
-    let error_path_oracle_ok = !matches!(family, ProbeFamily::ErrorPath)
-        || matches!(
-            strongest_kind,
-            OracleKind::ExactErrorVariant | OracleKind::BroadError
-        );
+    // RAISED exception (#1290 Class C). The alignment enforces this per assertion
+    // (RIPR-SPEC-0238 rule 6): for an error-path change only an
+    // `exact_error_variant` assertion that itself credits a branch observes it,
+    // so a strong normal-path value assertion, which never runs the changed
+    // raise, falls through to the strong-but-orthogonal branch below.
 
     // A changed default VALUE is discriminated only by a call that OMITS the
     // parameter (and so reaches the default). If every strong related test binds
@@ -311,7 +321,6 @@ pub(super) fn classify_change_with_context(
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
-        && error_path_oracle_ok
         && changed_default_exercised_ok
         && boundary_gap.is_none()
     {
@@ -328,7 +337,6 @@ pub(super) fn classify_change_with_context(
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
-        && error_path_oracle_ok
         && let Some(params) = &changed_default_override
     {
         // A strong oracle observes the owner's output, but every reaching call binds
@@ -350,7 +358,6 @@ pub(super) fn classify_change_with_context(
         )
     } else if strongest_strength >= OracleStrength::Strong.rank()
         && alignment.observes()
-        && error_path_oracle_ok
         && let Some(gap) = boundary_gap
     {
         // A strong oracle observes the owner's output, but no strong related

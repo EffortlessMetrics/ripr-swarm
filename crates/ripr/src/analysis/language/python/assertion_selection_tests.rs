@@ -708,7 +708,10 @@ fn changed_raise_class_is_independent_of_assertion_order() -> Result<(), String>
 fn passed_over_sibling_field_assertion_does_not_suppress_test_side_limits() {
     let owners = extract_owners(Path::new("src/calc.py"), OWNER_SOURCE);
     let changed = "        self.total = amount";
-    let property_source = "import pytest\nfrom hypothesis import given, strategies as st\nfrom src.calc import f\n\n@given(st.integers())\ndef test_f(value):\n    order = f(value)\n    assert order.count == 1\n    assert order.total > 0\n";
+    // The `@example` row binds the generated input, so only the selected
+    // assertion's strength decides the property-based limit (RIPR-SPEC-0238
+    // rule 19); without it the limit holds whatever the selection.
+    let property_source = "import pytest\nfrom hypothesis import example, given, strategies as st\nfrom src.calc import f\n\n@given(st.integers())\n@example(5)\ndef test_f(value):\n    order = f(value)\n    assert order.count == 1\n    assert order.total > 0\n";
     let helper_source = "import pytest\nfrom src.calc import f\n\ndef test_f():\n    order = f(5)\n    assert order.count == 1\n    assert order.total > 0\n    assert_valid(order)\n";
     let property_tests = extract_tests(Path::new("tests/test_calc.py"), property_source);
     let helper_tests = extract_tests(Path::new("tests/test_calc.py"), helper_source);
@@ -769,9 +772,8 @@ fn passed_over_sibling_field_assertion_does_not_suppress_test_side_limits() {
             &super::related_tests::related_test_candidates(&owners[0], &strong_property)
         )
         .map(|limit| limit.kind),
-        // The `@given` parameter is still an unresolved fixture input, a
-        // separate limit; the property-based limit itself is suppressed.
-        Some(StaticLimitKind::UnresolvedPytestFixture)
+        // A `@given` parameter is a generated input, not a fixture (#6601).
+        None
     );
     assert_eq!(
         static_limit_for_change(
@@ -792,7 +794,10 @@ fn changed_dict_key_limit_suppression_uses_the_classifier_focus() {
     let owners = extract_owners(Path::new("src/calc.py"), OWNER_SOURCE);
     let old = "    return {\"host\": \"a\", \"port\": 80}";
     let new = "    return {\"host\": \"a\", \"port\": 9090}";
-    let source = "import pytest\nfrom hypothesis import given, strategies as st\nfrom src.calc import f\n\n@given(st.integers())\ndef test_f(value):\n    config = f(value)\n    assert config[\"host\"] == \"a\"\n    assert config[\"port\"] > 0\n";
+    // The `@example` row keeps a strong selected assertion from carrying the
+    // property-based limit (RIPR-SPEC-0238 rule 19), so only the selection
+    // decides the limit here.
+    let source = "import pytest\nfrom hypothesis import example, given, strategies as st\nfrom src.calc import f\n\n@given(st.integers())\n@example(5)\ndef test_f(value):\n    config = f(value)\n    assert config[\"host\"] == \"a\"\n    assert config[\"port\"] > 0\n";
     let tests = extract_tests(Path::new("tests/test_calc.py"), source);
     assert_eq!(tests.len(), 1);
     assert_eq!(shapes(&tests[0]), vec![(FIELD, STRONG), (FIELD, WEAK)]);
@@ -812,6 +817,6 @@ fn changed_dict_key_limit_suppression_uses_the_classifier_focus() {
     // classifier passes its own focus.
     assert_eq!(
         static_limit_for_change(new, &owners[0], &candidates).map(|limit| limit.kind),
-        Some(StaticLimitKind::UnresolvedPytestFixture)
+        None
     );
 }
