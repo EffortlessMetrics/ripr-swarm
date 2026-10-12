@@ -54,13 +54,13 @@ impl OwnedCorpusRoot {
 
 impl Drop for OwnedCorpusRoot {
     fn drop(&mut self) {
-        if !self.retained_for_proof_owner {
-            if let Err(error) = std::fs::remove_dir_all(&self.path) {
-                eprintln!(
-                    "failed to remove owned corpus proof root {}: {error}",
-                    self.path.display()
-                );
-            }
+        if !self.retained_for_proof_owner
+            && let Err(error) = std::fs::remove_dir_all(&self.path)
+        {
+            eprintln!(
+                "failed to remove owned corpus proof root {}: {error}",
+                self.path.display()
+            );
         }
     }
 }
@@ -191,7 +191,7 @@ fn actionable_projection(root: &Path, captured: &Value) -> ProofResult<Value> {
 }
 
 #[test]
-fn genuine_rust_producer_and_xtask_projector_preserve_explicit_raw_language_and_current_corpus()
+fn genuine_bare_root_producer_preserves_raw_language_corpus_and_unbounded_verify_exclusion()
 -> ProofResult {
     let fixture = OwnedCorpusRoot::new("rust-corpus-actionable-projection")?;
     let root = &fixture.path;
@@ -230,7 +230,14 @@ fn genuine_rust_producer_and_xtask_projector_preserve_explicit_raw_language_and_
             && packets[0]["gap_state"] == "actionable"
             && packets[0]["primary_anchor"]["file"] == "src/lib.rs"
             && packets[0]["primary_anchor"]["line"] == 2
-            && packets[0]["public_projection_eligible"] == true
+            && packets[0]["public_projection_eligible"] == false
+            && packets[0]["projection_exclusion_reasons"] == json!(["unbounded_verify_command"])
+            && actionable["summary"]["public_projection_eligible_packets"] == 0
+            && actionable["summary"]["public_projection_excluded_packets"] == 1
+            && actionable["summary"]["projection_exclusion_reasons"]
+                == json!([{"count": 1, "label": "unbounded_verify_command"}])
+            && packets[0]["verify_command"]
+                == captured["seams"][0]["evidence_record"]["canonical_item"]["verify_command"]
             && packets[0]["verify_command"]
                 .as_str()
                 .is_some_and(|command| !command.is_empty())
@@ -244,7 +251,7 @@ fn genuine_rust_producer_and_xtask_projector_preserve_explicit_raw_language_and_
                 .is_some_and(|files| !files.is_empty()),
         || {
             format!(
-                "shared xtask projector must retain the exact complete nonempty typed native packet and copied provenance: {captured}; {actionable}"
+                "shared xtask projector must retain the exact bare-root packet, inherited unbounded-verify exclusion and copied provenance: {captured}; {actionable}"
             )
         },
     )
@@ -348,4 +355,95 @@ fn genuine_workspace_corpus_cannot_be_rebased_into_a_member_corpus_with_legal_na
             )
         },
     )
+}
+
+#[test]
+fn genuine_workspace_producer_preserves_current_corpus_and_native_bounded_projection() -> ProofResult
+{
+    let fixture = OwnedCorpusRoot::new("rust-corpus-workspace-projection")?;
+    let workspace = &fixture.path;
+    let member = workspace.join("crates/ordinary_shop");
+    pricing_files(&member)?;
+    write(
+        &workspace.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/ordinary_shop\"]\nresolver = \"3\"\n",
+    )?;
+    fixture_git::fixture_git_ok(workspace, &["init"])?;
+    fixture_git::fixture_git_ok(workspace, &["config", "user.name", "RIPR proof"])?;
+    fixture_git::fixture_git_ok(workspace, &["config", "user.email", "ripr@example.invalid"])?;
+    write(
+        &workspace.join(".git/info/exclude"),
+        "/target/\n/crates/ordinary_shop/target/\n",
+    )?;
+    fixture_git::fixture_git_ok(workspace, &["add", "Cargo.toml", "crates"])?;
+    fixture_git::fixture_git_ok(
+        workspace,
+        &["commit", "-m", "workspace bounded projection corpus"],
+    )?;
+    fixture_git::fixture_git_ok(workspace, &["branch", "-M", "main"])?;
+    let captured = genuine_rust_capture(workspace)?;
+    // Observed by the parent's frozen official62c CLI in the exact SOURCE /
+    // PRICING workspace shape, native-workspace-calibration-capture.json.
+    let seam_id = "49bdd89bd71dd5b9";
+    let gap_id = "gap:ba9f4264c3029d1c";
+    require(
+        captured["seams"][0]["seam_id"] == seam_id
+            && captured["seams"][0]["file"] == "crates/ordinary_shop/src/lib.rs"
+            && captured["seams"][0]["line"] == 2
+            && captured["seams"][0]["owner"] == "crates/ordinary_shop/src/lib.rs::discounted_total"
+            && captured["seams"][0]["grip_class"] == "weakly_gripped"
+            && captured["seams"][0]["evidence_record"]["canonical_gap_id"] == gap_id,
+        || {
+            format!(
+                "workspace positive must retain the exact genuinely observed nonempty product subject: {captured}"
+            )
+        },
+    )?;
+    let raw = captured["seams"][0]["evidence_record"]["raw_findings"]
+        .as_array()
+        .ok_or("workspace native producer omitted raw findings")?;
+    require(
+        !raw.is_empty()
+            && raw.iter().all(|finding| {
+                finding["language"] == "rust"
+                    && finding["language_status"] == "stable"
+                    && finding["file"] == "crates/ordinary_shop/src/lib.rs"
+                    && finding["line"] == 2
+            }),
+        || {
+            format!(
+                "workspace typed factory must explicitly tag the actual raw population: {captured}"
+            )
+        },
+    )?;
+    let actionable = actionable_projection(workspace, &captured)?;
+    let packets = actionable["packets"]
+        .as_array()
+        .ok_or("workspace projector omitted packets")?;
+    require(
+        packets.len() == 1
+            && packets[0]["canonical_gap_id"] == gap_id
+            && packets[0]["primary_anchor"]["file"] == "crates/ordinary_shop/src/lib.rs"
+            && packets[0]["primary_anchor"]["line"] == 2
+            && packets[0]["gap_state"] == "actionable"
+            && packets[0]["public_projection_eligible"] == true
+            && packets[0]["projection_exclusion_reasons"] == json!([])
+            && packets[0]["verify_command"]
+                == "cargo test -p ordinary_shop above_threshold_discounts"
+            && packets[0]["verify_command_source"] == "related_test_or_observer.name"
+            && packets[0]["receipt_command"]
+                == captured["seams"][0]["evidence_record"]["canonical_item"]["receipt_command"]
+            && packets[0]["raw_findings"]
+                == captured["seams"][0]["evidence_record"]["raw_findings"]
+            && actionable["summary"]["public_projection_eligible_packets"] == 1
+            && actionable["summary"]["public_projection_excluded_packets"] == 0,
+        || {
+            format!(
+                "workspace projector must select its actual bounded related-target fallback, retain exact native identity/provenance and declare eligibility honestly: {captured}; {actionable}"
+            )
+        },
+    )
+    // This proves shared xtask generation, not full LSP admission. Its
+    // verify_command_source is the real fallback, which the inherited LSP
+    // canonical-source-only guard currently rejects before corpus validation.
 }
