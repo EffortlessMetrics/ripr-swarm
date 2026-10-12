@@ -604,27 +604,21 @@ fn push_shell_command_pair(
 /// is no longer left unlabeled above a "(PowerShell)" variant, so a
 /// top-to-bottom reader on stock Windows PowerShell is not handed a
 /// `>`-redirect line their shell turns into UTF-16 output that downstream
-/// readers reject. On Windows hosts the PowerShell form prints first so the
-/// default Windows shell meets its own form before the Bash-only one;
-/// elsewhere the Bash form keeps its authoritative position. Commands that
-/// run unchanged in both shells stay unlabeled (a "(Bash)" label would
+/// readers reject. The Bash form always prints first, on every host: the
+/// `(PowerShell)` label pairs the variant with the command line immediately
+/// before it, which is a reader and paste-extractor contract asserted by
+/// `crates/ripr/tests/printed_command_paste.rs`, so host-dependent
+/// reordering would mis-paste the raw Bash form into PowerShell. Commands
+/// that run unchanged in both shells stay unlabeled (a "(Bash)" label would
 /// falsely claim shell-specific semantics), and untranslatable compounds
 /// keep their numbered-step variant, with the Bash line labeled only when a
 /// variant was actually emitted.
 fn push_recovery_command(out: &mut String, label: &str, command: &str) {
-    push_recovery_command_for_host(out, label, command, cfg!(windows));
-}
-
-fn push_recovery_command_for_host(out: &mut String, label: &str, command: &str, windows: bool) {
     match powershell_command(command) {
         Some(line) if line != command => {
             let bash = format!("{label} (Bash): `{command}`");
             let powershell = format!("{label} (PowerShell): `{line}`");
-            if windows {
-                out.push_str(&format!("{powershell}\n{bash}\n"));
-            } else {
-                out.push_str(&format!("{bash}\n{powershell}\n"));
-            }
+            out.push_str(&format!("{bash}\n{powershell}\n"));
         }
         None => {
             let mut variant = String::new();
@@ -633,13 +627,8 @@ fn push_recovery_command_for_host(out: &mut String, label: &str, command: &str, 
                 out.push_str(&format!("{label}: `{command}`\n"));
             } else {
                 let bash = format!("{label} (Bash): `{command}`");
-                if windows {
-                    out.push_str(&variant);
-                    out.push_str(&format!("{bash}\n"));
-                } else {
-                    out.push_str(&format!("{bash}\n"));
-                    out.push_str(&variant);
-                }
+                out.push_str(&format!("{bash}\n"));
+                out.push_str(&variant);
             }
         }
         Some(_) => out.push_str(&format!("{label}: `{command}`\n")),
@@ -894,24 +883,19 @@ mod tests {
     }
 
     #[test]
-    fn windows_host_leads_with_powershell_form() {
-        // #7387: on a Windows host the PowerShell form prints before the
-        // Bash-only `>`-redirect form, so the default Windows shell meets
-        // its own variant first; other hosts keep the Bash form first.
+    fn recovery_command_pair_keeps_bash_first_on_every_host() {
+        // #7387: both labeled forms print, but the Bash form must stay
+        // first on every host — the `(PowerShell)` label pairs the variant
+        // with the command line before it (paste-extractor contract in
+        // crates/ripr/tests/printed_command_paste.rs), so host-dependent
+        // reordering mis-pastes the raw Bash form into PowerShell.
         let bash = "ripr check --root . --mode instant --format repo-exposure-json > target/ripr/reports/repo-exposure.json";
-        let mut windows = String::new();
-        push_recovery_command_for_host(&mut windows, "Regeneration command", bash, true);
+        let mut out = String::new();
+        push_recovery_command(&mut out, "Regeneration command", bash);
         assert!(
-            windows.find("Regeneration command (PowerShell):")
-                < windows.find("Regeneration command (Bash):"),
-            "{windows}"
-        );
-        let mut unix = String::new();
-        push_recovery_command_for_host(&mut unix, "Regeneration command", bash, false);
-        assert!(
-            unix.find("Regeneration command (Bash):")
-                < unix.find("Regeneration command (PowerShell):"),
-            "{unix}"
+            out.find("Regeneration command (Bash):")
+                < out.find("Regeneration command (PowerShell):"),
+            "{out}"
         );
     }
 
