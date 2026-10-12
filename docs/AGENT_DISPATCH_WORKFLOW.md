@@ -314,7 +314,7 @@ runs the verify and receipt plumbing, binds the receipt, and writes it to
 test has landed sees no repository movement between its phases and refuses
 the receipt. Because this section's rerun happens after the test has landed,
 the commands below close out with the bare receipt instead; the
-**First-hour repair path: `ripr agent repair`** section below is where a
+**First-hour repair path: the repair transaction** section below is where a
 bound receipt is produced end to end.
 
 The lower-level commands stay available as the explicit-control fallback
@@ -390,12 +390,15 @@ ripr calibrate cargo-mutants \
 Runtime mutation vocabulary stays in the calibration report. The normal
 targeted-test receipt remains a static evidence movement receipt.
 
-## First-hour repair path: `ripr agent repair`
+## First-hour repair path: the repair transaction
 
 Steps 1-8 above compose the loop from its lower-level commands. For one named
 gap, the bounded repair transaction is the faster path — it runs the
 snapshot, packet, verify, and receipt plumbing for you and owns attempt
-identity:
+identity. The ordinary spelling is task-first (`ripr repair` starts,
+`ripr continue` continues, `ripr status` reports); the explicit-phase
+spelling below is the advanced route over the same services, and the commands
+the tool prints may use it:
 
 ```bash
 ripr agent repair --root . --seam-id <seam-id> --phase before
@@ -528,11 +531,22 @@ agent action:
 seam: helper-derived predicate
 grip: opaque
 diagnostic task: inspect_static_limitation
+limitation: Reach unresolved (...): `total_sums` (tests/it.rs:5) calls `total`,
+  which may lead to `clamp_total` through a call path ripr does not fully trace
 agent action:
-  do not add a test. Identify the helper or fixture that hides the
-  activation values. Decide whether to inline / refactor for
-  visibility, or accept the opacity and document the intent.
+  do not add a test yet. Open the test the limitation names and check whether it
+  exercises this seam and asserts the exact changed value, not just `> 0` or `is_ok`. Identify the helper, macro, or trait impl that hides
+  the path. Decide whether to inline / refactor for visibility, or accept
+  the opacity and document the intent.
 ```
+
+The limitation names the test or production function and the path ripr could not
+trace; no related test is established. When it names a production function
+instead of a test, as trait-dispatch evidence can, find the tests that call it.
+When a test exists, exercises the seam and asserts the exact changed value, the seam needs
+no new test. A test that only runs the code, or asserts something a wrong value would still
+pass such as `> 0`, needs a stronger assertion. See
+[Static Limits](STATIC_LIMITS.md#seam-readings-opaque-and-activation_unknown).
 
 ### Declared intent
 

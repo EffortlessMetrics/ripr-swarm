@@ -1,0 +1,51 @@
+{
+  "case_id": "tokens-word-start-helper",
+  "subject_id": "authored-tokens",
+  "diff": "cases/tokens-word-start-helper.diff",
+  "anchor": {
+    "file": "src/scan.rs",
+    "line": 38
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "helper_reached_with_literal_args",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": ".is_some_and(|b| !b.is_ascii_alphabetic())",
+        "mutated_line": ".is_some_and(|b| !b.is_ascii_alphabetic())",
+        "outcome": "tests_failed",
+        "failing_test": "scan::tests::classify_spots_a_leading_letter",
+        "equivalence_review": "not equivalent: letters stop starting words"
+      },
+      {
+        "replacement": ".is_some_and(|b| b.is_ascii_alphanumeric())",
+        "mutated_line": ".is_some_and(|b| b.is_ascii_alphanumeric())",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a leading digit starts a word, but no test classifies a digit"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "classify(\" x\") and classify(\"x\") catch a negated check but not a widened one, since no input starts with a digit. Spec cells: RIPR-SPEC-0159.",
+  "labeling_observation": {
+    "ripr_commit": "b0c6ef6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

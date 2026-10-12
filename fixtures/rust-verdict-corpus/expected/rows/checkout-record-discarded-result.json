@@ -1,0 +1,22 @@
+{
+  "case_id": "checkout-record-discarded-result",
+  "subject_id": "authored-checkout",
+  "origin": "authored",
+  "anchor": "src/store.rs:28",
+  "behavior_family": "call_deletion",
+  "test_shape": "wildcard_discard_observed_store",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "static_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

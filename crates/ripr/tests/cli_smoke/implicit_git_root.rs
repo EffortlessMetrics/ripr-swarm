@@ -197,16 +197,39 @@ fn git_launch_failure_stops_root_discovery_with_consumer_recovery() -> TestResul
     fs::write(programs.join("git"), "not executable\n")?;
     let path = programs.to_str().ok_or("fixture PATH is not UTF-8")?;
     let env = [("PATH", path), ("RIPR_CACHE_DIR", "")];
-    for (args, recovery) in [
+    for (args, recovery, expects_envelope) in [
         (
             vec!["check", "--diff", "change.diff", "--format", "json"],
             "pass --root PATH",
+            true,
         ),
-        (vec!["cache", "status", "--json"], "set RIPR_CACHE_DIR"),
+        (
+            vec!["cache", "status", "--json"],
+            "set RIPR_CACHE_DIR",
+            false,
+        ),
     ] {
         let output = run_command_with_env(env!("CARGO_BIN_EXE_ripr"), &project, &args, &env)?;
         assert_eq!(output.status.code(), Some(2));
-        assert!(output.stdout.is_empty());
+        if expects_envelope {
+            // #6834: `check --json` refusals emit the envelope on stdout;
+            // `cache` keeps the legacy empty-stdout contract.
+            let value = super::assert_check_json_refusal(
+                &output,
+                "repository_root_unusable",
+                "analysis/repository-root",
+            )?;
+            let message = value["run_limitations"][0]["message"]
+                .as_str()
+                .ok_or("refusal must carry a message")?;
+            assert!(
+                message.contains("cannot verify implicit Git root"),
+                "{message}"
+            );
+            assert!(message.contains(recovery), "{message}");
+        } else {
+            assert!(output.stdout.is_empty());
+        }
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             stderr.contains("cannot verify implicit Git root"),

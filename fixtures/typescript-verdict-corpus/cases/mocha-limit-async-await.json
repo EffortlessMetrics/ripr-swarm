@@ -1,0 +1,66 @@
+{
+  "case_id": "mocha-limit-async-await",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-limit-async-await.diff",
+  "anchor": {
+    "file": "src/limit.ts",
+    "line": 3
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "mocha_chai_async_it_expect_await_to_equal",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; @stryker-mutator/core 10.0.0 (command runner over `npx mocha`; @stryker-mutator/mocha-runner cannot load mocha 12)",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "loadLimit loads the tier limit",
+        "equivalence_review": "not equivalent: silver resolves 5000"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "loadLimit loads the tier limit",
+        "equivalence_review": "not equivalent: gold resolves 1000"
+      },
+      {
+        "replacement": "if (\"gold\" !== tier) {",
+        "mutated_line": "if (\"gold\" !== tier) {",
+        "outcome": "tests_failed",
+        "failing_test": "loadLimit loads the tier limit",
+        "equivalence_review": "not equivalent: inverts gold/silver"
+      },
+      {
+        "replacement": "if (\"\" === tier) {",
+        "mutated_line": "if (\"\" === tier) {",
+        "outcome": "tests_failed",
+        "failing_test": "loadLimit loads the tier limit",
+        "equivalence_review": "not equivalent: gold resolves 1000"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`tier === \"gold\"` becomes `\"gold\" === tier` inside an async function. An async mocha `it` awaits both tiers with `expect(await loadLimit(...)).to.equal(...)`, so every mutant fails. ripr reports `exposed` (exact_value/strong, observed `await loadLimit(\"silver\")`).",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

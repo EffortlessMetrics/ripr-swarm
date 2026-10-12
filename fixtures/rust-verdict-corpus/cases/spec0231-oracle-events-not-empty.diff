@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index e6fed15..dac4a62 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ pub fn emit(n: u32) -> Vec<u32> {
+     let mut events = Vec::new();
+-    events.push(n * 2);
++    events.push(2 * n);
+     events
+ }
+ 

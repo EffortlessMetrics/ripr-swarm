@@ -1,0 +1,59 @@
+{
+  "case_id": "spot-initials-computed-local-boundary",
+  "subject_id": "authored-spot",
+  "diff": "cases/spot-initials-computed-local-boundary.diff",
+  "anchor": {
+    "file": "src/score.rs",
+    "line": 18
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "boundary_on_computed_local_exact_result",
+  "hard_case": "letters comes from split_whitespace().count(); ripr does not map the test's empty-string input to letters == 0 and reports that no test input reaches the boundary.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "if letters != 0 {",
+        "mutated_line": "if letters != 0 {",
+        "outcome": "tests_failed",
+        "failing_test": "score::tests::initials_count_words_and_flag_blank_names",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      },
+      {
+        "replacement": "if letters == 1 {",
+        "mutated_line": "if letters == 1 {",
+        "outcome": "tests_failed",
+        "failing_test": "score::tests::initials_count_words_and_flag_blank_names",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      },
+      {
+        "replacement": "if letters > 0 {",
+        "mutated_line": "if letters > 0 {",
+        "outcome": "tests_failed",
+        "failing_test": "score::tests::initials_count_words_and_flag_blank_names",
+        "equivalence_review": "not equivalent: a pinned value changes"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "initials_count_words_and_flag_blank_names pins initials(\"\") to 100 and a two-word name to 2, so every listed boundary mutant changes a pinned value. Pattern from refuted pilot picks: strsim lib.rs:99 and 101 (a_len == 0 on a counted length), rust-hex lib.rs:225.",
+  "labeling_observation": {
+    "ripr_commit": "b2f2a21",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

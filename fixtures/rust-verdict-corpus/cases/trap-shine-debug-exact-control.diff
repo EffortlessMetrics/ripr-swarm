@@ -1,0 +1,11 @@
+diff --git a/src/shines.rs b/src/shines.rs
+index a68acbf..4523ec4 100644
+--- a/src/shines.rs
++++ b/src/shines.rs
+@@ -1,5 +1,5 @@
+ pub fn shine(base: u32) -> u32 {
+-    base * 47
++    47 * base
+ }
+ 
+ #[cfg(test)]

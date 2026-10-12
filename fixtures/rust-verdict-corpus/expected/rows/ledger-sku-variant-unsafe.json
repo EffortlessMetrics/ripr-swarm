@@ -1,0 +1,23 @@
+{
+  "case_id": "ledger-sku-variant-unsafe",
+  "subject_id": "authored-ledger",
+  "origin": "authored",
+  "anchor": "src/lib.rs:40",
+  "behavior_family": "static_unknown",
+  "test_shape": "unit_test_assert_not_empty",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": true,
+  "observed_classifications": [
+    "static_unknown",
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

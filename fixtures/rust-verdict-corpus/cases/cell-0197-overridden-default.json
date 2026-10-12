@@ -1,0 +1,51 @@
+{
+  "case_id": "cell-0197-overridden-default",
+  "subject_id": "authored-spec-confirm",
+  "diff": "cases/cell-0197-overridden-default.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 131
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "trait_default_overridden_in_tested_impl",
+  "hard_case": "The edited body is a trait default method; the only implementor overrides it, so the test calling next_word never runs the default.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "3 + self.base()",
+        "mutated_line": "3 + self.base()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the default returns base + 3"
+      },
+      {
+        "replacement": "self.base()",
+        "mutated_line": "self.base()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the default returns base"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "fixed_reader_returns_its_own_word runs Fixed::next_word, which returns 7 without the default, so both mutants pass. Spec cells: RIPR-SPEC-0197 identity trap, overridden trait default.",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "case_id": "mocha-isopen-true-smoke",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-isopen-true-smoke.diff",
+  "anchor": {
+    "file": "src/hours.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "mocha_chai_expect_to_be_true_smoke",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; @stryker-mutator/core 10.0.0 (command runner over `npx mocha`; @stryker-mutator/mocha-runner cannot load mocha 12)",
+    "mutants": [
+      {
+        "replacement": "return true;",
+        "mutated_line": "return true;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: returns true at hour 3"
+      },
+      {
+        "replacement": "return false;",
+        "mutated_line": "return false;",
+        "outcome": "tests_failed",
+        "failing_test": "isOpen is open at noon",
+        "equivalence_review": "not equivalent: returns false at hour 12"
+      },
+      {
+        "replacement": "return 9 <= hour || hour < 17;",
+        "mutated_line": "return 9 <= hour || hour < 17;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: returns true at hour 3"
+      },
+      {
+        "replacement": "return true && hour < 17;",
+        "mutated_line": "return true && hour < 17;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: returns true at hour 3"
+      },
+      {
+        "replacement": "return 9 < hour && hour < 17;",
+        "mutated_line": "return 9 < hour && hour < 17;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: returns false at hour 9"
+      },
+      {
+        "replacement": "return 9 > hour && hour < 17;",
+        "mutated_line": "return 9 > hour && hour < 17;",
+        "outcome": "tests_failed",
+        "failing_test": "isOpen is open at noon",
+        "equivalence_review": "not equivalent: returns false at hour 12"
+      },
+      {
+        "replacement": "return 9 <= hour && true;",
+        "mutated_line": "return 9 <= hour && true;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: returns true at hour 20"
+      },
+      {
+        "replacement": "return 9 <= hour && hour <= 17;",
+        "mutated_line": "return 9 <= hour && hour <= 17;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: returns true at hour 17"
+      },
+      {
+        "replacement": "return 9 <= hour && hour >= 17;",
+        "mutated_line": "return 9 <= hour && hour >= 17;",
+        "outcome": "tests_failed",
+        "failing_test": "isOpen is open at noon",
+        "equivalence_review": "not equivalent: returns false at hour 12"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`hour >= 9 && hour < 17` is rewritten to `9 <= hour && hour < 17`. The only test is `expect(isOpen(12)).to.be.true`, which kills the mutants that turn noon false but lets both boundary shifts and the always-true/disjunction mutants survive. ripr reports `weakly_exposed` with the related test as smoke_only/smoke, which matches the partial truth.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

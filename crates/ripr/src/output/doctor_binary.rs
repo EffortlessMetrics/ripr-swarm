@@ -136,8 +136,13 @@ fn evaluate_binary_identity(
         commit: build_identity::commit().map(str::to_string),
         commit_dirty: build_identity::commit_dirty(),
         executable_is_cargo_build_output: executable.as_deref().is_some_and(is_cargo_build_output),
-        executable: executable.map(|path| path.display().to_string()),
-        path_ripr: path_ripr.map(|path| path.display().to_string()),
+        // #5252 item 5: the human lines already normalize through
+        // `human_path_text` (#4378); the stored (and JSON-serialized) form
+        // must match instead of leaking the verbatim `\\?\` prefix and
+        // native separators beside slash-spelled fields. All comparisons
+        // above already ran on the resolved paths.
+        executable: executable.map(|path| human_path(&path)),
+        path_ripr: path_ripr.map(|path| human_path(&path)),
         path_ripr_is_cargo_build_output,
         path_ripr_is_running_executable,
         warnings,

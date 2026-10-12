@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:error_path:6b37a3bc",
+      "canonical_gap_id": "gap:rust:src/lib.rs:compute:error_variant:error_path:err_calcerror_negative",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:compute:error_variant:error_path:err_calcerror_negative",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "compute",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "err_calcerror_negative"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:error_path:6b37a3bc",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/unwrap_err_variant_positive/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 8,
         "expression": "return Err(CalcError::Negative);"
        },
@@ -92,6 +104,18 @@
     },
     {
       "id": "probe:src_lib.rs:return_value:832c68b7",
+      "canonical_gap_id": "gap:rust:src/lib.rs:compute:return_value:return_value:err_calcerror_negative",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:compute:return_value:return_value:err_calcerror_negative",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "compute",
+        "behavior_kind": "return_value",
+        "probe_kind": "return_value",
+        "normalized_discriminator": "err_calcerror_negative"
+
+      },
       "classification": "exposed",
       "severity": "info",
       "confidence": 1.00,
@@ -99,7 +123,7 @@
         "id": "probe:src_lib.rs:return_value:832c68b7",
         "family": "return_value",
         "delta": "value",
-        "file": "fixtures/unwrap_err_variant_positive/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 8,
         "expression": "return Err(CalcError::Negative);"
        },

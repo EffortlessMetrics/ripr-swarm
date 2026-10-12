@@ -270,6 +270,7 @@ pub use ripr::domain::CancellationPolicy
 pub use ripr::domain::CandidateRelation
 pub use ripr::domain::CanonicalDelta
 pub use ripr::domain::CanonicalEvidenceState
+pub use ripr::domain::CanonicalNextActionV1
 pub use ripr::domain::CardCurrentnessGoal
 pub use ripr::domain::CommandAuthorityBoundary
 pub use ripr::domain::CommandCostClass
@@ -321,6 +322,16 @@ pub use ripr::domain::MAX_REPAIR_CARD_REJECTED_ALTERNATIVES
 pub use ripr::domain::MissingDiscriminatorFact
 pub use ripr::domain::MutationConfirmationGoal
 pub use ripr::domain::NetworkPolicy
+pub use ripr::domain::NextActionAlternative
+pub use ripr::domain::NextActionCheckCase
+pub use ripr::domain::NextActionClass
+pub use ripr::domain::NextActionCommandRef
+pub use ripr::domain::NextActionCurrentness
+pub use ripr::domain::NextActionDiffSource
+pub use ripr::domain::NextActionProducer
+pub use ripr::domain::NextActionStop
+pub use ripr::domain::NextActionSubject
+pub use ripr::domain::NextActionTransition
 pub use ripr::domain::ORACLE_ALIGNMENT_VALUES
 pub use ripr::domain::OracleKind
 pub use ripr::domain::OracleStrength

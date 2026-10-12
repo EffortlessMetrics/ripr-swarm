@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0231-oracle-observer-substring-present",
+  "subject_id": "authored-spec0231-8",
+  "diff": "cases/spec0231-oracle-observer-substring-present.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "scalar_return_value",
+  "test_shape": "observer_substring_unrelated_call",
+  "hard_case": "ripr reports mock_expectation / medium because \"sent\" occurs inside is_present; the spec says not mock_expectation (measured defect, admission rule 5). The return_value finding reads weakly_exposed while truth is not_discriminated.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x * 3",
+        "mutated_line": "x * 3",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: score(2) becomes 6 (the spec's changed-from value)"
+      },
+      {
+        "replacement": "x * 50",
+        "mutated_line": "x * 50",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: score(2) becomes 100"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The || is_present() arm (always true) makes the assertion vacuous, so no mutant fails it. Spec cells: RIPR-SPEC-0231 example 8; spec-adopted oracle not mock_expectation.",
+  "labeling_observation": {
+    "ripr_commit": "96c1a18e9",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0231#8"
+  ]
+}

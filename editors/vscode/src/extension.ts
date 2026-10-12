@@ -69,9 +69,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         output.appendLine(`ripr server restart failed: ${message}`);
-        void vscode.window.showErrorMessage(
-          `ripr could not restart the server: ${message} Open ripr: Show Output, then retry.`
+        // Restart is the recovery action every other status message names, so
+        // a failed restart must offer the same one-click recovery the
+        // missing-server and warning surfaces already carry (Show Output /
+        // Retry), not a dead-end toast that sends the user back to the
+        // palette (#7342).
+        const selection = await vscode.window.showErrorMessage(
+          `ripr could not restart the server: ${message}`,
+          'Show Output',
+          'Retry'
         );
+        if (selection === 'Show Output') {
+          controller?.showOutput();
+        } else if (selection === 'Retry') {
+          await vscode.commands.executeCommand('ripr.restartServer');
+        }
       }
     }),
     vscode.commands.registerCommand('ripr.refreshDiagnostics', async () =>

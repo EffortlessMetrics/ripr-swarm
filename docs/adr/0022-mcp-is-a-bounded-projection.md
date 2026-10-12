@@ -185,8 +185,11 @@ shared RIPR authority:
   (`repair_packet_ready: false`); bounded repair surfaces, CommandSpec
   routes, and repair-attempt resources belong to #3090, and the
   repair-attempt link stays an explicit null.
-- Project-local configuration stays detected-not-loaded; refresh runs with
-  built-in defaults. No LSP protocol object is parsed and no VS Code
+- Project-local analysis configuration is honored from #6825 on: refresh
+  resolves the workspace's own `ripr.toml` through `config::load_for_root`
+  (loaded with its identity, built-in defaults when absent,
+  `config_invalid` fail-closed when unparseable — see the amendment below).
+  No LSP protocol object is parsed and no VS Code
   artifact is read as authority: MCP and LSP remain peers over the same
   producers.
 
@@ -262,3 +265,21 @@ The server remains a bounded adapter over shared RIPR authority:
   execution, mutation execution, and model provider remain none; the
   adapter edits nothing, launches nothing, and executes nothing a returned
   route names.
+
+## Analysis-configuration loading (#6825)
+
+The read-only boundary is about authority, not ignorance: the adapter never
+edits source, launches processes, or loads *provider* configuration (model
+endpoints, credentials, executables). Honoring the workspace's own analysis
+configuration is CLI parity, not authority growth. `ripr_refresh` and the
+session profile now resolve the analyzed root's configuration through the
+same `config::load_for_root` the CLI uses: a loadable `ripr.toml` is consumed
+(the status and session profile disclose `loaded` with its text-fingerprint
+`config_identity` and the enabled languages), a root without one keeps
+built-in defaults including the zero-config marker-based language
+auto-enable, and a present-but-unreadable or unparseable `ripr.toml` fails
+the refresh attempt closed with the promoted `config_invalid` code instead of
+silently analyzing a different language profile than the CLI. The repair-card
+producers consume the same resolved configuration as the snapshot's findings
+(#6825 review), so one committed snapshot cannot disagree with itself across
+the two producers, and the card discloses the config identity posture.

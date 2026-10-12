@@ -122,9 +122,71 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             "ripr check --json",
         ));
     }
-    super::resolve_worktree_root(&mut input, worktree, root_explicitly_provided)?;
-    let config = load_for_root(&input.root)?;
+    // #7331 review: `--from` + `--diff -` is an argv usage conflict, not an
+    // artifact defect — the stdin sentinel can never verify a recorded
+    // diff-file identity (RIPR-SPEC-0140) — so the CLI keeps it prose-only
+    // (empty stdout, exit 2) like the gates above, before any refusal
+    // envelope can reach stdout. The app layer keeps the identical check
+    // for library callers.
+    if from_artifact.is_some() && input.diff_file.as_deref() == Some(std::path::Path::new("-")) {
+        return Err(app::check_artifact::from_stdin_sentinel_scope_conflict());
+    }
+    // #7331 review: implicit `--worktree` root discovery runs below argv
+    // parsing and can fail on the Git probe; `context` is JSON-only, so the
+    // failure writes the shared refusal envelope (with a root-unusable
+    // identity) instead of leaving stdout empty.
+    let root_resolution =
+        super::resolve_worktree_root(&mut input, worktree, root_explicitly_provided);
+    if let Err(err) = root_resolution {
+        return Err(crate::cli::commands_context::refuse_json_envelope(
+            crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+            "diff",
+            Some(input.mode.as_str()),
+            &input.root,
+            input.base.as_deref(),
+            crate::core_error::CoreError::repository_root_unusable(err),
+        ));
+    }
+    // #7331: `context` produces JSON only, so every post-argv-parse failure
+    // below writes the shared refusal envelope (keyed with the context
+    // packet's own version) to stdout before the prose error reaches
+    // stderr. The usage gates above (selector requirement, flag conflicts)
+    // stay prose-only, exactly like `check`. The refusal context owns its
+    // snapshot so `input` can move into the pipeline call afterwards.
+    let parsed_context = (input.root.clone(), input.base.clone(), input.mode.as_str());
+    let config = load_for_root(&input.root).map_err(|err| {
+        crate::cli::commands_context::refuse_json_envelope(
+            crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+            "diff",
+            Some(parsed_context.2),
+            &parsed_context.0,
+            parsed_context.1.as_deref(),
+            crate::cli::commands_context::config_load_refusal(&parsed_context.0, err),
+        )
+    })?;
     apply_to_check_input(&mut input, &config, explicit);
+    // Capture the effective mode after config merging: a configured
+    // `[analysis] mode` replaces the default, and later refusals must name
+    // the mode analysis actually ran with, not the pre-merge default
+    // (#7331 review).
+    let envelope_context = (input.root.clone(), input.base.clone(), input.mode.as_str());
+    let refuse = |error: crate::core_error::CoreError| -> String {
+        // A selector miss is usage-class, not an operational refusal: the
+        // CLI failure contract keeps it prose-only (empty stdout, exit 2,
+        // guidance and the retry listing on stderr), exactly like
+        // `explain`, so it bypasses the envelope (#7331 review).
+        if error.is_selector_miss() {
+            return error.to_string();
+        }
+        crate::cli::commands_context::refuse_json_envelope(
+            crate::output::json::CONTEXT_PACKET_VERSION_CONTRACT,
+            "diff",
+            Some(envelope_context.2),
+            &envelope_context.0,
+            envelope_context.1.as_deref(),
+            error,
+        )
+    };
     let Some(selector) = selector else {
         return Err(super::missing_selector_error(
             "missing --at or --finding selector",
@@ -152,7 +214,8 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             &config,
             artifact_path,
             asserted_base.as_deref(),
-        )?,
+        )
+        .map_err(&refuse)?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
             app::collect_context_with_config_and_worktree(
@@ -162,7 +225,8 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
                 &config,
                 worktree,
                 explicit.mode,
-            )?
+            )
+            .map_err(&refuse)?
         }
     };
     println!("{rendered}");
@@ -327,6 +391,32 @@ mod tests {
         assert!(
             !matches!(&result, Err(message) if message.contains("cannot be combined with --diff")),
             "`--from` + `--base` + `--diff` is the reuse-verification path, not a diff-source conflict: {result:?}"
+        );
+    }
+
+    /// #7331 review: `--from` + `--diff -` is an argv usage conflict, not an
+    /// artifact defect, so the CLI gate must fire before any refusal
+    /// envelope — and before the artifact is even read — with the exact
+    /// prose the smoke contract pins (empty stdout, exit 2, `pass --diff
+    /// <path>` guidance on stderr).
+    #[test]
+    fn context_rejects_from_with_stdin_diff_as_usage_conflict() {
+        let expected = Err(
+            "--from cannot be combined with --diff -: stdin cannot verify a recorded \
+             diff-file identity; save stdin to a named diff file and pass --diff <path> \
+             when creating and reusing the artifact"
+                .to_string(),
+        );
+        assert_eq!(
+            context(&args(&[
+                "--from",
+                "missing-artifact.json",
+                "--diff",
+                "-",
+                "--at",
+                "probe:src_lib.rs:error_path:abcd",
+            ])),
+            expected
         );
     }
 }

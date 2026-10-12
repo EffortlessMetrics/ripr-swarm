@@ -74,6 +74,7 @@ pub(crate) fn render_pilot_timeout_summary_json(context: PilotSummaryContext<'_>
     out.push_str("  ],\n");
     out.push_str(&format!("  \"max_seams\": {},\n", context.max_seams));
     out.push_str("  \"actionable_seams_total\": null,\n");
+    out.push_str("  \"withheld_static_limitations_total\": null,\n");
     out.push_str("  \"top_actionable_seams\": [],\n");
     out.push_str("  \"next\": {\n");
     out.push_str(&format!(

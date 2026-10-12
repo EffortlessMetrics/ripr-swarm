@@ -1,0 +1,52 @@
+{
+  "case_id": "mined-bool-property-read-u32",
+  "subject_id": "authored-mined-wire",
+  "diff": "cases/mined-bool-property-read-u32.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 26
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "bool_property_fn_in_loop",
+  "hard_case": "The oracle is a test-local fn returning bool (value == read(write(value))), asserted with assert! over a sample loop. Mined from byteorder's quickcheck properties (https://github.com/BurntSushi/byteorder/blob/5a82625fae462e8ba64cec8146b24a372b4d75c6/src/lib.rs#L2307), written without quickcheck so the crate stays dependency-free.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])",
+        "mutated_line": "u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])",
+        "outcome": "tests_failed",
+        "failing_test": "tests::u32_reads_what_was_written",
+        "equivalence_review": "not equivalent: 1 reads back as 0x0100_0000"
+      },
+      {
+        "replacement": "u32::from_be_bytes([bytes[0], bytes[1], bytes[3], bytes[2]])",
+        "mutated_line": "u32::from_be_bytes([bytes[0], bytes[1], bytes[3], bytes[2]])",
+        "outcome": "tests_failed",
+        "failing_test": "tests::u32_reads_what_was_written",
+        "equivalence_review": "not equivalent: 0x0102_0304 reads back as 0x0102_0403"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "reads_back(value) compares read_u32 of the big-endian bytes with the value, and the loop's samples are not byte palindromes, so both mutants make assert!(reads_back(..)) fail.",
+  "labeling_observation": {
+    "ripr_commit": "da6a44d",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

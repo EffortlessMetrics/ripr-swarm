@@ -1,0 +1,8 @@
+[package]
+name = "owner_parameter_token_coincidence_fixture"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+path = "src/lib.rs"

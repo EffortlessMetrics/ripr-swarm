@@ -1,5 +1,6 @@
 use super::{
-    MutationOutcomeRecord, json_scalar_as_string, json_scalar_as_usize, normalize_report_path,
+    MutationOutcomeRecord, RuntimeSpan, json_scalar_as_string, json_scalar_as_usize,
+    normalize_report_path,
 };
 use serde_json::Value;
 
@@ -15,6 +16,7 @@ const NESTED_FILE_KEYS: &[&str] = &[
     "file_name",
 ];
 const LINE_KEYS: &[&str] = &["line", "line_start", "start_line", "startLine"];
+const COLUMN_KEYS: &[&str] = &["column", "col"];
 const OPERATOR_KEYS: &[&str] = &[
     "operator",
     "mutation_operator",
@@ -47,6 +49,7 @@ struct OutcomeIdentity {
     seam_id: Option<String>,
     file: Option<String>,
     line: Option<usize>,
+    span: Option<RuntimeSpan>,
 }
 
 struct RuntimeDetails {
@@ -64,15 +67,35 @@ pub(super) fn parse_mutation_outcomes_json(
     let mut records = Vec::new();
     collect_mutation_outcome_records(&value, &mut records);
     let mut records = super::merge_mutation_outcome_records(records);
-    records.sort_by(|left, right| {
-        left.seam_id
-            .cmp(&right.seam_id)
-            .then(left.file.cmp(&right.file))
-            .then(left.line.cmp(&right.line))
-            .then(left.mutation_operator.cmp(&right.mutation_operator))
-            .then(left.runtime_outcome.cmp(&right.runtime_outcome))
-    });
+    records.sort_by(compare_outcome_records);
     Ok(records)
+}
+
+/// Total order over merged records, so report output never depends on input
+/// order. `span_conflict` is last: merging by mutant ID means two records
+/// rarely share every earlier field, but the order must still be total.
+fn compare_outcome_records(
+    left: &MutationOutcomeRecord,
+    right: &MutationOutcomeRecord,
+) -> std::cmp::Ordering {
+    left.seam_id
+        .cmp(&right.seam_id)
+        .then(left.file.cmp(&right.file))
+        .then(left.line.cmp(&right.line))
+        .then(left.mutation_operator.cmp(&right.mutation_operator))
+        .then(left.runtime_outcome.cmp(&right.runtime_outcome))
+        // Records without a mutant ID can share every field above; the
+        // span, ID and run details keep output independent of input
+        // order.
+        .then(left.span.map(span_key).cmp(&right.span.map(span_key)))
+        .then(left.mutant_id.cmp(&right.mutant_id))
+        .then(left.duration.cmp(&right.duration))
+        .then(left.test_command.cmp(&right.test_command))
+        .then(left.span_conflict.cmp(&right.span_conflict))
+}
+
+fn span_key(span: RuntimeSpan) -> ((usize, usize), (usize, usize)) {
+    (span.start, span.end)
 }
 
 fn collect_mutation_outcome_records(value: &Value, records: &mut Vec<MutationOutcomeRecord>) {
@@ -122,6 +145,8 @@ fn mutation_outcome_record_from_object(
         seam_id: identity.seam_id,
         file: identity.file,
         line: identity.line,
+        span: identity.span,
+        span_conflict: false,
         mutation_operator: details.mutation_operator,
         runtime_outcome: details.runtime_outcome,
         duration: details.duration,
@@ -170,7 +195,31 @@ impl<'a> OutcomeObjectContext<'a> {
             seam_id: self.seam_id(),
             file: self.file(),
             line: self.line(),
+            span: self.runtime_span(),
         }
+    }
+
+    /// The mutated source range, from the same `span` the start line falls
+    /// back to. Read only when that span's start line agrees with the record
+    /// line, so a column is never paired with a different line. cargo-mutants
+    /// records 1-based character columns with an exclusive end, the same
+    /// geometry `repo-exposure-json` seams carry. The span is atomic: a
+    /// missing, zero, partial or inverted coordinate drops the whole span and
+    /// leaves the record as line-only evidence.
+    fn runtime_span(&self) -> Option<RuntimeSpan> {
+        let span = self.span?;
+        let start = nested_object(span, "start")?;
+        let end = nested_object(span, "end")?;
+        let start = (
+            usize_field_any(start, LINE_KEYS)?,
+            usize_field_any(start, COLUMN_KEYS)?,
+        );
+        let end = (
+            usize_field_any(end, LINE_KEYS)?,
+            usize_field_any(end, COLUMN_KEYS)?,
+        );
+        let complete = self.line() == Some(start.0) && start.1 > 0 && end.1 > 0 && start <= end;
+        complete.then_some(RuntimeSpan { start, end })
     }
 
     fn runtime_details(&self) -> RuntimeDetails {
@@ -323,6 +372,73 @@ mod tests {
     use super::*;
 
     #[test]
+    fn record_order_breaks_late_ties_on_run_details_then_span_conflict() {
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        let base = MutationOutcomeRecord {
+            mutant_id: None,
+            seam_id: None,
+            file: Some("src/a.rs".to_string()),
+            line: Some(5),
+            span: None,
+            span_conflict: false,
+            mutation_operator: "replace".to_string(),
+            runtime_outcome: "missed".to_string(),
+            duration: Some("1s".to_string()),
+            test_command: Some("cargo test".to_string()),
+        };
+        let conflicted = MutationOutcomeRecord {
+            span_conflict: true,
+            ..base.clone()
+        };
+        let other_command = MutationOutcomeRecord {
+            test_command: Some("cargo nextest".to_string()),
+            span_conflict: true,
+            ..base.clone()
+        };
+        let slower = MutationOutcomeRecord {
+            duration: Some("2s".to_string()),
+            ..base.clone()
+        };
+        // A later duration with an earlier test_command: only the
+        // duration-before-test_command order puts it after `base`.
+        let slower_other_command = MutationOutcomeRecord {
+            duration: Some("2s".to_string()),
+            test_command: Some("cargo nextest".to_string()),
+            ..base.clone()
+        };
+        // Records equal on every earlier field order by span_conflict alone.
+        assert_eq!(compare_outcome_records(&base, &conflicted), Less);
+        assert_eq!(compare_outcome_records(&conflicted, &base), Greater);
+        assert_eq!(compare_outcome_records(&base, &base), Equal);
+        // test_command outranks span_conflict, and duration outranks both.
+        assert_eq!(compare_outcome_records(&base, &other_command), Greater);
+        assert_eq!(compare_outcome_records(&conflicted, &slower), Less);
+        assert_eq!(
+            compare_outcome_records(&slower_other_command, &base),
+            Greater
+        );
+
+        let mut records = vec![
+            slower.clone(),
+            slower_other_command.clone(),
+            conflicted.clone(),
+            other_command.clone(),
+            base.clone(),
+        ];
+        records.sort_by(compare_outcome_records);
+        assert_eq!(
+            records,
+            vec![
+                other_command,
+                base,
+                conflicted,
+                slower_other_command,
+                slower
+            ]
+        );
+    }
+
+    #[test]
     fn parses_nested_mutant_location_and_span_shapes() -> Result<(), String> {
         let records = parse_mutation_outcomes_json(
             r#"{
@@ -401,6 +517,55 @@ mod tests {
         assert_eq!(duration_only.runtime_outcome, "unknown");
         Ok(())
     }
+    #[test]
+    fn reads_mutant_span_columns_and_drops_malformed_ends() -> Result<(), String> {
+        let records = parse_mutation_outcomes_json(
+            r#"[
+  {"name": "src/a.rs:3:7: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
+   "function": {"span": {"start": {"line": 1, "column": 1}, "end": {"line": 9, "column": 2}}},
+   "span": {"start": {"line": 3, "column": 7}, "end": {"line": 3, "column": 8}}, "summary": "MissedMutant"},
+  {"name": "src/a.rs:4:7: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
+   "span": {"start": {"line": 4, "column": 7}, "end": {"line": 4, "column": 2}}, "summary": "MissedMutant"},
+  {"name": "src/a.rs:5:7: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
+   "span": {"start": {"line": 5, "column": 7}, "end": {"line": 5}}, "summary": "MissedMutant"},
+  {"name": "src/a.rs:6:7: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
+   "span": {"start": {"line": 6, "column": 7}}, "summary": "MissedMutant"},
+  {"name": "src/a.rs:7:1: replace > with < in f", "file": "src/a.rs", "genre": "BinaryOperator",
+   "span": {"start": {"line": 7, "column": 0}, "end": {"line": 7, "column": 4}}, "summary": "MissedMutant"},
+  {"name": "src/a.rs:8:9: replace match guard with true in f", "file": "src/a.rs", "genre": "MatchArmGuard",
+   "span": {"start": {"line": 8, "column": 9}, "end": {"line": 10, "column": 3}}, "summary": "MissedMutant"}
+]"#,
+        )?;
+
+        let span_of = |line| {
+            records
+                .iter()
+                .find(|record| record.line == Some(line))
+                .map(|record| record.span)
+        };
+        assert_eq!(
+            span_of(3),
+            Some(Some(RuntimeSpan {
+                start: (3, 7),
+                end: (3, 8),
+            })),
+            "the mutant span, not function.span"
+        );
+        assert_eq!(span_of(4), Some(None), "an inverted end drops the span");
+        assert_eq!(span_of(5), Some(None), "a partial end drops the span");
+        assert_eq!(span_of(6), Some(None), "a start-only span is not a span");
+        assert_eq!(span_of(7), Some(None), "a zero column drops the span");
+        assert_eq!(
+            span_of(8),
+            Some(Some(RuntimeSpan {
+                start: (8, 9),
+                end: (10, 3),
+            })),
+            "a multiline span keeps its character columns"
+        );
+        Ok(())
+    }
+
     /// Shapes copied from a cargo-mutants 27.1.0 `mutants.out` (rust-hex),
     /// combined the way `ripr calibrate --mutants-json <dir>` combines
     /// `outcomes.json` and `mutants.json`.

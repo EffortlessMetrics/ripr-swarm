@@ -73,6 +73,29 @@ route should be enabled as an organization-wide zero policy from these inputs.
 A portable measured and candidate-bound producer is separate work; do not
 invent a supported command or reinterpret an incomplete result as pass.
 
+When a run fails on unreadable or malformed input, `ripr plus` first sets aside
+the previous receipt if it was a real result (any status other than
+`indeterminate`):
+
+```text
+target/ripr/reports/ripr-plus.last-good.json
+target/ripr/reports/ripr-plus.last-good.md
+```
+
+`ripr-plus.json` then records the failed run as `indeterminate`. When both
+files are saved, the error message names the saved JSON path; when a save
+fails, the message lists the failures instead and may not name a saved path. The Markdown copy is saved whenever
+`ripr-plus.md` exists, whichever run wrote it. When no `.md` exists, any older
+saved `.md` is removed. The copy goes by file presence only: ripr does not check that the `.md` matches
+the `.json`, so if the previous run wrote its `.json` and then failed to write
+its `.md`, the saved `.md` can predate that `.json`. Read the `.json` as the
+record. If
+only one file of the pair could be saved, the message says the receipt was kept
+only partly. An `indeterminate` receipt never becomes the last good one, so a
+second failed run does not overwrite the saved copy. Nothing reads the
+`last-good` files: gates and badges keep reading `ripr-plus.json`. They are a
+recovery copy of an earlier result, not a result for the current head.
+
 The badge surfaces retain their own advisory scope contract. In particular,
 missing test-efficiency evidence renders `needs test-efficiency`, not a
 measured zero. A badge count alone does not authorize merge or publication.
@@ -392,6 +415,15 @@ preview-skipped: typescript
 
 A missing preview adapter, absent packet, or limited downstream route must not
 be interpreted as evidence that the change is safe.
+
+Enabled preview-language findings (`language_status = "preview"`) stay visible
+in check JSON and human output. They do not increment the diff badge's
+calibrated exposure-gap count (`unsuppressed_exposure_gaps`) or the RIPR 0
+message. Native `counts.unknowns` still counts candidate-actionable static
+unknown Finding classes, including enabled preview evidence; only the unknowns
+headline contribution (`include_unknowns`) omits them. The badge authority is
+that status field, not a language-name table in the renderer. A candidate-current
+Rust gap still counts.
 
 ## Colors and status
 

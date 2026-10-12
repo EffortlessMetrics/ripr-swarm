@@ -366,7 +366,7 @@ fn native_packet_pilot_consumes_the_summary_artifact() -> Result<(), String> {
         .map_err(|error| format!("pilot-summary.json: {error}"))?;
     let product: serde_json::Value =
         serde_json::from_slice(&summary).map_err(|error| format!("pilot json: {error}"))?;
-    if product["schema_version"] != "0.2" {
+    if product["schema_version"] != "0.3" {
         return Err(format!("unexpected pilot schema: {product}"));
     }
     if product["tool"] != "ripr" {

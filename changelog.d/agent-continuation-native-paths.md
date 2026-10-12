@@ -1,3 +1,4 @@
+<!-- section: Fixed -->
 - General agent-status inventory, missing-artifact and review-summary embedded
   status commands preserve literal Unix filename backslashes in the selected
   root and anchored output (#6313).

@@ -51,6 +51,9 @@ STDERR_BIN = "stderr.bin"
 DEFAULT_CHECK_ARGV = ["check", "--root", "{subject_root}", "--format", "json"]
 DEFAULT_PILOT_ARGV = ["pilot", "--root", "{subject_root}", "--out", "{out_dir}"]
 PRODUCT_SCHEMA_VERSION = "0.2"
+# `pilot-summary.json` versions separately from check JSON; 0.3 added
+# `withheld_static_limitations_total` (#5497).
+PILOT_SUMMARY_SCHEMA_VERSION = "0.3"
 PILOT_SUMMARY_NAME = "pilot-summary.json"
 
 CLASS_COMPLETE = "complete"
@@ -546,10 +549,11 @@ def classify_product_json(
     if not isinstance(value, dict):
         raise ConsumerError(CLASS_MALFORMED_PRODUCT_OUTPUT, "product stdout is not a JSON object")
     version = value.get("schema_version")
-    if version != PRODUCT_SCHEMA_VERSION:
+    expected = PILOT_SUMMARY_SCHEMA_VERSION if operation == "pilot" else PRODUCT_SCHEMA_VERSION
+    if version != expected:
         raise ConsumerError(
             CLASS_MALFORMED_PRODUCT_OUTPUT,
-            f"product JSON schema_version {version!r} is not {PRODUCT_SCHEMA_VERSION}; consumer does not invent a schema",
+            f"product JSON schema_version {version!r} is not {expected}; consumer does not invent a schema",
         )
     selected, limitations = selected_subject_count(value)
     if operation == "check" and selected is None:

@@ -1,0 +1,12 @@
+diff --git a/src/memo.ts b/src/memo.ts
+index 0000000..1111111 100644
+--- a/src/memo.ts
++++ b/src/memo.ts
+@@ -1,6 +1,6 @@
+ export function parseMemo(s: string): string {
+   if (s === "") {
+-    throw new Error("memo required");
++    throw new Error('memo required');
+   }
+   return s.trim();
+ }

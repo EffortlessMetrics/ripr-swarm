@@ -5,7 +5,7 @@ name: ub-review
 # review plus a CI gate result. See docs/QUICKSTART.md and docs/ADOPTION_MODES.md.
 on:
   pull_request:
-    types: [opened, reopened, ready_for_review, synchronize]
+    types: [opened, reopened, synchronize]
 
 permissions:
   contents: read

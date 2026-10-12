@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 864edbd..bfeb540 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,6 +1,6 @@
+ pub fn lookup(k: u32) -> Option<u32> {
+     if k == 1 {
+-        return Some(3);
++        return Some(1 + 2);
+     }
+     None
+ }

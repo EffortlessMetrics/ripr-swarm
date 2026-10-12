@@ -42,6 +42,13 @@ The TypeScript preview adapter:
 - maps `toHaveBeenCalledWith` to a mock-interaction oracle;
 - names literal mock payload evidence when the callee and expected argument are
   syntax-bounded;
+- reads a literal `toHaveBeenCalledWith` payload on a `vi.fn()` the test
+  binds under the owner parameter's own name as strong (RIPR-SPEC-0247
+  rule 1), so `notifyStatus` and `notifyLiteral` read `exposed`;
+- keeps `notifyAudit` at `mock_expectation` / medium and `weakly_exposed`:
+  its test asserts on a `record` mock passed as `{ record }`, not on the
+  parameter's own name, so rule 1 refuses it (this is the
+  `mock_interaction_without_payload_proof` audit case's source finding);
 - keeps snapshot and smoke-only assertions weak instead of treating them as
   strong discriminators;
 - preserves `language = "typescript"`, `language_status = "preview"`, and

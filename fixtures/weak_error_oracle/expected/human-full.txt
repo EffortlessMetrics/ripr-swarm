@@ -7,7 +7,7 @@ Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
 
-WARNING fixtures/weak_error_oracle/input/src/lib.rs:7
+WARNING ./src/lib.rs:7
   id: probe:src_lib.rs:error_path:99b06ce7
 
 Changed
@@ -18,6 +18,7 @@ Probe
   family: error_path
   delta:  value
   owner:  src/lib.rs::authenticate
+  canonical gap: gap:rust:src/lib.rs:authenticate:error_variant:error_path:err_autherror_revokedtoken
 
 Static exposure
   weakly_exposed (warning, confidence 0.92)
@@ -39,10 +40,10 @@ Weakness
 Next step
   Assert the exact error variant or payload instead of only is_err().
 Drill in:
-  ripr explain --root fixtures/weak_error_oracle/input --diff fixtures/weak_error_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
-  ripr context --root fixtures/weak_error_oracle/input --diff fixtures/weak_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
+  ripr explain --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast probe:src_lib.rs:error_path:99b06ce7
+  ripr context --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:error_path:99b06ce7
 
-WARNING fixtures/weak_error_oracle/input/src/lib.rs:7
+WARNING ./src/lib.rs:7
   id: probe:src_lib.rs:return_value:e21dcccc
 
 Changed
@@ -53,6 +54,7 @@ Probe
   family: return_value
   delta:  value
   owner:  src/lib.rs::authenticate
+  canonical gap: gap:rust:src/lib.rs:authenticate:return_value:return_value:err_autherror_revokedtoken
 
 Static exposure
   weakly_exposed (warning, confidence 0.92)
@@ -74,5 +76,5 @@ Weakness
 Next step
   Add a test input that reaches the changed error path and assert the exact error variant it returns.
 Drill in:
-  ripr explain --root fixtures/weak_error_oracle/input --diff fixtures/weak_error_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:e21dcccc
-  ripr context --root fixtures/weak_error_oracle/input --diff fixtures/weak_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:e21dcccc
+  ripr explain --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast probe:src_lib.rs:return_value:e21dcccc
+  ripr context --root <cwd>/fixtures/weak_error_oracle/input --diff <cwd>/fixtures/weak_error_oracle/diff.patch --mode fast --at probe:src_lib.rs:return_value:e21dcccc

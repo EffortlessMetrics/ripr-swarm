@@ -1,0 +1,52 @@
+{
+  "case_id": "grid-flow-err-guard",
+  "subject_id": "authored-grid-flow",
+  "diff": "cases/grid-flow-err-guard.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 38
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "test_returns_err_on_mismatch",
+  "hard_case": "RIPR-SPEC-0154 parity gives the guard its twin's oracle, assert!(text.starts_with('v')), which grades as a weak relational check (format! also reads proc_macro_opaque); cargo-mutants' two replacements both lose the v, so the weak oracle still kills every listed mutant.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "String::new()",
+        "mutated_line": "String::new()",
+        "outcome": "tests_failed",
+        "failing_test": "label_starts_with_v",
+        "equivalence_review": "not equivalent: label_starts_with_v fails on it"
+      },
+      {
+        "replacement": "\"xyzzy\".into()",
+        "mutated_line": "\"xyzzy\".into()",
+        "outcome": "tests_failed",
+        "failing_test": "label_starts_with_v",
+        "equivalence_review": "not equivalent: label_starts_with_v fails on it"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Return value observed only through a test-body Err-return guard `if !text.starts_with('v') { return Err(..) }`. RIPR-SPEC-0154 gives the guard the oracle of its twin `assert!(text.starts_with('v'))`. Both cargo-mutants replacements lose the leading v and fail the guard. 2 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0154.",
+  "labeling_observation": {
+    "ripr_commit": "fddf363",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
