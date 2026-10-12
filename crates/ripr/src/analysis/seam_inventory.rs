@@ -8413,6 +8413,18 @@ impl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
                 None,
             ),
             (
+                "closure-parameter",
+                "",
+                "crate::owner(1); let _ = |#[values(crate::owner(2))] x: i32| x;",
+                None,
+            ),
+            (
+                "closure-parameter-reverse",
+                "",
+                "let _ = |#[values(crate::owner(2))] x: i32| x; crate::owner(1);",
+                None,
+            ),
+            (
                 "body-free",
                 "",
                 "assert_eq!(crate::owner(1), 1);",
@@ -8448,6 +8460,21 @@ fn selected({input}) {{ {body} }}
 "#
                 ),
             )?;
+            let file = root.join("src/lib.rs");
+            let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+            assert!(
+                !index
+                    .files()
+                    .get(&file)
+                    .ok_or("missing indexed input")?
+                    .used_lexical_fallback,
+                "{label}: refusal must not be earned through parser fallback"
+            );
+            assert_eq!(
+                index.tests().len(),
+                1,
+                "{label}: selected test must be captured"
+            );
             let result = inventory_changed_test_classified_seams_at_with_config_node(
                 &root,
                 &RiprConfig::default(),

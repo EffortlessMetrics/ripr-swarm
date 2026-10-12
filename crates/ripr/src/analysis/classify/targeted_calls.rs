@@ -131,21 +131,17 @@ impl<'index> TargetedCallSyntax<'index> {
                 // successfully parse and map to the selected function's source.
                 let mut mapped_attributes = Vec::new();
                 for attribute in function.syntax().descendants().filter_map(ast::Attr::cast) {
-                    if !attribute
-                        .syntax()
-                        .ancestors()
-                        .any(|node| ast::Param::can_cast(node.kind()))
-                        || attribute
+                    if !function.param_list().is_some_and(|parameters| {
+                        attribute
                             .syntax()
-                            .ancestors()
-                            .filter_map(ast::Fn::cast)
-                            .next()
-                            .as_ref()
-                            != Some(function)
-                        || !crate::analysis::extract::runs_its_arguments(
-                            &attribute.syntax().text().to_string(),
-                        )
-                    {
+                            .parent()
+                            .and_then(ast::Param::cast)
+                            .is_some_and(|parameter| {
+                                parameter.syntax().parent().as_ref() == Some(parameters.syntax())
+                            })
+                    }) || !crate::analysis::extract::runs_its_arguments(
+                        &attribute.syntax().text().to_string(),
+                    ) {
                         continue;
                     }
                     let Some(ast::Meta::TokenTreeMeta(meta)) = attribute.meta() else {
