@@ -140,7 +140,6 @@ pub(super) fn start_here_cli_summary(
                 }
             }
             if let Some(command) = string_path(selected, &["static_recheck_command"]) {
-                out.push_str(&format!("{STATIC_RECHECK_LABEL}: `{command}`\n"));
                 push_recovery_command(&mut out, STATIC_RECHECK_LABEL, &command);
                 out.push_str(&format!(
                     "{RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n"

@@ -5918,7 +5918,7 @@ mod tests {
             Path::new("start-here.md"),
         );
         let status_line = format!("{RECEIPT_STATUS_LABEL}: {RECEIPT_STATUS_STEP}\n");
-        let recheck_line = format!("{STATIC_RECHECK_LABEL}: `{expected}`\n");
+        let recheck_line = format!("{STATIC_RECHECK_LABEL} (Bash): `{expected}`\n");
         let boundary_line = format!("{RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n");
         let status_at = summary.find(&status_line).ok_or(summary.clone())?;
         let recheck_at = summary.find(&recheck_line).ok_or(summary.clone())?;
@@ -5938,7 +5938,7 @@ mod tests {
         );
         let markdown = render_start_here_markdown(&packet);
         assert!(
-            markdown.contains(&format!("- {STATIC_RECHECK_LABEL}: `{expected}`\n"))
+            markdown.contains(&format!("- {STATIC_RECHECK_LABEL} (Bash): `{expected}`\n"))
                 && markdown.contains(&format!(
                     "- {RECEIPT_BOUNDARY_LABEL}: {RECEIPT_BOUNDARY_STEP}\n"
                 )),
