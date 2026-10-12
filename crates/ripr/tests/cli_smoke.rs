@@ -22764,12 +22764,12 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
     for (command, retry) in [
         (
             "explain",
-            format!("ripr explain --root {root_str} --base HEAD~1 --worktree {finding_id}"),
+            format!("ripr explain --root {root_str} --base 'HEAD~1' --worktree {finding_id}"),
         ),
         (
             "context",
             format!(
-                "ripr context --root {root_str} --base HEAD~1 --worktree --at {finding_id}"
+                "ripr context --root {root_str} --base 'HEAD~1' --worktree --at {finding_id}"
             ),
         ),
     ] {
@@ -22817,12 +22817,12 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
     for (command, retry) in [
         (
             "explain",
-            format!("ripr explain --root {root_str} --base HEAD~1 --worktree {finding_id}"),
+            format!("ripr explain --root {root_str} --base 'HEAD~1' --worktree {finding_id}"),
         ),
         (
             "context",
             format!(
-                "ripr context --root {root_str} --base HEAD~1 --worktree --at {finding_id}"
+                "ripr context --root {root_str} --base 'HEAD~1' --worktree --at {finding_id}"
             ),
         ),
     ] {
