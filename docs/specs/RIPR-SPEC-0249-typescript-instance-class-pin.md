@@ -127,27 +127,28 @@ ladder and in its related-test row, when all of these hold:
 - the test's `C` is the module's class: the test file imports it under its
   own name from the owner's module (`import { C } from ...`), and neither
   the test body nor an enclosing scope rebinds it (`const C = Error`);
-- the module has no `Symbol.hasInstance` hook, prototype rewrite
-  (`setPrototypeOf`, `__proto__`) or constructor that contains a `return`,
-  any of which lets `instanceof` disagree with the `extends` chain. Since
-  such a hook or rewrite can be built without spelling its name, the
-  module also fails when it has any of these, each of which can reach a
-  class, a global or a reflection API where the name scan cannot see it:
-  - a decorator, an ambient `declare`, or a `static` member or block;
-  - `globalThis`, `window`, `global`, `self`, `eval`, `Function`,
-    `Object`, `Reflect`, `Symbol` or `Proxy`;
-  - a namespace or dynamic import (`import * as`, `import(`);
-  - a `.constructor` or `.prototype` member, a `prototype` name, a
-    `constructor` name other than a class-member header `constructor(`
-    (destructuring `{ constructor: O } = {}` reaches `Object`), or any
-    bracket with something inside, since a computed key built from strings
-    (`x[k]`, `x?.[k]`, `{ [k]: v } = o`) can name either; an empty `T[]`
-    type or `[]` literal is fine, and array literals and destructuring
-    with elements fail;
-  - a backslash in code, since an escaped identifier (`\u0046orbidden`)
-    names the same binding;
-  - `hasInstance`, `setPrototypeOf`, `__proto__` or a quoted
-    `constructor` anywhere, string text included.
+- the module is plain, so no code in it can install a `Symbol.hasInstance`
+  hook, rewrite a prototype or substitute a constructor (any of which lets
+  `instanceof` disagree with the `extends` chain, and each of which can be
+  built without spelling its name). A plain module holds only these items,
+  each optionally `export`ed:
+  - `import ... from "...";` statements;
+  - `class Name [extends Parent] { }`, empty or with only a constructor
+    that passes its parameters or literals to `super(...)`;
+  - `function name(params)[: Type] { ... }` with plain parameters (no
+    default, destructuring, rest or function type) and a body that only
+    tests its parameters and returns or throws `new` instances: every word
+    is a parameter, a module class, a builtin class or one of `if`,
+    `else`, `return`, `throw`, `new`, `instanceof`, `typeof`, `true`,
+    `false`, `null`, `undefined`, with no member access, bracket, arrow,
+    local declaration or call through a parameter.
+
+  Its text has no backslash, template literal or `/` outside a comment.
+  A top-level statement or variable, a type alias, an interface, a
+  decorator, a method, `this` or a field fails. The earlier token checks
+  (no `hasInstance`, `setPrototypeOf` or `__proto__` text, no
+  `Object`, `Reflect`, `Symbol`, global objects or computed access) stay
+  as a second line.
 
 The module scan reads every `class Name` declaration; a module with any
 generic (`class A<T>`), anonymous (`export default class {`) or repeated

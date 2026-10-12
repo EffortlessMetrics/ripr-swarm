@@ -36,11 +36,6 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
     assert!(ts_owner_branches_split_class(
         OWNER, &built, CHANGED, "NotFound"
     ));
-    // An empty `[]` type is not a computed access.
-    let typed = format!("{ERRORS}export const codes: number[] = [];\n");
-    assert!(ts_owner_branches_split_class(
-        OWNER, &typed, CHANGED, "NotFound"
-    ));
     // A builtin on the other branch is never a user class instance.
     let builtin = OWNER.replace("new Forbidden(", "new RangeError(");
     assert!(ts_owner_branches_split_class(
@@ -269,6 +264,41 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
             "a computed destructuring key reaches Object",
             OWNER.to_string(),
             format!("const {{ [\"constr\" + \"uctor\"]: O }} = {{}};\n{ERRORS}"),
+            "NotFound",
+        ),
+        (
+            "a legacy accessor rewrites a prototype from a top-level statement",
+            OWNER.to_string(),
+            format!(
+                "const {{ __lookupGetter__: lg, __lookupSetter__: ls }} = {{}};\nconst k = \"__pro\" + \"to__\";\nconst get = lg.call({{}}, k), set = ls.call({{}}, k);\nlet np: unknown;\n{ERRORS}"
+            ),
+            "NotFound",
+        ),
+        (
+            "a method body reaches its class through this",
+            OWNER.to_string(),
+            ERRORS.replace(
+                "class NotFound extends Error {}",
+                "class NotFound extends Error {\n  grab() {\n    return this;\n  }\n}",
+            ),
+            "NotFound",
+        ),
+        (
+            "an escaped string key",
+            OWNER.to_string(),
+            format!("{ERRORS}const {{ \"constr\\u0075ctor\": O }} = {{}};\n"),
+            "NotFound",
+        ),
+        (
+            "a function calls through a parameter",
+            OWNER.to_string(),
+            format!("{ERRORS}export function install(cb: Callback) {{\n  cb();\n}}\n"),
+            "NotFound",
+        ),
+        (
+            "a function body uses a local",
+            OWNER.to_string(),
+            format!("{ERRORS}export function install(a: number) {{\n  let b = a;\n  return b;\n}}\n"),
             "NotFound",
         ),
         (

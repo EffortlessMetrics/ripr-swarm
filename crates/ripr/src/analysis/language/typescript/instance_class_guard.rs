@@ -395,7 +395,10 @@ pub(crate) fn ts_owner_branches_split_class(
         return false;
     };
     let module = ts_mask_literals_and_comments(module_source);
-    if module_overrides_instanceof(&module) || module_escapes_name_scan(module_source, &module) {
+    if !module_is_plain(module_source)
+        || module_overrides_instanceof(&module)
+        || module_escapes_name_scan(module_source, &module)
+    {
         return false;
     }
     let Some(classes) = module_classes(&module) else {
@@ -407,6 +410,302 @@ pub(crate) fn ts_owner_branches_split_class(
         && chain_resolved(asserted, &classes, &module)
         && other != asserted
         && never_instance_of(&other, asserted, &classes, &module)
+}
+
+/// The module text with comments blanked and string contents blanked
+/// (quotes kept), or `None` when it has text this plain lexer does not
+/// read: a backslash anywhere, a template literal, a `/` in code that does
+/// not open a comment (a regular expression or a division), or an
+/// unterminated string or comment.
+fn plain_module_code(source: &str) -> Option<String> {
+    if source.contains(['\\', '`']) {
+        return None;
+    }
+    let mut out = String::with_capacity(source.len());
+    let mut chars = source.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' | '\'' => {
+                out.push(c);
+                loop {
+                    let next = chars.next()?;
+                    if next == c {
+                        out.push(c);
+                        break;
+                    }
+                    if next == '\n' {
+                        return None;
+                    }
+                    out.push(' ');
+                }
+            }
+            '/' if chars.peek() == Some(&'/') => {
+                for next in chars.by_ref() {
+                    if next == '\n' {
+                        out.push('\n');
+                        break;
+                    }
+                }
+            }
+            '/' if chars.peek() == Some(&'*') => {
+                chars.next();
+                let mut star = false;
+                loop {
+                    let next = chars.next()?;
+                    if star && next == '/' {
+                        break;
+                    }
+                    star = next == '*';
+                    out.push(if next == '\n' { '\n' } else { ' ' });
+                }
+            }
+            '/' => return None,
+            _ => out.push(c),
+        }
+    }
+    Some(out)
+}
+
+/// The identifier at the start of `text` after whitespace, and the rest.
+fn next_word(text: &str) -> Option<(&str, &str)> {
+    let text = text.trim_start();
+    let word = leading_identifier(text)?;
+    Some((word, &text[word.len()..]))
+}
+
+/// The text inside the bracket pair that `text` opens (after whitespace)
+/// with `open`, and the rest after its `close`. Nested pairs are counted.
+fn bracketed(text: &str, open: char, close: char) -> Option<(&str, &str)> {
+    let text = text.trim_start().strip_prefix(open)?;
+    let mut depth = 0usize;
+    for (index, c) in text.char_indices() {
+        if c == open {
+            depth += 1;
+        } else if c == close {
+            if depth == 0 {
+                return Some((&text[..index], &text[index + 1..]));
+            }
+            depth -= 1;
+        }
+    }
+    None
+}
+
+/// The parameter names of a plain parameter list (`a: number, b?: T`):
+/// no defaults, destructuring, rest or function types.
+fn plain_params(params: &str) -> Option<Vec<&str>> {
+    if params.contains(['=', '{', '[', '(', '.']) {
+        return None;
+    }
+    let mut names = Vec::new();
+    for param in params.split(',') {
+        let param = param.trim();
+        if param.is_empty() {
+            continue;
+        }
+        let name = leading_identifier(param)?;
+        let after = param[name.len()..].trim_start();
+        if !(after.is_empty() || after.starts_with([':', '?'])) {
+            return None;
+        }
+        names.push(name);
+    }
+    Some(names)
+}
+
+/// Words a plain function body may use besides its parameters and the
+/// class names the module declares or the builtins.
+const PLAIN_BODY_WORDS: [&str; 11] = [
+    "if",
+    "else",
+    "return",
+    "throw",
+    "new",
+    "instanceof",
+    "typeof",
+    "true",
+    "false",
+    "null",
+    "undefined",
+];
+
+/// `true` when `body` only tests its parameters and returns or throws new
+/// instances: every word is a parameter, a word above or a class name;
+/// there is no member access (`.`), bracket, arrow, local declaration or
+/// call other than `new C(...)` and `if (...)`.
+fn plain_function_body(body: &str, params: &[&str], classes: &[&str]) -> bool {
+    if body.contains(['.', '[', ']', '#', '@', '^', '~']) || body.contains("=>") {
+        return false;
+    }
+    let mut previous_word = "";
+    let mut rest = body;
+    while let Some(c) = rest.chars().next() {
+        if c.is_alphabetic() || matches!(c, '_' | '$') {
+            let Some(word) = leading_identifier(rest) else {
+                return false;
+            };
+            if !(params.contains(&word)
+                || PLAIN_BODY_WORDS.contains(&word)
+                || classes.contains(&word)
+                || BUILTIN_CLASSES.contains(&word))
+            {
+                return false;
+            }
+            previous_word = word;
+            rest = &rest[word.len()..];
+            continue;
+        }
+        if c == '(' && params.contains(&previous_word) {
+            return false; // a call through a parameter
+        }
+        if !c.is_whitespace() {
+            previous_word = "";
+        }
+        if !(c.is_alphanumeric() || c.is_whitespace() || "\"'=!<>&|+-*%?:(){},;".contains(c)) {
+            return false;
+        }
+        rest = &rest[c.len_utf8()..];
+    }
+    true
+}
+
+/// `true` when a class body is empty or only a constructor that passes its
+/// parameters to `super(...)`.
+fn plain_class_body(body: &str) -> bool {
+    let body = body.trim();
+    if body.is_empty() {
+        return true;
+    }
+    let Some(rest) = body.strip_prefix("constructor") else {
+        return false;
+    };
+    let Some((params, rest)) = bracketed(rest, '(', ')') else {
+        return false;
+    };
+    let Some(params) = plain_params(params) else {
+        return false;
+    };
+    let Some((inner, rest)) = bracketed(rest, '{', '}') else {
+        return false;
+    };
+    if !rest.trim().is_empty() {
+        return false;
+    }
+    let Some(call) = inner.trim().strip_prefix("super") else {
+        return false;
+    };
+    let Some((args, rest)) = bracketed(call, '(', ')') else {
+        return false;
+    };
+    let tail = rest.trim();
+    (tail.is_empty() || tail == ";")
+        && !args.contains(['(', '{', '[', '.', '='])
+        && args.split(',').all(|arg| {
+            let arg = arg.trim();
+            arg.is_empty()
+                || params.contains(&arg)
+                || (arg.starts_with(['"', '\''])
+                    && arg.len() >= 2
+                    && arg.ends_with(arg.as_bytes()[0] as char))
+                || arg.chars().all(|c| c.is_ascii_digit())
+        })
+}
+
+/// `true` when the module is only plain items, so no code in it can reach
+/// a class, its prototype or a reflection API:
+/// - `import ... from "...";` statements;
+/// - `class Name [extends Parent] { }`, empty or with a constructor that
+///   only calls `super` with its parameters or literals;
+/// - `function name(params)[: Type] { ... }` whose body is plain (see
+///   `plain_function_body`);
+/// each optionally `export`ed. Anything else (a top-level statement, a
+/// variable, a type alias, an interface, a decorator) fails.
+fn module_is_plain(source: &str) -> bool {
+    let Some(code) = plain_module_code(source) else {
+        return false;
+    };
+    let mut classes: Vec<&str> = Vec::new();
+    let mut functions: Vec<(Vec<&str>, &str)> = Vec::new();
+    let mut rest = code.as_str();
+    loop {
+        if rest.trim().is_empty() {
+            break;
+        }
+        let Some((mut word, mut after)) = next_word(rest) else {
+            return false;
+        };
+        if word == "import" {
+            let Some(end) = after.find(';') else {
+                return false;
+            };
+            if after[..end].contains('(') {
+                return false;
+            }
+            rest = &after[end + 1..];
+            continue;
+        }
+        if word == "export" {
+            let Some(next) = next_word(after) else {
+                return false;
+            };
+            (word, after) = next;
+        }
+        match word {
+            "class" => {
+                let Some((name, mut tail)) = next_word(after) else {
+                    return false;
+                };
+                if let Some(("extends", parent_tail)) = next_word(tail) {
+                    let Some((_, parent_rest)) = next_word(parent_tail) else {
+                        return false;
+                    };
+                    tail = parent_rest;
+                }
+                let Some((body, remaining)) = bracketed(tail, '{', '}') else {
+                    return false;
+                };
+                if !plain_class_body(body) {
+                    return false;
+                }
+                classes.push(name);
+                rest = remaining;
+            }
+            "function" => {
+                let Some((_, tail)) = next_word(after) else {
+                    return false;
+                };
+                let Some((params, tail)) = bracketed(tail, '(', ')') else {
+                    return false;
+                };
+                let Some(params) = plain_params(params) else {
+                    return false;
+                };
+                let tail = tail.trim_start();
+                // A return type runs to the body's `{`.
+                let tail = match tail.strip_prefix(':') {
+                    Some(annotation) => {
+                        let Some(open) = annotation.find('{') else {
+                            return false;
+                        };
+                        if annotation[..open].contains(['(', '[', '.']) {
+                            return false;
+                        }
+                        &annotation[open..]
+                    }
+                    None => tail,
+                };
+                let Some((body, remaining)) = bracketed(tail, '{', '}') else {
+                    return false;
+                };
+                functions.push((params, body));
+                rest = remaining;
+            }
+            _ => return false,
+        }
+    }
+    functions
+        .iter()
+        .all(|(params, body)| plain_function_body(body, params, &classes))
 }
 
 /// `true` when the module can make `instanceof` disagree with the `extends`
