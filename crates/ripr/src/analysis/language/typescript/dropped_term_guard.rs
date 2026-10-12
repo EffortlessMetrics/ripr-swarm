@@ -207,8 +207,8 @@ fn closes_term(after: &str) -> bool {
 
 /// `true` when parameter `name` holds the call's argument everywhere in the
 /// owner body: the body has no nested function (whose parameter could shadow
-/// it), never assigns or increments `name`, and declares nothing that
-/// mentions it.
+/// it), never assigns, increments or iterates into `name`, never
+/// destructures into it, and declares nothing that mentions it.
 pub(crate) fn ts_parameter_is_stable(owner_source: &str, name: &str) -> bool {
     let Some(body) = masked_owner_body(owner_source) else {
         return false;
@@ -225,18 +225,76 @@ pub(crate) fn ts_parameter_is_stable(owner_source: &str, name: &str) -> bool {
             }
         }
     }
+    // `for (name of xs)` / `for (name in o)` assign without `=`.
+    for at in identifier_offsets(&body, "for") {
+        let header = &body[at + "for".len()..];
+        let end = header.find(')').unwrap_or(header.len());
+        if !identifier_offsets(&header[..end], name).is_empty() {
+            return false;
+        }
+    }
     identifier_offsets(&body, name).into_iter().all(|at| {
         let after = body[at + name.len()..].trim_start();
-        let operator: String = after
-            .chars()
-            .take_while(|c| "+-*/%&|^<>?!=".contains(*c))
-            .collect();
-        let assigns = operator.ends_with('=')
-            && !matches!(operator.as_str(), "==" | "===" | "!=" | "!==" | "<=" | ">=");
-        let increments = operator.starts_with("++")
-            || operator.starts_with("--")
-            || body[..at].trim_end().ends_with("++")
-            || body[..at].trim_end().ends_with("--");
-        !assigns && !increments && !after.starts_with("=>")
+        let before = body[..at].trim_end();
+        let increments = after.starts_with("++")
+            || after.starts_with("--")
+            || before.ends_with("++")
+            || before.ends_with("--");
+        !increments && !assigns_after(after) && !inside_destructuring_target(&body, at)
     })
+}
+
+/// `true` when `after` (the text after a name) opens with an assignment
+/// operator: `=`, a compound `op=`, or a logical `&&=` / `||=` / `??=`,
+/// however the right-hand side starts (`fee=-0` assigns).
+fn assigns_after(after: &str) -> bool {
+    let Some(equals) = after.find('=') else {
+        return false;
+    };
+    let head = &after[..equals];
+    let compound = matches!(
+        head,
+        "" | "+"
+            | "-"
+            | "*"
+            | "/"
+            | "%"
+            | "**"
+            | "<<"
+            | ">>"
+            | ">>>"
+            | "&"
+            | "|"
+            | "^"
+            | "&&"
+            | "||"
+            | "??"
+    );
+    compound && !after[equals + 1..].starts_with(['=', '>'])
+}
+
+/// `true` when the name at `at` sits inside a `[...]` or `{...}` that an
+/// assignment follows (`[fee] = pair`, `({ fee } = o)`).
+fn inside_destructuring_target(body: &str, at: usize) -> bool {
+    let mut depth = 0usize;
+    for (index, c) in body[at..].char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' => {
+                let Some(next) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next;
+            }
+            ']' | '}' => {
+                if depth == 0 {
+                    return assigns_after(body[at + index + 1..].trim_start());
+                }
+                depth -= 1;
+            }
+            ';' => return false,
+            _ => {}
+        }
+    }
+    false
 }

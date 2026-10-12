@@ -4315,8 +4315,9 @@ pub(crate) enum DroppedTermWitness {
     Unknown,
 }
 
-/// RIPR-SPEC-0248 rule 1: fold `term` for the arguments of every owner call a
-/// strong assertion of an oracle relation observes. A parameter is bound to
+/// RIPR-SPEC-0248 rule 1: fold `term` for the arguments of every owner call
+/// whose whole result a strong assertion of an oracle relation observes
+/// (`owner(...)`, `ns.owner(...)`, or a local bound once to that call). A parameter is bound to
 /// its numeric literal argument only when the owner body never rebinds it; a
 /// constant-shaped name reads the owner module's integer `const`. Calls,
 /// members and anything else unbound fail the fold.
@@ -4351,7 +4352,24 @@ pub(crate) fn ts_dropped_term_witness(
             let Some(observed) = assertion.observed_expression.as_deref() else {
                 continue;
             };
-            let mut argument_lists = owner_call_arguments(observed, &owner.name, &receivers);
+            // Only an assertion on the call's whole result sees the term:
+            // `quote(6000, 5).tier` does not.
+            let bare = std::iter::once(String::new())
+                .chain(receivers.iter().map(|receiver| format!("{receiver}.")))
+                .any(|prefix| {
+                    let observed = observed.trim();
+                    observed
+                        .strip_prefix("await ")
+                        .map_or(observed, str::trim_start)
+                        .strip_prefix(prefix.as_str())
+                        .and_then(|rest| rest.strip_prefix(owner.name.as_str()))
+                        .is_some_and(ts_is_one_argument_list)
+                });
+            let mut argument_lists = if bare {
+                owner_call_arguments(observed, &owner.name, &receivers)
+            } else {
+                Vec::new()
+            };
             if argument_lists.is_empty()
                 && let Some(arguments) = ts_observed_local_owner_call_arguments(
                     candidate.test,

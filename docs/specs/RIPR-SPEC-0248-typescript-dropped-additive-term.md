@@ -71,8 +71,10 @@ tested input where the term is not zero.** When the changed line and its
 removed counterpart differ by exactly one span, and that span is one
 additive term (`a + t` against `a`, `a - t` against `a`, or `t + a`
 against `a`, in either direction), an `exposed` ladder result keeps its
-class only when some strong assertion of an oracle relation observes an
-owner call for which `t` folds to a non-zero number. Otherwise the finding
+class only when some strong assertion of an oracle relation observes the
+whole result of an owner call (`owner(...)`, `ns.owner(...)`, optionally
+awaited, or a local bound once to that call; not `owner(...).field` or
+`f(owner(...))`) for which `t` folds to a non-zero number. Otherwise the finding
 reads `weakly_exposed`, discrimination `weak`, and its missing line names
 the term and asks for an input that makes it non-zero.
 
@@ -81,9 +83,11 @@ The fold binds:
 - an owner parameter to the call's argument at its position when the
   argument is a plain numeric literal (or a test-scope constant the
   RIPR-SPEC-0027 boundary path already resolves) and the owner body never
-  rebinds the parameter: no assignment, compound assignment, increment,
-  shadowing declaration (including destructuring), and no nested
-  function or arrow whose parameter could shadow it;
+  rebinds the parameter: no assignment or compound assignment (with or
+  without spaces, `fee=-0`), increment, `for (p of ...)` / `for (p in
+  ...)`, destructuring assignment (`[p] = pair`, `({ p } = o)`),
+  shadowing declaration, and no nested function or arrow whose parameter
+  could shadow it;
 - a constant-shaped name (`UPPER_CASE`) to the owner module's single
   immutable integer `const`.
 
@@ -133,12 +137,21 @@ documented decisions and proceed"). Recorded on #6654.
 
 ### Known limits
 
+- A non-zero fold is necessary, not sufficient. The fold does not ask
+  whether the tested call reaches the changed line (`if (a > 10) return
+  a + t;` tested with `f(1, 5)`) or whether the surrounding expression
+  still lets the term move the result (`c ? a : b + t`, `a ?? b + t`).
+  Those shapes keep the pre-rule credit.
+- Any arrow or nested function in the owner body makes every parameter
+  unbound, so `items.reduce((s, x) => s + x, 0) + fee` reads
+  `weakly_exposed` even with a non-zero `fee` argument.
 - The rebinding check reads the owner body after the change. A diff that
   removes a reassignment on another line can let the fold bind the
   pre-change argument.
-- Under string concatenation `0` is not an identity (`"n=" + 0` differs
-  from `"n="`), so a zero fold can withdraw credit from a string edit the
-  test does catch. That costs a false gap, never false credit.
+- String terms never fold, and under string concatenation `0` is not an
+  identity (`"n=" + 0` differs from `"n="`). Dropping `+ name` from
+  `greeting + name` therefore reads `weakly_exposed` even when the test
+  pins `"Hi Bob"`. That costs a false gap, never false credit.
 
 ## Required Evidence
 
@@ -166,17 +179,21 @@ documented decisions and proceed"). Recorded on #6654.
 4. As example 2 with the only test `price(6000, 0)`: `weakly_exposed`,
    "is 0 for every tested input".
 5. As example 4 with a second assertion on `price(6000, 7)`: `exposed`.
-6. As example 2 with `fee = fee - 5;` on the changed line before the
-   return: `weakly_exposed` (`fee` is rebound, so it is not bound).
-7. `return a + b + 0` against `return a + b`: the rule does not apply.
-8. `return a + b * c` against `return a * c`, `return x - a + b` against
+6. As example 2 with `fee=fee-5;` on the line before the return:
+   `weakly_exposed` (`fee` is rebound, so it is not bound); with
+   `audit(fee);` there instead: `exposed`.
+7. As example 4 with a second assertion
+   `expect(Math.sign(price(6000, 7))).toBe(1)`: `weakly_exposed`; that
+   assertion does not observe the whole result.
+8. `return a + b + 0` against `return a + b`: the rule does not apply.
+9. `return a + b * c` against `return a * c`, `return x - a + b` against
    `return x - b`, `total += fee` against `total`, and `return +x`
    against `return`: the rule does not apply.
 
 ## Test Mapping
 
 - `crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs`
-  pins examples 1 to 8.
+  pins examples 1 to 9.
 - `fixtures/typescript-verdict-corpus` pins
   `ts-nodetest-quote-shipping-term` as `gap`.
 
