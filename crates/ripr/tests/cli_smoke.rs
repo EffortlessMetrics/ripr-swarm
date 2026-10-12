@@ -2229,12 +2229,88 @@ fn selector_location_misses_explain_syntax_and_preserve_retry_scope()
     Ok(())
 }
 
+/// These navigation/artifact contracts need the sample's real findings, not
+/// the unrelated source/test inventory of this repository. The workspace
+/// boundary also keeps `ready` a CLI-only override when Cargo puts temp files
+/// inside the checkout.
+struct SampleDiffFixture(PathBuf);
+
+const SAMPLE_DIFF_SELECTOR: &str = "probe:src_lib.rs:error_path:6732964a";
+
+impl SampleDiffFixture {
+    fn new(label: &str) -> Result<Self, String> {
+        let fixture = Self(unique_temp_workspace(label));
+        let write = |path: &str, text: &str| {
+            std::fs::write(fixture.0.join(path), text)
+                .map_err(|error| format!("write fixture {path}: {error}"))
+        };
+        std::fs::create_dir_all(fixture.0.join("src"))
+            .and_then(|()| std::fs::create_dir_all(fixture.0.join("tests")))
+            .map_err(|error| format!("create sample fixture: {error}"))?;
+        write(
+            "Cargo.toml",
+            "[package]\nname = \"ripr-sample\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[workspace]\n",
+        )?;
+        write("src/lib.rs", include_str!("../examples/sample/src/lib.rs"))?;
+        write(
+            "tests/pricing.rs",
+            include_str!("../examples/sample/tests/pricing.rs"),
+        )?;
+        write(
+            "example.diff",
+            &include_str!("../examples/sample/example.diff")
+                .replace("crates/ripr/examples/sample/src/lib.rs", "src/lib.rs"),
+        )?;
+        Ok(fixture)
+    }
+}
+
+impl Drop for SampleDiffFixture {
+    fn drop(&mut self) {
+        ignore_remove_dir_all(&self.0);
+    }
+}
+
+fn assert_sample_diff_artifact(text: &str, root: &Path, mode: &str) -> Result<(), String> {
+    let artifact: serde_json::Value =
+        serde_json::from_str(text).map_err(|error| format!("parse sample artifact: {error}"))?;
+    assert_eq!(artifact["identity"]["mode"], mode);
+    let finding = artifact["findings"]
+        .as_array()
+        .and_then(|findings| {
+            findings
+                .iter()
+                .find(|finding| finding["id"] == SAMPLE_DIFF_SELECTOR)
+        })
+        .ok_or_else(|| format!("sample must record its real error-path finding: {artifact}"))?;
+    assert_eq!(finding["probe"]["family"], "error_path");
+    assert_eq!(finding["probe"]["owner"], "src/lib.rs::validate_currency");
+    assert_eq!(
+        finding["probe"]["expression"],
+        "if currency == \"USD\" { Ok(()) } else { Err(InvoiceError::InvalidCurrency) }"
+    );
+    let file = finding["probe"]["location"]["file"]
+        .as_str()
+        .ok_or_else(|| "sample finding omitted its source path".to_string())?;
+    assert!(path_matches_printed(file, &root.join("src/lib.rs")));
+    assert!(
+        finding["missing"]
+            .as_array()
+            .is_some_and(|missing| !missing.is_empty()),
+        "sample finding must carry discriminator detail"
+    );
+    Ok(())
+}
+
 #[test]
 fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
-    let root = ".";
-    let diff = "crates/ripr/examples/sample/example.diff";
-    let output = run_ripr_in_workspace(&["check", "--root", root, "--diff", diff])
-        .map_err(|err| err.to_string())?;
+    let fixture = SampleDiffFixture::new("navigation-custom-scope")?;
+    let output = run_command(
+        env!("CARGO_BIN_EXE_ripr"),
+        Some(&fixture.0),
+        &["check", "--root", ".", "--diff", "example.diff"],
+    )
+    .map_err(|err| err.to_string())?;
     assert_success(&output);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -2280,6 +2356,12 @@ fn check_human_navigation_commands_replay_custom_scope() -> Result<(), String> {
         std::path::Path::new(printed_diff).is_absolute(),
         "drill-in repeated the typed relative --diff: {printed_diff}"
     );
+    assert!(path_matches_printed(printed_root, &fixture.0));
+    assert!(path_matches_printed(
+        printed_diff,
+        &fixture.0.join("example.diff")
+    ));
+    // Replay from the checkout, outside the analyzed fixture.
     let explain = run_ripr_in_workspace(&explain_args[1..]).map_err(|err| err.to_string())?;
     assert_success(&explain);
     let selector = explain_args
@@ -18881,13 +18963,12 @@ fn explain_unknown_probe_fails_with_clear_error() {
 #[test]
 fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_source_navigation()
 -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let dir = unique_temp_workspace("check-artifact-reuse");
-    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
-    let artifact = dir.join("last-check.json");
+    let fixture = SampleDiffFixture::new("check-artifact-reuse")?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("example.diff").display().to_string();
+    let artifact = fixture.0.join("last-check.json");
     let artifact_arg = artifact.display().to_string();
-    let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
+    let selector = SAMPLE_DIFF_SELECTOR;
 
     let result = (|| {
         let check = run_ripr(&[
@@ -18906,6 +18987,7 @@ fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_sour
         assert!(artifact_text.contains("\"ripr-check-artifact-v1\""));
         assert!(artifact_text.contains("\"identity\""));
         assert!(artifact_text.contains("\"diff_bytes_hash\""));
+        assert_sample_diff_artifact(&artifact_text, &fixture.0, "draft")?;
 
         let fresh_explain = run_ripr(&["explain", "--root", &root, "--diff", &diff, selector]);
         assert_success(&fresh_explain);
@@ -18920,6 +19002,17 @@ fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_sour
         assert_success(&reused_explain);
         let fresh_explain_text = String::from_utf8_lossy(&fresh_explain.stdout);
         let reused_explain_text = String::from_utf8_lossy(&reused_explain.stdout);
+        assert_eq!(
+            fresh_explain_text
+                .lines()
+                .filter(|line| !line.starts_with("Next: ripr context "))
+                .collect::<Vec<_>>(),
+            reused_explain_text
+                .lines()
+                .filter(|line| !line.starts_with("Next: ripr context "))
+                .collect::<Vec<_>>(),
+            "explain --from must preserve finding detail"
+        );
         if !fresh_explain_text.contains("Next: ripr context --root")
             || !fresh_explain_text.contains("--diff")
             || !reused_explain_text.contains("Next: ripr context --root")
@@ -18945,9 +19038,45 @@ fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_sour
         ]);
         assert_success(&reused_context);
         context_reuse_matches_fresh(&fresh_context.stdout, &reused_context.stdout)?;
+
+        // Falsify the retained detail oracle through the real artifact consumer.
+        // Identity stays valid; successful reuse must render the changed detail,
+        // and the fresh/reused comparison must reject it.
+        let mut altered: serde_json::Value = serde_json::from_str(&artifact_text)
+            .map_err(|error| format!("parse artifact for detail control: {error}"))?;
+        let missing = altered["findings"]
+            .as_array_mut()
+            .and_then(|findings| {
+                findings
+                    .iter_mut()
+                    .find(|finding| finding["id"] == selector)
+            })
+            .and_then(|finding| finding["missing"].as_array_mut())
+            .and_then(|missing| missing.first_mut())
+            .ok_or_else(|| "detail control needs the selected discriminator".to_string())?;
+        let marker = "Artifact detail mutation control";
+        *missing = serde_json::Value::String(marker.to_string());
+        let altered_text = serde_json::to_string(&altered)
+            .map_err(|error| format!("serialize detail control: {error}"))?;
+        std::fs::write(&artifact, altered_text)
+            .map_err(|error| format!("write detail control: {error}"))?;
+        let altered_context = run_ripr(&[
+            "context",
+            "--root",
+            &root,
+            "--from",
+            &artifact_arg,
+            "--at",
+            selector,
+        ]);
+        assert_success(&altered_context);
+        assert!(String::from_utf8_lossy(&altered_context.stdout).contains(marker));
+        assert!(
+            context_reuse_matches_fresh(&fresh_context.stdout, &altered_context.stdout).is_err(),
+            "fresh/reused detail oracle accepted a changed recorded discriminator"
+        );
         Ok(())
     })();
-    ignore_remove_dir_all(&dir);
     result
 }
 
@@ -19248,13 +19377,12 @@ fn check_worktree_write_artifact_then_explain_reuse_and_drift_fails_closed() -> 
 /// names the source identity used by each invocation.
 #[test]
 fn explain_from_consumes_artifact_written_with_non_default_mode() -> Result<(), String> {
-    let root = workspace_root().display().to_string();
-    let diff = sample_diff().display().to_string();
-    let dir = unique_temp_workspace("check-artifact-mode");
-    std::fs::create_dir_all(&dir).map_err(|err| format!("mkdir {}: {err}", dir.display()))?;
-    let artifact = dir.join("ready.json");
+    let fixture = SampleDiffFixture::new("check-artifact-mode")?;
+    let root = fixture.0.display().to_string();
+    let diff = fixture.0.join("example.diff").display().to_string();
+    let artifact = fixture.0.join("ready.json");
     let artifact_arg = artifact.display().to_string();
-    let selector = "probe:crates_ripr_examples_sample_src_lib.rs:error_path:c1a03250";
+    let selector = SAMPLE_DIFF_SELECTOR;
 
     let check = run_ripr(&[
         "check",
@@ -19268,6 +19396,9 @@ fn explain_from_consumes_artifact_written_with_non_default_mode() -> Result<(), 
         &artifact_arg,
     ]);
     assert_success(&check);
+    let artifact_text = std::fs::read_to_string(&artifact)
+        .map_err(|error| format!("read ready artifact: {error}"))?;
+    assert_sample_diff_artifact(&artifact_text, &fixture.0, "ready")?;
 
     let fresh = run_ripr(&[
         "explain", "--root", &root, "--diff", &diff, "--mode", "ready", selector,
@@ -19321,7 +19452,6 @@ fn explain_from_consumes_artifact_written_with_non_default_mode() -> Result<(), 
             && stderr.contains("mode"),
         "mode mismatch must be named:\n{stderr}"
     );
-    ignore_remove_dir_all(&dir);
     Ok(())
 }
 
