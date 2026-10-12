@@ -821,7 +821,14 @@ fn capture(
     Ok(report)
 }
 
+fn supported_profile_platform(platform: &str) -> bool {
+    platform == "linux"
+}
+
 pub fn command() -> Result<()> {
+    if !supported_profile_platform(std::env::consts::OS) {
+        return Err("coverage diagnostic capture is a Linux workflow adapter".into());
+    }
     #[cfg(not(target_os = "linux"))]
     return Err("coverage diagnostic capture is a Linux workflow adapter".into());
     #[cfg(target_os = "linux")]
@@ -922,6 +929,13 @@ mod tests {
     fn linux_profile_open_uses_target_abi_constants() {
         assert_ne!(libc::O_NOFOLLOW, 0);
         assert_ne!(libc::O_NONBLOCK, 0);
+    }
+    #[test]
+    fn profile_capture_platform_policy_has_linux_positive_and_negative_controls() {
+        assert!(supported_profile_platform("linux"));
+        for platform in ["windows", "macos", "freebsd"] {
+            assert!(!supported_profile_platform(platform));
+        }
     }
     #[cfg(not(target_os = "linux"))]
     #[test]
