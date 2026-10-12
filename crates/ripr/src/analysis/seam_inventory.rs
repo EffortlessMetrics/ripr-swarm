@@ -164,6 +164,10 @@ pub(crate) fn inventory_classified_seams_at(root: &Path) -> Result<Vec<Classifie
 #[derive(Clone, Debug)]
 pub(crate) struct ClassifiedSeamsReport {
     pub(crate) classified: Vec<ClassifiedSeam>,
+    /// The key that admitted or produced this full Rust inventory. Keeping
+    /// its consumed corpus identity avoids a later renderer hashing new
+    /// workspace bytes for old classifications. Synthetic reports have none.
+    pub(crate) corpus_key: Option<RepoSeamCacheKey>,
     pub(crate) limit_info: Option<SeamLimitInfo>,
     pub(crate) skipped_generated: Vec<PathBuf>,
     pub(crate) naming_only_skips: Vec<PathBuf>,
@@ -234,6 +238,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
                 // a warm hit still discloses files added after the cache write.
                 return Ok(ClassifiedSeamsReport {
                     classified: cached,
+                    corpus_key: Some(key),
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
                     skipped_generated,
                     naming_only_skips,
@@ -290,6 +295,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
             // its SeamLimitInfo in the envelope; a complete run stored None.
             return Ok(ClassifiedSeamsReport {
                 classified: cached,
+                corpus_key: Some(key),
                 limit_info: cached_limit_info.map(SeamLimitInfo::from),
                 skipped_generated,
                 naming_only_skips,
@@ -355,6 +361,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
+        corpus_key: Some(key),
         limit_info,
         skipped_generated,
         naming_only_skips,

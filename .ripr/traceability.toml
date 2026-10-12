@@ -6200,6 +6200,30 @@ id = "RIPR-SPEC-0076"
 name = "LSP diagnostics severity policy"
 spec = "docs/specs/RIPR-SPEC-0076-lsp-diagnostics-policy.md"
 tests = [
+  "crates/ripr/src/lsp/backend.rs::gap_record_context_tests::collect_context_unknown_gap_does_not_project_an_unrelated_stale_ledger",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::gap_commands_refuse_a_copied_foreign_ledger_after_a_healthy_byte_identical_workspace_refresh",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::gap_commands_admit_the_real_canonical_ledger_from_a_same_physical_alias_after_refresh",
+  "xtask/src/tests/rust_corpus_projection.rs::genuine_bare_root_producer_preserves_raw_language_corpus_and_unbounded_verify_exclusion",
+  "xtask/src/tests/rust_corpus_projection.rs::genuine_workspace_producer_preserves_current_corpus_and_native_bounded_projection",
+  "xtask/src/tests/rust_corpus_projection.rs::genuine_completed_no_action_corpus_produces_an_empty_queue_without_invented_language",
+  "xtask/src/tests/rust_corpus_projection.rs::genuine_workspace_corpus_cannot_be_rebased_into_a_member_corpus_with_legal_named_subjects",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_nonempty_no_action_rust_ledger_still_requires_current_corpus",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::gap_commands_recheck_rust_corpus_without_a_refresh_or_document_notification",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::ledger_derivation_requires_an_absolute_captured_producer_frame_for_corpus_transfer",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::foreign_root_ledger_derivation_cannot_rebase_captured_named_subjects_or_mint_corpus",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_accepts_empty_commit_and_identical_input_branch",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_accepts_same_head_dirty_non_corpus_input",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_rejects_added_test_at_same_head_and_recovers",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_rejects_changed_unclaimed_test_at_same_head_and_recovers",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_rejects_deleted_unclaimed_test_at_same_head_and_recovers",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::analysis_and_ledger_share_the_real_rust_corpus_content_authority",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_legacy_corpus_requires_regeneration_without_artifact_actions",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::delayed_ledger_derivation_copies_the_analysis_corpus_before_workspace_edit",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::active_absolute_legacy_gap_selector_remains_useful_after_corpus_edits",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_corpus_cannot_bypass_rust_currentness_with_missing_or_unknown_language",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::passive_rust_ledger_discloses_actual_corpus_currentness_scope",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::native_python_and_copied_mixed_records_cannot_claim_a_current_rust_corpus",
+  "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::unknown_corpus_language_precedes_known_preview_in_both_record_orders",
   "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::no_warning_for_finding_with_static_limit",
   "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::no_warning_for_preview_finding",
   "crates/ripr/src/lsp/diagnostics.rs::diagnostic_policy_tests::warning_only_when_gap_record_has_complete_packet",
@@ -6225,6 +6249,7 @@ id = "RIPR-SPEC-0077"
 name = "LSP repair packet command"
 spec = "docs/specs/RIPR-SPEC-0077-lsp-repair-packet-command.md"
 tests = [
+  "crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_unlisted_gap_uses_current_ledger_despite_stale_queue",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_no_snapshot_and_no_file_returns_null",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_incomplete_gap_returns_sentinel",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_complete_gap_returns_full_packet",

@@ -47,6 +47,10 @@
 //! failing test cannot orphan a process that would hold a file lock on the
 //! binary and break later builds.
 
+#[cfg(feature = "lang-rust")]
+#[path = "lsp_lifecycle/gap_corpus_currentness.rs"]
+mod gap_corpus_currentness;
+
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::io::Read;
@@ -1565,15 +1569,54 @@ fn compat_fixture_digest(root: &Path) -> Result<String, String> {
     Ok(format!("{:016x}", hasher.finish()))
 }
 
-fn ripr_binary_version() -> Result<String, String> {
+/// Run the Cargo-selected CLI binary with bounded process ownership and
+/// file captures, so neither a full stdout pipe nor a hung producer stalls
+/// the framed corpus-currentness journey. This generalizes the existing
+/// version-probe Command site; it does not introduce another spawn route.
+fn ripr_binary_probe(
+    current_dir: Option<&Path>,
+    args: &[&str],
+) -> Result<std::process::Output, String> {
+    let captured = unique_compat_fixture_root("binary-probe")?;
+    let stdout_path = captured.path.join("stdout");
+    let stderr_path = captured.path.join("stderr");
     let binary = env!("CARGO_BIN_EXE_ripr");
-    let output = Command::new(binary)
-        .arg("--version")
-        .output()
-        .map_err(|err| format!("run `{binary} --version` failed: {err}"))?;
+    let mut command = Command::new(binary);
+    command.args(args).stdin(Stdio::null());
+    if let Some(root) = current_dir {
+        command.current_dir(root);
+    }
+    command
+        .stdout(fs::File::create(&stdout_path).map_err(|error| error.to_string())?)
+        .stderr(fs::File::create(&stderr_path).map_err(|error| error.to_string())?);
+    let mut child = ripr::process_owner::OwnedProcess::spawn(command)
+        .map_err(|error| format!("spawn real CLI {args:?}: {error}"))?;
+    let deadline = Instant::now() + ANALYSIS_TIMEOUT;
+    let status = loop {
+        if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            child.terminate_tree()?;
+            return Err(format!(
+                "real CLI {args:?} exceeded {ANALYSIS_TIMEOUT:?}; terminated and reaped"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    child.terminate_tree()?;
+    Ok(std::process::Output {
+        status,
+        stdout: fs::read(&stdout_path).map_err(|error| error.to_string())?,
+        stderr: fs::read(&stderr_path).map_err(|error| error.to_string())?,
+    })
+}
+
+fn ripr_binary_version() -> Result<String, String> {
+    let output = ripr_binary_probe(None, &["--version"])?;
     if !output.status.success() {
         return Err(format!(
-            "`{binary} --version` failed: {}",
+            "`ripr --version` failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
     }

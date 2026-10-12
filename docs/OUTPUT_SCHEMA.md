@@ -17634,6 +17634,16 @@ lines, `gap-decision-ledger.json` and `actionable-gaps.json` carry an additive
 top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
+- `corpus` (additive, full Rust inventory only): the analysis-owned
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.62",
+  "files_content_hash": "<16 lowercase hex digits>" }` from the actual
+  classified inventory cache key, including both production and test Rust
+  files after the existing generated-file exclusions. This is the existing
+  cache content authority, not another digest or a HEAD identity. Cold and
+  warm inventories carry the same authority. Derived writers copy it only
+  within the same canonical physical root; they do not rehash the current
+  workspace or rebase an aggregate onto another root. Missing/relative producer root
+  or a different root makes corpus provenance unavailable.
 - `files[]`: one entry per workspace file the artifact's records name, sorted
   by `path`. `path` is repo-relative with `/` separators and no `.` or `..`
   segments; a `path::test_name` selector contributes its file part, and a
@@ -17659,7 +17669,9 @@ analyzed ones.
 projects any record from the artifact, and applies the result to the whole
 artifact:
 
-- every digest matches: the artifact is current and projects as before;
+- every digest matches: named-file currentness is established; a complete
+  raw Rust record/packet population additionally requires current corpus
+  provenance before projection;
 - a stamped file changed, was deleted, or now exists where `null` was
   stamped: the artifact is rejected as `stale_subject`, the run status becomes
   `stale`, and the `cache` and `gap_ledger` component outcomes carry kind
@@ -17671,12 +17683,59 @@ artifact:
   `source_subject_incomplete`, or `source_subject_unreadable`), the run status
   becomes `cache_limited`, and nothing from it is projected.
 
+For all-Rust ledgers and actionable-gap packets, the LSP compares the captured
+`files_content_hash` with the same inventory owner's current workspace key
+using the effective repository configuration. A corpus change outside the
+named files (including a new, edited, or deleted test at the same HEAD) rejects
+the artifact as `stale_corpus`, sets run status `stale`, and records
+`stale_corpus` in the cache and ledger component outcomes. Missing, malformed,
+unsupported or unreadable corpus metadata rejects as `unverifiable_subject`
+with a `source_subject_corpus_*` reason and run status `cache_limited`.
+Missing language provenance is `source_subject_corpus_scope_missing`, even
+when a sibling record has a known preview language. No current artifact
+actions or top repair packet are projected from these refused artifacts.
+Command-time ledger and actionable-gap reads apply the full shared artifact
+admission, including root, schema, language, path and command safety, after
+candidate lookup and before the selected artifact's actionability or projection.
+An explicit ID absent from the preferred queue can reach its ledger; an ID
+absent from the ledger retains the not-found route. Selected stale or invalid
+artifacts still refuse without falling back to another packet. Replacing an
+artifact after a healthy refresh cannot bypass those checks.
+
+Known preview or mixed-language artifacts retain their existing named-file
+admission. Rust provenance alone cannot establish their whole corpus
+currentness. `ripr.workspaceStatus` discloses each admitted ledger or
+actionable-gap report in the additive `gap_artifact_currentness` array:
+`kind`, `scope`, `corpus_currentness`, and `limitation`. All-Rust admission
+uses `rust_workspace`, `current`, and `null`; preview/mixed admission uses
+`preview_or_mixed_language`, `unavailable`, and
+`preview_or_mixed_corpus_provenance_unavailable`. No admitted affected
+artifacts yields an empty array. This does not promote preview support.
+The existing complete zero-count empty actionable queue remains admissible
+without a vacuous Rust claim: its row uses `empty_actionable_queue`,
+`unavailable`, and `empty_actionable_queue_corpus_scope_unavailable`.
+Complete preview/mixed corpus provenance is separately tracked in
+[#7452](https://github.com/EffortlessMetrics/ripr-swarm/issues/7452).
+The Rust classified inventory also emits explicit `language: "rust"` and
+`language_status: "stable"` on its evidence-record raw findings, which the
+existing actionable-gap projector preserves. File extensions, canonical gap
+IDs and an attached Rust hash do not substitute for a complete typed language
+population. Persisted ledger producer labels that are missing or relative
+cannot recover an aggregate frame; the xtask writer's explicitly bound local
+analysis invocation uses its known producer root.
+
 Rejected artifacts publish no gap diagnostics, and the repair-packet and
 gap-context commands return a `not_actionable_or_incomplete` sentinel whose
 `reason` starts with the rejection kind. Regenerate the ledger with
-`ripr reports gap-ledger` and `actionable-gaps.json` with
+fresh `ripr check --format repo-exposure-json` analysis followed by
+`ripr reports gap-ledger`, and `actionable-gaps.json` with
 `cargo xtask lane1-evidence-audit`. The stamp identifies file contents only; it
 does not make an artifact computed from an older check output current.
+Corpus admission covers the analyzed Rust source/test population only;
+configuration meaning, base/revision semantics and before/after lineage
+remain separate currentness dimensions. Explicit absolute-root historical
+`ripr rerun --gap` selection still recomputes current scopes after source/test
+edits; passive editor admission must not change that selector contract.
 
 ## Mutation Calibration Reports
 

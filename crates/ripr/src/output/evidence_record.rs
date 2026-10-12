@@ -1659,6 +1659,11 @@ fn flow_sink_json(sink: &EvidenceRecordFlowSink) -> Value {
 
 fn raw_finding_json(finding: &EvidenceRecordRawFinding) -> Value {
     json!({
+        // This typed evidence record is produced from the Rust classified
+        // inventory. Its raw language authority survives the existing xtask
+        // packet projection; consumers must not infer it from paths or IDs.
+        "language": "rust",
+        "language_status": "stable",
         "file": finding.file.as_str(),
         "line": finding.line,
         "kind": finding.kind.as_str(),

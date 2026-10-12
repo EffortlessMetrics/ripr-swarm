@@ -334,7 +334,12 @@ pub(crate) fn write_repo_exposure_json_with_context<W: io::Write>(
     let placeholder = repo_exposure_artifact_metadata(context, CONTENT_SHA256_PLACEHOLDER)?;
     let seams = SeamJsons::new(classified, PRERENDERED_SEAM_JSON_BUDGET_BYTES);
     let source_subject_started = Instant::now();
-    let source_subject = repo_exposure_source_subject(&seams, &context.root);
+    let mut source_subject = repo_exposure_source_subject(&seams, &context.root);
+    if let Some(key) = &context.corpus_key {
+        let subject = source_subject
+            .get_or_insert_with(|| serde_json::json!({"digest_algorithm": "sha256", "files": []}));
+        subject["corpus"] = crate::output::gap_source_subject::captured_rust_corpus_subject(key);
+    }
     trace_latency_phase(
         "serialize_source_subject",
         "ok",
