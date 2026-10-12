@@ -5,8 +5,8 @@ import * as path from 'path';
 
 // Generate once before the trusted host, using the existing public producer
 // composition test. Keep the original artifact bytes and compiler receipt.
-export function stageGenuineActionableQueue(repoRoot: string, exportDirectory: string): string {
-  fs.mkdirSync(exportDirectory);
+export function stageGenuineActionableQueue(repoRoot: string, exportPrefix: string): string {
+  const exportDirectory = fs.mkdtempSync(`${exportPrefix}-`);
   const testName = 'tests::rust_corpus_projection::genuine_workspace_producer_preserves_current_corpus_and_native_bounded_projection';
   const args = ['test', '--locked', '-p', 'xtask', '--bin', 'xtask', '--message-format=json',
     testName, '--', '--exact', '--nocapture'];
