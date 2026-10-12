@@ -239,6 +239,23 @@ sections of the reviewer packet without being treated as production behavior.
 format and numbering, and the policy surfaces that should fail quickly before
 review.
 
+Local command diagnostics reuse the existing reports: `precommit-v2.{json,md}`
+records diff-check and selected Clippy children, `file-policy.md` records actual
+covered-by warmup/list children, and `check-fast.md` records fmt and workspace
+Clippy children. Other commands are outside this bounded capture scope. Reused
+selectors and skipped warmups create no execution rows. Precommit diagnostics
+remain bound by its report digest; they add no acceptance or waiver authority.
+Structured argv preserves argument boundaries (`$REPO` substitutes the repository
+root in precommit). Captured elapsed time runs from runner start through observed
+exit, with polling, and excludes post-exit pipe drain; inherited-status elapsed
+includes the launch/status call and preserves inherited streams. Missing values
+are unavailable evidence. Cargo counts recognize `Compiling`, `Checking` and
+`Fresh` stderr progress lines only; they do not identify compiler units, prove
+artifact reuse or justify removing either Clippy obligation. Dirty-source HEAD,
+base and paths supply invocation context rather than immutable source identity.
+Successful report-write failures still return an I/O error; interrupted execution
+retains its original error and separately reports publication failures.
+
 `doctor` is the shortest agent hygiene entry point and is equivalent to
 `worktree doctor`. It reports dirty `main` worktrees, branches behind
 `origin/main`, generated badge/target residue, and broad source-of-truth diffs

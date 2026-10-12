@@ -8,6 +8,11 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod command_diagnostic;
+pub(crate) use command_diagnostic::{
+    CommandDiagnostic, DISCLOSURE as COMMAND_DIAGNOSTIC_DISCLOSURE,
+};
+
 /// Grace period for draining stdout/stderr pipes after a process-group kill.
 ///
 /// After `terminate_timed_process_tree` fires, any descendant that escaped the
@@ -190,6 +195,23 @@ pub(crate) fn run_with_envs(
     args: &[&str],
     envs: &[(&str, &str)],
 ) -> Result<ExitStatus, String> {
+    run_with_envs_recorded(program, args, envs, None)
+}
+
+pub(crate) fn run_diagnostic(
+    program: &str,
+    args: &[&str],
+    diagnostics: &mut Vec<CommandDiagnostic>,
+) -> Result<ExitStatus, String> {
+    run_with_envs_recorded(program, args, &[], Some(diagnostics))
+}
+
+fn run_with_envs_recorded(
+    program: &str,
+    args: &[&str],
+    envs: &[(&str, &str)],
+    diagnostics: Option<&mut Vec<CommandDiagnostic>>,
+) -> Result<ExitStatus, String> {
     let env_text = envs
         .iter()
         .map(|(name, value)| format!("{name}={value}"))
@@ -201,14 +223,22 @@ pub(crate) fn run_with_envs(
         format!("{env_text} ")
     };
     eprintln!("$ {env_prefix}{} {}", program, args.join(" "));
+    let started = Instant::now();
     let mut command = Command::new(program);
     command.args(args);
     for (name, value) in envs {
         command.env(name, value);
     }
-    let status = command
-        .status()
-        .map_err(|err| format!("failed to run {program}: {err}"))?;
+    let native = command.status();
+    if let Some(diagnostics) = diagnostics {
+        diagnostics.push(CommandDiagnostic::inherited(
+            program,
+            args,
+            &native,
+            started.elapsed(),
+        ));
+    }
+    let status = native.map_err(|err| format!("failed to run {program}: {err}"))?;
     if status.success() {
         Ok(status)
     } else {

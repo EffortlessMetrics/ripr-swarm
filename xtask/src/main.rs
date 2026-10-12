@@ -687,8 +687,50 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
     let mut ran = Vec::new();
     let mut skipped = Vec::new();
 
+    let mut child_diagnostics = Vec::new();
+    if let Err(error) = check_fast_gates(
+        &changed,
+        &categories,
+        &mut ran,
+        &mut skipped,
+        &mut child_diagnostics,
+    ) {
+        return check_fast_failure_report(&error, &child_diagnostics, |body| {
+            write_report("check-fast.md", body)
+        });
+    }
+
+    let body = format!(
+        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n\nRan:\n{}\n\nSkipped:\n{}\n",
+        ran.iter()
+            .map(|g| format!("- {g}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        if skipped.is_empty() {
+            "- none".to_string()
+        } else {
+            skipped
+                .iter()
+                .map(|g| format!("- {g}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    );
+    write_report(
+        "check-fast.md",
+        &(body + &check_fast_diagnostics(&child_diagnostics)),
+    )
+}
+
+fn check_fast_gates(
+    changed: &[String],
+    categories: &ChangedFileCategories,
+    ran: &mut Vec<&'static str>,
+    skipped: &mut Vec<&'static str>,
+    child_diagnostics: &mut Vec<run::CommandDiagnostic>,
+) -> Result<(), String> {
     // Always run: these are cheap and catch cross-cutting drift.
-    run("cargo", &["fmt", "--check"])?;
+    run::run_diagnostic("cargo", &["fmt", "--check"], child_diagnostics)?;
     ran.push("fmt --check");
     check_static_language()?;
     ran.push("check-static-language");
@@ -703,7 +745,7 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
         ran.push("check-allow-attributes");
         check_file_policy()?;
         ran.push("check-file-policy");
-        run(
+        run::run_diagnostic(
             "cargo",
             &[
                 "clippy",
@@ -713,6 +755,7 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
                 "-D",
                 "warnings",
             ],
+            child_diagnostics,
         )?;
         ran.push("clippy");
     } else {
@@ -764,23 +807,36 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
         changed.len()
     );
 
-    let body = format!(
-        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n\nRan:\n{}\n\nSkipped:\n{}\n",
-        ran.iter()
-            .map(|g| format!("- {g}"))
+    Ok(())
+}
+
+fn check_fast_diagnostics(diagnostics: &[run::CommandDiagnostic]) -> String {
+    format!(
+        "\n## Child command diagnostics\n\n{} Capture scope: fmt and workspace Clippy only; streams remain inherited, so Cargo progress is unavailable.\n\n{}\n",
+        run::COMMAND_DIAGNOSTIC_DISCLOSURE,
+        diagnostics
+            .iter()
+            .map(|row| format!("- {}", row.render()))
             .collect::<Vec<_>>()
             .join("\n"),
-        if skipped.is_empty() {
-            "- none".to_string()
-        } else {
-            skipped
-                .iter()
-                .map(|g| format!("- {g}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
+    )
+}
+
+fn check_fast_failure_report(
+    error: &str,
+    diagnostics: &[run::CommandDiagnostic],
+    mut write: impl FnMut(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let body = format!(
+        "# check-fast report\n\nStatus: failed\n\nOriginal failure:\n```text\n{error}\n```\n{}",
+        check_fast_diagnostics(diagnostics)
     );
-    write_report("check-fast.md", &body)
+    match write(&body) {
+        Ok(()) => Err(error.to_string()),
+        Err(report_error) => Err(format!(
+            "{error}; failed to publish current check-fast report: {report_error}"
+        )),
+    }
 }
 
 struct ChangedFileCategories {
@@ -874,6 +930,37 @@ fn check_fast_selector_failure_report(error: &str) -> String {
 #[cfg(test)]
 mod check_fast_selector_tests {
     use super::*;
+
+    #[test]
+    fn check_fast_children_keep_native_outcomes_and_failure_diagnostics() -> Result<(), String> {
+        let mut rows = Vec::new();
+        run::run_diagnostic("git", &["--version"], &mut rows)?;
+        let original = run::run_diagnostic("git", &["--definitely-not-a-git-option"], &mut rows)
+            .err()
+            .ok_or("invalid git passed")?;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].outcome, "pass");
+        assert_eq!(rows[1].outcome, "failed");
+        assert!(rows.iter().all(|row| row.status.is_some()
+            && row.elapsed_ms.is_some()
+            && row.cargo_progress.is_none()));
+        assert_eq!(rows[1].argv, ["--definitely-not-a-git-option"]);
+        let mut body = String::new();
+        let error = check_fast_failure_report(&original, &rows, |current| {
+            body = current.to_string();
+            Err("injected diagnostic I/O".to_string())
+        })
+        .err()
+        .ok_or("failed gate passed")?;
+        assert!(error.contains(&original) && error.contains("injected diagnostic I/O"));
+        assert!(
+            body.contains("Status: failed")
+                && body.contains("outcome=failed")
+                && !body.contains("Status: pass")
+        );
+        assert_eq!(rows.len(), 2);
+        Ok(())
+    }
 
     fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
         // Route through the centralized runner: process policy allows one
