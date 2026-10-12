@@ -50,8 +50,8 @@ fn tool(args: &[String]) -> Result<Value> {
     let out = std::thread::spawn(move || drain(stdout));
     let err = std::thread::spawn(move || drain(stderr));
     let status = child.wait().map_err(|e| e.to_string())?;
-    let (stdout, out_cut) = out.join().map_err(|_| "stdout drain failed")??;
-    let (stderr, err_cut) = err.join().map_err(|_| "stderr drain failed")??;
+    let (stdout, out_cut) = out.join().map_err(|_panic| "stdout drain failed")??;
+    let (stderr, err_cut) = err.join().map_err(|_panic| "stderr drain failed")??;
     Ok(
         json!({"exit": status.code(), "stdout": String::from_utf8_lossy(&stdout),
         "stderr": String::from_utf8_lossy(&stderr), "truncated": out_cut || err_cut,
@@ -443,7 +443,12 @@ mod tests {
         {
             let link = t.0.join("link");
             std::os::unix::fs::symlink(&dir, &link).map_err(|e| e.to_string())?;
-            assert!(capture(&link, &list, &t.0.join("second"), |a| runner(a, None)).is_err());
+            assert_eq!(
+                capture(&link, &list, &t.0.join("second"), |a| runner(a, None))
+                    .err()
+                    .as_deref(),
+                Some("diagnostic path contains a symlink")
+            );
         }
         Ok(())
     }
