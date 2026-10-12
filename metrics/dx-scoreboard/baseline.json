@@ -700,18 +700,18 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/rust-verdict-corpus/expected/report.json false_actionable_rate: 66/106",
+          "detail": "fixtures/rust-verdict-corpus false_actionable_rate: 45/185",
           "repo": null,
           "status": "below_target",
-          "value": 0.6226
+          "value": 0.2432
         }
       ],
-      "source": "file:fixtures/rust-verdict-corpus/expected/report.json#false_actionable_rate",
+      "source": "verdict-corpus:fixtures/rust-verdict-corpus#false_actionable_rate",
       "status": "below_target",
       "target": 0.05,
       "title": "Hand-checked edits the crate's tests fully catch that ripr still flags as a gap",
       "unit": "ratio",
-      "value": 0.6226
+      "value": 0.2432
     },
     {
       "baseline": {
@@ -726,18 +726,18 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/rust-verdict-corpus/expected/report.json abstention_rate: 58/203",
+          "detail": "fixtures/rust-verdict-corpus abstention_rate: 129/365",
           "repo": null,
           "status": "below_target",
-          "value": 0.2857
+          "value": 0.3534
         }
       ],
-      "source": "file:fixtures/rust-verdict-corpus/expected/report.json#abstention_rate",
+      "source": "verdict-corpus:fixtures/rust-verdict-corpus#abstention_rate",
       "status": "below_target",
       "target": 0.2,
       "title": "Hand-checked edits where ripr gives no specific verdict",
       "unit": "ratio",
-      "value": 0.2857
+      "value": 0.3534
     },
     {
       "baseline": {
@@ -752,13 +752,13 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/rust-verdict-corpus/expected/report.json false_silent_rate: 0/97",
+          "detail": "fixtures/rust-verdict-corpus false_silent_rate: 0/180",
           "repo": null,
           "status": "meets_target",
           "value": 0.0
         }
       ],
-      "source": "file:fixtures/rust-verdict-corpus/expected/report.json#false_silent_rate",
+      "source": "verdict-corpus:fixtures/rust-verdict-corpus#false_silent_rate",
       "status": "meets_target",
       "target": 0.0,
       "title": "Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less)",
@@ -778,18 +778,18 @@
       "runner_dependent": false,
       "samples": [
         {
-          "detail": "fixtures/rust-verdict-corpus/expected/report.json false_exposed_rate: 6/97",
+          "detail": "fixtures/rust-verdict-corpus false_exposed_rate: 5/180",
           "repo": null,
           "status": "below_target",
-          "value": 0.0619
+          "value": 0.0278
         }
       ],
-      "source": "file:fixtures/rust-verdict-corpus/expected/report.json#false_exposed_rate",
+      "source": "verdict-corpus:fixtures/rust-verdict-corpus#false_exposed_rate",
       "status": "below_target",
       "target": 0.0,
       "title": "Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator)",
       "unit": "ratio",
-      "value": 0.0619
+      "value": 0.0278
     },
     {
       "baseline": {

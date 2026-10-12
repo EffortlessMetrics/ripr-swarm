@@ -37,11 +37,11 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Trust | Commands that exit 0 when pointed at a missing repository | 0 commands | <= 0 commands | meets the bar | -2 commands since c6ccf9d (was 2 commands) |
 | Trust | Hostile-repository journeys (odd file names, symlink loops, shallow clones, submodules) where ripr neither finds nor refuses cleanly | 0 journeys | <= 0 journeys | meets the bar | no earlier measurement |
 | Trust | Findings or seams whose own evidence contradicts itself | 0 findings | <= 0 findings | meets the bar | -1 finding since c6ccf9d (was 1 finding) |
-| Trust | Wrong verdicts on hand-checked changes from real repositories | **5.9%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 365 cases: 14.0%) |
-| Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **62.3%** | <= 5.0% | below the bar | no earlier measurement |
-| Trust | Hand-checked edits where ripr gives no specific verdict | **28.6%** | <= 20.0% | below the bar | no earlier measurement |
+| Trust | Wrong verdicts on hand-checked changes from real repositories | **5.9%** | <= 5.0% | below the bar | first receipt (verdict corpus, upstream cases only; all 365 cases: 13.7%) |
+| Trust | Hand-checked edits the crate's tests fully catch that ripr still flags as a gap | **24.3%** | <= 5.0% | below the bar | no earlier measurement |
+| Trust | Hand-checked edits where ripr gives no specific verdict | **35.3%** | <= 20.0% | below the bar | no earlier measurement |
 | Trust | Hand-checked edits the crate's tests miss that ripr reports as fine (counterweight to abstaining less) | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
-| Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **6.2%** | <= 0.0% | below the bar | no earlier measurement |
+| Trust | Hand-checked edits the crate's tests miss that ripr credits as caught (false confidence; few credited cases so far, so read with its denominator) | **2.8%** | <= 0.0% | below the bar | no earlier measurement |
 | Trust | When ripr says a test discriminates, real mutants are caught | 100.0% | >= 95.0% | meets the bar | first receipt (mutation spot check, 14 of 15 seam-precise `strongly_gripped` mutants scored; 1 unscored) |
 | Trust | When ripr reports a gap, real mutants survive | **4.3%** | >= 80.0% | below the bar | first receipt (mutation spot check, 23 of 23 seam-precise `ungripped` mutants scored; 0 unscored) |
 | Trust | Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap | **14.5%** | <= 5.0% | below the bar | no earlier measurement |
@@ -86,8 +86,8 @@ Not measured, and why:
 
 Each line below is computed from the receipts above. Detail sections follow.
 
-- **Wrong gaps.** On changes from real repositories ripr reported a gap on 2 of 20 whose tests caught every listed mutant (10.0%): `regex-syntax-max-scalar-two-byte`, `strsim-sorensen-dice-equal`. On the authored cases, which were written to fill empty corpus cells, it did so on 44 of 165 (26.7%).
-- **Mostly unsure.** On real-repository changes it abstained on 25 of 34 cases (73.5%); on the authored cases, 103 of 331 (31.1%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
+- **Wrong gaps.** On changes from real repositories ripr reported a gap on 2 of 20 whose tests caught every listed mutant (10.0%): `regex-syntax-max-scalar-two-byte`, `strsim-sorensen-dice-equal`. On the authored cases, which were written to fill empty corpus cells, it did so on 43 of 165 (26.1%).
+- **Mostly unsure.** On real-repository changes it abstained on 25 of 34 cases (73.5%); on the authored cases, 104 of 331 (31.4%). Abstaining is the safe failure, but each abstention is a change ripr gave the developer no help on.
 - **Real mutants disagree with "no test would notice".** Of 23 mutants on seams ripr called ungripped, real mutation testing caught 22 that ripr said nothing would catch; ripr agreed on 1. The 12 recorded examples are all in: semver.
 - **Thin ground truth.** Only 37 of 1745 mutants (2.1%) enter an agreement rate. 174 join a ripr seam precisely, and 137 of those still do not enter a rate.
 - **Cold `ripr pilot` to first useful result.** Worst repository: ripr-swarm at 77.6 s; the bar is at most 30.0 s.
@@ -152,12 +152,12 @@ Only the upstream cases come from real repositories. The authored cases were wri
 
 | Rate | All cases | Upstream (real repositories) | Authored |
 | --- | --- | --- | --- |
-| False verdicts (all cases) | 51/365 (14.0%) | 2/34 (5.9%) | 49/331 (14.8%) |
-| False actionable (of discriminated) | 46/185 (24.9%) | 2/20 (10.0%) | 44/165 (26.7%) |
+| False verdicts (all cases) | 50/365 (13.7%) | 2/34 (5.9%) | 48/331 (14.5%) |
+| False actionable (of discriminated) | 45/185 (24.3%) | 2/20 (10.0%) | 43/165 (26.1%) |
 | False exposed (of not fully discriminated) | 5/180 (2.8%) | 0/14 (0.0%) | 5/166 (3.0%) |
 | False silent (of not fully discriminated) | 0/180 (0.0%) | 0/14 (0.0%) | 0/166 (0.0%) |
 | Ideal verdict | 186/365 (51.0%) | 7/34 (20.6%) | 179/331 (54.1%) |
-| Abstained (limited or silent where acceptable) | 128/365 (35.1%) | 25/34 (73.5%) | 103/331 (31.1%) |
+| Abstained (limited or silent where acceptable) | 129/365 (35.3%) | 25/34 (73.5%) | 104/331 (31.4%) |
 | Findings with a contradiction | 3/466 (0.6%) | not split by origin | not split by origin |
 
 | Case | Origin | Truth | Ideal | Observed | Static classes | Outcome | Contradictions |
@@ -315,7 +315,7 @@ Only the upstream cases come from real repositories. The authored cases were wri
 | `mined-doctest-only-read-u16` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
 | `mined-hex-table-tested-row` | authored | discriminated | credited | limited | static_unknown | abstained | none |
 | `mined-hex-table-unasserted-row` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
-| `mined-macro-closure-header-length` | authored | discriminated | credited | gap | weakly_exposed | false_actionable | none |
+| `mined-macro-closure-header-length` | authored | discriminated | credited | limited | weakly_exposed | abstained | none |
 | `mined-multi-line-struct-literal-field` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `mined-one-line-struct-literal-field` | authored | discriminated | credited | credited | exposed | ideal | none |
 | `mined-roundtrip-symmetric-mask` | authored | not_discriminated | gap | limited | static_unknown | abstained | none |
