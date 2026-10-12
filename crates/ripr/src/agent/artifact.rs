@@ -2418,6 +2418,8 @@ mod tests {
         Ok(())
     }
 
+    #[test]
+    fn repo_exposure_validation_rejects_foreign_repository_root() -> Result<(), String> {
         let root = temporary_git_root()?;
         let foreign = temporary_git_root()?;
         let result = (|| -> Result<(), String> {
