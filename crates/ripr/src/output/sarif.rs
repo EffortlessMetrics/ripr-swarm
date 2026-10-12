@@ -991,8 +991,8 @@ fn finding_class_help(class: &ExposureClass) -> (&'static str, &'static str) {
             "Static evidence only; no test was executed. Next step: add or sharpen an assertion that discriminates the changed behavior.",
         ),
         ExposureClass::NoStaticPath => (
-            "No static test path to the changed owner was found; the change appears to have no test coverage at all.",
-            "This is a reachability statement, not a runtime coverage measurement. Next step: add a focused test that exercises the changed behavior.",
+            "No static test path to the changed owner was found; static analysis could not trace any related test to this behavior.",
+            "This is a static reachability statement, not a runtime coverage measurement. Next step: add a focused test that exercises the changed behavior.",
         ),
         ExposureClass::InfectionUnknown => (
             "Tests may reach the change, but the input or fixture evidence is opaque, so static analysis cannot tell whether a wrong result would propagate.",
@@ -1020,7 +1020,7 @@ fn seam_class_help(class: &SeamGripClass) -> (&'static str, &'static str) {
             "Static evidence only; no test was executed. Next step: strengthen the nearest assertion so it observes the seam's sink.",
         ),
         SeamGripClass::Ungripped => (
-            "No related test grips this seam; it appears to have no test coverage at all.",
+            "No related test grips this seam; static analysis found no path from a test to this seam.",
             "Static reachability evidence, not a runtime coverage measurement. Next step: add a focused test for this seam.",
         ),
         SeamGripClass::ReachableUnrevealed => (
