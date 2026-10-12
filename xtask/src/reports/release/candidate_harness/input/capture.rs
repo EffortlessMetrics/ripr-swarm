@@ -54,18 +54,23 @@ pub(crate) fn capture_retained_executable_with(
     path: &Path,
     writer: impl FnOnce(&mut File, &[u8]) -> io::Result<()>,
 ) -> Result<CapturedFile, String> {
-    // Deliberate old-copy control, replaced by exclusive creation after the
-    // independently authored occupied-canary discriminator executes.
     let mut file = OpenOptions::new()
         .write(true)
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .open(path)
         .map_err(|error| format!("capture destination creation refused: {error}"))?;
-    let created =
-        Snapshot::capture(&file.metadata().map_err(|error| {
-            format!("capture ownership unavailable; partial retained: {error}")
-        })?)?;
+    let created = Snapshot::capture(&file.metadata().map_err(|error| {
+        format!(
+            "capture ownership unavailable; partial retained at {}: {error}",
+            path.display()
+        )
+    })?)
+    .map_err(|error| {
+        format!(
+            "capture ownership unavailable; partial retained at {}: {error}",
+            path.display()
+        )
+    })?;
     let result = (|| {
         writer(&mut file, bytes).map_err(|error| format!("write retained executable: {error}"))?;
         file.sync_all()

@@ -449,7 +449,7 @@ impl InstalledCandidate {
             "archive": self.archive.path, "executable": self.binary,
             "installed_executable": self.installed_binary,
             "compiler_artifact": self.producer.artifact,
-            "compiler_installed_bytes_equal": true,
+            "compiler_installed_bytes_equal_at_capture": true,
             "rustc_verbose_version": self.producer.toolchain.rustc_verbose_version,
             "cargo_verbose_version": self.producer.toolchain.cargo_verbose_version,
             "capture_mode": if self.captured.is_some() { "exclusive_frozen_reference" } else { "installed_output" },
