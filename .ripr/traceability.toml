@@ -5217,6 +5217,8 @@ id = "RIPR-SPEC-0057"
 name = "RIPR swarm repair loop"
 spec = "docs/specs/RIPR-SPEC-0057-ripr-swarm-repair-loop.md"
 tests = [
+  "xtask/src/tests/rust_corpus_projection.rs::genuine_workspace_projection_regeneration_retains_nonempty_fallback_and_corpus_authority",
+  "crates/ripr/src/domain/command_spec.rs::tests::broad_snapshot_recognition_preserves_permitted_command_word_spellings",
   "xtask::tests::ripr_swarm_plan_ranks_ready_packets_and_blocks_missing_context",
   "xtask::tests::ripr_swarm_plan_packet_corpus_matches_expected_states",
   "xtask::tests::actionable_gap_outcomes_fixture_corpus_matches_expected_states",
@@ -5296,6 +5298,8 @@ fixtures = [
   "fixtures/first_successful_pr/python-output-gap/expected/outcome/closed.md",
 ]
 code = [
+  "crates/ripr/src/domain/command_spec.rs",
+  "xtask/src/evidence_audit.rs",
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",
   "xtask/src/main.rs",
@@ -6273,6 +6277,11 @@ id = "RIPR-SPEC-0077"
 name = "LSP repair packet command"
 spec = "docs/specs/RIPR-SPEC-0077-lsp-repair-packet-command.md"
 tests = [
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_projection_rejects_unknown_missing_and_recommendation_provenance",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_projection_rejects_broad_snapshot_verify_with_either_recognized_source",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_projection_rejects_token_equivalent_broad_snapshot_at_full_admission",
+  "crates/ripr/src/lsp/gap_artifacts.rs::tests::actionable_projection_related_source_preserves_exclusion_and_payload_guards",
+  "xtask/src/tests/rust_corpus_projection.rs::genuine_workspace_projection_regeneration_retains_nonempty_fallback_and_corpus_authority",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_unlisted_gap_uses_current_ledger_despite_stale_queue",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_no_snapshot_and_no_file_returns_null",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_incomplete_gap_returns_sentinel",
@@ -6284,6 +6293,9 @@ tests = [
 ]
 fixtures = []
 code = [
+  "crates/ripr/src/domain/command_spec.rs",
+  "crates/ripr/src/lsp/gap_artifacts.rs",
+  "xtask/src/evidence_audit.rs",
   "crates/ripr/src/lsp.rs",
   "crates/ripr/src/lsp/capabilities.rs",
   "crates/ripr/src/lsp/backend.rs",
@@ -11193,6 +11205,11 @@ tests = [
   "xtask/src/identity_registry.rs::tests::unknown_field_has_no_disposition",
   "xtask/src/identity_registry.rs::tests::same_attempt_id_name_keeps_repair_and_feedback_dispositions_apart",
   "xtask/src/identity_registry.rs::tests::scanner_reports_unknown_and_zero_field_surfaces",
+  "xtask/src/identity_registry.rs::tests::rust_scanner_keeps_real_fields_after_quoted_char_and_byte_literals",
+  "xtask/src/identity_registry.rs::tests::rust_scanner_keeps_lifetimes_and_legacy_escaped_string_fields_distinct",
+  "xtask/src/identity_registry.rs::tests::rust_scanner_collects_command_id_after_the_actual_shared_tokenizer",
+  "xtask/src/identity_registry.rs::tests::rust_scanner_preserves_utf8_offsets_unknown_fields_and_zero_surface_refusal",
+  "xtask/src/identity_registry.rs::tests::rust_scanner_preserves_legacy_ordinary_raw_byte_string_and_quoted_comment_fields",
 ]
 fixtures = [
 ]
