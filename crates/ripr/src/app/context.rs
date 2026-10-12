@@ -102,6 +102,7 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
         ..input
     };
     let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
+    let root = input.root.clone();
     let output = if worktree {
         check_with_progress(
             input,
@@ -120,7 +121,13 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
             &output.root,
         )),
         None => Err(crate::core_error::CoreError::selector_miss(
-            super::explain::no_finding_matched(selector, &navigation.list_command()),
+            super::explain::no_finding_matched_fresh_run(
+                selector,
+                &navigation.list_command(),
+                &root,
+                worktree,
+                "ripr context --worktree --at",
+            ),
         )),
     }
 }

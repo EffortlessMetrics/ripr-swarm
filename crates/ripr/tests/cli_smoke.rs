@@ -22556,6 +22556,137 @@ fn check_worktree_drill_in_commands_reach_the_uncommitted_finding() -> Result<()
     Ok(())
 }
 
+/// #7328: a finding id copied from `ripr check --worktree` output dead-ends
+/// against the committed-history re-run — the miss message's own listing
+/// command analyzes committed content only and lists nothing. When the
+/// selected root has uncommitted tracked changes, the miss message must
+/// name the worktree retry; once the edits are committed (clean tree), the
+/// clause must stay silent.
+#[test]
+fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
+-> Result<(), String> {
+    let root = unique_temp_workspace("worktree-miss-hint");
+    std::fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+    run_git(&root, &["init"])?;
+    run_git(&root, &["config", "user.email", "test@test.com"])?;
+    run_git(&root, &["config", "user.name", "Test"])?;
+    let write_lib = |body: &str| -> Result<(), String> {
+        std::fs::write(root.join("src/lib.rs"), body)
+            .map_err(|err| format!("write lib.rs: {err}"))
+    };
+    write_lib("pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n")?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"worktree-miss-hint\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|err| format!("write Cargo.toml: {err}"))?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "v1"])?;
+    // v2 changes no probe-worthy boundary, so the committed-history
+    // listing the miss message suggests stays empty of the worktree
+    // finding — the dead-end premise of #7328.
+    write_lib("pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount > threshold\n}\n\npub fn always_ready() -> bool {\n    true\n}\n")?;
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "v2"])?;
+    // The uncommitted edit: only `check --worktree` can see this finding.
+    write_lib("pub fn over_threshold(amount: i32, threshold: i32) -> bool {\n    amount < threshold\n}\n\npub fn always_ready() -> bool {\n    true\n}\n")?;
+    let root_str = root.to_string_lossy().into_owned();
+
+    let listed = run_ripr(&[
+        "check",
+        "--root",
+        &root_str,
+        "--base",
+        "HEAD~1",
+        "--worktree",
+        "--json",
+    ]);
+    assert_success(&listed);
+    let finding_id = first_finding_id(&listed.stdout)?;
+
+    // Premise of the dead-end: the committed-history listing the miss
+    // message suggests names zero occurrences of the worktree finding.
+    let committed = run_ripr(&["check", "--root", &root_str, "--base", "HEAD~1", "--json"]);
+    assert_success(&committed);
+    if String::from_utf8_lossy(&committed.stdout).contains(&finding_id) {
+        return Err("the committed listing must not contain the worktree finding".to_string());
+    }
+
+    // The copied-id miss on a repository with uncommitted tracked edits:
+    // the message names the worktree retry and the worktree listing.
+    for (command, retry) in [
+        ("explain", format!("ripr explain --worktree {finding_id}")),
+        ("context", format!("ripr context --worktree --at {finding_id}")),
+    ] {
+        let mut args = vec![
+            command,
+            "--root",
+            root_str.as_str(),
+            "--base",
+            "HEAD~1",
+        ];
+        if command == "context" {
+            args.push("--at");
+        }
+        args.push(finding_id.as_str());
+        let miss = run_ripr(&args);
+        if miss.status.success() || !miss.stdout.is_empty() {
+            return Err(format!(
+                "{command} miss changed the CLI failure contract: {miss:?}"
+            ));
+        }
+        let stderr = String::from_utf8_lossy(&miss.stderr);
+        if !stderr.contains("not analyzed without `--worktree`")
+            || !stderr.contains("Uncommitted tracked edits exist")
+        {
+            return Err(format!(
+                "{command} miss must disclose the uncommitted-edits cause:\n{stderr}"
+            ));
+        }
+        if !stderr.contains(&retry) {
+            return Err(format!(
+                "{command} miss must name the working retry `{retry}`:\n{stderr}"
+            ));
+        }
+        if !stderr.contains("ripr check --worktree --json") {
+            return Err(format!(
+                "{command} miss must name the worktree listing:\n{stderr}"
+            ));
+        }
+    }
+
+    // Control: with the edits committed the tree is clean, and the clause
+    // must stay silent — the plain committed-history advice is sound there.
+    run_git(&root, &["add", "."])?;
+    run_git(&root, &["commit", "-m", "v3"])?;
+    for (command, retry) in [
+        ("explain", format!("ripr explain --worktree {finding_id}")),
+        ("context", format!("ripr context --worktree --at {finding_id}")),
+    ] {
+        let mut args = vec![
+            command,
+            "--root",
+            root_str.as_str(),
+            "--base",
+            "HEAD~1",
+        ];
+        if command == "context" {
+            args.push("--at");
+        }
+        args.push(finding_id.as_str());
+        let miss = run_ripr(&args);
+        let stderr = String::from_utf8_lossy(&miss.stderr);
+        if stderr.contains("Uncommitted tracked edits exist") || stderr.contains(&retry) {
+            return Err(format!(
+                "{command} miss on a clean tree must not claim uncommitted edits:\n{stderr}"
+            ));
+        }
+    }
+
+    ignore_remove_dir_all(&root);
+    Ok(())
+}
+
 /// RIPR-SPEC-0112: `--diff` analyzes the supplied patch, not committed
 /// history, so an uncommitted tracked edit in the same checkout was not
 /// "excluded" from it and must not be disclosed as unanalyzed. The fixture is

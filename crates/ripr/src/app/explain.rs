@@ -67,6 +67,7 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
     sink: Option<&dyn AnalysisProgressSink>,
 ) -> Result<String, String> {
     let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
+    let root = input.root.clone();
     let output = if worktree {
         check_with_progress(
             input,
@@ -84,7 +85,13 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
             &navigation.context_command(selector),
             &output.root,
         )),
-        None => Err(no_finding_matched(selector, &navigation.list_command())),
+        None => Err(no_finding_matched_fresh_run(
+            selector,
+            &navigation.list_command(),
+            &root,
+            worktree,
+            "ripr explain --worktree",
+        )),
     }
 }
 
@@ -101,6 +108,36 @@ pub(crate) fn no_finding_matched(selector: &str, list_command: &str) -> String {
     format!(
         "no finding matched {selector:?};{syntax_hint} run `{list_command}` to list available finding ids"
     )
+}
+
+/// The miss message for a fresh run, with the uncommitted-edits clause when
+/// the selector can only have come from a `--worktree` listing (#7328): a
+/// finding id copied from `ripr check --worktree` output dead-ends against
+/// the committed-history re-run — and the suggested listing command analyzes
+/// committed content only, so the printed advice demonstrably lists nothing.
+/// The clause fires only when the run was not `--worktree`, the selector is
+/// id- or location-shaped, and the selected root actually has staged or
+/// unstaged tracked changes; a clean repository keeps the unchanged
+/// message. `retry_command` is the working spell for this command
+/// (`ripr explain --worktree` / `ripr context --worktree --at`).
+pub(crate) fn no_finding_matched_fresh_run(
+    selector: &str,
+    list_command: &str,
+    root: &Path,
+    worktree: bool,
+    retry_command: &str,
+) -> String {
+    let mut message = no_finding_matched(selector, list_command);
+    if worktree || !selector.contains(':') {
+        return message;
+    }
+    if !crate::analysis::working_tree_has_tracked_changes(root) {
+        return message;
+    }
+    message.push_str(&format!(
+        ". Uncommitted tracked edits exist in this repository and are not analyzed without `--worktree`; if the finding came from uncommitted edits, retry `{retry_command} {selector}` (or list worktree finding ids with `ripr check --worktree --json`)"
+    ));
+    message
 }
 
 /// Like [`explain_finding_with_config`] but loads the finding set from a
