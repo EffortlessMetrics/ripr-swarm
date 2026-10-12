@@ -141,9 +141,13 @@ ladder and in its related-test row, when all of these hold:
     is a parameter, a module class, a builtin class or one of `if`,
     `else`, `return`, `throw`, `new`, `instanceof`, `typeof`, `true`,
     `false`, `null`, `undefined`, with no member access, bracket, arrow,
-    local declaration or call through a parameter.
+    assignment, local declaration or call through a parameter.
 
-  Its text has no backslash, template literal or `/` outside a comment.
+  An import must end at its module string, and a return type holds only
+  names, `|`, `&`, `<`, `>` and `,`. The text has no backslash, template
+  literal or `/` outside a comment, and the plain lexer that reads it must
+  agree with the shared masker the other scans use (the masker reads a
+  quote after a word as JSX text, which could hide code from them).
   A top-level statement or variable, a type alias, an interface, a
   decorator, a method, `this` or a field fails. The earlier token checks
   (no `hasInstance`, `setPrototypeOf` or `__proto__` text, no

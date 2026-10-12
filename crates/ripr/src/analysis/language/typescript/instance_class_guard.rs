@@ -440,23 +440,26 @@ fn plain_module_code(source: &str) -> Option<String> {
                 }
             }
             '/' if chars.peek() == Some(&'/') => {
+                out.push(' ');
                 for next in chars.by_ref() {
                     if next == '\n' {
                         out.push('\n');
                         break;
                     }
+                    out.push(' ');
                 }
             }
             '/' if chars.peek() == Some(&'*') => {
                 chars.next();
+                out.push_str("  ");
                 let mut star = false;
                 loop {
                     let next = chars.next()?;
+                    out.push(if next == '\n' { '\n' } else { ' ' });
                     if star && next == '/' {
                         break;
                     }
                     star = next == '*';
-                    out.push(if next == '\n' { '\n' } else { ' ' });
                 }
             }
             '/' => return None,
@@ -531,10 +534,23 @@ const PLAIN_BODY_WORDS: [&str; 11] = [
 
 /// `true` when `body` only tests its parameters and returns or throws new
 /// instances: every word is a parameter, a word above or a class name;
-/// there is no member access (`.`), bracket, arrow, local declaration or
-/// call other than `new C(...)` and `if (...)`.
+/// there is no member access (`.`), bracket, arrow, assignment, local
+/// declaration or call other than `new C(...)` and `if (...)`.
 fn plain_function_body(body: &str, params: &[&str], classes: &[&str]) -> bool {
     if body.contains(['.', '[', ']', '#', '@', '^', '~']) || body.contains("=>") {
+        return false;
+    }
+    // Comparisons only: an `=` must be part of `==`, `!=`, `<=` or `>=`,
+    // never an assignment (`x = y`, `x &&= y`, `x <<= y`).
+    let bytes = body.as_bytes();
+    let assigns = body.contains("<<=")
+        || body.contains(">>=")
+        || bytes.iter().enumerate().any(|(index, &b)| {
+            b == b'='
+                && !(index > 0 && b"=!<>".contains(&bytes[index - 1]))
+                && bytes.get(index + 1) != Some(&b'=')
+        });
+    if assigns {
         return false;
     }
     let mut previous_word = "";
@@ -624,6 +640,13 @@ fn module_is_plain(source: &str) -> bool {
     let Some(code) = plain_module_code(source) else {
         return false;
     };
+    // Every other scan reads the shared masker's output. Where the two
+    // lexers disagree on what is code (the masker reads a quote after a
+    // word as JSX text), text this grammar admits could be hidden from
+    // those scans, so the module is not read.
+    if code != ts_mask_literals_and_comments(source) {
+        return false;
+    }
     let mut classes: Vec<&str> = Vec::new();
     let mut functions: Vec<(Vec<&str>, &str)> = Vec::new();
     let mut rest = code.as_str();
@@ -635,10 +658,22 @@ fn module_is_plain(source: &str) -> bool {
             return false;
         };
         if word == "import" {
+            // `import ... from "x";` or `import "x";`: the statement must
+            // end at its module string, so it cannot swallow a statement
+            // written without a semicolon.
             let Some(end) = after.find(';') else {
                 return false;
             };
-            if after[..end].contains('(') {
+            let statement = &after[..end];
+            let module = statement.trim_end();
+            let ends_at_module = module.ends_with(['"', '\''])
+                && module[..module.len() - 1]
+                    .rfind(['"', '\''])
+                    .is_some_and(|open| {
+                        let head = module[..open].trim_end();
+                        head.is_empty() || head.ends_with("from")
+                    });
+            if statement.contains(['(', ';']) || !ends_at_module {
                 return false;
             }
             rest = &after[end + 1..];
@@ -687,7 +722,13 @@ fn module_is_plain(source: &str) -> bool {
                         let Some(open) = annotation.find('{') else {
                             return false;
                         };
-                        if annotation[..open].contains(['(', '[', '.']) {
+                        // A type name, union, intersection or generic only:
+                        // a scan to the next `{` must not cross a statement.
+                        if !annotation[..open].chars().all(|c| {
+                            c.is_alphanumeric()
+                                || c.is_whitespace()
+                                || matches!(c, '_' | '$' | '|' | '&' | '<' | '>' | ',')
+                        }) {
                             return false;
                         }
                         &annotation[open..]

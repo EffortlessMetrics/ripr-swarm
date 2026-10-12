@@ -28,6 +28,13 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
     assert!(ts_owner_branches_split_class(
         OWNER, &reads, CHANGED, "NotFound"
     ));
+    // Comments and an import keep the module plain.
+    let commented = format!(
+        "import {{ audit }} from \"./audit\";\n// Errors for the HTTP layer.\n/* 404 and 403 */\n{ERRORS}"
+    );
+    assert!(ts_owner_branches_split_class(
+        OWNER, &commented, CHANGED, "NotFound"
+    ));
     // A plain constructor that only calls `super` is fine.
     let built = ERRORS.replace(
         "class NotFound extends Error {}",
@@ -299,6 +306,36 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
             "a function body uses a local",
             OWNER.to_string(),
             format!("{ERRORS}export function install(a: number) {{\n  let b = a;\n  return b;\n}}\n"),
+            "NotFound",
+        ),
+        (
+            "the two lexers disagree on a quote after a word",
+            OWNER.replace(
+                "  if (status === 404) {",
+                "  if (status) '='; Forbidden = NotFound; ''\n  if (status === 404) {",
+            ),
+            ERRORS.replace(
+                "  if (status === 404) {",
+                "  if (status) '='; Forbidden = NotFound; ''\n  if (status === 404) {",
+            ),
+            "NotFound",
+        ),
+        (
+            "a parameter shadows the other class and is constructed",
+            OWNER.replace("(status: number)", "(status: number, Forbidden: any)"),
+            ERRORS.replace("(status: number)", "(status: number, Forbidden: any)"),
+            "NotFound",
+        ),
+        (
+            "a return type scan crosses a statement",
+            OWNER.to_string(),
+            format!("export function g(a: number): number;\nForbidden &&= NotFound;\nexport class X {{}}\n{ERRORS}"),
+            "NotFound",
+        ),
+        (
+            "an import without a semicolon swallows a statement",
+            OWNER.to_string(),
+            format!("import {{ a }} from \"./a\"\nForbidden &&= NotFound;\n{ERRORS}"),
             "NotFound",
         ),
         (
