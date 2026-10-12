@@ -761,8 +761,26 @@ fn canonical_root(root: &Path) -> Result<PathBuf, String> {
     })
 }
 
-fn display_root(root: &Path) -> String {
-    crate::agent::loop_commands::root_path_display(root)
+/// Render the artifact repository root for the portable document (#7370).
+/// `canonical_root` produces the verbatim `\\?\` device spelling on Windows,
+/// and `repository.root` was the one machine-consumed field embedding it, so
+/// cross-artifact joins, prefix checks, dashboard logs, and a human opening
+/// the JSON all met a spelling no other ripr surface uses. The field now
+/// renders through the shared human path owner: the plain drive-letter form
+/// with stable separators. No consumer depends on the prefixed form — `agent
+/// verify` re-canonicalizes the declared root, and the repo-seams artifact
+/// check compares against this same renderer — so identity moves with the
+/// renderer instead of breaking. Other verbatim forms (`\\?\UNC\..`,
+/// `\\?\Volume{..}`) render exactly as given, like every other
+/// `human_path` consumer.
+pub(crate) fn display_root(root: &Path) -> String {
+    display_root_for_host(root, cfg!(windows))
+}
+
+/// [`display_root`] with the host made explicit so both answers are testable
+/// anywhere (#4378 pattern).
+fn display_root_for_host(root: &Path, windows: bool) -> String {
+    crate::output::path::human_path_text(&root.to_string_lossy(), windows)
 }
 
 pub(crate) fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
@@ -3353,6 +3371,36 @@ mod tests {
         result?;
         cleanup?;
         Ok(())
+    }
+
+    /// #7370: `artifact.repository.root` embedded the verbatim `\\?\` device
+    /// spelling that `Path::canonicalize` produces on Windows — the one
+    /// machine-consumed field using a spelling no other ripr surface uses.
+    /// The rendered root strips the prefix (plain drive-letter form, stable
+    /// separators) on Windows and keeps the native spelling elsewhere;
+    /// `agent verify` re-canonicalizes the declared root and the repo-seams
+    /// check compares against this same renderer, so no consumer depends on
+    /// the prefixed form.
+    #[test]
+    fn artifact_repository_root_renders_without_windows_verbatim_prefix() {
+        // `check-local-context` forbids drive-letter path literals, so the
+        // Windows shapes are assembled from parts.
+        let drive = "F:";
+        let verbatim = format!(r"\\?\{drive}\tmp\ripr-audit-scratch");
+        let root = Path::new(&verbatim);
+        let windows = display_root_for_host(root, true);
+        assert_eq!(windows, format!("{drive}/tmp/ripr-audit-scratch"));
+        assert!(!windows.contains("/?/"), "{windows}");
+        assert!(!windows.contains('\\'), "{windows}");
+        let unix = display_root_for_host(root, false);
+        assert_eq!(unix, verbatim);
+        // A plain spelling is already portable and passes through unchanged
+        // apart from separator stabilization.
+        let plain = format!(r"{drive}\tmp\ripr-audit-scratch");
+        assert_eq!(
+            display_root_for_host(Path::new(&plain), true),
+            format!("{drive}/tmp/ripr-audit-scratch")
+        );
     }
 
     /// (#2823 test 6, removal-experiment oracle) Reintroducing the absolute

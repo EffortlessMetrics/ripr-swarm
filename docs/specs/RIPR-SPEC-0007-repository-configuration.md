@@ -205,6 +205,9 @@ Given the same workspace,
 when ripr doctor runs with --profile source-build,
 then the cargo and rustc checks fail, the report status is fail, and doctor
 exits 2;
+and a missing cargo or rustc names an install route on its own failing line;
+and the run does not print the analysis-profile start-here packet, recovery
+states, proof-rail note, or "Recommended first command: ripr check";
 and enabled language runtimes are reported but do not decide that profile's
 status.
 
@@ -243,6 +246,8 @@ Current tests:
 - `crates/ripr/tests/cli_smoke.rs::doctor_reports_malformed_config_error`
 - `crates/ripr/src/output/doctor.rs::tests::old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build`
 - `crates/ripr/src/output/doctor.rs::tests::rust_root_with_missing_cargo_discloses_verification_limitation`
+- `crates/ripr/src/output/doctor.rs::tests::source_build_missing_toolchain_names_install_fix_and_keeps_other_failures`
+- `crates/ripr/src/output/doctor.rs::tests::doctor_wait_failure_stays_off_the_source_build_install_route`
 - `crates/ripr/src/output/doctor.rs::tests::doctor_cargo_probe_uses_selected_root`
 - `crates/ripr/src/output/doctor.rs::tests::a_missing_root_skips_root_bound_probes_instead_of_blaming_the_tools`
 - `crates/ripr/src/output/doctor.rs::tests::a_file_root_is_not_reported_as_missing`
@@ -283,6 +288,10 @@ Current implementation:
   detection consume that presence rule instead of `Path::is_file`.
 - `crates/ripr/src/cli/commands.rs` loads repo config for `check`, `explain`,
   and `context`, and reports config status through `doctor`.
+- `crates/ripr/src/output/doctor.rs` projects missing cargo/rustc as analysis
+  advisories or source-build failures with an install route.
+- `crates/ripr/src/cli/commands/doctor.rs` prints start-here / first-command
+  guidance for the analysis profile only.
 - `crates/ripr/src/app.rs` provides config-aware orchestration for CLI and LSP
   adapters.
 - `crates/ripr/src/lsp/config.rs` merges repo config with LSP initialization

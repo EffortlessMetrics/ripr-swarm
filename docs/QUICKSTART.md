@@ -28,7 +28,8 @@ this guide.
 Rust 1.95 is needed to build ripr, not by the repository you analyze: ripr's
 static analysis does not run your compiler, so a repository pinned to an older
 toolchain can still be analyzed. Your own tests still run with that repository's toolchain.
-`ripr doctor --profile source-build` checks what building ripr needs.
+`ripr doctor --profile source-build` checks what building ripr needs and names
+an install route if cargo or rustc is missing. It does not recommend `ripr check`.
 
 The latest GitHub release is [0.10.0](https://github.com/EffortlessMetrics/ripr/releases/tag/v0.10.0).
 This guide describes **0.11 development**, including `--worktree`, bounded

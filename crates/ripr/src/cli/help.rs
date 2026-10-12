@@ -672,6 +672,8 @@ mod tests {
     #[test]
     fn gate_family_help_states_file_backed_output_discipline() {
         assert!(GATE_HELP.contains("stdout contains human `Wrote ...` status lines"));
+        assert!(GATE_HELP.contains("after a completed"));
+        assert!(GATE_HELP.contains("`config_error` reports stay quiet"));
         assert!(BASELINE_HELP.contains("ripr baseline create --from PATH"));
         assert!(BASELINE_HELP.contains("--dry-run"));
         assert!(BASELINE_HELP.contains("it prints the candidate JSON"));
@@ -837,7 +839,15 @@ mod tests {
         assert!(DOCTOR_HELP.contains("Usage: ripr doctor [--root PATH]"));
         assert!(DOCTOR_HELP.contains("--json"));
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
-        assert!(DOCTOR_HELP.contains("Start-here next step:"));
+        assert!(DOCTOR_HELP.contains("https://rustup.rs"));
+        assert!(DOCTOR_HELP.contains("Printed for every profile."));
+        assert!(
+            DOCTOR_HELP
+                .contains("Recommended first command (analysis profile; not printed for --profile")
+        );
+        assert!(DOCTOR_HELP.contains(
+            "Start-here next step (analysis profile; not printed for --profile source-build):"
+        ));
         // The compose commands take whatever base the caller has; this screen
         // no longer asserts `origin/main`, which does not exist in a repository
         // whose default branch is not `main`.

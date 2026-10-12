@@ -311,7 +311,9 @@ capability without failing installed-binary analysis. An additive
 `.github/workflows/ripr.yml` installs ripr without a version (the 0.10
 template) or pins a version other than the running one; its `evidence` names
 the refresh command. The source-build profile
-fails on missing tools or rustc below RIPR's build MSRV, and reports its
+fails on missing tools or rustc below RIPR's build MSRV. Missing cargo or rustc
+evidence names an install route (rustup or the OS package manager); a rustc
+below the build minimum still names `rustup update stable`. It reports its
 language `runtime_probes` with `required: false` because a language runtime is
 an analysis capability, not a build prerequisite. It does not establish
 whether project verification will succeed; that requires running the selected
@@ -9545,9 +9547,10 @@ waiver, baseline, calibration, blocking reason, debt movement counts, and
 artifact paths before appending the full Markdown decision report.
 `visible-only` remains advisory; blocking modes are opt-in.
 
-The CLI also prints a stderr warning when `ripr gate evaluate` omits `--mode`
-and stderr is non-interactive: the default is `visible-only`, which records
-advisory evidence and never blocks. This warning is not part of the JSON or
+The CLI also prints a stderr warning when a completed `ripr gate evaluate`
+omits `--mode` and stderr is non-interactive: the default is `visible-only`,
+which records advisory evidence and never blocks. Missing-input usage errors
+and `config_error` reports stay quiet. This warning is not part of the JSON or
 Markdown report contract; an explicit `--mode visible-only` suppresses it.
 
 See [Calibrated gate policy](CALIBRATED_GATE_POLICY.md) for the operating

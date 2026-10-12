@@ -880,6 +880,8 @@ tests = [
   "crates/ripr/src/output/doctor.rs::tests::doctor_tool_check_times_out_a_hanging_tool_100_times",
   "crates/ripr/src/output/doctor.rs::tests::old_workspace_compiler_is_advisory_for_analysis_and_fails_source_build",
   "crates/ripr/src/output/doctor.rs::tests::rust_root_with_missing_cargo_discloses_verification_limitation",
+  "crates/ripr/src/output/doctor.rs::tests::source_build_missing_toolchain_names_install_fix_and_keeps_other_failures",
+  "crates/ripr/src/output/doctor.rs::tests::doctor_wait_failure_stays_off_the_source_build_install_route",
   "crates/ripr/src/output/doctor.rs::tests::doctor_cargo_probe_uses_selected_root",
   "crates/ripr/src/output/doctor.rs::tests::doctor_cargo_toml_check_skips_for_an_unusable_root",
   "crates/ripr/src/output/doctor.rs::tests::a_missing_root_skips_root_bound_probes_instead_of_blaming_the_tools",
@@ -1699,6 +1701,10 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::gate_rejects_bad_surface_and_unknown_args",
   "crates/ripr/src/cli/commands.rs::tests::gate_command_writes_visible_only_reports",
   "crates/ripr/src/cli/commands.rs::tests::gate_command_writes_blocked_report_before_error",
+  "crates/ripr/src/cli/commands/gate.rs::tests::default_visible_only_warning_requires_omitted_mode_and_non_interactive_use",
+  "crates/ripr/tests/gate_visible_only_warning.rs::gate_evaluate_missing_input_does_not_emit_visible_only_warning",
+  "crates/ripr/tests/gate_visible_only_warning.rs::gate_evaluate_config_error_does_not_emit_visible_only_warning",
+  "crates/ripr/tests/gate_visible_only_warning.rs::gate_evaluate_completed_visible_only_run_still_emits_default_mode_warning",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_is_advisory",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_uploads_reports_and_makes_sarif_optional",
   "crates/ripr/src/cli/commands.rs::tests::init_generated_github_workflow_matches_smoke_fixture",
@@ -13583,6 +13589,7 @@ tests = [
   "xtask/src/work_portfolio.rs::tests::work_portfolio_ranking_is_explicit_ordered_factors_without_hidden_score",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_explain_view_matches_snapshot_and_fails_closed",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_markdown_derives_from_same_dto_without_strengthening",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_markdown_renders_lists_as_plain_markdown_not_debug",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_committed_corpus_provenance_and_scenarios_hold",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_argument_errors_fail_closed",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_provenance_rejects_path_traversal",
@@ -13965,6 +13972,32 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0249"
+name = "TypeScript instance class pin"
+spec = "docs/specs/RIPR-SPEC-0249-typescript-instance-class-pin.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::owner_branches_split_class_only_when_the_module_settles_them",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_pin_exposes_a_predicate_whose_paths_return_different_classes",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_pin_stays_weak_without_a_settled_class_split",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_pin_does_not_credit_a_returned_message_change",
+  "crates/ripr/src/analysis/language/typescript/tests/instance_class_tests.rs::instance_facts_read_predicate_changes_only",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/classifier.rs",
+  "crates/ripr/src/analysis/language/typescript/instance_class_guard.rs",
+  "crates/ripr/src/analysis/language/typescript/oracle.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0249-typescript-instance-class-pin.md",
+]
+metrics = [
+  "typescript_instance_pin_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0248"
 name = "TypeScript dropped additive term"
 spec = "docs/specs/RIPR-SPEC-0248-typescript-dropped-additive-term.md"
@@ -13976,6 +14009,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests/dropped_term_tests.rs::dropped_term_leaves_an_error_seam_alone",
 ]
 fixtures = [
+  "fixtures/ts_dropped_term_zero_input",
   "fixtures/typescript-verdict-corpus",
 ]
 code = [

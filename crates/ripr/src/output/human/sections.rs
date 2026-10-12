@@ -21,7 +21,7 @@ use crate::output::typescript_preview_card::{
 };
 use std::path::Path;
 
-use super::evidence_lines::{evidence_path_lines, weakness_lines};
+use super::evidence_lines::{JsonPointerWording, evidence_path_lines, weakness_lines};
 use super::{is_wrappable_advisory_prose, wrap_human_prose};
 
 pub(crate) fn render_finding_digest_with_config(
@@ -176,7 +176,9 @@ pub(crate) fn render_finding_digest_with_config(
             out.push('\n');
         }
     }
-    let evidence = evidence_path_lines(finding);
+    // The digest prints only the first two evidence lines, so either wording
+    // renders the same text here; the check flag keeps the historical form.
+    let evidence = evidence_path_lines(finding, JsonPointerWording::CheckFlag);
     if !evidence.is_empty() {
         // #4324: evidence ordering is pipeline-ordered (reach, infection,
         // propagation, observation, discriminator), so the positional 2-line
@@ -339,6 +341,7 @@ pub(crate) fn render_finding_with_config(
     finding: &Finding,
     config: &RiprConfig,
     root: &Path,
+    wording: JsonPointerWording,
 ) -> String {
     let mut out = String::new();
     let severity = config.severity().for_exposure(&finding.class).as_str();
@@ -420,7 +423,7 @@ pub(crate) fn render_finding_with_config(
     ));
 
     out.push_str("\nEvidence\n");
-    for line in evidence_path_lines(finding) {
+    for line in evidence_path_lines(finding, wording) {
         if is_wrappable_advisory_prose(&line) {
             out.push_str(&wrap_human_prose(&line, "  - ", "    "));
         } else {
