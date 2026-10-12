@@ -1,0 +1,47 @@
+{
+  "case_id": "py-spec0233-ex34-exc-length",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex34-exc-length.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 170
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_message",
+  "test_shape": "pytest_raises_as_exc_value_length",
+  "hard_case": "an `==` on exc.value text that reads only its length; 'empty' and 'blank' have equal length",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "raise KeyError(\"blank\")",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the KeyError message is 'blank' instead of 'empty'"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 34, length form: pytest.raises(KeyError) as exc, then `assert len(str(exc.value)) == 7`. The edit to 'blank' passes because both messages render as seven characters, so the length read does not pin the message. The spec's verdict is weakly_exposed, so a gap is ideal.",
+  "labeling_observation": {
+    "ripr_commit": "5a4976b18",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#34"
+  ]
+}
