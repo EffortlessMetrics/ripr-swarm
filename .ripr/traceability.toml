@@ -14417,6 +14417,7 @@ spec = "docs/specs/RIPR-SPEC-0252-current-cache-export.md"
 tests = [
   "crates/ripr/src/cli/commands/cache.rs::tests::export_current_snapshot_through_command_preserves_source_and_bounds_history",
   "crates/ripr/src/cli/commands/cache.rs::tests::export_parser_requires_one_destination_and_keeps_its_flags_separate",
+  "crates/ripr/src/cli/commands/cache.rs::tests::run_help_and_subcommand_routing_are_non_destructive",
   "crates/ripr/src/cli/commands/cache.rs::tests::export_preserves_relative_analysis_root_identity",
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_keeps_current_manifest_references_and_file_facts_without_history",
   "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_refuses_missing_corrupt_wrong_key_and_escaping_shards",

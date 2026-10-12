@@ -1872,7 +1872,7 @@ mod tests {
         run(&["clear".to_string(), "--help".to_string()])?;
         if run(&[])
             .err()
-            .is_none_or(|error| !error.contains("status` or `clear"))
+            .is_none_or(|error| !error.contains("`status`, `export` or `clear`"))
         {
             return Err("missing cache subcommand did not fail closed".to_string());
         }
