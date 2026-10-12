@@ -8421,6 +8421,12 @@ tests = [
   "xtask/src/reports/release/candidate_harness/input.rs::tests::retained_custody_refuses_same_byte_symlink_replacements",
   "xtask/src/reports/release/candidate_harness/archive.rs::tests::extracted_install_inputs_refuse_growth_at_each_retained_length",
   "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_package_install_custody_rejects_ignored_foreign_and_changed_bytes",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_witness_consumes_frozen_reference_after_mutable_outputs_change",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_capture_refuses_occupied_regular_and_link_canaries",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_partial_capture_cleans_only_its_observed_owned_object",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_competing_capture_creators_leave_one_complete_witness",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_consumer_retains_failed_capture_root_and_cleans_success",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_invocation_custody_pins_selected_command_against_overrides",
   "crates/ripr/src/agent/artifact.rs::tests::content_placeholder_is_fixed_width",
   "crates/ripr/src/agent/artifact.rs::tests::content_commitment_rejects_duplicate_fields",
   "crates/ripr/src/agent/artifact.rs::tests::content_commitment_rejects_non_hex_digest",
@@ -8490,7 +8496,9 @@ fixtures = [
 ]
 code = [
   "xtask/src/reports/release/candidate_harness/archive.rs",
+  "xtask/src/reports/release/candidate_harness/archive/producer.rs",
   "xtask/src/reports/release/candidate_harness/input.rs",
+  "xtask/src/reports/release/candidate_harness/input/capture.rs",
   "crates/ripr/src/agent/artifact.rs",
   "crates/ripr/src/analysis/seam_cache.rs",
   "crates/ripr/src/config.rs",
