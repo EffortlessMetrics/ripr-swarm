@@ -22613,10 +22613,19 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
     }
 
     // The copied-id miss on a repository with uncommitted tracked edits:
-    // the message names the worktree retry and the worktree listing.
+    // the message names the scope-bound worktree retry (same root and base
+    // as the failed run, #7328 review) and the worktree listing.
     for (command, retry) in [
-        ("explain", format!("ripr explain --worktree {finding_id}")),
-        ("context", format!("ripr context --worktree --at {finding_id}")),
+        (
+            "explain",
+            format!("ripr explain --root {root_str} --base HEAD~1 --worktree {finding_id}"),
+        ),
+        (
+            "context",
+            format!(
+                "ripr context --root {root_str} --base HEAD~1 --worktree --at {finding_id}"
+            ),
+        ),
     ] {
         let mut args = vec![
             command,
@@ -22660,8 +22669,16 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
     run_git(&root, &["add", "."])?;
     run_git(&root, &["commit", "-m", "v3"])?;
     for (command, retry) in [
-        ("explain", format!("ripr explain --worktree {finding_id}")),
-        ("context", format!("ripr context --worktree --at {finding_id}")),
+        (
+            "explain",
+            format!("ripr explain --root {root_str} --base HEAD~1 --worktree {finding_id}"),
+        ),
+        (
+            "context",
+            format!(
+                "ripr context --root {root_str} --base HEAD~1 --worktree --at {finding_id}"
+            ),
+        ),
     ] {
         let mut args = vec![
             command,
@@ -22679,6 +22696,47 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
         if stderr.contains("Uncommitted tracked edits exist") || stderr.contains(&retry) {
             return Err(format!(
                 "{command} miss on a clean tree must not claim uncommitted edits:\n{stderr}"
+            ));
+        }
+    }
+
+    // Control: a `--diff` run analyzes the supplied patch, not committed
+    // history — with a dirty checkout the uncommitted edits were never the
+    // analyzed input, so the clause must stay silent for a supplied scope
+    // even though the same selector would trigger it on a `--base` run
+    // (#7328 review).
+    let diff_text = String::from_utf8_lossy(
+        &std::process::Command::new("git")
+            .args(["diff", "HEAD~1", "HEAD"])
+            .current_dir(&root)
+            .output()
+            .map_err(|err| format!("git diff: {err}"))?
+            .stdout,
+    )
+    .into_owned();
+    let diff_path = root.join("supplied-scope.diff");
+    std::fs::write(&diff_path, diff_text)
+        .map_err(|err| format!("write supplied diff: {err}"))?;
+    let diff_str = diff_path.to_string_lossy().into_owned();
+    std::fs::write(root.join("src/lib.rs"), "pub fn dirty_marker() {}\n")
+        .map_err(|err| format!("dirty the tracked tree: {err}"))?;
+    for command in ["explain", "context"] {
+        let mut args = vec![
+            command,
+            "--root",
+            root_str.as_str(),
+            "--diff",
+            diff_str.as_str(),
+        ];
+        if command == "context" {
+            args.push("--at");
+        }
+        args.push("probe:src/lib.rs:error_path:deadbeef");
+        let miss = run_ripr(&args);
+        let stderr = String::from_utf8_lossy(&miss.stderr);
+        if stderr.contains("Uncommitted tracked edits exist") {
+            return Err(format!(
+                "{command} miss on a supplied scope must not claim the uncommitted edits were excluded:\n{stderr}"
             ));
         }
     }

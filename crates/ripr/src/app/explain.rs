@@ -68,6 +68,15 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
 ) -> Result<String, String> {
     let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
     let root = input.root.clone();
+    // The worktree retry names the same repository and base the failed run
+    // analyzed; a bare `ripr explain --worktree` prefix would analyze the
+    // caller's directory at its default base instead (#7328 review).
+    let retry_command = super::finding_navigation_with_worktree(&input, None, mode_explicit, true)
+        .explain_command(selector);
+    // A supplied scope (`--diff`, candidate tree) was the analyzed input:
+    // uncommitted edits were never excluded, and a worktree retry cannot
+    // replay the supplied patch, so the clause stays silent there.
+    let committed_history = input.diff_file.is_none() && input.git_candidate.is_none();
     let output = if worktree {
         check_with_progress(
             input,
@@ -90,7 +99,8 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
             &navigation.list_command(),
             &root,
             worktree,
-            "ripr explain --worktree",
+            committed_history,
+            &retry_command,
         )),
     }
 }
@@ -115,27 +125,33 @@ pub(crate) fn no_finding_matched(selector: &str, list_command: &str) -> String {
 /// finding id copied from `ripr check --worktree` output dead-ends against
 /// the committed-history re-run — and the suggested listing command analyzes
 /// committed content only, so the printed advice demonstrably lists nothing.
-/// The clause fires only when the run was not `--worktree`, the selector is
-/// id- or location-shaped, and the selected root actually has staged or
-/// unstaged tracked changes; a clean repository keeps the unchanged
-/// message. `retry_command` is the working spell for this command
-/// (`ripr explain --worktree` / `ripr context --worktree --at`).
+/// The clause fires only when the run was not `--worktree`, the analyzed
+/// scope was committed history (a `--diff` or candidate-tree run analyzed a
+/// supplied patch, so uncommitted edits were never the input and a worktree
+/// retry cannot replay it), the selector is id- or location-shaped, and the
+/// selected root actually has staged or unstaged tracked changes; a clean
+/// repository or a supplied scope keeps the unchanged message.
+/// `retry_command` is the full working retry for this command, already bound
+/// to the run's root/base and quoted (the worktree-mode navigation command),
+/// not a bare prefix: a prefix dropped `--root`/`--base` and could point the
+/// retry at another repository or base (#7328 review).
 pub(crate) fn no_finding_matched_fresh_run(
     selector: &str,
     list_command: &str,
     root: &Path,
     worktree: bool,
+    committed_history: bool,
     retry_command: &str,
 ) -> String {
     let mut message = no_finding_matched(selector, list_command);
-    if worktree || !selector.contains(':') {
+    if worktree || !committed_history || !selector.contains(':') {
         return message;
     }
     if !crate::analysis::working_tree_has_tracked_changes(root) {
         return message;
     }
     message.push_str(&format!(
-        ". Uncommitted tracked edits exist in this repository and are not analyzed without `--worktree`; if the finding came from uncommitted edits, retry `{retry_command} {selector}` (or list worktree finding ids with `ripr check --worktree --json`)"
+        ". Uncommitted tracked edits exist in this repository and are not analyzed without `--worktree`; if the finding came from uncommitted edits, retry `{retry_command}` (or list worktree finding ids with `ripr check --worktree --json`)"
     ));
     message
 }
