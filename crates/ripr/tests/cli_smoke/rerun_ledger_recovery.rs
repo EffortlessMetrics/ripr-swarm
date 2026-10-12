@@ -311,11 +311,21 @@ impl Drop for RootBindingFixture {
 fn root_binding_fixture(
     label: &str,
 ) -> Result<(RootBindingFixture, serde_json::Value), Box<dyn std::error::Error>> {
+    root_binding_fixture_named(label, "repository A", "repository B")
+}
+
+fn root_binding_fixture_named(
+    label: &str,
+    root_name: &str,
+    foreign_name: &str,
+) -> Result<(RootBindingFixture, serde_json::Value), Box<dyn std::error::Error>> {
     let scratch = unique_temp_workspace(label);
     let fixture = RootBindingFixture {
-        root: scratch.join("repository A"),
-        foreign: scratch.join("repository B"),
-        ledger: scratch.join("repository A/target/ripr/reports/gap-decision-ledger.json"),
+        root: scratch.join(root_name),
+        foreign: scratch.join(foreign_name),
+        ledger: scratch
+            .join(root_name)
+            .join("target/ripr/reports/gap-decision-ledger.json"),
         scratch,
     };
     // B deliberately has identical analyzed bytes. A content-digest-only
@@ -517,6 +527,76 @@ fn rerun_default_gap_ledger_binds_producer_root_before_scope_recomputation() -> 
         "producer persisted a CWD-relative root: {ledger}"
     );
     assert_eq!(recorded_root.canonicalize()?, fixture.root.canonicalize()?);
+    Ok(())
+}
+
+/// Native `%` is a filename byte, not an encoded display token. Encoding A's
+/// root must not select byte-identical sibling B whose literal name is `%25`.
+#[test]
+fn rerun_gap_ledger_preserves_literal_percent_root_and_refuses_encoded_sibling() -> TestResult {
+    let (fixture, ledger) = root_binding_fixture_named(
+        "rerun-percent-ledger-root",
+        "repo%percent",
+        "repo%25percent",
+    )?;
+    let expected_root = fixture.root.canonicalize()?;
+    assert_ne!(expected_root, fixture.foreign.canonicalize()?);
+    let local = root_binding_json(
+        &fixture.root,
+        &[
+            "rerun",
+            "--gap",
+            ROOT_BINDING_GAP,
+            "--gap-ledger",
+            "target/ripr/reports/gap-decision-ledger.json",
+            "--json",
+        ],
+    )?;
+    let refused = root_binding_rerun(&fixture, &fixture.ledger, false)?;
+    let explicit = root_binding_rerun(&fixture, &fixture.ledger, true)?;
+    // Observe every consumer before asserting, so a red witness retains both
+    // the real same-root false refusal and the distinct-root false admission.
+    let observation = serde_json::json!({
+        "persisted_root": ledger["root"],
+        "default_a": {
+            "state": local["state"],
+            "matched": local["selector"]["matched_record_count"],
+            "recomputed": local["selector"]["recomputed_scope_count"],
+            "seams": local["seams"].as_array().map(Vec::len),
+        },
+        "default_b": {
+            "state": refused["state"],
+            "matched": refused["selector"]["matched_record_count"],
+            "recomputed": refused["selector"]["recomputed_scope_count"],
+            "seams": refused["seams"].as_array().map(Vec::len),
+            "limitation": refused["limitation"]["kind"],
+        },
+        "explicit_a_from_b": {
+            "state": explicit["state"],
+            "matched": explicit["selector"]["matched_record_count"],
+            "recomputed": explicit["selector"]["recomputed_scope_count"],
+            "seams": explicit["seams"].as_array().map(Vec::len),
+        },
+    });
+    eprintln!("literal-percent root observations: {observation}");
+    assert_eq!(
+        ledger["root"].as_str(),
+        Some(
+            expected_root
+                .to_str()
+                .ok_or("native fixture root is not UTF-8")?
+        ),
+        "persisted producer identity must be the native path, without display encoding"
+    );
+    assert_root_binding_selected(&local, "weakly_gripped")?;
+    assert_root_binding_refused(&refused, "stale_gap_ledger", "does not match rerun root")?;
+    assert_root_binding_selected(&explicit, "weakly_gripped")?;
+    for selected in [local, explicit] {
+        assert_eq!(
+            selected["seams"][0]["seam_id"],
+            ledger["records"][0]["seam_id"]
+        );
+    }
     Ok(())
 }
 
