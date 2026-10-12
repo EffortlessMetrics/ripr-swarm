@@ -28,8 +28,10 @@ Allowed sections are the ones in `docs/CHANGELOG_POLICY.md`: `Added`,
 ## What this is not
 
 - `cargo xtask check-changelog-fragments` (run by `precommit`) checks the
-  format: the section line, a `- ` bullet entry, an issue or PR reference, and
-  a lowercase kebab-case name that is more than a number. Nothing checks that
+  format: the section line (the only HTML comment allowed), every entry a
+  `- ` bullet at column 0 with indented continuation lines, an issue or PR
+  reference in each entry, and a lowercase kebab-case name that is more than
+  a number. Nothing checks that
   a PR which needs an entry carries one; reviewers do. The fold step below is
   manual.
 - Existing `CHANGELOG.md` entries stay where they are. Do not move them.
