@@ -1585,20 +1585,49 @@ fn python_corpus_dir() -> PathBuf {
 
 #[test]
 fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(), String> {
-    let corpus = validated_corpus_without_coverage(&python_corpus_dir())?;
+    // The coverage read requires the spec-example ledger, so deleting
+    // `spec-coverage.toml` fails here instead of silently ungating the
+    // Python corpus in `check-all`.
+    let dir = python_corpus_dir();
+    let coverage = coverage::spec_example_coverage_for_corpus(&dir)?;
+    let corpus = load_corpus(&dir)?;
+    assert_eq!(
+        coverage.ledger,
+        "fixtures/python-verdict-corpus/spec-coverage.toml"
+    );
     assert!(
-        corpus.cases.len() >= 60,
+        corpus.cases.len() >= 63,
         "python corpus shrank to {}",
         corpus.cases.len()
     );
-    // Every runnable RIPR-SPEC-0238 acceptance example up to 33 keeps a case;
-    // 9 and 10 are left out by `fixtures/python-verdict-corpus/SPEC.md`. The
-    // ids keep the prefix of the spec's draft number, RIPR-SPEC-0233.
-    for example in (1..=33).filter(|n| ![9, 10].contains(n)) {
+    // Every RIPR-SPEC-0238 acceptance example but 9 and 10 keeps a case
+    // citing it; the ledger leaves those two visible as uncovered rather
+    // than waived. Examples 1 to 34 have `py-spec0233-exNN-` cases (the
+    // prefix of the spec's draft number, RIPR-SPEC-0233); 35 to 39 were
+    // written from the library cases that cite them.
+    let spec = coverage
+        .by_spec
+        .iter()
+        .find(|row| row.spec == "RIPR-SPEC-0238")
+        .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
+    assert_eq!(spec.in_scope_examples, 39);
+    assert_eq!(spec.uncovered, vec![9, 10]);
+    assert_eq!(spec.waived, 0);
+    assert!(
+        coverage.floor >= 37 && coverage.floor <= coverage.covered_examples,
+        "python ledger floor {} against {} covered",
+        coverage.floor,
+        coverage.covered_examples
+    );
+    for example in (1..=34).filter(|n| ![9, 10].contains(n)) {
         let prefix = format!("py-spec0233-ex{example:02}-");
+        let cited = format!("RIPR-SPEC-0238#{example}");
         assert!(
-            corpus.cases.iter().any(|c| c.case_id.starts_with(&prefix)),
-            "no case for RIPR-SPEC-0238 example {example}"
+            corpus
+                .cases
+                .iter()
+                .any(|c| c.case_id.starts_with(&prefix) && c.spec_examples.contains(&cited)),
+            "no case citing RIPR-SPEC-0238 example {example}"
         );
     }
     // Every test library the corpus exists to cover keeps cases in both
