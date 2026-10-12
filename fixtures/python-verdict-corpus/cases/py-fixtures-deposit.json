@@ -1,0 +1,52 @@
+{
+  "case_id": "py-fixtures-deposit",
+  "subject_id": "authored-py-pytest-fixtures",
+  "diff": "cases/py-fixtures-deposit.diff",
+  "anchor": {
+    "file": "shop/__init__.py",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "state_update",
+  "test_shape": "pytest_conftest_fixture_assert_eq",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "self.balance = amount",
+        "mutated_line": "self.balance = amount",
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_shop.py::test_deposit_through_fixture",
+        "equivalence_review": "not equivalent: the balance becomes 50 instead of 150"
+      },
+      {
+        "replacement": "self.balance = self.balance - amount",
+        "mutated_line": "self.balance = self.balance - amount",
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_shop.py::test_deposit_through_fixture",
+        "equivalence_review": "not equivalent: the deposit is subtracted, leaving 50"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_deposit_through_fixture takes `account` from conftest.py (Account(100)), deposits 50 and asserts the balance is 150, so both mutants fail. ripr reports static_unknown with unresolved_pytest_fixture, an acceptable limit.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

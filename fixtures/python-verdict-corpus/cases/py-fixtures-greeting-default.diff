@@ -1,0 +1,12 @@
+diff --git a/shop/__init__.py b/shop/__init__.py
+--- a/shop/__init__.py
++++ b/shop/__init__.py
+@@ -24,7 +24,7 @@ def save_report(path, total):
+ 
+ def greeting():
+     """Greet the user named in the environment."""
+-    return f"hello {os.environ.get('USER_NAME', 'guest')}"
++    return f"hello {os.environ.get('USER_NAME', 'anon')}"
+ 
+ 
+ def warn(message):

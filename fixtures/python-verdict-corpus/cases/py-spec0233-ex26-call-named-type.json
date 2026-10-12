@@ -1,0 +1,45 @@
+{
+  "case_id": "py-spec0233-ex26-call-named-type",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex26-call-named-type.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 137
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "call_target",
+  "test_shape": "pytest_assert_eq_type_named_callee",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return content_type(x)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_subject.py::test_label_call",
+        "equivalence_review": "not equivalent: label_call(1) returns 'a' instead of 'b'"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 26: the edit changes `content_kind(x)` to `content_type(x)`, a call whose name ends in `type`, and test_label_call asserts the result is 'b', so 'a' fails it. The spec says no static limit and exposed; ripr reports static_unknown with metaprogramming, an acceptable limit with a misread call name.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

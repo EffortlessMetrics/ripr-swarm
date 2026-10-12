@@ -1,0 +1,45 @@
+{
+  "case_id": "py-spec0233-ex08-almost-equal",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex08-almost-equal.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 33
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "unittest_assert_almost_equal",
+  "hard_case": "the spec leaves assertAlmostEqual unrecognized, yet it discriminates this edit",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return int(text) + 2",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_subject.py::TestNotEqual::test_almost_equal",
+        "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 8: self.assertAlmostEqual(parse_almost_equal(\"1\"), 2.0) is not a recognized assertion (Decision 7), so ripr reports weakly_exposed, the spec's verdict; at the default seven places it still fails for 3, so the verdict scores false actionable.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
