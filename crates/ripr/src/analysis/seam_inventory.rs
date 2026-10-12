@@ -5864,6 +5864,10 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
                     std::fs::read_to_string(fixture.join(file)).map_err(|e| e.to_string())?;
                 write_file(&root.join(file), &source)?;
             }
+            assert!(
+                crate::analysis::workspace::verified_anyhow_identity(&root).is_some(),
+                "prepare canonical fixture dependencies first: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml (same CARGO_HOME)"
+            );
             let full = inventory_classified_seams_at(&root)?;
             let compact = inventory_compact_classified_seams_at_with_config(&root, &config)?;
             for inventory in [&full, &compact] {

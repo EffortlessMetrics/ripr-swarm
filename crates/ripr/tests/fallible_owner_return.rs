@@ -80,7 +80,10 @@ fn frozen_fallible_literal_helper_exposes_exact_owner_return() -> Result<(), Str
     let report = subject.check()?;
     assert_eq!(report["findings"].as_array().ok_or("findings")?.len(), 1);
     let finding = answer(&report)?;
-    assert_eq!(finding["classification"], "exposed");
+    assert_eq!(
+        finding["classification"], "exposed",
+        "prepare the pinned fixture first with the locked fetch documented in docs/TESTING.md"
+    );
     assert_eq!(finding["ripr"]["propagate"]["state"], "yes");
     assert_eq!(finding["ripr"]["observe"]["state"], "yes");
     assert_eq!(finding["ripr"]["discriminate"]["state"], "yes");
