@@ -8050,6 +8050,7 @@ spec = "docs/specs/RIPR-SPEC-0149-back-sync-verifier.md"
 tests = [
   "xtask/src/reports/back_sync.rs::tests::abbreviated_inputs_are_rejected",
   "xtask/src/reports/back_sync.rs::tests::synthetic_graph_adversarial_cases_invoke_verifier",
+  "xtask/src/reports/back_sync.rs::tests::unfolded_changelog_fragment_at_k_is_refused",
 ]
 fixtures = []
 code = [
@@ -8082,6 +8083,7 @@ tests = [
   "xtask/src/reports/source_promotion.rs::tests::requires_an_immutable_swarm_ref",
   "xtask/src/reports/source_promotion.rs::tests::rejects_a_branch_or_wrongly_named_swarm_ref",
   "xtask/src/reports/source_promotion.rs::tests::version_observation_reads_exact_parent_not_checkout_files",
+  "xtask/src/reports/source_promotion.rs::tests::unfolded_changelog_fragments_are_reported_and_refused_in_reviewed_tree",
   "xtask/src/reports/source_promotion.rs::tests::repository_identity_serialization_has_no_checkout_path",
   "xtask/src/reports/source_promotion.rs::tests::disposable_repo_creation_rejects_existing_path",
   "xtask/src/reports/source_promotion.rs::tests::swarm_parent_must_be_ancestor_of_declared_main",

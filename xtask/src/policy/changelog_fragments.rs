@@ -128,6 +128,25 @@ pub(crate) fn changelog_fragment_violations(
     Ok(violations)
 }
 
+/// The `changelog.d/` paths in a tree listing that are still unfolded:
+/// everything but `README.md`. Release tooling (source promotion and
+/// back-sync, #6341) reads Git trees rather than the working tree, so it
+/// lists the paths itself and asks this owner which of them block a release.
+pub(crate) fn unfolded_fragment_paths<'a>(
+    tree_paths: impl IntoIterator<Item = &'a str>,
+) -> Vec<String> {
+    let readme = format!("{FRAGMENT_DIR}/{README}");
+    let prefix = format!("{FRAGMENT_DIR}/");
+    let mut paths: Vec<String> = tree_paths
+        .into_iter()
+        .map(str::trim)
+        .filter(|path| path.starts_with(&prefix) && *path != readme)
+        .map(str::to_string)
+        .collect();
+    paths.sort();
+    paths
+}
+
 /// Violations for one fragment file, given its file name and contents.
 fn fragment_violations(name: &str, text: &str) -> Vec<String> {
     let path = format!("{FRAGMENT_DIR}/{name}");

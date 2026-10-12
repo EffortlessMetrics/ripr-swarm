@@ -32,7 +32,9 @@ bound to the requested version, released source head, K, and reviewed tree.
 It requires parseable policy-before, temporary-approved-exception, and
 restoration evidence, and fails closed when merge commits are not disabled
 before and after. It requires every retained swarm development surface and
-rejects source publication workflow/settings paths changed into K. The
+rejects source publication workflow/settings paths changed into K. It rejects
+a K whose tree still holds a `changelog.d/` fragment other than `README.md`,
+because that entry never reached the released `CHANGELOG.md` (#6341). The
 verifier reads these inputs and never mutates refs, branch protection,
 repository settings, tags, releases, publication channels, or metadata.
 
@@ -50,11 +52,16 @@ repository settings, tags, releases, publication channels, or metadata.
   structured receipts and policy evidence match those exact values.
 - Reject a single-parent, reversed-parent, wrong-tree, unexpected-head, stale
   receipt, malformed-policy, or source-publication-authority candidate.
+- Reject a K that retains an unfolded `changelog.d/` fragment, naming it;
+  accept one that holds only `changelog.d/README.md`.
 
 ## Test Mapping
 
 - `xtask/src/reports/back_sync.rs::synthetic_graph_adversarial_cases_invoke_verifier`
   invokes the verifier for the valid and adversarial graph/evidence cases.
+- `xtask/src/reports/back_sync.rs::unfolded_changelog_fragment_at_k_is_refused`
+  invokes the verifier for a K holding only the fragment README and a K
+  holding an unfolded fragment.
 
 ## Implementation Mapping
 
