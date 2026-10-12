@@ -93,11 +93,12 @@ these hold:
 - the changed line is `key: value` with `value` on that line (no `{`, `}`,
   `[` or `]` outside literals), found once in the owner;
 - the literal that directly holds the changed line opens right after that
-  `return` and closes with `}` followed by `;` or by the owner's own `}`,
+  `return` and closes with `}` followed by `;` or by a line that opens
+  with `}`,
   so it is the whole returned value (`return { ... }.adult` fails);
 - every top-level entry of that literal, the changed line's own included,
   is a plain `name: value`, shorthand `name` or method `name()`, and
-  exactly one names `key` (a quoted or computed key, a spread, an accessor
+  exactly one names `key`, the entry that the changed line itself opens (a quoted or computed key, a spread, an accessor
   or a second `key` entry fails);
 - `o` lists `key` at its top level.
 
@@ -126,10 +127,14 @@ documented decisions and proceed"). Recorded on #6654.
 - `typescript_oracle_confidence` reads the assertion's default (weak)
   strength, so a credited pin shows `low`.
 - Expression-bodied arrows (`=> ({ ... })`), a literal assigned and then
-  returned, shorthand fields (`adult,`), multi-line values and nested
-  listed objects keep the weak reading.
+  returned, shorthand fields (`adult,`), values that open a nested `{` or
+  `[` literal, and nested listed objects keep the weak reading. A changed
+  line that continues its value on the next line is still read, since the
+  change stays inside the listed field.
 - A local bound once to the owner call is not checked for later field
-  writes (`bo.adult = true`).
+  writes (`bo.adult = true`, `Object.assign(bo, ...)`, or a helper that
+  mutates `bo`). The same gap applies to `toEqual` through the shared
+  whole-result reader; filed as #7497.
 
 ## Required Evidence
 
@@ -160,7 +165,8 @@ documented decisions and proceed"). Recorded on #6654.
 6. As example 1 with a second `return`, the field in a nested literal, a
    spread, a later `adult:`, `"adult":` or `["adult"]:` entry (on its
    own line, after another entry, or on the changed line), an accessor,
-   or `return { ... }.adult`: rule 1 reads no pin.
+   `return { ... }.adult`, or a changed `adult : 18 <= age` line that is
+   the second arm of a multi-line `status: admin ?` ternary: rule 1 reads no pin.
 
 ## Test Mapping
 

@@ -650,11 +650,6 @@ pub(crate) fn expect_assertion_from_expression(
     let (expected_value_or_variant, has_dynamic_matcher_arg) =
         match instance_class_argument(matcher, async_modifier, outer_call) {
             Some(class) => (Some(class), false),
-            // `.rejects.toMatchObject(...)` observes the error, not the
-            // returned object (RIPR-SPEC-0250).
-            None if matcher == "toMatchObject" && async_modifier == Some("rejects") => {
-                (None, false)
-            }
             None => extract_matcher_expected_value(matcher, &error_payload, outer_call, source),
         };
 

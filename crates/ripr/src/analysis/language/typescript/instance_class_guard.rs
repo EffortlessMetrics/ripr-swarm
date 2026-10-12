@@ -68,6 +68,8 @@ impl PinFacts {
         }
     }
 
+    /// Adds another guard's credited pins (RIPR-SPEC-0250 match-object pins
+    /// join the RIPR-SPEC-0249 class pins).
     pub(crate) fn extend(&mut self, other: PinFacts) {
         self.credited.extend(other.credited);
     }

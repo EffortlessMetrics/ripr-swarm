@@ -140,9 +140,13 @@ pub(crate) fn ts_owner_returned_field_key(owner_source: &str, line_text: &str) -
         literal.push_str(line.get(start..end)?);
         literal.push('\n');
     }
+    // The one entry named `key` must be the one the changed line opens:
+    // a changed line that continues another entry's value (the `adult : x`
+    // arm of a multi-line `status: flag ?` ternary) only looks like a field.
     let mut named = 0usize;
-    for entry in top_level_entries(&literal) {
-        let entry = entry.trim();
+    let mut opens_changed_line = false;
+    for (offset, raw) in top_level_entries(&literal) {
+        let entry = raw.trim();
         if entry.is_empty() {
             continue;
         }
@@ -153,13 +157,19 @@ pub(crate) fn ts_owner_returned_field_key(owner_source: &str, line_text: &str) -
         }
         if name == key {
             named += 1;
+            let entry_start = offset + (raw.len() - raw.trim_start().len());
+            let line_start = literal[..entry_start].rfind('\n').map_or(0, |at| at + 1);
+            opens_changed_line = open_line + literal[..entry_start].matches('\n').count()
+                == changed
+                && literal[line_start..entry_start].trim().is_empty();
         }
     }
-    (named == 1).then(|| key.to_string())
+    (named == 1 && opens_changed_line).then(|| key.to_string())
 }
 
-/// The entries of an object literal's body, split at its top-level commas.
-fn top_level_entries(literal: &str) -> Vec<&str> {
+/// The entries of an object literal's body, split at its top-level commas,
+/// each with its byte offset in `literal`.
+fn top_level_entries(literal: &str) -> Vec<(usize, &str)> {
     let mut entries = Vec::new();
     let mut depth = 0usize;
     let mut start = 0;
@@ -168,13 +178,13 @@ fn top_level_entries(literal: &str) -> Vec<&str> {
             '(' | '[' | '{' => depth += 1,
             ')' | ']' | '}' => depth = depth.saturating_sub(1),
             ',' if depth == 0 => {
-                entries.push(&literal[start..index]);
+                entries.push((start, &literal[start..index]));
                 start = index + 1;
             }
             _ => {}
         }
     }
-    entries.push(&literal[start..]);
+    entries.push((start, &literal[start..]));
     entries
 }
 

@@ -147,6 +147,10 @@ pub(crate) struct CreditFacts<'a> {
 ///    an owner call, e.g. `expect(applyDiscount(100, 10))`) or contains a
 ///    changed token from the changed sub-expression.
 ///
+/// A RIPR-SPEC-0250 match-object pin credited in `pin_facts` also confirms,
+/// although its default reading is weak: its guard already proved it
+/// observes the whole owner result.
+///
 /// One-hop local aliasing: a bare-local observed_expression
 /// (`t.is(result, 3)`) also confirms when the test body initializes that
 /// local from an expression referencing the owner or a changed token

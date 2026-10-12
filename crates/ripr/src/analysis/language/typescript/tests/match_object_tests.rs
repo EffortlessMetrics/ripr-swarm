@@ -63,6 +63,14 @@ fn returned_field_key_reads_only_a_top_level_field_of_the_one_returned_literal()
             FIELD_OLD,
         ),
         (
+            "a ternary arm continuing another entry",
+            PROFILE.replace(
+                "    adult: age >= 18,\n",
+                "    adult,\n    status: admin ?\n      adult : 18 <= age,\n",
+            ),
+            "      adult : 18 <= age,",
+        ),
+        (
             "a second entry on the changed line",
             PROFILE.replace(FIELD_OLD, "    adult: age >= 18, adult: true,"),
             "    adult: age >= 18, adult: true,",
@@ -200,8 +208,8 @@ fn match_object_pin_exposes_a_listed_returned_field() -> Result<(), String> {
             "  const bo = buildProfile(\"bo\", 18);\n  expect(bo).toMatchObject({ adult: true });",
         ),
         (
-            "match-object-resolves",
-            "  await expect(Promise.resolve(buildProfile(\"bo\", 18))).resolves.toMatchObject({ adult: true });\n  expect(buildProfile(\"ana\", 17)).toMatchObject({ \"adult\": false });",
+            "match-object-quoted-listed-key",
+            "  expect(buildProfile(\"ana\", 17)).toMatchObject({ \"adult\": false });",
         ),
     ] {
         let finding = profile_finding(label, &profile_test(body))?;
@@ -251,6 +259,65 @@ fn match_object_pin_stays_weak_without_the_listed_field_on_the_whole_result() ->
             "{label}: {:?}",
             finding.missing
         );
+        // The test must still relate, so a case that stopped parsing cannot
+        // pass here; its row keeps a reading below `exact_value` / strong.
+        if label != "match-object-shadowed" {
+            let row = finding
+                .related_tests
+                .first()
+                .ok_or_else(|| format!("{label}: expected a related test row"))?;
+            assert_ne!(
+                (row.oracle_kind.clone(), row.oracle_strength.clone()),
+                (OracleKind::ExactValue, OracleStrength::Strong),
+                "{label}"
+            );
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{label}");
+        }
+    }
+    Ok(())
+}
+
+/// The refused matcher readings keep their parsed subject: a dynamic
+/// argument records no expected value and keeps the unresolved-assertion
+/// limitation, and `.rejects.toMatchObject` keeps its RIPR-SPEC-0243
+/// error-payload reading (`unknown` when the payload is not a literal), so
+/// neither is a `relational_check` pin.
+#[test]
+fn match_object_refused_readings_keep_their_parsed_subject() -> Result<(), String> {
+    for (label, body, kind, dynamic) in [
+        (
+            "dynamic",
+            "  const expected = { adult: true };\n  expect(buildProfile(\"bo\", 18)).toMatchObject(expected);",
+            OracleKind::RelationalCheck,
+            true,
+        ),
+        (
+            "rejects",
+            "  await expect(buildProfile(\"bo\", 18)).rejects.toMatchObject({ adult: true });",
+            OracleKind::ExactErrorVariant,
+            false,
+        ),
+        (
+            "rejects-dynamic",
+            "  const expected = { adult: true };\n  await expect(buildProfile(\"bo\", 18)).rejects.toMatchObject(expected);",
+            OracleKind::Unknown,
+            true,
+        ),
+    ] {
+        let tests = extract_tests(Path::new("test/profile.test.ts"), &profile_test(body));
+        let [test] = tests.as_slice() else {
+            return Err(format!("{label}: expected one test, got {}", tests.len()));
+        };
+        let assertion = test
+            .assertions
+            .iter()
+            .find(|assertion| assertion.matcher == "toMatchObject")
+            .ok_or_else(|| format!("{label}: no toMatchObject assertion"))?;
+        assert_eq!(assertion.oracle_kind, kind, "{label}");
+        assert_eq!(assertion.has_dynamic_matcher_arg, dynamic, "{label}");
+        if dynamic {
+            assert_eq!(assertion.expected_value_or_variant, None, "{label}");
+        }
     }
     Ok(())
 }
