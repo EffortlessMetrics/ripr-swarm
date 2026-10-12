@@ -75,6 +75,7 @@ pub(crate) struct GapDecisionLedgerReport {
 pub(crate) struct ParsedGapRecordSource {
     pub(crate) root: Option<String>,
     pub(crate) generated_at: Option<String>,
+    pub(crate) source_subject: Option<Value>,
     pub(crate) records: Vec<GapRecord>,
 }
 
@@ -887,6 +888,7 @@ fn parse_gap_record_source_json_with_root(
     Ok(ParsedGapRecordSource {
         root,
         generated_at,
+        source_subject: value.get("source_subject").cloned(),
         records,
     })
 }

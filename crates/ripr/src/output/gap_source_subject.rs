@@ -14,7 +14,8 @@
 //! ([`derive_source_subject`]); they never hash the workspace, so a report
 //! written after a checkout or an edit cannot vouch for records computed
 //! before it. The LSP validator in `lsp::gap_artifacts` recomputes the
-//! digests from the current workspace and is the only consumer authority.
+//! digests from the current workspace. Targeted rerun uses the same validator
+//! to admit legacy ledgers whose relative/missing root cannot bind a checkout.
 
 mod shared;
 
@@ -42,6 +43,19 @@ pub(crate) enum SourceSubjectCheck {
     /// missing, malformed, uses an unknown digest, omits a file the records
     /// name, or a stamped file cannot be read.
     Unverifiable(&'static str),
+}
+
+/// Compare selected and persisted roots through their existing filesystem
+/// identity. Failed canonicalizations never establish a match. Shared by
+/// targeted rerun and editor artifact admission, including aliased roots.
+pub(crate) fn same_root(root: &Path, artifact_root: &Path) -> bool {
+    match (
+        std::fs::canonicalize(root),
+        std::fs::canonicalize(artifact_root),
+    ) {
+        (Ok(root), Ok(artifact_root)) => root == artifact_root,
+        _ => false,
+    }
 }
 
 /// `sha256:<hex>` of one workspace file, `Ok(None)` when it does not exist.

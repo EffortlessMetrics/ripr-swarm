@@ -17,6 +17,7 @@ use crate::cli::suggest::unknown_argument;
 use crate::core_error::CoreError;
 use crate::domain::{CommandExecutionMode, CommandSpec, CommandSpecDigest};
 use crate::output::gap_decision_ledger::{GapRecord, parse_gap_record_source_json};
+use crate::output::gap_source_subject::{self, SourceSubjectCheck, same_root};
 use crate::output::outcome::{TargetedRerunStaticSeam, targeted_rerun_movement_from_json};
 #[cfg(feature = "lang-typescript")]
 use crate::output::typescript_packet_projection::typescript_canonical_gap_id;
@@ -641,17 +642,55 @@ fn rerun_gap(
     if let Some(ledger_root) = source
         .root
         .as_deref()
-        .filter(|value| !value.trim().is_empty())
-        && !same_root(root, Path::new(ledger_root))
+        .filter(|value| Path::new(value).is_absolute())
     {
-        return Ok(limited_report(
-            selector,
-            "stale_gap_ledger",
-            format!(
-                "gap ledger root `{ledger_root}` does not match rerun root `{}`",
-                root.display()
-            ),
-        ));
+        if !same_root(root, Path::new(ledger_root)) {
+            return Ok(limited_report(
+                selector,
+                "stale_gap_ledger",
+                format!(
+                    "gap ledger root `{ledger_root}` does not match rerun root `{}`",
+                    root.display()
+                ),
+            ));
+        }
+    } else {
+        // Legacy relative/missing roots cannot recover the producer's CWD.
+        // Admit them only through the existing source-subject authority,
+        // before resolving records or recomputing scopes. Absolute roots
+        // retain targeted recomputation after edits, not a revision policy.
+        let mut required = BTreeSet::new();
+        for record in &source.records {
+            let value = serde_json::to_value(record).map_err(|error| {
+                CoreError::gap_ledger_unusable(format!("read gap ledger subject failed: {error}"))
+            })?;
+            required.extend(gap_source_subject::gap_record_subject_paths(root, &value));
+        }
+        match gap_source_subject::check_source_subject(
+            root,
+            source.source_subject.as_ref(),
+            &required,
+        ) {
+            SourceSubjectCheck::Current => {}
+            SourceSubjectCheck::Stale(path) => {
+                return Ok(limited_report(
+                    selector,
+                    "stale_subject",
+                    format!(
+                        "unbound gap ledger source file `{path}` does not match the selected root"
+                    ),
+                ));
+            }
+            SourceSubjectCheck::Unverifiable(reason) => {
+                return Ok(limited_report(
+                    selector,
+                    "unverifiable_subject",
+                    format!(
+                        "gap ledger has no bound absolute root: {reason}; regenerate the ledger for the selected root"
+                    ),
+                ));
+            }
+        }
     }
     let records = match resolve_gap_records(source.records, canonical_gap_id) {
         Ok(records) => records,
@@ -1256,16 +1295,6 @@ fn display_scope(scope: &GapRerunScope) -> String {
     match scope.owner.as_deref() {
         Some(owner) => format!("{}::{owner}", display_path(&scope.file)),
         None => display_path(&scope.file),
-    }
-}
-
-fn same_root(root: &Path, ledger_root: &Path) -> bool {
-    match (
-        std::fs::canonicalize(root),
-        std::fs::canonicalize(ledger_root),
-    ) {
-        (Ok(root), Ok(ledger_root)) => root == ledger_root,
-        _ => false,
     }
 }
 

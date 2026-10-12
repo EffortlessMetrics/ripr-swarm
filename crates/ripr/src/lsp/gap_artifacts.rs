@@ -1206,7 +1206,10 @@ fn validate_report_root(
         return Ok(());
     }
     let candidate = Path::new(report_root);
-    if candidate.is_absolute() && normalize_path(candidate) == normalize_path(root) {
+    if candidate.is_absolute()
+        && (normalize_path(candidate) == normalize_path(root)
+            || gap_source_subject::same_root(root, candidate))
+    {
         return Ok(());
     }
     Err(GapArtifactRejection::WrongRoot(report_root.to_string()))

@@ -15636,7 +15636,7 @@ fn rerun_gap_before_receipt_names_selector_ledger_change() -> Result<(), String>
     let ledger = workspace.join("gap-ledger.json");
     let ledger_json = serde_json::json!({
         "kind": "gap_decision_ledger",
-        "root": root_arg,
+        "root": workspace_root().join(root_arg),
         "records": [{
             "canonical_gap_id": canonical_gap_id,
             "anchor": { "file": file, "owner": owner },
@@ -15847,7 +15847,7 @@ fn rerun_gap_recomputes_fixture_anchor_from_explicit_canonical_ledger() -> Resul
     let ledger = ledger_dir.join("gap-ledger.json");
     let ledger_json = serde_json::json!({
         "kind": "gap_decision_ledger",
-        "root": root_arg,
+        "root": workspace_root().join(root_arg),
         "records": [{
             "canonical_gap_id": canonical_gap_id,
             "anchor": { "file": file, "owner": owner },

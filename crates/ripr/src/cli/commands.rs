@@ -543,6 +543,10 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
             options.root
         ));
     }
+    // Persist the producer's selected directory, not a label that a consumer
+    // would resolve in its own invocation directory (#7382).
+    let selected_root = std::fs::canonicalize(&options.root)
+        .map_err(|error| format!("resolve gap-ledger root {} failed: {error}", options.root))?;
     let records_path = ledger_source_path(options.source.path())?;
     // An unreadable source means the command could not complete for the same
     // reason: refuse before writing a `blocked` ledger.
@@ -554,13 +558,22 @@ fn gap_decision_ledger(args: &[String]) -> Result<(), String> {
             )
         })?;
     let input = output::gap_decision_ledger::GapDecisionLedgerInput {
-        root: options.root,
+        // `root` is consumed as a native path. Display escaping would turn
+        // a literal `%` into a different directory named `%25` (#7382).
+        root: selected_root
+            .to_str()
+            .ok_or_else(|| {
+                format!(
+                    "reports gap-ledger root {} resolves to a non-UTF-8 path; select a UTF-8 repository root",
+                    options.root
+                )
+            })?
+            .to_string(),
         generated_at: gap_decision_ledger_generated_at()?,
         source_kind: options.source.kind(),
         records_path,
         records_json: Ok(records_json),
     };
-    let selected_root = PathBuf::from(&input.root);
     let mut report = output::gap_decision_ledger::build_gap_decision_ledger_report(input);
     output::gap_decision_ledger::stamp_gap_decision_ledger_source_subject(
         &mut report,
