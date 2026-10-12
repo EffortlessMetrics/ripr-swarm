@@ -81,6 +81,7 @@ fn oversized_status_envelope_gets_typed_too_large_like_every_tool() -> Result<()
             envelope,
             workspace::SESSION_SCHEMA_VERSION,
             "serialize workspace status",
+            workspace::RECOVERY_STATUS_TOO_LARGE,
         )
         .map_err(|error| error.to_string())?;
     let rendered = format!("{response:?}");
@@ -88,6 +89,9 @@ fn oversized_status_envelope_gets_typed_too_large_like_every_tool() -> Result<()
         return Err(format!(
             "oversized envelope missed typed refusal: {rendered}"
         ));
+    }
+    if rendered.contains("ripr_get_gap") {
+        return Err(format!("status overflow named ripr_get_gap: {rendered}"));
     }
     Ok(())
 }

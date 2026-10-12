@@ -3,6 +3,15 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-12: An oversized `ripr_get_gap` must not recover by calling itself (#7462)
+
+The MCP response bound is 128 KiB. One canonical item can exceed it. The
+failure used to say "read narrower evidence (one item through ripr_get_gap)",
+which is the call that just failed. That recovery stays on `ripr_list_gaps`
+only as a page-smaller instruction. A too-large item names `ripr check
+--format json` outside MCP and says `ripr_get_gap` cannot return it. Other
+tools name their own next read, or say there is no narrower MCP read.
+
 ## 2026-10-12: Doctor `cargo_toml` is not `resolve_project_root` (#7466)
 
 `ripr check`'s `resolve_project_root` walks *up* and can return a git top

@@ -42,6 +42,19 @@ pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
 pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
 pub(crate) const CODE_RESULT_TOO_LARGE: &str = "result_too_large";
+/// #7462: `ripr_get_gap` is already one item. Retrying it cannot shrink the
+/// document. The CLI check has no per-item MCP cap.
+pub(crate) const RECOVERY_GAP_ITEM_TOO_LARGE: &str = "this item's evidence exceeds the MCP response bound; read it with ripr check --format json outside MCP. ripr_get_gap and ripr://gap cannot return it";
+/// A list response that still does not fit is narrowed by paging, not by
+/// reading the same page again and not by pretending one item is smaller.
+pub(crate) const RECOVERY_GAP_LIST_TOO_LARGE: &str =
+    "page ripr_list_gaps with a smaller limit instead of retrying this response";
+pub(crate) const RECOVERY_SNAPSHOT_TOO_LARGE: &str =
+    "page identities with ripr_list_gaps; this snapshot document exceeds the MCP response bound";
+pub(crate) const RECOVERY_REFRESH_TOO_LARGE: &str = "the refresh result exceeds the MCP response bound; read session state with ripr_workspace_status";
+pub(crate) const RECOVERY_STATUS_TOO_LARGE: &str =
+    "the status document exceeds the MCP response bound; there is no narrower status read";
+pub(crate) const RECOVERY_REPAIR_TOO_LARGE: &str = "this repair document exceeds the MCP response bound; there is no narrower MCP read of this record";
 /// Reserved typed-failure vocabulary for later slices. This slice fails
 /// closed before any of these states can occur; they are named so the wire
 /// contract stays stable when the owning slice lands.
@@ -615,7 +628,7 @@ impl WorkspaceSession {
             )
             .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
         }
-        bounded_document(document)
+        bounded_document(document, RECOVERY_GAP_LIST_TOO_LARGE)
     }
 
     /// Assemble the gap-list document around a page of item summaries.
@@ -722,7 +735,7 @@ impl WorkspaceSession {
             );
             links.remove("repair_attempt_note");
         }
-        bounded_document(document)
+        bounded_document(document, RECOVERY_GAP_ITEM_TOO_LARGE)
     }
 
     /// The `ripr://snapshot/{snapshot_id}` evidence resource: snapshot
@@ -772,7 +785,7 @@ impl WorkspaceSession {
                 "item entries are identities and locations, not evidence; read one item through ripr_get_gap or ripr://gap/{canonical_id}",
             ],
         });
-        bounded_document(document)
+        bounded_document(document, RECOVERY_SNAPSHOT_TOO_LARGE)
     }
 
     /// Session block for `ripr_workspace_status`. Facts only: no evidence
@@ -1153,7 +1166,10 @@ fn omitted_reason_as_str(reason: OmittedDiagnosticReason) -> &'static str {
 
 /// Fail closed when even one bounded document cannot fit the wire cap: an
 /// over-cap response would otherwise terminate the transport.
-pub(crate) fn bounded_document(document: Value) -> Result<Value, AttemptFailure> {
+pub(crate) fn bounded_document(
+    document: Value,
+    recovery: &'static str,
+) -> Result<Value, AttemptFailure> {
     struct LengthWriter(usize);
 
     impl std::io::Write for LengthWriter {
@@ -1183,7 +1199,7 @@ pub(crate) fn bounded_document(document: Value) -> Result<Value, AttemptFailure>
                 writer.0,
                 super::MAX_RESPONSE_BYTES
             ),
-            "read narrower evidence (one item through ripr_get_gap) instead of widening the response",
+            recovery,
         ));
     }
     Ok(document)
@@ -1476,6 +1492,27 @@ mod tests {
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
         })
+    }
+
+    /// #7462: the single-item read is already the narrow MCP route. An item
+    /// that does not fit must not tell the caller to call `ripr_get_gap` again.
+    #[test]
+    fn oversized_gap_item_recovery_leaves_mcp() -> Result<(), String> {
+        let document = json!({
+            "evidence": "x".repeat(crate::mcp::MAX_RESPONSE_BYTES),
+        });
+        let Err(failure) = bounded_document(document, RECOVERY_GAP_ITEM_TOO_LARGE) else {
+            return Err("an oversized gap item was accepted".to_string());
+        };
+        if failure.code != CODE_RESULT_TOO_LARGE {
+            return Err(format!("unexpected code {}", failure.code));
+        }
+        if !failure.recovery.contains("ripr check --format json")
+            || failure.recovery.contains("one item through ripr_get_gap")
+        {
+            return Err(failure.recovery.to_string());
+        }
+        Ok(())
     }
 
     /// #6021: an aggregate listing too large for one wire response degrades
