@@ -1,0 +1,12 @@
+diff --git a/stats/__init__.py b/stats/__init__.py
+--- a/stats/__init__.py
++++ b/stats/__init__.py
+@@ -13,7 +13,7 @@ def absolute(x):
+ 
+ def mean(xs):
+     """Arithmetic mean of a non-empty list."""
+-    return sum(xs) / len(xs)
++    return sum(xs) / (len(xs) + 1)
+ 
+ 
+ def is_passing(score):

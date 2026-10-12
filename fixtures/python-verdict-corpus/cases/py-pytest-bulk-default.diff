@@ -1,0 +1,12 @@
+diff --git a/pricing/core.py b/pricing/core.py
+--- a/pricing/core.py
++++ b/pricing/core.py
+@@ -57,7 +57,7 @@ def label_for(tier):
+     return tier.upper()
+ 
+ 
+-def bulk_price(unit_cents, quantity, bulk_threshold=10):
++def bulk_price(unit_cents, quantity, bulk_threshold=12):
+     """Price for a quantity; bulk orders get ten percent off."""
+     if quantity >= bulk_threshold:
+         return unit_cents * quantity * 9 // 10

@@ -7,7 +7,7 @@ use crate::analysis::classify::{
 use crate::analysis::rust_index::TestSummary;
 use crate::domain::*;
 
-const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change (a test may still reach it through macros, dynamic dispatch, or integration tests that static evidence does not follow). Add or point to a test that exercises it and asserts the result first; deep mode and real mutation testing need a reaching test to say more.";
+const STATIC_UNKNOWN_UNREACHED_NEXT_STEP: &str = "No static test path reaches this change; a test may still reach it through paths ripr cannot follow.";
 
 pub(in crate::analysis) fn build_finding(
     context: &ProbeContext<'_>,
@@ -46,7 +46,16 @@ pub(in crate::analysis) fn build_finding(
             // A new function no test calls yields several unclassifiable lines;
             // "escalate to real mutation" is useless while no test reaches
             // the owner at all. The class stays static_unknown.
-            Some(STATIC_UNKNOWN_UNREACHED_NEXT_STEP.to_string())
+            Some(format!(
+                "{STATIC_UNKNOWN_UNREACHED_NEXT_STEP} {}",
+                recommended_next_step(
+                    context.probe,
+                    &class,
+                    context.owner_assertion_shaped,
+                    &stop_reasons
+                )
+                .unwrap_or_default()
+            ))
         } else if class == ExposureClass::ReachableUnrevealed
             && evidence.observe.summary == ASSERTION_CONTEXT_UNESTABLISHED
             && !context.owner_assertion_shaped
@@ -55,7 +64,12 @@ pub(in crate::analysis) fn build_finding(
                 evidence.assertion_refusal.as_ref(),
             ))
         } else {
-            recommended_next_step(context.probe, &class, context.owner_assertion_shaped)
+            recommended_next_step(
+                context.probe,
+                &class,
+                context.owner_assertion_shaped,
+                &stop_reasons,
+            )
         };
     let confidence = evidence.confidence(&class);
     let invalid_propagation_witness = evidence.propagation_witness().is_some_and(|diagnostic| {

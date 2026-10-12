@@ -1,0 +1,44 @@
+{
+  "case_id": "py-spec0233-ex32-split-dict",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex32-split-dict.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 109
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "collection_element",
+  "test_shape": "pytest_field_and_whole_value_gates_in_two_tests",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return {\"port\": 81, \"timeout\": 8080}",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns port 81 instead of 80"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 32: test_a asserts only the timeout key and test_b calls build_split() beside an unrelated whole-dict assert, so changing the port passes. The spec says weakly_exposed; ripr today credits exposed, a false exposed verdict that joins one test's identity with another's whole-collection gate.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

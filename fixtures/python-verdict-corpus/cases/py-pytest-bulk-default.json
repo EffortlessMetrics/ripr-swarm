@@ -1,0 +1,44 @@
+{
+  "case_id": "py-pytest-bulk-default",
+  "subject_id": "authored-py-pytest-pricing",
+  "diff": "cases/py-pytest-bulk-default.diff",
+  "anchor": {
+    "file": "pricing/core.py",
+    "line": 60
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "parameter_default",
+  "test_shape": "pytest_every_call_binds_the_default",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "def bulk_price(unit_cents, quantity, bulk_threshold=12):",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: bulk_price(100, 10) without a threshold costs 1000 instead of 900"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Every test call passes bulk_threshold explicitly, so the default is never reached and raising it to 12 passes. RIPR-SPEC-0028 says such a default line is not credited exposed; ripr's weakly_exposed is the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -300,12 +300,27 @@ pub(super) fn collect_tests_from_statements(
                     "pytest"
                 };
                 let name = function.name.to_string();
-                let fixtures = fixture_parameter_names(&function.args, framework);
+                let generated_inputs = super::hypothesis::given_parameter_names(
+                    &function.args,
+                    &function.decorator_list,
+                );
+                let fixtures: Vec<String> = fixture_parameter_names(&function.args, framework)
+                    .into_iter()
+                    .filter(|name| !generated_inputs.contains(name))
+                    .collect();
                 let assertions = collect_assertions_from_statements(&function.body, source);
-                // pytest does not parametrize unittest methods.
+                // pytest does not parametrize unittest methods; Hypothesis
+                // `@example` rows run under either framework.
                 let parametrize = (framework == "pytest")
                     .then(|| parametrize_cases(source, &function.decorator_list))
-                    .flatten();
+                    .flatten()
+                    .or_else(|| {
+                        super::hypothesis::example_cases(
+                            source,
+                            &function.args,
+                            &function.decorator_list,
+                        )
+                    });
                 let imports = test_imports(file, imports, &function.body);
                 let assertion_admission = assertion_admission(
                     &PythonTestFunction {
@@ -336,6 +351,7 @@ pub(super) fn collect_tests_from_statements(
                     parametrized: is_parametrized(&function.decorator_list),
                     parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
+                    generated_inputs,
                     framework,
                     assertions,
                     assertion_admission,
@@ -353,12 +369,27 @@ pub(super) fn collect_tests_from_statements(
                     "pytest"
                 };
                 let name = function.name.to_string();
-                let fixtures = fixture_parameter_names(&function.args, framework);
+                let generated_inputs = super::hypothesis::given_parameter_names(
+                    &function.args,
+                    &function.decorator_list,
+                );
+                let fixtures: Vec<String> = fixture_parameter_names(&function.args, framework)
+                    .into_iter()
+                    .filter(|name| !generated_inputs.contains(name))
+                    .collect();
                 let assertions = collect_assertions_from_statements(&function.body, source);
-                // pytest does not parametrize unittest methods.
+                // pytest does not parametrize unittest methods; Hypothesis
+                // `@example` rows run under either framework.
                 let parametrize = (framework == "pytest")
                     .then(|| parametrize_cases(source, &function.decorator_list))
-                    .flatten();
+                    .flatten()
+                    .or_else(|| {
+                        super::hypothesis::example_cases(
+                            source,
+                            &function.args,
+                            &function.decorator_list,
+                        )
+                    });
                 let imports = test_imports(file, imports, &function.body);
                 let assertion_admission = assertion_admission(
                     &PythonTestFunction {
@@ -389,6 +420,7 @@ pub(super) fn collect_tests_from_statements(
                     parametrized: is_parametrized(&function.decorator_list),
                     parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
+                    generated_inputs,
                     framework,
                     assertions,
                     assertion_admission,

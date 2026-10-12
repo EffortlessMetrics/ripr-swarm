@@ -1,0 +1,22 @@
+{
+  "case_id": "py-spec0233-ex25-rival-import",
+  "subject_id": "authored-py-pytest-spec0233",
+  "origin": "authored",
+  "anchor": "src/subject.py:125",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_rival_module_same_name",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

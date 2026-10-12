@@ -1,0 +1,45 @@
+{
+  "case_id": "py-spec0233-ex20-raises-regex",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex20-raises-regex.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 86
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_message",
+  "test_shape": "unittest_assert_raises_regex_callable",
+  "hard_case": "the spec does not read callable-form assertRaisesRegex, yet it discriminates the message",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "raise KeyError(\"blank\")",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_subject.py::TestNotEqual::test_raises_regex",
+        "equivalence_review": "not equivalent: the KeyError message is 'blank' instead of 'empty'"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 20: self.assertRaisesRegex(KeyError, \"empty\", perr_raises_regex, \"\") is not used as an oracle (Decision 9), so ripr reports weakly_exposed, the spec's verdict; the regex fails for 'blank', so it scores false actionable.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
