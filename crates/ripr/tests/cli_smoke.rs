@@ -13632,7 +13632,7 @@ fn init_dry_run_fails_like_the_real_run_when_config_exists_without_force() -> Re
     );
     assert!(String::from_utf8_lossy(&dry.stderr).contains("already exists"));
     assert!(String::from_utf8_lossy(&dry.stderr).contains("resets customizations"));
-    assert!(String::from_utf8_lossy(&dry.stderr).contains("--dry-run"));
+    assert!(String::from_utf8_lossy(&dry.stderr).contains("--force --dry-run"));
     assert!(String::from_utf8_lossy(&dry.stderr).contains("ripr init --ci github --force"));
 
     // The pre-existing config is untouched by either invocation.
@@ -13859,7 +13859,7 @@ fn init_refuses_existing_config_without_force() -> Result<(), String> {
         stderr.contains("resets customizations"),
         "stderr:\n{stderr}"
     );
-    assert!(stderr.contains("--dry-run"), "stderr:\n{stderr}");
+    assert!(stderr.contains("--force --dry-run"), "stderr:\n{stderr}");
     assert!(
         stderr.contains("ripr init --ci github --force"),
         "stderr:\n{stderr}"
