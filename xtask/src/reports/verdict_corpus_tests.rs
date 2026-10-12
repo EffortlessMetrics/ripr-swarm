@@ -2057,17 +2057,19 @@ fn perl_expected_rows_agree_with_corpus_labels() -> Result<(), String> {
     Ok(())
 }
 
-/// The first committed Perl case whose packet is the producer's own output.
+/// The first committed Perl case whose packet is the producer's own output;
+/// a fresh key when there is none, so the tamper finds no violation and the
+/// subtest fails naming itself.
 fn producer_case(raw: &mut Value) -> &mut Value {
-    let cases = raw["cases"]
-        .as_array_mut()
-        .map(Vec::as_mut_slice)
-        .unwrap_or_default();
-    let index = cases
-        .iter()
-        .position(|case| case["perl_facts"]["provenance"] == json!("producer"))
-        .unwrap_or_default();
-    &mut raw["cases"][index]
+    let index = raw["cases"].as_array().and_then(|cases| {
+        cases
+            .iter()
+            .position(|case| case["perl_facts"]["provenance"] == json!("producer"))
+    });
+    match index {
+        Some(index) => &mut raw["cases"][index],
+        None => &mut raw["no_producer_case"],
+    }
 }
 
 #[test]
@@ -2182,6 +2184,15 @@ fn report_keeps_edited_packet_rates_apart_from_producer_rates() -> Result<(), St
         .by_packet_provenance
         .get("edited_producer")
         .ok_or("no edited rates")?;
+    let count = |provenance: PacketProvenance| {
+        corpus
+            .cases
+            .iter()
+            .filter(|c| c.perl_facts.as_ref().map(|f| f.provenance) == Some(provenance))
+            .count()
+    };
+    assert_eq!(producer.cases_total, count(PacketProvenance::Producer));
+    assert_eq!(edited.cases_total, count(PacketProvenance::EditedProducer));
     assert_eq!(
         producer.cases_total + edited.cases_total,
         corpus.cases.len()
