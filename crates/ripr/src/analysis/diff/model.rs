@@ -611,6 +611,25 @@ mod tests {
     }
 
     #[test]
+    fn a_symmetric_tie_pairs_nothing_by_content() {
+        // Two identical removed lines against two equally close added lines
+        // (plus one unrelated): every candidate ties, so content pairs
+        // nothing and only the first line's coordinate match remains.
+        let tied = ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines: vec![
+                line(4, 4, "f(a, 1);"),
+                line(5, 5, "f(a, 2);"),
+                line(6, 6, "h();"),
+            ],
+            removed_lines: vec![line(4, 4, "f(a);"), line(5, 4, "f(a);")],
+        };
+        let map = tied.aligned_counterparts();
+        assert_eq!(map.len(), 1, "{map:?}");
+        assert_eq!(aligned_text(&tied, 4), Some("f(a);"));
+    }
+
+    #[test]
     fn unlike_lines_do_not_pair_by_content() {
         let unlike = ChangedFile {
             path: PathBuf::from("src/lib.ts"),
