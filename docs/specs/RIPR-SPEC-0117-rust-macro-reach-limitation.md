@@ -109,8 +109,10 @@ condition below must hold; any doubt keeps the gap:
    nested block, is followed by a literal `fn` item, and names no `cfg`,
    `cfg_attr`, `ignore` or nested `macro_rules`: each can leave an invocation
    with no running test. No attribute in the transcriber may contain a `$`
-   fragment (`#[$m]`, `$(#[$m])*`), which would let the call site pass
-   `ignore` or a cfg.
+   fragment (`#[$m]`, `$(#[$m])*`), and no `$` fragment may precede the
+   `#[test]` (`$($p)*`, `# $a`), sit between the test's name and its body
+   brace (`fn $n() $b`), or open its body (`{ $($t)* .. }`): each would let
+   the call site pass `ignore` or a cfg.
 2. The invocation is in the definition's file, below it and inside the block
    that holds the definition (`macro_rules!` is textually scoped; a
    `#[macro_use]` module that widens the scope is not followed), and outside
@@ -125,7 +127,8 @@ condition below must hold; any doubt keeps the gap:
 4. Neither the invocation's leading attributes nor any enclosing `mod`
    header carries a cfg other than `cfg(test)`, and none carries
    `cfg_attr`. Any inner attribute (`#![..]`) in the file with a cfg other
-   than `cfg(test)` withholds every generator witness in that file.
+   than `cfg(test)` withholds every generator witness in that file; a crate
+   root's `#![cfg_attr(docsrs, ..)]` does too, which costs only the witness.
 
 The scan masks comments and strings first, so a commented-out invocation or a
 `#[test]` inside a string does not count. The witness names the test only

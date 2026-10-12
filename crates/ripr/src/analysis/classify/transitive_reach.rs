@@ -1537,7 +1537,13 @@ fn generated_test_sites<'a>(file: &'a Path, source: &str) -> Vec<GeneratedTestSi
     // An inner `#![cfg(..)]` can remove the file or a module the scope walk
     // does not track, so any inner cfg other than `cfg(test)` gives none.
     if attribute_groups(&masked)
-        .filter(|group| group.starts_with("#!") || group.contains("#!"))
+        .filter(|group| {
+            group
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .take(2)
+                .eq("#!".chars())
+        })
         .any(|group| !only_test_cfg(group))
     {
         return Vec::new();
@@ -1685,6 +1691,14 @@ fn generated_test_name(body: &str) -> Option<GeneratedTestName> {
         return None;
     }
     let test_attr = top_level_test_attribute(transcriber)?;
+    // A fragment ahead of `#[test]` (`$($p)*`, `# $a`) can splice in
+    // call-site attributes such as `#[ignore]`.
+    if transcriber
+        .get(..test_attr)
+        .is_some_and(|prefix| prefix.contains('$'))
+    {
+        return None;
+    }
     let mut cursor = skip_ascii_whitespace(transcriber, test_attr + "#[test]".len());
     // Further attributes such as `#[should_panic]` may follow.
     while transcriber
@@ -1704,6 +1718,18 @@ fn generated_test_name(body: &str) -> Option<GeneratedTestName> {
         return None;
     };
     let name = after_fn.trim_start();
+    // The body must open with a literal token: a leading fragment
+    // (`{ $($t)* .. }`) can splice in `#![ignore]` or `#![cfg(..)]`, and a
+    // fragment between the name and the body brace (`fn $n() $b`) hides
+    // where the body starts.
+    let name_end = ascii_ident_end(name, usize::from(name.starts_with('$')));
+    let signature_and_body = name.get(name_end..)?;
+    let body_open = signature_and_body.find('{')?;
+    let signature = signature_and_body.get(..body_open)?;
+    let body_start = signature_and_body.get(body_open + 1..)?.trim_start();
+    if signature.contains('$') || body_start.starts_with('$') {
+        return None;
+    }
     if let Some(variable) = name.strip_prefix('$') {
         let variable = variable
             .get(..ascii_ident_end(variable, 0))
@@ -3791,6 +3817,10 @@ first!(lead_name, 2);
             "{ ($m:meta, $n:ident) => { #[$m] #[test] fn $n() { owner(); } }; }",
             "{ ($n:ident $(, $m:meta)*) => { #[test] $(#[$m])* fn $n() { owner(); } }; }",
             "{ ($i:item) => { #[test] $i }; }",
+            "{ ([$($p:tt)*] $n:ident) => { $($p)* #[test] fn $n() { owner(); } }; }",
+            "{ ($a:tt $n:ident) => { # $a #[test] fn $n() { owner(); } }; }",
+            "{ ($n:ident $($t:tt)*) => { #[test] fn $n() { $($t)* owner(); } }; }",
+            "{ ($n:ident, $b:block) => { #[test] fn $n() $b }; }",
         ] {
             assert_eq!(generated_test_name(body), None, "{body}");
         }
@@ -3801,6 +3831,8 @@ first!(lead_name, 2);
 }
 ";
         assert!(generated_test_sites(Path::new("src/lib.rs"), inner_cfg).is_empty());
+        let spaced = inner_cfg.replace("#![", "# ![");
+        assert!(generated_test_sites(Path::new("src/lib.rs"), &spaced).is_empty());
         let inner_test_cfg = inner_cfg.replace("any()", "test");
         let names: Vec<String> = generated_test_sites(Path::new("src/lib.rs"), &inner_test_cfg)
             .into_iter()
