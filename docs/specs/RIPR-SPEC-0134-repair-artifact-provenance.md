@@ -380,6 +380,20 @@ remain. Initial archive/executable capture and archive decompression are not
 bounded by this reread contract; full package/install qualification remains
 separate from these controls.
 
+The existing admitted installed-candidate handle also retains the actual
+Cargo-install executable artifact and observed Cargo/rustc versions. The selected
+compiler executable must belong to the owned install target and match the
+installed bytes before initial capture. The qualified negative-corpus consumer
+captures those retained bytes once using exclusive creation in its owned producer
+root; an occupied destination refuses even when its bytes match. Complete
+readback precedes publication of the captured handle. Subsequent qualified runs
+reuse that handle and validate its frozen file, source and archive, without
+recopying or rereading mutable compiler/install outputs. Failed capture publishes
+no handle. Unix cleanup removes only the observed created inode with one link;
+where native ownership is unavailable, the named partial remains retained. These
+unlocked observations do not establish hostile race safety, crash durability,
+generic artifact reuse or final installed-candidate qualification.
+
 The 2026-10-02 review census had 5,411 ordinary blobs, 58,566,161 body bytes,
 1,949,776 bytes in the largest blob, and 647,658 metadata bytes. That observation
 motivates the limits and is not a promise about the final release candidate.
