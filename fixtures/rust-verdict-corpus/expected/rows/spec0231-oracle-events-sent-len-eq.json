@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0231-oracle-events-sent-len-eq",
+  "subject_id": "authored-spec0231-9",
+  "origin": "authored",
+  "anchor": "src/lib.rs:3",
+  "behavior_family": "side_effect_push",
+  "test_shape": "assert_eq_collection_len",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "false_exposed",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

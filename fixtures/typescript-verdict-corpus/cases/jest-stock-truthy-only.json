@@ -1,0 +1,65 @@
+{
+  "case_id": "jest-stock-truthy-only",
+  "subject_id": "authored-ts-jest-checkout",
+  "diff": "cases/jest-stock-truthy-only.diff",
+  "anchor": {
+    "file": "src/stock.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "jest_expect_tobetruthy_smoke",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "return true;",
+        "mutated_line": "return true;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "return false;",
+        "mutated_line": "return false;",
+        "outcome": "tests_failed",
+        "failing_test": "a stocked item is available",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "return 0 <= count;",
+        "mutated_line": "return 0 <= count;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      },
+      {
+        "replacement": "return 0 >= count;",
+        "mutated_line": "return 0 >= count;",
+        "outcome": "tests_failed",
+        "failing_test": "a stocked item is available",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "toBeTruthy on inStock(5) only rules out a false result, so `return true` and `0 <= count` pass. ripr reports weakly_exposed on the anchor, the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

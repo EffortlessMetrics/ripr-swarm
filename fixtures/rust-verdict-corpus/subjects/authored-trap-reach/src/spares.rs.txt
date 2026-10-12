@@ -1,0 +1,3 @@
+pub fn spare(base: u32) -> u32 {
+    base * 11
+}

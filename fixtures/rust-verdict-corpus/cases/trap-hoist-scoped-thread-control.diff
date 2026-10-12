@@ -1,0 +1,11 @@
+diff --git a/src/hoists.rs b/src/hoists.rs
+index c5aae2a..95d3914 100644
+--- a/src/hoists.rs
++++ b/src/hoists.rs
+@@ -1,5 +1,5 @@
+ pub fn hoist(base: u32) -> u32 {
+-    base * 49
++    49 * base
+ }
+ 
+ #[cfg(test)]

@@ -5,11 +5,16 @@
 profile = "gh-runner"
 
 [repo]
+kind = "rust"
+ledger = ""
 base = "origin/main"
 head = "HEAD"
 
 [gate]
 required_check = "ub-review/gate"
+# The pinned action otherwise posts only on opened/Ready. Keep repaired-head
+# and reopened review publication when Ready no longer starts advisory work.
+post_review_on = ["opened", "synchronize", "reopened"]
 
 # Post actionable findings (severity medium+ or confidence medium-high+) to
 # the PR; suppress pure lane-status boilerplate. Without this, the default

@@ -1,0 +1,52 @@
+{
+  "case_id": "semver-caret-minor-ge",
+  "subject_id": "semver",
+  "diff": "cases/semver-caret-minor-ge.diff",
+  "anchor": {
+    "file": "src/eval.rs",
+    "line": 149
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_public_api",
+  "hard_case": "tests live in tests/ and reach eval.rs only through the public VersionReq::matches API",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "minor < ver.minor",
+        "mutated_line": "return minor < ver.minor;",
+        "outcome": "tests_failed",
+        "failing_test": "test_caret",
+        "equivalence_review": "not equivalent: ^1.2 stops matching 1.2.x"
+      },
+      {
+        "replacement": "minor == ver.minor",
+        "mutated_line": "return minor == ver.minor;",
+        "outcome": "tests_failed",
+        "failing_test": "test_caret",
+        "equivalence_review": "not equivalent: ^1.2 stops matching 1.3.0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_caret asserts both matching and non-matching versions around ^1.2, so both mutants fail it. ripr names rust_integration_public_api_path_unresolved and stays limited, an acceptable abstention.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

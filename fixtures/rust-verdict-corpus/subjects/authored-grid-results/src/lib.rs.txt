@@ -1,0 +1,49 @@
+//! Result-returning functions observed through guarded matches: one test
+//! routes each side to its own assertion, the other swallows the error arm.
+
+#[derive(Debug, PartialEq)]
+pub enum PayError {
+    Insufficient,
+    Limit,
+}
+
+pub fn withdraw(balance: u64, amount: u64) -> Result<u64, PayError> {
+    if amount > 500 {
+        return Err(PayError::Limit);
+    }
+    if amount > balance {
+        return Err(PayError::Insufficient);
+    }
+    Ok(balance - amount)
+}
+
+pub fn refund(paid: u64, amount: u64) -> Result<u64, PayError> {
+    if amount > 500 {
+        return Err(PayError::Limit);
+    }
+    if amount > paid {
+        return Err(PayError::Insufficient);
+    }
+    Ok(paid - amount)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overdraw_routes_to_insufficient() {
+        match withdraw(10, 20) {
+            Ok(left) => panic!("overdraw left {left}"),
+            Err(e) => assert_eq!(e, PayError::Insufficient),
+        }
+    }
+
+    #[test]
+    fn refunds_tolerate_errors() {
+        match refund(10, 20) {
+            Ok(left) => assert_eq!(left, 0),
+            Err(_) => {}
+        }
+    }
+}

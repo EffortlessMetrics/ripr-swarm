@@ -1,0 +1,3 @@
+fn fixture_line() -> &'static str {
+    "x,y,z"
+}

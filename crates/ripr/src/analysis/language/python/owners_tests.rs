@@ -1,3 +1,4 @@
+use super::admission::{PythonAdmissionContext, PythonTestFunction, assertion_admission};
 use super::module_constants::{
     PythonModuleConstant, constants_visible_in_function, python_test_rebinding,
 };
@@ -265,6 +266,14 @@ pub(super) fn extract_tests(file: &Path, source: &str) -> Vec<PythonTest> {
     extract_source_facts(file, source).tests
 }
 
+/// Python decorators and method bodies use different binding scopes.
+#[derive(Clone, Copy)]
+pub(super) struct TestImportContext<'a> {
+    pub(super) body: &'a [PythonImport],
+    pub(super) definition: &'a [PythonImport],
+    pub(super) admission: &'a PythonAdmissionContext,
+}
+
 /// Follow the default pytest `python_functions` and unittest
 /// `TestLoader.testMethodPrefix`: both use `test`, not `test_`.
 /// Custom collection prefixes and hooks are not resolved here.
@@ -274,11 +283,15 @@ pub(super) fn collect_tests_from_statements(
     statements: &[Stmt],
     class_context: Option<&str>,
     in_unittest_class: bool,
-    imports: &[PythonImport],
+    import_context: TestImportContext<'_>,
     out: &mut Vec<PythonTest>,
 ) {
-    let local_classes = LocalTestClasses::of(statements);
+    let imports = import_context.body;
+    let admission = import_context.admission;
+    let mut definition_imports = import_context.definition.to_vec();
+    let local_classes = LocalTestClasses::of(file, statements, import_context.definition);
     for stmt in statements {
+        apply_definition_import(file, stmt, &mut definition_imports);
         match stmt {
             Stmt::FunctionDef(function) if function.name.as_str().starts_with("test") => {
                 let framework = if in_unittest_class {
@@ -287,23 +300,45 @@ pub(super) fn collect_tests_from_statements(
                     "pytest"
                 };
                 let name = function.name.to_string();
+                let fixtures = fixture_parameter_names(&function.args, framework);
+                let assertions = collect_assertions_from_statements(&function.body, source);
+                // pytest does not parametrize unittest methods.
+                let parametrize = (framework == "pytest")
+                    .then(|| parametrize_cases(source, &function.decorator_list))
+                    .flatten();
+                let imports = test_imports(file, imports, &function.body);
+                let assertion_admission = assertion_admission(
+                    &PythonTestFunction {
+                        body: &function.body,
+                        decorators: &function.decorator_list,
+                        parameters: &fixtures,
+                        imports: &imports,
+                        class_path: class_context,
+                    },
+                    &assertions,
+                    parametrize.as_ref().map(|cases| cases.argnames()).as_ref(),
+                    admission,
+                );
                 out.push(PythonTest {
                     qualified_name: qualified_test_name(class_context, &name),
                     name,
                     file: file.to_path_buf(),
                     line: line_for_range_start(source, function.range),
                     body_text: text_for_range(source, function.range),
-                    imports: test_imports(file, imports, &function.body),
+                    imports,
                     decorators: decorator_names(&function.decorator_list),
-                    fixtures: fixture_parameter_names(&function.args, framework),
+                    activation_controls: super::test_activation::activation_controls(
+                        &decorator_names(&function.decorator_list),
+                        &definition_imports,
+                        super::test_activation::DeclarationSite::Function,
+                    ),
+                    fixtures,
                     parametrized: is_parametrized(&function.decorator_list),
-                    // pytest does not parametrize unittest methods.
-                    parametrize: (framework == "pytest")
-                        .then(|| parametrize_cases(source, &function.decorator_list))
-                        .flatten()
+                    parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
                     framework,
-                    assertions: collect_assertions_from_statements(&function.body, source),
+                    assertions,
+                    assertion_admission,
                     constant_rebinding: python_test_rebinding(
                         &function.args,
                         &function.body,
@@ -318,23 +353,45 @@ pub(super) fn collect_tests_from_statements(
                     "pytest"
                 };
                 let name = function.name.to_string();
+                let fixtures = fixture_parameter_names(&function.args, framework);
+                let assertions = collect_assertions_from_statements(&function.body, source);
+                // pytest does not parametrize unittest methods.
+                let parametrize = (framework == "pytest")
+                    .then(|| parametrize_cases(source, &function.decorator_list))
+                    .flatten();
+                let imports = test_imports(file, imports, &function.body);
+                let assertion_admission = assertion_admission(
+                    &PythonTestFunction {
+                        body: &function.body,
+                        decorators: &function.decorator_list,
+                        parameters: &fixtures,
+                        imports: &imports,
+                        class_path: class_context,
+                    },
+                    &assertions,
+                    parametrize.as_ref().map(|cases| cases.argnames()).as_ref(),
+                    admission,
+                );
                 out.push(PythonTest {
                     qualified_name: qualified_test_name(class_context, &name),
                     name,
                     file: file.to_path_buf(),
                     line: line_for_range_start(source, function.range),
                     body_text: text_for_range(source, function.range),
-                    imports: test_imports(file, imports, &function.body),
+                    imports,
                     decorators: decorator_names(&function.decorator_list),
-                    fixtures: fixture_parameter_names(&function.args, framework),
+                    activation_controls: super::test_activation::activation_controls(
+                        &decorator_names(&function.decorator_list),
+                        &definition_imports,
+                        super::test_activation::DeclarationSite::Function,
+                    ),
+                    fixtures,
                     parametrized: is_parametrized(&function.decorator_list),
-                    // pytest does not parametrize unittest methods.
-                    parametrize: (framework == "pytest")
-                        .then(|| parametrize_cases(source, &function.decorator_list))
-                        .flatten()
+                    parametrize: parametrize
                         .and_then(|cases| cases.excluding_body_bindings(&function.body)),
                     framework,
-                    assertions: collect_assertions_from_statements(&function.body, source),
+                    assertions,
+                    assertion_admission,
                     constant_rebinding: python_test_rebinding(
                         &function.args,
                         &function.body,
@@ -347,14 +404,21 @@ pub(super) fn collect_tests_from_statements(
                 let class_is_unittest =
                     in_unittest_class || local_classes.unittest.contains(class_name);
                 if class_is_unittest || local_classes.pytest.contains(class_name) {
+                    let first_class_test = out.len();
                     let nested_class_context = qualified_test_name(class_context, class_name);
+                    // Decorators see class-local bindings; method bodies do
+                    // not. Keep global/body-call identity on the old context.
                     collect_tests_from_statements(
                         file,
                         source,
                         &class.body,
                         Some(&nested_class_context),
                         class_is_unittest,
-                        imports,
+                        TestImportContext {
+                            body: imports,
+                            definition: &definition_imports,
+                            admission,
+                        },
                         out,
                     );
                     // Mixin members this class resolves to run as this
@@ -373,14 +437,44 @@ pub(super) fn collect_tests_from_statements(
                             &mixin.body,
                             Some(&nested_class_context),
                             class_is_unittest,
-                            imports,
+                            TestImportContext {
+                                body: imports,
+                                definition: local_classes
+                                    .definition_imports
+                                    .get(mixin.name.as_str())
+                                    .map(Vec::as_slice)
+                                    .unwrap_or(&definition_imports),
+                                admission,
+                            },
                             &mut from_mixin,
                         );
+                        for test in &mut from_mixin {
+                            test.decorators
+                                .extend(decorator_names(&mixin.decorator_list));
+                        }
                         out.extend(from_mixin.into_iter().filter(|test| {
                             members.contains(test.name.as_str())
                                 && test.qualified_name
                                     == qualified_test_name(Some(&nested_class_context), &test.name)
                         }));
+                    }
+                    for test in &mut out[first_class_test..] {
+                        test.activation_controls.extend(
+                            local_classes
+                                .class_activation_controls
+                                .get(class_name)
+                                .into_iter()
+                                .flatten()
+                                .cloned(),
+                        );
+                        test.decorators.extend(
+                            local_classes
+                                .class_decorators
+                                .get(class_name)
+                                .into_iter()
+                                .flatten()
+                                .cloned(),
+                        );
                     }
                 }
             }
@@ -401,6 +495,28 @@ fn test_imports(file: &Path, module_imports: &[PythonImport], body: &[Stmt]) -> 
         imports.push(import);
     }
     imports
+}
+
+/// Decorators execute when a declaration is reached. Later imports in its
+/// module/class must not retroactively change the decorator's identity.
+fn apply_definition_import(file: &Path, stmt: &Stmt, imports: &mut Vec<PythonImport>) {
+    if matches!(stmt, Stmt::Import(_) | Stmt::ImportFrom(_)) {
+        for mut import in collect_imports_from_statements(file, std::slice::from_ref(stmt)) {
+            // `import unittest.mock` binds `unittest`, unlike
+            // `import unittest.mock as helper`. Keep this declaration-only
+            // binding model separate from owner/module path identities.
+            if import.source_module.is_empty()
+                && import.alias == import.imported
+                && let Some((root, _)) = import.imported.split_once('.')
+            {
+                let root = root.to_string();
+                import.alias.clone_from(&root);
+                import.imported = root;
+            }
+            imports.retain(|earlier| earlier.alias != import.alias);
+            imports.push(import);
+        }
+    }
 }
 
 fn qualified_test_name(class_context: Option<&str>, name: &str) -> String {
@@ -547,10 +663,15 @@ struct LocalTestClasses<'a> {
     /// the `test*` members the class resolves to that mixin.
     inherited: BTreeMap<&'a str, Vec<(&'a ast::StmtClassDef, BTreeSet<&'a str>)>>,
     last_definitions: BTreeSet<*const ast::StmtClassDef>,
+    /// Marks on known local ancestors can control an overridden test too.
+    class_decorators: BTreeMap<&'a str, Vec<String>>,
+    class_activation_controls:
+        BTreeMap<&'a str, Vec<super::test_activation::PythonActivationControl>>,
+    definition_imports: BTreeMap<&'a str, Vec<PythonImport>>,
 }
 
 impl<'a> LocalTestClasses<'a> {
-    fn of(statements: &'a [Stmt]) -> Self {
+    fn of(file: &Path, statements: &'a [Stmt], initial_imports: &[PythonImport]) -> Self {
         let scope = ScopeClasses::of(statements);
         let mut found = Self {
             last_definitions: scope
@@ -560,6 +681,17 @@ impl<'a> LocalTestClasses<'a> {
                 .collect(),
             ..Self::default()
         };
+        let mut prefix = initial_imports.to_vec();
+        for stmt in statements {
+            apply_definition_import(file, stmt, &mut prefix);
+            if let Stmt::ClassDef(class) = stmt
+                && found.is_last_definition(class)
+            {
+                found
+                    .definition_imports
+                    .insert(class.name.as_str(), prefix.clone());
+            }
+        }
         let mut own_unittest: BTreeSet<&'a str> = BTreeSet::new();
         let mut changed = true;
         while changed {
@@ -592,6 +724,31 @@ impl<'a> LocalTestClasses<'a> {
         }
         let collected: BTreeSet<&'a str> = own_unittest.union(&found.pytest).copied().collect();
         for name in &collected {
+            let decorators = scope
+                .ancestors_or_self(name)
+                .iter()
+                .filter_map(|ancestor| scope.defs.get(ancestor))
+                .flat_map(|(_, class)| decorator_names(&class.decorator_list))
+                .collect();
+            found.class_decorators.insert(name, decorators);
+            let controls = scope
+                .ancestors_or_self(name)
+                .iter()
+                .filter_map(|ancestor| {
+                    scope
+                        .defs
+                        .get(ancestor)
+                        .zip(found.definition_imports.get(ancestor))
+                })
+                .flat_map(|((_, class), imports)| {
+                    super::test_activation::activation_controls(
+                        &decorator_names(&class.decorator_list),
+                        imports,
+                        super::test_activation::DeclarationSite::Class,
+                    )
+                })
+                .collect();
+            found.class_activation_controls.insert(name, controls);
             let Some(mro) = scope.mro(name, &mut Vec::new()) else {
                 continue;
             };

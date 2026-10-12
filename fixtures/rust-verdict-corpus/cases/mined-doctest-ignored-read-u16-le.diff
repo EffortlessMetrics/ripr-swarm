@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 9ea04c7..495babb 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -18,7 +18,7 @@ pub fn read_u16(bytes: &[u8]) -> u16 {
+ /// assert_eq!(wire::read_u16_le(&[0x34, 0x12]), 0x1234);
+ /// ```
+ pub fn read_u16_le(bytes: &[u8]) -> u16 {
+-    u16::from_le_bytes([bytes[0], bytes[1]])
++    u16::from(bytes[0]) | (u16::from(bytes[1]) << 8)
+ }
+ 
+ /// Reads a big-endian `u32` from the first four bytes.

@@ -256,7 +256,7 @@ done
 printf 'human pilot terminal\n'
 if [ -n "$out" ]; then
   mkdir -p "$out"
-  printf '%s\n' '{"schema_version":"0.2","tool":"ripr","status":"complete","findings":[{"id":"seam-1"}]}' > "$out/pilot-summary.json"
+  printf '%s\n' '{"schema_version":"0.3","tool":"ripr","status":"complete","findings":[{"id":"seam-1"}]}' > "$out/pilot-summary.json"
 fi
 printf 'PILOT_RAN\n' >&2
 exit 0

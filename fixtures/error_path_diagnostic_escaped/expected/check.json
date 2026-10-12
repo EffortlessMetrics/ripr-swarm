@@ -11,6 +11,18 @@
   "findings": [
     {
       "id": "probe:src_lib.rs:error_path:fedbf836",
+      "canonical_gap_id": "gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:read_all:error_variant:error_path:let_n=rdr.read_mut_buf",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "read_all",
+        "behavior_kind": "error_variant",
+        "probe_kind": "error_path",
+        "normalized_discriminator": "let_n=rdr.read_mut_buf"
+
+      },
       "classification": "weakly_exposed",
       "severity": "warning",
       "confidence": 0.92,
@@ -18,7 +30,7 @@
         "id": "probe:src_lib.rs:error_path:fedbf836",
         "family": "error_path",
         "delta": "value",
-        "file": "fixtures/error_path_diagnostic_escaped/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 5,
         "expression": "let n = rdr.read(&mut buf)?;"
        },
@@ -91,7 +103,7 @@
           "relation_reason": "direct_owner_call",
           "relation_confidence": "high",
           "miss": "observation_unconfirmed",
-          "why": "assertion does not mention the changed expression"
+          "why": "ripr could not confirm that this assertion observes the changed behavior"
         }
       ],
       "stop_reasons": [],
@@ -104,6 +116,18 @@
     },
     {
       "id": "probe:src_lib.rs:static_unknown:afc04379",
+      "canonical_gap_id": "gap:rust:src/lib.rs:read_all:static_unknown:static_unknown:let_n=rdr.read_mut_buf_.unwrap_or_0",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:read_all:static_unknown:static_unknown:let_n=rdr.read_mut_buf_.unwrap_or_0",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "read_all",
+        "behavior_kind": "static_unknown",
+        "probe_kind": "static_unknown",
+        "normalized_discriminator": "let_n=rdr.read_mut_buf_.unwrap_or_0"
+
+      },
       "classification": "static_unknown",
       "severity": "note",
       "confidence": 0.50,
@@ -111,7 +135,7 @@
         "id": "probe:src_lib.rs:static_unknown:afc04379",
         "family": "static_unknown",
         "delta": "unknown",
-        "file": "fixtures/error_path_diagnostic_escaped/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 5,
         "expression": "let n = rdr.read(&mut buf).unwrap_or(0);"
        },

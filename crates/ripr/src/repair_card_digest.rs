@@ -34,6 +34,7 @@ struct RepairCardDigestInput<'a> {
     done_when: &'a RepairCardDoneWhen,
     stop_conditions: &'a [String],
     next_action: Option<RepairCardDigestCommandRef<'a>>,
+    canonical_next_action: Option<RepairCardDigestNextAction>,
     selected_basis: &'a Option<String>,
     rejected_alternatives: &'a [crate::domain::RepairCardRejectedAlternative],
     attempt: &'a Option<RepairCardAttempt>,
@@ -56,6 +57,23 @@ struct RepairCardDigestDetail<'a> {
 struct RepairCardDigestCommandRef<'a> {
     command_id: &'a str,
     role: &'a str,
+}
+
+/// The canonical decision behind `next_action`: schema, producer, class,
+/// command identity, stop kind, and transition labels. Subject, currentness,
+/// and limitations are already digested through the card's own fields;
+/// displays, stop details, and alternative routes are presentation or may
+/// bind a concrete root, so they stay out like `next_action.display`.
+#[derive(serde::Serialize)]
+struct RepairCardDigestNextAction {
+    schema_version: String,
+    producer: String,
+    action_class: String,
+    command_id: Option<String>,
+    command_role: Option<String>,
+    stop_kind: Option<String>,
+    transition_from: Option<String>,
+    transition_to: Option<String>,
 }
 
 /// Compute the portable semantic digest of a card. Equivalent roots and
@@ -85,6 +103,27 @@ pub(crate) fn repair_card_semantic_digest(card: &RepairCardV1) -> Result<String,
                 command_id: &command.command_id,
                 role: &command.role,
             }),
+        canonical_next_action: card.canonical_next_action.as_ref().map(|action| {
+            RepairCardDigestNextAction {
+                schema_version: action.schema_version().to_string(),
+                producer: action.producer().as_str().to_string(),
+                action_class: action.action_class().as_str().to_string(),
+                command_id: action.command().map(|command| command.command_id.clone()),
+                command_role: action.command().map(|command| {
+                    serde_json::to_value(command.role)
+                        .ok()
+                        .and_then(|role| role.as_str().map(str::to_string))
+                        .unwrap_or_else(|| "unknown".to_string())
+                }),
+                stop_kind: action.stop().map(|stop| stop.kind().to_string()),
+                transition_from: action
+                    .expected_transition()
+                    .map(|transition| transition.from_state.clone()),
+                transition_to: action
+                    .expected_transition()
+                    .map(|transition| transition.to_state.clone()),
+            }
+        }),
         selected_basis: &card.selected_basis,
         rejected_alternatives: &card.rejected_alternatives,
         attempt: &card.attempt,
@@ -203,6 +242,7 @@ mod tests {
             done_when: done_when(),
             stop_conditions: vec!["snapshot_stale".to_string()],
             next_action: Some(next_action()),
+            canonical_next_action: None,
             selected_basis: Some("direct_owner_call".to_string()),
             rejected_alternatives: vec![crate::domain::RepairCardRejectedAlternative {
                 target: "tests/other.rs::name_match".to_string(),
@@ -499,6 +539,111 @@ mod tests {
         if repair_card_semantic_digest(&stale)? == with_ref {
             return Err("detail state is not load-bearing".to_string());
         }
+        Ok(())
+    }
+
+    fn canonical_subject() -> crate::domain::NextActionSubject {
+        crate::domain::NextActionSubject {
+            root: "workspace:demo".to_string(),
+            diff_source: crate::domain::NextActionDiffSource::Committed {
+                base: None,
+                head: Some("abc123".to_string()),
+            },
+            item: Some("seam:demo".to_string()),
+        }
+    }
+
+    fn canonical_currentness() -> crate::domain::NextActionCurrentness {
+        crate::domain::NextActionCurrentness {
+            head_expected: Some("abc123".to_string()),
+            head_observed: Some("abc123".to_string()),
+            config_expected: None,
+            config_observed: None,
+        }
+    }
+
+    fn canonical_run(display: &str) -> Result<crate::domain::CanonicalNextActionV1, String> {
+        crate::domain::CanonicalNextActionV1::new(
+            crate::domain::NextActionProducer::RepairCard,
+            canonical_subject(),
+            canonical_currentness(),
+            crate::domain::NextActionClass::RunCommand,
+            Some(crate::domain::NextActionCommandRef {
+                command_id: "cmd:verify".to_string(),
+                role: crate::domain::CommandRole::Verify,
+                display: display.to_string(),
+            }),
+            None,
+            Some(crate::domain::NextActionTransition {
+                from_state: "fix_site_ready".to_string(),
+                to_state: "verification_recorded".to_string(),
+            }),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    fn canonical_stopped(
+        detail_route: &str,
+    ) -> Result<crate::domain::CanonicalNextActionV1, String> {
+        crate::domain::CanonicalNextActionV1::new(
+            crate::domain::NextActionProducer::RepairCard,
+            canonical_subject(),
+            canonical_currentness(),
+            crate::domain::NextActionClass::InspectDetails,
+            None,
+            Some(crate::domain::NextActionStop::InspectTarget {
+                detail_route: detail_route.to_string(),
+            }),
+            None,
+            Vec::new(),
+            Vec::new(),
+        )
+    }
+
+    #[test]
+    fn canonical_decision_moves_remint_the_digest() -> Result<(), String> {
+        let base = card_fixture();
+        let base_digest = repair_card_semantic_digest(&base)?;
+
+        let mut running = base.clone();
+        running.canonical_next_action = Some(canonical_run("cargo test --package demo")?);
+        let running_digest = repair_card_semantic_digest(&running)?;
+        if running_digest == base_digest {
+            return Err("canonical decision did not enter the semantic identity".to_string());
+        }
+
+        let mut stopped = base.clone();
+        stopped.canonical_next_action = Some(canonical_stopped("packet-route")?);
+        if repair_card_semantic_digest(&stopped)? == running_digest {
+            return Err("canonical class move did not remint the digest".to_string());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn canonical_presentation_moves_keep_the_digest() -> Result<(), String> {
+        let base = card_fixture();
+        let base_digest = repair_card_semantic_digest(&base)?;
+
+        // Command display is presentation, like `next_action.display`.
+        let mut running = base.clone();
+        running.canonical_next_action = Some(canonical_run("cargo test --package demo")?);
+        let running_digest = repair_card_semantic_digest(&running)?;
+        running.canonical_next_action = Some(canonical_run("a different rendered string")?);
+        if repair_card_semantic_digest(&running)? != running_digest {
+            return Err("canonical command display entered the semantic identity".to_string());
+        }
+
+        // Stop detail routes may bind a concrete root; only the kind counts.
+        let mut stopped = base.clone();
+        stopped.canonical_next_action = Some(canonical_stopped("workspace:demo/packet")?);
+        let stopped_digest = repair_card_semantic_digest(&stopped)?;
+        stopped.canonical_next_action = Some(canonical_stopped("workspace:other/packet")?);
+        if repair_card_semantic_digest(&stopped)? != stopped_digest {
+            return Err("canonical stop detail entered the semantic identity".to_string());
+        }
+        let _ = base_digest;
         Ok(())
     }
 }

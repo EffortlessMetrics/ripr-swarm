@@ -1,0 +1,57 @@
+schema_version = "2.0"
+id = "ripr.slice.check-json-canonical-next-action.v1"
+generation = 1
+
+source_issue = "issue:7258"
+design_reference = "RIPR-SPEC-0242"
+change_class = "spec_or_contract_change"
+
+claim_boundary = """
+Expose CanonicalNextActionV1 on the public navigation-aware ripr check
+--format json adapter using the existing check producer and DTO. Generic
+JSON and unbounded pr-evidence omit the object. Per-finding
+suggested_next_action stays compatible. Additive in check schema 0.2.
+"""
+
+non_goals = [
+  "repair lifecycle, store, grammar, or ranking changes",
+  "re-inferring provenance at render time",
+  "blanket analyzer golden refresh",
+  "doctor, pilot, and inventory renderer migration",
+  "release decisions",
+]
+
+return_conditions = [
+  "Return to root if JSON invents a stronger action than the shared producer.",
+  "Return to root if generic JSON fabricates a committed-source default.",
+  "Return to root if an inspectable finding becomes run_command by serialization.",
+]
+
+owned_seams = [
+  "seam:ripr:output:check-json-canonical-next-action",
+]
+
+shared_seams = [
+  "seam:ripr:output:next-action-projection",
+  "seam:ripr:output:check-triage",
+  "seam:ripr:contract:output-enums",
+]
+
+forbidden_seams = [
+  "seam:ripr:agent:command-runner",
+  "seam:ripr:agent:receipt-issuer",
+  "seam:ripr:repair:lifecycle",
+]
+
+[[requirement_delta]]
+requirement_id = "RIPR-SPEC-0242"
+requirement_generation = 1
+
+[implementation_claim]
+status = "implemented"
+
+[evidence]
+state = "outstanding"
+
+[support_claim]
+state = "unchanged"

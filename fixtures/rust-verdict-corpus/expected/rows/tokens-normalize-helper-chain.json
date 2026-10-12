@@ -1,0 +1,22 @@
+{
+  "case_id": "tokens-normalize-helper-chain",
+  "subject_id": "authored-tokens",
+  "origin": "authored",
+  "anchor": "src/reach.rs:4",
+  "behavior_family": "return_value",
+  "test_shape": "helper_chain_two_hops",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "propagation_unknown"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

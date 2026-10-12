@@ -1,0 +1,65 @@
+{
+  "case_id": "ts-nodetest-gold-threshold",
+  "subject_id": "authored-ts-nodetest-pricing",
+  "diff": "cases/ts-nodetest-gold-threshold.diff",
+  "anchor": {
+    "file": "src/pricing.ts",
+    "line": 12
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "node_assert_strict_equal_far_from_boundary",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --experimental-strip-types --test \"test/*.test.ts\"",
+    "toolchain": "Node.js v22.22.0 (node:test, --experimental-strip-types), x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "if (true) {",
+        "mutated_line": "if (true) {",
+        "outcome": "tests_failed",
+        "failing_test": "tiers far from their thresholds",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (false) {",
+        "mutated_line": "if (false) {",
+        "outcome": "tests_failed",
+        "failing_test": "tiers far from their thresholds",
+        "equivalence_review": "not equivalent: the result no longer depends on the compared value"
+      },
+      {
+        "replacement": "if (5000 < points) {",
+        "mutated_line": "if (5000 < points) {",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      },
+      {
+        "replacement": "if (5000 > points) {",
+        "mutated_line": "if (5000 > points) {",
+        "outcome": "tests_failed",
+        "failing_test": "tiers far from their thresholds",
+        "equivalence_review": "not equivalent: the result differs at the boundary value"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "\"tiers far from their thresholds\" checks 6000 and 0 points only, so the constant and flipped mutants of `5000 <= points` fail it while the off-by-one `5000 < points` passes. ripr's weakly_exposed is the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

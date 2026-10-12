@@ -14,6 +14,36 @@
 
 ### Fixed
 
+- Give the `Extension Smoke` suite setup its own generous mocha budget and
+  report a suite whose before-all hook died as a named setup death instead of
+  an ordinary test failure. Activation awaits full server start (a 10s
+  compatibility probe plus client start) inside the hook, so on a slow or
+  cold host the whole real-server configuration/preview e2e suite could die
+  in "before all" under the global 10s timeout while the run still looked
+  like an ordinary single failure
+  ([#6845](https://github.com/EffortlessMetrics/ripr-swarm/issues/6845)).
+
+- Name `ripr.toml [languages] enabled` as the preview-language enablement
+  mechanism where expectations are set: the Get Started open-file step and
+  the README onboarding show the exact `[languages] enabled = [...]` shape
+  plus the restart behavior and scope the step's completion to Rust files,
+  and the zero-diagnostics status branch now names routed-but-disabled
+  preview languages and the same mechanism instead of a generic
+  "enabled languages" hint
+  ([#6846](https://github.com/EffortlessMetrics/ripr-swarm/issues/6846)).
+
+- Resolve the diff base from the repository by default. `ripr.baseRef`
+  defaulted to `origin/main`, so every repository whose default branch is
+  `master` showed "the base `origin/main` does not resolve" and no
+  diagnostics until the user found the setting. The default is now empty and
+  resolves `origin/HEAD`, then `origin/main`, `origin/master`, `main`,
+  `master`, as `ripr check` does. An explicit setting is still used as given.
+  When no default branch resolves, the status bar now points at
+  `ripr.baseRef` instead of the generic retry text.
+
+- Hover prefers a column-precise finding over a line-level one on the same
+  line.
+
 - Start the server when Workspace Trust is granted or a first folder is added.
   Activation in an untrusted or folderless window was recorded as a running
   session, so those events did nothing until `ripr: Restart Server`.

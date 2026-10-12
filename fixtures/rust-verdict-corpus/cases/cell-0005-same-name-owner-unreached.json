@@ -1,0 +1,51 @@
+{
+  "case_id": "cell-0005-same-name-owner-unreached",
+  "subject_id": "authored-spec-confirm",
+  "diff": "cases/cell-0005-same-name-owner-unreached.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 120
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "same_name_owner_other_module_tested",
+  "hard_case": "Two modules define price_quote with the same signature; the edited one is wholesale, and the only test imports retail::* and calls the bare name.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "total: 8 + items,",
+        "mutated_line": "total: 8 + items,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: wholesale::price_quote(3).total becomes 11 instead of 24"
+      },
+      {
+        "replacement": "total: 8 * items + 1,",
+        "mutated_line": "total: 8 * items + 1,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: wholesale::price_quote(3).total becomes 25 instead of 24"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "retail_quote_charges_twelve_each never reaches wholesale::price_quote, so both mutants pass. Spec cells: RIPR-SPEC-0005 constructor_field_owner_ambiguous.",
+  "labeling_observation": {
+    "ripr_commit": "128f794f6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

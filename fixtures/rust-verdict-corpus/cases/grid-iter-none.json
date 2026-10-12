@@ -1,0 +1,51 @@
+{
+  "case_id": "grid-iter-none",
+  "subject_id": "authored-grid-iter",
+  "diff": "cases/grid-iter-none.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 20
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "closure_in_iterator_adaptor",
+  "test_shape": "smoke_call_no_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "prices.iter().map(|&p| p + 100).sum()",
+        "mutated_line": "prices.iter().map(|&p| p + 100).sum()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: total_cents(&[1, 2]) is 203 instead of 300"
+      },
+      {
+        "replacement": "prices.iter().map(|&p| p / 100).sum()",
+        "mutated_line": "prices.iter().map(|&p| p / 100).sum()",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: total_cents(&[1, 2]) is 0 instead of 300"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "Grid cell: closure in an iterator adaptor (pattern destructured; mutants change the closure's operator) x smoke_call_no_assert. The test calls the function and asserts nothing; 0 of 2 listed mutants fail cargo test. Spec cells: RIPR-SPEC-0001, RIPR-SPEC-0231.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

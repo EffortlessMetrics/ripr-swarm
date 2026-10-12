@@ -1,0 +1,17 @@
+pub fn area(width: u32, height: u32) -> u32 {
+    width * height
+}
+
+pub fn area_rounded(width: u32, height: u32) -> u32 {
+    (width * height + 9) / 10 * 10
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn area_rounded_rounds_up() {
+        assert_eq!(area_rounded(3, 4), 20);
+    }
+}

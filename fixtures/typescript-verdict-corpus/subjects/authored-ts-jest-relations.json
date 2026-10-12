@@ -1,0 +1,145 @@
+{
+  "subject_id": "authored-ts-jest-relations",
+  "origin": "authored",
+  "version_label": "authored@2026-10-04",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "jest.config.js",
+      "sha256": "06ffef8b53b4cb850f7bf2691d6fe2f3ad3bce674d2aa636ad1e29dcd22152a5"
+    },
+    {
+      "path": "package.json",
+      "sha256": "c455f22de14faf5f3579c70e86f05af2f09bb49ea06066bb58637d4322c13bde"
+    },
+    {
+      "path": "ripr.toml",
+      "sha256": "27f3758ca9cce54d063a7f0daddc95f0940433563d4869a9e5a7c622ae961381"
+    },
+    {
+      "path": "src/add.ts",
+      "sha256": "9a30ac96b5d5c1b67eca69e1e2cf0798817d9578c8d7d904a81a67b983b35cba"
+    },
+    {
+      "path": "src/fee31.ts",
+      "sha256": "18dfbac373facc8024c08a53e6fb3e26cc784f53ddf597fc77d752000aa43f27"
+    },
+    {
+      "path": "src/fee32.ts",
+      "sha256": "50cf6260d4aff29cfaadaac771a61c2c10b674e23118da3a179eb51d842ccc90"
+    },
+    {
+      "path": "src/other24.ts",
+      "sha256": "4ab17e36fbb4ec87d85c18d66621f3ba8f7ba2ff158b0db146c8c12fcc461528"
+    },
+    {
+      "path": "src/priceAlias.ts",
+      "sha256": "b127a661771d192cb9790686e36caa957ec2aeb1221421ee906e3bce5378496f"
+    },
+    {
+      "path": "src/priceAliasLocal.ts",
+      "sha256": "704d91c2cc68ed7b4a45b30214b727b58e6e740df349335b75ad0a5222083de9"
+    },
+    {
+      "path": "src/priceDefault.ts",
+      "sha256": "421d2161cdc7190f68d8822b5706322f1d46db4ecd8dd29ab138b6aa4417cb62"
+    },
+    {
+      "path": "src/priceDynamic.ts",
+      "sha256": "6f5c7a645bc35993169ef741ca6c912d46720b88debdbef03e0f4b66532791d5"
+    },
+    {
+      "path": "src/priceFeeMocked.ts",
+      "sha256": "1898c662fecdbb3180a8f967134bd22dd05b9f4b433cd27f8739c43ea03d969a"
+    },
+    {
+      "path": "src/priceLocal.ts",
+      "sha256": "a4d8f34d7219a8b92d97b3b11bda3ccffa844f642302c2e3be559162ae13bd7f"
+    },
+    {
+      "path": "src/priceOtherMocked.ts",
+      "sha256": "15eacea1e5c17f3c97c2630774e24e169950c0d7b8631b2001f83e755157f412"
+    },
+    {
+      "path": "src/priceRenamed.ts",
+      "sha256": "a60861b17fae755733d240611e2b209dccfdbab3e910880e517d30d5d496a42f"
+    },
+    {
+      "path": "src/priceSelfMocked.ts",
+      "sha256": "01f210c2de52af2efbc596494390af062f5a69b93a8b44e1fbd0250825a307ae"
+    },
+    {
+      "path": "src/priceUnobserved.ts",
+      "sha256": "a96e2a875fd37ce9d2cfaf3187161f70ce1f431ba7fa1a06d7462507df1c1eb8"
+    },
+    {
+      "path": "src/priceUnrelatedMocked.ts",
+      "sha256": "3dfa217087d7b57d84430eee790af40e7fb10c5d8427333f81f9e5bf506f0a70"
+    },
+    {
+      "path": "src/save.ts",
+      "sha256": "c974f80138160b38055ce3742d838aa926ca150c966d9156d8f30bdcf4c8c508"
+    },
+    {
+      "path": "src/unrelated32.ts",
+      "sha256": "009f7b78e3f9983abe2d6556e4e6991717f5f0b202398445ff0b700d62a0da55"
+    },
+    {
+      "path": "test/add.test.ts",
+      "sha256": "d33610af21859ec0bd68ea3ddc378091c8a527514fb18a805a67cdafd46bc493"
+    },
+    {
+      "path": "test/priceAlias.test.ts",
+      "sha256": "cea8a88f3e1f1c699a2ab05bd9b7d671de9f8bb3a3ac6b3fb804fafce2f627ce"
+    },
+    {
+      "path": "test/priceAliasLocal.test.ts",
+      "sha256": "3d947ff504098b45dfb9728c046b918e05c95a486bc9c6e3bdd3b0de0768787d"
+    },
+    {
+      "path": "test/priceDefault.test.ts",
+      "sha256": "2cac3a2811be2fcee254dd16e06cc246f87fb1faa9e03b13df8ce340fa4d6b95"
+    },
+    {
+      "path": "test/priceDynamic.test.ts",
+      "sha256": "bc3bd453dd2d621498eb1201c2352e2b7c6f302ea00621f12abd046c3d19c3c0"
+    },
+    {
+      "path": "test/priceFeeMocked.test.ts",
+      "sha256": "8d858b5e3e01fc97c23c8114ec6fbde980c796585d35266754336f120e09e323"
+    },
+    {
+      "path": "test/priceLocal.test.ts",
+      "sha256": "5b4cfdb9f01333bbccccda581480e1c54ffed526d892c0d357b0c21d6ac6cfd3"
+    },
+    {
+      "path": "test/priceOtherMocked.test.ts",
+      "sha256": "8c9229b1a57bc47b58f549c05953d6329f81fafb8e43b36ffaf1b104dc7df4d0"
+    },
+    {
+      "path": "test/priceRenamed.test.ts",
+      "sha256": "137d0a3798e0dbfa314c62f4fec7e04347e2f959cdbdef941da008764b9dee84"
+    },
+    {
+      "path": "test/priceSelfMocked.test.ts",
+      "sha256": "a4261b15f06d92f17b0080a35eb2fbdd9726b1eaca391906688fd8906e81915e"
+    },
+    {
+      "path": "test/priceUnobserved.test.ts",
+      "sha256": "56f177a1b915ef8e9810a82da1c495912b8ee3bfdba128d20165478df87c700d"
+    },
+    {
+      "path": "test/priceUnrelatedMocked.test.ts",
+      "sha256": "d7c8fec12831aac749d0eac985d4c91d2b686cb06240ca2530e049c32fd96fa6"
+    },
+    {
+      "path": "test/save.test.ts",
+      "sha256": "4ce935359cceafe8b072b1f7f0ffa0e555b4025cb0d9dfdb6313888e8bec2f7a"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "f6cc3423554323dafa1e27b7726571abbb8f612680393f198b11ce352aace598"
+    }
+  ]
+}

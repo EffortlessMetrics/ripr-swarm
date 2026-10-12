@@ -255,10 +255,11 @@ typescript_import_graph_unresolved
 
 `typescript_table_case_unresolved` is emitted only from a real table-case
 producer: an oracle-eligible `test.each(...)` / `it.each(...)` test whose
-matcher expected value is row-derived or otherwise dynamic. The finding may
-still carry useful preview evidence, but the adapter does not bind table rows
-to concrete expected values, so the limitation stays advisory and emits no
-repair packet by itself.
+matcher expected value is row-derived or otherwise dynamic and whose rows the
+adapter cannot bind. Same-file inline literal rows are read one concrete case
+per row (RIPR-SPEC-0243) and do not emit it. The finding may still carry useful
+preview evidence; the limitation stays advisory and emits no repair packet by
+itself.
 
 ### Source-to-test ownership and the cross-language boundary
 

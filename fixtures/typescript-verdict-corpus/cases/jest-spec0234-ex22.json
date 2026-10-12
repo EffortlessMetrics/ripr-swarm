@@ -1,0 +1,44 @@
+{
+  "case_id": "jest-spec0234-ex22",
+  "subject_id": "authored-ts-jest-relations",
+  "diff": "cases/jest-spec0234-ex22.diff",
+  "anchor": {
+    "file": "src/add.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_owner_called_prefix_named_local_asserted",
+  "hard_case": "the asserted local `address` shares the owner name `add` as a prefix",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0",
+    "mutants": [
+      {
+        "replacement": "return a - b;",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: behavior_change edit (the spec's diff); a - b differs from a + b whenever b != 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The test calls `add(1, 2)` without using the result and asserts only `expect(address).toBe(\"x\")` on an unrelated local; the edit `a + b` -> `a - b` cannot be noticed and the test passes. ripr reports `exposed` (observed `address`, exact_value), a wrong credit: it treats `address` as an observation of `add`. (spec target weakly_exposed with propagation_unknown; spec today exposed; ripr today exposed). Spec cells: RIPR-SPEC-0243 example 22",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

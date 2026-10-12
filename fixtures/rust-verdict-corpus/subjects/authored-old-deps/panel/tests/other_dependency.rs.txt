@@ -1,0 +1,6 @@
+use spare::Meter;
+
+#[test]
+fn spare_meter_ticks_once() {
+    assert_eq!(Meter::tick(), 1);
+}

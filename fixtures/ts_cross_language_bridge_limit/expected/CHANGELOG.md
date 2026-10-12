@@ -325,3 +325,38 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+## Pending — ts_cross_language_bridge_limit (9)
+
+Reason:
+RIPR-SPEC-0140: issue 5988 populates identity.config_identity from the canonical finding-affecting config fingerprint whenever a ripr.toml is loaded, so fixtures that load one record it (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless ts_cross_language_bridge_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_cross_language_bridge_limit (10)
+
+Reason:
+RIPR-SPEC-0140: issue 5988 review repair publishes the fingerprint of the exact loaded ripr.toml text in identity.config_identity, so fixtures that load one record the text fingerprint (single-field intended flip, formatting-only 1-line drift)
+
+Command:
+`cargo xtask goldens bless ts_cross_language_bridge_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — ts_cross_language_bridge_limit (11)
+
+Reason:
+RIPR-SPEC-0116: the check drill-in binds --root to the resolved repository (#3948); goldens carry the <cwd>/ placeholder
+
+Command:
+`cargo xtask goldens bless ts_cross_language_bridge_limit --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

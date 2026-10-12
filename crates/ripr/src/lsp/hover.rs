@@ -1,4 +1,5 @@
 use super::HOVER_TEXT;
+use super::position::line_span_range;
 use super::state::{AnalysisSnapshot, format_duration};
 use super::uri::{CappedArtifactRead, read_artifact_capped};
 use crate::agent::loop_commands;
@@ -39,7 +40,7 @@ pub(super) fn diagnostic_hover_response(diagnostic: &Diagnostic) -> Hover {
             kind: MarkupKind::Markdown,
             value: diagnostic_hover_markdown(diagnostic),
         }),
-        range: Some(diagnostic.range),
+        range: Some(hover_range(diagnostic.range)),
     }
 }
 
@@ -49,7 +50,7 @@ pub(super) fn finding_hover_response(finding: &Finding, diagnostic: &Diagnostic)
             kind: MarkupKind::Markdown,
             value: finding_hover_markdown(diagnostic, finding),
         }),
-        range: Some(diagnostic.range),
+        range: Some(hover_range(diagnostic.range)),
     }
 }
 
@@ -137,7 +138,7 @@ pub(super) fn classified_seam_hover_response(
             kind: MarkupKind::Markdown,
             value: classified_seam_hover_markdown(seam, snapshot),
         }),
-        range: Some(diagnostic.range),
+        range: Some(hover_range(diagnostic.range)),
     }
 }
 
@@ -167,9 +168,36 @@ pub(super) fn diagnostic_at_position<'a>(
     diagnostics: &'a [Diagnostic],
     position: &Position,
 ) -> Option<&'a Diagnostic> {
-    diagnostics
+    // Prefer a column-precise diagnostic over a line-level one.
+    let mut covering = diagnostics
         .iter()
-        .find(|diagnostic| position_in_range(position, &diagnostic.range))
+        .filter(|diagnostic| position_in_range(position, &diagnostic.range));
+    let first = covering.next()?;
+    if !is_line_level_range(&first.range) {
+        return Some(first);
+    }
+    covering
+        .find(|diagnostic| !is_line_level_range(&diagnostic.range))
+        .or(Some(first))
+}
+
+/// A line-level range carries no column evidence: it is either zero-width
+/// (a coarse origin published verbatim) or the projected full-line span
+/// that coarse origins, seams and gaps use (`line_span_range`). Hover must
+/// not let one shadow a column-precise diagnostic the cursor is on.
+pub(super) fn is_line_level_range(range: &Range) -> bool {
+    range.start == range.end || *range == line_span_range(range.start.line)
+}
+
+/// The range a hover highlights. A zero-width diagnostic is hoverable across
+/// its whole line, so its hover highlights that line rather than an empty
+/// span the cursor is never inside.
+fn hover_range(range: Range) -> Range {
+    if range.start == range.end {
+        line_span_range(range.start.line)
+    } else {
+        range
+    }
 }
 
 /// True if `diagnostic`'s range covers `position`. Useful for callers
@@ -463,7 +491,17 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
         lines.push("## Canonical Gap".to_string());
         lines.push(format!("ID: `{}`", gap.id));
     }
-    if let Some(witness) = DiagnosticWitness::from_finding(finding) {
+    if let Some(mut witness) = DiagnosticWitness::from_finding(finding) {
+        // The diagnostic carries the session-bound drill-in (#3948); the
+        // hover shows the same command rather than the portable domain one.
+        if let Some(command) = diagnostic
+            .data
+            .as_ref()
+            .and_then(|data| data.get("explain_command"))
+            .and_then(Value::as_str)
+        {
+            witness.explain_command = command.to_string();
+        }
         push_diagnostic_witness(&mut lines, &witness);
         let summary = crate::domain::FixInstructionSummary::from_witness(&witness);
         lines.push(format!(
@@ -482,18 +520,31 @@ fn finding_hover_markdown(diagnostic: &Diagnostic, finding: &Finding) -> String 
                 test,
                 &finding.activation.missing_discriminators,
             );
+            // #5927: only an unmatched row uses the `misses/checked` form, as
+            // in human output; a matched row keeps its oracle kind and
+            // strength and adds the reason it still misses. A row with no
+            // recorded oracle (for example `has no assertion`) shows only the
+            // reason, so hover never grades an oracle that does not exist.
+            let label = crate::output::related_test_miss::related_test_miss_label(test);
             let oracle_text = match (&why, &test.oracle) {
-                (Some(why), Some(oracle)) => format!(
-                    " misses: {why}; checked `{}`",
+                (Some(why), Some(oracle)) if test.is_unmatched() => format!(
+                    " {label}: {why}; checked `{}`",
                     crate::output::related_test_miss::checked_assertion_text(oracle)
                 ),
-                (Some(why), None) => format!(" misses: {why}"),
-                (None, Some(oracle)) => format!(
-                    " \u{2014} {} {} oracle: {}",
-                    test.oracle_strength.as_str(),
-                    test.oracle_kind.as_str(),
-                    oracle
-                ),
+                (Some(why), None) => format!(" {label}: {why}"),
+                (why, Some(oracle)) => {
+                    let mut text = format!(
+                        " \u{2014} {} {} oracle: {}",
+                        test.oracle_strength.as_str(),
+                        test.oracle_kind.as_str(),
+                        oracle
+                    );
+                    if let Some(why) = why {
+                        text.truncate(text.trim_end_matches(';').len());
+                        text.push_str(&format!("; {label}: {why}"));
+                    }
+                    text
+                }
                 (None, None) => String::new(),
             };
             lines.push(format!(
@@ -760,6 +811,16 @@ fn number_or_string_label(value: &NumberOrString) -> String {
 }
 
 fn position_in_range(position: &Position, range: &Range) -> bool {
+    // A zero-width range is a coarse line-level origin: the producer refused
+    // column precision (`OriginKind::CoarseZeroWidth`: stale currentness, no
+    // parser span, lexical fallback) or the input was missing.
+    // Editors render it on that line, so the whole line must reach its hover;
+    // a half-open check would make it unhoverable at every position. The
+    // projected full-line span (`line_span_range`, 0..120) is the same
+    // line-level claim, so columns past its fixed width also reach it.
+    if is_line_level_range(range) {
+        return position.line == range.start.line;
+    }
     position_is_after_or_equal(position, &range.start) && position_is_before(position, &range.end)
 }
 
@@ -946,14 +1007,22 @@ fn push_editor_commands(
             loop_commands::EDITOR_AGENT_PACKET_ARTIFACT,
         )
     ));
-    lines.push(format!(
-        "- brief: `{}`",
-        loop_commands::agent_brief_command(
-            &root,
-            seam_id,
-            loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
-        )
-    ));
+    // Gate the brief handoff rather than reroute or annotate it: `ripr
+    // agent brief --seam-id` already refuses static-limitation classes
+    // (opaque and `*_unknown`) with an empty brief and a named omission
+    // warning (#6775, #7126). Offering the command would advertise a
+    // handoff the brief itself will not populate. The packet line stays:
+    // packets still render `inspect_static_limitation` for those seams.
+    if !entry.class.is_static_limitation() {
+        lines.push(format!(
+            "- brief: `{}`",
+            loop_commands::agent_brief_command(
+                &root,
+                seam_id,
+                loop_commands::EDITOR_AGENT_BRIEF_ARTIFACT,
+            )
+        ));
+    }
     lines.push(format!(
         "- after snapshot: `{}`",
         loop_commands::check_repo_exposure_command_with_base(
@@ -1226,8 +1295,8 @@ fn seam_class_reason(entry: &ClassifiedSeam) -> &'static str {
 /// kind and class. Mirrors the shape of `agent_seam_packets`'
 /// `missing_oracle_shape` so hover and packets stay in sync.
 fn seam_next_step_for(entry: &ClassifiedSeam) -> String {
-    use crate::analysis::seams::{SeamGripClass, SeamKind};
-    if matches!(entry.class, SeamGripClass::Opaque) {
+    use crate::analysis::seams::SeamKind;
+    if entry.class.is_static_limitation() {
         return "Inspect the static limitation: helper, macro, or fixture that hides evidence."
             .to_string();
     }
@@ -1288,10 +1357,11 @@ mod seam_hover_tests {
                 description: "amount >= discount_threshold".to_string(),
             },
             ExpectedSink::ReturnValue,
-        );
+        )
+        .with_owner_call(crate::analysis::seams::OwnerCallShape::Free);
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -1308,7 +1378,7 @@ mod seam_hover_tests {
                 relation_reason:
                     crate::analysis::test_grip_evidence::RelationReason::DirectOwnerCall,
                 relation_confidence: crate::analysis::test_grip_evidence::RelationConfidence::High,
-            }],
+            })],
             reach: stage(StageState::Yes, "Related tests reach discounted_total"),
             activate: stage(StageState::Yes, "Observed amount = 50, amount = 10000"),
             propagate: stage(StageState::Yes, "Seam flows to return_value"),
@@ -1326,6 +1396,7 @@ mod seam_hover_tests {
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         };
         ClassifiedSeam {
             seam,
@@ -1433,6 +1504,7 @@ mod seam_hover_tests {
             analysis_outcome: None,
             diagnostic_profile: crate::config::LspDiagnosticProfile::Full,
             classified_seams: Vec::new(),
+            repair_card_candidate_seams: None,
             gap_artifacts: Vec::new(),
             gap_artifact_rejections: Vec::new(),
             harness_facts: super::super::state::HarnessFactsOnSnapshot::NotRegistered,
@@ -1443,6 +1515,7 @@ mod seam_hover_tests {
             partial_scope: None,
             component_outcomes: Vec::new(),
             out_of_scope_test_file_findings: 0,
+            unavailable_adapter: super::super::state::UnavailableAdapterCoverage::default(),
         }
     }
 
@@ -1989,6 +2062,81 @@ mod seam_hover_tests {
         let md = extract_markup(&hover)?;
         if !md.contains("Inspect the static limitation") {
             return Err(format!("expected opaque next-step text in:\n{md}"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_class_seam_hover_advises_inspecting_static_limitation() -> Result<(), String> {
+        let mut seam = weakly_gripped_classified();
+        seam.class = SeamGripClass::ActivationUnknown;
+        let diagnostic = sample_diagnostic();
+        let hover = classified_seam_hover_response(&seam, &diagnostic, None);
+        let md = extract_markup(&hover)?;
+        let next_step = md
+            .split("## Next step")
+            .nth(1)
+            .ok_or_else(|| format!("missing Next step section in unknown-class hover:\n{md}"))?;
+        if !next_step.contains(
+            "Inspect the static limitation: helper, macro, or fixture that hides evidence.",
+        ) {
+            return Err(format!(
+                "unknown-class next-step should inspect the static limitation:\n{md}"
+            ));
+        }
+        if next_step.contains("Add an exact-value assertion") {
+            return Err(format!(
+                "unknown-class next-step must not advise adding an assertion:\n{md}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_class_seam_hover_omits_brief_handoff_and_keeps_packet() -> Result<(), String> {
+        let mut seam = weakly_gripped_classified();
+        seam.class = SeamGripClass::ActivationUnknown;
+        let diagnostic = sample_diagnostic();
+        let snapshot = sample_snapshot(Mode::Ready);
+        let hover = classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot));
+        let md = extract_markup(&hover)?;
+        let handoff = md
+            .split("## Handoff, verify, and receipt commands")
+            .nth(1)
+            .ok_or_else(|| format!("missing Handoff section in unknown-class hover:\n{md}"))?;
+        if !handoff.contains("- packet: `ripr agent packet --root") {
+            return Err(format!(
+                "unknown-class hover must keep the packet handoff:\n{md}"
+            ));
+        }
+        if handoff.contains("- brief:") {
+            return Err(format!(
+                "unknown-class hover must omit the brief handoff:\n{md}"
+            ));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn ordinary_seam_hover_still_offers_brief_handoff() -> Result<(), String> {
+        let seam = weakly_gripped_classified();
+        let diagnostic = sample_diagnostic();
+        let snapshot = sample_snapshot(Mode::Ready);
+        let hover = classified_seam_hover_response(&seam, &diagnostic, Some(&snapshot));
+        let md = extract_markup(&hover)?;
+        let handoff = md
+            .split("## Handoff, verify, and receipt commands")
+            .nth(1)
+            .ok_or_else(|| format!("missing Handoff section in ordinary-seam hover:\n{md}"))?;
+        if !handoff.contains("- brief: `ripr agent brief --root") {
+            return Err(format!(
+                "ordinary gap-class hover must keep the brief handoff:\n{md}"
+            ));
+        }
+        if !handoff.contains("- packet: `ripr agent packet --root") {
+            return Err(format!(
+                "ordinary gap-class hover must keep the packet handoff:\n{md}"
+            ));
         }
         Ok(())
     }

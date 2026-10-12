@@ -346,6 +346,7 @@ fn committed_range_analysis_binds_to_committed_content_of_a_dirty_file() -> Resu
         include_unchanged_tests: false,
         resolve_tsconfig_paths: false,
         perl_facts_path: None,
+        perl_producer_failure: None,
         git_timeout: DEADLINE,
         git_candidate: None,
         production_like_targets: Default::default(),
@@ -429,7 +430,7 @@ fn workspace_authority_confirms_committed_bytes_of_a_dirty_file() -> Result<(), 
             PathBuf::from(path),
             FileFacts {
                 path: PathBuf::from(path),
-                source: source.to_string(),
+                source: source.into(),
                 ..FileFacts::default()
             },
         )
