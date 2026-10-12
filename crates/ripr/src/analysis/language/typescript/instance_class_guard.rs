@@ -541,10 +541,12 @@ fn plain_function_body(body: &str, params: &[&str], classes: &[&str]) -> bool {
         return false;
     }
     // Comparisons only: an `=` must be part of `==`, `!=`, `<=` or `>=`,
-    // never an assignment (`x = y`, `x &&= y`, `x <<= y`).
+    // never an assignment (`x = y`, `x &&= y`, `x <<= y`, `x++`).
     let bytes = body.as_bytes();
     let assigns = body.contains("<<=")
         || body.contains(">>=")
+        || body.contains("++")
+        || body.contains("--")
         || bytes.iter().enumerate().any(|(index, &b)| {
             b == b'='
                 && !(index > 0 && b"=!<>".contains(&bytes[index - 1]))
@@ -666,12 +668,23 @@ fn module_is_plain(source: &str) -> bool {
             };
             let statement = &after[..end];
             let module = statement.trim_end();
+            // Before the module string: nothing, or a clause of names,
+            // braces, commas, `as` and `*` followed by `from`.
             let ends_at_module = module.ends_with(['"', '\''])
                 && module[..module.len() - 1]
                     .rfind(['"', '\''])
                     .is_some_and(|open| {
                         let head = module[..open].trim_end();
-                        head.is_empty() || head.ends_with("from")
+                        head.is_empty()
+                            || head.strip_suffix("from").is_some_and(|clause| {
+                                let clause = clause.trim();
+                                !clause.is_empty()
+                                    && clause.chars().all(|c| {
+                                        c.is_alphanumeric()
+                                            || c.is_whitespace()
+                                            || matches!(c, '_' | '$' | '{' | '}' | ',' | '*')
+                                    })
+                            })
                     });
             if statement.contains(['(', ';']) || !ends_at_module {
                 return false;
@@ -726,8 +739,7 @@ fn module_is_plain(source: &str) -> bool {
                         // a scan to the next `{` must not cross a statement.
                         if !annotation[..open].chars().all(|c| {
                             c.is_alphanumeric()
-                                || c.is_whitespace()
-                                || matches!(c, '_' | '$' | '|' | '&' | '<' | '>' | ',')
+                                || matches!(c, ' ' | '\t' | '_' | '$' | '|' | '&' | '<' | '>' | ',')
                         }) {
                             return false;
                         }

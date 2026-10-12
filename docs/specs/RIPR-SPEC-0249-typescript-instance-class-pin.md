@@ -141,10 +141,12 @@ ladder and in its related-test row, when all of these hold:
     is a parameter, a module class, a builtin class or one of `if`,
     `else`, `return`, `throw`, `new`, `instanceof`, `typeof`, `true`,
     `false`, `null`, `undefined`, with no member access, bracket, arrow,
-    assignment, local declaration or call through a parameter.
+    assignment (`++` and `--` included), local declaration or call
+    through a parameter.
 
-  An import must end at its module string, and a return type holds only
-  names, `|`, `&`, `<`, `>` and `,`. The text has no backslash, template
+  An import is `import "x";` or `import <clause> from "x";` with a clause
+  of names, braces, commas and `*`, and a return type holds only names,
+  spaces, `|`, `&`, `<`, `>` and `,` on the function's own line. The text has no backslash, template
   literal or `/` outside a comment, and the plain lexer that reads it must
   agree with the shared masker the other scans use (the masker reads a
   quote after a word as JSX text, which could hide code from them).

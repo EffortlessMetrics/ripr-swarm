@@ -339,6 +339,24 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
             "NotFound",
         ),
         (
+            "an import clause swallows a statement without semicolons",
+            OWNER.to_string(),
+            format!("import {{ from }} from \"./a\"\nNotFound &&= from\n\"y\";\n{ERRORS}"),
+            "NotFound",
+        ),
+        (
+            "a return type runs across lines",
+            OWNER.to_string(),
+            format!("export function g(a: number): number\nexport class X {{}}\n{ERRORS}"),
+            "NotFound",
+        ),
+        (
+            "a plain body increments",
+            OWNER.to_string(),
+            format!("{ERRORS}export function bump(a: number) {{\n  return a++;\n}}\n"),
+            "NotFound",
+        ),
+        (
             "a destructured prototype",
             OWNER.to_string(),
             format!("{ERRORS}const {{ prototype: p }} = x;\n"),
