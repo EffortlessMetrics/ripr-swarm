@@ -925,11 +925,29 @@ fn select_next_command(
             } else {
                 "start a new attempt"
             };
+            // A terminal attempt can carry the recorded after-phase refusal
+            // the inventory projection persisted (#7378); the default path
+            // must project it into the restart reason too, or a fresh
+            // session restarts blind to the cause the refusal names — the
+            // `--attempt` path already does through `restart_attempt_command`.
+            let refusal_note = ended
+                .iter()
+                .filter_map(|attempt| {
+                    attempt.last_after_refusal.as_ref().map(|refusal| {
+                        format!(
+                            "attempt `{}`'s recorded refusal explains why it ended: {}",
+                            attempt.attempt_id,
+                            refusal.reason.trim_end_matches('.')
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
             return Some(AgentStatusCommand {
                 step: "repair_attempt_before".to_string(),
                 artifact: store.locator.to_string(),
                 reason: format!(
-                    "no repair attempt for seam `{seam_id}` can continue at the current HEAD ({}); {restart}",
+                    "no repair attempt for seam `{seam_id}` can continue at the current HEAD ({}); {restart}{}",
                     ended
                         .iter()
                         .map(|attempt| format!(
@@ -938,7 +956,12 @@ fn select_next_command(
                             attempt_condition(attempt)
                         ))
                         .collect::<Vec<_>>()
-                        .join(", ")
+                        .join(", "),
+                    if refusal_note.is_empty() {
+                        String::new()
+                    } else {
+                        format!(". {refusal_note}")
+                    }
                 ),
                 command: new_repair_attempt_command(root_display, seam_id, store.flag),
             });
@@ -4245,7 +4268,63 @@ mod tests {
         Ok(())
     }
 
-    /// After `ripr pilot`, status continues with the repair start pilot
+    /// The default status path (no `--attempt`) builds the restart reason in
+    /// `select_next_command`; a terminal attempt's recorded after-phase
+    /// refusal (#7378) must reach that reason too, not only the `--attempt`
+    /// path's, and the reason must stay refusal-free when nothing recorded one.
+    #[test]
+    fn agent_status_default_restart_names_the_recorded_refusal() -> Result<(), String> {
+        let root = unique_agent_status_test_dir("default-refusal-restart");
+        std::fs::create_dir_all(&root).map_err(|err| format!("create root: {err}"))?;
+        let mut refused = synthetic_attempt("a", "seam-a", "ended", Some("restart a"));
+        refused.last_after_refusal = Some(AgentStatusAfterRefusal {
+            reason: "the edit cage refused 1 path(s): src/lib.rs (ForbiddenPath)".to_string(),
+            recorded_unix_ms: 1_700_000_000_000,
+        });
+        let store = || StoreFollowUp {
+            locator: REPAIR_ATTEMPT_DIRECTORY,
+            flag: "",
+        };
+        let mut warnings = Vec::new();
+        let next = select_next_command(
+            &root,
+            ".",
+            None,
+            Some(&vec![refused]),
+            &[],
+            &mut warnings,
+            store(),
+        )
+        .ok_or_else(|| "expected a restart for the one open seam".to_string())?;
+        assert_eq!(next.step, "repair_attempt_before");
+        if !next.reason.contains("recorded refusal") || !next.reason.contains("ForbiddenPath") {
+            return Err(format!(
+                "the default restart reason lost the recorded refusal: {}",
+                next.reason
+            ));
+        }
+
+        let plain = synthetic_attempt("b", "seam-b", "ended", Some("restart b"));
+        let mut warnings = Vec::new();
+        let next = select_next_command(
+            &root,
+            ".",
+            None,
+            Some(&vec![plain]),
+            &[],
+            &mut warnings,
+            store(),
+        )
+        .ok_or_else(|| "expected a restart for the one open seam".to_string())?;
+        if next.reason.contains("recorded refusal") {
+            return Err(format!(
+                "the default restart reason invented a refusal: {}",
+                next.reason
+            ));
+        }
+        std::fs::remove_dir_all(&root).map_err(|err| format!("remove root: {err}"))?;
+        Ok(())
+    }
     /// recorded rather than sending the user back to pilot. A summary whose
     /// top seam did not pass the flip (`null`) leaves status on `select_seam`.
     #[test]
