@@ -3186,6 +3186,16 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
     // that blocks until EOF with no visible sign of why, so the cli adapter
     // discloses the read before dispatching; the analysis loader itself
     // stays silent for library callers.
+    // #7352: a fresh explain run re-executes the full check pipeline to
+    // resolve one finding id; on a cold large repository the silent window
+    // looked like a hang. The same stderr-only stage lines `ripr check`
+    // projects disclose the work without touching machine stdout. The
+    // `--from` artifact path runs no pipeline and wires no sink.
+    let progress = crate::cli::progress::CliProgressSink::for_stderr(
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        crate::cli::progress::ProgressPolicy::STANDARD,
+    );
+    let progress_sink = Some(&progress as &dyn app::AnalysisProgressSink);
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::explain_finding_from_artifact_with_navigation_mode(
             input,
@@ -3197,12 +3207,13 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
         )?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
-            app::explain_finding_with_config_and_navigation_mode(
+            app::explain_finding_with_config_navigation_mode_and_progress(
                 input,
                 &selector,
                 &config,
                 explicit.mode,
                 worktree,
+                progress_sink,
             )?
         }
     };

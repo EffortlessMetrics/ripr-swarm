@@ -206,6 +206,16 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
     // that blocks until EOF with no visible sign of why, so the cli adapter
     // discloses the read before dispatching; the analysis loader itself
     // stays silent for library callers.
+    // #7352: a fresh context run re-executes the full check pipeline; on a
+    // cold large repository the silent window looked like a hang. The same
+    // stderr-only stage lines `ripr check` projects (throttled heartbeats
+    // included) disclose the work without touching machine stdout. The
+    // `--from` artifact path runs no pipeline and wires no sink.
+    let progress = crate::cli::progress::CliProgressSink::for_stderr(
+        std::io::IsTerminal::is_terminal(&std::io::stderr()),
+        crate::cli::progress::ProgressPolicy::STANDARD,
+    );
+    let progress_sink = Some(&progress as &dyn app::AnalysisProgressSink);
     let rendered = match from_artifact.as_deref() {
         Some(artifact_path) => app::collect_context_from_artifact(
             input,
@@ -218,13 +228,14 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
         .map_err(&refuse)?,
         None => {
             disclose_attached_terminal_stdin_read(input.diff_file.as_deref());
-            app::collect_context_with_config_and_worktree(
+            app::collect_context_with_config_worktree_and_progress(
                 input,
                 &selector,
                 max_tests,
                 &config,
                 worktree,
                 explicit.mode,
+                progress_sink,
             )
             .map_err(&refuse)?
         }

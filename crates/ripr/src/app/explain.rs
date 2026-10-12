@@ -1,6 +1,7 @@
-use super::CheckInput;
-use super::check_workspace_with_config;
+use super::check::check_with_progress;
+use super::progress::{AnalysisProgressScope, AnalysisProgressSink};
 use super::selector::select_finding;
+use super::CheckInput;
 use crate::config::RiprConfig;
 use crate::output;
 use std::path::Path;
@@ -39,11 +40,42 @@ pub(crate) fn explain_finding_with_config_and_navigation_mode(
     mode_explicit: bool,
     worktree: bool,
 ) -> Result<String, String> {
+    explain_finding_with_config_navigation_mode_and_progress(
+        input,
+        selector,
+        config,
+        mode_explicit,
+        worktree,
+        None,
+    )
+}
+
+/// [`explain_finding_with_config_and_navigation_mode`] with a progress sink
+/// on the fresh pipeline run (#7352): a selector-only `explain` re-runs the
+/// full check pipeline, and on a cold large repository that work was
+/// invisible — no stage lines or heartbeats — for the same
+/// tens-of-seconds-to-minutes window `ripr check` discloses. The shared sink
+/// projects the same producer-owned stage lines `check` promises; `None`
+/// reproduces the legacy silent behavior for library callers. The `--from`
+/// artifact path runs no pipeline and takes no sink.
+pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
+    input: CheckInput,
+    selector: &str,
+    config: &RiprConfig,
+    mode_explicit: bool,
+    worktree: bool,
+    sink: Option<&dyn AnalysisProgressSink>,
+) -> Result<String, String> {
     let navigation = super::finding_navigation_with_worktree(&input, None, mode_explicit, worktree);
     let output = if worktree {
-        super::check_workspace_worktree_with_config(input, config)?
+        check_with_progress(
+            input,
+            config,
+            AnalysisProgressScope::Worktree,
+            sink,
+        )?
     } else {
-        check_workspace_with_config(input, config)?
+        check_with_progress(input, config, AnalysisProgressScope::Diff, sink)?
     };
     match select_finding(&output.findings, selector) {
         Some(finding) => Ok(output::human::render_finding_with_context_command(
