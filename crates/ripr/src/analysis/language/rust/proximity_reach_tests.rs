@@ -194,9 +194,9 @@ mod tests {
 }
 
 #[test]
-fn a_test_calling_the_owner_keeps_the_gap_despite_a_macro_witness() -> Result<(), String> {
+fn a_weak_direct_test_preserves_the_unresolved_macro_witness() -> Result<(), String> {
     // The same macro witness exists, but a test calls the owner directly:
-    // reach is established, so the weak oracle stays a gap.
+    // direct reach is established, but its weak oracle cannot erase the unresolved macro witness.
     let fixture = Fixture::new(
         "direct",
         &format!(
@@ -213,7 +213,12 @@ fn a_test_calling_the_owner_keeps_the_gap_despite_a_macro_witness() -> Result<()
         finding.related_tests
     );
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
     Ok(())
 }
 
