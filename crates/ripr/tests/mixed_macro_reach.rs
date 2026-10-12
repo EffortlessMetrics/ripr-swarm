@@ -65,14 +65,13 @@ fn owner(output: &ripr::CheckOutput) -> Result<&Finding, String> {
     let candidates: Vec<_> = output
         .findings
         .iter()
-        .filter(|f| {
-            f.probe.location.file == PathBuf::from("src/lib.rs") && f.probe.location.line == 4
-        })
+        .filter(|f| f.probe.location.file.ends_with("src/lib.rs") && f.probe.location.line == 4)
         .collect();
     match candidates.as_slice() {
         [finding] => Ok(finding),
         _ => Err(format!(
-            "expected one changed owner at line4, got {candidates:?}"
+            "expected one changed owner at line4, got {candidates:?}; all findings: {:?}",
+            output.findings
         )),
     }
 }
