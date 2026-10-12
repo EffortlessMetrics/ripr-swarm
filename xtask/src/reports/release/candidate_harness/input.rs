@@ -5,6 +5,9 @@ use std::io::Read;
 use std::path::Path;
 use std::time::SystemTime;
 
+mod capture;
+pub(super) use capture::{CapturedFile, capture_retained_executable_with};
+
 #[derive(Eq, PartialEq)]
 struct Snapshot {
     len: u64,

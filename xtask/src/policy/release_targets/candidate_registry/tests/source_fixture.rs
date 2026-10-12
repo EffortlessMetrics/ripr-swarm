@@ -16,12 +16,20 @@ use super::{
 struct OwnedFixture {
     root: PathBuf,
     finished: bool,
+    retain_for_proof_owner: bool,
 }
 
 impl OwnedFixture {
     fn finish(mut self) -> Result<(), String> {
-        fs::remove_dir_all(&self.root)
-            .map_err(|error| format!("owned fixture cleanup failed: {error}"))?;
+        if self.retain_for_proof_owner {
+            eprintln!(
+                "4510 proof fixture retained: {}",
+                json!({"root": self.root})
+            );
+        } else {
+            fs::remove_dir_all(&self.root)
+                .map_err(|error| format!("owned fixture cleanup failed: {error}"))?;
+        }
         self.finished = true;
         Ok(())
     }
@@ -30,7 +38,14 @@ impl OwnedFixture {
 impl Drop for OwnedFixture {
     fn drop(&mut self) {
         if !self.finished {
-            let _ = fs::remove_dir_all(&self.root);
+            if self.retain_for_proof_owner {
+                eprintln!(
+                    "4510 proof fixture retained after unfinished test: {}",
+                    json!({"root": self.root})
+                );
+            } else {
+                let _ = fs::remove_dir_all(&self.root);
+            }
         }
     }
 }
@@ -128,6 +143,14 @@ fn replace_row(
 }
 
 fn create_source_fixture() -> Result<SourceFixture, String> {
+    // Explicit local proof custody only. The root's compiler-bound driver owns
+    // namespace/identity, readers, archive/restore and final removal after exit.
+    // Ordinary CI retains the existing finish/drop cleanup.
+    let retain_for_proof_owner = match std::env::var("RIPR_4510_RETAIN_PROOF_FIXTURES") {
+        Ok(value) if value == "1" => true,
+        Err(std::env::VarError::NotPresent) => false,
+        _ => return Err("RIPR_4510_RETAIN_PROOF_FIXTURES must be unset or exactly 1".to_string()),
+    };
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("fixture clock: {error}"))?
@@ -138,6 +161,7 @@ fn create_source_fixture() -> Result<SourceFixture, String> {
     let guard = OwnedFixture {
         root: owned,
         finished: false,
+        retain_for_proof_owner,
     };
     let source = guard.root.join("source é");
     let controller = guard.root.join("controller with spaces");
@@ -569,5 +593,430 @@ fn real_package_install_custody_rejects_ignored_foreign_and_changed_bytes() -> R
             );
         }
     }
+    fixture.guard.finish()
+}
+
+// Real dependency-free Cargo package -> install -> retained selected artifact ->
+// witness -> the existing Qualified execution. This qualifies that harness
+// boundary, not a RIPR release. Setup/compile failures are not product RED.
+fn capture_fixture_input(
+    fixture: &SourceFixture,
+    label: &str,
+) -> Result<
+    (
+        crate::reports::release::candidate_harness::QualificationInput,
+        PathBuf,
+    ),
+    String,
+> {
+    use crate::reports::release::candidate_harness::QualificationInput;
+    let owned = fixture.guard.root.join(label);
+    fs::create_dir(&owned).map_err(|error| format!("capture fixture directory: {error}"))?;
+    let input = QualificationInput::new(
+        fixture.controller.clone(),
+        fixture.source.clone(),
+        PathBuf::from(PINNED_JSON),
+    )?;
+    Ok((
+        input,
+        owned.canonicalize().map_err(|error| error.to_string())?,
+    ))
+}
+
+fn capture_observed_verbose_version(program: &str, root: &Path) -> Result<String, String> {
+    let output = crate::run::capture_bytes_in_dir_with_timeout(
+        Path::new(program),
+        &["-vV".to_string()],
+        root,
+        &[],
+        &[
+            "CARGO_TARGET_DIR",
+            "GIT_DIR",
+            "GIT_WORK_TREE",
+            "GIT_INDEX_FILE",
+        ],
+        Duration::from_secs(30),
+        "4510 capture fixture actual verbose toolchain observation",
+    )?;
+    if output.timed_out || !output.status.is_some_and(|status| status.success()) {
+        return Err(format!(
+            "SETUP: {program} verbose observation failed: timed_out={}, status={:?}",
+            output.timed_out, output.status
+        ));
+    }
+    String::from_utf8(output.stdout)
+        .map(|value| value.trim().to_string())
+        .map_err(|error| format!("SETUP: {program} verbose output is not UTF-8: {error}"))
+}
+
+fn capture_assert_real_install_identity(
+    custody: &Value,
+    installed_path: &Path,
+    installed_bytes: &[u8],
+    owned: &Path,
+    rustc: &str,
+    cargo: &str,
+) -> Result<PathBuf, String> {
+    assert_eq!(custody["capture_mode"], "installed_output");
+    assert_eq!(custody["executable"], json!(installed_path));
+    assert_eq!(custody["installed_executable"], json!(installed_path));
+    assert_eq!(custody["executable_sha256"], sha256_hex(installed_bytes));
+    let artifact = &custody["compiler_artifact"];
+    assert_eq!(artifact["reason"], "compiler-artifact");
+    assert_eq!(artifact["target"]["name"], "ripr");
+    assert_eq!(artifact["target"]["kind"], json!(["bin"]));
+    assert_eq!(artifact["profile"]["test"], false);
+    assert_eq!(artifact["features"], json!([]));
+    assert!(
+        artifact["package_id"]
+            .as_str()
+            .is_some_and(|value| { value.starts_with("path+file:") && value.ends_with("0.11.0") })
+    );
+    let selected = PathBuf::from(
+        artifact["executable"]
+            .as_str()
+            .ok_or_else(|| "SETUP: real Cargo message lacks selected executable".to_string())?,
+    );
+    let selected_canonical = selected.canonicalize().map_err(|error| error.to_string())?;
+    let owned_canonical = owned.canonicalize().map_err(|error| error.to_string())?;
+    assert!(selected_canonical.starts_with(&owned_canonical));
+    let manifest = PathBuf::from(
+        artifact["manifest_path"]
+            .as_str()
+            .ok_or_else(|| "SETUP: real Cargo message lacks manifest_path".to_string())?,
+    );
+    assert_eq!(
+        manifest.canonicalize().map_err(|error| error.to_string())?,
+        owned
+            .join("target/package/extracted/Cargo.toml")
+            .canonicalize()
+            .map_err(|error| error.to_string())?
+    );
+    let selected_bytes = fs::read(&selected).map_err(|error| error.to_string())?;
+    assert!(!selected_bytes.is_empty());
+    if selected_bytes != installed_bytes {
+        return Err("SETUP: compiler-selected executable and installed bytes differ".to_string());
+    }
+    assert_eq!(
+        custody["rustc_verbose_version"].as_str().map(str::trim),
+        Some(rustc)
+    );
+    assert_eq!(
+        custody["cargo_verbose_version"].as_str().map(str::trim),
+        Some(cargo)
+    );
+    Ok(selected)
+}
+
+#[test]
+fn real_compiler_bound_witness_consumes_frozen_reference_after_mutable_outputs_change()
+-> Result<(), String> {
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, CandidateExecution,
+    };
+    let fixture = create_source_fixture()?;
+    let (input, owned) = capture_fixture_input(&fixture, "actual frozen-reference producer")?;
+    let admitted = AdmittedSource::admit(&input, "0.11.0")?;
+    assert_eq!(admitted.source_sha()?, fixture.sha);
+    let rustc = capture_observed_verbose_version("rustc", &fixture.source)?;
+    let cargo = capture_observed_verbose_version("cargo", &fixture.source)?;
+    let mut installed = AttributedArchive::produce(admitted, &owned)?.install(&owned)?;
+    let installed_path = installed.binary().to_path_buf();
+    let installed_bytes = fs::read(&installed_path).map_err(|error| error.to_string())?;
+    let original_custody = installed.custody_json();
+    let selected = capture_assert_real_install_identity(
+        &original_custody,
+        &installed_path,
+        &installed_bytes,
+        &owned,
+        &rustc,
+        &cargo,
+    )?;
+    eprintln!("4510 real compiler/install binding before capture: {original_custody}");
+    let foreign = fixture.guard.root.join("foreign consumer cwd");
+    fs::create_dir(&foreign).map_err(|error| error.to_string())?;
+    let before = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &foreign,
+        "4510 real installed source positive before capture",
+    )?;
+    assert!(before.success && before.status == Some(0));
+    assert_eq!(before.stdout, "fixture source A\n");
+    let slot = owned.join(format!(
+        "source-{}-frozen{}",
+        fixture.sha,
+        std::env::consts::EXE_SUFFIX
+    ));
+    installed.freeze_into(&slot)?;
+    let captured = installed.custody_json();
+    assert_eq!(installed.binary(), slot.as_path());
+    assert_eq!(captured["capture_mode"], "exclusive_frozen_reference");
+    assert_eq!(captured["installed_executable"], json!(installed_path));
+    assert_eq!(
+        captured["compiler_artifact"],
+        original_custody["compiler_artifact"]
+    );
+    assert_eq!(
+        captured["rustc_verbose_version"],
+        original_custody["rustc_verbose_version"]
+    );
+    assert_eq!(
+        captured["cargo_verbose_version"],
+        original_custody["cargo_verbose_version"]
+    );
+    assert_eq!(captured["source"], original_custody["source"]);
+    assert_eq!(
+        captured["archive_sha256"],
+        original_custody["archive_sha256"]
+    );
+    assert_eq!(
+        captured["executable_sha256"],
+        original_custody["executable_sha256"]
+    );
+    assert_eq!(
+        fs::read(&slot).map_err(|error| error.to_string())?,
+        installed_bytes
+    );
+
+    // Both are owned real producer outputs, not archived original witnesses.
+    // The unchanged admitted source/archive and frozen execution stay binding.
+    assert_ne!(selected, slot);
+    assert_ne!(installed_path, slot);
+    fs::write(&selected, b"changed mutable compiler output\n")
+        .map_err(|error| error.to_string())?;
+    fs::write(&installed_path, b"changed mutable installed output\n")
+        .map_err(|error| error.to_string())?;
+    for _ in 0..2 {
+        let result = CandidateExecution::Qualified(&installed).run(
+            &[],
+            &foreign,
+            "4510 explicit frozen handle reuse",
+        )?;
+        assert!(result.success && result.status == Some(0));
+        assert_eq!(result.stdout, "fixture source A\n");
+        assert_eq!(installed.custody_json(), captured);
+        assert_eq!(
+            fs::read(&slot).map_err(|error| error.to_string())?,
+            installed_bytes
+        );
+    }
+    require_refusal(installed.freeze_into(&slot), "already frozen")?;
+    assert_eq!(
+        fs::read(&slot).map_err(|error| error.to_string())?,
+        installed_bytes
+    );
+    eprintln!("4510 compiler-bound frozen handle proof: {captured}");
+    fixture.guard.finish()
+}
+
+#[test]
+fn real_compiler_bound_capture_refuses_occupied_regular_and_link_canaries() -> Result<(), String> {
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, CandidateExecution,
+    };
+    let fixture = create_source_fixture()?;
+    let (input, owned) = capture_fixture_input(&fixture, "actual occupied-slot producer")?;
+    let mut installed =
+        AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &owned)?
+            .install(&owned)?;
+    let positive = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 actual installed positive before occupied slots",
+    )?;
+    assert!(positive.success && positive.status == Some(0));
+    assert_eq!(positive.stdout, "fixture source A\n");
+    let original_path = installed.binary().to_path_buf();
+    let original_custody = installed.custody_json();
+    eprintln!(
+        "4510 real occupied-slot setup: {}",
+        json!({"custody": original_custody, "native_success": positive.success,
+            "native_status": positive.status, "native_stdout": positive.stdout})
+    );
+    #[cfg(unix)]
+    {
+        let parent_alias = fixture.guard.root.join("producer-parent-alias");
+        std::os::unix::fs::symlink(&owned, &parent_alias).map_err(|error| error.to_string())?;
+        let alias_slot = parent_alias.join("must-not-be-created");
+        require_refusal(
+            installed.freeze_into(&alias_slot),
+            "capture destination must be an ordinary file in the owned producer root",
+        )?;
+        assert!(!owned.join("must-not-be-created").exists());
+    }
+    let canary = owned.join("protected-canary");
+    let canary_bytes = b"preserve this occupied witness canary\n";
+    fs::write(&canary, canary_bytes).map_err(|error| error.to_string())?;
+    let regular = owned.join("occupied-regular");
+    fs::write(&regular, canary_bytes).map_err(|error| error.to_string())?;
+    let hardlink = owned.join("occupied-hardlink");
+    fs::hard_link(&canary, &hardlink).map_err(|error| error.to_string())?;
+    let slots = vec![regular, hardlink];
+    #[cfg(unix)]
+    let slots = {
+        let mut slots = slots;
+        let symlink = owned.join("occupied-symlink");
+        std::os::unix::fs::symlink(&canary, &symlink).map_err(|error| error.to_string())?;
+        slots.push(symlink);
+        slots
+    };
+    for slot in slots {
+        let refused = installed.freeze_into(&slot);
+        let slot_bytes = fs::read(&slot).map_err(|error| error.to_string())?;
+        if slot_bytes != canary_bytes
+            || fs::read(&canary).map_err(|error| error.to_string())? != canary_bytes
+        {
+            return Err(format!(
+                "capture truncated/replaced an occupied canary: {}; observed_len={}, observed_sha256={}; refusal={refused:?}",
+                slot.display(),
+                slot_bytes.len(),
+                sha256_hex(&slot_bytes)
+            ));
+        }
+        require_refusal(refused, "capture destination creation refused")?;
+        assert_eq!(installed.binary(), original_path.as_path());
+        assert_eq!(installed.custody_json(), original_custody);
+    }
+    let clean = owned.join(format!("exclusive-clean{}", std::env::consts::EXE_SUFFIX));
+    installed.freeze_into(&clean)?;
+    let consumed = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 actual clean slot after occupied refusals",
+    )?;
+    assert!(consumed.success && consumed.status == Some(0));
+    assert_eq!(consumed.stdout, "fixture source A\n");
+    assert_eq!(
+        fs::read(&canary).map_err(|error| error.to_string())?,
+        canary_bytes
+    );
+    eprintln!(
+        "4510 occupied canaries and genuine clean capture: {}",
+        installed.custody_json()
+    );
+    fixture.guard.finish()
+}
+
+#[test]
+fn real_compiler_bound_partial_capture_cleans_only_its_observed_owned_object() -> Result<(), String>
+{
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, CandidateExecution,
+    };
+    use std::io::Write;
+    let fixture = create_source_fixture()?;
+    let (input, owned) = capture_fixture_input(&fixture, "actual partial-capture producer")?;
+    let mut installed =
+        AttributedArchive::produce(AdmittedSource::admit(&input, "0.11.0")?, &owned)?
+            .install(&owned)?;
+    installed.revalidate()?;
+    let before = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 real installed positive before partial write",
+    )?;
+    assert!(before.success && before.status == Some(0));
+    assert_eq!(before.stdout, "fixture source A\n");
+    let actual_bytes = fs::read(installed.binary()).map_err(|error| error.to_string())?;
+    assert!(actual_bytes.len() > 16);
+    let original_path = installed.binary().to_path_buf();
+    let original_custody = installed.custody_json();
+    eprintln!(
+        "4510 real partial-write setup: {}",
+        json!({"custody": original_custody, "native_success": before.success,
+            "native_status": before.status, "native_stdout": before.stdout})
+    );
+    let partial = owned.join("owned-partial");
+    let mut writer_reached = false;
+    let refusal = installed.freeze_into_with_writer_for_test(&partial, |file, retained| {
+        writer_reached = true;
+        if retained != actual_bytes {
+            return Err(std::io::Error::other(
+                "wrong retained compiler-produced bytes",
+            ));
+        }
+        file.write_all(&retained[..16])?;
+        Err(std::io::Error::other("injected witness-copy failure"))
+    });
+    assert!(
+        writer_reached,
+        "must reach partial write after real exclusive creation"
+    );
+    require_refusal(refusal, "injected witness-copy failure")?;
+    assert_eq!(installed.binary(), original_path.as_path());
+    assert_eq!(installed.custody_json(), original_custody);
+    #[cfg(unix)]
+    assert!(
+        !partial.exists(),
+        "only this attempt's observed partial must be cleaned"
+    );
+    #[cfg(not(unix))]
+    assert_eq!(
+        fs::read(&partial).map_err(|error| error.to_string())?,
+        actual_bytes[..16]
+    );
+
+    // Even the failure hook must refuse an occupied slot before its writer.
+    let canary = owned.join("partial-protected-canary");
+    let canary_bytes = b"do not clean a pre-existing or replacement witness\n";
+    fs::write(&canary, canary_bytes).map_err(|error| error.to_string())?;
+    let mut occupied_writer_reached = false;
+    let refused = installed.freeze_into_with_writer_for_test(&canary, |_, _| {
+        occupied_writer_reached = true;
+        Err(std::io::Error::other("occupied writer must not run"))
+    });
+    assert!(!occupied_writer_reached);
+    assert_eq!(
+        fs::read(&canary).map_err(|error| error.to_string())?,
+        canary_bytes
+    );
+    require_refusal(refused, "capture destination creation refused")?;
+
+    #[cfg(unix)]
+    {
+        let replaced = owned.join("partial-with-replacement");
+        let own_backup = owned.join("owned-partial-backup");
+        let refused = installed.freeze_into_with_writer_for_test(&replaced, |file, retained| {
+            file.write_all(&retained[..16])?;
+            fs::rename(&replaced, &own_backup)?;
+            fs::hard_link(&canary, &replaced)?;
+            Err(std::io::Error::other("injected replacement-path failure"))
+        });
+        require_refusal(refused, "injected replacement-path failure")?;
+        assert_eq!(
+            fs::read(&replaced).map_err(|error| error.to_string())?,
+            canary_bytes
+        );
+        assert_eq!(
+            fs::read(&canary).map_err(|error| error.to_string())?,
+            canary_bytes
+        );
+        assert_eq!(
+            fs::read(&own_backup).map_err(|error| error.to_string())?,
+            actual_bytes[..16]
+        );
+        assert_eq!(installed.binary(), original_path.as_path());
+    }
+    let retry = owned.join(format!(
+        "complete-after-failure{}",
+        std::env::consts::EXE_SUFFIX
+    ));
+    installed.freeze_into(&retry)?;
+    assert_eq!(
+        fs::read(&retry).map_err(|error| error.to_string())?,
+        actual_bytes
+    );
+    installed.revalidate()?;
+    let consumed = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 real complete retry after partial failure",
+    )?;
+    assert!(consumed.success && consumed.status == Some(0));
+    assert_eq!(consumed.stdout, "fixture source A\n");
+    eprintln!(
+        "4510 partial cleanup and real complete retry: {}",
+        installed.custody_json()
+    );
     fixture.guard.finish()
 }

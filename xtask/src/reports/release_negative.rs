@@ -400,7 +400,11 @@ fn run_negative_corpus_with_input(
         fs::create_dir(&path)
             .map_err(|error| format!("exclusive qualification producer root: {error}"))?;
         owned_root = Some(OwnedQualificationRoot(path.clone()));
-        qualified = AttributedArchive::produce(source, &path)?.install(&path)?;
+        let mut installed = AttributedArchive::produce(source, &path)?.install(&path)?;
+        installed.freeze_into(
+            &path.join(format!("candidate-witness{}", std::env::consts::EXE_SUFFIX)),
+        )?;
+        qualified = installed;
         let execution = CandidateExecution::Qualified(&qualified);
         let version_result = execution.run(
             &["--version".to_string()],

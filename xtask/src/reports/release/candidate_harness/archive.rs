@@ -1,10 +1,17 @@
 //! Actual Cargo producer, archive inventory, install and executable custody.
-use super::{AdmittedSource, input::revalidate_retained_file, safe_artifact_path};
+use super::{
+    AdmittedSource,
+    input::{CapturedFile, capture_retained_executable_with, revalidate_retained_file},
+    safe_artifact_path,
+};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+mod producer;
+use producer::{InstallProducer, InstallToolchain};
 
 /// Archive custody starts at an observed successful Cargo producer, never a
 /// caller's archive/version string. Ordinary entries retain raw Git attribution.
@@ -112,6 +119,7 @@ impl AttributedArchive {
             "--config".to_string(),
             config.to_string_lossy().into_owned(),
             "install".to_string(),
+            "--message-format=json".to_string(),
             "--jobs".to_string(),
             "2".to_string(),
             "--path".to_string(),
@@ -123,13 +131,17 @@ impl AttributedArchive {
             "--target-dir".to_string(),
             target_root.to_string_lossy().into_owned(),
         ];
-        qualified_command(
+        let toolchain = InstallToolchain::observe(&extracted)?;
+        let output = qualified_command(
             Path::new("cargo"),
             &args,
             &extracted,
             Duration::from_mins(15),
             "qualified cargo install",
         )?;
+        if InstallToolchain::observe(&extracted)? != toolchain {
+            return Err("install toolchain changed during compilation".to_string());
+        }
         self.revalidate()?;
         revalidate_extracted_files(&extracted, &self.inventory)?;
         let binary = install_root.join("bin").join(format!(
@@ -142,10 +154,24 @@ impl AttributedArchive {
         if executable_bytes.is_empty() {
             return Err("installed candidate executable is empty".to_string());
         }
+        let producer = InstallProducer::from_output(
+            &output.stdout,
+            &extracted,
+            &target_root,
+            self.source.package_name(),
+            toolchain,
+            &executable_bytes,
+        )?;
         let installed = InstalledCandidate {
             archive: self,
+            installed_binary: binary.clone(),
             binary,
             executable_bytes,
+            producer,
+            capture_root: owned_root
+                .canonicalize()
+                .map_err(|error| format!("resolve owned capture root: {error}"))?,
+            captured: None,
         };
         installed.revalidate()?;
         Ok(installed)
@@ -221,6 +247,10 @@ pub(crate) struct InstalledCandidate {
     archive: AttributedArchive,
     binary: PathBuf,
     executable_bytes: Vec<u8>,
+    installed_binary: PathBuf,
+    producer: InstallProducer,
+    capture_root: PathBuf,
+    captured: Option<CapturedFile>,
 }
 
 /// Shared authentic-chain semantics, with qualified custody enforced at each
@@ -344,6 +374,10 @@ impl InstalledCandidate {
     }
     pub(crate) fn revalidate(&self) -> Result<(), String> {
         self.archive.revalidate()?;
+        if let Some(captured) = &self.captured {
+            return captured.revalidate(&self.executable_bytes);
+        }
+        self.producer.revalidate(&self.executable_bytes)?;
         revalidate_retained_file(
             &self.binary,
             &self.executable_bytes,
@@ -353,11 +387,72 @@ impl InstalledCandidate {
     pub(crate) fn binary(&self) -> &Path {
         &self.binary
     }
+    /// Transition this admitted handle once. Reusing its qualified execution
+    /// reference afterward never recopies mutable compiler/install output.
+    pub(crate) fn freeze_into(&mut self, slot: &Path) -> Result<(), String> {
+        self.freeze_with(slot, |file, bytes| file.write_all(bytes))
+    }
+
+    fn freeze_with(
+        &mut self,
+        slot: &Path,
+        writer: impl FnOnce(&mut std::fs::File, &[u8]) -> std::io::Result<()>,
+    ) -> Result<(), String> {
+        if self.captured.is_some() {
+            return Err(
+                "candidate executable already frozen; reuse its retained reference".to_string(),
+            );
+        }
+        if !slot.is_absolute()
+            || slot.parent() != Some(self.capture_root.as_path())
+            || !slot
+                .file_name()
+                .is_some_and(|name| safe_artifact_path(Path::new(name)))
+            || self.capture_root.canonicalize().ok().as_ref() != Some(&self.capture_root)
+        {
+            return Err(
+                "capture destination must be an ordinary file in the owned producer root"
+                    .to_string(),
+            );
+        }
+        self.revalidate()?;
+        let permissions = std::fs::metadata(&self.installed_binary)
+            .map_err(|error| format!("read installed executable permissions: {error}"))?
+            .permissions();
+        let captured = capture_retained_executable_with(
+            &self.executable_bytes,
+            permissions,
+            slot,
+            |file, bytes| {
+                writer(file, bytes)?;
+                self.archive.revalidate().map_err(std::io::Error::other)
+            },
+        )?;
+        self.binary = slot.to_path_buf();
+        self.captured = Some(captured);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn freeze_into_with_writer_for_test(
+        &mut self,
+        slot: &Path,
+        writer: impl FnOnce(&mut std::fs::File, &[u8]) -> std::io::Result<()>,
+    ) -> Result<(), String> {
+        self.freeze_with(slot, writer)
+    }
+
     pub(crate) fn custody_json(&self) -> serde_json::Value {
         serde_json::json!({"source": self.archive.source.custody_json(),
             "archive_sha256": format!("{:x}", Sha256::digest(&self.archive.bytes)),
             "executable_sha256": format!("{:x}", Sha256::digest(&self.executable_bytes)),
             "archive": self.archive.path, "executable": self.binary,
+            "installed_executable": self.installed_binary,
+            "compiler_artifact": self.producer.artifact,
+            "compiler_installed_bytes_equal": true,
+            "rustc_verbose_version": self.producer.toolchain.rustc_verbose_version,
+            "cargo_verbose_version": self.producer.toolchain.cargo_verbose_version,
+            "capture_mode": if self.captured.is_some() { "exclusive_frozen_reference" } else { "installed_output" },
             "claim": "unlocked byte custody checks; not authenticated or atomic provenance"})
     }
 }
