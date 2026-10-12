@@ -1259,8 +1259,8 @@ fn real_compiler_bound_competing_capture_creators_leave_one_complete_witness() -
         // Both callbacks run after any precheck and immediately before the
         // same native creation owner. The test never copies an executable.
         let result = installed.capture_unpublished_with_gate_for_test(&slot, || {
-            let mut participants = gate.0.lock().map_err(|_| {
-                "INSTRUMENT: competing capture creation gate lock poisoned".to_string()
+            let mut participants = gate.0.lock().map_err(|error| {
+                format!("INSTRUMENT: competing capture creation gate lock poisoned: {error}")
             })?;
             reached.fetch_add(1, Ordering::SeqCst);
             *participants += 1;
@@ -1276,8 +1276,8 @@ fn real_compiler_bound_competing_capture_creators_leave_one_complete_witness() -
                         "INSTRUMENT: competing capture creation gate deadline expired before both creators arrived".to_string()
                     })?;
                 let (observed, wait) = gate.1.wait_timeout(participants, remaining)
-                    .map_err(|_| {
-                        "INSTRUMENT: competing capture creation gate wait poisoned".to_string()
+                    .map_err(|error| {
+                        format!("INSTRUMENT: competing capture creation gate wait poisoned: {error}")
                     })?;
                 participants = observed;
                 if wait.timed_out() && *participants < 2 {
@@ -1290,16 +1290,16 @@ fn real_compiler_bound_competing_capture_creators_leave_one_complete_witness() -
         (result, completed_metadata)
     };
     let outcomes = std::thread::scope(|scope| {
-        let first = scope.spawn(&attempt);
-        let second = scope.spawn(&attempt);
+        let first = scope.spawn(attempt);
+        let second = scope.spawn(attempt);
         // Reap both scoped workers before propagating either failure. A peer
         // that fails before its gate cannot leave an unbounded arrival wait.
         let first = first.join();
         let second = second.join();
-        let first = first.map_err(|_| {
+        let first = first.map_err(|_panic_payload| {
             "INSTRUMENT: competing capture first worker did not complete normally".to_string()
         })?;
-        let second = second.map_err(|_| {
+        let second = second.map_err(|_panic_payload| {
             "INSTRUMENT: competing capture second worker did not complete normally".to_string()
         })?;
         Ok::<_, String>([first, second])
