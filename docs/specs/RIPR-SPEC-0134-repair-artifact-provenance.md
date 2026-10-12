@@ -390,8 +390,12 @@ readback precedes publication of the captured handle. Subsequent qualified runs
 reuse that handle and validate its frozen file, source and archive, without
 recopying or rereading mutable compiler/install outputs. Failed capture publishes
 no handle. Unix cleanup removes only the observed created inode with one link;
-where native ownership is unavailable, the named partial remains retained. These
-unlocked observations do not establish hostile race safety, crash durability,
+where native ownership is unavailable, the named partial remains retained. Capture
+errors also make the existing qualification producer-root guard retain
+and name its whole directory for owner verification. Neither its destructor nor
+explicit finish may delete that retained root. Successful capture restores normal
+automatic cleanup; source/package/install setup failures keep their prior cleanup.
+These unlocked observations do not establish hostile race safety, crash durability,
 generic artifact reuse or final installed-candidate qualification.
 
 The 2026-10-02 review census had 5,411 ordinary blobs, 58,566,161 body bytes,

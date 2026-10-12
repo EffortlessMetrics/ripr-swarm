@@ -356,24 +356,50 @@ fn corpus_failure_hint(written_report: &Path) -> String {
     )
 }
 
-struct OwnedQualificationRoot(PathBuf);
+struct OwnedQualificationRoot {
+    path: PathBuf,
+    retain_for_verification: bool,
+}
 impl OwnedQualificationRoot {
-    fn capture(&mut self, capture: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
-        capture().map_err(|error| {
-            format!(
-                "{error}; qualification capture producer root: {}",
-                self.0.display()
-            )
-        })
+    fn new(path: PathBuf) -> Self {
+        Self {
+            path,
+            retain_for_verification: false,
+        }
     }
+
+    fn capture(&mut self, capture: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+        if self.retain_for_verification {
+            return Err(self.retention_refusal());
+        }
+        self.retain_for_verification = true;
+        let result = capture();
+        if result.is_ok() {
+            self.retain_for_verification = false;
+        }
+        result.map_err(|error| format!("{error}; {}", self.retention_refusal()))
+    }
+
+    fn retention_refusal(&self) -> String {
+        format!(
+            "qualification producer root retained for owner verification at {}",
+            self.path.display()
+        )
+    }
+
     fn finish(self) -> Result<(), String> {
-        fs::remove_dir_all(&self.0)
+        if self.retain_for_verification {
+            return Err(self.retention_refusal());
+        }
+        fs::remove_dir_all(&self.path)
             .map_err(|error| format!("remove owned qualification producer root: {error}"))
     }
 }
 impl Drop for OwnedQualificationRoot {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        if !self.retain_for_verification {
+            let _ = fs::remove_dir_all(&self.path);
+        }
     }
 }
 
@@ -382,7 +408,7 @@ pub(crate) fn capture_with_owned_root_for_test(
     owned_root: &Path,
     capture: impl FnOnce() -> Result<(), String>,
 ) -> Result<(), String> {
-    let mut producer = OwnedQualificationRoot(owned_root.to_path_buf());
+    let mut producer = OwnedQualificationRoot::new(owned_root.to_path_buf());
     producer.capture(capture)
 }
 
@@ -416,7 +442,7 @@ fn run_negative_corpus_with_input(
         let path = corpus_root.join("owned-producer");
         fs::create_dir(&path)
             .map_err(|error| format!("exclusive qualification producer root: {error}"))?;
-        let mut producer = OwnedQualificationRoot(path.clone());
+        let mut producer = OwnedQualificationRoot::new(path.clone());
         let mut installed = AttributedArchive::produce(source, &path)?.install(&path)?;
         producer.capture(|| {
             installed.freeze_into(

@@ -284,7 +284,9 @@ installed bytes agree, and captures those retained bytes in an exclusive slot
 before qualified consumption. Reuse the same captured handle; another capture
 must refuse an occupied slot even if its bytes match. Failed captures publish no
 handle and remove only an observed owned partial; where native file ownership
-cannot be established they name and retain it. These unlocked checks do not
+cannot be established they name and retain it. The qualification producer-root
+guard also names and retains its whole root after capture failure for verification;
+successful capture restores normal cleanup. These unlocked checks do not
 qualify a hostile filesystem race, crash durability, general test-artifact reuse,
 or the final installed release candidate.
 
