@@ -1575,7 +1575,14 @@ mod tests {
     fn process_stat_is_running(stat: std::io::Result<String>) -> Result<bool> {
         let stat = match stat {
             Ok(stat) => stat,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            // A process can exit after its proc descriptor is opened but before
+            // the stat read; Linux reports ESRCH for that vanished task.
+            Err(error)
+                if error.kind() == std::io::ErrorKind::NotFound
+                    || error.raw_os_error() == Some(libc::ESRCH) =>
+            {
+                return Ok(false);
+            }
             Err(error) => return Err(error.to_string()),
         };
         let state = stat
