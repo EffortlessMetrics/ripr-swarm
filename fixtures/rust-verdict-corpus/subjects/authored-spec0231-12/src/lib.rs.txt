@@ -1,0 +1,19 @@
+pub fn score(x: u32) -> u32 {
+    x * 2
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_json_eq(actual: String, expected: String) {
+        assert!(actual == expected, "json differs");
+    }
+
+    #[test]
+    fn score_renders_as_json() {
+        let actual = format!("{{\"score\":{}}}", score(2));
+        let expected = String::from("{\"score\":4}");
+        assert_json_eq(actual, expected);
+    }
+}

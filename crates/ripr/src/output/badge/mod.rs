@@ -21,12 +21,12 @@ pub(crate) use model::{
     BadgeBasis, BadgeCounts, BadgeKind, BadgePolicy, BadgeScope, BadgeStatus, BadgeSummary,
 };
 pub(crate) use public_projection::{
-    attach_public_projection, attach_public_projection_with_run_status,
+    attach_public_projection, attach_public_projection_with_optional_source,
 };
 pub(crate) use render::{render_native_json, render_shields_json};
 pub(crate) use summaries::{
-    repo_gap_ledger_badge_summary_from_json, ripr_badge_summary_with_suppressions,
-    ripr_canonical_actionable_gap_badge_summary,
+    refusal_badge_summary, repo_gap_ledger_badge_summary_from_json,
+    ripr_badge_summary_with_suppressions, ripr_canonical_actionable_gap_badge_summary,
 };
 #[cfg(test)]
 pub(crate) use summaries::{ripr_badge_summary, ripr_seam_badge_summary};

@@ -1,0 +1,33 @@
+{
+  "subject_id": "authored-accounts",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for spec-defined cells",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.toml",
+      "sha256": "86da95405a5988e0427d13d21c3e51d0d91382c0271d440c4a2cc34c66bc5a59"
+    },
+    {
+      "path": "src/account.rs",
+      "sha256": "d66ae1d39b5c4859d963ed3481e94670e49f12dacae2d3037d69358aaa71397f"
+    },
+    {
+      "path": "src/bytes.rs",
+      "sha256": "f6cd8969580469a87e31fa348682f4ca7f6238a9151e413e6069364f8dd16323"
+    },
+    {
+      "path": "src/frame.rs",
+      "sha256": "18382a691c362df1a6f18a94ee348d4a208ec98180443d17f062a94fdb074633"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "1ba4d355f3fe1d379575ae40040ea359e43a58e7bbc22dab56cc006c697d5d85"
+    },
+    {
+      "path": "src/parse.rs",
+      "sha256": "b6e76981133121f1382b4327c0f0d6b6a858cdac4ab10fa6a9a0d81f68a56d4a"
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+diff --git a/src/units.rs b/src/units.rs
+index 2f33613..3909e33 100644
+--- a/src/units.rs
++++ b/src/units.rs
+@@ -1,6 +1,6 @@
+ pub mod metric {
+     pub fn round(value: u32) -> u32 {
+-        (value + 5) / 10 * 10
++        (5 + value) / 10 * 10
+     }
+ }
+ 

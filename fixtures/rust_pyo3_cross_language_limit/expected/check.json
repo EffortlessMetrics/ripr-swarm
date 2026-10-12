@@ -18,7 +18,7 @@
         "id": "probe:src_lib.rs:predicate:f89fd108",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/rust_pyo3_cross_language_limit/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 5,
         "expression": "amount >= 100"
        },
@@ -68,7 +68,7 @@
         "id": "probe:src_lib.rs:predicate:c3007359",
         "family": "predicate",
         "delta": "control",
-        "file": "fixtures/rust_pyo3_cross_language_limit/input/src/lib.rs",
+        "file": "./src/lib.rs",
         "line": 20,
         "expression": "if amount >= 100 {"
        },

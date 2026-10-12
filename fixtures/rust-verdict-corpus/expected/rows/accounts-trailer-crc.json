@@ -1,0 +1,22 @@
+{
+  "case_id": "accounts-trailer-crc",
+  "subject_id": "authored-accounts",
+  "origin": "authored",
+  "anchor": "src/frame.rs:29",
+  "behavior_family": "field_construction",
+  "test_shape": "unit_test_other_field_only",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

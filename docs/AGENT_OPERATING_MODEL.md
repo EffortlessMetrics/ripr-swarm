@@ -167,6 +167,20 @@ Examples:
 
 Do not recreate completed ceremony merely because a new session arrived later.
 
+## Bounded repair handoff
+
+When a session receives ripr repair work for one seam, the default bounded
+handoff is the compact repair card: `ripr agent card --root . --seam-id ID [--json]`
+projects the `RepairCardV1` fix-instruction summary, repair-route readiness,
+and canonical next action, with the complete packet behind the card's explicit
+detail route. A successful `ripr repair` start prints the same card, so
+packet or file-path assembly is never a prerequisite for the ordinary path;
+`ripr agent packet` remains the compatibility and full-detail route. A card
+that renders `stale`, `limited`, or `unavailable` is a typed stop condition —
+read its blocker instead of reconstructing the packet by hand. See
+[Agent workflows](AGENT_WORKFLOWS.md) and the
+[LLM operator guide](LLM_OPERATOR_GUIDE.md).
+
 ---
 
 ## Engineering decisions

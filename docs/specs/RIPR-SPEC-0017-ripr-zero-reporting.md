@@ -157,18 +157,27 @@ metadata state as `missing`, `partial`, or `unknown`. Missing metadata is a
 review signal, not a suppression and not a reason to drop the entry.
 
 Campaign 18 metadata support is intentionally additive: baseline create writes
-the full object for new ledgers, baseline diff reports any present metadata on
-baseline-derived delta items, and shrink-only update preserves existing entry
-objects while removing resolved debt. Older Campaign 17 ledgers with partial or
-absent review metadata remain valid inputs.
+the full object shape for new ledgers with `owner` and `review_after` as
+`null`, baseline diff reports any present metadata on baseline-derived delta
+items, and shrink-only update preserves existing entry objects while removing
+resolved debt. Review ownership and deadlines are operator-set ledger content:
+no binary command writes non-null `owner` or `review_after` values. Older
+Campaign 17 ledgers with partial or absent review metadata remain valid inputs.
 
 Baseline review status values:
 
 - `current` - metadata exists and the review window has not expired.
-- `stale` - `review_after` is in the past or the configured age threshold is
-  exceeded.
+- `stale` - `review_after` is in the past. `unix_ms:<millis>` deadlines compare
+  in milliseconds; `YYYY-MM-DD` dates and RFC3339 datetimes compare against
+  the UTC run date taken from `generated_at`. RFC3339 values with a numeric
+  offset are converted to UTC before that day comparison. RFC 3339 leap seconds
+  (`23:59:60` UTC, including offset forms such as `15:59:60-08:00`) stay on that
+  UTC civil day; other `*:60` values are `unknown`.
 - `missing_metadata` - owner, reason, created_at, or review_after is absent.
-- `unknown` - the report cannot parse enough metadata to classify the entry.
+- `unknown` - the report cannot parse enough metadata to classify the entry,
+  including a present `review_after` that cannot be compared with
+  `generated_at` (malformed timestamps, impossible Gregorian dates, or a `T`
+  suffix that is not RFC3339). An incomparable deadline is not `current`.
 
 ## JSON Shape
 
@@ -432,7 +441,12 @@ The implementation adds tests for:
 - missing required baseline debt delta input producing an incomplete report;
 - Campaign 17 baseline ledgers without Campaign 18 metadata remaining
   compatible and visible;
-- metadata classification for current, stale, missing, and unknown entries;
+- metadata classification for current, stale, missing, and unknown entries,
+  including past-due ISO `YYYY-MM-DD` deadlines, unix_ms deadlines, and
+  incomparable `review_after` values that must not fail open to `current`;
+- a deadline on an incomplete review record (missing owner, reason,
+  `created_at`, or `review_after`) remaining `missing_metadata`, pinning the
+  operator-set review metadata contract;
 - RIPR 0 achieved, not yet, and unknown state calculation;
 - top debt area grouping by repo-relative path or configured area name;
 - repair-route selection from PR guidance, baseline debt delta, gate decision,

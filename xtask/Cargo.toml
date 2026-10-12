@@ -7,6 +7,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+repo-policy = { path = "../tools/repo-policy" }
 ripr = { path = "../crates/ripr" }
 ra_ap_syntax = "0.0.349"
 rayon = "1"

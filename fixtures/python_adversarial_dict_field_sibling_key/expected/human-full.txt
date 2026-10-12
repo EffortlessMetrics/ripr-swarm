@@ -71,8 +71,8 @@ Python repair card (preview/advisory)
 Next step
   Python preview: strengthen the existing related test with a field/object assertion for missing discriminator `host == "localhost"`.
 Drill in:
-  ripr explain --root fixtures/python_adversarial_dict_field_sibling_key/input --diff fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast probe:src_conf.py:python_preview:932c667d
-  ripr context --root fixtures/python_adversarial_dict_field_sibling_key/input --diff fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast --at probe:src_conf.py:python_preview:932c667d
+  ripr explain --root <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input --diff <cwd>/fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast probe:src_conf.py:python_preview:932c667d
+  ripr context --root <cwd>/fixtures/python_adversarial_dict_field_sibling_key/input --diff <cwd>/fixtures/python_adversarial_dict_field_sibling_key/diff.patch --mode fast --at probe:src_conf.py:python_preview:932c667d
 
 
 Note: 1 Python file analyzed under preview support — preview evidence is advisory and may be incomplete. Treat its findings as advisory, not Rust-grade.

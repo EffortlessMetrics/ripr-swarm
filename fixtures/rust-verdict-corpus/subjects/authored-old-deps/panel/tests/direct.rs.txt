@@ -1,0 +1,6 @@
+use meter::Gauge;
+
+#[test]
+fn gauge_reads_forty_two() {
+    assert_eq!(Gauge::reading(), 42);
+}

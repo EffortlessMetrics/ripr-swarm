@@ -1,0 +1,22 @@
+{
+  "case_id": "jest-mined-tobe-identity",
+  "subject_id": "authored-ts-jest-mined",
+  "origin": "authored",
+  "anchor": "src/options.ts:8",
+  "behavior_family": "return_value",
+  "test_shape": "jest_tobe_identity_catches_copy",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

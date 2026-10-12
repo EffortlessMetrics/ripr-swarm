@@ -1,0 +1,53 @@
+{
+  "case_id": "semver-tilde-pre-ge",
+  "subject_id": "semver",
+  "diff": "cases/semver-tilde-pre-ge.diff",
+  "anchor": {
+    "file": "src/eval.rs",
+    "line": 133
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_custom_assert_helper",
+  "hard_case": "assertions go through tests/util assert_match_all/assert_match_none helpers",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "cmp.pre < ver.pre",
+        "mutated_line": "cmp.pre < ver.pre",
+        "outcome": "tests_failed",
+        "failing_test": "test_tilde",
+        "equivalence_review": "not equivalent: ~1.2.3-beta stops matching 1.2.3-beta"
+      },
+      {
+        "replacement": "cmp.pre == ver.pre",
+        "mutated_line": "cmp.pre == ver.pre",
+        "outcome": "tests_failed",
+        "failing_test": "test_tilde",
+        "equivalence_review": "not equivalent: ~1.2.3-beta.2 stops matching 1.2.3 and 1.2.3-beta.4 (a later patch such as 1.2.4 returns before the pre-release comparison)"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_tilde covers equal and later prereleases through helper assertions, so both mutants fail. ripr limits (infection_unknown and propagation_unknown), an acceptable abstention.",
+  "labeling_observation": {
+    "ripr_commit": "a7a089e",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "infection_unknown",
+      "propagation_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

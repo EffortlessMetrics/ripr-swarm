@@ -14,14 +14,18 @@
 //! ([`derive_source_subject`]); they never hash the workspace, so a report
 //! written after a checkout or an edit cannot vouch for records computed
 //! before it. The LSP validator in `lsp::gap_artifacts` recomputes the
-//! digests from the current workspace and is the only consumer authority.
+//! digests from the current workspace. Targeted rerun uses the same validator
+//! to admit legacy ledgers whose relative/missing root cannot bind a checkout.
 
+mod corpus;
 mod shared;
+
+pub(crate) use corpus::{CorpusSubjectCheck, check_rust_corpus_subject};
 
 pub(crate) use shared::{
     GapSourceSubject, GapSourceSubjectFile, SOURCE_SUBJECT_DIGEST_ALGORITHM,
     actionable_packet_named_paths, actionable_packet_subject_paths, derive_source_subject,
-    subject_relative_path,
+    same_root, subject_relative_path,
 };
 
 use serde_json::Value;
@@ -42,6 +46,18 @@ pub(crate) enum SourceSubjectCheck {
     /// missing, malformed, uses an unknown digest, omits a file the records
     /// name, or a stamped file cannot be read.
     Unverifiable(&'static str),
+}
+
+/// Preserve the existing full Rust inventory's consumed corpus identity.
+/// This projection performs no filesystem read and defines no new digest.
+pub(crate) fn captured_rust_corpus_subject(
+    key: &crate::analysis::seam_cache::RepoSeamCacheKey,
+) -> Value {
+    serde_json::json!({
+        "scope": "rust_workspace",
+        "cache_schema_version": key.schema_version,
+        "files_content_hash": key.files_content_hash,
+    })
 }
 
 /// `sha256:<hex>` of one workspace file, `Ok(None)` when it does not exist.
@@ -139,6 +155,7 @@ pub(crate) fn stamp_source_subject(
     Ok(GapSourceSubject {
         digest_algorithm: SOURCE_SUBJECT_DIGEST_ALGORITHM.to_string(),
         files,
+        corpus: None,
     })
 }
 
@@ -223,11 +240,19 @@ pub(crate) fn with_source_subject_for_test(root: &Path, mut artifact: Value) -> 
             paths.extend(actionable_packet_subject_paths(root, packet));
         }
     }
-    if let (Ok(stamp), Some(object)) = (
+    if let (Ok(mut stamp), Some(object)) = (
         stamp_source_subject(root, &paths)
             .and_then(|stamp| serde_json::to_value(stamp).map_err(|err| err.to_string())),
         artifact.as_object_mut(),
     ) {
+        // Unit fixtures use the existing corpus owner too. The independent
+        // integration controls exercise real analysis capture and derivation.
+        if let Ok(key) = crate::analysis::workspace_cache_key_at_with_config(
+            root,
+            &crate::config::RiprConfig::default(),
+        ) {
+            stamp["corpus"] = captured_rust_corpus_subject(&key);
+        }
         object.insert("source_subject".to_string(), stamp);
     }
     artifact

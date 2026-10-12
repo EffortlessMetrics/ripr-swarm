@@ -10,7 +10,9 @@
 //!
 //! The walk observes; it does not gate. A static verdict is recorded per case
 //! but never asserted here. Verdict accuracy belongs to a labeled corpus, and
-//! this report only names which verdict each release produced.
+//! this report only names which verdict each release produced, read against
+//! whether the crate's own tests notice the edit. Without that reading an
+//! unknown replacing a false gap looks like lost resolution.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -18,7 +20,7 @@ use std::time::Instant;
 
 use serde_json::{Value, json};
 
-use crate::run::{CapturedOutput, capture_output_in_dir};
+use crate::run::{CapturedOutput, capture_output_in_dir, capture_output_in_dir_with_envs};
 
 const DEFAULT_OUT: &str = "target/ripr/first-run";
 const SCHEMA_VERSION: &str = "first_run.v1";
@@ -49,6 +51,9 @@ struct Case {
     line: usize,
     from: &'static str,
     to: &'static str,
+    /// Tests that fail with the edit applied (`cargo test` on the feature
+    /// branch). Empty means the crate's tests do not notice the edit.
+    caught_by: &'static [&'static str],
 }
 
 const CASES: [Case; 3] = [
@@ -59,6 +64,17 @@ const CASES: [Case; 3] = [
         line: 166,
         from: "digit > b'9'",
         to: "digit >= b'9'",
+        // Recorded 2026-10-06: requirements such as `=0.9.0` stop parsing.
+        caught_by: &[
+            "test_basic",
+            "test_caret",
+            "test_exact",
+            "test_less_than",
+            "test_multiple",
+            "test_tilde",
+            "test_whitespace_delimited_comparator_sets",
+            "test_wildcard",
+        ],
     },
     Case {
         krate: "fastrand",
@@ -67,6 +83,8 @@ const CASES: [Case; 3] = [
         line: 684,
         from: "val >= surrogate_start",
         to: "val > surrogate_start",
+        // Recorded 2026-10-06: `char::try_from` panics on a surrogate.
+        caught_by: &["test_char"],
     },
     Case {
         krate: "bytesize",
@@ -75,8 +93,28 @@ const CASES: [Case; 3] = [
         line: 192,
         from: "bytes < unit",
         to: "bytes <= unit",
+        // Recorded 2026-10-06: `ByteSize::kib(1)` renders as "1024 B".
+        caught_by: &["tests::test_display", "tests::test_to_string_as"],
     },
 ];
+
+/// What a verdict means given whether the crate's tests notice the edit.
+/// A missing-path class on a caught edit is a false gap; `weakly_exposed`
+/// there names a discriminator but calls it too weak, so it understates the
+/// tests. An unknown is unresolved, not wrong.
+fn verdict_reading(verdict: Option<&str>, caught: bool) -> &'static str {
+    match (verdict, caught) {
+        (None, _) => "no verdict",
+        (Some("exposed"), true) => "agrees with the tests",
+        (Some("exposed"), false) => "false credit",
+        (Some("weakly_exposed"), true) => "understates the tests",
+        (Some("reachable_unrevealed" | "no_static_path"), true) => "false gap",
+        (Some("weakly_exposed" | "reachable_unrevealed" | "no_static_path"), false) => {
+            "agrees with the tests"
+        }
+        (Some(_), _) => "unresolved",
+    }
+}
 
 /// Wall-clock budget per step. A blown budget is friction, not a failure.
 fn budget_secs(step: &str) -> f64 {
@@ -135,6 +173,46 @@ fn parse_options(args: &[String]) -> Result<Options, String> {
     Ok(options)
 }
 
+/// Timed `--install-published` cargo-install invocation.
+///
+/// `CARGO_HOME` is `<out>/cargo-home`. This helper names that path; it does
+/// not create or empty it. `run()` calls `prepare_out_dir` first, so the
+/// directory does not exist when cargo starts and cargo creates a new home.
+/// `RUSTUP_HOME` and `PATH` are omitted so the toolchain still resolves from
+/// the caller.
+struct PublishedInstallSpec {
+    cwd: PathBuf,
+    args: Vec<String>,
+    envs: Vec<(String, String)>,
+    install_root: PathBuf,
+}
+
+impl PublishedInstallSpec {
+    fn env_pairs(&self) -> Vec<(&str, &str)> {
+        self.envs
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect()
+    }
+}
+
+fn published_install_spec(out: &Path) -> PublishedInstallSpec {
+    let install_root = out.join("install-root");
+    let cargo_home = out.join("cargo-home").display().to_string();
+    PublishedInstallSpec {
+        cwd: std::env::temp_dir(),
+        args: vec![
+            "install".into(),
+            "ripr".into(),
+            "--locked".into(),
+            "--root".into(),
+            install_root.display().to_string(),
+        ],
+        envs: vec![("CARGO_HOME".into(), cargo_home)],
+        install_root,
+    }
+}
+
 pub(crate) fn run(args: &[String]) -> Result<(), String> {
     let options = parse_options(args)?;
     let out = absolute(&options.out)?;
@@ -142,21 +220,13 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
 
     let mut setup_steps = Vec::new();
     let ripr = if options.install_published {
-        let root = out.join("install-root");
         // Outside the repository so its rust-toolchain and cargo config do not
-        // decide how the published crate builds.
-        let step = timed(
-            &std::env::temp_dir(),
-            "install_published",
-            "cargo",
-            &[
-                "install".into(),
-                "ripr".into(),
-                "--locked".into(),
-                "--root".into(),
-                root.display().to_string(),
-            ],
-        )?;
+        // decide how the published crate builds. A fresh CARGO_HOME keeps the
+        // crates `cargo xtask` already downloaded for xtask out of the timing,
+        // so the sample is a cold install.
+        let spec = published_install_spec(&out);
+        let envs = spec.env_pairs();
+        let step = timed_with_envs(&spec.cwd, "install_published", "cargo", &spec.args, &envs)?;
         let failed = step.exit != Some(0);
         if failed {
             // The reports keep a count; the cause lives in the full stderr.
@@ -167,7 +237,11 @@ pub(crate) fn run(args: &[String]) -> Result<(), String> {
         if failed {
             return finish(&options, &out, "unavailable", setup_steps, Vec::new());
         }
-        root.join("bin").join("ripr").display().to_string()
+        spec.install_root
+            .join("bin")
+            .join("ripr")
+            .display()
+            .to_string()
     } else {
         resolve_ripr(&options.ripr)?
     };
@@ -272,9 +346,95 @@ impl StepResult {
 }
 
 fn timed(cwd: &Path, name: &str, program: &str, args: &[String]) -> Result<StepResult, String> {
+    timed_with_envs(cwd, name, program, args, &[])
+}
+
+fn timed_with_envs(
+    cwd: &Path,
+    name: &str,
+    program: &str,
+    args: &[String],
+    envs: &[(&str, &str)],
+) -> Result<StepResult, String> {
+    #[cfg(test)]
+    if let Some(fake) = intercept_timed_launch(cwd, name, program, args, envs) {
+        return Ok(fake);
+    }
     let started = Instant::now();
-    let captured = capture_output_in_dir(program, args, cwd, name)?;
+    let captured = capture_output_in_dir_with_envs(program, args, cwd, name, envs, &[])?;
     Ok(step_result(name, program, args, started, captured))
+}
+
+#[cfg(test)]
+struct TimedLaunch {
+    name: String,
+    cwd: PathBuf,
+    program: String,
+    args: Vec<String>,
+    envs: Vec<(String, String)>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static TIMED_LAUNCHES: std::cell::RefCell<Option<Vec<TimedLaunch>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+struct RecordingTimedLaunches;
+
+#[cfg(test)]
+impl Drop for RecordingTimedLaunches {
+    fn drop(&mut self) {
+        TIMED_LAUNCHES.with(|slot| {
+            *slot.borrow_mut() = None;
+        });
+    }
+}
+
+#[cfg(test)]
+fn start_recording_timed_launches() -> RecordingTimedLaunches {
+    TIMED_LAUNCHES.with(|slot| {
+        *slot.borrow_mut() = Some(Vec::new());
+    });
+    RecordingTimedLaunches
+}
+
+#[cfg(test)]
+fn take_recorded_timed_launches() -> Vec<TimedLaunch> {
+    TIMED_LAUNCHES.with(|slot| slot.borrow_mut().take().unwrap_or_default())
+}
+
+#[cfg(test)]
+fn intercept_timed_launch(
+    cwd: &Path,
+    name: &str,
+    program: &str,
+    args: &[String],
+    envs: &[(&str, &str)],
+) -> Option<StepResult> {
+    TIMED_LAUNCHES.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let launches = slot.as_mut()?;
+        launches.push(TimedLaunch {
+            name: name.to_string(),
+            cwd: cwd.to_path_buf(),
+            program: program.to_string(),
+            args: args.to_vec(),
+            envs: envs
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+                .collect(),
+        });
+        Some(StepResult {
+            name: name.to_string(),
+            command: format!("{program} {}", args.join(" ")).trim().to_string(),
+            exit: Some(0),
+            secs: 0.0,
+            stdout: String::new(),
+            stderr: String::new(),
+        })
+    })
 }
 
 fn step_result(
@@ -458,6 +618,7 @@ struct CaseResult {
     name: String,
     steps: Vec<(StepResult, Vec<String>)>,
     verdict: Option<&'static str>,
+    caught_by: &'static [&'static str],
     workflow_lines: Option<usize>,
     workflow_installs_with_cargo: Option<bool>,
 }
@@ -517,6 +678,7 @@ fn walk_case(out: &Path, ripr: &str, case: &Case) -> Result<CaseResult, String> 
         name,
         steps: annotated,
         verdict,
+        caught_by: case.caught_by,
         workflow_lines,
         workflow_installs_with_cargo,
     })
@@ -633,6 +795,8 @@ fn finish(
         "cases": cases.iter().map(|case| json!({
             "case": case.name,
             "verdict": case.verdict,
+            "caught_by": case.caught_by,
+            "verdict_reading": verdict_reading(case.verdict, !case.caught_by.is_empty()),
             "workflow_lines": case.workflow_lines,
             "workflow_installs_with_cargo": case.workflow_installs_with_cargo,
             "steps": case.steps.iter().map(|(s, f)| step_json(s, f)).collect::<Vec<Value>>(),
@@ -794,9 +958,15 @@ fn render_markdown(version: &str, setup: &[StepResult], cases: &[CaseResult]) ->
     }
     for case in cases {
         text.push_str(&format!(
-            "\n## {}\n\nverdict: `{}`; generated workflow: {} lines, installs with cargo: {}\n\n| step | exit | secs | stdout lines | friction |\n| --- | --- | --- | --- | --- |\n",
+            "\n## {}\n\nverdict: `{}` ({}; tests that notice the edit: {}); generated workflow: {} lines, installs with cargo: {}\n\n| step | exit | secs | stdout lines | friction |\n| --- | --- | --- | --- | --- |\n",
             case.name,
             case.verdict.unwrap_or("none printed"),
+            verdict_reading(case.verdict, !case.caught_by.is_empty()),
+            if case.caught_by.is_empty() {
+                "none".to_string()
+            } else {
+                case.caught_by.join(", ")
+            },
             case.workflow_lines
                 .map_or_else(|| "none".to_string(), |lines| lines.to_string()),
             case.workflow_installs_with_cargo
@@ -865,6 +1035,7 @@ mod tests {
                 (step("init_ci", 0, "", "", 0.1), vec!["x".to_string()]),
             ],
             verdict: Some("weakly_exposed"),
+            caught_by: &[],
             workflow_lines: Some(321),
             workflow_installs_with_cargo: Some(false),
         };
@@ -1027,6 +1198,7 @@ mod tests {
             line: 2,
             from: "a > b",
             to: "a >= b",
+            caught_by: &[],
         };
         assert_eq!(
             apply_edit("x\nif a > b {\ny\n", &case).as_deref(),
@@ -1038,11 +1210,139 @@ mod tests {
     }
 
     #[test]
+    fn every_verdict_class_has_a_reading_for_a_caught_and_an_uncaught_edit() {
+        let expected = [
+            ("exposed", "agrees with the tests", "false credit"),
+            (
+                "weakly_exposed",
+                "understates the tests",
+                "agrees with the tests",
+            ),
+            ("reachable_unrevealed", "false gap", "agrees with the tests"),
+            ("no_static_path", "false gap", "agrees with the tests"),
+            ("infection_unknown", "unresolved", "unresolved"),
+            ("propagation_unknown", "unresolved", "unresolved"),
+            ("static_unknown", "unresolved", "unresolved"),
+        ];
+        assert_eq!(
+            expected.map(|(class, _, _)| class),
+            VERDICT_CLASSES,
+            "every verdict class needs an expected reading"
+        );
+        for (class, caught, uncaught) in expected {
+            assert_eq!(verdict_reading(Some(class), true), caught, "{class} caught");
+            assert_eq!(
+                verdict_reading(Some(class), false),
+                uncaught,
+                "{class} uncaught"
+            );
+        }
+        assert_eq!(verdict_reading(None, true), "no verdict");
+        assert_eq!(verdict_reading(None, false), "no verdict");
+    }
+
+    #[test]
+    fn the_markdown_verdict_line_names_the_reading_and_the_catching_tests() {
+        let case = CaseResult {
+            name: "demo-1.0.0".to_string(),
+            steps: vec![(step("check", 0, "", "", 0.1), vec![])],
+            verdict: Some("reachable_unrevealed"),
+            caught_by: &["tests::boundary", "tests::equal"],
+            workflow_lines: None,
+            workflow_installs_with_cargo: None,
+        };
+        let text = render_markdown("ripr 0.0.0", &[], &[case]);
+        assert!(
+            text.contains("verdict: `reachable_unrevealed` (false gap; tests that notice the edit: tests::boundary, tests::equal)"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn unknown_arguments_name_the_usage() {
         let err = parse_options(&["--bogus".to_string()])
             .err()
             .unwrap_or_default();
         assert!(err.contains("usage: cargo xtask first-run"), "{err}");
         assert!(parse_options(&["--ripr".to_string()]).is_err());
+    }
+
+    #[test]
+    fn the_published_install_child_gets_an_isolated_cargo_home_under_out() -> Result<(), String> {
+        let out = std::env::temp_dir().join(format!("first-run-cargo-home-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&out);
+        let _recording = start_recording_timed_launches();
+        // Fake the install child so this does not `cargo install`. `--version`
+        // then fails because the binary was not written; the launch record is
+        // already captured.
+        let _ = run(&[
+            "--install-published".to_string(),
+            "--out".to_string(),
+            out.display().to_string(),
+        ]);
+        let launches = take_recorded_timed_launches();
+        let install = launches
+            .iter()
+            .find(|launch| launch.name == "install_published")
+            .ok_or_else(|| "run() did not launch install_published".to_string())?;
+
+        let cargo_home = install
+            .envs
+            .iter()
+            .find(|(key, _)| key == "CARGO_HOME")
+            .map(|(_, value)| PathBuf::from(value))
+            .ok_or_else(|| "install child has no CARGO_HOME override".to_string())?;
+
+        assert_eq!(install.program, "cargo");
+        assert_eq!(cargo_home, out.join("cargo-home"));
+        assert!(
+            cargo_home.starts_with(&out),
+            "CARGO_HOME must sit under --out, not the caller home: {}",
+            cargo_home.display()
+        );
+        if let Some(caller) = std::env::var_os("CARGO_HOME") {
+            assert_ne!(
+                PathBuf::from(caller),
+                cargo_home,
+                "install child must not inherit the caller's CARGO_HOME"
+            );
+        }
+        // The helper names the path; emptiness comes from prepare_out_dir
+        // having just replaced --out, so cargo-home does not exist yet.
+        assert!(
+            !cargo_home.exists(),
+            "CARGO_HOME must start absent after prepare_out_dir so cargo creates a fresh home"
+        );
+        assert!(
+            install
+                .envs
+                .iter()
+                .all(|(key, _)| key != "RUSTUP_HOME" && key != "PATH"),
+            "RUSTUP_HOME and PATH must stay inherited so the toolchain resolves: {:?}",
+            install.envs
+        );
+        assert_eq!(install.cwd, std::env::temp_dir());
+        assert_eq!(
+            install.args,
+            vec![
+                "install".into(),
+                "ripr".into(),
+                "--locked".into(),
+                "--root".into(),
+                out.join("install-root").display().to_string(),
+            ]
+        );
+        let spec = published_install_spec(&out);
+        assert_eq!(spec.install_root, out.join("install-root"));
+        assert_eq!(
+            install.envs,
+            spec.env_pairs()
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect::<Vec<_>>()
+        );
+
+        let _ = fs::remove_dir_all(&out);
+        Ok(())
     }
 }

@@ -1,0 +1,12 @@
+diff --git a/src/cart.ts b/src/cart.ts
+--- a/src/cart.ts
++++ b/src/cart.ts
+@@ -9,7 +9,7 @@ export interface Notifier {
+ }
+ 
+ export function lineTotal(line: Line): number {
+-  return line.unitCents * line.quantity;
++  return line.unitCents + line.quantity;
+ }
+ 
+ export function bulkDiscount(quantity: number): number {

@@ -1,0 +1,10 @@
+diff --git a/src/pricing.ts b/src/pricing.ts
+--- a/src/pricing.ts
++++ b/src/pricing.ts
+@@ -61,5 +61,5 @@ export function quote(subtotalCents: number, points: number): Quote {
+ }
+ 
+ export function receiptFooter(storeName: string): string {
+-  return `Thank you for shopping at ${storeName}!`;
++  return `Thanks for shopping at ${storeName}!`;
+ }

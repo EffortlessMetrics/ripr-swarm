@@ -1,4 +1,5 @@
 //! #5355 / #5453: `ripr agent stub --write` must leave the user's crate compiling.
+//! #6712: scratch crates under `temp_dir()` must create that redirected root first.
 //! Each ready inline stub is written into a fresh copy of one fixture crate,
 //! the file is compiled with rustc as a test crate, and the stub's test must
 //! run and stop at its own `ripr:` `todo!()`. Integration-file stubs take a
@@ -416,6 +417,1106 @@ fn written_stubs_compile_and_stop_at_their_own_todo() -> Result<(), String> {
     Ok(())
 }
 
+/// The `ripr` binary under test.
+fn ripr_command() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_ripr"))
+}
+
+/// #5471: `ripr check` prints `Write a test for it:` only when the command
+/// it prints produces a stub. `src/lib.rs` holds seams that sort before the
+/// other files; `src/gated.rs` puts its owner behind a feature cfg a plain
+/// `cargo test` build may not enable, so its stub is refused; `src/zz.rs` is
+/// stubbable; `src/pair.rs` has two predicate seams on one line, which
+/// `--at` and `--kind` cannot tell apart; `src/parse.rs` changes a `?` whose
+/// function holds a stubbable predicate but no stubbable error variant.
+const ROUTE_LIB: &str = "pub mod gated;\npub mod pair;\npub mod parse;\npub mod zz;\n\npub fn price(amount: u32, threshold: u32) -> u32 {\n    if amount >= threshold { amount - 10 } else { amount }\n}\n\npub fn small(n: u32) -> bool {\n    n < 3\n}\n";
+const ROUTE_GATED: &str = "#[cfg(feature = \"extra\")] pub fn clamp(n: u32, max: u32) -> u32 {\n    if n > max { max } else { n }\n}\n";
+const ROUTE_PAIR: &str = "pub fn both(a: u32, b: u32) -> u32 {\n    if a > 10 && b > 20 { 1 } else { 0 }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn a_boundary() {\n        assert_eq!(both(9, 30), 0);\n        assert_eq!(both(10, 30), 0);\n        assert_eq!(both(11, 30), 1);\n    }\n}\n";
+const ROUTE_PARSE: &str = "pub fn read(s: &str) -> Result<u32, std::num::ParseIntError> {\n    let n: u32 = s.parse()?;\n    if n > 5 { Ok(n) } else { Ok(0) }\n}\n";
+const ROUTE_ZZ: &str =
+    "pub fn fee(n: u32, cap: u32) -> u32 {\n    if n >= cap { cap } else { n }\n}\n";
+
+fn route_crate(scratch: &Scratch) -> Result<(), String> {
+    let root = &scratch.directory;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_route\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    for (file, text) in [
+        ("src/lib.rs", ROUTE_LIB),
+        ("src/gated.rs", ROUTE_GATED),
+        ("src/pair.rs", ROUTE_PAIR),
+        ("src/parse.rs", ROUTE_PARSE),
+        ("src/zz.rs", ROUTE_ZZ),
+    ] {
+        std::fs::write(root.join(file), text).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// A one-line diff that changes `old` into line 2 of `file`.
+fn one_line_diff(scratch: &Scratch, file: &str, old: &str, new: &str) -> Result<PathBuf, String> {
+    let path = scratch
+        .directory
+        .join(format!("{}.diff", file.replace(['/', '.'], "_")));
+    std::fs::write(
+        &path,
+        format!(
+            "diff --git a/{file} b/{file}\n--- a/{file}\n+++ b/{file}\n@@ -2 +2 @@\n-{old}\n+{new}\n"
+        ),
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(path)
+}
+
+fn check_human(root: &Path, diff: &Path) -> Result<String, String> {
+    let mut check = ripr_command();
+    check
+        .args(["check", "--root"])
+        .arg(root)
+        .arg("--diff")
+        .arg(diff);
+    let output = run_bounded(check, root, "check", Duration::from_mins(2))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    if !output.status.success() {
+        return Err(format!(
+            "check failed: {stdout}{}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(stdout)
+}
+
+/// The command `check` printed under `Write a test for it:`, as arguments
+/// after `ripr`.
+fn printed_stub_args(stdout: &str) -> Option<Vec<String>> {
+    let mut lines = stdout.lines();
+    lines.find(|line| *line == "Write a test for it:")?;
+    let command = lines.next()?.trim();
+    let mut words = command.split_whitespace();
+    (words.next() == Some("ripr")).then(|| words.map(str::to_string).collect())
+}
+
+#[test]
+fn check_prints_the_stub_route_only_when_the_printed_command_yields_a_stub() -> Result<(), String> {
+    let scratch = Scratch::new()?;
+    route_crate(&scratch)?;
+    let root = scratch.directory.clone();
+
+    // A refused location prints the refusal, never the route.
+    let gated = one_line_diff(
+        &scratch,
+        "src/gated.rs",
+        "    if n >= max { max } else { n }",
+        "    if n > max { max } else { n }",
+    )?;
+    let stdout = check_human(&root, &gated)?;
+    assert!(
+        stdout.contains("src/gated.rs:2"),
+        "the selected finding is the gated.rs change: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Write a test for it:"),
+        "a refused stub must not be offered: {stdout}"
+    );
+    assert!(
+        stdout.contains("No test stub here: the owner is a trait default method or nested function, sits in an impl local to a block or whose self type is not a plain path, sits behind a cfg a plain `cargo test` build may not enable, or takes a typed `self` receiver\n"),
+        "the refusal reason is printed instead: {stdout}"
+    );
+
+    // Two seams of the finding's kind on its line: the route could stub the
+    // `a > 10` boundary the tests already pin, so no route is printed.
+    let pair = one_line_diff(
+        &scratch,
+        "src/pair.rs",
+        "    if a > 10 && b >= 20 { 1 } else { 0 }",
+        "    if a > 10 && b > 20 { 1 } else { 0 }",
+    )?;
+    let stdout = check_human(&root, &pair)?;
+    assert!(
+        stdout.contains("src/pair.rs:2"),
+        "the selected finding is the pair.rs change: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Write a test for it:"),
+        "an ambiguous location must not be offered: {stdout}"
+    );
+
+    // An error_path finding never answers with the `n > 5` predicate stub on
+    // the next line: a seam of another kind does not speak for it.
+    let parse = one_line_diff(
+        &scratch,
+        "src/parse.rs",
+        "    let n: u32 = s.parse().unwrap_or(0);",
+        "    let n: u32 = s.parse()?;",
+    )?;
+    let stdout = check_human(&root, &parse)?;
+    assert!(
+        stdout.contains("src/parse.rs:2"),
+        "the selected finding is the parse.rs change: {stdout}"
+    );
+    assert!(
+        !stdout.contains("Write a test for it:") && !stdout.contains("No test stub here"),
+        "another kind's seam must not answer for the finding: {stdout}"
+    );
+
+    // A stale patch: its added line is not the disk's line 2, so the
+    // resolver (which reads the disk) would answer for other text.
+    let stale = one_line_diff(
+        &scratch,
+        "src/zz.rs",
+        "    if n >= cap { cap } else { n }",
+        "    if n > cap { cap } else { n }",
+    )?;
+    let stdout = check_human(&root, &stale)?;
+    assert!(stdout.contains("src/zz.rs:2"), "{stdout}");
+    assert!(
+        !stdout.contains("Write a test for it:") && !stdout.contains("No test stub here"),
+        "a patch that disagrees with the disk must not route: {stdout}"
+    );
+
+    // A stubbable location prints the route, and the printed command, run
+    // as printed, yields a stub through the same resolver.
+    let zz = one_line_diff(
+        &scratch,
+        "src/zz.rs",
+        "    if n > cap { cap } else { n }",
+        "    if n >= cap { cap } else { n }",
+    )?;
+    let stdout = check_human(&root, &zz)?;
+    assert!(!stdout.contains("No test stub here"), "{stdout}");
+    let args = printed_stub_args(&stdout)
+        .ok_or_else(|| format!("a stubbable gap prints the route: {stdout}"))?;
+    assert!(
+        args.iter().any(|arg| arg == "src/zz.rs:2"),
+        "the route names the finding location: {args:?}"
+    );
+    assert!(
+        args.windows(2)
+            .any(|pair| pair[0] == "--kind" && pair[1] == "predicate"),
+        "the route carries the finding's probe family: {args:?}"
+    );
+    // The full inventory, capped to one seam, holds only a `src/lib.rs`
+    // seam; the location-scoped resolver must not depend on it.
+    let mut stub = ripr_command();
+    stub.args(&args)
+        .arg("--json")
+        .env("RIPR_REPO_EXPOSURE_SEAM_LIMIT", "1");
+    let output = run_bounded(stub, &root, "stub", Duration::from_mins(2))?;
+    let stub_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    assert!(
+        output.status.success(),
+        "the printed route must yield a stub: {stub_stdout}{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_str(&stub_stdout)
+        .map_err(|error| format!("stub JSON: {error}: {stub_stdout}"))?;
+    assert_eq!(document["owner"], "src/zz.rs::fee", "{stub_stdout}");
+    assert_eq!(document["written"], false, "{stub_stdout}");
+    scratch.cleanup()
+}
+
+/// #5471: without `--kind` no `check` finding vouches for the location, so a
+/// bare `--at` keeps the gap filter: a seam the tests already pin is not
+/// stubbed, while an unpinned one in the same file still is.
+#[test]
+fn bare_at_stubs_only_a_reported_gap() -> Result<(), String> {
+    const PINNED: &str = "pub fn gate(a: u32) -> bool {\n    a > 10\n}\n\npub fn loose(b: u32) -> bool {\n    b > 20\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    #[test]\n    fn gate_boundary() {\n        assert_eq!(gate(10), false);\n        assert_eq!(gate(11), true);\n    }\n}\n";
+    let scratch = Scratch::new()?;
+    let root = scratch.directory.clone();
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_bare\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(root.join("src/lib.rs"), PINNED).map_err(|error| error.to_string())?;
+    let stub_at = |at: &str| -> Result<Output, String> {
+        let mut stub = ripr_command();
+        stub.args(["agent", "stub", "--root"])
+            .arg(&root)
+            .args(["--at", at, "--json"]);
+        run_bounded(stub, &root, "stub", Duration::from_mins(2))
+    };
+
+    let pinned = stub_at("src/lib.rs:2")?;
+    let stdout = String::from_utf8_lossy(&pinned.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&pinned.stderr).to_string();
+    assert!(
+        !pinned.status.success(),
+        "a seam the tests pin is no gap to stub: {stdout}{stderr}"
+    );
+    assert!(stderr.contains("no reported gap"), "{stderr}");
+
+    let open = stub_at("src/lib.rs:6")?;
+    let stdout = String::from_utf8_lossy(&open.stdout).to_string();
+    assert!(
+        open.status.success(),
+        "an unpinned seam is still stubbed: {stdout}{}",
+        String::from_utf8_lossy(&open.stderr)
+    );
+    let document: serde_json::Value =
+        serde_json::from_str(&stdout).map_err(|error| format!("stub JSON: {error}: {stdout}"))?;
+    assert_eq!(document["owner"], "src/lib.rs::loose", "{stdout}");
+    scratch.cleanup()
+}
+
+/// #6689 items 1–2: refusal hints keep the requested family and never route
+/// the caller to a nearer seam of another family.
+const KIND_REFUSAL_SOURCE: &str = "pub fn plain(n: u8) -> u8 {\n    if n > 3 { n } else { 0 }\n}\n\npub fn fallible(input: &str) -> Result<u8, E> {\n    if input.is_empty() {\n        return Err(E::Bad);\n    }\n    Ok(1)\n}\n\n#[derive(Debug, PartialEq)]\npub enum E { Bad }\n";
+
+const KIND_NEAREST_SOURCE: &str = "pub fn plain(a: u8, b: u8, c: u8, d: u8, e: u8, f: u8) -> u8 {\n    if a > 1 && b > 2 && c > 3 && d > 4 && e > 5 && f > 6 { a } else { b }\n}\n\npub fn fallible(input: &str) -> Result<u8, E> {\n    if input.is_empty() {\n        return Err(E::Bad);\n    }\n    Ok(1)\n}\n\n#[derive(Debug, PartialEq)]\npub enum E { Bad }\n";
+
+fn kind_refusal_crate(source: &str) -> Result<Scratch, String> {
+    let scratch = Scratch::new()?;
+    std::fs::write(
+        scratch.directory.join("Cargo.toml"),
+        "[package]\nname = \"stub_kind_refusal\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::write(scratch.directory.join("src/lib.rs"), source)
+        .map_err(|error| error.to_string())?;
+    Ok(scratch)
+}
+
+fn kind_refusal_command(root: &Path, at: &str, kind: Option<&str>) -> Command {
+    let mut stub = ripr_command();
+    stub.args(["agent", "stub", "--root"])
+        .arg(root)
+        .args(["--at", at, "--json"]);
+    if let Some(kind) = kind {
+        stub.args(["--kind", kind]);
+    }
+    stub
+}
+
+#[test]
+fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), String> {
+    let scratch = kind_refusal_crate(KIND_REFUSAL_SOURCE)?;
+    let root = &scratch.directory;
+    assert_eq!(
+        KIND_REFUSAL_SOURCE.lines().nth(1),
+        Some("    if n > 3 { n } else { 0 }")
+    );
+    let predicate = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("predicate")),
+        root,
+        "predicate-control",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        predicate.status.success(),
+        "the wrong-family subject must be stubbable: {}{}",
+        String::from_utf8_lossy(&predicate.stdout),
+        String::from_utf8_lossy(&predicate.stderr)
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&predicate.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(document["state"], "ready");
+    assert_eq!(document["owner"], "src/lib.rs::plain");
+    assert_eq!(document["test_name"], "plain_boundary_discriminator");
+    assert_eq!(document["written"], false);
+
+    let refused = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
+        root,
+        "family-refusal",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(refused.status.code(), Some(3));
+    assert!(
+        refused.stdout.is_empty(),
+        "a not-found decision has no JSON"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        stderr.starts_with(
+            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
+        ),
+        "the refusal must echo the requested probe family: {stderr}"
+    );
+    assert!(
+        !stderr.contains("no error_variant "),
+        "the internal seam kind is not the requested family: {stderr}"
+    );
+    scratch.cleanup()
+}
+
+const STRONGLY_GRIPPED_CLAMP: &str = "pub fn clamp_to(x: i32) -> i32 {\n    if x >= 100 { 100 } else { x }\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n    #[test]\n    fn at_boundary_clamps() {\n        assert_eq!(clamp_to(100), 100);\n        assert_eq!(clamp_to(99), 99);\n        assert_eq!(clamp_to(500), 100);\n    }\n}\n";
+
+/// #7290: `ripr agent stub --at --kind` still yields a ready scaffold for a
+/// seam inventory classifies `strongly_gripped`, and both JSON and human
+/// output disclose that class with the packet/repair omission reason.
+#[test]
+fn at_kind_stub_discloses_strongly_gripped_classification() -> Result<(), String> {
+    let scratch = kind_refusal_crate(STRONGLY_GRIPPED_CLAMP)?;
+    let root = &scratch.directory;
+    assert_eq!(
+        STRONGLY_GRIPPED_CLAMP.lines().nth(1),
+        Some("    if x >= 100 { 100 } else { x }")
+    );
+
+    let json = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("predicate")),
+        root,
+        "strongly-gripped-json",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        json.status.success(),
+        "a strongly gripped seam stays a ready stub: {}{}",
+        String::from_utf8_lossy(&json.stdout),
+        String::from_utf8_lossy(&json.stderr)
+    );
+    let document: serde_json::Value =
+        serde_json::from_slice(&json.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(document["state"], "ready");
+    assert_eq!(document["grip_class"], "strongly_gripped");
+    assert_eq!(document["classification"], "exposed");
+    let warnings = document["warnings"]
+        .as_array()
+        .ok_or_else(|| format!("warnings must be an array: {document}"))?;
+    assert_eq!(warnings.len(), 1, "{document}");
+    let warning = warnings[0]
+        .as_str()
+        .ok_or_else(|| format!("warning must be a string: {document}"))?;
+    assert!(
+        warning.contains(
+            "is configured off for strongly_gripped seams and is not included in agent results"
+        ),
+        "{warning}"
+    );
+
+    let mut human = ripr_command();
+    human.args(["agent", "stub", "--root"]).arg(root).args([
+        "--at",
+        "src/lib.rs:2",
+        "--kind",
+        "predicate",
+    ]);
+    let human = run_bounded(
+        human,
+        root,
+        "strongly-gripped-human",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        human.status.success(),
+        "human ready path stays exit 0: {}{}",
+        String::from_utf8_lossy(&human.stdout),
+        String::from_utf8_lossy(&human.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    assert!(
+        stdout.contains(
+            "is configured off for strongly_gripped seams and is not included in agent results"
+        ),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("Test stub"),
+        "scaffold text remains after the disclosure: {stdout}"
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Result<(), String> {
+    let scratch = kind_refusal_crate(KIND_NEAREST_SOURCE)?;
+    let root = &scratch.directory;
+    assert_eq!(
+        KIND_NEAREST_SOURCE.lines().nth(1),
+        Some("    if a > 1 && b > 2 && c > 3 && d > 4 && e > 5 && f > 6 { a } else { b }")
+    );
+    assert_eq!(
+        KIND_NEAREST_SOURCE.lines().nth(6),
+        Some("        return Err(E::Bad);")
+    );
+    // Six closer predicate seams make filtering after take(5) lose the
+    // matching seam. The ready error control also identifies the seam:
+    // a return-value seam shares line 7 and is not an error-path suggestion.
+    let direct = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:7", Some("error_path")),
+        root,
+        "error-control",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        direct.status.success(),
+        "the matching subject must be stubbable: {}{}",
+        String::from_utf8_lossy(&direct.stdout),
+        String::from_utf8_lossy(&direct.stderr)
+    );
+    let control: serde_json::Value =
+        serde_json::from_slice(&direct.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(control["state"], "ready");
+    assert_eq!(control["owner"], "src/lib.rs::fallible");
+    assert_eq!(control["test_name"], "fallible_exact_error_variant");
+    assert_eq!(control["written"], false);
+    let expected_id = control["seam_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| format!("the ready error control needs a seam ID: {control}"))?;
+    let text = control["text"]
+        .as_str()
+        .ok_or_else(|| format!("the ready error control needs test text: {control}"))?;
+    assert!(text.contains("let actual = fallible(input);"), "{text}");
+    assert!(
+        text.contains(
+            "assert!(matches!(actual, Err(E::Bad { .. })), \"expected Err(E::Bad {{ .. }})\");",
+        ),
+        "the control observes the error variant, not a nearby predicate: {text}"
+    );
+
+    let refused = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
+        root,
+        "nearest-refusal",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(refused.status.code(), Some(3));
+    assert!(
+        refused.stdout.is_empty(),
+        "a not-found decision has no JSON"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let (_, tail) = stderr
+        .split_once("; nearest: ")
+        .ok_or_else(|| format!("the refusal needs a nearest section: {stderr}"))?;
+    let (nearest, _) = tail
+        .split_once(". Run ")
+        .ok_or_else(|| format!("the refusal needs its follow-up route: {stderr}"))?;
+    assert_eq!(
+        nearest,
+        format!("src/lib.rs:7 (--seam-id {expected_id})"),
+        "only the matching error seam may be suggested: {stderr}"
+    );
+
+    // Follow the actual emitted location with the original family.
+    let (at, emitted_id) = nearest
+        .split_once(" (--seam-id ")
+        .ok_or_else(|| format!("the suggestion needs a location and seam ID: {nearest}"))?;
+    let emitted_id = emitted_id
+        .strip_suffix(')')
+        .ok_or_else(|| format!("the suggestion needs a complete seam ID: {nearest}"))?;
+    let recovered = run_bounded(
+        kind_refusal_command(root, at, Some("error_path")),
+        root,
+        "nearest-recovery",
+        Duration::from_mins(2),
+    )?;
+    assert!(
+        recovered.status.success(),
+        "the emitted location must recover with the same family: {}{}",
+        String::from_utf8_lossy(&recovered.stdout),
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    let recovered: serde_json::Value =
+        serde_json::from_slice(&recovered.stdout).map_err(|error| error.to_string())?;
+    assert_eq!(recovered["seam_id"], emitted_id);
+    assert_eq!(
+        recovered, control,
+        "recovery must select the same error stub"
+    );
+
+    let repeated = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
+        root,
+        "nearest-repeat",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(repeated.status.code(), Some(3));
+    assert_eq!(repeated.stdout, refused.stdout);
+    assert_eq!(repeated.stderr, refused.stderr);
+    assert_eq!(
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        KIND_NEAREST_SOURCE
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<(), String> {
+    const PLAIN_ONLY: &str = "pub fn plain(n: u8) -> u8 {\n    if n > 3 { n } else { 0 }\n}\n";
+    let scratch = kind_refusal_crate(PLAIN_ONLY)?;
+    let root = &scratch.directory;
+    for (kind, label) in [
+        (Some("predicate"), "predicate-control"),
+        (None, "bare-control"),
+    ] {
+        let ready = run_bounded(
+            kind_refusal_command(root, "src/lib.rs:2", kind),
+            root,
+            label,
+            Duration::from_mins(2),
+        )?;
+        assert!(
+            ready.status.success(),
+            "the plain seam remains available to its family and bare selectors: {}{}",
+            String::from_utf8_lossy(&ready.stdout),
+            String::from_utf8_lossy(&ready.stderr)
+        );
+        let document: serde_json::Value =
+            serde_json::from_slice(&ready.stdout).map_err(|error| error.to_string())?;
+        assert_eq!(document["state"], "ready");
+        assert_eq!(document["owner"], "src/lib.rs::plain");
+        assert_eq!(document["test_name"], "plain_boundary_discriminator");
+        assert_eq!(document["written"], false);
+    }
+
+    let refused = run_bounded(
+        kind_refusal_command(root, "src/lib.rs:2", Some("error_path")),
+        root,
+        "absent-family",
+        Duration::from_mins(2),
+    )?;
+    assert_eq!(refused.status.code(), Some(3));
+    assert!(
+        refused.stdout.is_empty(),
+        "a not-found decision has no JSON"
+    );
+    let stderr = String::from_utf8_lossy(&refused.stderr);
+    let (_, tail) = stderr
+        .split_once("; nearest: ")
+        .ok_or_else(|| format!("the refusal needs a nearest section: {stderr}"))?;
+    let (nearest, _) = tail
+        .split_once(". Run ")
+        .ok_or_else(|| format!("the refusal needs its follow-up route: {stderr}"))?;
+    assert_eq!(
+        nearest, "",
+        "a file with only other families must not offer their seams: {stderr}"
+    );
+    assert!(
+        stderr.starts_with(
+            "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
+        ),
+        "{stderr}"
+    );
+    scratch.cleanup()
+}
+
+// #7055 A1: this bridge consumes real review cards through first-action,
+// using this file's existing bounded process and exclusive scratch owners.
+fn repair_start_fixture(
+    fixture: &str,
+    test_file: &str,
+    old: &str,
+    new: &str,
+) -> Result<Scratch, String> {
+    let scratch = Scratch::new()?;
+    let root = &scratch.directory;
+    let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(fixture)
+        .join("input");
+    std::fs::create_dir(root.join("tests")).map_err(|error| error.to_string())?;
+    for relative in ["Cargo.toml", "src/lib.rs", test_file] {
+        let mut text = std::fs::read_to_string(source.join(relative))
+            .map_err(|error| format!("read {fixture}/{relative}: {error}"))?;
+        if relative == "Cargo.toml" {
+            text.push_str("\n[workspace]\n");
+        }
+        std::fs::write(root.join(relative), text).map_err(|error| error.to_string())?;
+    }
+    let head =
+        std::fs::read_to_string(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+    assert_eq!(
+        head.matches(new).count(),
+        1,
+        "fixture change must be unique"
+    );
+    std::fs::write(root.join("src/lib.rs"), head.replace(new, old))
+        .map_err(|error| error.to_string())?;
+    git(root, root, &["init", "-q"])?;
+    git(root, root, &["add", "Cargo.toml", "src", "tests"])?;
+    git(root, root, &["commit", "-q", "-m", "base"])?;
+    std::fs::write(root.join("src/lib.rs"), head).map_err(|error| error.to_string())?;
+    git(root, root, &["add", "src/lib.rs"])?;
+    git(root, root, &["commit", "-q", "-m", "change"])?;
+    Ok(scratch)
+}
+
+fn repair_start_review(scratch: &Scratch) -> Result<serde_json::Value, String> {
+    let root = &scratch.directory;
+    let out = root.join("review.json");
+    let mut command = ripr_command();
+    isolate_from_outer_repo(&mut command)
+        .current_dir(root)
+        .env("RIPR_CACHE_DIR", root.join("fixture-cache"))
+        .args(["review-comments", "--root"])
+        .arg(root)
+        .args(["--base", "HEAD~1", "--head", "HEAD", "--out"])
+        .arg(&out);
+    let output = run_bounded(command, root, "review", Duration::from_mins(2))?;
+    assert!(
+        output.status.success(),
+        "review producer must complete: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&read_bounded_stream(&out)?)
+        .map_err(|error| format!("parse real review cards: {error}"))
+}
+
+fn repair_start_action(
+    scratch: &Scratch,
+    guidance: &serde_json::Value,
+    label: &str,
+) -> Result<(serde_json::Value, String), String> {
+    let root = &scratch.directory;
+    let input = root.join("guidance.json");
+    let out = root.join("action.json");
+    let md = root.join("action.md");
+    // A successful no-op must not inherit an earlier report.
+    for path in [&out, &md] {
+        match std::fs::remove_file(path) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("remove owned report {}: {error}", path.display())),
+        }
+    }
+    std::fs::write(
+        &input,
+        serde_json::to_vec(guidance).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let mut command = ripr_command();
+    isolate_from_outer_repo(&mut command)
+        .current_dir(root)
+        .env("RIPR_CACHE_DIR", root.join("fixture-cache"))
+        .args(["first-action", "--root"])
+        .arg(root)
+        .arg("--pr-guidance")
+        .arg(&input)
+        .arg("--out")
+        .arg(&out)
+        .arg("--out-md")
+        .arg(&md);
+    let output = run_bounded(command, root, label, Duration::from_mins(2))?;
+    assert!(
+        output.status.success(),
+        "first-action must render a decision: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let report = serde_json::from_slice(&read_bounded_stream(&out)?)
+        .map_err(|error| format!("parse first-action decision: {error}"))?;
+    let markdown =
+        String::from_utf8(read_bounded_stream(&md)?).map_err(|error| error.to_string())?;
+    Ok((report, markdown))
+}
+
+/// Only the independently validated generation timestamp varies by call.
+fn repair_start_semantic_report(report: &serde_json::Value) -> Result<serde_json::Value, String> {
+    let generated = report["generated_at"]
+        .as_str()
+        .and_then(|value| value.strip_prefix("unix_ms:"))
+        .ok_or_else(|| format!("report needs its actual generation timestamp: {report}"))?;
+    let millis = generated
+        .parse::<u128>()
+        .map_err(|error| format!("invalid generation timestamp {generated}: {error}"))?;
+    assert!(
+        millis > 0,
+        "the report must carry an actual generation timestamp"
+    );
+    let mut semantic = report.clone();
+    semantic
+        .as_object_mut()
+        .ok_or("report must be an object")?
+        .remove("generated_at")
+        .ok_or("report must carry generated_at")?;
+    Ok(semantic)
+}
+
+#[test]
+fn first_action_real_repair_card_uses_neutral_rationale_and_recovers() -> Result<(), String> {
+    let scratch = repair_start_fixture(
+        "boundary_gap",
+        "tests/pricing.rs",
+        "amount > discount_threshold",
+        "amount >= discount_threshold",
+    )?;
+    let root = &scratch.directory;
+    let original = std::fs::read(root.join("src/lib.rs")).map_err(|error| error.to_string())?;
+    let guidance = repair_start_review(&scratch)?;
+    let cards = guidance["comments"]
+        .as_array()
+        .ok_or("producer has no comments array")?;
+    let card = cards
+        .iter()
+        .find(|card| {
+            card["owner"] == "src/lib.rs::discounted_total"
+                && card["kind"] == "predicate_boundary"
+                && card["seam"]["line"] == 2
+        })
+        .ok_or_else(|| format!("producer must emit the changed predicate card: {guidance}"))?;
+    assert_eq!(card["grip_class"], "weakly_gripped");
+    assert_eq!(card["gap_state"], "actionable");
+    assert_eq!(card["seam"]["expression"], "amount >= discount_threshold");
+    assert_eq!(
+        card["missing_discriminator"],
+        "discount_threshold (equality boundary)"
+    );
+    let repair = card["llm_guidance"]["repair_command"]
+        .as_str()
+        .filter(|command| !command.is_empty())
+        .ok_or_else(|| format!("real card must carry an admitted repair start: {card}"))?;
+
+    let (action, markdown) = repair_start_action(&scratch, &guidance, "action-first")?;
+    assert_eq!(action["status"], "actionable");
+    assert_eq!(action["action_kind"], "write_focused_test");
+    assert_eq!(action["selected"]["source"], "pr_guidance");
+    assert_eq!(action["selected"]["seam_id"], card["seam_id"]);
+    assert_eq!(action["selected"]["path"], "src/lib.rs");
+    assert_eq!(action["selected"]["line"], 2);
+    assert_eq!(action["selected"]["classification"], "weakly_exposed");
+    assert_eq!(
+        action["selected"]["changed_behavior"],
+        "amount >= discount_threshold"
+    );
+    assert_eq!(
+        action["selected"]["missing_discriminator"],
+        "discount_threshold (equality boundary)"
+    );
+    assert_eq!(action["commands"]["repair"], repair);
+    for field in ["analysis_outcome", "verify"] {
+        assert_eq!(
+            action["commands"][field],
+            card["llm_guidance"][format!("{field}_command")],
+            "carried {field} command"
+        );
+    }
+    assert_eq!(action["commands"]["receipt"], card["receipt_command"]);
+    // Independently authored literal; no production vocabulary/helper oracle.
+    assert_eq!(
+        action["why"],
+        "The review card identifies missing discriminator `discount_threshold (equality boundary)` and names its repair start."
+    );
+    assert_eq!(
+        markdown.lines().find(|line| line.starts_with("- Why: ")),
+        Some(
+            "- Why: The review card identifies missing discriminator `discount_threshold (equality boundary)` and names its repair start.",
+        )
+    );
+    assert!(
+        !markdown.contains("a related test reaches this change"),
+        "{markdown}"
+    );
+    let (repeated, repeated_md) = repair_start_action(&scratch, &guidance, "action-repeat")?;
+    assert_eq!(
+        repair_start_semantic_report(&repeated)?,
+        repair_start_semantic_report(&action)?,
+        "all fields except the validated timestamp must be deterministic"
+    );
+    assert_eq!(repeated_md, markdown);
+
+    // Consumer-input recovery controls, preserving the real card's identity.
+    for (blank, label) in [(false, "action-missing"), (true, "action-blank")] {
+        let mut missing = guidance.clone();
+        for bucket in ["comments", "summary_only"] {
+            if let Some(cards) = missing
+                .get_mut(bucket)
+                .and_then(serde_json::Value::as_array_mut)
+            {
+                for card in cards {
+                    if let Some(fields) = card["llm_guidance"].as_object_mut() {
+                        fields.remove("repair_command");
+                        if blank {
+                            fields.insert("repair_command".to_string(), serde_json::json!("  "));
+                        }
+                    }
+                }
+            }
+        }
+        let (refused, refused_md) = repair_start_action(&scratch, &missing, label)?;
+        assert_eq!(refused["status"], "missing_required_artifact");
+        assert_eq!(refused["action_kind"], "generate_missing_artifact");
+        assert!(refused["commands"].get("repair").is_none());
+        assert!(!refused_md.contains("## Start Repair"));
+    }
+    let (recovered, recovered_md) = repair_start_action(&scratch, &guidance, "action-recovery")?;
+    assert_eq!(
+        repair_start_semantic_report(&recovered)?,
+        repair_start_semantic_report(&action)?,
+        "restored evidence recovers every field except the validated timestamp"
+    );
+    assert_eq!(recovered_md, markdown);
+    assert_eq!(
+        std::fs::read(root.join("src/lib.rs")).map_err(|error| error.to_string())?,
+        original
+    );
+    scratch.cleanup()
+}
+
+#[test]
+fn first_action_real_callee_only_wrapper_keeps_its_refusal() -> Result<(), String> {
+    let scratch = repair_start_fixture(
+        "wrapper_seam_callee_call_attribution",
+        "tests/attribution.rs",
+        "try_parse_summary(raw).map_err(Into::into)",
+        "try_parse_summary(raw).map_err(|error| error.to_string().into())",
+    )?;
+    let root = &scratch.directory;
+    let mut check = ripr_command();
+    isolate_from_outer_repo(&mut check)
+        .current_dir(root)
+        .env("RIPR_CACHE_DIR", root.join("fixture-cache"))
+        .args(["check", "--root"])
+        .arg(root)
+        .args(["--base", "HEAD~1", "--mode", "draft", "--json"]);
+    let output = run_bounded(check, root, "callee-check", Duration::from_mins(2))?;
+    assert!(
+        output.status.success(),
+        "actual callee-only analysis must complete: {}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let document: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("parse callee-only analysis: {error}"))?;
+    let findings = document["findings"]
+        .as_array()
+        .ok_or("check has no findings array")?;
+    let subjects: Vec<_> = findings
+        .iter()
+        .filter(|finding| {
+            finding["probe"]["line"] == 14
+                && finding["probe"]["expression"]
+                    == "try_parse_summary(raw).map_err(|error| error.to_string().into())"
+        })
+        .collect();
+    assert_eq!(subjects.len(), 2, "genuine wrapper subjects: {document}");
+    assert!(
+        subjects
+            .iter()
+            .any(|f| f["probe"]["family"] == "error_path")
+    );
+    assert!(
+        subjects
+            .iter()
+            .any(|f| f["probe"]["family"] == "return_value")
+    );
+    for finding in subjects {
+        assert_eq!(finding["classification"], "weakly_exposed");
+        assert_eq!(finding["ripr"]["reach"]["state"], "weak");
+        assert_eq!(
+            finding["static_limit_kind"],
+            "wrapper_error_binding_unresolved"
+        );
+        assert_eq!(finding["missing_discriminators"], serde_json::json!([]));
+        let related = finding["related_tests"]
+            .as_array()
+            .ok_or("subject has no related tests")?;
+        // The return-value probe emits one record per assertion. The
+        // before-shadow test has two; that test-level association does
+        // not prove its later shadowed assertion invokes the owner.
+        let mut expected = vec![
+            (
+                "calls_callee_before_shadow_binding",
+                "tests/attribution.rs",
+                13,
+                "assert_eq!(parsed.map(|n| n), Ok(3));",
+            ),
+            (
+                "observes_callee_outcome",
+                "tests/attribution.rs",
+                4,
+                "assert_eq!(parsed.map(|n| n), Ok(3));",
+            ),
+        ];
+        match finding["probe"]["family"].as_str() {
+            Some("error_path") => {}
+            Some("return_value") => expected.push((
+                "calls_callee_before_shadow_binding",
+                "tests/attribution.rs",
+                13,
+                "assert_eq!(ignored, Ok(5));",
+            )),
+            other => return Err(format!("unexpected wrapper family: {other:?}")),
+        }
+        let mut actual = related
+            .iter()
+            .map(|test| {
+                Ok::<_, String>((
+                    test["name"].as_str().ok_or("related test has no name")?,
+                    test["file"].as_str().ok_or("related test has no file")?,
+                    test["line"].as_u64().ok_or("related test has no line")?,
+                    test["oracle"]
+                        .as_str()
+                        .ok_or("related test has no oracle")?,
+                ))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        actual.sort_unstable();
+        expected.sort_unstable();
+        assert_eq!(
+            actual, expected,
+            "every genuine callee assertion record must match: {finding}"
+        );
+        for test in related {
+            assert_eq!(test["relation_reason"], "seam_callee_call");
+            assert_eq!(test["relation_confidence"], "medium");
+        }
+    }
+
+    let guidance = repair_start_review(&scratch)?;
+    // A genuine check Finding is not a RepoSeam card. Keep only actual
+    // wrapper cards in this consumer control; no card is invented if the
+    // producer refuses to render one.
+    let mut wrapper_guidance = guidance.clone();
+    for bucket in ["comments", "summary_only"] {
+        let cards = wrapper_guidance[bucket]
+            .as_array_mut()
+            .ok_or_else(|| format!("producer has no {bucket} array"))?;
+        cards.retain(|card| card["owner"] == "src/lib.rs::parse_summary");
+        for card in cards {
+            assert!(
+                card["llm_guidance"]["repair_command"]
+                    .as_str()
+                    .is_none_or(|command| command.trim().is_empty()),
+                "the currently limited wrapper must not carry a repair start: {card}"
+            );
+        }
+    }
+    let wrapper_card = wrapper_guidance["comments"]
+        .as_array()
+        .and_then(|cards| cards.first())
+        .or_else(|| {
+            wrapper_guidance["summary_only"]
+                .as_array()
+                .and_then(|cards| cards.first())
+        })
+        .ok_or("producer must retain its genuine non-actionable wrapper card")?;
+    assert_eq!(wrapper_card["owner"], "src/lib.rs::parse_summary");
+    assert_eq!(wrapper_card["kind"], "return_value");
+    assert_eq!(wrapper_card["grip_class"], "ungripped");
+    assert_eq!(wrapper_card["seam"]["line"], 14);
+    assert_eq!(
+        wrapper_card["seam"]["expression"],
+        "try_parse_summary(raw).map_err(|error| error.to_string().into())"
+    );
+    let seam_id = wrapper_card["seam_id"]
+        .as_str()
+        .filter(|id| !id.is_empty())
+        .ok_or("the genuine wrapper card must carry its identity")?;
+    // Preserve the producer's global suppression evidence; this does
+    // not attribute a per-card suppression cause.
+    let (action, markdown) = repair_start_action(&scratch, &wrapper_guidance, "callee-action")?;
+    assert_eq!(action["schema_version"], "0.1");
+    assert_eq!(action["kind"], "first_useful_action");
+    assert!(action["commands"].get("repair").is_none(), "{action}");
+    assert_eq!(action["status"], "suppressed", "{action}");
+    assert_eq!(action["action_kind"], "no_action");
+    assert_eq!(action["fallback"]["kind"], "suppressed");
+    assert_eq!(action["why"], "The seam is suppressed or configured off.");
+    assert_eq!(action["selected"]["source"], "pr_guidance");
+    assert_eq!(action["selected"]["seam_id"], seam_id);
+    assert_eq!(action["selected"]["path"], "src/lib.rs");
+    assert_eq!(action["selected"]["line"], 14);
+    assert_eq!(action["selected"]["seam_kind"], "return_value");
+    assert_eq!(action["selected"]["classification"], "no_static_path");
+    assert_eq!(
+        action["selected"]["changed_behavior"],
+        "try_parse_summary(raw).map_err(|error| error.to_string().into())"
+    );
+    assert_eq!(
+        markdown.lines().find(|line| line.starts_with("- Why: ")),
+        Some("- Why: The seam is suppressed or configured off.")
+    );
+    assert!(!markdown.contains("## Start Repair"));
+    scratch.cleanup()
+}
+
+/// Clears inherited repository selectors so a hook or wrapper that exports
+/// them cannot redirect the fixture into the outer repository.
+fn isolate_from_outer_repo(command: &mut Command) -> &mut Command {
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_COMMON_DIR")
+        .env_remove("GIT_INDEX_FILE")
+}
+
+/// Runs git in `repo`; its captured streams land in `scratch`, outside it.
+fn git(scratch: &Path, repo: &Path, args: &[&str]) -> Result<(), String> {
+    let mut git = Command::new("git");
+    isolate_from_outer_repo(&mut git)
+        .current_dir(repo)
+        .args([
+            "-c",
+            "user.name=RIPR test",
+            "-c",
+            "user.email=ripr@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+        ])
+        .args(args);
+    let output = run_bounded(git, scratch, "git", Duration::from_secs(30))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+/// #5471: the stub resolver reads the file on disk. A committed-history
+/// check reads HEAD content for a file with uncommitted edits, so the route
+/// could stub an expression the finding never saw; it is not printed then.
+#[test]
+fn check_prints_no_stub_route_when_it_analyzed_other_bytes_than_the_disk() -> Result<(), String> {
+    let scratch = Scratch::new()?;
+    let streams = scratch.directory.clone();
+    let root = streams.join("repo");
+    std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+    std::fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"stub_snapshot\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| error.to_string())?;
+    let lib = root.join("src/lib.rs");
+    let source = |op: &str| {
+        format!(
+            "pub fn fee(n: u32, cap: u32) -> u32 {{\n    if n {op} cap {{ cap }} else {{ n }}\n}}\n"
+        )
+    };
+    std::fs::write(&lib, source(">")).map_err(|error| error.to_string())?;
+    git(&streams, &root, &["init", "-q"])?;
+    git(&streams, &root, &["add", "."])?;
+    git(&streams, &root, &["commit", "-qm", "base"])?;
+    std::fs::write(&lib, source(">=")).map_err(|error| error.to_string())?;
+    git(&streams, &root, &["commit", "-qam", "change boundary"])?;
+    let check = |root: &Path, extra: &[&str]| -> Result<String, String> {
+        let mut check = ripr_command();
+        isolate_from_outer_repo(&mut check)
+            .args(["check", "--root"])
+            .arg(root)
+            .args(["--base", "HEAD~1"])
+            .args(extra);
+        let output = run_bounded(check, &streams, "check", Duration::from_mins(2))?;
+        Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    };
+
+    // Clean tree: HEAD is the disk, so the route is offered.
+    let clean = check(&root, &[])?;
+    assert!(clean.contains("src/lib.rs:2"), "{clean}");
+    assert!(clean.contains("Write a test for it:"), "{clean}");
+
+    // An uncommitted edit with a forced committed-history read: HEAD was
+    // analyzed, the disk differs. `--committed` is load-bearing: the
+    // dirty-tree default would read the working tree (the disk) instead.
+    std::fs::write(&lib, source("<")).map_err(|error| error.to_string())?;
+    let dirty = check(&root, &["--committed"])?;
+    assert!(dirty.contains("src/lib.rs:2"), "{dirty}");
+    assert!(
+        !dirty.contains("Write a test for it:") && !dirty.contains("No test stub here"),
+        "a route over other bytes must not be offered: {dirty}"
+    );
+    scratch.cleanup()
+}
 /// #5453: a producer-admitted `new_integration_file` stub must compile under
 /// the cargo command the CLI prints, including a `crate::` parameter type and
 /// a crate-root `pub const` boundary. rustc-on-lib.rs cannot see this path.
@@ -570,21 +1671,46 @@ struct Scratch {
     cleanup_attempted: bool,
 }
 
+fn io_error_at(action: &str, path: &Path, error: std::io::Error) -> String {
+    format!("{action} {}: {error}", path.display())
+}
+
+/// `.cargo/config.toml` force-redirects `TMPDIR` to `<workspace>/target`.
+/// That directory is gitignored and absent in a fresh worktree whose build
+/// output lives in another `CARGO_TARGET_DIR`.
+fn ensure_scratch_parent(parent: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(parent)
+        .map_err(|error| io_error_at("create scratch parent", parent, error))
+}
+
+fn create_exclusive_dir(path: &Path) -> Result<(), String> {
+    std::fs::create_dir(path).map_err(|error| io_error_at("create exclusive scratch", path, error))
+}
+
 impl Scratch {
     fn new() -> Result<Self, String> {
         static NEXT: AtomicU64 = AtomicU64::new(0);
-        let directory = std::env::temp_dir().join(format!(
-            "ripr-agent-stub-compiles-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, Ordering::Relaxed)
-        ));
+        Self::create(
+            std::env::temp_dir(),
+            &format!(
+                "ripr-agent-stub-compiles-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ),
+        )
+    }
+
+    fn create(parent: impl AsRef<Path>, name: &str) -> Result<Self, String> {
+        let parent = parent.as_ref();
+        ensure_scratch_parent(parent)?;
+        let directory = parent.join(name);
         // Own the directory exclusively; never adopt a preexisting one.
-        std::fs::create_dir(&directory).map_err(|error| error.to_string())?;
+        create_exclusive_dir(&directory)?;
         let scratch = Self {
             directory,
             cleanup_attempted: false,
         };
-        std::fs::create_dir(scratch.directory.join("src")).map_err(|error| error.to_string())?;
+        create_exclusive_dir(&scratch.directory.join("src"))?;
         Ok(scratch)
     }
 
@@ -609,6 +1735,129 @@ impl Drop for Scratch {
         }
         let _ = std::fs::remove_dir_all(&self.directory);
     }
+}
+
+fn unused_scratch_probe(label: &str) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    std::env::temp_dir().join(format!(
+        "ripr-agent-stub-temp-root-{label}-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+struct RemovePath(PathBuf);
+
+impl Drop for RemovePath {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[test]
+fn scratch_creates_a_missing_temp_parent() -> Result<(), String> {
+    let root = unused_scratch_probe("missing");
+    let _cleanup = RemovePath(root.clone());
+    let parent = root.join("nested");
+    assert!(
+        !parent.exists(),
+        "discriminator requires an absent parent: {}",
+        parent.display()
+    );
+    let scratch = Scratch::create(&parent, "scratch")?;
+    assert!(
+        parent.is_dir(),
+        "create_dir_all must materialize {}: missing parent is the #6712 repro",
+        parent.display()
+    );
+    assert_eq!(scratch.directory, parent.join("scratch"));
+    assert!(scratch.directory.join("src").is_dir());
+    scratch.cleanup()
+}
+
+#[test]
+fn scratch_reuses_an_existing_temp_parent() -> Result<(), String> {
+    let parent = unused_scratch_probe("existing");
+    let _cleanup = RemovePath(parent.clone());
+    ensure_scratch_parent(&parent)?;
+    let scratch = Scratch::create(&parent, "scratch")?;
+    assert_eq!(scratch.directory, parent.join("scratch"));
+    assert!(scratch.directory.join("src").is_dir());
+    scratch.cleanup()
+}
+
+#[test]
+fn scratch_refuses_to_adopt_a_preexisting_directory() -> Result<(), String> {
+    let parent = unused_scratch_probe("exclusive");
+    let _cleanup = RemovePath(parent.clone());
+    let first = Scratch::create(&parent, "scratch")?;
+    let error = match Scratch::create(&parent, "scratch") {
+        Ok(unexpected) => {
+            let path = unexpected.directory.display().to_string();
+            unexpected.cleanup()?;
+            return Err(format!("must not adopt a preexisting scratch at {path}"));
+        }
+        Err(error) => error,
+    };
+    assert!(
+        error.contains(&first.directory.display().to_string()),
+        "exclusive-create error must name the path, got {error}"
+    );
+    first.cleanup()
+}
+
+#[test]
+fn scratch_names_the_path_when_the_temp_parent_is_a_file() -> Result<(), String> {
+    let parent = unused_scratch_probe("file");
+    let _cleanup = RemovePath(parent.clone());
+    if let Some(temp_root) = parent.parent() {
+        ensure_scratch_parent(temp_root)?;
+    }
+    std::fs::write(&parent, b"not a directory").map_err(|error| {
+        io_error_at("write file standing in for scratch parent", &parent, error)
+    })?;
+    let error = match Scratch::create(&parent, "scratch") {
+        Ok(unexpected) => {
+            unexpected.cleanup()?;
+            return Err(format!(
+                "a file cannot be a scratch parent: {}",
+                parent.display()
+            ));
+        }
+        Err(error) => error,
+    };
+    assert!(
+        error.contains(&parent.display().to_string()),
+        "parent-is-file error must name the path, got {error}"
+    );
+    Ok(())
+}
+
+#[test]
+fn exclusive_scratch_dir_error_names_the_path_when_parent_is_missing() -> Result<(), String> {
+    let parent = unused_scratch_probe("enoent");
+    let child = parent.join("child");
+    assert!(
+        !parent.exists(),
+        "discriminator requires an absent parent: {}",
+        parent.display()
+    );
+    let error = match create_exclusive_dir(&child) {
+        Ok(()) => {
+            let _ = std::fs::remove_dir_all(&parent);
+            return Err(format!(
+                "create_dir cannot invent a missing parent: {}",
+                child.display()
+            ));
+        }
+        Err(error) => error,
+    };
+    assert!(
+        error.contains(&child.display().to_string()),
+        "bare ENOENT hid the missing path; got {error}"
+    );
+    Ok(())
 }
 
 const STREAM_LIMIT: u64 = 256 * 1024;

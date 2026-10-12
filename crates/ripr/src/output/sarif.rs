@@ -55,7 +55,13 @@ pub(crate) fn render_findings_sarif(
         .filter(|finding| finding.is_candidate_actionable())
         .filter_map(|finding| finding_result(&output.root, finding, config, suppressions, &today))
         .collect::<Vec<_>>();
-    sarif_document("finding", rules, results, output.analysis_outcome.as_ref())
+    sarif_document(
+        "finding",
+        rules,
+        results,
+        output.analysis_outcome.as_ref(),
+        output.analyzed_revisions.as_ref(),
+    )
 }
 
 /// Render repo-scoped classified seams as SARIF.
@@ -126,6 +132,7 @@ fn sarif_document(
     rules: Vec<Value>,
     results: Vec<Value>,
     analysis_outcome: Option<&AnalysisOutcome>,
+    revisions: Option<&crate::analysis::AnalyzedRevisions>,
 ) -> String {
     let mut properties = Map::new();
     properties.insert("tool".to_string(), json!("ripr"));
@@ -134,6 +141,27 @@ fn sarif_document(
         json!(RIPR_SARIF_SCHEMA_VERSION),
     );
     properties.insert("scope".to_string(), json!(scope));
+    // RIPR-SPEC-0116 amendment: the run names the base and head it analyzed,
+    // with the same field names the check JSON uses. Additive; absent for
+    // diff-file, stdin and candidate-tree inputs.
+    if let Some(revisions) = revisions {
+        properties.insert("base".to_string(), json!(revisions.base_ref));
+        if let Some(commit) = &revisions.base_commit {
+            properties.insert("base_commit".to_string(), json!(commit));
+        }
+        if let Some(commit) = &revisions.merge_base_commit {
+            properties.insert("merge_base_commit".to_string(), json!(commit));
+        }
+        let mut head = Map::new();
+        head.insert(
+            "source".to_string(),
+            json!(crate::output::analyzed_revisions::head_source(revisions)),
+        );
+        if let Some(commit) = &revisions.head_commit {
+            head.insert("commit".to_string(), json!(commit));
+        }
+        properties.insert("head".to_string(), Value::Object(head));
+    }
     if let Some(outcome) = analysis_outcome {
         properties.insert(
             "run_status".to_string(),
@@ -186,6 +214,82 @@ fn json_pretty(value: Value) -> String {
             escape_message(err.to_string().as_str())
         ),
     }
+}
+
+/// The notification id every SARIF refusal document declares and references.
+/// One declared id — the typed identity and repair route ride in the
+/// notification's property bag and the run's properties, never in a
+/// dynamically named rule.
+const SARIF_REFUSAL_NOTIFICATION_ID: &str = "run_refused";
+
+/// Render a SARIF 2.1.0 refusal document for a run that never analyzed
+/// (#7332). Schema-valid and code-scanning-uploadable: one run with an
+/// `invocations[].toolConfigurationNotifications` entry naming the typed
+/// refusal identity and repair route, an empty `results` array, and the
+/// ripr property bag echoing the invocation context. A SARIF consumer gets
+/// a parseable document that says the run refused — never zero bytes that
+/// could read as "the tool was never invoked".
+pub(crate) fn render_refusal_sarif(
+    notice: &crate::core_error::RefusalNotice,
+    root: &Path,
+    base: Option<&str>,
+) -> String {
+    let mut properties = Map::new();
+    properties.insert("tool".to_string(), json!("ripr"));
+    properties.insert(
+        "schema_version".to_string(),
+        json!(RIPR_SARIF_SCHEMA_VERSION),
+    );
+    properties.insert("scope".to_string(), json!("finding"));
+    properties.insert("run_status".to_string(), json!("refused"));
+    properties.insert("refusal_identity".to_string(), json!(notice.identity));
+    properties.insert("repair_route".to_string(), json!(notice.repair_route));
+    properties.insert("root".to_string(), json!(root.display().to_string()));
+    if let Some(base) = base {
+        properties.insert("base".to_string(), json!(base));
+    }
+    let document = json!({
+        "$schema": SARIF_SCHEMA,
+        "version": SARIF_VERSION,
+        "runs": [
+            {
+                "tool": {
+                    "driver": {
+                        "name": "ripr",
+                        "semanticVersion": env!("CARGO_PKG_VERSION"),
+                        "informationUri": "https://github.com/EffortlessMetrics/ripr",
+                        "notifications": [
+                            {
+                                "id": SARIF_REFUSAL_NOTIFICATION_ID,
+                                "shortDescription": {
+                                    "text": "The run refused to analyze; the invocation notification carries the typed identity and repair route."
+                                }
+                            }
+                        ]
+                    }
+                },
+                "invocations": [
+                    {
+                        "executionSuccessful": false,
+                        "toolConfigurationNotifications": [
+                            {
+                                "level": "error",
+                                "descriptor": { "id": SARIF_REFUSAL_NOTIFICATION_ID },
+                                "message": { "text": notice.message },
+                                "properties": {
+                                    "identity": notice.identity,
+                                    "repair_route": notice.repair_route
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "results": [],
+                "properties": properties
+            }
+        ]
+    });
+    json_pretty(document)
 }
 
 fn finding_result(
@@ -935,6 +1039,56 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
+    fn refusal_sarif_is_a_schema_valid_run_with_the_typed_notification() -> Result<(), String> {
+        // #7332: a refused run must still upload to code scanning — one run
+        // whose only signal is the tool-configuration notification naming the
+        // typed identity and repair route, and an empty results array.
+        let notice = crate::core_error::CoreError::base_unresolvable(
+            "the base `deadbeef` does not resolve to a commit",
+        )
+        .refusal_notice();
+        let rendered = render_refusal_sarif(&notice, std::path::Path::new("."), Some("deadbeef"));
+        let sarif = parse_json(&rendered)?;
+        if sarif["version"] != Value::String("2.1.0".to_string()) {
+            return Err(format!("version must be 2.1.0: {sarif}"));
+        }
+        let run = &sarif["runs"][0];
+        if run["tool"]["driver"]["notifications"][0]["id"] != Value::String("run_refused".into()) {
+            return Err(format!("driver must declare run_refused: {sarif}"));
+        }
+        let notification = &run["invocations"][0]["toolConfigurationNotifications"][0];
+        for (pointer, expected) in [
+            ("/level", "error"),
+            ("/descriptor/id", "run_refused"),
+            ("/properties/identity", "base_unresolvable"),
+            ("/properties/repair_route", "analysis/base-resolution"),
+        ] {
+            let actual = notification.pointer(pointer).and_then(Value::as_str);
+            if actual != Some(expected) {
+                return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+            }
+        }
+        if notification["message"]["text"] != Value::String(notice.message.clone()) {
+            return Err(format!("notification must echo the diagnostic: {sarif}"));
+        }
+        if run["results"].as_array().map(Vec::len) != Some(0) {
+            return Err(format!("results must be empty: {sarif}"));
+        }
+        for (pointer, expected) in [
+            ("/properties/run_status", "refused"),
+            ("/properties/refusal_identity", "base_unresolvable"),
+            ("/properties/repair_route", "analysis/base-resolution"),
+            ("/properties/base", "deadbeef"),
+        ] {
+            let actual = run.pointer(pointer).and_then(Value::as_str);
+            if actual != Some(expected) {
+                return Err(format!("{pointer}: expected {expected}, got {actual:?}"));
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn sarif_preserves_matched_total_for_sparse_retained_rows() -> Result<(), String> {
         let mut output = sample_output();
         let finding = output
@@ -1022,6 +1176,39 @@ mod tests {
             first_result(&sarif)?["partialFingerprints"]["riprFingerprintV1"],
             "ripr.finding.weakly_exposed|finding:discount|probe:src/pricing.rs:88:predicate|src/rate%limit.rs|88"
         );
+        Ok(())
+    }
+
+    /// RIPR-SPEC-0116 amendment: the run properties name the analyzed base
+    /// and head with the check JSON's field names; absent without revisions.
+    #[test]
+    fn sarif_run_properties_name_analyzed_base_and_head() -> Result<(), String> {
+        let mut output = sample_output();
+        output.analyzed_revisions = Some(crate::analysis::AnalyzedRevisions {
+            base_ref: "origin/main".to_string(),
+            base_commit: Some("1a2b3c4d5e6f".to_string()),
+            merge_base_commit: Some("9f8e7d6c5b4a".to_string()),
+            head_commit: Some("5d6e7f8a9b0c".to_string()),
+            working_tree: true,
+        });
+        let sarif = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let properties = &sarif["runs"][0]["properties"];
+        assert_eq!(properties["base"], "origin/main");
+        assert_eq!(properties["base_commit"], "1a2b3c4d5e6f");
+        assert_eq!(properties["merge_base_commit"], "9f8e7d6c5b4a");
+        assert_eq!(
+            properties["head"],
+            serde_json::json!({ "source": "working_tree", "commit": "5d6e7f8a9b0c" })
+        );
+        output.analyzed_revisions = None;
+        let plain = parse_json(&render_findings_sarif(&output, &RiprConfig::default(), &[]))?;
+        let plain_properties = &plain["runs"][0]["properties"];
+        for key in ["base", "base_commit", "merge_base_commit", "head"] {
+            assert!(
+                plain_properties.get(key).is_none(),
+                "{key}: {plain_properties}"
+            );
+        }
         Ok(())
     }
 
@@ -1879,6 +2066,7 @@ weakly_gripped = "note"
             suppression: None,
             analysis_outcome: None,
             partial_scope: None,
+            analyzed_revisions: None,
         }
     }
 
@@ -1997,7 +2185,7 @@ weakly_gripped = "note"
         );
         let evidence = TestGripEvidence {
             seam_id: seam.id().clone(),
-            related_tests: vec![RelatedTestGrip {
+            related_tests: vec![std::sync::Arc::new(RelatedTestGrip {
                 test_name: "below_threshold_has_no_discount".to_string(),
                 file: PathBuf::from("tests/pricing.rs"),
                 line: 12,
@@ -2013,7 +2201,7 @@ weakly_gripped = "note"
                 evidence_summary: "exact value assertion".to_string(),
                 relation_reason: RelationReason::DirectOwnerCall,
                 relation_confidence: RelationConfidence::High,
-            }],
+            })],
             reach: stage(StageState::Yes, "related test calls owner"),
             activate: stage(StageState::Yes, "amount value observed"),
             propagate: stage(StageState::Yes, "return value sink reached"),
@@ -2031,6 +2219,7 @@ weakly_gripped = "note"
                 flow_sink: None,
             }],
             new_test_target: None,
+            statically_contradicted_related_tests: 0,
         };
         ClassifiedSeam {
             seam,

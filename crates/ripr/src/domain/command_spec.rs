@@ -47,6 +47,10 @@ pub enum CommandRole {
     Regeneration,
     Inspection,
     TargetedRerun,
+    /// Start one repair attempt for a single bound seam (#6305). The
+    /// task-first repair command offers this route only when its producer
+    /// binds exactly one eligible subject.
+    RepairStart,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -131,6 +135,7 @@ pub enum CommandAuthorityBoundary {
     RegenerationRouteOnly,
     InspectionRouteOnly,
     TargetedRerunRouteOnly,
+    RepairStartRouteOnly,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -370,6 +375,9 @@ fn authority_matches_role(role: CommandRole, boundary: CommandAuthorityBoundary)
         ) | (
             CommandRole::TargetedRerun,
             CommandAuthorityBoundary::TargetedRerunRouteOnly
+        ) | (
+            CommandRole::RepairStart,
+            CommandAuthorityBoundary::RepairStartRouteOnly
         )
     )
 }

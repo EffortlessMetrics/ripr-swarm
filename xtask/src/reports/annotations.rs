@@ -3,6 +3,9 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+// The one character policy, included by path (see `operator`).
+use super::operator::loop_commands;
+
 const DEFAULT_COMMENTS_JSON: &str = "target/ripr/review/comments.json";
 const DEFAULT_ANNOTATIONS_TXT: &str = "target/ripr/review/annotations.txt";
 
@@ -163,6 +166,21 @@ fn annotation_from_comment(item: &Value) -> Result<String, String> {
     }
     let title = format!("ripr {severity} {kind}");
     let level = annotation_level_for_severity(severity);
+    if path_is_unplaceable(&path) {
+        // GitHub decodes only %25 %0D %0A %3A %2C in property values, so a
+        // control or bidi character cannot be named in `file=`. Omit the
+        // placement and name the escaped location in the message, matching
+        // `ripr annotations` and `ripr reports ci-packet` (#6309).
+        let location = format!("{path}:{line}");
+        let escaped_location = escape_for_terminal(&location);
+        return Ok(format!(
+            "::{level} title={}::{}",
+            escape_property(&title),
+            escape_data(&format!(
+                "Location (file name has control characters, so not placed): {escaped_location}. {message}"
+            ))
+        ));
+    }
     Ok(format!(
         "::{level} file={},line={},title={}::{}",
         escape_property(&path),
@@ -240,6 +258,25 @@ fn escape_property(value: &str) -> String {
     escape_data(value).replace(',', "%2C").replace(':', "%3A")
 }
 
+/// True when a path holds a control or bidi character a property cannot
+/// carry; `\r` and `\n` stay placeable (they encode as `%0D`/`%0A`).
+fn path_is_unplaceable(path: &str) -> bool {
+    path.chars()
+        .any(|c| c != '\r' && loop_commands::needs_terminal_escape(c))
+}
+
+fn escape_for_terminal(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for ch in text.chars() {
+        if loop_commands::needs_terminal_escape(ch) {
+            out.push_str(&format!("\\u{{{:02x}}}", ch as u32));
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 fn repo_root() -> Result<PathBuf, String> {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
     manifest_dir.parent().map(Path::to_path_buf).ok_or_else(|| {
@@ -254,6 +291,29 @@ fn repo_root() -> Result<PathBuf, String> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn control_character_paths_drop_the_placement_and_name_the_location() -> Result<(), String> {
+        // #6309: parity with `ripr annotations` and `ripr reports ci-packet`.
+        let item = json!({
+            "placement": {
+                "path": "src/a\u{1b}[2Jb\u{202e}.rs",
+                "line": 7,
+                "mode": "same_file_changed_line"
+            },
+            "kind": "focused_test",
+            "reason": "Pin the value"
+        });
+        assert_eq!(
+            annotation_from_comment(&item)?,
+            concat!(
+                "::warning title=ripr advisory focused_test::",
+                "Location (file name has control characters, so not placed): ",
+                "src/a\\u{1b}[2Jb\\u{202e}.rs:7. Pin the value"
+            )
+        );
+        Ok(())
+    }
 
     #[test]
     fn parse_supports_paths_and_check() -> Result<(), String> {

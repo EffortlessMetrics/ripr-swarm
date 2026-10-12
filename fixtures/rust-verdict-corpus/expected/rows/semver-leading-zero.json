@@ -1,0 +1,22 @@
+{
+  "case_id": "semver-leading-zero",
+  "subject_id": "semver",
+  "origin": "upstream",
+  "anchor": "src/parse.rs:169",
+  "behavior_family": "predicate",
+  "test_shape": "integration_test_error_message",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "limited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "no_static_path"
+  ],
+  "outcome": "abstained",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

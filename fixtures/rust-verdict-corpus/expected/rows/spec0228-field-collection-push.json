@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0228-field-collection-push",
+  "subject_id": "authored-spec0228-8",
+  "origin": "authored",
+  "anchor": "src/lib.rs:11",
+  "behavior_family": "field_collection_push",
+  "test_shape": "owner_call_then_assert_eq_vec_field",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

@@ -1,0 +1,45 @@
+{
+  "case_id": "ts-vitest-line-total-reexport",
+  "subject_id": "authored-ts-vitest-cart",
+  "diff": "cases/ts-vitest-line-total-reexport.diff",
+  "anchor": {
+    "file": "src/cart.ts",
+    "line": 12
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "vitest_to_be_through_index_reexport",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx vitest run",
+    "toolchain": "Node.js v22.22.0, vitest 3.2.7, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return line.unitCents + line.quantity;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test/cart.test.ts > cart > multiplies unit price by quantity",
+        "equivalence_review": "not equivalent: three apples at 120 total 123 instead of 360; test/cart.test.ts > cart > tells the owner what was charged also fails"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test imports lineTotal through src/index.ts, which re-exports it from ./cart (RIPR-SPEC-0095), and toBe(360) fails when the line adds instead of multiplying, as does \"tells the owner what was charged\", which reaches lineTotal through checkout. ripr credits exposed, the ideal verdict.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -215,6 +215,11 @@ Semantics:
   currency guard;
 - first-cancel-wins: a deadline cancel loses to an earlier supersede or
   client cancel, so the original outcome is preserved;
+- an attempt counts as cancelled only when a checkpoint handed the abort to
+  the work (#4860). When a parallel parse batch holds both an ordinary file
+  failure and a sibling's abort, the first ordinary failure in input order
+  is propagated and the attempt is reported as that failure, not as a
+  cancellation (#6721);
 - an expired deadline drops the refresh fail-closed with the named
   `deadline_exceeded` attempt outcome — NO limited snapshot is committed,
   no new `run_status` string is introduced, and the component-outcome

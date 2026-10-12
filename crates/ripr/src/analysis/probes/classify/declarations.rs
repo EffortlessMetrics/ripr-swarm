@@ -8,6 +8,38 @@ use crate::domain::ProbeFamily;
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 use std::ops::Range;
 
+pub(super) fn type_bound_lines(
+    source: &str,
+    lines: &[crate::analysis::diff::ChangedLine],
+) -> Vec<bool> {
+    let Some(parse) = parse_clean_source_file(source) else {
+        return vec![false; lines.len()];
+    };
+    let root = parse.tree();
+    lines
+        .iter()
+        .map(|line| {
+            let Some(range) = source_line_byte_range(source, line.line) else {
+                return false;
+            };
+            if source.get(range.clone()).map(str::trim) != Some(line.text.trim()) {
+                return false;
+            }
+            let Some(span) = declaration_line_span(root.syntax(), range) else {
+                return false;
+            };
+            root.syntax()
+                .descendants()
+                .filter(supported_bound_declaration)
+                .any(|node| {
+                    let range = node.text_range();
+                    u32::from(range.start()) as usize <= span.start
+                        && span.end <= u32::from(range.end()) as usize
+                })
+        })
+        .collect()
+}
+
 /// This fallback is used only after ordinary parser-owned expressions have
 /// been considered. It never promotes exposure or drops the changed source.
 /// Exact current-line equality prevents borrowing new-side context for a
@@ -55,6 +87,13 @@ pub(super) fn declaration_shape<'a>(
 }
 
 fn supported_declaration(node: &SyntaxNode) -> bool {
+    // Where predicates (including lifetime and higher-ranked bounds) and
+    // generic parameters are type syntax. Admission still requires every
+    // nontrivia token of this exact changed line to fit its declaration owner;
+    // shared runtime bodies and macro token trees cannot borrow its authority.
+    if supported_bound_declaration(node) {
+        return true;
+    }
     if ast::Param::can_cast(node.kind()) || ast::SelfParam::can_cast(node.kind()) {
         return node
             .parent()
@@ -73,6 +112,32 @@ fn supported_declaration(node: &SyntaxNode) -> bool {
         .and_then(|list| list.syntax().parent())
         .is_some_and(|parent| ast::Struct::can_cast(parent.kind()));
     owned_by_struct
+        && !node.descendants().any(|child| {
+            ast::Expr::can_cast(child.kind()) || ast::MacroCall::can_cast(child.kind())
+        })
+}
+
+fn supported_type_bound(node: &SyntaxNode) -> bool {
+    (ast::WhereClause::can_cast(node.kind())
+        || ast::WherePred::can_cast(node.kind())
+        || ast::TypeParam::can_cast(node.kind())
+        || ast::LifetimeParam::can_cast(node.kind()))
+        && !node.descendants().any(|child| {
+            ast::Expr::can_cast(child.kind()) || ast::MacroCall::can_cast(child.kind())
+        })
+}
+
+fn supported_bound_declaration(node: &SyntaxNode) -> bool {
+    if supported_type_bound(node) {
+        return true;
+    }
+    // An inline bound occupies only part of its item. The complete item may
+    // own a changed line only when it contains no executable or macro syntax.
+    // Function bodies and code sharing the item line cannot borrow this range.
+    (ast::Struct::can_cast(node.kind())
+        || ast::Impl::can_cast(node.kind())
+        || ast::TypeAlias::can_cast(node.kind()))
+        && node.descendants().any(|child| supported_type_bound(&child))
         && !node.descendants().any(|child| {
             ast::Expr::can_cast(child.kind()) || ast::MacroCall::can_cast(child.kind())
         })
@@ -127,7 +192,6 @@ mod tests {
         let facts = RaRustSyntaxAdapter.summarize_file(Path::new("src/lib.rs"), source)?;
         Ok(FileData {
             path: facts.path,
-            calls: facts.calls,
             returns: facts.returns,
             literals: facts.literals,
             probe_shapes: facts.probe_shapes,
@@ -136,7 +200,22 @@ mod tests {
             unresolved_property_macros: facts.unresolved_property_macros,
             role_provenance: facts.role_provenance,
             source: facts.source,
+            item_scopes: facts.item_scopes,
+            macro_candidates: facts.macro_candidates,
         })
+    }
+
+    #[test]
+    fn bound_fallback_rejects_const_expression_and_macro_authority() -> Result<(), String> {
+        for text in ["T: Trait<{ construct() }>,", "T: Trait<types!()>,"] {
+            let source = format!("fn f<T>()\nwhere\n    {text}\n{{}}\n");
+            let facts = declaration_facts(&source)?;
+            assert!(
+                declaration_shape(&facts, 3, text).is_none(),
+                "expression or macro acquired declaration authority: {text}"
+            );
+        }
+        Ok(())
     }
 
     #[test]
@@ -164,9 +243,9 @@ mod tests {
         facts.used_lexical_fallback = true;
         assert!(declaration_shape(&facts, 3, "out: &Path,").is_none());
         facts.used_lexical_fallback = false;
-        facts.source = "struct Path;\nfn project(\n    out: &Path,\n".to_string();
+        facts.source = "struct Path;\nfn project(\n    out: &Path,\n".into();
         assert!(declaration_shape(&facts, 3, "out: &Path,").is_none());
-        facts.source.clear();
+        facts.source = std::sync::Arc::from("");
         assert!(declaration_shape(&facts, 3, "out: &Path,").is_none());
         Ok(())
     }
@@ -275,9 +354,9 @@ mod tests {
         facts.used_lexical_fallback = true;
         assert!(declaration_shape(&facts, 2, "value: u8,").is_none());
         facts.used_lexical_fallback = false;
-        facts.source = "struct Packet {\n    value: u8,\n".to_string();
+        facts.source = "struct Packet {\n    value: u8,\n".into();
         assert!(declaration_shape(&facts, 2, "value: u8,").is_none());
-        facts.source.clear();
+        facts.source = std::sync::Arc::from("");
         assert!(declaration_shape(&facts, 2, "value: u8,").is_none());
         Ok(())
     }

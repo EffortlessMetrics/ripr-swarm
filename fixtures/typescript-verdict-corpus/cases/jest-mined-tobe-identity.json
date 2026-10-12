@@ -1,0 +1,45 @@
+{
+  "case_id": "jest-mined-tobe-identity",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-mined-tobe-identity.diff",
+  "anchor": {
+    "file": "src/options.ts",
+    "line": 8
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "jest_tobe_identity_catches_copy",
+  "hard_case": "toBe identity is the only discriminator for copy-vs-reuse (mined from immer)",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9; @stryker-mutator/core 10.0.0 (jest runner, mutate restricted to the anchor line)",
+    "mutants": [
+      {
+        "replacement": "return { ...opts };",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "ready options are reused, not copied",
+        "equivalence_review": "the edit itself: a copy is a different object with equal fields"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The edit returns a copy instead of the same object; toBe compares identity, so the test fails. ripr reports exposed on the anchor, the ideal credit.",
+  "labeling_observation": {
+    "ripr_commit": "1273096",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,13 @@
+diff --git a/src/bin/tool.rs b/src/bin/tool.rs
+index 294b005..464e49b 100644
+--- a/src/bin/tool.rs
++++ b/src/bin/tool.rs
+@@ -5,7 +5,7 @@ fn render(n: u32) -> String {
+ }
+ 
+ fn label(n: u32) -> String {
+-    format!("n={}", n + 1)
++    format!("n={}", 1 + n)
+ }
+ 
+ fn main() {

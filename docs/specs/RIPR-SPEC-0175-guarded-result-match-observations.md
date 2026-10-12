@@ -16,6 +16,7 @@ Linked issues:
 
 - #3709 (derive owner-bound guarded Result observations)
 - #3727 (parser-backed shadow/item facts for seam-callee defeat — Slice A)
+- #6673 (asserted-Err form: diverging Ok arm, exact assertion Err arm)
 - #1528 (downstream qualification parent; the #13162 comparison)
 - #3284 / RIPR-SPEC-0154 (the Err-return guard family this extends; that spec
   excluded match-arm Err forms as a non-goal)
@@ -190,6 +191,38 @@ the #13162 `expect_response` comparison shape.
   is not an exact identity. Wildcard `Err(_)` arms, opaque predicates,
   and message-only variant mentions never pin: exactness is not inferred
   from names or payload text.
+- The asserted-Err form (#6673). The Err-arm grammar above refuses an
+  assertion body (an `assert_eq!` arm can return normally), and owner-pin
+  admission (RIPR-SPEC-0197 rule 1) refuses an assertion inside a match
+  arm. One exhaustive shape is nonetheless an exact pin, and it emits a
+  strong fact with that variant as its pin:
+
+  ```rust
+  match withdraw(10, 20) {
+      Ok(left) => panic!("overdraw left {left}"),
+      Err(e) => assert_eq!(e, PayError::Insufficient),
+  }
+  ```
+
+  Every condition is required: the block holds exactly two arms, one
+  `Ok(..)` and one `Err(..)`, with no guard on either and no catch-all
+  (so the compiler's exhaustiveness check makes both patterns
+  irrefutable); the Ok arm terminates under the same divergence grammar
+  as a terminal Err arm; the Err arm binds a bare identifier and its
+  whole body is ONE statement — `assert_eq!(<binding>, <unit variant
+  path>)` in either operand order (a trailing message is allowed) or
+  `assert!(matches!(<binding>, <variant pattern>))` whose pattern has no
+  `|` alternation and no `if` guard. The test then passes exactly when
+  the owner returns that error. A quiet or asserting Ok arm
+  (`Ok(_) => {}`, `Ok(v) => assert_eq!(v, 0)`), a guard, a catch-all arm,
+  an assertion on another value, `assert_ne!`, a second statement, a
+  payload variant compared by value (`assert_eq!(e, E::Wrap(1))`), and a
+  wildcard `Err(_)` arm all stay unrecognized as a pin and keep their
+  existing meaning. The scrutinee rules, the shadow defeat, and the
+  reveal-side gates below apply unchanged. Residual (documented, shared
+  with the rest of this grammar): a test-local `macro_rules!` that
+  redefines `assert_eq!`, `assert!`, `matches!`, or `panic!` is not
+  detected here.
 - A same-named local `fn` or `let` binding in the test body defeats the
   oracle for a BARE one-segment scrutinee (the shared #3714 shadow
   authority): a shadowed name is not the resolved callee. A qualified
@@ -476,9 +509,19 @@ the #13162 `expect_response` comparison shape.
   payload (or has no Ok arm at all) offered as the discriminator for a
   changed success value.
 
+- Accept (#6673): `match withdraw(10, 20) { Ok(left) => panic!(..),
+  Err(e) => assert_eq!(e, PayError::Insufficient) }` credits the changed
+  `return Err(PayError::Insufficient)` line.
+- Reject (#6673): the same match with `Ok(_) => {}`, with a third
+  `_ => {}` arm, or with `Err(_) => {}` beside an asserting Ok arm.
+
 ## Test Mapping
 
 - `crates/ripr/src/analysis/extract/oracles/scan.rs::guarded_result_match_tests`
+- `crates/ripr/src/analysis/extract/oracles/scan.rs::asserted_err_arm_tests`
+  (#6673 asserted-Err form, positives and the quiet-Ok, catch-all, guard,
+  other-value, `assert_ne!`, multi-statement, alternation and payload
+  negatives)
 - `crates/ripr/src/analysis/syntax/ra.rs::guard_pipeline_debug_tests::parser_path_credits_guarded_routing_match_in_test_facts`
 - `crates/ripr/src/analysis/syntax/ra.rs::guard_pipeline_debug_tests::parser_path_shadow_defeats_guarded_match_through_facts`
 - `crates/ripr/src/analysis/syntax/ra.rs::shadow_fact_equivalence_tests`

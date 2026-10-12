@@ -1,0 +1,13 @@
+diff --git a/src/parse.rs b/src/parse.rs
+index 093d870..4c82514 100644
+--- a/src/parse.rs
++++ b/src/parse.rs
+@@ -16,7 +16,7 @@ pub fn parse_code(s: &str) -> Result<u32, CodeError> {
+     }
+     let mut value = 0;
+     for c in s.chars().take(4) {
+-        let d = digit(c).ok_or(CodeError::NotDigit)?;
++        let d = digit(c).ok_or_else(|| CodeError::NotDigit)?;
+         value = value * 10 + d;
+     }
+     Ok(value)
