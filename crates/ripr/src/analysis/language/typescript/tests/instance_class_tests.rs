@@ -124,13 +124,37 @@ fn owner_branches_split_class_only_when_the_module_settles_them() {
             !ts_owner_branches_split_class(&owner, &module, CHANGED, asserted),
             "{label}"
         );
-    } // A one-line `if (c) { return a; }` closes its own body, so the scan
+    }
+    // A one-line `if (c) { return a; }` closes its own body, so the scan
     // would read the enclosing block's returns as its branches.
     let one_line = "export function errorFor(status: number, admin: boolean): Error {\n  if (!admin) {\n    if (status === 404) { return new NotFound(\"a\"); }\n    return new NotFound(\"b\");\n  }\n  return new Forbidden(\"x\");\n}";
     assert!(!ts_owner_branches_split_class(
         one_line,
         ERRORS,
         "    if (status === 404) { return new NotFound(\"a\"); }",
+        "NotFound"
+    ));
+    // A failing `case` label jumps to the next label, not the next
+    // statement, so the line after its body is not its false branch.
+    let case_owner = "export function errorFor(k: number): Error {\n  switch (k) {\n    case 1: {\n      return new NotFound(\"a\");\n    }\n    return new Forbidden(\"b\");\n    default:\n      return new NotFound(\"c\");\n  }\n}";
+    assert!(!ts_owner_branches_split_class(
+        case_owner,
+        ERRORS,
+        "    case 1: {",
+        "NotFound"
+    ));
+    // The changed text also sits in a multi-line template literal. Masking
+    // blanks the template's line breaks, the line counts differ, and the
+    // scan refuses rather than reading the real `if` the diff missed.
+    let template_owner = OWNER.replacen(
+        "{\n",
+        "{\n  const doc = `\n  if (status === 404) {\n`;\n",
+        1,
+    );
+    assert!(!ts_owner_branches_split_class(
+        &template_owner,
+        ERRORS,
+        CHANGED,
         "NotFound"
     ));
 }

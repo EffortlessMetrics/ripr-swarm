@@ -138,6 +138,15 @@ fn branch_classes(owner_source: &str, line_text: &str) -> Option<(String, String
     if !target.trim_end().ends_with('{') || opens != closes + 1 {
         return None;
     }
+    // Only an `if` hands control to the next statement when it fails; a
+    // changed `case`, `for` or `while` line has other successors.
+    let head = target.trim_start();
+    if !["if (", "if(", "else if (", "else if("]
+        .iter()
+        .any(|form| head.starts_with(form))
+    {
+        return None;
+    }
     let mut matching = lines
         .iter()
         .enumerate()

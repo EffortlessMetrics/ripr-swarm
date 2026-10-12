@@ -97,7 +97,9 @@ ladder and in its related-test row, when all of these hold:
   (not `f(owner(...))` or `owner(...).field`), and the test does not
   shadow the owner;
 - the owner body has no arrow or nested `function`, and the changed line
-  is an `if (...) {` found once in the owner that ends with `{` and leaves
+  starts with `if (` or `else if (` (a changed `case`, `for` or `while`
+  line fails: a failing `case` label jumps to the next label, not the next
+  statement), is found once in the owner, ends with `{` and leaves
   exactly one more brace open than it closes (a one-line
   `if (c) { return a; }` fails), and the
   RIPR-SPEC-0027 branch scan reads its true branch and its false branch
