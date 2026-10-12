@@ -3,7 +3,8 @@
 //! The unit tests in `analysis::resource_cost` prove the record shape and the
 //! platform mapping. These prove the two claims only a real child process can
 //! establish: the receipt appears on stderr when the existing opt-in switch is
-//! set, and stdout plus default stderr are byte-identical when it is not.
+//! set, and stdout plus default stderr carry identical content when it is not
+//! (modulo the wall-clock artifact identity fields every run restamps).
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -68,6 +69,38 @@ const CHECK_ARGS: &[&str] = &[
     "repo-exposure-json",
 ];
 
+/// #7401: repo-exposure-json now discloses a wall-clock `generated_at` stamp
+/// (and a content commitment covering those bytes), so two runs of the same
+/// selection differ by milliseconds. The claim under test is that tracing
+/// changes nothing, so volatile artifact identity fields are stripped before
+/// the two runs are compared; everything else stays byte-compared via the
+/// canonical JSON forms.
+fn mask_volatile_identity(stdout: &[u8]) -> Result<serde_json::Value, String> {
+    let mut value: serde_json::Value = serde_json::from_slice(stdout)
+        .map_err(|error| format!("stdout is not JSON: {error}"))?;
+    fn strip(part: &mut serde_json::Value) {
+        if let serde_json::Value::Object(map) = part {
+            map.remove("generated_at");
+            map.remove("content_sha256");
+        }
+        match part {
+            serde_json::Value::Object(map) => {
+                for nested in map.values_mut() {
+                    strip(nested);
+                }
+            }
+            serde_json::Value::Array(items) => {
+                for nested in items {
+                    strip(nested);
+                }
+            }
+            _ => {}
+        }
+    }
+    strip(&mut value);
+    Ok(value)
+}
+
 #[test]
 fn tracing_off_leaves_stdout_and_stderr_byte_identical() -> Result<(), String> {
     let untraced = run_ripr(CHECK_ARGS, None)?;
@@ -89,11 +122,19 @@ fn tracing_off_leaves_stdout_and_stderr_byte_identical() -> Result<(), String> {
             untraced.stderr
         ));
     }
-    if untraced.stdout != traced.stdout {
+    let untraced_canonical = mask_volatile_identity(&untraced.stdout)?;
+    let traced_canonical = mask_volatile_identity(&traced.stdout)?;
+    if untraced_canonical != traced_canonical {
+        let untraced_norm = serde_json::to_string(&untraced_canonical)
+            .map_err(|error| format!("normalize untraced stdout: {error}"))?;
+        let traced_norm = serde_json::to_string(&traced_canonical)
+            .map_err(|error| format!("normalize traced stdout: {error}"))?;
         return Err(format!(
-            "stdout must be byte-identical with and without the trace switch\nuntraced {} bytes\ntraced {} bytes",
+            "stdout must be identical with and without the trace switch once volatile artifact identity is masked\nuntraced {} bytes canonical {} bytes\ntraced {} bytes canonical {} bytes",
             untraced.stdout.len(),
-            traced.stdout.len()
+            untraced_norm.len(),
+            traced.stdout.len(),
+            traced_norm.len()
         ));
     }
     // Beyond the receipt, the only lines a traced run may add are the trace
