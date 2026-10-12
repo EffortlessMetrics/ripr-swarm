@@ -246,7 +246,7 @@ fn write_annotations(
     fs::create_dir_all(parent)
         .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
     crate::output::file_write::write(path, generated.text.as_bytes())
-        .map_err(|err| format!("failed to write {}: {err}", options.out))?;
+        .map_err(|err| crate::output::file_write::write_failure_message(path, &err))?;
     if generated.comments_missing {
         println!("RIPR annotations skipped: {} is missing", options.comments);
     } else if generated.text.is_empty() {

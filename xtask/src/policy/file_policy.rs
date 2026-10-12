@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::time::Duration;
 
-use crate::run::TimedOutput;
+use crate::run::{COMMAND_DIAGNOSTIC_DISCLOSURE, CommandDiagnostic, TimedOutput};
 use crate::{
     FilePolicyHost, FilePolicyTestCommand, FixKind, PolicyDisclosure, PolicyReportSpec,
     capture_output_with_timeout, collect_files, finish_policy_report_with_disclosures,
@@ -24,11 +24,33 @@ const COVERED_BY_INSTRUMENT_PREFIX: &str = "covered_by_instrument_timeout:";
 pub(crate) fn check_file_policy() -> Result<(), String> {
     let policy_path = "policy/non-rust-allowlist.toml";
     let allowlist = read_file_policy_allowlist(policy_path)?;
-    let coverage =
-        validate_test_covered_by(policy_path, &read_file_policy_test_commands(policy_path)?)?;
+    let mut diagnostics = Vec::new();
+    let coverage = match validate_test_covered_by_recorded(
+        policy_path,
+        &read_file_policy_test_commands(policy_path)?,
+        &mut diagnostics,
+    ) {
+        Ok(coverage) => coverage,
+        Err(error) => {
+            return file_policy_failure_report(
+                "coverage enumeration",
+                &error,
+                &diagnostics,
+                |body| crate::write_report("file-policy.md", body),
+            );
+        }
+    };
     let mut violations = Vec::new();
 
-    for path in collect_files(Path::new("."))? {
+    let files = match collect_files(Path::new(".")) {
+        Ok(files) => files,
+        Err(error) => {
+            return file_policy_failure_report("file enumeration", &error, &diagnostics, |body| {
+                crate::write_report("file-policy.md", body)
+            });
+        }
+    };
+    for path in files {
         let normalized = normalize_path(&path);
         if !is_file_policy_candidate(&normalized) {
             continue;
@@ -71,8 +93,36 @@ pub(crate) fn check_file_policy() -> Result<(), String> {
             heading: "Test-valued coverage applicability".to_string(),
             intro: "Applicable selectors must enumerate nonzero tests. Enumeration is not test execution. Host-inapplicable selectors are not enumerated and confer no coverage on this host.".to_string(),
             items: coverage.iter().map(TestCoverageObservation::render).collect(),
+        }, PolicyDisclosure {
+            heading: "Cargo child command diagnostics".to_string(),
+            intro: format!("{COMMAND_DIAGNOSTIC_DISCLOSURE} Capture scope: actual covered-by warmup/list calls only. Reused listings, skipped warmups and host-inapplicable selectors add no executed rows."),
+            items: diagnostics.iter().map(CommandDiagnostic::render).collect(),
         }],
     )
+}
+
+fn file_policy_failure_report(
+    phase: &str,
+    error: &str,
+    diagnostics: &[CommandDiagnostic],
+    mut write: impl FnMut(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    // Preserve the original enumerator failure, including instrument failures,
+    // without routing it through a renderer that calls it a policy violation.
+    let body = format!(
+        "# check-file-policy\n\nStatus: stopped during {phase}\n\nOriginal failure:\n```text\n{error}\n```\n\n## Cargo child command diagnostics\n\n{COMMAND_DIAGNOSTIC_DISCLOSURE}\n\n{}\n",
+        diagnostics
+            .iter()
+            .map(|row| format!("- {}", row.render()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    );
+    match write(&body) {
+        Ok(()) => Err(error.to_string()),
+        Err(report_error) => Err(format!(
+            "{error}; failed to publish current file-policy report: {report_error}"
+        )),
+    }
 }
 
 #[derive(Debug)]
@@ -103,12 +153,39 @@ impl TestCoverageObservation {
     }
 }
 
+#[cfg(test)]
 fn validate_test_covered_by(
     path: &str,
     commands: &[FilePolicyTestCommand],
 ) -> Result<Vec<TestCoverageObservation>, String> {
+    validate_test_covered_by_recorded(path, commands, &mut Vec::new())
+}
+
+fn validate_test_covered_by_recorded(
+    path: &str,
+    commands: &[FilePolicyTestCommand],
+    diagnostics: &mut Vec<CommandDiagnostic>,
+) -> Result<Vec<TestCoverageObservation>, String> {
+    validate_test_covered_by_recorded_with(
+        path,
+        commands,
+        FilePolicyHost::current()?,
+        diagnostics,
+        |spawn| {
+            capture_output_with_timeout("cargo", &spawn.args, &[], spawn.timeout, spawn.description)
+        },
+    )
+}
+
+fn validate_test_covered_by_recorded_with(
+    path: &str,
+    commands: &[FilePolicyTestCommand],
+    host: FilePolicyHost,
+    diagnostics: &mut Vec<CommandDiagnostic>,
+    mut capture: impl FnMut(&CoveredBySpawn) -> Result<TimedOutput, String>,
+) -> Result<Vec<TestCoverageObservation>, String> {
     let mut warmed = BTreeSet::new();
-    validate_test_covered_by_with(path, commands, FilePolicyHost::current()?, |args| {
+    validate_test_covered_by_with(path, commands, host, |args| {
         let spawns = enumeration_spawns(args);
         let warmup = spawns.len() == 2;
         let mut listed = None;
@@ -116,13 +193,9 @@ fn validate_test_covered_by(
             if index == 0 && warmup && !warmed.insert(spawn.args.join("\u{1f}")) {
                 continue;
             }
-            let output = capture_output_with_timeout(
-                "cargo",
-                &spawn.args,
-                &[],
-                spawn.timeout,
-                spawn.description,
-            )?;
+            let captured = capture(&spawn);
+            diagnostics.push(CommandDiagnostic::captured("cargo", &spawn.args, &captured));
+            let output = captured?;
             if output.timed_out || !output.status.is_some_and(|status| status.success()) {
                 return Ok(enumeration_result(output, spawn.timeout));
             }
@@ -294,8 +367,126 @@ mod tests {
     use super::enumeration_spawns;
     use super::validate_test_covered_by;
     use super::validate_test_covered_by_with;
-    use crate::run::TimedOutput;
+    use crate::run::{CommandDiagnostic, TimedOutput};
     use crate::{FilePolicyHost, FilePolicyTestCommand, is_cargo_test_command};
+
+    #[test]
+    fn covered_by_diagnostics_count_only_actual_spawns_and_preserve_order() -> Result<(), String> {
+        let commands = [
+            common(1, "cargo test selected"),
+            common(2, "cargo test selected"),
+            common(3, "cargo test selected -- --ignored"),
+            FilePolicyTestCommand {
+                host: Some(FilePolicyHost::Windows),
+                ..common(4, "cargo test foreign")
+            },
+        ];
+        let mut rows = Vec::new();
+        let mut calls = Vec::new();
+        let observations = super::validate_test_covered_by_recorded_with(
+            "policy.toml",
+            &commands,
+            FilePolicyHost::Unix,
+            &mut rows,
+            |spawn| {
+                calls.push(spawn.args.clone());
+                Ok(timed_output(Some(status(0)), "selected: test\n", "", false))
+            },
+        )?;
+        assert_eq!(observations.len(), 4);
+        assert_eq!(calls.len(), 3); // one warmup, two distinct listings
+        assert_eq!(
+            rows.iter().map(|row| row.argv.clone()).collect::<Vec<_>>(),
+            calls
+        );
+        assert!(rows[0].argv.iter().any(|arg| arg == "--no-run"));
+        assert!(
+            rows[1..]
+                .iter()
+                .all(|row| row.argv.iter().any(|arg| arg == "--list"))
+        );
+        assert!(observations[3].selected.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn covered_by_diagnostics_survive_interrupted_and_zero_subject_enumeration()
+    -> Result<(), String> {
+        for fail_at in [0, 1] {
+            for kind in ["exit", "timeout", "status", "capture", "zero"] {
+                let mut rows = Vec::new();
+                let mut calls = 0;
+                let result = super::validate_test_covered_by_recorded_with(
+                    "policy.toml",
+                    &[common(1, "cargo test selected")],
+                    FilePolicyHost::Unix,
+                    &mut rows,
+                    |_| {
+                        let current = calls;
+                        calls += 1;
+                        if current != fail_at {
+                            return Ok(timed_output(
+                                Some(status(0)),
+                                "selected: test\n",
+                                "",
+                                false,
+                            ));
+                        }
+                        match kind {
+                            "capture" => Err("capture unavailable".to_string()),
+                            "exit" => Ok(timed_output(
+                                Some(status(7)),
+                                "selected: test\n",
+                                "failed",
+                                false,
+                            )),
+                            "timeout" => Ok(timed_output(
+                                Some(status(0)),
+                                "selected: test\n",
+                                "partial",
+                                true,
+                            )),
+                            "status" => {
+                                Ok(timed_output(None, "selected: test\n", "partial", false))
+                            }
+                            _ => Ok(timed_output(Some(status(0)), "0 tests\n", "", false)),
+                        }
+                    },
+                );
+                // A zero-subject warmup is not a listing; only listing output
+                // owns the selector denominator, so its later list may pass.
+                if kind == "zero" && fail_at == 0 {
+                    assert!(result.is_ok());
+                    assert_eq!(rows.len(), 2);
+                } else {
+                    assert!(result.is_err(), "{kind} at {fail_at} passed");
+                    assert_eq!(rows.len(), fail_at + 1);
+                }
+                assert_eq!(rows.len(), calls);
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn covered_by_failure_keeps_diagnostics_and_report_io_error() {
+        let row = CommandDiagnostic::captured(
+            "cargo",
+            &["test".to_string()],
+            &Err("capture".to_string()),
+        );
+        let original = "instrument timeout, not an unresolved pointer";
+        let mut written = String::new();
+        let error =
+            super::file_policy_failure_report("coverage enumeration", original, &[row], |body| {
+                written = body.to_string();
+                Err("injected diagnostic I/O".to_string())
+            });
+        assert!(error.is_err_and(
+            |error| error.contains(original) && error.contains("injected diagnostic I/O")
+        ));
+        assert!(written.contains("capture_unavailable") && !written.contains("Status: pass"));
+    }
 
     fn common(line: usize, command: &str) -> FilePolicyTestCommand {
         FilePolicyTestCommand {

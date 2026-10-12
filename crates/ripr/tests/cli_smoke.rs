@@ -11296,6 +11296,22 @@ fn doctor_source_build_preflight_warns_on_linker_temp_redirect() -> Result<(), S
         stdout.contains(&format!("mkdir {rooted_target}")),
         "repair must name the workspace-rooted directory {rooted_target}:\n{stdout}"
     );
+    assert!(
+        !stdout.contains("Start-here packet:"),
+        "source-build must not print analysis start-here guidance:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Recommended first command:"),
+        "source-build must not recommend ripr check:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Recovery states:"),
+        "source-build must not print analysis recovery states:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Proof rail:"),
+        "source-build must not print the analysis proof rail:\n{stdout}"
+    );
 
     // Once the directory exists (a normal workspace build creates it), the
     // preflight is silent again.
@@ -12332,6 +12348,16 @@ fn doctor_check_status(report: &serde_json::Value, name: &str) -> String {
         .to_string()
 }
 
+#[cfg(unix)]
+fn doctor_check_evidence(report: &serde_json::Value, name: &str) -> String {
+    report["checks"]
+        .as_array()
+        .and_then(|checks| checks.iter().find(|check| check["name"] == name))
+        .and_then(|check| check["evidence"].as_str())
+        .unwrap_or("absent")
+        .to_string()
+}
+
 /// A Python-only or TypeScript-only root is not a Rust project: doctor must
 /// pass without Cargo.toml, cargo, or rustc, and say why those checks were
 /// skipped instead of reporting them as broken setup.
@@ -12479,14 +12505,54 @@ fn doctor_discloses_missing_verification_tools_but_still_checks_manifest() -> Re
     .map_err(|error| format!("run source-build doctor: {error}"))?;
     let source_report: serde_json::Value = serde_json::from_slice(&source_build.stdout)
         .map_err(|error| format!("source-build doctor JSON did not parse: {error}"))?;
+    let source_cargo = doctor_check_evidence(&source_report, "tool_cargo");
+    let source_rustc = doctor_check_evidence(&source_report, "tool_rustc");
+    let analysis_cargo = doctor_check_evidence(&report, "tool_cargo");
     let source_result = if source_build.status.success()
         || source_report["status"] != "fail"
         || source_report["profile"] != "source-build"
         || doctor_check_status(&source_report, "tool_cargo") != "fail"
         || doctor_check_status(&source_report, "tool_rustc") != "fail"
+        || !source_cargo.contains("https://rustup.rs")
+        || !source_rustc.contains("https://rustup.rs")
+        || source_cargo.contains("rustup update stable")
+        || source_rustc.contains("rustup update stable")
+        || analysis_cargo.contains("https://rustup.rs")
     {
         Err(format!(
-            "source-build must require cargo and rustc: {source_report}"
+            "source-build must require cargo and rustc with an install route; analysis must not: {source_report} analysis cargo={analysis_cargo:?}"
+        ))
+    } else {
+        Ok(())
+    };
+
+    let human_source = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &with_manifest,
+        &[
+            "doctor",
+            "--root",
+            &with_manifest.display().to_string(),
+            "--profile",
+            "source-build",
+        ],
+        &[("PATH", path.as_str())],
+    )
+    .map_err(|error| format!("run source-build doctor human: {error}"))?;
+    let human_stdout = String::from_utf8_lossy(&human_source.stdout);
+    let human_result = if human_source.status.success()
+        || !human_stdout
+            .contains("! cargo not available; install Rust via rustup (https://rustup.rs)")
+        || !human_stdout
+            .contains("! rustc not available; install Rust via rustup (https://rustup.rs)")
+        || human_stdout.contains("Start-here packet:")
+        || human_stdout.contains("Recommended first command:")
+        || human_stdout.contains("Recovery states:")
+        || human_stdout.contains("Proof rail:")
+        || human_stdout.contains("rustup update stable")
+    {
+        Err(format!(
+            "source-build human output must name the install route on each ! line and omit analysis first-run guidance:\n{human_stdout}"
         ))
     } else {
         Ok(())
@@ -12497,6 +12563,9 @@ fn doctor_discloses_missing_verification_tools_but_still_checks_manifest() -> Re
         .map_err(|error| format!("create sources root: {error}"))?;
     std::fs::write(sources_only.join("src/lib.rs"), "pub fn f() {}\n")
         .map_err(|error| format!("write lib.rs: {error}"))?;
+    // Bound ancestor discovery: this fixture lives under the ripr work tree.
+    std::fs::create_dir(sources_only.join(".git"))
+        .map_err(|error| format!("mkdir sources-only .git: {error}"))?;
     let output = run_doctor_with_path(&sources_only, &path, false)?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let sources_result = if output.status.success() || !stdout.contains("! no Cargo.toml found") {
@@ -12508,7 +12577,85 @@ fn doctor_discloses_missing_verification_tools_but_still_checks_manifest() -> Re
     };
 
     ignore_remove_dir_all(&workspace);
-    manifest_result.and(source_result).and(sources_result)
+    manifest_result
+        .and(source_result)
+        .and(human_result)
+        .and(sources_result)
+}
+
+/// #7466: `cd <git-root> && ripr doctor` must pass `cargo_toml` when the
+/// Cargo workspace lives in a subdirectory. Do not pass `--root`; the
+/// reported contradiction is an implicit run at the git top level.
+#[test]
+fn doctor_git_root_with_nested_workspace_passes_cargo_toml() -> Result<(), String> {
+    let workspace = unique_temp_workspace("doctor-gitroot-nested-workspace");
+    std::fs::create_dir_all(workspace.join("website"))
+        .map_err(|error| format!("create website: {error}"))?;
+    std::fs::create_dir_all(workspace.join("rust/crates/x/src"))
+        .map_err(|error| format!("create rust crate: {error}"))?;
+    std::fs::write(workspace.join("README.md"), "docs\n")
+        .map_err(|error| format!("write README: {error}"))?;
+    std::fs::write(workspace.join("website/index.md"), "# site\n")
+        .map_err(|error| format!("write website: {error}"))?;
+    std::fs::write(
+        workspace.join("rust/Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/x\"]\n",
+    )
+    .map_err(|error| format!("write workspace manifest: {error}"))?;
+    std::fs::write(
+        workspace.join("rust/crates/x/Cargo.toml"),
+        "[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| format!("write package manifest: {error}"))?;
+    std::fs::write(
+        workspace.join("rust/crates/x/src/lib.rs"),
+        "pub fn f() {}\n",
+    )
+    .map_err(|error| format!("write lib.rs: {error}"))?;
+    run_git(&workspace, &["init", "-b", "main"])?;
+
+    let json = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &workspace,
+        &["doctor", "--json"],
+        &[],
+    )
+    .map_err(|error| format!("run doctor --json: {error}"))?;
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout)
+        .map_err(|error| format!("doctor JSON did not parse: {error}"))?;
+    let cargo_toml = report["checks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|check| check["name"] == "cargo_toml")
+        .cloned()
+        .ok_or_else(|| format!("missing cargo_toml: {report}"))?;
+    let evidence = cargo_toml["evidence"].as_str().unwrap_or("");
+    let json_result = if cargo_toml["status"] != "pass"
+        || !evidence.contains("via workspace root")
+        || !evidence.contains("rust")
+    {
+        Err(format!(
+            "git-root nested workspace must pass cargo_toml: {cargo_toml}"
+        ))
+    } else {
+        Ok(())
+    };
+
+    let human = run_command_with_env(env!("CARGO_BIN_EXE_ripr"), &workspace, &["doctor"], &[])
+        .map_err(|error| format!("run doctor: {error}"))?;
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    let human_result =
+        if stdout.contains("! no Cargo.toml found") || !stdout.contains("via workspace root") {
+            Err(format!(
+                "human doctor must not fail cargo_toml at a nested-workspace git root:\n{stdout}"
+            ))
+        } else {
+            Ok(())
+        };
+
+    ignore_remove_dir_all(&workspace);
+    json_result.and(human_result)
 }
 
 #[test]

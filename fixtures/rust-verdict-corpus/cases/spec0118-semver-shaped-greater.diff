@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 81f90ff..b6b334e 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -28,7 +28,7 @@ impl VersionReq {
+ 
+ fn matches_greater(cmp: &VersionReq, ver: &Version) -> bool {
+     if ver.major != cmp.major {
+-        return ver.major > cmp.major;
++        return cmp.major < ver.major;
+     }
+     ver.minor > cmp.minor
+ }

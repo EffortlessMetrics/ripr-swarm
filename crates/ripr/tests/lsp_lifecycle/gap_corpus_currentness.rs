@@ -618,7 +618,7 @@ fn captured_corpus(captured: &Value) -> ProofResult<&Value> {
         .ok_or("analysis producer omitted source_subject.corpus")?;
     require(
         corpus["scope"] == "rust_workspace"
-            && corpus["cache_schema_version"] == "1.62"
+            && corpus["cache_schema_version"] == "1.63"
             && corpus["files_content_hash"].as_str().is_some_and(|hash| {
                 hash.len() == 16
                     && hash
@@ -760,10 +760,7 @@ impl InvalidCorpus {
                         corpus.insert("scope".into(), json!("unrecognized_workspace"));
                     }
                     Self::UnsupportedSchema => {
-                        corpus.insert(
-                            "cache_schema_version".into(),
-                            json!("unsupported-cache-schema"),
-                        );
+                        corpus.insert("cache_schema_version".into(), json!("1.62"));
                     }
                     Self::Missing | Self::Malformed => {
                         return Err("unreachable corpus corruption variant".into());

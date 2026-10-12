@@ -1293,6 +1293,22 @@ owner = "product-analysis"
 standalone_reason = "Amends the TypeScript oracle rules from corpus mutation evidence: copy-for-identity changes need an identity matcher, and three nested callbacks that run before the test settles are collected."
 
 [[artifact]]
+id = "RIPR-SPEC-0251"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0251-typescript-default-import-owner-local.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads a renamed TypeScript default import of the owner as the owner in the observation guard, amending the RIPR-SPEC-0243 non-goal from corpus mutation evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0250"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads TypeScript toMatchObject from corpus mutation evidence: a match-object pin discriminates a change to a returned field it lists."
+
+[[artifact]]
 id = "RIPR-SPEC-0249"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0249-typescript-instance-class-pin.md"

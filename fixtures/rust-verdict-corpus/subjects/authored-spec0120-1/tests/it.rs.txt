@@ -1,0 +1,11 @@
+macro_rules! assert_result {
+    ($got:expr, $want:expr) => {
+        assert_eq!($got, $want, "unexpected result")
+    };
+}
+
+#[test]
+fn inner_adds_four() {
+    let result = spec0120_1::inner(3);
+    assert_result!(result, 7);
+}

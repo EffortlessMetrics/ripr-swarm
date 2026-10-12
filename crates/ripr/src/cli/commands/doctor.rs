@@ -152,7 +152,14 @@ pub(in crate::cli) fn doctor(args: &[String]) -> Result<(), String> {
         ok &= report_doctor_core_check(&report, &format!("tool_{tool}"));
     }
 
-    print_doctor_start_here_guidance(&root, &report, environment.preview_enablement.as_ref());
+    // Start-here, recovery states, the proof-rail note, and "Recommended
+    // first command: ripr check" are analysis-first-run guidance. The
+    // source-build profile exists to diagnose whether this machine can build
+    // ripr; its failing `!` lines already name the toolchain fix, so that
+    // profile must not send the reader to run analysis (#7435).
+    if profile == output::doctor::DoctorProfile::Analysis {
+        print_doctor_start_here_guidance(&root, &report, environment.preview_enablement.as_ref());
+    }
 
     if ok && report.status == output::doctor::DoctorStatus::Pass {
         println!("✓ doctor checks passed");

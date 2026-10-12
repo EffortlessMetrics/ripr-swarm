@@ -172,17 +172,22 @@ The `Cargo.toml`, `cargo`, and `rustc` checks apply only when Rust is in
 scope for the root: Rust is enabled and either Rust markers (`Cargo.toml` or
 `.rs` files) are detected or no other language is detected or enabled. A
 Python-only or TypeScript-only root reports those checks as `skipped` with
-the reason and does not fail on them. A Rust root, a root with Rust sources but no
-`Cargo.toml`, and an empty root under the Rust-only default still fail on a
-missing manifest.
+the reason and does not fail on them. A Cargo.toml at the selected root, an
+ancestor Cargo project bounded by git, or a nested Cargo.toml in this tree
+(for example `rust/Cargo.toml` at a polyglot git root) passes `cargo_toml`.
+A root with Rust sources but no Cargo.toml anywhere in that bounded search,
+and an empty root under the Rust-only default, still fail on a missing
+manifest.
 
 The toolchain checks depend on the profile. Under the default `analysis`
 profile, a missing `cargo` or `rustc`, or a workspace `rustc` older than
 RIPR's build MSRV, is reported as `advisory` and does not change the exit
 code: the installed binary can still analyze the workspace. A missing `cargo`
 still withholds evidence that reads `cargo metadata`. Under
-`--profile source-build`, the same conditions are failures and exit `2`, while
-enabled language runtimes stay visible but do not decide that profile's exit.
+`--profile source-build`, the same conditions are failures and exit `2`. A
+missing cargo or rustc names an install route on the failing check; an older
+rustc still names `rustup update stable`. Enabled language runtimes stay
+visible but do not decide that profile's exit.
 
 ## CI integration
 
