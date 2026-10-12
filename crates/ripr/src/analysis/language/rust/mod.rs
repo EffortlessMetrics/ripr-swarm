@@ -1221,7 +1221,14 @@ fn apply_probe_and_oracle_limits(
     index: &RustIndex,
     binding_relation: Option<&crate::analysis::probes::ChangedBindingPredicateUse>,
 ) {
-    let owner_name = owner_name_from_id(&probe.owner, &probe.location.file);
+    // #7089 matches a bare `owner(` call, which for a method owner
+    // (`impl Cart::total`) can only be some other item named `total`.
+    let free_fn_owner = probe
+        .owner
+        .as_ref()
+        .is_some_and(|id| !id.0.split("::").any(|segment| segment.starts_with("impl ")));
+    let owner_name =
+        owner_name_from_id(&probe.owner, &probe.location.file).filter(|_| free_fn_owner);
     oracles::apply_rust_macro_wrapped_assertion_limit(finding, index, owner_name.as_deref());
     probes::apply_rust_value_propagation_limit(finding, probe, index);
     oracles::apply_wrapper_error_binding_limit(finding, probe);

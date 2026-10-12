@@ -439,7 +439,10 @@ fn only_proximity_tests_supply_an_oracle(finding: &Finding) -> bool {
     for related in finding.oracle_related_tests() {
         let direct = is_direct_relation(related.relation_reason);
         if related.relation_reason.is_none() || direct {
-            if related.oracle.is_some() {
+            // A refused assertion is still an assertion ripr judged.
+            if related.oracle.is_some()
+                || related.miss == Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
+            {
                 return false;
             }
             direct_seen |= direct;
@@ -543,7 +546,8 @@ fn unresolved_assertion_macro_invocations(
 /// call `owner_name(`, read from masked text. A path- or method-qualified call
 /// (`Bar::new(`, `x.len(`) may name a different item with the same last
 /// segment, so it does not count; neither does an argument list that runs
-/// past a `;` (an unmasked char literal such as `'('` unbalanced it).
+/// past a `;` or holds a `'`: char literals are not masked, so `'('` can
+/// unbalance the delimiters.
 fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bool {
     let Some(rest) = masked.get(after_bang..) else {
         return false;
@@ -574,6 +578,9 @@ fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bo
     let Some(arguments) = close.and_then(|close| rest.get(open + 1..close)) else {
         return false;
     };
+    if arguments.contains('\'') {
+        return false;
+    }
     arguments.match_indices(owner_name).any(|(start, _)| {
         let qualified_or_ident = arguments[..start]
             .trim_end()
@@ -984,10 +991,10 @@ mod tests {
         );
         // A same-named item on another path, and arguments that an unmasked
         // char literal lets run past the statement, do not count.
-        let tricky = "{\n    assert_custom!(Bar::bulk(2).is_ok());\n    assert_custom!(c == '('); let _ = bulk(1);\n    assert_multi!(\n        0.5,\n        bulk (3)\n    );\n}\n";
+        let tricky = "{\n    assert_custom!(Bar::bulk(2).is_ok());\n    assert_custom!(c == '('); let _ = bulk(1);\n    assert_twice!(c == '(' || c == '(');\n    let _ = bulk(1);\n    let close = (')', ')');\n    assert_multi!(\n        0.5,\n        bulk (3)\n    );\n}\n";
         assert_eq!(
             unresolved_assertion_macro_invocations(tricky, 1, Some("bulk")),
-            vec![("assert_multi".to_string(), 4)]
+            vec![("assert_multi".to_string(), 7)]
         );
     }
 
@@ -1083,6 +1090,21 @@ mod tests {
         // No proximity oracle: the weakness is not explained by proximity.
         let (mut finding, index) = weakly_exposed_beside_a_proximity_oracle();
         finding.related_tests[1].oracle = None;
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, Some("inner"));
+        assert_eq!(finding.static_limit_kind, None);
+
+        // A test with no relation reason that holds an oracle may be direct.
+        let (mut finding, index) = weakly_exposed_beside_a_proximity_oracle();
+        let mut unknown = finding.related_tests[1].clone();
+        unknown.name = "unknown_relation".to_string();
+        unknown.relation_reason = None;
+        finding.related_tests.push(unknown);
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, Some("inner"));
+        assert_eq!(finding.static_limit_kind, None);
+
+        // A direct test whose assertion ripr refused still had one judged.
+        let (mut finding, index) = weakly_exposed_beside_a_proximity_oracle();
+        finding.related_tests[0].miss = Some(crate::domain::RelatedTestMiss::AssertionNotCredited);
         apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, Some("inner"));
         assert_eq!(finding.static_limit_kind, None);
 

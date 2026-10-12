@@ -436,6 +436,35 @@ mod tests {
 }
 ";
 
+/// Fixture construction for the #7089 cases: `rate_triples` is related by a
+/// direct relation with the given oracle presence, and a proximity-only test
+/// holds a recognized oracle.
+fn assert_custom_assert_construction(finding: &Finding, direct_has_oracle: bool) {
+    let direct = finding
+        .related_tests
+        .iter()
+        .find(|test| test.name == "rate_triples");
+    assert!(
+        direct.is_some_and(|test| test
+            .relation_reason
+            .is_some_and(|reason| !crate::analysis::classify::is_proximity_only(reason))
+            && test.oracle.is_some() == direct_has_oracle),
+        "{:?}",
+        finding.related_tests
+    );
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|test| test.oracle.is_some()
+                && test
+                    .relation_reason
+                    .is_some_and(crate::analysis::classify::is_proximity_only)),
+        "{:?}",
+        finding.related_tests
+    );
+}
+
 #[test]
 fn an_owner_call_inside_an_unread_assertion_macro_names_the_macro_limit() -> Result<(), String> {
     let fixture = Fixture::new("custom-assert", CUSTOM_ASSERT)?;
@@ -489,6 +518,7 @@ fn an_unread_assertion_macro_without_the_owner_call_keeps_the_gap() -> Result<()
         ),
     )?;
     let finding = fixture.rate_finding()?;
+    assert_custom_assert_construction(&finding, false);
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())
@@ -507,6 +537,7 @@ fn a_direct_test_with_a_recognized_oracle_keeps_the_gap() -> Result<(), String> 
         ),
     )?;
     let finding = fixture.rate_finding()?;
+    assert_custom_assert_construction(&finding, true);
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())

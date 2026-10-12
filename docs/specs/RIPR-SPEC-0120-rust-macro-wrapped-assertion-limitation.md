@@ -84,13 +84,17 @@ none. The same limit applies to that finding when all of these hold:
 - at least one related test has a direct relation (not proximity and not
   name-only: `same_test_file`, `same_module`, `weak_token_substring` and
   `owner_named_test` do not count), and no such test, nor any test without a
-  relation reason, has a recognized oracle;
+  relation reason, has a recognized oracle or an assertion ripr refused to
+  credit (`assertion_not_credited`);
 - at least one proximity or name-only test does hold a recognized oracle;
 - one of the direct tests invokes an assertion-like macro outside the known
   set, and the macro's delimited arguments make a bare call `owner(`, read
   with comments and strings masked. A path- or method-qualified call
   (`Bar::new(`, `x.len(`) may name another item with the same last segment
-  and does not count, nor does an argument list that runs past a `;`.
+  and does not count, nor does an argument list that runs past a `;` or holds
+  a `'` (char literals are not masked and can unbalance the delimiters);
+- the owner is a free function. For a method owner (`impl Cart::total`) a bare
+  `total(` can only be another item, so the path does not run.
 
 The class stays `weakly_exposed`; the finding names the limit instead of
 reporting a gap. An owner value that reaches the macro only through a binding,
