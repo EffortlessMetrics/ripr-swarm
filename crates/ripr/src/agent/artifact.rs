@@ -388,6 +388,17 @@ pub(crate) fn validate_repo_exposure_artifact(
             "agent verify {label} artifact has invalid or unknown producer identity"
         ));
     }
+    // #7369: a present stamp must carry the same `unix_ms:` millisecond
+    // disclosure shape the producer pins. A legacy artifact without the field
+    // stays acceptable — the absence is a missing disclosure, not invalid
+    // identity — but a malformed stamp fails closed instead of passing.
+    if let Some(stamp) = identity.generated_at.as_deref() {
+        if !stamp.starts_with("unix_ms:") {
+            return Err(format!(
+                "agent verify {label} artifact carries a generated_at stamp that is not a unix_ms millisecond disclosure: {stamp}"
+            ));
+        }
+    }
     // Version gate (#2823): only the current input-identity algorithm
     // validates as current evidence. A previous-version identity (for example
     // the v1 `input:<digest>` form that embedded the absolute checkout root)
@@ -2371,7 +2382,42 @@ mod tests {
     }
 
     #[test]
-    fn repo_exposure_validation_rejects_foreign_repository_root() -> Result<(), String> {
+    fn repo_exposure_validation_rejects_malformed_generated_at_stamp() -> Result<(), String> {
+        // #7369 follow-up from the Rust Small clippy gate: the disclosure
+        // stamp is part of the identity envelope, so validation reads it — a
+        // stamp that is not a `unix_ms:` millisecond disclosure fails closed,
+        // while a well-formed one keeps validating.
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let placeholder_raw = repo_exposure_raw_with_placeholder(&root)?;
+            let document: Value = serde_json::from_str(&placeholder_raw)
+                .map_err(|error| format!("parse placeholder document: {error}"))?;
+            let malformed = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["generated_at"] = json!("2026-10-12T12:00:00Z");
+            })?;
+            expect_identity_rejection(
+                "non-unix_ms generated_at stamp",
+                malformed,
+                "not a unix_ms millisecond disclosure",
+            )?;
+            let well_formed = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["generated_at"] = json!("unix_ms:1760000000000");
+            })?;
+            match well_formed {
+                Ok(_) => Ok(()),
+                Err(error) => Err(format!(
+                    "a well-formed unix_ms stamp must keep validating: {error}"
+                )),
+            }
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
         let root = temporary_git_root()?;
         let foreign = temporary_git_root()?;
         let result = (|| -> Result<(), String> {
