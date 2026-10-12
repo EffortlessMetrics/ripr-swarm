@@ -1602,18 +1602,19 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
     );
     // Every RIPR-SPEC-0238 acceptance example but 9 and 10 keeps a case
     // citing it; the ledger leaves those two visible as uncovered rather
-    // than waived. The case ids keep the prefix of the spec's draft number,
-    // RIPR-SPEC-0233.
+    // than waived. Examples 1 to 34 have `py-spec0233-exNN-` cases (the
+    // prefix of the spec's draft number, RIPR-SPEC-0233); 35 to 39 were
+    // written from the library cases that cite them.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0238")
         .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
-    assert_eq!(spec.in_scope_examples, 34);
+    assert_eq!(spec.in_scope_examples, 39);
     assert_eq!(spec.uncovered, vec![9, 10]);
     assert_eq!(spec.waived, 0);
     assert!(
-        coverage.floor >= 32 && coverage.floor <= coverage.covered_examples,
+        coverage.floor >= 37 && coverage.floor <= coverage.covered_examples,
         "python ledger floor {} against {} covered",
         coverage.floor,
         coverage.covered_examples
