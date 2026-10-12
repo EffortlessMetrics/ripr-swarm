@@ -73,7 +73,10 @@ pub(crate) fn capture_retained_executable_with(
             path.display()
         )
     })?;
-    let result = (|| {
+    // Pin the closure error type: on Unix the cfg(unix) `return Err(String)`
+    // below infers it, but on Windows that arm is compiled out and E0282
+    // leaves the build broken. String is the type every arm already produces.
+    let result: Result<CapturedFile, String> = (|| {
         writer(&mut file, bytes).map_err(|error| format!("write retained executable: {error}"))?;
         file.sync_all()
             .map_err(|error| format!("flush retained executable: {error}"))?;
