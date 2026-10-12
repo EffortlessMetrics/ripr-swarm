@@ -16800,6 +16800,8 @@ fn execute_command_collect_workspace_status_registered_in_capabilities() -> Resu
 
 // ── collect_repair_packet tests ──────────────────────────────────────────────
 
+// These are synthetic unit fixtures for packet selection/rendering. Their
+// metadata must satisfy the same full admission contract as the disk read.
 fn complete_actionable_gaps_report() -> serde_json::Value {
     let raw_finding = serde_json::json!({
         "file": "src/pricing.rs",
@@ -16814,11 +16816,30 @@ fn complete_actionable_gaps_report() -> serde_json::Value {
         "gap_state": "actionable",
         "primary_anchor": { "file": "src/pricing.rs", "line": 42 },
         "repair_kind": "add_boundary_assertion",
+        "repair_route_source": "canonical_item.repair_route",
+        "verify_command_source": "canonical_item.verify_command",
+        "public_projection_eligible": true,
+        "projection_exclusion_reasons": [],
+        "target_test_type": "boundary_discriminator",
+        "assertion_shape": "assert_eq!(price(threshold), expected)",
+        "target_test_shape": "boundary_discriminator: assert_eq!(price(threshold), expected)",
+        "repair_route": {
+            "repair_kind": "add_boundary_assertion",
+            "target_test_type": "boundary_discriminator",
+            "assertion_shape": "assert_eq!(price(threshold), expected)"
+        },
+        "related_test_or_observer": {
+            "file": "tests/pricing.rs",
+            "name": "discount_threshold",
+            "line": 33
+        },
         "verify_command": "ripr agent verify --root . --json",
         "receipt_command": "ripr agent receipt --root . --json",
+        "receipt_command_or_path": "ripr agent receipt --root . --json",
         "allowed_edit_surface": ["tests/pricing.rs"],
         "must_not_change": ["Do not infer actionability from raw static class."],
-        "raw_evidence_refs": [raw_finding],
+        "raw_evidence_refs": [raw_finding.clone()],
+        "raw_findings": [raw_finding],
         "confidence_basis": "static_only"
     });
     serde_json::json!({
@@ -16867,6 +16888,9 @@ fn write_gap_decision_ledger(root: &std::path::Path) -> Result<(), String> {
 
 fn complete_gap_decision_ledger_json() -> &'static str {
     r#"{
+  "schema_version": "0.1",
+  "tool": "ripr",
+  "kind": "gap_decision_ledger",
   "records": [
     {
       "gap_id": "gap:pr:pricing:threshold-boundary",
@@ -16984,29 +17008,14 @@ fn execute_command_collect_repair_packet_incomplete_gap_returns_sentinel() -> Re
         .map_err(|err| format!("failed to start test runtime: {err}"))?;
     runtime.block_on(async {
         let root = unique_lsp_test_root("repair-packet-incomplete")?;
-        // Build a packet that looks actionable but is missing receipt_command.
-        let raw_finding = serde_json::json!({
-            "file": "src/pricing.rs", "line": 42,
-            "kind": "weakly_exposed", "language": "rust", "language_status": "stable"
-        });
-        let packet = serde_json::json!({
-            "canonical_gap_id": "gap:rust:pricing-boundary",
-            "gap_state": "actionable",
-            "primary_anchor": { "file": "src/pricing.rs", "line": 42 },
-            "repair_kind": "add_boundary_assertion",
-            "verify_command": "ripr agent verify --root . --json",
-            // receipt_command intentionally omitted
-            "allowed_edit_surface": ["tests/pricing.rs"],
-            "must_not_change": ["Do not infer actionability from raw static class."],
-            "raw_evidence_refs": [raw_finding],
-            "confidence_basis": "static_only"
-        });
-        let report = serde_json::json!({
-            "schema_version": "0.1", "tool": "ripr", "report": "actionable-gaps",
-            "scope": "repo", "status": "advisory",
-            "summary": { "actionable_gaps": 1, "packets_emitted": 1 },
-            "run_limitations": [], "packets": [packet]
-        });
+        // Retain the complete admission metadata so this negative isolates
+        // the missing receipt route rather than a projection-field omission.
+        let mut report = complete_actionable_gaps_report();
+        let packet = report["packets"][0]
+            .as_object_mut()
+            .ok_or_else(|| "fixture packet must be an object".to_string())?;
+        packet.remove("receipt_command");
+        packet.remove("receipt_command_or_path");
         write_actionable_gaps_report(root.path(), &report)?;
 
         let (service, _socket) =
