@@ -13181,6 +13181,24 @@ fn check_doc_index() -> Result<(), String> {
         }
     }
 
+    let docs_index = read_text_lossy(Path::new("docs/README.md"))?;
+    for required in [
+        "EXIT_CODES.md",
+        "REPAIR_ATTEMPT.md",
+        "SERVER_PROVISIONING.md",
+        "STATIC_LIMITS.md",
+        "INSTALL_CHANNELS.md",
+        "BLOCKING_READINESS.md",
+    ] {
+        if !docs_index.contains(required) {
+            violations.push(format!("docs/README.md does not reference `{required}`"));
+        } else if !index_links_file(&docs_index, required) {
+            violations.push(format!(
+                "docs/README.md mentions `{required}` without a Markdown link to it"
+            ));
+        }
+    }
+
     finish_policy_report(
         PolicyReportSpec {
             report_file: "doc-index.md",
@@ -13191,6 +13209,7 @@ fn check_doc_index() -> Result<(), String> {
                 "Update docs/adr/README.md when adding or removing ADRs.",
                 "Update docs/specs/README.md when adding or removing specs.",
                 "Keep README.md and docs/DOCUMENTATION.md linked to the active planning, automation, metrics, ADR, and spec docs.",
+                "Keep docs/README.md indexing the user-facing top-level reference pages (exit codes, static limits, repair recovery, blocking readiness, install channels, server provisioning).",
             ],
             rerun_command: "cargo xtask check-doc-index",
             exception_template: None,
@@ -15229,6 +15248,18 @@ fn known_xtask_command(command: &str) -> bool {
         .into_iter()
         .map(known_command_root)
         .any(|known| known == command)
+}
+
+/// Whether `index` links to `file` as a Markdown link destination, accepting
+/// plain relative (`PAGE.md`), `./`-prefixed, anchored (`PAGE.md#sec`), and
+/// titled (`PAGE.md "title"`) destinations, while refusing a longer name that
+/// merely contains `file` as a substring (for example `PAGE.md.backup`).
+fn index_links_file(index: &str, file: &str) -> bool {
+    ["](", "](./"].iter().any(|open| {
+        [")", " ", "#"]
+            .iter()
+            .any(|close| index.contains(&format!("{open}{file}{close}")))
+    })
 }
 
 fn require_index_mentions_files(

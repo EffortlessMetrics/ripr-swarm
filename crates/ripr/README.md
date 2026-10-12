@@ -50,7 +50,8 @@ for development features.
 ## Quick Start
 
 Run this from a Rust repository on a branch with committed changes. The 0.10
-release uses `origin/main` as its default base; use `--base REF` to choose another
+release resolves its default base by trying `origin/HEAD`, then `origin/main`,
+`origin/master`, `main`, and `master`; use `--base REF` to choose another
 existing branch or commit:
 
 ```bash
