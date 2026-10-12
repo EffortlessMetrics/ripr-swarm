@@ -113,6 +113,21 @@ suite('Genuine actionable queue consumer', () => {
     ['wrong filter', q => { q.packets[0].verify_command = 'cargo test -p ordinary_shop another_test'; }],
     ['extra Cargo option', q => { q.packets[0].verify_command += ' --manifest-path ../Cargo.toml'; }],
     ['unbounded Cargo suite', q => { q.packets[0].verify_command = 'cargo test -p ordinary_shop'; }],
+    ['option-shaped filter', q => {
+      q.packets[0].related_test_or_observer.name = '--all-features';
+      q.packets[0].verify_command = 'cargo test -p ordinary_shop --all-features';
+    }],
+    ['workspace option-shaped filter', q => {
+      q.packets[0].related_test_or_observer.name = '--workspace';
+      q.packets[0].verify_command = 'cargo test -p ordinary_shop --workspace';
+    }],
+    ['option-shaped package', q => {
+      q.packets[0].related_test_or_observer.file = 'crates/--workspace/tests/pricing.rs';
+      q.packets[0].verify_command = 'cargo test -p --workspace above_threshold_discounts';
+    }],
+    ['Cargo verification copied into receipt role', q => {
+      q.packets[0].receipt_command_or_path = boundedVerify;
+    }],
     ['shell suffix', q => { q.packets[0].verify_command += '; echo injected'; }],
     ['raw newline', q => {
       q.packets[0].verify_command_source = 'canonical_item.verify_command';
