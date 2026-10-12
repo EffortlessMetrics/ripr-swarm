@@ -1732,3 +1732,423 @@ fn real_compiler_bound_consumer_retains_failed_capture_root_and_cleans_success()
     fixture.guard.finish()
 }
 // 4510 independent proof: actual consumer owned-root cleanup end.
+
+// 4510 independent proof: install compiler invocation controls start.
+#[cfg(unix)]
+fn capture_compiler_shell_word(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(unix)]
+fn capture_compiler_path_entry() -> Result<PathBuf, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let path = std::env::var_os("PATH")
+        .ok_or_else(|| "SETUP: compiler control requires an existing PATH".to_string())?;
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    for directory in std::env::split_paths(&path) {
+        let directory = if directory.is_absolute() {
+            directory
+        } else {
+            cwd.join(directory)
+        };
+        let candidate = directory.join("rustc");
+        if let Ok(metadata) = fs::metadata(&candidate)
+            && metadata.is_file()
+            && metadata.permissions().mode() & 0o111 != 0
+        {
+            // Preserve the proxy's rustc basename, including a rustup symlink.
+            return Ok(directory
+                .canonicalize()
+                .map_err(|error| error.to_string())?
+                .join("rustc"));
+        }
+    }
+    Err("SETUP: compiler control cannot find an executable PATH rustc".to_string())
+}
+
+#[cfg(unix)]
+fn capture_compiler_forwarder(
+    program: &Path,
+    log: &Path,
+    label: &str,
+    real_compiler: Option<&Path>,
+) -> Result<(), String> {
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    let log = log
+        .to_str()
+        .ok_or_else(|| "SETUP: forwarding log path must be UTF-8".to_string())?;
+    let execute = if let Some(compiler) = real_compiler {
+        let compiler = compiler
+            .to_str()
+            .ok_or_else(|| "SETUP: compiler path must be UTF-8".to_string())?;
+        format!("exec {} \"$@\"", capture_compiler_shell_word(compiler))
+    } else {
+        // Cargo wrappers receive the next wrapper/compiler as their first arg.
+        "exec \"$@\"".to_string()
+    };
+    let script = format!(
+        "#!/bin/sh\n{{\n  printf '%s\\t' {}\n  printf '%s\\t' \"$@\"\n  printf 'ENV:PATH=%s\\tENV:RUSTC=%s\\tENV:CARGO_BUILD_RUSTC=%s\\tENV:RUSTC_WRAPPER=%s\\tENV:CARGO_BUILD_RUSTC_WRAPPER=%s\\tENV:RUSTC_WORKSPACE_WRAPPER=%s\\tENV:CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER=%s\\n' \"${{PATH-}}\" \"${{RUSTC-}}\" \"${{CARGO_BUILD_RUSTC-}}\" \"${{RUSTC_WRAPPER-}}\" \"${{CARGO_BUILD_RUSTC_WRAPPER-}}\" \"${{RUSTC_WORKSPACE_WRAPPER-}}\" \"${{CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER-}}\"\n}} >> {}\n{execute}\n",
+        capture_compiler_shell_word(label),
+        capture_compiler_shell_word(log)
+    );
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(program)
+        .map_err(|error| format!("SETUP: create actual forwarding script: {error}"))?;
+    file.write_all(script.as_bytes())
+        .map_err(|error| error.to_string())?;
+    file.set_permissions(fs::Permissions::from_mode(0o755))
+        .map_err(|error| error.to_string())?;
+    file.sync_all().map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn capture_compiler_install_rows(log: &Path, target: &Path) -> Result<Vec<String>, String> {
+    let content =
+        fs::read_to_string(log).map_err(|error| format!("SETUP: read invocation log: {error}"))?;
+    Ok(content
+        .lines()
+        .filter(|line| {
+            let fields = line.split('\t').collect::<Vec<_>>();
+            fields
+                .windows(2)
+                .any(|pair| pair == ["--crate-name", "ripr"])
+                && fields
+                    .windows(2)
+                    .any(|pair| pair[0] == "--out-dir" && Path::new(pair[1]).starts_with(target))
+        })
+        .map(str::to_string)
+        .collect())
+}
+
+#[cfg(unix)]
+fn capture_compiler_install_child(
+    mode: &str,
+    control: &Path,
+    original_path: &str,
+) -> Result<(), String> {
+    use crate::reports::release::candidate_harness::{
+        AdmittedSource, AttributedArchive, CandidateExecution,
+    };
+    let selected = control.join("selected/rustc");
+    let contrary = control.join("contrary/rustc");
+    let wrapper = control.join("wrapper/forward");
+    let fixture = create_source_fixture()?;
+    let (input, owned) =
+        capture_fixture_input(&fixture, &format!("actual compiler {mode} producer"))?;
+    let admitted = AdmittedSource::admit(&input, "0.11.0")?;
+    assert_eq!(admitted.source_sha()?, fixture.sha);
+    let rustc = capture_observed_verbose_version("rustc", &fixture.source)?;
+    let cargo = capture_observed_verbose_version("cargo", &fixture.source)?;
+    let archive = AttributedArchive::produce(admitted, &owned)?;
+
+    // Package setup remains inherited. Add the ancestor only after genuine
+    // packaging; logs retain every call and install-target rows disambiguate.
+    if mode != "child_selectors" {
+        let config = if mode == "ancestor_build" {
+            let mut build = toml::map::Map::new();
+            build.insert(
+                "rustc".to_string(),
+                toml::Value::String(contrary.to_string_lossy().into_owned()),
+            );
+            build.insert(
+                "rustc-wrapper".to_string(),
+                toml::Value::String(wrapper.to_string_lossy().into_owned()),
+            );
+            build.insert(
+                "rustc-workspace-wrapper".to_string(),
+                toml::Value::String(wrapper.to_string_lossy().into_owned()),
+            );
+            let mut config = toml::map::Map::new();
+            config.insert("build".to_string(), toml::Value::Table(build));
+            toml::Value::Table(config)
+        } else {
+            // This case has no build.rustc or compiler-selector configuration.
+            let forced = std::env::join_paths(
+                std::iter::once(control.join("contrary"))
+                    .chain(std::env::split_paths(original_path)),
+            )
+            .map_err(|error| error.to_string())?
+            .into_string()
+            .map_err(|_non_utf8_path| "SETUP: forced PATH must be UTF-8".to_string())?;
+            let mut path = toml::map::Map::new();
+            path.insert("value".to_string(), toml::Value::String(forced));
+            path.insert("force".to_string(), toml::Value::Boolean(true));
+            let mut env = toml::map::Map::new();
+            env.insert("PATH".to_string(), toml::Value::Table(path));
+            let mut config = toml::map::Map::new();
+            config.insert("env".to_string(), toml::Value::Table(env));
+            toml::Value::Table(config)
+        };
+        fs::create_dir(owned.join(".cargo")).map_err(|error| error.to_string())?;
+        fs::write(
+            owned.join(".cargo/config.toml"),
+            toml::to_string(&config).map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?;
+    }
+    let installed = archive.install(&owned)?;
+    let actual_bytes = fs::read(installed.binary()).map_err(|error| error.to_string())?;
+    let custody = installed.custody_json();
+    capture_assert_real_install_identity(
+        &custody,
+        installed.binary(),
+        &actual_bytes,
+        &owned,
+        &rustc,
+        &cargo,
+    )?;
+    let native = CandidateExecution::Qualified(&installed).run(
+        &[],
+        &fixture.controller,
+        "4510 actual compiler control installed source positive",
+    )?;
+    assert!(native.success && native.status == Some(0));
+    assert_eq!(native.stdout, "fixture source A\n");
+    let target = owned.join("install-target");
+    let selected_rows =
+        capture_compiler_install_rows(&control.join("selected/invocations.log"), &target)?;
+    let contrary_rows =
+        capture_compiler_install_rows(&control.join("contrary/invocations.log"), &target)?;
+    let wrapper_rows =
+        capture_compiler_install_rows(&control.join("wrapper/invocations.log"), &target)?;
+    eprintln!(
+        "4510 actual compiler invocation/native observations: {}",
+        json!({
+            "mode": mode, "producer_root": owned, "custody": custody,
+            "native_success": native.success, "native_status": native.status,
+            "native_stdout": native.stdout, "selected_install_rows": selected_rows,
+            "contrary_install_rows": contrary_rows, "wrapper_install_rows": wrapper_rows,
+            "claim": "forwarding commands use the same actual compiler ABI; invocation provenance only"
+        })
+    );
+
+    // OLD must fail on observed runtime selection, before new metadata keys.
+    if selected_rows.is_empty() || !contrary_rows.is_empty() || !wrapper_rows.is_empty() {
+        return Err(format!(
+            "BEHAVIOR: {mode} actual install compilation must use selected PATH rustc only; selected={}, contrary={}, wrapper={}",
+            selected_rows.len(),
+            contrary_rows.len(),
+            wrapper_rows.len()
+        ));
+    }
+    let selected_text = selected
+        .to_str()
+        .ok_or_else(|| "SETUP: selected path must be UTF-8".to_string())?;
+    let expected_path = std::env::var("PATH").map_err(|error| error.to_string())?;
+    for row in &selected_rows {
+        for (name, expected) in [
+            ("PATH", expected_path.as_str()),
+            ("RUSTC", selected_text),
+            ("CARGO_BUILD_RUSTC", selected_text),
+            ("RUSTC_WRAPPER", ""),
+            ("CARGO_BUILD_RUSTC_WRAPPER", ""),
+            ("RUSTC_WORKSPACE_WRAPPER", ""),
+            ("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", ""),
+        ] {
+            let field = format!("ENV:{name}={expected}");
+            if !row.split('\t').any(|actual| actual == field) {
+                return Err(format!(
+                    "BEHAVIOR: {mode} actual selected compiler environment differs for {name}; expected {field}"
+                ));
+            }
+        }
+    }
+    assert_eq!(custody["rustc_command"], json!(selected));
+    fixture.guard.finish()
+}
+
+#[cfg(unix)]
+#[test]
+fn real_compiler_invocation_custody_pins_selected_command_against_overrides() -> Result<(), String>
+{
+    const MODE: &str = "RIPR_4510_COMPILER_CHILD_MODE";
+    const CONTROL: &str = "RIPR_4510_COMPILER_CONTROL_ROOT";
+    const ORIGINAL_PATH: &str = "RIPR_4510_COMPILER_ORIGINAL_PATH";
+    const MODES: [&str; 3] = ["child_selectors", "ancestor_build", "ancestor_forced_path"];
+    if let Ok(mode) = std::env::var(MODE) {
+        if !MODES.contains(&mode.as_str()) {
+            return Err(format!("SETUP: unknown compiler child mode {mode}"));
+        }
+        let control = PathBuf::from(
+            std::env::var(CONTROL)
+                .map_err(|error| format!("SETUP: compiler control root: {error}"))?,
+        );
+        if !control.is_absolute()
+            || control.canonicalize().map_err(|error| error.to_string())? != control
+        {
+            return Err("SETUP: compiler control root must be canonical absolute".to_string());
+        }
+        let original_path = std::env::var(ORIGINAL_PATH)
+            .map_err(|error| format!("SETUP: original child PATH: {error}"))?;
+        return capture_compiler_install_child(&mode, &control, &original_path);
+    }
+    if std::env::var_os(MODE).is_some() {
+        return Err("SETUP: compiler child mode must be UTF-8".to_string());
+    }
+    let fixture = create_source_fixture()?;
+    let original_path =
+        std::env::var("PATH").map_err(|error| format!("SETUP: parent PATH: {error}"))?;
+    if original_path.contains('\n') || original_path.contains('\t') {
+        return Err(
+            "SETUP: compiler invocation log requires PATH without tabs/newlines".to_string(),
+        );
+    }
+    let real_compiler = capture_compiler_path_entry()?;
+    let executable = std::env::current_exe().map_err(|error| error.to_string())?;
+    let (_, module) = module_path!()
+        .split_once("::")
+        .ok_or_else(|| "SETUP: compiler test module has no crate prefix".to_string())?;
+    let exact = format!(
+        "{module}::real_compiler_invocation_custody_pins_selected_command_against_overrides"
+    );
+    let root = fixture
+        .guard
+        .root
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let mut failures = Vec::new();
+    let mut outcomes = Vec::new();
+    for mode in MODES {
+        let control = root.join(mode);
+        fs::create_dir(&control).map_err(|error| error.to_string())?;
+        for (directory, label, compiler) in [
+            ("selected", "selected", Some(real_compiler.as_path())),
+            ("contrary", "contrary", Some(real_compiler.as_path())),
+            ("wrapper", "wrapper", None),
+        ] {
+            let directory = control.join(directory);
+            fs::create_dir(&directory).map_err(|error| error.to_string())?;
+            let log = directory.join("invocations.log");
+            let _log_file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&log)
+                .map_err(|error| error.to_string())?;
+            let program = directory.join(if compiler.is_some() {
+                "rustc"
+            } else {
+                "forward"
+            });
+            capture_compiler_forwarder(&program, &log, label, compiler)?;
+        }
+        let selected_path = std::env::join_paths(
+            std::iter::once(control.join("selected")).chain(std::env::split_paths(&original_path)),
+        )
+        .map_err(|error| error.to_string())?
+        .into_string()
+        .map_err(|_non_utf8_path| "SETUP: selected PATH must be UTF-8".to_string())?;
+        let control_text = control
+            .to_str()
+            .ok_or_else(|| "SETUP: control path must be UTF-8".to_string())?;
+        let contrary = control.join("contrary/rustc");
+        let contrary_text = contrary
+            .to_str()
+            .ok_or_else(|| "SETUP: contrary path must be UTF-8".to_string())?;
+        let wrapper = control.join("wrapper/forward");
+        let wrapper_text = wrapper
+            .to_str()
+            .ok_or_else(|| "SETUP: wrapper path must be UTF-8".to_string())?;
+        let mut overlay = vec![
+            (MODE, mode),
+            (CONTROL, control_text),
+            (ORIGINAL_PATH, original_path.as_str()),
+            ("PATH", selected_path.as_str()),
+            ("TMPDIR", control_text),
+        ];
+        if mode == "child_selectors" {
+            overlay.extend([
+                ("RUSTC", contrary_text),
+                ("CARGO_BUILD_RUSTC", contrary_text),
+                ("RUSTC_WRAPPER", wrapper_text),
+                ("CARGO_BUILD_RUSTC_WRAPPER", wrapper_text),
+                ("RUSTC_WORKSPACE_WRAPPER", wrapper_text),
+                ("CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER", wrapper_text),
+            ]);
+        }
+        let attempted = crate::run::capture_bytes_in_dir_with_timeout(
+            &executable,
+            &[
+                "--exact".to_string(),
+                exact.clone(),
+                "--nocapture".to_string(),
+                "--test-threads=1".to_string(),
+            ],
+            &fixture.controller,
+            &overlay,
+            &[
+                MODE,
+                CONTROL,
+                ORIGINAL_PATH,
+                "RUSTC",
+                "CARGO_BUILD_RUSTC",
+                "RUSTC_WRAPPER",
+                "CARGO_BUILD_RUSTC_WRAPPER",
+                "RUSTC_WORKSPACE_WRAPPER",
+                "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
+                "CARGO_TARGET_DIR",
+                "GIT_DIR",
+                "GIT_WORK_TREE",
+                "GIT_INDEX_FILE",
+            ],
+            Duration::from_mins(5),
+            "4510 actual compiler adversarial child test",
+        );
+        let output = match attempted {
+            Ok(output) => output,
+            Err(error) => {
+                failures.push(format!(
+                    "INSTRUMENT: {mode} native child launch/capture failed: {error}"
+                ));
+                let observation =
+                    json!({"mode": mode, "native_status": null, "launcher_error": error});
+                eprintln!("4510 compiler child native disposition: {observation}");
+                outcomes.push(observation);
+                continue;
+            }
+        };
+        // Preserve child native output, including every retained-fixture line.
+        eprintln!(
+            "4510 compiler child {mode} stdout:\n{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        eprintln!(
+            "4510 compiler child {mode} stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let status = output.status.and_then(|status| status.code());
+        let observation =
+            json!({"mode": mode, "native_status": status, "timed_out": output.timed_out});
+        eprintln!("4510 compiler child native disposition: {observation}");
+        outcomes.push(observation);
+        if output.timed_out {
+            failures.push(format!("INSTRUMENT: {mode} native child deadline expired"));
+        } else if !output.status.is_some_and(|status| status.success()) {
+            let behavior = [&output.stderr, &output.stdout].iter().any(|stream| {
+                stream
+                    .windows(b"BEHAVIOR:".len())
+                    .any(|bytes| bytes == b"BEHAVIOR:")
+            });
+            failures.push(format!("{}: {mode} native child status {status:?}; retained stdout/stderr identify the exact failure",
+                if behavior { "BEHAVIOR" } else { "SETUP/INSTRUMENT" }));
+        } else if !output
+            .stderr
+            .windows(b"4510 actual compiler invocation/native observations:".len())
+            .any(|bytes| bytes == b"4510 actual compiler invocation/native observations:")
+        {
+            failures.push(format!("SETUP/INSTRUMENT: {mode} child exited zero without genuine install/native observations; an empty test selection is not qualification"));
+        }
+    }
+    eprintln!(
+        "4510 aggregate compiler child dispositions: {}",
+        json!(outcomes)
+    );
+    if !failures.is_empty() {
+        return Err(failures.join("; "));
+    }
+    fixture.guard.finish()
+}
+// 4510 independent proof: install compiler invocation controls end.

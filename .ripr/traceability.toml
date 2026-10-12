@@ -8407,6 +8407,7 @@ tests = [
   "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_partial_capture_cleans_only_its_observed_owned_object",
   "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_competing_capture_creators_leave_one_complete_witness",
   "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_bound_consumer_retains_failed_capture_root_and_cleans_success",
+  "xtask/src/policy/release_targets/candidate_registry/tests/source_fixture.rs::real_compiler_invocation_custody_pins_selected_command_against_overrides",
   "crates/ripr/src/agent/artifact.rs::tests::content_placeholder_is_fixed_width",
   "crates/ripr/src/agent/artifact.rs::tests::content_commitment_rejects_duplicate_fields",
   "crates/ripr/src/agent/artifact.rs::tests::content_commitment_rejects_non_hex_digest",
