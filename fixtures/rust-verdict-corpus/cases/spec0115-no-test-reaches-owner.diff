@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 1106c10..5bce9e2 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,7 +1,7 @@
+ //! RIPR-SPEC-0115 example 3: no test reaches the owner.
+ 
+ pub fn apply_fee(total: u32) -> u32 {
+-    total + 15
++    15 + total
+ }
+ 
+ pub fn currency() -> &'static str {
