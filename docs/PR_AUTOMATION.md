@@ -870,7 +870,7 @@ leaf scans invoke no Cargo build/test/Clippy children; `cargo xtask` still
 compiles the driver when needed. This is a local workflow improvement; existing
 precommit/check-fast behavior and hosted gate routing remain unchanged.
 
-[RIPR-SPEC-0252](specs/RIPR-SPEC-0252-local-collect-all-policy.md) maps this
+[RIPR-SPEC-0253](specs/RIPR-SPEC-0253-local-collect-all-policy.md) maps this
 command's five acceptance cases to its actual-driver tests and production owner.
 
 The precommit inventory is:

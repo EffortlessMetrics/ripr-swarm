@@ -1,4 +1,4 @@
-# RIPR-SPEC-0252: Local collect-all policy scans
+# RIPR-SPEC-0253: Local collect-all policy scans
 
 Status: accepted
 

@@ -65,7 +65,7 @@ worktree doctor` checks your working tree for common local hygiene issues
 (dirty `main`, stale branches, generated-artifact residue) before you start
 shaping a PR.
 
-For the local collect-all policy command, [RIPR-SPEC-0252](docs/specs/RIPR-SPEC-0252-local-collect-all-policy.md)
+For the local collect-all policy command, [RIPR-SPEC-0253](docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md)
 defines the selected checks and failure/report contract. Its five real-driver
 acceptance tests run with `cargo test -p xtask --test policy_all`.
 

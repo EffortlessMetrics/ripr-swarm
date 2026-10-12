@@ -14411,9 +14411,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0252"
+id = "RIPR-SPEC-0253"
 name = "local collect-all policy scans"
-spec = "docs/specs/RIPR-SPEC-0252-local-collect-all-policy.md"
+spec = "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md"
 tests = [
   "xtask/tests/policy_all.rs::policy_all_healthy_fixture_passes_with_original_leaf_reports",
   "xtask/tests/policy_all.rs::policy_all_reports_two_independent_violations_and_runs_later_leaves",
@@ -14429,7 +14429,7 @@ code = [
   "xtask/src/dispatch.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0252-local-collect-all-policy.md",
+  "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md",
   "docs/PR_AUTOMATION.md",
 ]
 metrics = ["unit_test_pass_rate"]
