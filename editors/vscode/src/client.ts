@@ -4454,6 +4454,20 @@ function validateActionableGapQueue(
             : 'producer did not mark every actionable packet safe for public projection'
         };
       }
+      if (!stringField(packetObject, 'canonical_gap_id')) {
+        return {
+          ...base,
+          state: 'blocked',
+          detail: 'actionable packet is missing canonical_gap_id'
+        };
+      }
+      if (!stringField(packetObject, 'verify_command') || !stringField(packetObject, 'receipt_command_or_path')) {
+        return {
+          ...base,
+          state: 'malformed',
+          detail: 'actionable packet is missing verify or receipt payload'
+        };
+      }
       topActionable ??= packetObject;
     } else if (packetIsStaticLimitOnly(packetObject)) {
       staticLimitOnlyGaps += 1;
@@ -4505,20 +4519,6 @@ function validateActionableGapQueue(
   const verifyCommand = stringField(topActionable, 'verify_command');
   const receiptCommandOrPath = stringField(topActionable, 'receipt_command_or_path');
   const canonicalGapId = stringField(topActionable, 'canonical_gap_id');
-  if (!canonicalGapId) {
-    return {
-      ...base,
-      state: 'blocked',
-      detail: 'actionable packet is missing canonical_gap_id'
-    };
-  }
-  if (!verifyCommand || !receiptCommandOrPath) {
-    return {
-      ...base,
-      state: 'malformed',
-      detail: 'actionable packet is missing verify or receipt payload'
-    };
-  }
   return {
     ...base,
     state: 'topActionableGap',
