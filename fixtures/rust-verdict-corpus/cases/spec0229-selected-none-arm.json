@@ -1,0 +1,48 @@
+{
+  "case_id": "spec0229-selected-none-arm",
+  "subject_id": "authored-spec0229-2",
+  "diff": "cases/spec0229-selected-none-arm.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "match_arm",
+  "test_shape": "integration_test_input_selects_changed_arm",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "None => 0,",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "none_reads_the_none_arm",
+        "equivalence_review": "the edit itself: reason(None) returns 0 instead of 1"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "tests/it.rs pins reason(None) to 1 on the unedited crate; None selects the changed arm and the exact assert_eq! fails on the edit. The spec states the test as assert_eq!(reason(None), 0) against the post-edit source; a behavior_change subject must pass its own tests before the edit, so the stored test pins the pre-edit value 1, the same selecting call and exact oracle. Spec cells: RIPR-SPEC-0229 example 2. ripr reads exposed on the match arm: reason(None) provably selects the changed arm under an exact assert_eq!, as the example requires.",
+  "labeling_observation": {
+    "ripr_commit": "dd5a66b5",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0229#2"
+  ]
+}
