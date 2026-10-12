@@ -1,0 +1,44 @@
+{
+  "case_id": "mocha-label-throw-second-replaced-line",
+  "subject_id": "authored-ts-mocha-ledger",
+  "diff": "cases/mocha-label-throw-second-replaced-line.diff",
+  "anchor": {
+    "file": "src/label.ts",
+    "line": 5
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_path",
+  "test_shape": "mocha_chai_expect_to_throw_message_substring",
+  "hard_case": "the message-only `throw` change is the second line of a two-line replacement, so the old line must be paired by position inside the run, not by the run's shared new-side coordinate (#7524).",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx mocha",
+    "toolchain": "node 22.22.0; mocha 12.0.3; chai 6.3.0; tsx 4.23.15 (tsx/cjs via .mocharc.json); typescript 5.9; edit applied by hand and `npx mocha` run on the whole package",
+    "mutants": [
+      {
+        "replacement": "throw new Error(\"label is blank\");",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the thrown message changes from \"label must not be blank\" to \"label is blank\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "A comment line and the `throw` line below it are replaced together; only the message literal of the `throw` changes, from \"label must not be blank\" to \"label is blank\". The test asserts `expect(() => parseLabel(\"  \")).to.throw(\"blank\")`, a substring check that both messages satisfy, so the edited package's tests still pass. RIPR-SPEC-0243 rule 4 (example 14's broad half): a payload that passes on both versions is broad_error/weak, so the change is a gap. Reported in #7524.",
+  "labeling_observation": {
+    "ripr_commit": "29fa4ce",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}
