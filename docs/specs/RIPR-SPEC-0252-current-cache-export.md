@@ -14,6 +14,13 @@ analysis coverage, evidence classes or support tiers.
 Policy impact: none. No dependencies, process spawns, network, workflow or
 security-policy changes.
 
+## Problem
+
+Copying a live cache carries historical workspace keys, old per-file content
+keys and unreferenced shard generations into every restored snapshot. A caller
+cannot safely select current entries by interpreting the producer's private
+formats. The producer needs a read-only export using its ordinary key authority.
+
 ## Behavior
 
 `ripr cache export [--root PATH] --out NEW_DIRECTORY` copies a restorable current
@@ -59,7 +66,7 @@ not an atomically published shared cache. Restore a completed directory through
 input identity. Omitted fingerprint mappings cost a source hash pass, not loss
 of eligible classified/fact reuse.
 
-## Proof and limits
+## Required Evidence
 
 The public command regression changes a Rust predicate three times, requires two
 current entries at each export, and checks unchanged source paths and bytes.
@@ -74,3 +81,52 @@ bounds historical membership, not total bytes, process memory or runtime. Full
 loader decoding remains unchanged; its read-side bound belongs to #5124. This
 contract authorizes neither shared live-cache maintenance, release publication
 nor a consumer's private-format pruning.
+
+## Non-Goals
+
+This command does not collect live-cache garbage, enforce a fixed byte or memory
+limit, change analysis coverage, publish a shared cache atomically, protect
+against hostile directory replacement, or change releases and dependencies.
+
+## Acceptance Examples
+
+- After three predicate revisions, export retains the current classified entry
+  and file fact while the live source retains historical entries unchanged.
+- A sharded current entry retains its manifest and every listed shard, while an
+  unreferenced generation and a historical workspace key are excluded.
+- A missing referenced shard, corrupt present fact, linked path, overlapping
+  output or existing destination refuses success; the caller cannot restore a
+  partial result as a successful snapshot.
+- Restoring completed output through `RIPR_CACHE_DIR` under the same root and
+  input/build identity preserves ordinary analysis output and eligible cache hits.
+
+## Test Mapping
+
+- `cli::commands::cache::tests::export_current_snapshot_through_command_preserves_source_and_bounds_history`
+  covers current selection, source-byte preservation and output guards.
+- `cli::commands::cache::tests::export_preserves_relative_analysis_root_identity`
+  binds the ordinary relative-root key rather than a canonicalized substitute.
+- `cli::commands::cache::tests::export_parser_requires_one_destination_and_keeps_its_flags_separate`
+  covers the public argument boundary.
+- `analysis::seam_cache::export::tests::snapshot_keeps_current_manifest_references_and_file_facts_without_history`
+  covers both classified families, shard references and historical exclusion.
+- `analysis::seam_cache::export::tests::snapshot_refuses_missing_corrupt_wrong_key_and_escaping_shards`
+  and `snapshot_counts_missing_optional_facts_and_refuses_corrupt_present_facts`
+  cover copied-byte validation and optional-fact accounting.
+
+## Implementation Mapping
+
+- `crates/ripr/src/analysis/seam_inventory.rs::current_cache_keys_at` reuses the
+  ordinary corpus/workspace/per-file key builders without fingerprint writes.
+- `crates/ripr/src/analysis/seam_cache/export.rs::export_current` owns confinement,
+  selection, independent copying, loader validation and the final identity check.
+- `crates/ripr/src/cli/commands/cache.rs` owns argument parsing and success JSON.
+- `docs/OUTPUT_SCHEMA.md` defines logical-byte and entry-count report semantics.
+
+## Metrics
+
+Report copied files, present and absent file facts, classified families and
+logical encoded file bytes. Qualification records inode-deduplicated allocated
+bytes including directories, sampled peak, retained state and elapsed time for
+each named workflow. These are workload measurements, not universal growth
+bounds; export staging and retained snapshot size are distinct scopes.
