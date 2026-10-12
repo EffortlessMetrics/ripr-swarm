@@ -23,7 +23,7 @@ The page is generated. A unit test that CI requires fails when the page no longe
 
 ## Scoreboard
 
-43 bars. ripr meets 15, is below the bar on 23, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
+46 bars. ripr meets 16, is below the bar on 25, and has not measured 5. Bold values miss their bar. A comparable trend shows the baseline revision and prior value it compares. A cross-class trend shows the earlier runner class and, when available, its prior value; it does not compare measurements. A measured row with no earlier measurement is a first measurement. Corpus and ranking rows come from those lanes' own baselines when the scoreboard receipt did not ingest them.
 
 | Board | Bar | Now | Target | Status | Trend |
 | --- | --- | --- | --- | --- | --- |
@@ -47,6 +47,9 @@ The page is generated. A unit test that CI requires fails when the page no longe
 | Trust | Authored TypeScript edits the project's tests fully catch that ripr still flags as a gap | **14.5%** | <= 5.0% | below the bar | no earlier measurement |
 | Trust | Authored TypeScript edits the project's tests miss that ripr credits as caught | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
 | Trust | Authored TypeScript edits the project's tests miss that ripr reports as fine | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
+| Trust | Authored Python edits the project's tests fully catch that ripr still flags as a gap | **46.9%** | <= 5.0% | below the bar | no earlier measurement |
+| Trust | Authored Python edits the project's tests miss that ripr credits as caught | **20.7%** | <= 0.0% | below the bar | no earlier measurement |
+| Trust | Authored Python edits the project's tests miss that ripr reports as fine | 0.0% | <= 0.0% | meets the bar | no earlier measurement |
 | Trust | When ripr pilot ranks a seam in its top ten, a real mutant there is missed | not measured | >= 60.0% | not measured | no earlier measurement |
 | Trust | Real mutants that join a ripr seam precisely (join coverage; 37 of 1745 enter an agreement rate) | **10.0%** | >= 50.0% | below the bar | first receipt (mutation spot check) |
 | Trust | False actionable rate on the Rust judged behavior panel | not measured | <= 0.0% | not measured | no earlier measurement |
