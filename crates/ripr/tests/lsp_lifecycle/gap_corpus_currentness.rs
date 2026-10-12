@@ -419,29 +419,29 @@ fn selected_rerun(root: &Path, ledger: &Value, label: &str) -> ProofResult<Value
 
 #[derive(Clone, Copy)]
 enum CorpusMutation {
-    AddEqualityTest,
-    EditUnclaimedTest,
-    DeleteUnclaimedTest,
+    AddEquality,
+    EditUnclaimed,
+    DeleteUnclaimed,
 }
 
 impl CorpusMutation {
     fn label(self) -> &'static str {
         match self {
-            Self::AddEqualityTest => "added-test",
-            Self::EditUnclaimedTest => "changed-test",
-            Self::DeleteUnclaimedTest => "deleted-test",
+            Self::AddEquality => "added-test",
+            Self::EditUnclaimed => "changed-test",
+            Self::DeleteUnclaimed => "deleted-test",
         }
     }
 
     fn apply(self, root: &Path) -> ProofResult {
         match self {
-            Self::AddEqualityTest => {
+            Self::AddEquality => {
                 std::fs::write(root.join("tests/new_boundary.rs"), EQUALITY_TEST)
             }
-            Self::EditUnclaimedTest => {
+            Self::EditUnclaimed => {
                 std::fs::write(root.join("tests/corpus_control.rs"), CORPUS_CONTROL_EDITED)
             }
-            Self::DeleteUnclaimedTest => std::fs::remove_file(root.join("tests/corpus_control.rs")),
+            Self::DeleteUnclaimed => std::fs::remove_file(root.join("tests/corpus_control.rs")),
         }
         .map_err(|error| error.to_string())
     }
@@ -556,8 +556,8 @@ fn corpus_mutation_contract(mutation: CorpusMutation, stale_kind: &str) -> Proof
     // passive freshness condition may erase the still-useful selector.
     let current = selected_rerun(root, &original, "historical")?;
     let expected_class = match mutation {
-        CorpusMutation::AddEqualityTest => "strongly_gripped",
-        CorpusMutation::EditUnclaimedTest | CorpusMutation::DeleteUnclaimedTest => "weakly_gripped",
+        CorpusMutation::AddEquality => "strongly_gripped",
+        CorpusMutation::EditUnclaimed | CorpusMutation::DeleteUnclaimed => "weakly_gripped",
     };
     require(
         current["seams"][0]["static_class"] == expected_class,
@@ -578,7 +578,7 @@ fn corpus_mutation_contract(mutation: CorpusMutation, stale_kind: &str) -> Proof
     install(root, &fresh)?;
     let recovered = framed_status(root)?;
     match mutation {
-        CorpusMutation::AddEqualityTest => {
+        CorpusMutation::AddEquality => {
             require(
                 fresh["summary"]["records_total"] == 1
                     && fresh["summary"]["repairable_total"] == 0
@@ -592,7 +592,7 @@ fn corpus_mutation_contract(mutation: CorpusMutation, stale_kind: &str) -> Proof
             )?;
             assert_current_no_action(&recovered)
         }
-        CorpusMutation::EditUnclaimedTest | CorpusMutation::DeleteUnclaimedTest => {
+        CorpusMutation::EditUnclaimed | CorpusMutation::DeleteUnclaimed => {
             assert_capture_is_actionable(&fresh_capture, &fresh)?;
             assert_current_action(&recovered)
         }
@@ -601,17 +601,17 @@ fn corpus_mutation_contract(mutation: CorpusMutation, stale_kind: &str) -> Proof
 
 #[test]
 fn passive_corpus_rejects_added_test_at_same_head_and_recovers() -> ProofResult {
-    corpus_mutation_contract(CorpusMutation::AddEqualityTest, "stale_corpus")
+    corpus_mutation_contract(CorpusMutation::AddEquality, "stale_corpus")
 }
 
 #[test]
 fn passive_corpus_rejects_changed_unclaimed_test_at_same_head_and_recovers() -> ProofResult {
-    corpus_mutation_contract(CorpusMutation::EditUnclaimedTest, "stale_corpus")
+    corpus_mutation_contract(CorpusMutation::EditUnclaimed, "stale_corpus")
 }
 
 #[test]
 fn passive_corpus_rejects_deleted_unclaimed_test_at_same_head_and_recovers() -> ProofResult {
-    corpus_mutation_contract(CorpusMutation::DeleteUnclaimedTest, "stale_corpus")
+    corpus_mutation_contract(CorpusMutation::DeleteUnclaimed, "stale_corpus")
 }
 
 fn captured_corpus(captured: &Value) -> ProofResult<&Value> {
@@ -845,7 +845,7 @@ fn delayed_ledger_derivation_copies_the_analysis_corpus_before_workspace_edit() 
     let captured_subject = captured_corpus(&captured)?.clone();
     cache_corpus_authority(root, &captured_subject)?;
     let initial_head = head(root)?;
-    CorpusMutation::EditUnclaimedTest.apply(root)?;
+    CorpusMutation::EditUnclaimed.apply(root)?;
     require(head(root)? == initial_head, || {
         "delayed derivation stimulus changed actual HEAD".into()
     })?;
@@ -901,7 +901,7 @@ fn active_absolute_legacy_gap_selector_remains_useful_after_corpus_edits() -> Pr
             )
         },
     )?;
-    CorpusMutation::AddEqualityTest.apply(root)?;
+    CorpusMutation::AddEquality.apply(root)?;
     assert_original_named_bytes(root, &original)?;
     require(head(root)? == original_head, || {
         "active legacy edit control changed actual HEAD".into()
@@ -1560,7 +1560,7 @@ fn assert_all_captured_named_bytes(root: &Path, ledger: &Value) -> ProofResult {
 fn passive_nonempty_no_action_rust_ledger_still_requires_current_corpus() -> ProofResult {
     let fixture = CorpusFixture::new("corpus-no-action-stale")?;
     let root = fixture.root();
-    CorpusMutation::AddEqualityTest.apply(root)?;
+    CorpusMutation::AddEquality.apply(root)?;
     let captured = capture(root)?;
     let old = derive(root, &captured, "already-observed")?;
     require(
@@ -1601,7 +1601,7 @@ fn passive_nonempty_no_action_rust_ledger_still_requires_current_corpus() -> Pro
     let old_head = head(root)?;
     let old_bytes = std::fs::read(root.join("target/ripr/reports/gap-decision-ledger.json"))
         .map_err(|error| error.to_string())?;
-    CorpusMutation::EditUnclaimedTest.apply(root)?;
+    CorpusMutation::EditUnclaimed.apply(root)?;
     require(head(root)? == old_head, || {
         "no-action corpus edit changed HEAD".into()
     })?;
@@ -1722,7 +1722,7 @@ fn gap_commands_recheck_rust_corpus_without_a_refresh_or_document_notification()
             || format!("initial repair command must return its real useful route: {repair}"),
         )?;
         let old_head = head(root)?;
-        CorpusMutation::EditUnclaimedTest.apply(root)?;
+        CorpusMutation::EditUnclaimed.apply(root)?;
         require(head(root)? == old_head, || {
             "command-time edit changed HEAD".into()
         })?;
