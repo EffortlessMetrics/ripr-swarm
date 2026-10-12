@@ -1509,8 +1509,20 @@ fn doctor_tool_unavailable_evidence(tool: &str) -> String {
     }
 }
 
+/// Wait/pipe-reader failure after the probe started. Cargo and rustc must not
+/// reuse the missing-tool sentence: source-build projection would then name
+/// an install route for a tool that may already be running. Git keeps the
+/// pre-existing `{tool} not available` message.
+fn doctor_wait_failure_evidence(tool: &str) -> String {
+    if RUST_TOOLCHAIN_TOOLS.contains(&tool) {
+        format!("{tool} could not be waited on")
+    } else {
+        rust_toolchain_missing_state(tool)
+    }
+}
+
 /// Source-build projection of a failed cargo/rustc check. Only the missing-tool
-/// state gets the install route; timeout, below-minimum, path-pin, and
+/// state gets the install route; timeout, below-minimum, path-pin, wait, and
 /// launch-failure evidence already name their own fix.
 fn source_build_toolchain_failure_evidence(tool: &str, evidence: &str) -> String {
     if evidence == rust_toolchain_missing_state(tool) {
@@ -1535,7 +1547,9 @@ fn analysis_advisory_toolchain_evidence(tool: &str, evidence: &str) -> String {
         return evidence.to_string();
     }
     let missing_state = rust_toolchain_missing_state(tool);
-    let evidence = if evidence == rust_toolchain_missing_with_install_fix(tool) {
+    let evidence = if evidence == rust_toolchain_missing_with_install_fix(tool)
+        || evidence == doctor_wait_failure_evidence(tool)
+    {
         missing_state.as_str()
     } else {
         evidence
@@ -1605,11 +1619,7 @@ fn doctor_tool_run_result(
         }
         Err(DoctorToolRunError::Spawn(kind)) => doctor_spawn_failure(tool, kind),
         Err(DoctorToolRunError::Wait) => {
-            // Wait/pipe-reader failure is not a missing-tool diagnosis: cargo
-            // or rustc may already have started. Keep the pre-existing
-            // `{tool} not available` sentence and reserve the install route
-            // for spawn-not-found and the source-build missing-tool projection.
-            DoctorToolCheckResult::failure(format!("{tool} not available"))
+            DoctorToolCheckResult::failure(doctor_wait_failure_evidence(tool))
         }
     }
 }
@@ -3105,23 +3115,83 @@ mod tests {
     }
 
     #[test]
-    fn doctor_wait_failure_uses_the_missing_tool_evidence() {
+    fn doctor_wait_failure_stays_off_the_source_build_install_route() -> Result<(), String> {
         let cargo_wait =
             doctor_tool_run_result("cargo", DOCTOR_TOOL_TIMEOUT, Err(DoctorToolRunError::Wait));
-        assert_eq!(cargo_wait.evidence, "cargo not available");
-        assert!(
-            !cargo_wait.evidence.contains("https://rustup.rs"),
-            "a wait failure must not name the missing-tool install route: {}",
-            cargo_wait.evidence
-        );
+        if cargo_wait.evidence != doctor_wait_failure_evidence("cargo")
+            || cargo_wait.evidence == rust_toolchain_missing_state("cargo")
+            || cargo_wait.evidence.contains("https://rustup.rs")
+        {
+            return Err(format!(
+                "cargo wait must be distinct from missing-tool evidence: {:?}",
+                cargo_wait.evidence
+            ));
+        }
+        let projected = source_build_toolchain_failure_evidence("cargo", &cargo_wait.evidence);
+        if projected != cargo_wait.evidence || projected.contains("https://rustup.rs") {
+            return Err(format!(
+                "source-build projection must not add an install route to wait evidence: {projected:?}"
+            ));
+        }
+        let analysis = analysis_advisory_toolchain_evidence("cargo", &cargo_wait.evidence);
+        let analysis_missing =
+            analysis_advisory_toolchain_evidence("cargo", &rust_toolchain_missing_state("cargo"));
+        if analysis != analysis_missing || analysis.contains("https://rustup.rs") {
+            return Err(format!(
+                "analysis wrapping of cargo wait must keep the missing-tool advisory: {analysis:?}"
+            ));
+        }
         let git_wait =
             doctor_tool_run_result("git", DOCTOR_TOOL_TIMEOUT, Err(DoctorToolRunError::Wait));
-        assert_eq!(git_wait.evidence, "git not available");
-        assert!(
-            !git_wait.evidence.contains("https://rustup.rs"),
-            "git wait must not inherit the Rust install route: {}",
-            git_wait.evidence
-        );
+        if git_wait.evidence != "git not available"
+            || git_wait.evidence.contains("https://rustup.rs")
+        {
+            return Err(format!(
+                "git wait must keep the pre-existing message: {:?}",
+                git_wait.evidence
+            ));
+        }
+
+        let root = doctor_scope_root(
+            "scope-source-build-wait",
+            &[
+                ("Cargo.toml", "[package]\nname = \"probe\"\n"),
+                ("src/lib.rs", "pub fn f() {}\n"),
+            ],
+        )?;
+        let wait_probe = |tool: &str, _root: &Path| {
+            if tool == "git" {
+                (DoctorStatus::Pass, "git version 2.43.0".to_string())
+            } else {
+                (DoctorStatus::Fail, doctor_wait_failure_evidence(tool))
+            }
+        };
+        let waited = evaluate_doctor_core_with_probe_for_profile(
+            &root,
+            &[LanguageId::Rust],
+            DoctorProfile::SourceBuild,
+            &wait_probe,
+        )
+        .report;
+        let _ = std::fs::remove_dir_all(&root);
+        let cargo = check(&waited, "tool_cargo")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        let rustc = check(&waited, "tool_rustc")?
+            .evidence
+            .clone()
+            .unwrap_or_default();
+        if cargo != doctor_wait_failure_evidence("cargo")
+            || rustc != doctor_wait_failure_evidence("rustc")
+            || cargo.contains("https://rustup.rs")
+            || rustc.contains("https://rustup.rs")
+        {
+            return Err(format!(
+                "source-build projected wait checks must not name the install route: {cargo:?} / {rustc:?}"
+            ));
+        }
+        Ok(())
     }
 
     /// PR #4196 review: `cargo` resolves through rustup's per-directory
