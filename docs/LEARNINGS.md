@@ -11,6 +11,7 @@ complete run, a human or `ripr agent status --root` can read last run's seams as
 this run. Remove those unwritten siblings on timeout; do not mark them stale
 in-place. `outputs` stays the packet path map so schema `0.3` is unchanged;
 `outputs_written` remains the authority for what this run produced.
+
 ## 2026-10-12: Implicit `check` skips a closer `ripr.toml` after the root move (#7468)
 
 Config discovery walks ancestors of the *selected analysis root*, not of the
