@@ -95,7 +95,10 @@ these hold:
 - the literal that directly holds the changed line opens right after that
   `return` and closes with `}` followed by `;` or by the owner's own `}`,
   so it is the whole returned value (`return { ... }.adult` fails);
-- no other entry of that literal is a spread or sets `key` again;
+- every top-level entry of that literal, the changed line's own included,
+  is a plain `name: value`, shorthand `name` or method `name()`, and
+  exactly one names `key` (a quoted or computed key, a spread, an accessor
+  or a second `key` entry fails);
 - `o` lists `key` at its top level.
 
 ### Decisions
@@ -155,8 +158,9 @@ documented decisions and proceed"). Recorded on #6654.
 5. As example 1 with a non-literal argument (`toMatchObject(expected)`) or
    `.rejects.toMatchObject(...)`: not `exposed`.
 6. As example 1 with a second `return`, the field in a nested literal, a
-   spread or a later `adult:` in the literal, or `return { ... }.adult`:
-   rule 1 reads no pin.
+   spread, a later `adult:`, `"adult":` or `["adult"]:` entry (on its
+   own line, after another entry, or on the changed line), an accessor,
+   or `return { ... }.adult`: rule 1 reads no pin.
 
 ## Test Mapping
 

@@ -110,30 +110,68 @@ pub(crate) fn ts_owner_returned_field_key(owner_source: &str, line_text: &str) -
     {
         return None;
     }
-    let close_line = matching_close_brace(&lines, open_line, open_column)?;
-    // Another top-level entry of the literal could set `key` again.
-    for (index, line) in lines
-        .iter()
-        .enumerate()
-        .take(close_line)
-        .skip(open_line + 1)
-    {
-        if index == changed {
+    let (close_line, close_column) = matching_close_brace(&lines, open_line, open_column)?;
+    // Every top-level entry of the literal, the changed line's own included,
+    // must be a plain `name: value`, `name,` or `name()` entry, and exactly
+    // one may name `key`: a quoted, computed or numeric key, a spread or an
+    // accessor could set `key` again where this scan cannot see it.
+    let kept = ts_mask_literals_and_comments(owner_source);
+    let kept_lines: Vec<&str> = kept.lines().collect();
+    if kept_lines.len() != lines.len() {
+        return None;
+    }
+    let mut literal = String::new();
+    for index in open_line..=close_line {
+        let line = kept_lines[index];
+        let start = if index == open_line {
+            open_column + 1
+        } else {
+            0
+        };
+        let end = if index == close_line {
+            close_column
+        } else {
+            line.len()
+        };
+        literal.push_str(line.get(start..end)?);
+        literal.push('\n');
+    }
+    let mut named = 0usize;
+    for entry in top_level_entries(&literal) {
+        let entry = entry.trim();
+        if entry.is_empty() {
             continue;
         }
-        let entry = line.trim();
-        if entry.contains("...")
-            || leading_identifier(entry).is_some_and(|other| {
-                other == key
-                    && entry[other.len()..]
-                        .trim_start()
-                        .starts_with([':', ',', '('])
-            })
-        {
-            return None;
+        let name = leading_identifier(entry)?;
+        let after = entry[name.len()..].trim_start();
+        if !(after.is_empty() || after.starts_with([':', '('])) {
+            return None; // `get adult()`, `async adult()`, `adult?:`
+        }
+        if name == key {
+            named += 1;
         }
     }
-    Some(key.to_string())
+    (named == 1).then(|| key.to_string())
+}
+
+/// The entries of an object literal's body, split at its top-level commas.
+fn top_level_entries(literal: &str) -> Vec<&str> {
+    let mut entries = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0;
+    for (index, c) in literal.char_indices() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                entries.push(&literal[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    entries.push(&literal[start..]);
+    entries
 }
 
 /// The line and column of the `{` that opens the literal holding line
@@ -154,10 +192,14 @@ fn enclosing_open_brace(lines: &[&str], changed: usize) -> Option<(usize, usize)
     None
 }
 
-/// The line of the `}` that closes the `{` at (`open_line`, `open_column`)
+/// The line and column of the `}` that closes the `{` at (`open_line`, `open_column`)
 /// when only `;` follows it there, or nothing follows and the next line
 /// closes the owner.
-fn matching_close_brace(lines: &[&str], open_line: usize, open_column: usize) -> Option<usize> {
+fn matching_close_brace(
+    lines: &[&str],
+    open_line: usize,
+    open_column: usize,
+) -> Option<(usize, usize)> {
     let mut depth = 0usize;
     for (index, line) in lines.iter().enumerate().skip(open_line) {
         let start = if index == open_line { open_column } else { 0 };
@@ -175,7 +217,7 @@ fn matching_close_brace(lines: &[&str], open_line: usize, open_column: usize) ->
                                 .is_some_and(|next| next.trim().starts_with('}'))
                         };
                         return (after == ";" || (after.is_empty() && closes_owner()))
-                            .then_some(index);
+                            .then_some((index, start + column));
                     }
                 }
                 _ => {}

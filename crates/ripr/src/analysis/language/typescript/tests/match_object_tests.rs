@@ -53,6 +53,39 @@ fn returned_field_key_reads_only_a_top_level_field_of_the_one_returned_literal()
             FIELD_OLD,
         ),
         (
+            "a later quoted key",
+            PROFILE.replace("    tags:", "    \"adult\": false,\n    tags:"),
+            FIELD_OLD,
+        ),
+        (
+            "a later computed key",
+            PROFILE.replace("    tags:", "    [\"adult\"]: false,\n    tags:"),
+            FIELD_OLD,
+        ),
+        (
+            "a second entry on the changed line",
+            PROFILE.replace(FIELD_OLD, "    adult: age >= 18, adult: true,"),
+            "    adult: age >= 18, adult: true,",
+        ),
+        (
+            "a spread on the changed line",
+            PROFILE.replace(FIELD_OLD, "    adult: age >= 18, ...overrides,"),
+            "    adult: age >= 18, ...overrides,",
+        ),
+        (
+            "a duplicate after another entry on a later line",
+            PROFILE.replace("    tags:", "    id: 1, adult: true,\n    tags:"),
+            FIELD_OLD,
+        ),
+        (
+            "an accessor",
+            PROFILE.replace(
+                "    tags:",
+                "    get adult() {\n      return true;\n    },\n    tags:",
+            ),
+            FIELD_OLD,
+        ),
+        (
             "a member read after the literal",
             PROFILE.replace("  };\n", "  }.adult;\n"),
             FIELD_OLD,
