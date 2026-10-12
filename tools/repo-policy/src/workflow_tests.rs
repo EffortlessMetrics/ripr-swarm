@@ -1,6 +1,27 @@
 use super::*;
 
 #[test]
+fn automatic_pr_plan_placeholder_is_retired() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let workflow = ".github/workflows/pr-plan.yml";
+    assert!(
+        !root
+            .join(workflow)
+            .try_exists()
+            .map_err(|e| e.to_string())?,
+        "the retired PR Plan placeholder must not spend automatic runners"
+    );
+    let allowance = root.join("policy/workflow_allowlist.txt");
+    let text = fs::read_to_string(&allowance).map_err(|e| e.to_string())?;
+    let budgets = parse_workflow_budgets("policy/workflow_allowlist.txt", &text)?;
+    assert!(
+        budgets.iter().all(|budget| budget.path != workflow),
+        "the retired PR Plan placeholder must not retain a workflow allowance"
+    );
+    Ok(())
+}
+
+#[test]
 fn workflow_run_extraction_handles_step_shorthand_and_blocks() {
     let workflow = r#"
 jobs:

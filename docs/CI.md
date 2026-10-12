@@ -171,8 +171,8 @@ Every CI-efficiency PR should show evidence appropriate to the edited surface:
 
 ### PR Planning
 
-Every pull request should eventually get a cheap CI forecast before heavier
-lanes run. The planned `target/ci/ci-plan.json` artifact should record:
+A future CI forecast must establish qualification decision value before it
+earns automatic execution. The planned `target/ci/ci-plan.json` artifact should record:
 
 - changed files;
 - detected risk packs;
@@ -193,13 +193,13 @@ PR Plan
 - To run all: add full-ci
 ```
 
-The active PR Plan workflow is structural advisory today: it runs on opened,
-synchronized, reopened, labeled, and unlabeled pull requests, writes the
-changed-file list locally, and writes a placeholder step summary. To avoid
-routine artifact churn, it uploads the changed-file list only on failure or
-when the PR is labeled `full-ci`. Until the numeric planner exists, authors
-should still fill the PR template's CI economics section for CI-affecting
-changes.
+The automatic PR Plan placeholder is retired under #4987. It had no decision
+output or downstream qualification consumer. Its changed-file and ledger-presence
+diagnostic remains an optional [local recipe](ci/pr-plan.md#local-advisory-diagnostic).
+Candidate shaping uses the existing `pr-ready`, `check-fast`, `precommit`, and
+`check-pr` owners; no planner or new Ready advisory lane is installed.
+`cargo xtask ci plan` and the numeric forecast remain planned. Authors should
+still fill the PR template's CI economics section for CI-affecting changes.
 
 ### Risk Packs
 
@@ -253,7 +253,7 @@ artifacts are grouped by family:
 
 | Family | Expected paths |
 | --- | --- |
-| `ci-plan` | `target/ripr/reports/pr-plan-changes.txt`, `target/ci/ci-plan.json`, `target/ci/ci-actuals.json` |
+| `ci-plan` | `target/ci/ci-plan.json`, `target/ci/ci-actuals.json` (planned) |
 | `ripr-evidence` | `target/ripr/reports/index.md`, `target/ripr/reports/repo-exposure.json`, `target/ripr/reports/repo-sarif.json` |
 | `editor-agent-loop` | `target/ripr/reports/operator-cockpit.{json,md}`, `target/ripr/reports/agent-receipt.json`, `target/ripr/workflow/agent-seam-packets.json`, `target/ripr/workflow/workflow.json`, `target/ripr/workflow/commands.md`, `target/ripr/workflow/agent-status.{json,md}`, `target/ripr/workflow/agent-review-summary.{json,md}`, `target/ripr/workflow/agent-packet.json`, `target/ripr/workflow/agent-brief.json`, `target/ripr/workflow/agent-verify.json`, plus compatibility copies under `target/ripr/agent/` |
 | `release-readiness` | package lists, publish dry-run transcript, VSIX package proof, server archive proof |
@@ -279,8 +279,8 @@ Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) when watching a
 specific PR through hosted checks, branch freshness, Droid/advisory status, and
 merge execution.
 
-The `pr-plan-changes.txt` file is the current structural advisory artifact;
-the `target/ci/ci-plan.json` forecast remains planned. The `editor-agent-loop`
+PR Plan has no hosted artifact producer after retirement; the optional local
+diagnostic is not a qualification artifact. The `editor-agent-loop`
 paths reflect the current split between the local bulk packet envelope
 (`agent-seam-packets.json`) and generated CI's focused agent artifacts under
 `target/ripr/agent/`.
@@ -1025,7 +1025,6 @@ EM self-hosted runners.
 | `security.yml` `cargo-deny` | `em-ci-tiny` | `rust-tiny` |
 | `source-of-truth.yml`, `badge-endpoints.yml` | `em-ci-tiny` | `rust-tiny` |
 | `security.yml` `dependency-review` | `em-ci-nano` | `policy-nano` |
-| `pr-plan.yml` | `em-ci-nano` | `workflow-nano` |
 | `droid-review`, `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
 
 All self-hosted lanes carry the `trusted-pr` label and keep their existing
