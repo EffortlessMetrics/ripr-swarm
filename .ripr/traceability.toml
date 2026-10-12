@@ -14499,3 +14499,27 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0253"
+name = "local collect-all policy scans"
+spec = "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md"
+tests = [
+  "xtask/tests/policy_all.rs::policy_all_healthy_fixture_passes_with_original_leaf_reports",
+  "xtask/tests/policy_all.rs::policy_all_reports_two_independent_violations_and_runs_later_leaves",
+  "xtask/tests/policy_all.rs::policy_all_keeps_early_io_error_and_does_not_trust_stale_leaf_report",
+  "xtask/tests/policy_all.rs::policy_all_report_write_error_preserves_leaf_failures",
+  "xtask/tests/policy_all.rs::policy_all_healthy_leaves_still_fail_when_aggregate_report_cannot_be_written",
+]
+fixtures = []
+code = [
+  "xtask/src/policy/all.rs::check_policy_all",
+  "xtask/src/policy/mod.rs",
+  "xtask/src/command.rs",
+  "xtask/src/dispatch.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md",
+  "docs/PR_AUTOMATION.md",
+]
+metrics = ["unit_test_pass_rate"]
