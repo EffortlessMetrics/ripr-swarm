@@ -18970,7 +18970,7 @@ fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_sour
     let artifact_arg = artifact.display().to_string();
     let selector = SAMPLE_DIFF_SELECTOR;
 
-    let result = (|| {
+    (|| {
         let check = run_ripr(&[
             "check",
             "--root",
@@ -19076,8 +19076,7 @@ fn check_write_artifact_then_explain_and_context_reuse_preserves_detail_and_sour
             "fresh/reused detail oracle accepted a changed recorded discriminator"
         );
         Ok(())
-    })();
-    result
+    })()
 }
 
 /// RIPR-SPEC-0140: a `context --from` packet equals the fresh `--diff` packet
