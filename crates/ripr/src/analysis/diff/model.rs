@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 #[derive(Clone, Debug, Default)]
@@ -38,35 +39,66 @@ pub struct ChangedLine {
 
 impl ChangedFile {
     /// The removed line this added line replaced, paired by position inside
-    /// one replacement block. The diff parser gives every removed line of a
-    /// block the new-side coordinate where the block's added run starts, so
-    /// the k-th added line pairs with the k-th removed line when both runs
-    /// have the same length. Unequal runs pair nothing: a guessed pairing
-    /// could compare an added line against the wrong old line.
+    /// one replacement block. See [`Self::replacement_counterparts`]; a
+    /// caller visiting every added line of a file should build that map once
+    /// instead.
     pub(crate) fn replaced_line_counterpart(
         &self,
         added_new_side_line: usize,
     ) -> Option<&ChangedLine> {
-        let run_start = self.added_run_start(added_new_side_line);
-        let mut run_len = 0usize;
-        while self
-            .added_lines
-            .iter()
-            .any(|line| line.new_side_line == run_start + run_len)
-        {
-            run_len += 1;
-        }
-        let removed = self
-            .removed_lines
-            .iter()
-            .filter(|line| line.new_side_line == run_start)
-            .collect::<Vec<_>>();
-        if removed.len() != run_len {
+        if self.removed_lines.is_empty() {
             return None;
         }
-        removed
-            .get(added_new_side_line.checked_sub(run_start)?)
+        self.replacement_counterparts()
+            .get(&added_new_side_line)
             .copied()
+    }
+
+    /// Every added line's positional counterpart, keyed by the added line's
+    /// new-side line. The diff parser gives every removed line of a block the
+    /// new-side coordinate where the block's added run starts, so the k-th
+    /// added line pairs with the k-th removed line when both runs have the
+    /// same length. Unequal runs pair nothing, and neither does a run that a
+    /// removed line interrupts (`-a -b +x -c +y`): a guessed pairing could
+    /// compare an added line against the wrong old line.
+    ///
+    /// Built in one pass over the file's lines, so a large added block costs
+    /// O(n log n), not a scan per line.
+    pub(crate) fn replacement_counterparts(&self) -> BTreeMap<usize, &ChangedLine> {
+        let mut pairs = BTreeMap::new();
+        if self.removed_lines.is_empty() {
+            return pairs;
+        }
+        let mut removed_at: BTreeMap<usize, Vec<&ChangedLine>> = BTreeMap::new();
+        for line in &self.removed_lines {
+            removed_at.entry(line.new_side_line).or_default().push(line);
+        }
+        let added: BTreeSet<usize> = self
+            .added_lines
+            .iter()
+            .map(|line| line.new_side_line)
+            .collect();
+        let mut lines = added.iter().copied().peekable();
+        while let Some(run_start) = lines.next() {
+            let mut run_end = run_start;
+            while lines.next_if(|&next| next == run_end + 1).is_some() {
+                run_end += 1;
+            }
+            let Some(removed) = removed_at.get(&run_start) else {
+                continue;
+            };
+            let interrupted = removed_at
+                .range(run_start + 1..run_end + 1)
+                .next()
+                .is_some();
+            if interrupted || removed.len() != run_end - run_start + 1 {
+                continue;
+            }
+            for (offset, line) in removed.iter().enumerate() {
+                pairs.insert(run_start + offset, *line);
+            }
+        }
+        pairs
     }
 
     /// The new-side line where the contiguous added run holding this line
@@ -180,5 +212,80 @@ mod tests {
         };
         assert!(changed.replaced_line_counterpart(4).is_none());
         assert!(changed.replaced_line_counterpart(5).is_none());
+    }
+
+    #[test]
+    fn a_removed_line_inside_an_added_run_breaks_the_block() {
+        // `-a -b +x -c +y`: a and b carry new-side 4, x is 4, c and y are 5.
+        // The added run 4..=5 has two lines and two removed lines at its
+        // start, but c sits inside it, so y is not b's replacement.
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines: vec![line(4, 4, "x"), line(6, 5, "y")],
+            removed_lines: vec![line(4, 4, "a"), line(5, 4, "b"), line(6, 5, "c")],
+        };
+        assert!(changed.replaced_line_counterpart(4).is_none());
+        assert!(changed.replaced_line_counterpart(5).is_none());
+        assert!(changed.replacement_counterparts().is_empty());
+    }
+
+    #[test]
+    fn counterpart_map_matches_the_per_line_lookup() {
+        // Two blocks separated by context, then an uneven block.
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines: vec![
+                line(4, 4, "x"),
+                line(5, 5, "y"),
+                line(8, 8, "z"),
+                line(12, 12, "p"),
+                line(13, 13, "q"),
+            ],
+            removed_lines: vec![
+                line(4, 4, "a"),
+                line(5, 4, "b"),
+                line(8, 8, "c"),
+                line(12, 12, "d"),
+            ],
+        };
+        let map = changed.replacement_counterparts();
+        let texts: Vec<(usize, &str)> = map
+            .iter()
+            .map(|(added, removed)| (*added, removed.text.as_str()))
+            .collect();
+        assert_eq!(texts, vec![(4, "a"), (5, "b"), (8, "c")]);
+        for added in &changed.added_lines {
+            assert_eq!(
+                changed
+                    .replaced_line_counterpart(added.new_side_line)
+                    .map(|line| line.text.as_str()),
+                map.get(&added.new_side_line).map(|line| line.text.as_str()),
+                "line {}",
+                added.new_side_line
+            );
+        }
+    }
+
+    #[test]
+    fn a_large_block_pairs_in_one_pass() {
+        // A new 50,000-line file and a 50,000-line even replacement: a scan
+        // per added line would be quadratic or worse here.
+        let lines = 50_000;
+        let added: Vec<ChangedLine> = (1..=lines).map(|n| line(n, n, "x")).collect();
+        let inserted = ChangedFile {
+            path: PathBuf::from("src/new.ts"),
+            added_lines: added.clone(),
+            removed_lines: Vec::new(),
+        };
+        assert!(inserted.replacement_counterparts().is_empty());
+        assert!(inserted.replaced_line_counterpart(lines).is_none());
+        let replaced = ChangedFile {
+            path: PathBuf::from("src/big.ts"),
+            added_lines: added,
+            removed_lines: (1..=lines).map(|n| line(n, 1, "old")).collect(),
+        };
+        let map = replaced.replacement_counterparts();
+        assert_eq!(map.len(), lines);
+        assert_eq!(map.get(&lines).map(|line| line.line), Some(lines));
     }
 }

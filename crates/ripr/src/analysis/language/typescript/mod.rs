@@ -468,6 +468,7 @@ impl TypeScriptAdapter {
                 .iter()
                 .map(|removed| removed.text.as_str())
                 .collect();
+            let counterparts = changed.replacement_counterparts();
             for added in &changed.added_lines {
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
@@ -521,9 +522,11 @@ impl TypeScriptAdapter {
                 // new-side line where the added run starts, so matching on
                 // that coordinate alone finds an old line only for the run's
                 // first added line (#7524). Pair by position inside an even
-                // block; an uneven block keeps the first-line match.
-                let old_line_text = changed
-                    .replaced_line_counterpart(added.line)
+                // block; an uneven or interleaved block keeps the
+                // same-coordinate match.
+                let old_line_text = counterparts
+                    .get(&added.line)
+                    .copied()
                     .or_else(|| {
                         changed
                             .removed_lines

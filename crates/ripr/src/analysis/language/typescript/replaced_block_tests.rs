@@ -127,3 +127,36 @@ fn uneven_block_keeps_the_first_line_match() -> Result<(), String> {
     assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
     Ok(())
 }
+
+/// `-a -b +x -c +y` (a hand-written or tool-generated diff; git groups a
+/// block's removals first): `c` sits inside the added run, so `y` is not
+/// `b`'s replacement. The same-coordinate match pairs `y` with `c`, the
+/// `throw` it rewrote, and the guard reads the substring check broad. With
+/// `b` as its old line the change is not message-only and kept strong
+/// credit.
+#[test]
+fn a_removed_line_inside_the_run_keeps_the_same_coordinate_match() -> Result<(), String> {
+    let new_source = "export function parseLabel(s: string): string {\n  const label = s.trim();\n  if (label === \"\") {\n    console.warn(\"blank\");\n    throw new Error(\"label is blank\");\n  }\n  return label;\n}\n";
+    let diff = "diff --git a/src/label.ts b/src/label.ts\n--- a/src/label.ts\n+++ b/src/label.ts\n@@ -2,8 +2,7 @@ export function parseLabel(s: string): string {\n   const label = s.trim();\n   if (label === \"\") {\n-    console.log(\"blank\");\n-    console.log(\"again\");\n+    console.warn(\"blank\");\n-    throw new Error(\"label must not be blank\");\n+    throw new Error(\"label is blank\");\n   }\n   return label;\n }\n";
+    let changed = crate::analysis::diff::parse_unified_diff(diff);
+    assert_eq!(changed.len(), 1, "fixture must parse one file");
+    assert_eq!(
+        changed[0]
+            .removed_lines
+            .iter()
+            .map(|line| line.new_side_line)
+            .collect::<Vec<_>>(),
+        vec![4, 4, 5],
+        "fixture: the third removed line sits inside the added run 4..=5"
+    );
+    assert!(changed[0].replaced_line_counterpart(5).is_none());
+    let finding = finding_on(
+        "replaced-block-interleaved",
+        new_source,
+        &chai_test("\"blank\""),
+        diff,
+        5,
+    )?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed, "{finding:?}");
+    Ok(())
+}
