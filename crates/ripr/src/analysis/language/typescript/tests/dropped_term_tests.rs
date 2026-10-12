@@ -212,7 +212,12 @@ fn dropped_term_keeps_credit_only_with_a_non_zero_tested_input() -> Result<(), S
             &test,
             "  return subtotal + shipping(subtotal) + FLAT;",
         )?;
-        assert_eq!(finding.class, ExposureClass::Exposed, "{label}: {:?}", finding.missing);
+        assert_eq!(
+            finding.class,
+            ExposureClass::Exposed,
+            "{label}: {:?}",
+            finding.missing
+        );
     }
 
     // A non-zero call the assertion sees only through another expression

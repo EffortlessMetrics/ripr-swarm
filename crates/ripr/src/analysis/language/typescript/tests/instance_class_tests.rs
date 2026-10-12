@@ -11,22 +11,33 @@ const OWNER: &str = "export function errorFor(status: number): Error {\n  if (st
 #[test]
 fn owner_returns_distinct_classes_only_when_the_module_settles_them() {
     assert!(ts_owner_returns_distinct_classes(OWNER, ERRORS, "NotFound"));
-    assert!(ts_owner_returns_distinct_classes(OWNER, ERRORS, "Forbidden"));
+    assert!(ts_owner_returns_distinct_classes(
+        OWNER,
+        ERRORS,
+        "Forbidden"
+    ));
     // A builtin on the other path is never a user class instance.
     let builtin = OWNER.replace("new Forbidden(", "new RangeError(");
-    assert!(ts_owner_returns_distinct_classes(&builtin, ERRORS, "NotFound"));
+    assert!(ts_owner_returns_distinct_classes(
+        &builtin, ERRORS, "NotFound"
+    ));
     for (label, owner, module, asserted) in [
         (
             "the other class extends the asserted one",
             OWNER.to_string(),
-            ERRORS.replace("class Forbidden extends Error", "class Forbidden extends NotFound"),
+            ERRORS.replace(
+                "class Forbidden extends Error",
+                "class Forbidden extends NotFound",
+            ),
             "NotFound",
         ),
         (
             "a module class extends the asserted one through another",
             OWNER.to_string(),
-            ERRORS.replace("class Forbidden extends Error", "class Forbidden extends Gone")
-                + "class Gone extends NotFound {}\n",
+            ERRORS.replace(
+                "class Forbidden extends Error",
+                "class Forbidden extends Gone",
+            ) + "class Gone extends NotFound {}\n",
             "NotFound",
         ),
         (
@@ -62,13 +73,19 @@ fn owner_returns_distinct_classes_only_when_the_module_settles_them() {
         (
             "a mixin parent is not read",
             OWNER.to_string(),
-            ERRORS.replace("class Forbidden extends Error", "class Forbidden extends mix(NotFound)"),
+            ERRORS.replace(
+                "class Forbidden extends Error",
+                "class Forbidden extends mix(NotFound)",
+            ),
             "NotFound",
         ),
         (
             "a generic class header is not read",
             OWNER.to_string(),
-            ERRORS.replace("class Forbidden extends Error", "class Forbidden<T> extends NotFound"),
+            ERRORS.replace(
+                "class Forbidden extends Error",
+                "class Forbidden<T> extends NotFound",
+            ),
             "NotFound",
         ),
         (
@@ -147,10 +164,25 @@ fn instance_pin_exposes_a_predicate_whose_paths_return_different_classes() -> Re
         tests[0].assertions[0].expected_value_or_variant.as_deref(),
         Some("NotFound")
     );
-    assert_eq!(tests[0].assertions[0].oracle_kind, OracleKind::RelationalCheck);
-    let finding = errors_finding("instance-pin", ERRORS, &pinned, PREDICATE_OLD, PREDICATE_NEW, 5)?;
+    assert_eq!(
+        tests[0].assertions[0].oracle_kind,
+        OracleKind::RelationalCheck
+    );
+    let finding = errors_finding(
+        "instance-pin",
+        ERRORS,
+        &pinned,
+        PREDICATE_OLD,
+        PREDICATE_NEW,
+        5,
+    )?;
     assert_eq!(finding.probe.family, ProbeFamily::Predicate);
-    assert_eq!(finding.class, ExposureClass::Exposed, "{:?}", finding.missing);
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
     let row = finding
         .related_tests
         .first()
@@ -162,8 +194,20 @@ fn instance_pin_exposes_a_predicate_whose_paths_return_different_classes() -> Re
     let local = errors_test(
         "  const missing = errorFor(404);\n  expect(missing).toBeInstanceOf(NotFound);\n  expect(errorFor(403)).toBeInstanceOf(Forbidden);",
     );
-    let finding = errors_finding("instance-local", ERRORS, &local, PREDICATE_OLD, PREDICATE_NEW, 5)?;
-    assert_eq!(finding.class, ExposureClass::Exposed, "{:?}", finding.missing);
+    let finding = errors_finding(
+        "instance-local",
+        ERRORS,
+        &local,
+        PREDICATE_OLD,
+        PREDICATE_NEW,
+        5,
+    )?;
+    assert_eq!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
     Ok(())
 }
 
@@ -235,7 +279,12 @@ fn instance_pin_does_not_credit_a_returned_message_change() -> Result<(), String
         8,
     )?;
     assert_ne!(finding.probe.family, ProbeFamily::Predicate);
-    assert_ne!(finding.class, ExposureClass::Exposed, "{:?}", finding.missing);
+    assert_ne!(
+        finding.class,
+        ExposureClass::Exposed,
+        "{:?}",
+        finding.missing
+    );
     Ok(())
 }
 

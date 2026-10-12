@@ -3527,7 +3527,8 @@ pub(crate) fn ts_observes_whole_owner_result(
                 .and_then(|rest| rest.strip_prefix(owner.name.as_str()))
                 .is_some_and(ts_is_one_argument_list)
         });
-    bare || ts_observed_local_owner_call_arguments(test, assertion, &owner.name, receivers).is_some()
+    bare || ts_observed_local_owner_call_arguments(test, assertion, &owner.name, receivers)
+        .is_some()
 }
 
 /// Classify a changed TypeScript/JavaScript line and return a finding.
@@ -4057,7 +4058,9 @@ pub(crate) fn classify_change_with_alias_state(
         format!(
             "TypeScript preview adapter: related test uses a `{}` oracle, but a change-specific rule withdrew discrimination credit: {}",
             strongest_kind.as_str(),
-            missing.first().map_or("see missing evidence.", String::as_str)
+            missing
+                .first()
+                .map_or("see missing evidence.", String::as_str)
         )
     } else if strongest_strength >= OracleStrength::Strong.rank() && observation_confirmed {
         format!(
@@ -4544,9 +4547,7 @@ fn ts_whole_owner_call_arguments(
         .filter_map(|receiver| observed.strip_prefix(receiver.as_str()))
         .filter_map(|rest| rest.trim_start().strip_prefix('.'))
         .filter_map(|rest| rest.trim_start().strip_prefix(owner.name.as_str()));
-    let bare = names
-        .iter()
-        .filter_map(|name| observed.strip_prefix(name));
+    let bare = names.iter().filter_map(|name| observed.strip_prefix(name));
     bare.chain(qualified)
         .map(str::trim_start)
         .find(|rest| ts_is_one_argument_list(rest))
@@ -4733,8 +4734,7 @@ fn ts_rule8_mocked_changed_callee(
             .iter()
             .filter(|candidate| candidate.relation.uses_oracle())
             .all(|candidate| candidate.relation == TypeScriptRelationKind::ModuleEntryCall);
-        let (strength, _) =
-            strongest_family_matching_oracle(
+        let (strength, _) = strongest_family_matching_oracle(
             &probe_shape.family,
             &subset,
             error_facts,
