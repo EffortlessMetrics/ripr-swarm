@@ -161,6 +161,37 @@ constructors of literals in the grammar above, with different values. Any
 other result expression (`1 + 1` against `2`, a call, a binding) gives no
 credit, because different text can compute the same value.
 
+### Exact pattern pins through a local `assert_matches!` (#6616)
+
+A test may pin the owner's result with a test-local macro instead of
+`assert_eq!`:
+`assert_matches!(parse_unit("q"), Err(UnitError::Unknown))`. Such an
+assertion confirms a selected arm only when ripr can read from source that
+it fails on any other value (`crates/ripr/src/analysis/syntax/pattern_pin.rs`):
+
+- the test's file defines exactly one macro of that name, a `macro_rules!`
+  with no attributes in a module enclosing the test and before it, imports
+  nothing of that name, has no `macro_use` and no item-position macro call;
+- the macro's first rule takes exactly `$v:expr, $p:pat` (optionally
+  `$(,)?`) and the invocation is exactly one expression and one pattern, so
+  that rule is the one that runs; its transcriber is `match $v { $p => {}
+  <catch-all> => panic!(..) }` (or `unreachable!`), and the panic arguments
+  cannot leave the test;
+- the test is a plain `#[test] fn` with no parameters or return type, the
+  invocation is a top-level statement, and every earlier statement is on an
+  allowlist that completes or fails the test (a plain `let` or expression
+  built from calls, paths, literals and operators, a standard assertion
+  macro, another admitted `assert_matches!`);
+- the pattern is exact (constructors, paths, literals, tuples; no binding,
+  `_`, `..`, range, alternative or reference), and the value operand is a
+  direct owner call whose input selects the changed arm;
+- the shared owner-pin binding authority finds no visible rebinding of the
+  standard macros the pin relies on (`panic`, `stringify`, earlier
+  assertions).
+
+Anything else leaves the assertion to the token rule. Any invocation
+delimiter takes the same rule, so it opens no other credit path.
+
 ### Selection outranks tokens
 
 When every related call is resolved and none selects the changed arm, a
@@ -346,7 +377,21 @@ the diff changes `None => 1` to `None => 0`.
    `0..=3` to `0..=4`. Test `assert_eq!(f(4), 2)`: not `exposed` (4 moved
    arms, but both arms return 2).
 
+10. `fn parse_unit(raw: &str) -> Result<u32, E> { match raw { "" =>
+    Err(E::Blank), "k" => Ok(1_000), _ => Err(E::Unknown) } }`, the diff
+    changes the `_` arm's body. Test
+    `assert_matches!(parse_unit("q"), Err(E::Unknown))` through a local
+    macro whose first rule panics on a mismatch: `exposed`. The same test
+    with input `"k"` or `""`, pattern `Err(_)`, the invocation after a
+    `return;` or inside a closure, or a local macro that does not panic:
+    not `exposed`.
+
 ## Test Mapping
+
+- `crates/ripr/src/analysis/syntax/pattern_pin/tests.rs` and the
+  `arm_selection.rs` pattern-pin unit tests (#6616): the verified macro,
+  per-rule trust, delimiters, broad patterns, skipped invocations and
+  rebindings. Verdict corpus case `old-unit-assert-matches-macro`.
 
 - `fixtures/match_arm_blind` (example 1, with the arm added rather than
   changed; the expected result is the same)
@@ -367,6 +412,10 @@ the diff changes `None => 1` to `None => 0`.
   arguments are implemented.
 
 ## Implementation Mapping
+
+- `crates/ripr/src/analysis/syntax/pattern_pin.rs` and
+  `OwnerPinSyntax::exact_pattern_pin_value`: exact pattern pins through a
+  verified local `assert_matches!`, parsed once per file per run.
 
 - `crates/ripr/src/analysis/classify/arm_selection.rs`: pattern and input
   reading, scrutinee binding and first-match selection.

@@ -373,13 +373,22 @@ impl ClassifiedProbeEvidence {
             })
             .and_then(|owner| ArmSelector::establish(context.probe, owner))
             .map(|selector| {
-                selector.in_workspace(
-                    context.index,
-                    context
-                        .related_tests
-                        .iter()
-                        .map(|(test, _)| test.file.as_path()),
-                )
+                selector
+                    .in_workspace(
+                        context.index,
+                        context
+                            .related_tests
+                            .iter()
+                            .map(|(test, _)| test.file.as_path()),
+                    )
+                    // RIPR-SPEC-0229 (#6616): exact pattern pins through a verified
+                    // local `assert_matches!`, read once per file per run.
+                    .with_pattern_pins(
+                        context.related_tests.iter().map(|(test, _)| *test),
+                        |test, assertion| {
+                            pin_syntax.exact_pattern_pin_value(test, assertion, context.index)
+                        },
+                    )
             });
         // RIPR-SPEC-0094 Part D: the state a deleted `self.callee(..)` writes,
         // established once per probe; `None` keeps the Part C reading.

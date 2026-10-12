@@ -528,6 +528,7 @@ fn analyze_related_assertions(
         }),
         arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
         arm_inputs_readable: false,
+        arm_pattern_pinned: false,
         owner_scoped_tokens: &owner_scoped_tokens,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
@@ -728,8 +729,14 @@ fn analyze_related_assertions(
                     &test.body,
                     match_context.owner_callee,
                 );
+            let assertion_context = RevealMatchContext {
+                arm_pattern_pinned: match_context
+                    .arm_selector
+                    .is_some_and(|selector| selector.pattern_pin_selects(test, assertion)),
+                ..match_context
+            };
             let (matched, mut has_token_match) = assertion_matches_probe_detail_with_literals(
-                &match_context,
+                &assertion_context,
                 assertion,
                 assertion_count,
                 import_defeats_owner,
@@ -754,7 +761,7 @@ fn analyze_related_assertions(
                     .collect();
                 let narrowed = RevealMatchContext {
                     probe_tokens: &unoverridden,
-                    ..match_context
+                    ..assertion_context
                 };
                 let (_, narrowed_token_match) = assertion_matches_probe_detail_with_literals(
                     &narrowed,
@@ -1049,6 +1056,10 @@ struct RevealMatchContext<'a> {
     /// direct call the selector reads. A `let reason = |x| ..` closure or
     /// any other local use of the name may shadow the owner.
     arm_inputs_readable: bool,
+    /// RIPR-SPEC-0229 (#6616): the current assertion is an admitted exact
+    /// pattern pin (a verified local `assert_matches!`) whose value
+    /// operand is a direct owner call selecting the arm.
+    arm_pattern_pinned: bool,
     /// Probe tokens that name a binding only the owner holds (a parameter
     /// or `let` local) on a value probe. They confirm observation only in
     /// an assertion that calls the owner; anywhere else the shared name is
@@ -1931,6 +1942,7 @@ fn assertion_matches_probe_detail_with_literals(
         owner_callee,
         arm_selector,
         arm_inputs_readable,
+        arm_pattern_pinned,
         owner_scoped_tokens,
     } = *context;
     // #4748: use the same operand boundary as extraction, including token and
@@ -2054,7 +2066,7 @@ fn assertion_matches_probe_detail_with_literals(
         arm_inputs_readable
             && !import_defeats_owner
             && !cross_package_defeats_owner
-            && selector.assertion_selects(&assertion.text)
+            && (selector.assertion_selects(&assertion.text) || arm_pattern_pinned)
     } else if matches!(family, ProbeFamily::MatchArm) {
         !match_arm_guarded
             && (match_arm_variants
@@ -2184,6 +2196,7 @@ fn assertion_matches_probe_detail(
             owner_callee,
             arm_selector: None,
             arm_inputs_readable: false,
+            arm_pattern_pinned: false,
             owner_scoped_tokens: &[],
         },
         assertion,
@@ -4305,6 +4318,7 @@ mod tests {
                 owner_callee: Some("route"),
                 arm_selector: None,
                 arm_inputs_readable: false,
+                arm_pattern_pinned: false,
                 owner_scoped_tokens: &empty,
             };
             let (_, has_token) = assertion_matches_probe_detail_with_literals(
