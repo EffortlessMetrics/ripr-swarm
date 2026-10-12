@@ -41,6 +41,9 @@
 //! read its `fn` text, and an out-of-workspace trait in scope that also
 //! names the method is not detected.
 
+mod fallible_check;
+pub(in crate::analysis) use fallible_check::{FallibleCheckReceipt, fallible_check_receipt};
+
 use super::super::rust_index::{FunctionSummary, OracleFact, RustIndex, TestSummary};
 use super::reveal::{
     UsePath, assertion_comparison_operands, contains_as_whole_word,
@@ -100,6 +103,8 @@ pub(in crate::analysis) struct OwnerReturnPin {
 /// No cache outlives that immutable index; no public/file facts are changed.
 #[derive(Clone, Debug, Default)]
 pub(in crate::analysis) struct OwnerPinSyntax {
+    fallible_dependencies:
+        RefCell<BTreeMap<PathBuf, (String, Option<crate::analysis::workspace::AnyhowIdentity>)>>,
     ambiguous_macro_bindings: RefCell<Option<BTreeSet<String>>>,
     /// Definitions confined to one inline module or function body, keyed by
     /// file: they make a name ambiguous only for tests inside that scope.

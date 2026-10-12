@@ -1,3 +1,4 @@
+mod assertion_dependency;
 mod cargo_targets;
 mod classify;
 mod discover;
@@ -6,6 +7,9 @@ mod path_dependencies;
 mod select;
 mod source_role;
 
+pub(crate) use assertion_dependency::{
+    AnyhowIdentity, config_snapshot_identity, eligible_manifest, verified_anyhow_identity,
+};
 pub(crate) use cargo_targets::{
     CargoHarnessVerdict, ManifestInventory, context_for_files,
     declared_crate_root_paths_from_manifest,

@@ -145,6 +145,18 @@ mutants of the rewritten line run under `prove -l t`, because no Perl
 mutation tool drives all three libraries; each mutant names its mutated
 line, the failing test file and assertion, and carries an equivalence review.
 
+### Python corpus
+
+Subjects are authored projects (`authored-py-<library>-<name>`) with a
+`pyproject.toml` or `setup.cfg` marker and no `ripr.toml`, so Python is
+enabled the way a new user's repository enables it. Cases cover pytest
+(asserts, `parametrize`, `raises`, fixtures, `capsys`, `tmp_path`,
+`monkeypatch`), unittest (assert methods, mocks, mixins) and Hypothesis
+(`@given`, `@example`, `assume`), plus at least one case per runnable
+RIPR-SPEC-0238 acceptance example (`fixtures/python-verdict-corpus/SPEC.md`
+lists the examples and alternate forms left out). Truth is a hand-applied
+mutant run of the anchored line under the test command each case records.
+
 ## Required Evidence
 
 - `--language` maps a language to its own corpus directory and refuses a
@@ -206,6 +218,8 @@ Tests live in `xtask/src/reports/verdict_corpus_tests.rs`:
 - `packet_findings_count_while_their_subject_is_unresolved_and_others_do_not`
 - `report_keeps_edited_packet_rates_apart_from_producer_rates`
 - `a_packet_case_refuses_a_binary_without_the_perl_adapter`
+- `committed_python_corpus_is_valid_and_covers_each_test_library`
+- `python_expected_rows_agree_with_corpus_labels`
 
 ## Implementation Mapping
 

@@ -1,0 +1,12 @@
+diff --git a/stats/__init__.py b/stats/__init__.py
+--- a/stats/__init__.py
++++ b/stats/__init__.py
+@@ -18,7 +18,7 @@ def mean(xs):
+ 
+ def is_passing(score):
+     """A score of 50 or more passes."""
+-    return score >= 50
++    return score > 49
+ 
+ 
+ def grade_label(score):

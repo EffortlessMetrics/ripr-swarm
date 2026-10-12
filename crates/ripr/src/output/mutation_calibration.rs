@@ -12,6 +12,16 @@ pub(crate) const MUTATION_CALIBRATION_SCHEMA_VERSION: &str = "0.2";
 
 const STATIC_WITHOUT_RUNTIME_SAMPLE_LIMIT: usize = 50;
 const AGREEMENT_SAMPLE_LIMIT: usize = 50;
+const ZERO_MUTANT_RECORDS_ERROR: &str = concat!(
+    "0 mutant records recognized in the cargo-mutants JSON; ",
+    "expected cargo-mutants outcomes.json or mutants.json. ",
+    "An empty array, empty object, or other valid JSON with no mutant records ",
+    "is not a successful empty calibration.",
+);
+const NO_RUNTIME_MUTANTS_IMPORTED: &str = "No runtime mutants were imported.\n";
+const ALL_IMPORTED_MUTANTS_MATCHED: &str = "All imported runtime mutants matched a static seam.\n";
+const EVERY_STATIC_SEAM_MATCHED: &str =
+    "Every static seam matched at least one runtime mutant in the imported data.\n";
 
 mod outcome_records;
 
@@ -163,11 +173,25 @@ pub(crate) fn mutation_calibration_report_from_json(
     mutants_json: &str,
 ) -> Result<MutationCalibrationReport, String> {
     let static_seams = parse_repo_exposure_static_seams(repo_exposure_json)?;
-    let runtime_mutants = parse_mutation_outcomes_json(mutants_json)?;
+    let runtime_mutants =
+        require_imported_runtime_mutants(parse_mutation_outcomes_json(mutants_json)?)?;
     Ok(build_mutation_calibration_report(
         static_seams,
         runtime_mutants,
     ))
+}
+
+fn require_imported_runtime_mutants(
+    records: Vec<MutationOutcomeRecord>,
+) -> Result<Vec<MutationOutcomeRecord>, String> {
+    if records.is_empty() {
+        // Fail closed: a wrong-shaped or empty import is indistinguishable
+        // from a genuine all-matched calibration if it still exits 0 and
+        // renders "All imported runtime mutants matched a static seam."
+        Err(ZERO_MUTANT_RECORDS_ERROR.to_string())
+    } else {
+        Ok(records)
+    }
 }
 
 pub(crate) fn render_mutation_calibration_json(
@@ -351,7 +375,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
 
     out.push_str("\n## Matched Mutants\n\n");
     if report.matched.is_empty() {
-        out.push_str("No runtime mutants matched static seams.\n");
+        if report.mutants_total == 0 {
+            out.push_str(NO_RUNTIME_MUTANTS_IMPORTED);
+        } else {
+            out.push_str("No runtime mutants matched static seams.\n");
+        }
     } else {
         out.push_str("| Seam | Class | Oracle | Mutation operator | Runtime outcome | Join | Confidence label |\n");
         out.push_str("| --- | --- | --- | --- | --- | --- | --- |\n");
@@ -386,7 +414,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
 
     out.push_str("\n## Unmatched Runtime Mutants\n\n");
     if report.unmatched_mutants.is_empty() {
-        out.push_str("All imported runtime mutants matched a static seam.\n");
+        if report.mutants_total == 0 {
+            out.push_str(NO_RUNTIME_MUTANTS_IMPORTED);
+        } else {
+            out.push_str(ALL_IMPORTED_MUTANTS_MATCHED);
+        }
     } else {
         out.push_str(
             "| Location | Mutation operator | Runtime outcome | Reason | Test command |\n",
@@ -409,9 +441,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
 
     out.push_str("\n## Static Seams Without Runtime Data\n\n");
     if report.static_without_runtime.is_empty() {
-        out.push_str(
-            "Every static seam matched at least one runtime mutant in the imported data.\n",
-        );
+        if report.mutants_total == 0 {
+            out.push_str(NO_RUNTIME_MUTANTS_IMPORTED);
+        } else {
+            out.push_str(EVERY_STATIC_SEAM_MATCHED);
+        }
     } else {
         out.push_str(
             "Sample only; see JSON `static_without_runtime_total` for the full count.\n\n",
@@ -1378,6 +1412,97 @@ mod tests {
     }
 
     #[test]
+    fn zero_recognized_mutant_records_fail_closed_instead_of_all_matched() -> Result<(), String> {
+        let repo = repo_json_for("seam-a", "weakly_gripped", "src/pricing.rs", 42);
+        for (label, mutants) in [
+            ("empty array", "[]"),
+            ("empty object", "{}"),
+            ("non-mutant array", r#"["hello"]"#),
+            ("empty outcomes list", r#"{"outcomes":[]}"#),
+        ] {
+            let error = match mutation_calibration_report_from_json(&repo, mutants) {
+                Err(error) => error,
+                Ok(_) => {
+                    return Err(format!("{label}: zero-record JSON must fail closed"));
+                }
+            };
+            assert!(
+                error.contains("0 mutant records recognized"),
+                "{label}: expected a zero-record error, got {error}"
+            );
+            assert!(
+                error.contains("expected cargo-mutants outcomes.json or mutants.json"),
+                "{label}: error should name the accepted artifacts, got {error}"
+            );
+            assert!(
+                !error.contains("All imported runtime mutants matched a static seam"),
+                "{label}: fail-closed error must not reuse the vacuous all-matched wording: {error}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn empty_import_markdown_does_not_claim_all_mutants_matched() {
+        let report = build_mutation_calibration_report(
+            vec![static_seam(
+                "seam-a",
+                "weakly_gripped",
+                "src/pricing.rs",
+                42,
+            )],
+            Vec::new(),
+        );
+        assert_eq!(report.mutants_total, 0);
+        let markdown = render_mutation_calibration_md(&report);
+        assert!(
+            markdown.contains("No runtime mutants were imported."),
+            "zero-denominator unmatched section must say nothing was imported:\n{markdown}"
+        );
+        assert!(
+            !markdown.contains("All imported runtime mutants matched a static seam"),
+            "vacuous all-matched wording must not render when nothing was imported:\n{markdown}"
+        );
+        assert!(
+            !markdown.contains(
+                "Every static seam matched at least one runtime mutant in the imported data"
+            ),
+            "vacuous every-seam-matched wording must not render when nothing was imported:\n{markdown}"
+        );
+
+        let empty_both = render_mutation_calibration_md(&build_mutation_calibration_report(
+            Vec::new(),
+            Vec::new(),
+        ));
+        assert!(
+            empty_both.contains("No runtime mutants were imported."),
+            "zero seams and zero mutants must not claim every seam matched:\n{empty_both}"
+        );
+        assert!(
+            !empty_both.contains(
+                "Every static seam matched at least one runtime mutant in the imported data"
+            ),
+            "vacuous every-seam-matched wording must not render with no import:\n{empty_both}"
+        );
+    }
+
+    #[test]
+    fn matched_import_still_may_say_all_imported_mutants_matched() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &repo_json_for("seam-a", "strongly_gripped", "src/pricing.rs", 42),
+            r#"[{"id":"m1","seam_id":"seam-a","outcome":"caught","operator":"replace"}]"#,
+        )?;
+        assert_eq!(report.mutants_total, 1);
+        assert!(report.unmatched_mutants.is_empty());
+        let markdown = render_mutation_calibration_md(&report);
+        assert!(
+            markdown.contains("All imported runtime mutants matched a static seam."),
+            "a nonempty import that all joined may keep the all-matched wording:\n{markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn mutation_calibration_summarizes_static_runtime_agreement() -> Result<(), String> {
         let static_seams = vec![
             static_seam("gap-runtime", "weakly_gripped", "src/pricing.rs", 10),
@@ -1654,7 +1779,12 @@ mod tests {
         let empty_report = build_mutation_calibration_report(Vec::new(), Vec::new());
         let empty_markdown = render_mutation_calibration_md(&empty_report);
         assert!(empty_markdown.contains("| none | 0 |"));
-        assert!(empty_markdown.contains("No runtime mutants matched static seams."));
+        assert!(empty_markdown.contains("No runtime mutants were imported."));
+        assert!(!empty_markdown.contains("No runtime mutants matched static seams."));
+        assert!(!empty_markdown.contains("All imported runtime mutants matched a static seam"));
+        assert!(!empty_markdown.contains(
+            "Every static seam matched at least one runtime mutant in the imported data"
+        ));
 
         let static_seams = vec![
             static_seam("ambiguous-a", "ungripped", "src/ambiguous.rs", 40),

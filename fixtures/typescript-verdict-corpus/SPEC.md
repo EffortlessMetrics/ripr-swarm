@@ -39,18 +39,20 @@ it as false and its reasoning names the spec example.
 Each subject carries a `ripr.toml` that enables TypeScript beside Rust, the
 way a user opts a repository in today.
 
-Each case is a one-line edit under `cases/`, labeled with what the package's
-own tests discriminate. A behavior-preserving rewrite lists the StrykerJS 10
-mutants of the edited line (jest, vitest and mocha runners; node:test through
-the command runner) and the outcome of each; a behavior change is its own
-single mutant. Labels were taken with Node 22, jest 30.5, ts-jest 29.4,
+Each case is one edit under `cases/` (one changed line, except the two
+`*-throw-second-replaced-line` cases, which replace two), labeled with
+what the package's own tests discriminate. A behavior-preserving rewrite
+lists the StrykerJS 10 mutants of the edited line (jest, vitest and mocha
+runners; node:test through the command runner) and the outcome of each;
+a behavior change is its own single mutant. Labels were taken with Node 22, jest 30.5, ts-jest 29.4,
 vitest 5.0.3 (3.2.7 for `authored-ts-vitest-cart`, replayed under 5.0.3), mocha 12.0.3, chai 6.3
 and tsx 4.23. The two subjects handed over from the Python corpus thread
 (`authored-ts-nodetest-pricing`, `authored-ts-vitest-cart`) list hand-applied
 mutants instead of Stryker's, except their five boundary rewrites, which list
 Stryker's mutant set. All 185 mutant outcomes were then replayed by
 applying each mutant by hand and running the case's test command; every one
-agreed.
+agreed. The two `*-throw-second-replaced-line` cases (#7524) came later and
+were labeled by running `npx mocha` on the stored and the edited package.
 
 ## Layout
 
