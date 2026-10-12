@@ -92,6 +92,16 @@ repository-relative test file or an unambiguous `path::test_node` selector
 within that file. An unknown or ambiguous node is a named limitation
 (`changed_test_unresolved`, `changed_test_owner_unresolved`, or
 `changed_test_owner_ambiguous`).
+Selected owner admission uses individual parser-backed source occurrences,
+including byte-mapped expression operands of unambiguously bound `assert!`,
+`assert_eq!` and `assert_ne!`. Supported local/free call qualifiers retain their
+identity across lines. Same-line occurrences cannot lend each other authority;
+opaque macros, diagnostic formatting operands and unmodeled captures cannot
+authorize a workspace owner. Parsing is cached only within one immutable index
+run. A parsed method occurrence supplies no receiver type proof: receiver,
+return declaration and field identity remain a separate admission boundary.
+This selection prerequisite does not establish complete field repair readiness.
+
 An absent, out-of-root, or stale selector is a named limitation, not a broad
 silent fallback. An anchorless or stale record in an otherwise usable canonical
 group is a named per-scope limitation, not a reason to discard the group's

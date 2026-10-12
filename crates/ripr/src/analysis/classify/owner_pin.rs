@@ -548,6 +548,53 @@ impl OwnerPinSyntax {
             .cloned()
     }
 
+    /// Call occurrence parsing borrows binding authority only. It does not
+    /// grant assertion execution, oracle strength or receiver identity.
+    pub(in crate::analysis) fn targeted_macro_binding_is_unambiguous(
+        &self,
+        test: &TestSummary,
+        line: usize,
+        name: &str,
+        index: &RustIndex,
+    ) -> bool {
+        !self.trusted_macro_ambiguities(index).contains(name)
+            && !self
+                .scoped_names_for(test, line)
+                .iter()
+                .any(|candidate| candidate == name)
+            && !self
+                .crate_names_for(test, index)
+                .iter()
+                .any(|candidate| candidate == name)
+    }
+
+    fn trusted_macro_ambiguities(&self, index: &RustIndex) -> BTreeSet<String> {
+        let resolved_modules = self.resolved_module_declarations(index);
+        let module_resolved = |file: &Path, line: usize, declaration: &str| {
+            resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
+        };
+        let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
+        ambiguous
+            .get_or_insert_with(|| {
+                let (mut global, scoped, by_root) =
+                    trusted_macro_sites_in(index, self.target_roots(index), &module_resolved);
+                *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
+                let mut by_root = by_root;
+                for (root, names) in &self.withheld.by_root {
+                    by_root
+                        .entry(root.clone())
+                        .or_default()
+                        .extend(names.iter().cloned());
+                }
+                *self.crate_macro_bindings.borrow_mut() = Some(by_root);
+                // Withheld crate-root files' crate-local sites are routed by
+                // root below; every other withheld site is workspace-wide.
+                global.extend(self.withheld.trusted.iter().cloned());
+                global
+            })
+            .clone()
+    }
+
     fn refusal(
         &self,
         test: &TestSummary,
@@ -558,24 +605,7 @@ impl OwnerPinSyntax {
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
         };
-        let mut ambiguous = self.ambiguous_macro_bindings.borrow_mut();
-        let ambiguous = ambiguous.get_or_insert_with(|| {
-            let (mut global, scoped, by_root) =
-                trusted_macro_sites_in(index, self.target_roots(index), &module_resolved);
-            *self.scoped_macro_bindings.borrow_mut() = Some(scoped);
-            let mut by_root = by_root;
-            for (root, names) in &self.withheld.by_root {
-                by_root
-                    .entry(root.clone())
-                    .or_default()
-                    .extend(names.iter().cloned());
-            }
-            *self.crate_macro_bindings.borrow_mut() = Some(by_root);
-            // Withheld crate-root files' crate-local sites are routed by
-            // root below; every other withheld site is workspace-wide.
-            global.extend(self.withheld.trusted.iter().cloned());
-            global
-        });
+        let ambiguous = self.trusted_macro_ambiguities(index);
         let Some(facts) = index
             .files()
             .get(&test.file)

@@ -1034,7 +1034,7 @@ fn resolves_empty_local(call: &ast::MacroCall, empty: &BTreeMap<String, ast::Mac
 /// Discarded call-argument spans from the same bounded local resolver used by
 /// execution admission. This only removes evidence; workspace macro ambiguity
 /// still independently refuses positive assertion admission.
-pub(super) fn empty_local_macro_invocation_ranges(
+pub(crate) fn empty_local_macro_invocation_ranges(
     root: &SyntaxNode,
 ) -> Vec<std::ops::Range<usize>> {
     let empty = local_empty_macros(root);

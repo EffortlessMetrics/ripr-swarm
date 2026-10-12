@@ -17,6 +17,7 @@ mod reach;
 mod related_tests;
 mod reveal;
 mod scanner_transfer;
+mod targeted_calls;
 mod text;
 mod transitive_reach;
 mod value_transfer;
@@ -62,10 +63,10 @@ pub(in crate::analysis) use reach::{
     is_proximity_only, is_trait_impl_method, owner_may_be_reached_unseen, reach_evidence,
 };
 pub(in crate::analysis) use related_tests::{
-    DependencyEdgeContext, RelatedTestCandidateIndex, TargetedCallShape, body_contains_owner_call,
+    DependencyEdgeContext, RelatedTestCandidateIndex, body_contains_owner_call,
     call_text_may_call_free_function, find_related_tests_with_candidate_index, impl_self_type_name,
     method_call_resolves_to_impl, owner_call_text, owner_dispatch_trait, package_prefix,
-    targeted_call_shapes, test_calls_free_function,
+    test_calls_free_function,
 };
 pub(in crate::analysis) use reveal::reveal_outcome;
 pub(in crate::analysis) use reveal::wrapper_error_seam_expression;
@@ -89,3 +90,5 @@ pub(in crate::analysis) use transitive_reach::{
     macro_reach_limitation_detail_lines, macro_reach_witness_pointer, transitive_reach_limit_kind,
     transitive_reach_limitation_detail_lines, transitive_reach_witness_pointer,
 };
+
+pub(in crate::analysis) use targeted_calls::{TargetedCallShape, TargetedCallSyntax};

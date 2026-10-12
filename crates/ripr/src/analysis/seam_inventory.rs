@@ -973,6 +973,7 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
     }
 
     let syntax = super::classify::OwnerPinSyntax::default();
+    let call_syntax = super::classify::TargetedCallSyntax::new(&cached.index);
     let mut candidate_functions = BTreeMap::new();
     let unresolved = |name: &str| {
         selector_limitation(
@@ -984,8 +985,9 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         )
     };
     for test in &selected_tests {
-        let masked_body = crate::analysis::extract::mask_comments_and_strings(&test.body);
-        for call in test.calls.iter().filter(|call| call.name != test.name) {
+        for call in call_syntax.occurrences(test, |line, name| {
+            syntax.targeted_macro_binding_is_unambiguous(test, line, name, &cached.index)
+        }) {
             use super::classify::TargetedCallShape;
             use crate::analysis::facts::FunctionImplContext;
             let functions = cached
@@ -999,135 +1001,102 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
             if super::classify::targeted_name_is_alias(&cached.index, &call.name) {
                 return Err(unresolved(&call.name));
             }
-            // A line-only fact cannot resolve a qualifier continued from a
-            // previous line, including through masked comments/blank lines.
-            let continued_path = call
-                .line
-                .checked_sub(test.start_line)
-                .is_some_and(|offset| {
-                    masked_body
-                        .split_inclusive('\n')
-                        .take(offset)
-                        .collect::<String>()
-                        .trim_end()
-                        .ends_with("::")
-                        || {
-                            let preceding = masked_body
-                                .split_inclusive('\n')
-                                .take(offset)
-                                .collect::<String>();
-                            preceding.trim_end().ends_with('.')
-                                && !preceding.trim_end().ends_with("..")
+            let shape = call.shape;
+            if matches!(shape, TargetedCallShape::Bare)
+                && functions
+                    .iter()
+                    .filter(|function| matches!(function.impl_context, FunctionImplContext::Free))
+                    .count()
+                    > 1
+            {
+                return Err(selector_limitation(
+                    CHANGED_TEST_OWNER_AMBIGUOUS,
+                    format!(
+                        "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
+                        call.name
+                    ),
+                    selected_tests.len(),
+                ));
+            }
+            let mut matching = Vec::new();
+            for function in &functions {
+                match (&shape, &function.impl_context) {
+                    (TargetedCallShape::Bare, FunctionImplContext::Free) => {
+                        if !super::classify::targeted_free_call_reaches_owner(
+                            test,
+                            function,
+                            None,
+                            &cached.index,
+                            &syntax,
+                        ) {
+                            return Err(unresolved(&call.name));
                         }
-                });
-            let shapes = if continued_path {
-                BTreeSet::from([TargetedCallShape::Unsupported])
-            } else {
-                super::classify::targeted_call_shapes(&call.text, &call.name)
-            };
-            for shape in shapes {
-                if matches!(shape, TargetedCallShape::Bare)
-                    && functions
-                        .iter()
-                        .filter(|function| {
-                            matches!(function.impl_context, FunctionImplContext::Free)
-                        })
-                        .count()
-                        > 1
-                {
-                    return Err(selector_limitation(
-                        CHANGED_TEST_OWNER_AMBIGUOUS,
-                        format!(
-                            "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
-                            call.name
-                        ),
-                        selected_tests.len(),
-                    ));
-                }
-                let mut matching = Vec::new();
-                for function in &functions {
-                    match (&shape, &function.impl_context) {
-                        (TargetedCallShape::Bare, FunctionImplContext::Free) => {
-                            if !super::classify::targeted_free_call_reaches_owner(
+                        matching.push(*function);
+                    }
+                    (
+                        TargetedCallShape::Path { prefix, generic },
+                        FunctionImplContext::Impl { self_type },
+                    ) => {
+                        let type_name = prefix.rsplit("::").next().unwrap_or(prefix);
+                        if super::classify::targeted_type_name_is_unresolved(
+                            test,
+                            &cached.index,
+                            type_name,
+                        ) {
+                            return Err(unresolved(&call.name));
+                        }
+                        if type_name != self_type {
+                            // Parser-established different self types cannot own
+                            // this call (e.g. BTreeMap::new versus Alpha::new).
+                            continue;
+                        }
+                        if *generic
+                            || !syntax.targeted_inherent_call_is_local(
                                 test,
                                 function,
-                                None,
+                                prefix,
                                 &cached.index,
-                                &syntax,
-                            ) {
-                                return Err(unresolved(&call.name));
-                            }
-                            matching.push(*function);
+                            )
+                        {
+                            return Err(unresolved(&call.name));
                         }
-                        (
-                            TargetedCallShape::Path { prefix, generic },
-                            FunctionImplContext::Impl { self_type },
-                        ) => {
-                            let type_name = prefix.rsplit("::").next().unwrap_or(prefix);
-                            if super::classify::targeted_type_name_is_unresolved(
-                                test,
-                                &cached.index,
-                                type_name,
-                            ) {
-                                return Err(unresolved(&call.name));
-                            }
-                            if type_name != self_type {
-                                // Parser-established different self types cannot own
-                                // this call (e.g. BTreeMap::new versus Alpha::new).
-                                continue;
-                            }
+                        matching.push(*function);
+                    }
+                    (TargetedCallShape::Path { prefix, generic }, FunctionImplContext::Free) => {
+                        if super::classify::call_text_may_call_free_function(&call.text, &call.name)
+                        {
                             if *generic
-                                || !syntax.targeted_inherent_call_is_local(
+                                || !super::classify::targeted_free_call_reaches_owner(
                                     test,
                                     function,
-                                    prefix,
+                                    Some(prefix),
                                     &cached.index,
+                                    &syntax,
                                 )
                             {
                                 return Err(unresolved(&call.name));
                             }
                             matching.push(*function);
                         }
-                        (
-                            TargetedCallShape::Path { prefix, generic },
-                            FunctionImplContext::Free,
-                        ) => {
-                            if super::classify::call_text_may_call_free_function(
-                                &call.text, &call.name,
-                            ) {
-                                if *generic
-                                    || !super::classify::targeted_free_call_reaches_owner(
-                                        test,
-                                        function,
-                                        Some(prefix),
-                                        &cached.index,
-                                        &syntax,
-                                    )
-                                {
-                                    return Err(unresolved(&call.name));
-                                }
-                                matching.push(*function);
-                            }
-                        }
-                        (TargetedCallShape::Unsupported, _) | (_, FunctionImplContext::Unknown) => {
-                            return Err(unresolved(&call.name));
-                        }
-                        (TargetedCallShape::Bare, FunctionImplContext::Impl { .. }) => {}
                     }
+                    (TargetedCallShape::Unsupported, _) | (_, FunctionImplContext::Unknown) => {
+                        return Err(unresolved(&call.name));
+                    }
+                    (TargetedCallShape::Bare, FunctionImplContext::Impl { .. }) => {}
                 }
-                if matching.len() > 1 {
-                    return Err(selector_limitation(
-                        CHANGED_TEST_OWNER_AMBIGUOUS,
-                        format!(
-                            "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
-                            call.name
-                        ),
-                        selected_tests.len(),
-                    ));
-                }
-                for function in matching {
-                    candidate_functions.insert(function.id.0.replace('\\', "/"), function);
-                }
+            }
+            if matching.len() > 1 {
+                return Err(selector_limitation(
+                    CHANGED_TEST_OWNER_AMBIGUOUS,
+                    format!(
+                        "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
+                        call.name
+                    ),
+                    selected_tests.len(),
+                ));
+            }
+            for function in matching {
+                candidate_functions.insert(function.id.0.replace('\\', "/"), function);
             }
         }
     }
@@ -8343,23 +8312,301 @@ use super::{module}::{{diagnostic_refresh_plan}};
     #[test]
     fn changed_test_inventory_exact_occurrence_multiline_constructor() -> Result<(), String> {
         let root = make_tempdir("targeted-exact-multiline")?;
-        write_file(&root.join("Cargo.toml"), "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n")?;
-        write_file(&root.join("src/lib.rs"), r#"
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
 pub struct Alpha;
 impl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
 #[test] fn selected() {
     assert_eq!(crate::Alpha::
         new(1), 1);
 }
-"#)?;
+"#,
+        )?;
+        let file = root.join("src/lib.rs");
+        let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+        assert!(!index.files().get(&file).ok_or("missing indexed file")?.used_lexical_fallback);
+        assert_eq!(index.tests().len(), 1);
+        assert!(index.functions().iter().any(|function| function.name == "new"
+            && matches!(&function.impl_context, crate::analysis::facts::FunctionImplContext::Impl { self_type } if self_type == "Alpha")
+            && !function.source_role.is_evidence_role()));
         let inventory = inventory_changed_test_classified_seams_at_with_config_node(
-            &root, &RiprConfig::default(), Path::new("src/lib.rs"), Some("selected"),
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lib.rs"),
+            Some("selected"),
         )?;
         assert_eq!(inventory.selected_test_count, 1);
         assert_eq!(inventory.direct_call_names, ["new"]);
         assert!(!inventory.classified.is_empty());
-        assert!(inventory.classified.iter().all(|entry| entry.seam.owner() == "src/lib.rs::impl Alpha::new"));
+        assert!(
+            inventory
+                .classified
+                .iter()
+                .all(|entry| entry.seam.owner() == "src/lib.rs::impl Alpha::new")
+        );
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_rows_preserve_offsets() -> Result<(), String> {
+        let root = make_tempdir("targeted-occurrence-offsets")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub struct Alpha;
+impl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
+#[test]
+fn selected() {
+    let _label = "π"; assert_eq!(crate::Alpha::new(1), crate::Alpha::new(2));
+    assert!(crate::Alpha::
+        new(3) > 0,);
+    let left = Alpha::new(4); left.field.is_empty(); right.field.is_empty();
+}
+"#,
+        )?;
+        let file = root.join("src/lib.rs");
+        let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+        let test = index
+            .tests()
+            .iter()
+            .find(|test| test.name == "selected")
+            .ok_or("missing indexed test")?;
+        assert!(!index.files().get(&file).ok_or("missing indexed file")?.used_lexical_fallback);
+        let syntax = super::super::classify::OwnerPinSyntax::default();
+        let calls = super::super::classify::TargetedCallSyntax::new(&index)
+            .occurrences(test, |line, name| {
+                syntax.targeted_macro_binding_is_unambiguous(test, line, name, &index)
+            });
+        let new = calls
+            .iter()
+            .filter(|call| call.name == "new")
+            .collect::<Vec<_>>();
+        assert_eq!(new.len(), 4, "{calls:?}");
+        assert!(new.iter().all(|call| call.range.is_some()));
+        assert_eq!(new[0].text, "crate::Alpha::new(1)");
+        assert_eq!(new[1].text, "crate::Alpha::new(2)");
+        assert_ne!(new[0].range, new[1].range);
+        assert_eq!(new[2].text, "crate::Alpha::\n        new(3)");
+        let methods = calls
+            .iter()
+            .filter(|call| call.name == "is_empty")
+            .collect::<Vec<_>>();
+        assert_eq!(methods.len(), 2, "{calls:?}");
+        assert_ne!(methods[0].range, methods[1].range);
+        assert!(methods.iter().all(|call| matches!(
+            call.shape,
+            super::super::classify::TargetedCallShape::Unsupported
+        )));
+        for call in &calls {
+            let range = call.range.clone().ok_or("unexpected unproven row")?;
+            assert_eq!(&index.files().get(&file).ok_or("missing indexed file")?.source[range], call.text);
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_opaque_and_mixed_refusals() -> Result<(), String> {
+        for (label, setup, body) in [
+            ("mixed", "", "Alpha::new(1); foreign::Alpha::new(2);"),
+            ("reverse", "", "foreign::Alpha::new(2); Alpha::new(1);"),
+            ("opaque", "", "Alpha::new(1); opaque!(Alpha::new(2));"),
+            (
+                "opaque-reverse",
+                "",
+                "opaque!(Alpha::new(2)); Alpha::new(1);",
+            ),
+            (
+                "nested-opaque",
+                "",
+                "assert_eq!(Alpha::new(1), opaque!(Alpha::new(2)));",
+            ),
+            (
+                "format",
+                "",
+                "assert_eq!(Alpha::new(1), 1, \"{}\", foreign::Alpha::new(2));",
+            ),
+            (
+                "custom-assert",
+                "macro_rules! assert_eq { ($($t:tt)*) => { core::hint::black_box(()); } }",
+                "assert_eq!(Alpha::new(1), 1);",
+            ),
+            (
+                "imported-assert",
+                "use foreign::verify as assert_eq;",
+                "assert_eq!(Alpha::new(1), 1);",
+            ),
+            (
+                "operand-dormant",
+                "",
+                "assert_eq!({ fn dormant() { foreign::Alpha::new(1); } Alpha::new(2) }, 2);",
+            ),
+            ("malformed-arity", "", "assert_eq!(Alpha::new(1));"),
+            (
+                "dormant",
+                "",
+                "fn dormant() { foreign::Alpha::new(1); } Alpha::new(2);",
+            ),
+            (
+                "template",
+                "",
+                "macro_rules! dormant { () => { foreign::Alpha::new(1) }; } Alpha::new(2);",
+            ),
+            (
+                "multiline",
+                "",
+                "Alpha::new(1); foreign:: /* trivia */\n Alpha::new(2);",
+            ),
+            ("receiver-mixed", "", "Alpha::new(1); unknown.new();"),
+            ("receiver-reverse", "", "unknown.new(); Alpha::new(1);"),
+        ] {
+            let root = make_tempdir(&format!("targeted-occurrence-{label}"))?;
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    "pub struct Alpha;\nimpl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}\n{setup}\n#[test]\nfn selected() {{ {body} }}\n"
+                ),
+            )?;
+            let file = root.join("src/lib.rs");
+            let index = crate::analysis::facts::build_index(&root, std::slice::from_ref(&file))?;
+            assert_eq!(index.tests().len(), 1, "{label}: setup missing test");
+            assert!(
+                index.tests()[0].calls.iter().any(|call| call.name == "new"),
+                "{label}: missing captured call"
+            );
+            assert!(
+                !index.files().get(&file).ok_or("missing indexed file")?.used_lexical_fallback,
+                "{label}: parser fallback"
+            );
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            assert!(
+                matches!(
+                    result,
+                    Err(TargetedTestInventoryError::Selector {
+                        kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                        selected_test_count: 1,
+                        ..
+                    })
+                ),
+                "{label}: {result:?}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_known_empty_macro_stays_masked() -> Result<(), String>
+    {
+        let root = make_tempdir("targeted-occurrence-empty-macro")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub struct Alpha;
+impl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
+macro_rules! noop { ($($ignored:tt)*) => {}; }
+#[test]
+fn selected() { noop!(foreign::Alpha::new(1)); assert_eq!(Alpha::new(2), 2); }
+"#,
+        )?;
+        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lib.rs"),
+            Some("selected"),
+        )?;
+        assert_eq!(inventory.selected_test_count, 1);
+        assert_eq!(inventory.direct_call_names, ["new"]);
+        assert!(!inventory.classified.is_empty());
+        assert!(
+            inventory
+                .classified
+                .iter()
+                .all(|entry| entry.seam.owner() == "src/lib.rs::impl Alpha::new")
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_declaration_only_invalidation() -> Result<(), String>
+    {
+        let root = make_tempdir("targeted-occurrence-declaration-currentness")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        let source = "pub struct Alpha;\nimpl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }\n#[test]\nfn selected() { assert_eq!(Alpha::new(1), 1); }\n";
+        let file = root.join("src/lib.rs");
+        write_file(&file, source)?;
+        let select = || {
+            inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            )
+        };
+        let cold = select()?;
+        let warm = select()?;
+        assert!(!cold.classified.is_empty());
+        assert!(!warm.classified.is_empty());
+        assert_eq!(cold.selected_test_count, 1);
+        assert_eq!(warm.selected_test_count, 1);
+        assert_eq!(
+            cold.classified
+                .iter()
+                .map(|entry| entry.seam.id())
+                .collect::<Vec<_>>(),
+            warm.classified
+                .iter()
+                .map(|entry| entry.seam.id())
+                .collect::<Vec<_>>()
+        );
+        // Keep the test/call and impl body exact. A declaration-only alias
+        // change must not borrow a prior run's parser/binding decision.
+        write_file(
+            &file,
+            &source.replacen(
+                "pub struct Alpha;",
+                "pub struct Beta;\ntype Alpha = Beta;",
+                1,
+            ),
+        )?;
+        let result = select();
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        assert!(
+            matches!(
+                result,
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
+        Ok(())
     }
 
     #[test]
