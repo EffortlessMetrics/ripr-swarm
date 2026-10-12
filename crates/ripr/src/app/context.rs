@@ -105,8 +105,10 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
     let root = input.root.clone();
     // See the explain fresh path: the retry binds this run's root/base and
     // stays silent for supplied scopes (#7328 review).
-    let retry_command = super::finding_navigation_with_worktree(&input, None, mode_explicit, true)
-        .context_command(selector);
+    let worktree_navigation =
+        super::finding_navigation_with_worktree(&input, None, mode_explicit, true);
+    let retry_command = worktree_navigation.context_command(selector);
+    let worktree_list_command = worktree_navigation.list_command();
     let committed_history = input.diff_file.is_none() && input.git_candidate.is_none();
     let output = if worktree {
         check_with_progress(
@@ -133,6 +135,7 @@ pub(crate) fn collect_context_with_config_worktree_and_progress(
                 worktree,
                 committed_history,
                 &retry_command,
+                &worktree_list_command,
             ),
         )),
     }

@@ -71,8 +71,10 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
     // The worktree retry names the same repository and base the failed run
     // analyzed; a bare `ripr explain --worktree` prefix would analyze the
     // caller's directory at its default base instead (#7328 review).
-    let retry_command = super::finding_navigation_with_worktree(&input, None, mode_explicit, true)
-        .explain_command(selector);
+    let worktree_navigation =
+        super::finding_navigation_with_worktree(&input, None, mode_explicit, true);
+    let retry_command = worktree_navigation.explain_command(selector);
+    let worktree_list_command = worktree_navigation.list_command();
     // A supplied scope (`--diff`, candidate tree) was the analyzed input:
     // uncommitted edits were never excluded, and a worktree retry cannot
     // replay the supplied patch, so the clause stays silent there.
@@ -101,6 +103,7 @@ pub(crate) fn explain_finding_with_config_navigation_mode_and_progress(
             worktree,
             committed_history,
             &retry_command,
+            &worktree_list_command,
         )),
     }
 }
@@ -134,7 +137,11 @@ pub(crate) fn no_finding_matched(selector: &str, list_command: &str) -> String {
 /// `retry_command` is the full working retry for this command, already bound
 /// to the run's root/base and quoted (the worktree-mode navigation command),
 /// not a bare prefix: a prefix dropped `--root`/`--base` and could point the
-/// retry at another repository or base (#7328 review).
+/// retry at another repository or base (#7328 review). `worktree_list_command`
+/// is the worktree-mode listing from the same navigation: the clause must
+/// name the listing that can actually contain the id, not a bare
+/// `ripr check --worktree --json` that analyzes the caller's directory at its
+/// default base.
 pub(crate) fn no_finding_matched_fresh_run(
     selector: &str,
     list_command: &str,
@@ -142,6 +149,7 @@ pub(crate) fn no_finding_matched_fresh_run(
     worktree: bool,
     committed_history: bool,
     retry_command: &str,
+    worktree_list_command: &str,
 ) -> String {
     let mut message = no_finding_matched(selector, list_command);
     if worktree || !committed_history || !selector.contains(':') {
@@ -151,7 +159,7 @@ pub(crate) fn no_finding_matched_fresh_run(
         return message;
     }
     message.push_str(&format!(
-        ". Uncommitted tracked edits exist in this repository and are not analyzed without `--worktree`; if the finding came from uncommitted edits, retry `{retry_command}` (or list worktree finding ids with `ripr check --worktree --json`)"
+        ". Uncommitted tracked edits exist in this repository and are not analyzed without `--worktree`; if the finding came from uncommitted edits, retry `{retry_command}` (or list worktree finding ids with `{worktree_list_command}`)"
     ));
     message
 }

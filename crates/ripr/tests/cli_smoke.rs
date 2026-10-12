@@ -22803,26 +22803,32 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
                 "{command} miss must name the working retry `{retry}`:\n{stderr}"
             ));
         }
-        if !stderr.contains("ripr check --worktree --json") {
+        if !stderr.contains(&format!(
+            "ripr check --root {root_str} --base 'HEAD~1' --worktree --json"
+        )) {
             return Err(format!(
-                "{command} miss must name the worktree listing:\n{stderr}"
+                "{command} miss must name the worktree listing for this run's root/base:\n{stderr}"
             ));
         }
     }
 
     // Control: with the edits committed the tree is clean, and the clause
     // must stay silent — the plain committed-history advice is sound there.
+    // The selector must stay unmatched after v3: v3 itself contains the
+    // flip, so reusing the worktree finding id can match and let the run
+    // succeed, passing the silence assertions vacuously.
     run_git(&root, &["add", "."])?;
     run_git(&root, &["commit", "-m", "v3"])?;
+    let absent_selector = format!("{finding_id}f00d");
     for (command, retry) in [
         (
             "explain",
-            format!("ripr explain --root {root_str} --base 'HEAD~1' --worktree {finding_id}"),
+            format!("ripr explain --root {root_str} --base 'HEAD~1' --worktree {absent_selector}"),
         ),
         (
             "context",
             format!(
-                "ripr context --root {root_str} --base 'HEAD~1' --worktree --at {finding_id}"
+                "ripr context --root {root_str} --base 'HEAD~1' --worktree --at {absent_selector}"
             ),
         ),
     ] {
@@ -22836,8 +22842,13 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist()
         if command == "context" {
             args.push("--at");
         }
-        args.push(finding_id.as_str());
+        args.push(absent_selector.as_str());
         let miss = run_ripr(&args);
+        if miss.status.success() {
+            return Err(format!(
+                "{command} with an absent selector must miss, not succeed"
+            ));
+        }
         let stderr = String::from_utf8_lossy(&miss.stderr);
         if stderr.contains("Uncommitted tracked edits exist") || stderr.contains(&retry) {
             return Err(format!(
