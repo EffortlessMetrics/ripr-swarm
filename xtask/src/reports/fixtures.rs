@@ -119,7 +119,10 @@ pub(crate) fn goldens_impl(args: &[String]) -> Result<(), String> {
 
 pub(crate) fn goldens_check() -> Result<(), String> {
     let run_set = collect_golden_runs()?;
-    let entries = write_golden_drift_reports(&run_set.runs, &run_set.violations)?;
+    // One provenance snapshot backs both the drift report and the console
+    // failure card, so the two always name the same build (#7401).
+    let provenance = golden_drift_provenance();
+    let entries = write_golden_drift_reports(&run_set.runs, &run_set.violations, &provenance)?;
     let body = goldens_check_report_body(&run_set.fixtures, &run_set.runs, &run_set.violations);
     write_report("goldens.md", &body)?;
     if run_set.violations.is_empty() {
@@ -128,7 +131,7 @@ pub(crate) fn goldens_check() -> Result<(), String> {
         Err(goldens_check_failure_message(
             &entries,
             &run_set.violations,
-            &golden_drift_provenance(),
+            &provenance,
         ))
     }
 }
@@ -209,7 +212,8 @@ pub(crate) fn goldens_check_failure_message(
 
 pub(crate) fn golden_drift_impl() -> Result<(), String> {
     let run_set = collect_golden_runs()?;
-    write_golden_drift_reports(&run_set.runs, &run_set.violations)?;
+    let provenance = golden_drift_provenance();
+    write_golden_drift_reports(&run_set.runs, &run_set.violations, &provenance)?;
     if run_set
         .violations
         .iter()
@@ -1249,11 +1253,11 @@ fn goldens_check_report_body(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct GoldenDriftProvenance {
     /// The worktree-absolute debug binary every fixture spawn used.
-    binary: String,
+    pub(crate) binary: String,
     /// Its `ripr --version` line: `ripr <version> (<commit>[-dirty])`.
-    ripr_version: String,
+    pub(crate) ripr_version: String,
     /// `git rev-parse HEAD` of the checkout the report ran in.
-    revision: String,
+    pub(crate) revision: String,
 }
 
 fn golden_drift_provenance() -> GoldenDriftProvenance {
@@ -1287,12 +1291,12 @@ fn golden_drift_provenance() -> GoldenDriftProvenance {
 fn write_golden_drift_reports(
     runs: &[FixtureRun],
     violations: &[String],
+    provenance: &GoldenDriftProvenance,
 ) -> Result<Vec<GoldenDriftEntry>, String> {
     let changed_paths = collect_changed_paths_set().unwrap_or_default();
     let entries = golden_drift_entries(runs, &changed_paths)?;
-    let provenance = golden_drift_provenance();
-    let markdown = golden_drift_markdown(&entries, violations, &provenance);
-    let json = golden_drift_json(&entries, violations, &provenance);
+    let markdown = golden_drift_markdown(&entries, violations, provenance);
+    let json = golden_drift_json(&entries, violations, provenance);
     write_report("golden-drift.md", &markdown)?;
     write_report("golden-drift.json", &json)?;
     Ok(entries)
