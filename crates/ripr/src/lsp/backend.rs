@@ -8271,9 +8271,6 @@ fn collect_gap_record_context_packet(
             return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
         }
     };
-    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
-        return Some(sentinel);
-    }
     let records = match parse_gap_records_json_for_root(&contents, Some(root)) {
         Ok(records) => records,
         Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
@@ -8281,6 +8278,9 @@ fn collect_gap_record_context_packet(
     let record = records
         .iter()
         .find(|record| gap_record_matches(record, gap_id))?;
+    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
+        return Some(sentinel);
+    }
     let rendered = render_agent_gap_record_packet_json(&display_path(&ledger_path), record).ok()?;
     serde_json::from_str(&rendered).ok()
 }
@@ -8769,16 +8769,6 @@ fn collect_repair_packet_from_actionable_gaps(
         Ok(report) => report,
         Err(_) => return Some(repair_packet_sentinel(MALFORMED_ACTIONABLE_GAPS_REASON)),
     };
-    if let Some(sentinel) = source_subject_sentinel(
-        root,
-        repo_config,
-        &report,
-        super::gap_artifacts::GapArtifactKind::ActionableGaps,
-        "actionable-gaps.json",
-        "cargo xtask lane1-evidence-audit",
-    ) {
-        return Some(sentinel);
-    }
     let packets = report.get("packets").and_then(|v| v.as_array())?;
     // A requested gap must match exactly. Answering an unknown id with the
     // first packet handed out another gap's repair instructions; `None` lets
@@ -8799,6 +8789,17 @@ fn collect_repair_packet_from_actionable_gaps(
             })
             .or_else(|| packets.first())?
     };
+
+    if let Some(sentinel) = source_subject_sentinel(
+        root,
+        repo_config,
+        &report,
+        super::gap_artifacts::GapArtifactKind::ActionableGaps,
+        "actionable-gaps.json",
+        "cargo xtask lane1-evidence-audit",
+    ) {
+        return Some(sentinel);
+    }
 
     // Require the packet to be actionable to emit a complete repair packet.
     if packet
@@ -8963,9 +8964,6 @@ fn collect_repair_packet_from_ledger(
             return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON));
         }
     };
-    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
-        return Some(sentinel);
-    }
     let records = match parse_gap_records_json_for_root(&contents, Some(root)) {
         Ok(records) => records,
         Err(_) => return Some(repair_packet_sentinel(MALFORMED_GAP_LEDGER_REASON)),
@@ -8977,6 +8975,9 @@ fn collect_repair_packet_from_ledger(
     } else {
         records.iter().find(|r| r.gap_state == "actionable")?
     };
+    if let Some(sentinel) = ledger_source_subject_sentinel(root, repo_config, &contents) {
+        return Some(sentinel);
+    }
     // Use the existing validator for completeness gate.
     if let Err(reason) = validate_agent_gap_record_packet(record) {
         return Some(serde_json::json!({
@@ -9367,6 +9368,74 @@ mod gap_record_context_tests {
         );
         fs::remove_dir_all(&root)
             .map_err(|err| format!("remove temp root {} failed: {err}", root.display()))?;
+        Ok(())
+    }
+
+    /// Synthetic unit ledger: unknown IDs select no record even when the
+    /// unrelated artifact is stale; selected records still require admission.
+    #[test]
+    fn collect_context_unknown_gap_does_not_project_an_unrelated_stale_ledger() -> Result<(), String>
+    {
+        let owned_root =
+            super::super::tests::unique_lsp_test_root("context-unrelated-stale-ledger")?;
+        let root = owned_root.path();
+        fs::create_dir_all(root.join("target/ripr/reports"))
+            .map_err(|err| format!("create reports directory failed: {err}"))?;
+        write_gap_ledger(root)?;
+        let args_value = serde_json::json!({ "gap_ledger": DEFAULT_GAP_DECISION_LEDGER_OUT });
+        let args = args_value
+            .as_object()
+            .ok_or_else(|| "expected object args".to_string())?;
+        let config = crate::config::RiprConfig::default();
+        let selected_id = "gap:rust:pricing:threshold-boundary";
+        let current = collect_gap_record_context_packet(root, &config, args, selected_id)
+            .ok_or_else(|| "expected the current selected context".to_string())?;
+        assert_eq!(current["source"], "gap_decision_ledger");
+        assert_eq!(
+            current["packets"][0]["gap_id"],
+            "gap:pr:pricing:threshold-boundary"
+        );
+        assert_eq!(
+            current["packets"][0]["verification_commands"][0],
+            "cargo xtask fixtures boundary_gap"
+        );
+        assert!(
+            collect_gap_record_context_packet(root, &config, args, "gap:rust:absent").is_none()
+        );
+        let ledger_path = root.join(DEFAULT_GAP_DECISION_LEDGER_OUT);
+        let ledger_bytes =
+            fs::read(&ledger_path).map_err(|err| format!("read original ledger failed: {err}"))?;
+        let ledger: serde_json::Value = serde_json::from_slice(&ledger_bytes)
+            .map_err(|err| format!("parse original ledger failed: {err}"))?;
+        fs::create_dir_all(root.join("tests"))
+            .map_err(|err| format!("create test directory failed: {err}"))?;
+        fs::write(
+            root.join("tests/unclaimed_corpus.rs"),
+            "#[test] fn unclaimed_corpus() { assert_eq!(2 + 2, 4); }\n",
+        )
+        .map_err(|err| format!("write unclaimed test failed: {err}"))?;
+        let key = crate::analysis::workspace_cache_key_at_with_config(root, &config)?;
+        assert_ne!(
+            ledger["source_subject"]["corpus"]["files_content_hash"], key.files_content_hash,
+            "the existing corpus owner must detect the unclaimed addition"
+        );
+        assert_eq!(
+            fs::read(&ledger_path).map_err(|err| format!("read retained ledger failed: {err}"))?,
+            ledger_bytes
+        );
+        let stale = collect_gap_record_context_packet(root, &config, args, selected_id)
+            .ok_or_else(|| "expected a stale selected-record refusal".to_string())?;
+        assert_eq!(stale["status"], "not_actionable_or_incomplete");
+        assert!(
+            stale["reason"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("stale_corpus:"))
+        );
+        assert!(stale.get("packets").is_none() && stale.get("verify_command").is_none());
+        assert!(
+            collect_gap_record_context_packet(root, &config, args, "gap:rust:absent").is_none(),
+            "an unknown gap selects no record from the unchanged stale ledger"
+        );
         Ok(())
     }
 

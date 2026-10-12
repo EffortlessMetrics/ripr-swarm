@@ -17695,9 +17695,12 @@ Missing language provenance is `source_subject_corpus_scope_missing`, even
 when a sibling record has a known preview language. No current artifact
 actions or top repair packet are projected from these refused artifacts.
 Command-time ledger and actionable-gap reads apply the full shared artifact
-admission, including root, schema, language, path and command safety, before
-matching or projecting a packet. Replacing an artifact after a healthy
-refresh cannot bypass those checks.
+admission, including root, schema, language, path and command safety, after
+candidate lookup and before the selected artifact's actionability or projection.
+An explicit ID absent from the preferred queue can reach its ledger; an ID
+absent from the ledger retains the not-found route. Selected stale or invalid
+artifacts still refuse without falling back to another packet. Replacing an
+artifact after a healthy refresh cannot bypass those checks.
 
 Known preview or mixed-language artifacts retain their existing named-file
 admission. Rust provenance alone cannot establish their whole corpus

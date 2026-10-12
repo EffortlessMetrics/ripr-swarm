@@ -6200,6 +6200,7 @@ id = "RIPR-SPEC-0076"
 name = "LSP diagnostics severity policy"
 spec = "docs/specs/RIPR-SPEC-0076-lsp-diagnostics-policy.md"
 tests = [
+  "crates/ripr/src/lsp/backend.rs::gap_record_context_tests::collect_context_unknown_gap_does_not_project_an_unrelated_stale_ledger",
   "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::gap_commands_refuse_a_copied_foreign_ledger_after_a_healthy_byte_identical_workspace_refresh",
   "crates/ripr/tests/lsp_lifecycle/gap_corpus_currentness.rs::gap_commands_admit_the_real_canonical_ledger_from_a_same_physical_alias_after_refresh",
   "xtask/src/tests/rust_corpus_projection.rs::genuine_bare_root_producer_preserves_raw_language_corpus_and_unbounded_verify_exclusion",
@@ -6248,6 +6249,7 @@ id = "RIPR-SPEC-0077"
 name = "LSP repair packet command"
 spec = "docs/specs/RIPR-SPEC-0077-lsp-repair-packet-command.md"
 tests = [
+  "crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_unlisted_gap_uses_current_ledger_despite_stale_queue",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_no_snapshot_and_no_file_returns_null",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_incomplete_gap_returns_sentinel",
   "crates/ripr/src/lsp/tests.rs::execute_command_collect_repair_packet_complete_gap_returns_full_packet",

@@ -17396,6 +17396,204 @@ fn execute_command_collect_repair_packet_never_substitutes_another_gaps_packet()
     })
 }
 
+/// These synthetic unit artifacts isolate exact selection from corpus admission;
+/// genuine public Actionables producer parity is qualified separately.
+#[test]
+fn execute_command_collect_repair_packet_unlisted_gap_uses_current_ledger_despite_stale_queue()
+-> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| format!("failed to start test runtime: {err}"))?;
+    runtime.block_on(async {
+        let root = unique_lsp_test_root("repair-packet-unrelated-stale-queue")?;
+        write_actionable_gaps_report(root.path(), &complete_actionable_gaps_report())?;
+        write_gap_decision_ledger(root.path())?;
+        let queue_path = root.path().join("target/ripr/reports/actionable-gaps.json");
+        let queue_bytes = std::fs::read(&queue_path)
+            .map_err(|err| format!("read original queue failed: {err}"))?;
+        let queue: serde_json::Value = serde_json::from_slice(&queue_bytes)
+            .map_err(|err| format!("parse original queue failed: {err}"))?;
+        let original_ledger_bytes = std::fs::read(
+            root.path()
+                .join("target/ripr/reports/gap-decision-ledger.json"),
+        )
+        .map_err(|err| format!("read original ledger failed: {err}"))?;
+        let (service, _socket) =
+            LspService::new(|client| Backend::new(client, root.path().to_path_buf()));
+        let backend = service.inner();
+        seed_successful_snapshot(backend)?;
+        let collect = |gap_id: Option<&str>| {
+            let arguments = gap_id
+                .map(|id| vec![serde_json::json!({ "gap_id": id })])
+                .unwrap_or_default();
+            backend.execute_command(ExecuteCommandParams {
+                command: COLLECT_REPAIR_PACKET_COMMAND.to_string(),
+                arguments,
+                work_done_progress_params: Default::default(),
+            })
+        };
+
+        let current_queue = collect(Some("gap:rust:pricing-boundary"))
+            .await
+            .map_err(|err| format!("collect current queue failed: {err}"))?
+            .ok_or_else(|| "expected the current queue packet".to_string())?;
+        assert_eq!(
+            current_queue["canonical_gap_id"],
+            "gap:rust:pricing-boundary"
+        );
+        assert!(
+            current_queue["verify_command"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
+        );
+        let current_ledger = collect(Some("gap:rust:pricing:threshold-boundary"))
+            .await
+            .map_err(|err| format!("collect current ledger failed: {err}"))?
+            .ok_or_else(|| "expected the current ledger packet".to_string())?;
+        assert_eq!(
+            current_ledger["canonical_gap_id"],
+            "gap:rust:pricing:threshold-boundary"
+        );
+
+        // This new Rust file is named by neither artifact. The original queue
+        // and all its named subjects remain unchanged; only its corpus ages.
+        std::fs::create_dir_all(root.path().join("tests"))
+            .map_err(|err| format!("create test directory failed: {err}"))?;
+        std::fs::write(
+            root.path().join("tests/unclaimed_corpus.rs"),
+            "#[test] fn unclaimed_corpus() { assert_eq!(2 + 2, 4); }\n",
+        )
+        .map_err(|err| format!("write unclaimed test failed: {err}"))?;
+        let named_paths = queue["packets"]
+            .as_array()
+            .ok_or_else(|| "fixture queue must contain packets".to_string())?
+            .iter()
+            .flat_map(|packet| {
+                crate::output::gap_source_subject::actionable_packet_subject_paths(
+                    root.path(),
+                    packet,
+                )
+            })
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            crate::output::gap_source_subject::check_source_subject(
+                root.path(),
+                queue.get("source_subject"),
+                &named_paths,
+            ),
+            crate::output::gap_source_subject::SourceSubjectCheck::Current,
+            "the queue's named-file contract must remain current"
+        );
+        write_gap_decision_ledger(root.path())?;
+        let fresh_ledger: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(
+                root.path()
+                    .join("target/ripr/reports/gap-decision-ledger.json"),
+            )
+            .map_err(|err| format!("read fresh ledger failed: {err}"))?,
+        )
+        .map_err(|err| format!("parse fresh ledger failed: {err}"))?;
+        assert_ne!(
+            queue["source_subject"]["corpus"]["files_content_hash"],
+            fresh_ledger["source_subject"]["corpus"]["files_content_hash"],
+            "the existing corpus owner must capture the unclaimed addition"
+        );
+
+        // A product-reader positive establishes that the fresh ledger can
+        // render its own nonempty packet before reintroducing the old queue.
+        std::fs::remove_file(&queue_path)
+            .map_err(|err| format!("remove owned queue for control failed: {err}"))?;
+        let fresh_packet = collect(Some("gap:rust:pricing:threshold-boundary"))
+            .await
+            .map_err(|err| format!("collect fresh ledger control failed: {err}"))?
+            .ok_or_else(|| "expected the fresh ledger control".to_string())?;
+        assert_eq!(
+            fresh_packet["canonical_gap_id"],
+            "gap:rust:pricing:threshold-boundary"
+        );
+        assert_eq!(
+            fresh_packet["verify_command"],
+            "cargo xtask fixtures boundary_gap"
+        );
+        std::fs::write(&queue_path, &queue_bytes)
+            .map_err(|err| format!("restore original queue failed: {err}"))?;
+        assert_eq!(
+            std::fs::read(&queue_path)
+                .map_err(|err| format!("read restored queue failed: {err}"))?,
+            queue_bytes
+        );
+
+        for gap_id in [None, Some("gap:rust:pricing-boundary")] {
+            let refused = collect(gap_id)
+                .await
+                .map_err(|err| format!("collect stale queue failed: {err}"))?
+                .ok_or_else(|| "expected a stale queue refusal".to_string())?;
+            assert_eq!(refused["status"], "not_actionable_or_incomplete");
+            assert!(
+                refused["reason"]
+                    .as_str()
+                    .is_some_and(|s| s.starts_with("stale_corpus:"))
+            );
+            assert!(
+                refused.get("verify_command").is_none() && refused.get("receipt_command").is_none()
+            );
+        }
+        let selected = collect(Some("gap:rust:pricing:threshold-boundary"))
+            .await
+            .map_err(|err| format!("collect selected ledger failed: {err}"))?
+            .ok_or_else(|| "expected the selected ledger packet".to_string())?;
+        assert_eq!(
+            selected["canonical_gap_id"], "gap:rust:pricing:threshold-boundary",
+            "an unrelated stale queue must not shadow the selected current ledger: {selected}"
+        );
+        assert_eq!(
+            selected["verify_command"],
+            "cargo xtask fixtures boundary_gap"
+        );
+        // Isolate the ledger repair reader too: an unlisted ID selects no
+        // stale record, while selected/top B still requires full admission.
+        std::fs::remove_file(&queue_path)
+            .map_err(|err| format!("remove owned queue for ledger selector failed: {err}"))?;
+        std::fs::write(
+            root.path()
+                .join("target/ripr/reports/gap-decision-ledger.json"),
+            &original_ledger_bytes,
+        )
+        .map_err(|err| format!("restore original ledger failed: {err}"))?;
+        for gap_id in [None, Some("gap:rust:pricing:threshold-boundary")] {
+            let refused = collect(gap_id)
+                .await
+                .map_err(|err| format!("collect stale selected ledger failed: {err}"))?
+                .ok_or_else(|| "expected a selected stale ledger refusal".to_string())?;
+            assert_eq!(refused["status"], "not_actionable_or_incomplete");
+            assert!(
+                refused["reason"]
+                    .as_str()
+                    .is_some_and(|s| s.starts_with("stale_corpus:"))
+            );
+            assert!(
+                refused.get("verify_command").is_none() && refused.get("receipt_command").is_none()
+            );
+        }
+        let unknown = collect(Some("gap:rust:absent"))
+            .await
+            .map_err(|err| format!("collect absent ledger gap failed: {err}"))?
+            .ok_or_else(|| "expected the absent-gap sentinel".to_string())?;
+        assert_eq!(unknown["status"], "not_actionable_or_incomplete");
+        assert!(
+            unknown["reason"]
+                .as_str()
+                .is_some_and(|s| { s.contains("no repair packet for gap `gap:rust:absent`") }),
+            "an absent ID must not select an unrelated stale ledger record: {unknown}"
+        );
+        assert!(
+            unknown.get("verify_command").is_none() && unknown.get("receipt_command").is_none()
+        );
+        Ok(())
+    })
+}
+
 #[test]
 fn execute_command_collect_repair_packet_discloses_stale_actionable_gaps_subject()
 -> Result<(), String> {
