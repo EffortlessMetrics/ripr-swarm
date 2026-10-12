@@ -36,6 +36,55 @@ pub struct ChangedLine {
     pub new_side_line: usize,
 }
 
+impl ChangedFile {
+    /// The removed line this added line replaced, paired by position inside
+    /// one replacement block. The diff parser gives every removed line of a
+    /// block the new-side coordinate where the block's added run starts, so
+    /// the k-th added line pairs with the k-th removed line when both runs
+    /// have the same length. Unequal runs pair nothing: a guessed pairing
+    /// could compare an added line against the wrong old line.
+    pub(crate) fn replaced_line_counterpart(
+        &self,
+        added_new_side_line: usize,
+    ) -> Option<&ChangedLine> {
+        let run_start = self.added_run_start(added_new_side_line);
+        let mut run_len = 0usize;
+        while self
+            .added_lines
+            .iter()
+            .any(|line| line.new_side_line == run_start + run_len)
+        {
+            run_len += 1;
+        }
+        let removed = self
+            .removed_lines
+            .iter()
+            .filter(|line| line.new_side_line == run_start)
+            .collect::<Vec<_>>();
+        if removed.len() != run_len {
+            return None;
+        }
+        removed
+            .get(added_new_side_line.checked_sub(run_start)?)
+            .copied()
+    }
+
+    /// The new-side line where the contiguous added run holding this line
+    /// starts.
+    pub(crate) fn added_run_start(&self, added_new_side_line: usize) -> usize {
+        let mut run_start = added_new_side_line;
+        while run_start > 0
+            && self
+                .added_lines
+                .iter()
+                .any(|line| line.new_side_line == run_start - 1)
+        {
+            run_start -= 1;
+        }
+        run_start
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -59,5 +108,63 @@ mod tests {
         assert_eq!(changed_line.line, 42);
         assert_eq!(changed_line.new_side_line, 42);
         assert_eq!(changed_line.text, "example");
+    }
+
+    fn line(line: usize, new_side_line: usize, text: &str) -> ChangedLine {
+        ChangedLine {
+            line,
+            text: text.to_string(),
+            new_side_line,
+        }
+    }
+
+    #[test]
+    fn even_replacement_block_pairs_lines_by_position() {
+        // `-a -b +x +y` at new line 4: both removed lines carry new-side 4.
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines: vec![line(4, 4, "x"), line(5, 5, "y")],
+            removed_lines: vec![line(4, 4, "a"), line(5, 4, "b")],
+        };
+        let text = |added| {
+            changed
+                .replaced_line_counterpart(added)
+                .map(|line| line.text.as_str())
+        };
+        assert_eq!(text(4), Some("a"));
+        assert_eq!(text(5), Some("b"));
+        assert_eq!(changed.added_run_start(5), 4);
+    }
+
+    #[test]
+    fn uneven_block_or_pure_insertion_pairs_nothing() {
+        let uneven = ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines: vec![line(4, 4, "x")],
+            removed_lines: vec![line(4, 4, "a"), line(5, 4, "b")],
+        };
+        assert!(uneven.replaced_line_counterpart(4).is_none());
+        let inserted = ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines: vec![line(4, 4, "x")],
+            removed_lines: Vec::new(),
+        };
+        assert!(inserted.replaced_line_counterpart(4).is_none());
+    }
+
+    #[test]
+    fn separate_blocks_pair_within_their_own_run() {
+        // `-a +x  context  -b +y`: two one-line blocks.
+        let changed = ChangedFile {
+            path: PathBuf::from("src/lib.ts"),
+            added_lines: vec![line(4, 4, "x"), line(6, 6, "y")],
+            removed_lines: vec![line(4, 4, "a"), line(6, 6, "b")],
+        };
+        assert_eq!(
+            changed
+                .replaced_line_counterpart(6)
+                .map(|line| line.text.as_str()),
+            Some("b")
+        );
     }
 }
