@@ -5025,7 +5025,7 @@
       "tier": "pure",
       "source_fixture": "fixtures/python_empty_sink_module_comparison",
       "vector": "empty_sink_tokens_module_comparison_text",
-      "probe_family": "predicate_boundary",
+      "probe_family": "predicate",
       "assertions": [
         {
           "type": "must_not_report_clean"
