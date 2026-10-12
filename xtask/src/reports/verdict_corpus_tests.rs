@@ -2216,3 +2216,25 @@ fn report_keeps_edited_packet_rates_apart_from_producer_rates() -> Result<(), St
     assert!(!render_report_json(&rust_report)?.contains("packet_provenance"));
     Ok(())
 }
+
+#[test]
+fn a_packet_case_refuses_a_binary_without_the_perl_adapter() -> Result<(), String> {
+    let unavailable = json!({"findings": [], "language_runs": [
+        {"language": "perl", "status": "unavailable", "reason": "not compiled"}
+    ]});
+    let Err(err) = refuse_unavailable_perl(&unavailable, "c", "ripr-lang-perl") else {
+        return Err("an unavailable Perl run must be refused".to_string());
+    };
+    assert!(err.contains("has no Perl adapter"), "{err}");
+    for ok in [
+        json!({"findings": [], "language_runs": [{"language": "perl", "status": "ok"}]}),
+        json!({"findings": [], "language_runs": [{"language": "rust", "status": "unavailable"}]}),
+        json!({"findings": []}),
+    ] {
+        assert!(
+            refuse_unavailable_perl(&ok, "c", "ripr-lang-perl").is_ok(),
+            "{ok}"
+        );
+    }
+    Ok(())
+}

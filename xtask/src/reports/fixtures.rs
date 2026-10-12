@@ -799,31 +799,8 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     // ripr_debug_binary() honors CARGO_TARGET_DIR (#2176 review): the
     // routed CI jobs set it, so `cargo build` writes there.
     ripr_fixture_binary_built_by(ripr_debug_binary(), &RIPR_BINARY_BUILD, &|| {
-        with_fixture_build_lock(&|| run("cargo", &["build", "-p", "ripr"]).map(|_status| ()))
+        run("cargo", &["build", "-p", "ripr"]).map(|_status| ())
     })
-}
-
-/// Hold an exclusive lock beside the shared debug binary while `build` runs.
-/// The default and `lang-perl` builds write the same `target/debug/ripr`;
-/// Cargo serializes each build but not the Perl build's later copy, so both
-/// builds take this lock and a default build can never land between the Perl
-/// build and its copy, in this process or another xtask sharing the target.
-fn with_fixture_build_lock(build: &dyn Fn() -> Result<(), String>) -> Result<(), String> {
-    let lock_path = ripr_debug_binary().with_file_name(".ripr-fixture-build.lock");
-    if let Some(parent) = lock_path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|err| format!("create {} failed: {err}", parent.display()))?;
-    }
-    let lock = fs::OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&lock_path)
-        .map_err(|err| format!("open {} failed: {err}", lock_path.display()))?;
-    lock.lock()
-        .map_err(|err| format!("lock {} failed: {err}", lock_path.display()))?;
-    // The lock is released when `lock` drops, after the build returns.
-    build()
 }
 
 /// Memoized result of the one `cargo build -p ripr --features lang-perl` this
@@ -834,26 +811,27 @@ static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
 /// Perl verdict corpus (RIPR-SPEC-0245): the default build refuses Perl
 /// packets. Cargo writes both feature sets to the same `target/debug/ripr`, so
 /// the Perl build is copied to its own `ripr-lang-perl` name and the default
-/// build is restored, all under [`with_fixture_build_lock`], so a Rust run
-/// never gets the Perl feature set and the copy never gets the default one.
+/// build is restored, so a Rust run in this process never gets the Perl
+/// feature set. A default build from another process can still land between
+/// the Perl build and its copy; the corpus run then refuses every packet case
+/// rather than scoring it (see `run_case`). No build lock is taken: the
+/// fixture-cache tests hold Cargo's own lock and need the child to wait there.
 /// Only the `ripr` crate recompiles.
 pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
     let shared = ripr_debug_binary();
     let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
     ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
-        with_fixture_build_lock(&|| {
-            run("cargo", &["build", "-p", "ripr", "--features", "lang-perl"])?;
-            fs::copy(&shared, &perl).map_err(|err| {
-                format!(
-                    "copy {} to {} failed: {err}",
-                    shared.display(),
-                    perl.display()
-                )
-            })?;
-            // Restore the default binary before releasing the lock. Cargo
-            // keeps both feature sets' artifacts, so this only relinks.
-            run("cargo", &["build", "-p", "ripr"]).map(|_status| ())
-        })
+        run("cargo", &["build", "-p", "ripr", "--features", "lang-perl"])?;
+        fs::copy(&shared, &perl).map_err(|err| {
+            format!(
+                "copy {} to {} failed: {err}",
+                shared.display(),
+                perl.display()
+            )
+        })?;
+        // Restore the default binary. Cargo keeps both feature sets'
+        // artifacts, so this only relinks.
+        run("cargo", &["build", "-p", "ripr"]).map(|_status| ())
     })
 }
 

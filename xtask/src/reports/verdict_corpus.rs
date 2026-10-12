@@ -2445,6 +2445,9 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
             case.case_id
         )
     })?;
+    if case.perl_facts.is_some() {
+        refuse_unavailable_perl(&check, &case.case_id, &binary)?;
+    }
     relativize_probe_files(&mut check, &work);
     // ripr may report the canonical root (macOS `/var` is `/private/var`);
     // strip that spelling too so findings still land on their anchors.
@@ -2452,6 +2455,31 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
         relativize_probe_files(&mut check, &canonical);
     }
     Ok((check, anchor_line))
+}
+
+/// A binary without `lang-perl` reports the Perl run `unavailable` and exits
+/// 0 with no findings, which would score every packet case as silent. Refuse
+/// the run instead, so a wrong binary is a named error, never a verdict.
+pub(crate) fn refuse_unavailable_perl(
+    check: &Value,
+    case_id: &str,
+    binary: &str,
+) -> Result<(), String> {
+    let unavailable = check
+        .get("language_runs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|run| {
+            run.get("language").and_then(Value::as_str) == Some("perl")
+                && run.get("status").and_then(Value::as_str) == Some("unavailable")
+        });
+    if unavailable {
+        return Err(format!(
+            "case `{case_id}`: {binary} has no Perl adapter (language run `unavailable`); it is not the lang-perl build, so another build may have replaced it before the copy; rerun the corpus check"
+        ));
+    }
+    Ok(())
 }
 
 /// ripr names probe files by joining them onto the absolute `--root`; the
