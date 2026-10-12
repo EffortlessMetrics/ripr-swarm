@@ -784,7 +784,9 @@ mod tests {
             .find(|line| line.starts_with("Real dir: "))
             .unwrap_or("");
         if !real_line.starts_with(&format!("Real dir: {drive}/code/myrepo/target/ripr/cache")) {
-            return Err(format!("Windows human Real dir leaked verbatim spelling: {human}"));
+            return Err(format!(
+                "Windows human Real dir leaked verbatim spelling: {human}"
+            ));
         }
         if real_line.contains(r"\\?\") || real_line.contains('\\') {
             return Err(format!(
@@ -796,10 +798,7 @@ mod tests {
             .lines()
             .find(|line| line.starts_with("Real dir: "))
             .unwrap_or("");
-        if !unix_line.starts_with(&format!(
-            "Real dir: {}",
-            real_dir.display()
-        )) {
+        if !unix_line.starts_with(&format!("Real dir: {}", real_dir.display())) {
             return Err(format!(
                 "Unix human Real dir must keep the real path spelling: {unix}"
             ));
@@ -1323,13 +1322,16 @@ mod tests {
         // `check-local-context` forbids drive-letter path literals, so the
         // Windows shape is assembled from parts.
         let drive = "F:";
-        let verbatim = format!(r"\\?\{drive}\tmp\ripr-audit-scratch\target\ripr\cache\repo-file-facts");
+        let verbatim =
+            format!(r"\\?\{drive}\tmp\ripr-audit-scratch\target\ripr\cache\repo-file-facts");
         let layer_path = Path::new(&verbatim);
         let error = std::io::Error::from(std::io::ErrorKind::Other);
         let windows = layer_removal_failure_message(layer_path, &error, true);
         let expected_path =
             format!("{drive}/tmp/ripr-audit-scratch/target/ripr/cache/repo-file-facts");
-        if !windows.contains(&format!("failed to remove ripr cache layer {expected_path}:")) {
+        if !windows.contains(&format!(
+            "failed to remove ripr cache layer {expected_path}:"
+        )) {
             return Err(format!(
                 "windows failure message leaked the verbatim spelling: {windows}"
             ));

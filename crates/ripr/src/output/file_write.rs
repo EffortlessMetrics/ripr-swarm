@@ -195,7 +195,11 @@ pub(crate) fn write_failure_message(path: &Path, err: &io::Error) -> String {
 
 /// [`write_failure_message`] with the host made explicit so both answers are
 /// testable anywhere (#4378 pattern).
-pub(crate) fn write_failure_message_for_host(path: &Path, err: &io::Error, windows: bool) -> String {
+pub(crate) fn write_failure_message_for_host(
+    path: &Path,
+    err: &io::Error,
+    windows: bool,
+) -> String {
     let mut message = format!(
         "failed to write {}: {err}",
         crate::output::path::human_path_text(&path.to_string_lossy(), windows)
@@ -466,9 +470,8 @@ mod output_dir_tests {
         // `check-local-context` forbids drive-letter path literals, so the
         // Windows shape is assembled from parts.
         let drive = "F:";
-        let verbatim = format!(
-            r"\\?\{drive}\tmp\ripr-audit-scratch\target\ripr\reports\start-here.md"
-        );
+        let verbatim =
+            format!(r"\\?\{drive}\tmp\ripr-audit-scratch\target\ripr\reports\start-here.md");
         let path = Path::new(&verbatim);
         let locked = io::Error::from_raw_os_error(32);
         let windows = super::write_failure_message_for_host(path, &locked, true);
@@ -480,12 +483,18 @@ mod output_dir_tests {
         );
         assert!(!windows.contains(r"\\?\"), "{windows}");
         assert!(!windows.contains('\\'), "{windows}");
-        assert!(windows.contains("likely held open by another program"), "{windows}");
+        assert!(
+            windows.contains("likely held open by another program"),
+            "{windows}"
+        );
         assert!(windows.contains("rerun the same command"), "{windows}");
         // ERROR_LOCK_VIOLATION (33) gets the same hint.
         let lock_violation = io::Error::from_raw_os_error(33);
         let hinted = super::write_failure_message_for_host(path, &lock_violation, true);
-        assert!(hinted.contains("likely held open by another program"), "{hinted}");
+        assert!(
+            hinted.contains("likely held open by another program"),
+            "{hinted}"
+        );
         // Other OS codes keep the raw error without a invented diagnosis.
         let other = io::Error::from_raw_os_error(28);
         let plain = super::write_failure_message_for_host(path, &other, true);
@@ -493,7 +502,10 @@ mod output_dir_tests {
         assert!(!plain.contains("likely held open"), "{plain}");
         // Non-Windows hosts render the text unchanged and never add the hint.
         let unix = super::write_failure_message_for_host(path, &locked, false);
-        assert!(unix.contains(&format!("failed to write {verbatim}:")), "{unix}");
+        assert!(
+            unix.contains(&format!("failed to write {verbatim}:")),
+            "{unix}"
+        );
         assert!(!unix.contains("likely held open"), "{unix}");
     }
 
