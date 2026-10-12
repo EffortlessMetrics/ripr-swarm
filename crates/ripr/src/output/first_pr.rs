@@ -2671,12 +2671,12 @@ fn base_fetch_refspec(branch: &str) -> String {
 fn fetch_base_command(options: &FirstPrOptions) -> String {
     if let Some(branch) = options.base.strip_prefix("origin/") {
         if branch.is_empty() {
-            // Fail closed (#7368): an `origin/` base with an empty branch
-            // composes the invalid refspec `+refs/heads/:refs/remotes/origin/`
-            // that git rejects; fall back to the fetch-everything spelling a
-            // non-origin base already uses.
+            // Fail closed (#7368): an `origin/` base with an empty branch is
+            // an invalid ref that no fetch spelling can make resolve, so
+            // fetch-everything advice would be dead recovery. Point at a
+            // rerun with a valid base instead.
             return format!(
-                "git -C {} fetch --all --prune",
+                "ripr first-pr --root {} --base <ref> --head HEAD",
                 shell_arg(&options.command_root())
             );
         }
@@ -2897,18 +2897,17 @@ mod tests {
     }
 
     #[test]
-    fn fetch_base_command_with_empty_origin_branch_falls_back_to_fetch_all() {
-        // #7368: `origin/` with an empty branch composes the invalid refspec
-        // `+refs/heads/:refs/remotes/origin/`; the recovery must fall back to
-        // the fetch-everything spelling instead of printing a command git
-        // rejects outright.
+    fn fetch_base_command_with_empty_origin_branch_points_at_valid_rerun() {
+        // #7368: `origin/` with an empty branch is an invalid ref that no
+        // fetch spelling can make resolve; the recovery must point at a rerun
+        // with a valid base instead of dead fetch-everything advice.
         let empty = FirstPrOptions {
             base: "origin/".to_string(),
             ..FirstPrOptions::default()
         };
         let command = fetch_base_command(&empty);
-        assert!(command.contains("fetch --all --prune"), "{command}");
-        assert!(!command.contains("refs/heads/:"), "{command}");
+        assert!(command.contains("--base <ref> --head HEAD"), "{command}");
+        assert!(!command.contains("fetch"), "{command}");
 
         let named = FirstPrOptions {
             base: "origin/trunk".to_string(),
