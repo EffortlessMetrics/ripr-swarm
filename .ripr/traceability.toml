@@ -14578,3 +14578,24 @@ outputs = [
   "docs/PR_AUTOMATION.md",
 ]
 metrics = ["unit_test_pass_rate"]
+
+[[behavior]]
+id = "RIPR-SPEC-0254"
+name = "check config path disclosure"
+spec = "docs/specs/RIPR-SPEC-0254-check-config-path-disclosure.md"
+tests = [
+  "crates/ripr/src/output/human.rs::tests::header_names_the_loaded_config_path",
+  "crates/ripr/src/output/human.rs::tests::render_includes_summary_counts_and_empty_findings_message",
+  "crates/ripr/src/output/json/report.rs::harness_projection_tests::config_path_names_the_loaded_file_and_defaults_omit_it",
+]
+fixtures = []
+code = [
+  "crates/ripr/src/output/human.rs",
+  "crates/ripr/src/output/json/report.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0254-check-config-path-disclosure.md",
+  "docs/OUTPUT_SCHEMA.md",
+  "schemas/ripr/check.schema.json",
+]
+metrics = ["unit_test_pass_rate"]

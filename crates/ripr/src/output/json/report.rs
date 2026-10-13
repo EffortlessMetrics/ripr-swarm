@@ -199,6 +199,18 @@ pub(crate) fn render_with_config(
         &crate::output::path::display_path(&output.root),
         true,
     );
+    // RIPR-SPEC-0254 (#7536): name the ripr.toml that governed the run so
+    // JSON consumers and stderr-discarding CI logs can tell which file
+    // applied. Absent exactly when built-in defaults governed.
+    if let Some(path) = config.source_path() {
+        field(
+            &mut out,
+            1,
+            "config_path",
+            &crate::output::path::human_path(path),
+            true,
+        );
+    }
     if let Some(base) = &output.base {
         field(&mut out, 1, "base", base, true);
     }
@@ -1838,6 +1850,24 @@ mod harness_projection_tests {
 
     fn parse(rendered: &str) -> Result<serde_json::Value, serde_json::Error> {
         serde_json::from_str(rendered)
+    }
+
+    /// RIPR-SPEC-0254 (#7536): a loaded `ripr.toml` is named by the
+    /// top-level `config_path`; built-in defaults omit the member entirely.
+    #[test]
+    fn config_path_names_the_loaded_file_and_defaults_omit_it() -> TestResult {
+        let output = output_with(Vec::new());
+        let defaults = parse(&render_with_config(&output, &RiprConfig::default(), None))?;
+        assert!(defaults.get("config_path").is_none());
+
+        let mut loaded = RiprConfig::default();
+        loaded.source_path = Some(std::path::PathBuf::from("repo/ripr.toml"));
+        let rendered = parse(&render_with_config(&output, &loaded, None))?;
+        assert_eq!(
+            rendered.get("config_path").and_then(|value| value.as_str()),
+            Some("repo/ripr.toml")
+        );
+        Ok(())
     }
 
     #[test]
