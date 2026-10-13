@@ -280,6 +280,102 @@ pub(in crate::analysis) fn fallible_literal_witness(
     Some(witness)
 }
 
+/// A constant owner tail (#6617): the owner's whole body is one expression
+/// built only from literals, unary and binary operators and parentheses
+/// (`42`, `40 + 2`, `-(1 << 3)`), and that expression is the changed one.
+/// Such an expression has no semantic tokens, so [`current_path_witness`]
+/// cannot pair it with its sink, yet nothing sits between it and the owner's
+/// return: every value it produces is the value the owner returns. Only that
+/// exact shape completes a DirectReturn witness. A statement, a binding, a
+/// name, a call, a cast or a macro anywhere in the body answers `None`, as
+/// does a sink on another line or with other text (fail closed).
+pub(in crate::analysis) fn constant_tail_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    if probe.family != ProbeFamily::ReturnValue || probe.owner.as_ref() != Some(&owner.id) {
+        return None;
+    }
+    let identity = normalize_semantic_text(&probe.expression);
+    let tail_line = constant_owner_tail_line(owner, &identity)?;
+    if tail_line != probe.location.line {
+        return None;
+    }
+    let sink = sinks.iter().find(|sink| {
+        sink.owner.as_ref() == Some(&owner.id)
+            && sink.kind == FlowSinkKind::ReturnValue
+            && sink.line == probe.location.line
+            && normalize_semantic_text(&sink.text) == identity
+    })?;
+    let mut witness = PropagationWitnessV1 {
+        schema_version: SCHEMA_VERSION,
+        behavior: BehaviorIdentity {
+            owner: owner.id.clone(),
+            family: probe.family.as_str().into(),
+            delta: probe.delta.as_str().into(),
+            expression: identity.clone(),
+        },
+        source: PropagationEndpoint {
+            kind: "changed_behavior".into(),
+            identity: identity.clone(),
+            line: probe.location.line,
+        },
+        edges: vec![PropagationEdge {
+            kind: PropagationEdgeKind::DirectReturn,
+            status: EdgeStatus::Established,
+            from: identity.clone(),
+            to: identity.clone(),
+        }],
+        selected_helper_calls: Vec::new(),
+        fallible_check: None,
+        sink: PropagationEndpoint {
+            kind: sink.kind.as_str().into(),
+            identity,
+            line: sink.line,
+        },
+        completeness: PathCompleteness::Complete,
+        limitations: vec![
+            "constant_owner_tail".into(),
+            "static_local_flow_only".into(),
+        ],
+        semantic_digest: String::new(),
+    };
+    witness.semantic_digest = witness.compute_semantic_digest();
+    Some(witness)
+}
+
+/// The line of the owner's body when that body is exactly one constant
+/// expression whose normalized text is `identity`.
+fn constant_owner_tail_line(
+    owner: &crate::analysis::facts::FunctionSummary,
+    identity: &str,
+) -> Option<usize> {
+    use ra_ap_syntax::{AstNode, SyntaxKind, ast};
+    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
+    let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let list = function.body()?.stmt_list()?;
+    if list.statements().next().is_some() {
+        return None;
+    }
+    let tail = list.tail_expr()?;
+    let constant = tail.syntax().descendants().all(|node| {
+        matches!(
+            node.kind(),
+            SyntaxKind::LITERAL
+                | SyntaxKind::BIN_EXPR
+                | SyntaxKind::PREFIX_EXPR
+                | SyntaxKind::PAREN_EXPR
+        )
+    });
+    if !constant || normalize_semantic_text(&tail.syntax().text().to_string()) != identity {
+        return None;
+    }
+    let offset = usize::from(tail.syntax().text_range().start());
+    let before = owner.body.get(..offset)?;
+    Some(owner.start_line + before.matches('\n').count())
+}
+
 /// A field-to-push route may contain a macro initializer that the complete
 /// local adapter refuses. Retain its exact local field as a candidate only;
 /// the independently parsed returned-ledger route never completes this path.
@@ -1257,6 +1353,12 @@ mod tests {
         }
     }
 
+    fn probe_at(family: ProbeFamily, expression: &str, line: usize) -> Probe {
+        let mut probe = probe(family, expression);
+        probe.location = SourceLocation::new("src/lib.rs", line, 5);
+        probe
+    }
+
     fn sink(kind: FlowSinkKind, text: &str, line: usize) -> FlowSinkFact {
         FlowSinkFact {
             kind,
@@ -1297,6 +1399,103 @@ mod tests {
         };
         let flow_sinks = super::super::local_flow_sinks(probe, Some(&owner));
         current_path_witness(probe, &flow_sinks)
+    }
+
+    fn constant_owner(body: &str) -> FunctionSummary {
+        FunctionSummary {
+            id: SymbolId("owner:calculate".to_string()),
+            name: "calculate".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: body.into(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        }
+    }
+
+    /// #6617: only a body that is exactly one literal-only expression is a
+    /// constant tail.
+    #[test]
+    fn constant_owner_tail_is_the_whole_literal_only_body() {
+        for (body, expression) in [
+            ("fn calculate() -> u32 {\n    40 + 2\n}", "40 + 2"),
+            ("fn calculate() -> u32 {\n    7\n}", "7"),
+            ("fn calculate() -> i32 {\n    -(1 << 3)\n}", "-(1 << 3)"),
+            (
+                "fn calculate() -> &'static str {\n    \"ripr\"\n}",
+                "\"ripr\"",
+            ),
+        ] {
+            assert_eq!(
+                constant_owner_tail_line(&constant_owner(body), expression),
+                Some(2),
+                "{body}"
+            );
+        }
+        for (body, expression) in [
+            // A statement before the tail.
+            (
+                "fn calculate() -> u32 {\n    let _x = 1;\n    40 + 2\n}",
+                "40 + 2",
+            ),
+            // A name, a call, a method, a cast, a closure, a macro, a block.
+            ("fn calculate() -> u32 {\n    BASE + 2\n}", "BASE + 2"),
+            ("fn calculate() -> u32 {\n    base() + 2\n}", "base() + 2"),
+            (
+                "fn calculate() -> u32 {\n    40u32.pow(1)\n}",
+                "40u32.pow(1)",
+            ),
+            (
+                "fn calculate() -> u32 {\n    -1i64 as u32\n}",
+                "-1i64 as u32",
+            ),
+            ("fn calculate() -> u32 {\n    (|| 42)()\n}", "(|| 42)()"),
+            ("fn calculate() -> u32 {\n    m!(42)\n}", "m!(42)"),
+            ("fn calculate() -> u32 {\n    { 42 }\n}", "{ 42 }"),
+            (
+                "fn calculate() -> u32 {\n    if true { 42 } else { 0 }\n}",
+                "if true { 42 } else { 0 }",
+            ),
+            // The changed expression is not the whole tail.
+            ("fn calculate() -> u32 {\n    40 + 2\n}", "2"),
+        ] {
+            assert_eq!(
+                constant_owner_tail_line(&constant_owner(body), expression),
+                None,
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn constant_tail_witness_binds_owner_line_and_sink() {
+        let owner = constant_owner("fn calculate() -> u32 {\n    40 + 2\n}");
+        let probe = probe_at(ProbeFamily::ReturnValue, "40 + 2", 2);
+        let sinks = super::super::local_flow_sinks(&probe, Some(&owner));
+        let witness = constant_tail_witness(&probe, &owner, &sinks);
+        assert!(
+            complete_direct_witness(&probe, witness.as_ref()),
+            "{witness:?} {sinks:?}"
+        );
+        // Another line, another family, or another owner gets nothing.
+        let elsewhere = probe_at(ProbeFamily::ReturnValue, "40 + 2", 3);
+        let sinks = super::super::local_flow_sinks(&elsewhere, Some(&owner));
+        assert!(constant_tail_witness(&elsewhere, &owner, &sinks).is_none());
+        let predicate = probe_at(ProbeFamily::Predicate, "40 + 2", 2);
+        let sinks = super::super::local_flow_sinks(&predicate, Some(&owner));
+        assert!(constant_tail_witness(&predicate, &owner, &sinks).is_none());
+        let mut other = probe_at(ProbeFamily::ReturnValue, "40 + 2", 2);
+        other.owner = Some(SymbolId("owner:other".to_string()));
+        assert!(constant_tail_witness(&other, &owner, &[]).is_none());
     }
 
     #[test]

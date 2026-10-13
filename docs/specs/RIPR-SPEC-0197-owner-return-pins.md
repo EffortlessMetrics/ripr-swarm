@@ -919,6 +919,33 @@ Implementation and validation obligations:
    blast-radius and focused policy checks before a coherent implementation draft.
    General oracle-strength work (#6764/#6670) remains with its existing owners.
 
+### Constant owner tails (#6617)
+
+Rule 7a's literal adapter stays the only route for its fallible helper
+shape. Separately, `constant_tail_witness` in
+`classify/propagation_witness.rs` completes a DirectReturn witness for a
+`return_value` probe when all of these hold:
+
+- the owner's whole body is one tail expression with no statement;
+- that expression is built only from literals, unary and binary operators
+  and parentheses (`42`, `40 + 2`, `-(1 << 3)`, `"ripr"`);
+- its normalized text is the probe's changed expression, on the probe's
+  line;
+- the owner's local return-value sink has that same text on that line.
+
+Nothing sits between such an expression and the owner's return, so every
+value it produces is the value the owner returns. Without this witness, an
+exact pin such as `assert_eq!(answer(), 42)` on `fn answer() -> u32 { 40 + 2 }`
+read as a false `weakly_exposed` gap, because a literal has no semantic
+tokens to pair with its sink.
+
+A name, call, method, cast, closure, macro, block, branch or preceding
+statement anywhere in the body yields no witness (fail closed). The witness
+settles propagation only; relation, activation and oracle strength keep
+their own rules, so a weak oracle on a constant tail keeps its gap.
+`current_path_witness`, `semantic_tokens` and the rule-7a receipt are
+unchanged.
+
 ### Same-named module-level functions (#6544)
 
 A bare call used to refuse the pin whenever any other module-level `fn` of
