@@ -4,6 +4,10 @@ const path = require("node:path");
 const { spawnSync } = require("node:child_process");
 
 const REQUIRED_PORTABLE_TESTS = Object.freeze([
+  "distinguishes native resolution failures from missing optional packages",
+  "rejects non-object native manifests with a contextual typed error",
+  "public bin identifies corrupt package metadata and recovers after restoration",
+  "public bin retains missing-manifest and missing-exports reasons without claiming package absence",
   "rejects lifecycle scripts, version ranges, and dependency drift",
   "rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads",
   "source bin missing-package failure never falls back to PATH or writes stdout",
