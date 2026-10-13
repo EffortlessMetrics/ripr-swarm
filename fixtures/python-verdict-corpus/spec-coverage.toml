@@ -8,16 +8,16 @@
 # oracle, probe or test-shape behavior that a corpus case (a Python diff plus
 # runtime mutant truth from the subject's own tests) can label. An in-scope
 # example a case cannot label is waived with a reason; waived examples are
-# accounted for, never covered. RIPR-SPEC-0238 examples 9 and 10 are neither
-# covered nor waived: they are left out for the reasons in SPEC.md (9 has no
-# realistic owner yet, 10 needs numpy in a subject), and neither is
-# impossible to label, so they stay visible as uncovered.
+# accounted for, never covered. RIPR-SPEC-0238 example 10 is neither covered
+# nor waived: it is left out for the reason in SPEC.md (it needs numpy in a
+# subject), and it is not impossible to label, so it stays visible as
+# uncovered.
 #
 # `floor` is the covered-example count `verdict-corpus check` protects. Raise
 # it when coverage grows; lowering it is a reviewed edit with a reason.
 
 schema_version = "ripr_verdict_corpus_spec_coverage.v1"
-floor = 37
+floor = 39
 
 # LSP Repair Packet Command
 [[spec]]
@@ -477,6 +477,12 @@ reason = "TypeScript analyzer rules; a Python case cannot label them"
 # TypeScript default-import owner local
 [[spec]]
 id = "RIPR-SPEC-0251"
+scope = "out"
+reason = "TypeScript analyzer rules; a Python case cannot label them"
+
+# TypeScript node:test context assert
+[[spec]]
+id = "RIPR-SPEC-0252"
 scope = "out"
 reason = "TypeScript analyzer rules; a Python case cannot label them"
 

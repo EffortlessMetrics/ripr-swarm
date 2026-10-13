@@ -281,7 +281,7 @@ fn selection_with_open_files(selected: &[PathBuf], open: &BTreeSet<PathBuf>) -> 
 ///
 /// The module-tree walk parses every module of a package, so it runs only
 /// for suspects: test files whose module name no loaded file of their
-/// package declares outside a line comment, and no loaded file spells as a
+/// package declares outside comments/strings, and no loaded file spells as a
 /// path, and target roots in a package that turns Cargo's
 /// target discovery off. Anything else keeps its tests without a walk.
 ///
@@ -421,20 +421,17 @@ fn mentioned_module_names(
     let mut mentioned = MentionedModules::default();
     for (path, bytes) in loaded_files {
         let package = owning_manifest_dir(root, path, manifests);
-        for (at, _) in bytes.windows(3).enumerate().filter(|(_, w)| *w == b"mod") {
-            if at > 0 && is_ident(bytes[at - 1]) {
+        // Text inside comments and literals cannot declare a module. Keep
+        // path hints on the original bytes below so real #[path]/include!
+        // literals still spare their targets the suspect walk.
+        let code =
+            crate::analysis::extract::mask_comments_and_strings(&String::from_utf8_lossy(bytes));
+        let code = code.as_bytes();
+        for (at, _) in code.windows(3).enumerate().filter(|(_, w)| *w == b"mod") {
+            if at > 0 && is_ident(code[at - 1]) {
                 continue;
             }
-            // A commented-out declaration (`// mod used_tests;`) is how a
-            // file often becomes an orphan; it must not spare the walk.
-            let line_start = bytes[..at]
-                .iter()
-                .rposition(|byte| *byte == b'\n')
-                .map_or(0, |position| position + 1);
-            if contains_bytes(&bytes[line_start..at], b"//") {
-                continue;
-            }
-            let rest = &bytes[at + 3..];
+            let rest = &code[at + 3..];
             let skipped = rest
                 .iter()
                 .take_while(|byte| byte.is_ascii_whitespace())
@@ -1221,7 +1218,19 @@ fn apply_probe_and_oracle_limits(
     index: &RustIndex,
     binding_relation: Option<&crate::analysis::probes::ChangedBindingPredicateUse>,
 ) {
-    oracles::apply_rust_macro_wrapped_assertion_limit(finding, index);
+    // #7089 matches a bare `owner(` call, which for a method owner
+    // (`impl Cart::total`) or a trait default method can only be some other
+    // item named `total`. Only a parser-established free function counts;
+    // the lexical fallback leaves the context unknown, so the limit stays off.
+    let free_fn_owner = probe.owner.as_ref().is_some_and(|id| {
+        index.functions().iter().any(|function| {
+            function.id == *id
+                && function.impl_context == crate::analysis::facts::FunctionImplContext::Free
+        })
+    });
+    let owner_name =
+        owner_name_from_id(&probe.owner, &probe.location.file).filter(|_| free_fn_owner);
+    oracles::apply_rust_macro_wrapped_assertion_limit(finding, index, owner_name.as_deref());
     probes::apply_rust_value_propagation_limit(finding, probe, index);
     oracles::apply_wrapper_error_binding_limit(finding, probe);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);
@@ -1258,6 +1267,20 @@ fn needs_proximity_reach_limit(finding: &Finding) -> bool {
         })
 }
 
+/// A recognized weak direct oracle does not rule out an opaque macro path.
+/// Examined misses supply no oracle row, and a confirmed discriminator is
+/// preserved even when another RIPR stage keeps the classification weak.
+fn needs_mixed_macro_reach_limit(finding: &Finding) -> bool {
+    finding.class == ExposureClass::WeaklyExposed
+        && finding.static_limit_kind.is_none()
+        && finding.ripr.reach.state == crate::domain::StageState::Yes
+        && finding.ripr.reveal.discriminate.state != crate::domain::StageState::Yes
+        && finding.oracle_related_tests().any(|test| {
+            test.relation_reason == Some(crate::domain::RelationReason::DirectOwnerCall)
+                && test.oracle.is_some()
+        })
+}
+
 fn apply_rust_no_static_path_limit(
     finding: &mut Finding,
     probe: &Probe,
@@ -1267,6 +1290,17 @@ fn apply_rust_no_static_path_limit(
 ) {
     if needs_proximity_reach_limit(finding) {
         apply_rust_proximity_reach_limit(finding, probe, transitive_reach);
+        return;
+    }
+    if needs_mixed_macro_reach_limit(finding) {
+        // Direct reach is already known. Search only the unresolved macro
+        // route; a lexical helper witness must not broaden this boundary.
+        if let Some(owner) = owner_name_from_id(&probe.owner, &probe.location.file)
+            && let Some(witness) = transitive_reach.macro_reach_witness(&owner)
+        {
+            apply_rust_macro_reach_limit(finding, &owner, &witness);
+            unresolved_reach_next_step(finding, &witness.test_name, &witness.entry_symbol, &owner);
+        }
         return;
     }
     if !needs_no_static_path_limit(finding) {
@@ -1297,20 +1331,7 @@ fn apply_rust_no_static_path_limit(
             ));
     } else if let Some(witness) = transitive_reach.macro_reach_witness(&owner_name) {
         replace_witnessed_no_path_infection_summary(finding);
-        finding.static_limit_kind = Some(classify::macro_reach_limit_kind(&witness.macro_host));
-        finding.stop_reasons.push(StopReason::MacroReachUnresolved);
-        finding
-            .evidence
-            .push(classify::RUST_MACRO_REACH_MESSAGE.to_string());
-        finding
-            .evidence
-            .push(classify::macro_reach_witness_pointer(&witness));
-        finding
-            .evidence
-            .extend(classify::macro_reach_limitation_detail_lines(
-                &witness,
-                &owner_name,
-            ));
+        apply_rust_macro_reach_limit(finding, &owner_name, &witness);
     } else if let Some(test) = find_subprocess_binary_test(index, &probe.location.file) {
         finding.static_limit_kind = Some(StaticLimitKind::RustSubprocessBinaryReachUnresolved);
         finding.evidence.push(
@@ -1360,28 +1381,15 @@ fn apply_rust_proximity_reach_limit(
                 &witness,
                 &owner_name,
             ));
-        proximity_reach_next_step(
+        unresolved_reach_next_step(
             finding,
             &witness.test_name,
             &witness.entry_symbol,
             &owner_name,
         );
     } else if let Some(witness) = transitive_reach.macro_reach_witness(&owner_name) {
-        finding.static_limit_kind = Some(classify::macro_reach_limit_kind(&witness.macro_host));
-        finding.stop_reasons.push(StopReason::MacroReachUnresolved);
-        finding
-            .evidence
-            .push(classify::RUST_MACRO_REACH_MESSAGE.to_string());
-        finding
-            .evidence
-            .push(classify::macro_reach_witness_pointer(&witness));
-        finding
-            .evidence
-            .extend(classify::macro_reach_limitation_detail_lines(
-                &witness,
-                &owner_name,
-            ));
-        proximity_reach_next_step(
+        apply_rust_macro_reach_limit(finding, &owner_name, &witness);
+        unresolved_reach_next_step(
             finding,
             &witness.test_name,
             &witness.entry_symbol,
@@ -1390,15 +1398,52 @@ fn apply_rust_proximity_reach_limit(
     }
 }
 
-/// The proximity-only finding's next step and missing lines were the gap's
-/// ("replace broad assertions", "no strong discriminator"); with the reach
+/// Shared typed macro limitation projection. It adds neither reach credit
+/// nor a related-test relation and leaves every existing RIPR stage intact.
+fn apply_rust_macro_reach_limit(
+    finding: &mut Finding,
+    owner: &str,
+    witness: &classify::MacroReachWitness,
+) {
+    finding.static_limit_kind = Some(classify::macro_reach_limit_kind(&witness.macro_host));
+    finding.stop_reasons.push(StopReason::MacroReachUnresolved);
+    finding
+        .evidence
+        .push(classify::RUST_MACRO_REACH_MESSAGE.to_string());
+    finding
+        .evidence
+        .push(classify::macro_reach_witness_pointer(witness));
+    finding
+        .evidence
+        .extend(classify::macro_reach_limitation_detail_lines(
+            witness, owner,
+        ));
+}
+
+/// The weak finding's next step and missing lines were the gap's
+/// ("replace broad assertions", "no strong discriminator"); with that path
 /// unresolved, the next step points at the witness and the gap lines go, as
 /// RIPR-SPEC-0240 does for a withheld gap, so repair placement and agent
 /// packets never read a gap this limit withheld.
-fn proximity_reach_next_step(finding: &mut Finding, test: &str, entry: &str, owner: &str) {
-    finding.recommended_next_step = Some(format!(
-        "Check whether `{test}`, which may reach `{owner}` through `{entry}`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test."
-    ));
+fn unresolved_reach_next_step(finding: &mut Finding, test: &str, entry: &str, owner: &str) {
+    replace_unresolved_reach_advice(
+        finding,
+        format!(
+            "Check whether `{test}`, which may reach `{owner}` through `{entry}`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test."
+        ),
+    );
+}
+
+/// No witness was searched in the withheld files. Keep the guidance about
+/// that missing search rather than inventing a test or macro edge.
+fn unsearched_reach_next_step(finding: &mut Finding) {
+    replace_unresolved_reach_advice(finding,
+        "Inspect tests in dependent packages before judging this change; ripr did not search those files, so this limitation does not establish a missing test. Raise RIPR_DIFF_NARROW_INDEX_FILES to search them (it is capped at RIPR_MAX_DIFF_INDEX_FILES).".to_string(),
+    );
+}
+
+fn replace_unresolved_reach_advice(finding: &mut Finding, next_step: String) {
+    finding.recommended_next_step = Some(next_step);
     if let Some(limit) = finding.static_limit_kind {
         finding.missing = vec![limit.describe().to_string()];
     }
@@ -2155,11 +2200,13 @@ impl RustAdapter {
                 // #5320: with dependent files withheld, the witnesses search
                 // the owner's caller closure, widened on demand. #7071: the
                 // same search runs for a proximity-only weakly_exposed
-                // finding.
+                // finding. #7542 also widens for an admitted weak direct
+                // discriminator before searching only its macro witness.
                 let reach = match dependent_scope.as_mut() {
                     Some(scope)
                         if needs_no_static_path_limit(&finding)
-                            || needs_proximity_reach_limit(&finding) =>
+                            || needs_proximity_reach_limit(&finding)
+                            || needs_mixed_macro_reach_limit(&finding) =>
                     {
                         match owner_name_from_id(&probe.owner, &probe.location.file) {
                             Some(owner) => scope.reach_index(&owner, &index, narrow_limit)?,
@@ -2200,13 +2247,17 @@ impl RustAdapter {
                             &property_macro_mentions,
                             &transitive_reach,
                         );
-                        if needs_no_static_path_limit(&finding) {
+                        let mixed = needs_mixed_macro_reach_limit(&finding);
+                        if needs_no_static_path_limit(&finding) || mixed {
                             dependent_scope::apply_reach_search_over_limit(
                                 &mut finding,
                                 &probe,
                                 files,
                                 limit,
                             );
+                            if mixed {
+                                unsearched_reach_next_step(&mut finding);
+                            }
                         }
                     }
                 }
@@ -3609,6 +3660,226 @@ mod tests {
             ],
             "reach widening follows the callers and their tests only"
         );
+        Ok(())
+    }
+
+    /// #7542: a weak direct test in the changed package keeps reach Yes,
+    /// but its dependent macro witness still needs the same narrowed-index
+    /// widening as the full selection. CoreOnly is the load-bearing refusal.
+    #[test]
+    fn mixed_macro_witness_survives_dependent_scope_narrowing() -> Result<(), String> {
+        use dependent_scope::DependentScopeMode;
+        let root = temp_root("mixed-macro-scope")?;
+        write_dependent_scope_workspace(&root, UNRELATED_E_SOURCE)?;
+        write(
+            &root.join("a/src/lib.rs"),
+            "pub fn inner(x: i64) -> i64 {\n    3 * x\n}\n#[cfg(test)] mod tests { use super::*; #[test] fn inner_is_positive() { assert!(inner(2) > 0); } }\n",
+        )?;
+        write(
+            &root.join("b/src/lib.rs"),
+            "macro_rules! call_inner { ($x:expr) => { scope_a::inner($x) }; }\npub fn relay(x: i64) -> i64 { call_inner!(x) }\n",
+        )?;
+        write(
+            &root.join("b/tests/relay_tests.rs"),
+            "#[test] fn relay_triples() { assert_eq!(scope_b::relay(4), 12); }\n",
+        )?;
+        write(
+            &root.join("c/src/lib.rs"),
+            "pub fn forward(x: i64) -> i64 { scope_b::relay(x) }\n",
+        )?;
+        write(
+            &root.join("c/tests/forward_tests.rs"),
+            "#[test] fn forward_triples() { assert_eq!(scope_c::forward(4), 12); }\n",
+        )?;
+        let changed = diff::parse_unified_diff(
+            "diff --git a/a/src/lib.rs b/a/src/lib.rs\n--- a/a/src/lib.rs\n+++ b/a/src/lib.rs\n@@ -1,3 +1,3 @@\n pub fn inner(x: i64) -> i64 {\n-    x * 3\n+    3 * x\n }\n",
+        );
+        let run = |mode| {
+            dependent_scope::with_forced_mode(mode, || {
+                let result = RustAdapter.analyze_diff(
+                    &diff_options(root.clone(), AnalysisMode::Draft),
+                    &OraclePolicy::default(),
+                    &changed,
+                )?;
+                let finding = result
+                    .findings
+                    .into_iter()
+                    .find(|f| f.probe.location.line == 2)
+                    .ok_or("expected the changed inner return")?;
+                Ok::<_, String>((
+                    finding,
+                    dependent_scope::observed_main_files(),
+                    dependent_scope::observed_reach_files(),
+                ))
+            })
+        };
+        let (full, _, _) = run(DependentScopeMode::Full)?;
+        assert_eq!(full.class, ExposureClass::WeaklyExposed);
+        assert_eq!(full.ripr.reach.state, StageState::Yes);
+        assert_eq!(
+            full.static_limit_kind,
+            Some(StaticLimitKind::RustMacroReachUnresolved)
+        );
+        let (named, main, widened) = run(DependentScopeMode::NameAdmitted)?;
+        assert_eq!(format!("{named:?}"), format!("{full:?}"));
+        let main = slash_paths(&main.ok_or("the named run must narrow")?);
+        assert!(!main.iter().any(|p| p == "b/tests/relay_tests.rs"));
+        assert!(
+            slash_paths(&widened)
+                .iter()
+                .any(|p| p == "b/tests/relay_tests.rs")
+        );
+        let (core, _, _) = run(DependentScopeMode::CoreOnly)?;
+        assert_eq!(core.ripr.reach.state, StageState::Yes);
+        assert_eq!(core.static_limit_kind, None);
+
+        // A budget refusal is not an empty macro search. No withheld file
+        // was parsed, so name only the existing unsearched-route limit.
+        let (over, _, _) =
+            dependent_scope::with_forced_reach_limit(1, || run(DependentScopeMode::NameAdmitted))?;
+        assert_eq!(dependent_scope::observed_reach_parses(), 0);
+        assert_eq!(over.class, ExposureClass::WeaklyExposed);
+        assert_eq!(format!("{:?}", over.ripr), format!("{:?}", core.ripr));
+        assert_eq!(
+            format!("{:?}", over.related_tests),
+            format!("{:?}", core.related_tests)
+        );
+        assert!(!over.related_tests.is_empty());
+        assert_eq!(
+            over.static_limit_kind,
+            Some(StaticLimitKind::RustTransitiveReachUnresolved)
+        );
+        assert!(
+            over.stop_reasons
+                .contains(&crate::domain::StopReason::TransitiveReachUnresolved)
+        );
+        assert!(
+            over.evidence
+                .iter()
+                .any(|line| line.contains("did not search dependent packages"))
+        );
+        assert_eq!(
+            over.missing,
+            vec![
+                StaticLimitKind::RustTransitiveReachUnresolved
+                    .describe()
+                    .to_string()
+            ]
+        );
+        assert!(over.activation.missing_discriminators.is_empty());
+        assert!(over.canonical_gap.is_none());
+        let next = over.recommended_next_step.as_deref().unwrap_or("");
+        assert!(
+            next.contains("did not search") && next.contains("does not establish a missing test"),
+            "{next}"
+        );
+        assert!(
+            !next.contains("relay_triples") && !next.contains("Replace broad assertions"),
+            "{next}"
+        );
+
+        // A concrete witness already in the main index keeps its macro
+        // detail even when the dependent closure cannot be searched.
+        let local = "pub fn inner(x: i64) -> i64 {\n    3 * x\n}\nmacro_rules! call_local { ($x:expr) => { inner($x) }; }\npub fn local_outer(x: i64) -> i64 { call_local!(x) }\n#[cfg(test)] mod tests { use super::*; #[test] fn inner_is_positive() { assert!(inner(2) > 0); } #[test] fn local_triples() { assert_eq!(local_outer(4), 12); } }\n";
+        write(&root.join("a/src/lib.rs"), local)?;
+        let (witnessed, _, _) =
+            dependent_scope::with_forced_reach_limit(1, || run(DependentScopeMode::NameAdmitted))?;
+        assert_eq!(dependent_scope::observed_reach_parses(), 0);
+        assert_eq!(witnessed.class, ExposureClass::WeaklyExposed);
+        assert_eq!(
+            witnessed.static_limit_kind,
+            Some(StaticLimitKind::RustMacroReachUnresolved)
+        );
+        assert!(
+            witnessed
+                .evidence
+                .iter()
+                .any(|line| line.contains("local_triples"))
+        );
+        assert!(
+            !witnessed
+                .evidence
+                .iter()
+                .any(|line| line.contains("did not search dependent packages"))
+        );
+        assert!(
+            !witnessed
+                .stop_reasons
+                .contains(&crate::domain::StopReason::TransitiveReachUnresolved)
+        );
+        assert!(witnessed.canonical_gap.is_none());
+
+        // A confirmed direct oracle never requests this missing search.
+        write(
+            &root.join("a/src/lib.rs"),
+            &local.replace("assert!(inner(2) > 0)", "assert_eq!(inner(4), 12)"),
+        )?;
+        let (confirmed, _, _) =
+            dependent_scope::with_forced_reach_limit(1, || run(DependentScopeMode::NameAdmitted))?;
+        assert_eq!(confirmed.class, ExposureClass::Exposed);
+        assert_eq!(confirmed.ripr.reveal.discriminate.state, StageState::Yes);
+        assert_eq!(confirmed.static_limit_kind, None);
+
+        // #7089 owns a direct call without a recognized oracle beside a
+        // proximity-only oracle. Our mixed gate must leave the concrete
+        // main-index assertion witness available at either reach budget.
+        write(
+            &root.join("a/src/lib.rs"),
+            "pub fn inner(x: i64) -> i64 {\n    3 * x\n}\npub fn other(x: i64) -> i64 { x + 1 }\n#[cfg(test)] mod tests { use super::*; macro_rules! assert_rate { ($actual:expr, $expected:expr) => { if $actual != $expected { panic!(\"rate mismatch\"); } }; } #[test] fn rate_triples() { assert_rate!(inner(4), 12); } #[test] fn other_is_positive() { assert!(other(1) > 0); } }\n",
+        )?;
+        write(
+            &root.join("b/src/lib.rs"),
+            "pub fn relay(x: i64) -> i64 { scope_a::inner(x) }\n",
+        )?;
+        let (assertion, _, _) = run(DependentScopeMode::NameAdmitted)?;
+        let (assertion_over, _, _) =
+            dependent_scope::with_forced_reach_limit(1, || run(DependentScopeMode::NameAdmitted))?;
+        for finding in [&assertion, &assertion_over] {
+            let direct = finding
+                .related_tests
+                .iter()
+                .find(|test| test.name == "rate_triples")
+                .ok_or("the custom assertion must retain its direct test")?;
+            assert_eq!(
+                direct.relation_reason,
+                Some(crate::domain::RelationReason::DirectOwnerCall)
+            );
+            assert!(direct.oracle.is_none());
+            assert!(
+                finding
+                    .related_tests
+                    .iter()
+                    .any(|test| test.name == "other_is_positive" && test.oracle.is_some())
+            );
+            assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+            assert_eq!(
+                finding.static_limit_kind,
+                Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved)
+            );
+            assert!(
+                finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.contains("assert_rate!") && line.contains("rate_triples"))
+            );
+            assert!(
+                !finding
+                    .evidence
+                    .iter()
+                    .any(|line| line.contains("did not search dependent packages"))
+            );
+            assert!(finding.canonical_gap.is_none());
+        }
+        assert_eq!(dependent_scope::observed_reach_parses(), 0);
+        assert_eq!(
+            format!("{:?}", assertion.ripr),
+            format!("{:?}", assertion_over.ripr)
+        );
+        assert_eq!(
+            format!("{:?}", assertion.related_tests),
+            format!("{:?}", assertion_over.related_tests)
+        );
+        fs::remove_dir_all(root).map_err(|e| e.to_string())?;
         Ok(())
     }
 

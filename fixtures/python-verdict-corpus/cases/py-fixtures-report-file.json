@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "test_report_file writes through tmp_path and asserts the file reads exactly \"total=5\\n\", so \"total: 5\" fails it. ripr reports weakly_exposed, a false actionable verdict.",
+  "reasoning": "test_report_file writes through tmp_path and asserts the file reads exactly \"total=5\\n\", so \"total: 5\" fails it. ripr reports weakly_exposed, a false actionable verdict. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",

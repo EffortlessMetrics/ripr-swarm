@@ -178,11 +178,19 @@ pub(crate) fn same_output_leaf(left: &Path, right: &Path) -> bool {
 
 fn normalize_output_leaf(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
-    for component in Path::new(&display_path(path)).components() {
+    // Display text uses slash separators even for Unix backslash filenames.
+    // Destination identity must instead follow the host's native components.
+    for component in path.components() {
         match component {
             Component::CurDir => {}
             Component::ParentDir => {
-                let _ = out.pop();
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    let _ = out.pop();
+                } else if !out.has_root() {
+                    // A relative parent with no normal component to cancel
+                    // still selects a different directory from the cwd.
+                    out.push(component);
+                }
             }
             other => out.push(other),
         }
@@ -349,6 +357,55 @@ mod tests {
         assert!(!same_output_leaf(
             Path::new("ledger.json"),
             Path::new("ledger.jsonl")
+        ));
+    }
+
+    #[test]
+    fn same_output_leaf_keeps_unresolved_relative_parents() {
+        assert!(!same_output_leaf(
+            Path::new("../report.json"),
+            Path::new("report.json")
+        ));
+        assert!(!same_output_leaf(
+            Path::new("../../report.json"),
+            Path::new("../report.json")
+        ));
+        assert!(same_output_leaf(
+            Path::new("reports/../../report.json"),
+            Path::new("../report.json")
+        ));
+        assert!(same_output_leaf(
+            Path::new("../reports/../report.json"),
+            Path::new("../report.json")
+        ));
+    }
+
+    #[test]
+    fn same_output_leaf_uses_native_separator_identity() {
+        assert_eq!(
+            same_output_leaf(
+                Path::new(r"reports\history.json"),
+                Path::new("reports/history.json")
+            ),
+            cfg!(windows)
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn same_output_leaf_keeps_drive_relative_parents_and_root_prefixes() {
+        let drive = "F:";
+        assert!(!same_output_leaf(
+            Path::new(&format!("{drive}../report.json")),
+            Path::new(&format!("{drive}report.json"))
+        ));
+        assert!(same_output_leaf(
+            Path::new(&format!("{drive}/../report.json")),
+            Path::new(&format!("{drive}/report.json"))
+        ));
+        assert!(!same_output_leaf(
+            Path::new(&format!("{drive}report.json")),
+            Path::new(&format!("{drive}/report.json"))
         ));
     }
 

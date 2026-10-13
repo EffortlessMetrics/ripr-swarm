@@ -127,6 +127,13 @@ functions stay available for owner relations, activation input,
 sink/oracle evidence, and selectors. `TestFact` semantics are untouched
 — source role never registers a helper as an executable test selector.
 
+The suspect prefilter ignores `mod` declarations inside comments and string
+literals (#6979); those mentions cannot spare an unchanged test file the
+authoritative module walk. Literal `#[path]` and `include!` hints still retain
+their conservative over-approximation, and an incomplete walk still keeps
+the file. Ordinary `cfg(test)` declarations and renamed literal-path modules
+retain their eligible tests, including nested fixture directories.
+
 At item granularity, the typed `FunctionSourceRole` model (#3531)
 classifies each function: `Production`, `TestAttribute` (exact
 supported test-defining attribute; registers an executable
@@ -288,6 +295,10 @@ is not a measured throughput, peak-RSS, constant-memory, or reduced-coverage cla
   or added by the diff) and a `tests/` file that `autotests = false`
   leaves undeclared relate to nothing, while the declared file and the
   name-only `[[test]]` target keep their relation.
+- Comment/string module mentions (#6979): an unchanged orphan named only
+  inside a block comment, nested block comment, doc comment, plain string or
+  raw string supplies no related test; real `cfg(test)` and renamed
+  literal-path modules retain their test, and incomplete walks retain credit.
 - Unresolved `#[path]` routes (#4435): a file reached only through a
   `cfg_attr` path target, its child, or the `cfg_attr`-only default
   resolution records the limitation naming the declaration, while a
