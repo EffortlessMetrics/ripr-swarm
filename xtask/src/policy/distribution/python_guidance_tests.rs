@@ -95,6 +95,7 @@ fn run_fixture(
             "PIP_ROOT",
             "PIP_USER",
             "PIP_PYTHON",
+            "PIP_LOG",
             "PYTHONHOME",
             "PYTHONPATH",
         ],
