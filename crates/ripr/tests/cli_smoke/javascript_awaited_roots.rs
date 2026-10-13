@@ -89,6 +89,7 @@ fn awaited_nanoid_consumer_credits_the_same_assertion_as_a_bare_root() -> TestRe
     for registration in [
         "test('default id length', () => { assert.strictEqual(nanoid().length, 21); });",
         "await test('default id length', () => { assert.strictEqual(nanoid().length, 21); });",
+        "await test('default id length', (t) => { t.assert.strictEqual(nanoid().length, 21); });",
         "await test('default id length', { skip: false, expectFailure: false }, () => { assert.strictEqual(nanoid().length, 21); });",
         "await test('default id length', { skip: undefined }, () => { assert.strictEqual(nanoid().length, 21); });",
         "await describe('ids', async () => { await test('default id length', () => { assert.strictEqual(nanoid().length, 21); }); });",
