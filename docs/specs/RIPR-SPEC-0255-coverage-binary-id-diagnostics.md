@@ -1,4 +1,4 @@
-# RIPR-SPEC-0254: Bounded coverage binary-ID diagnostics
+# RIPR-SPEC-0255: Bounded coverage binary-ID diagnostics
 
 Status: proposed
 

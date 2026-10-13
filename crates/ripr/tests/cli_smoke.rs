@@ -18,16 +18,27 @@ mod build_commit_record;
 mod check_artifact_stdin;
 #[path = "common/mod.rs"]
 mod common;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/diff_selection.rs"]
+mod diff_selection;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/discarded_matches.rs"]
 mod discarded_matches;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/human_full_shared.rs"]
+mod human_full_shared;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/javascript_awaited_roots.rs"]
+mod javascript_awaited_roots;
 #[path = "cli_smoke/next_action.rs"]
 mod next_action;
+#[path = "cli_smoke/output_leaf_identity.rs"]
+mod output_leaf_identity;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
@@ -44,6 +55,9 @@ mod repair_orderfile;
 mod rerun_ledger_recovery;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/source_unicode.rs"]
+mod source_unicode;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
@@ -8465,6 +8479,7 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
         for bad in [
             ["--base", "no-such-ref-4445"],
             ["--diff", missing_diff.as_str()],
+            ["--diff", root_arg.as_str()],
         ] {
             let output = run_ripr(&[
                 "check", "--root", &root_arg, bad[0], bad[1], "--format", format,
@@ -8498,6 +8513,61 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
                 stderr.contains(bad[1]),
                 "{format} {bad:?}: stderr does not name the rejected input: {stderr}"
             );
+            if bad[0] == "--diff" {
+                let diagnostic = format!(
+                    "check: --diff {} is not a readable file; pass an existing unified diff file, or omit --diff for repo-scoped analysis",
+                    bad[1]
+                );
+                assert!(
+                    stderr.contains(&diagnostic),
+                    "{format} {bad:?}: stderr must name how to recover: {stderr}"
+                );
+                if format != "repo-sarif" {
+                    let refusal: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                    assert_eq!(refusal["limitations"][0]["message"], diagnostic);
+                }
+            }
+        }
+    }
+
+    // The diff-scoped loader keeps its existing recovery, including stdin.
+    for (bad, recovery) in [
+        (
+            missing_diff.as_str(),
+            "pass the path of an existing unified diff file",
+        ),
+        (root_arg.as_str(), "pass a diff file path"),
+    ] {
+        let output = run_ripr(&[
+            "check", "--root", &root_arg, "--diff", bad, "--format", "json",
+        ]);
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(recovery), "{stderr}");
+        assert!(
+            stderr.contains("or `-` to read the diff from stdin"),
+            "{stderr}"
+        );
+        assert_check_json_refusal(&output, "analysis_failed", "analysis/failure")?;
+    }
+
+    // Both remedies must work on the real CLI. Repo formats validate the named
+    // input but do not consume the diff, and omitting it retains repo scope.
+    let existing_diff = root.join("existing.diff");
+    std::fs::write(
+        &existing_diff,
+        "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-    x >= 10\n+    x > 10\n",
+    )?;
+    let existing_diff_arg = existing_diff.display().to_string();
+    for format in [
+        "repo-exposure-json",
+        "repo-sarif",
+        "agent-seam-packets-json",
+    ] {
+        for remedy in [vec!["--diff", existing_diff_arg.as_str()], vec![]] {
+            let mut argv = vec!["check", "--root", &root_arg, "--format", format];
+            argv.extend(remedy);
+            assert_success(&run_ripr(&argv));
         }
     }
 
@@ -12528,6 +12598,11 @@ fn doctor_passes_python_only_root_without_rust_toolchain() -> Result<(), String>
         "def shout(text):\n    return text.upper()\n",
     )
     .map_err(|error| format!("write python source: {error}"))?;
+    // Bound ancestor Cargo.toml discovery: fixtures live under the ripr
+    // work tree (`target/`), so without a local `.git` the locator would
+    // credit `/workspace/Cargo.toml` (#7506).
+    std::fs::create_dir(workspace.join(".git"))
+        .map_err(|error| format!("mkdir python-only .git: {error}"))?;
     let path = doctor_path_without_rust_toolchain(&workspace)?;
     let result = assert_doctor_passes_without_rust_toolchain(
         &workspace,
@@ -12556,6 +12631,8 @@ fn doctor_passes_typescript_root_without_rust_toolchain() -> Result<(), String> 
         "export const price = (n: number) => n * 2;\n",
     )
     .map_err(|error| format!("write ts source: {error}"))?;
+    std::fs::create_dir(workspace.join(".git"))
+        .map_err(|error| format!("mkdir typescript-only .git: {error}"))?;
     let path = doctor_path_without_rust_toolchain(&workspace)?;
     let result = assert_doctor_passes_without_rust_toolchain(
         &workspace,
@@ -12765,6 +12842,81 @@ fn doctor_git_root_with_nested_workspace_passes_cargo_toml() -> Result<(), Strin
         } else {
             Ok(())
         };
+
+    ignore_remove_dir_all(&workspace);
+    json_result.and(human_result)
+}
+
+/// #7506: a TypeScript marker at the git root must not skip `cargo_toml`
+/// when `rust/Cargo.toml` exists. This is the production path: shallow
+/// `detect_languages` plus the cargo-only locator.
+#[test]
+fn doctor_polyglot_git_root_with_typescript_passes_nested_cargo_toml() -> Result<(), String> {
+    let workspace = unique_temp_workspace("doctor-gitroot-polyglot-ts-nested");
+    std::fs::create_dir_all(workspace.join("rust/crates/x/src"))
+        .map_err(|error| format!("create rust crate: {error}"))?;
+    std::fs::write(workspace.join("package.json"), "{\"name\": \"site\"}\n")
+        .map_err(|error| format!("write package.json: {error}"))?;
+    std::fs::write(workspace.join("README.md"), "docs\n")
+        .map_err(|error| format!("write README: {error}"))?;
+    std::fs::write(
+        workspace.join("rust/Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/x\"]\n",
+    )
+    .map_err(|error| format!("write workspace manifest: {error}"))?;
+    std::fs::write(
+        workspace.join("rust/crates/x/Cargo.toml"),
+        "[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+    )
+    .map_err(|error| format!("write package manifest: {error}"))?;
+    std::fs::write(
+        workspace.join("rust/crates/x/src/lib.rs"),
+        "pub fn f() {}\n",
+    )
+    .map_err(|error| format!("write lib.rs: {error}"))?;
+    run_git(&workspace, &["init", "-b", "main"])?;
+
+    let json = run_command_with_env(
+        env!("CARGO_BIN_EXE_ripr"),
+        &workspace,
+        &["doctor", "--json"],
+        &[],
+    )
+    .map_err(|error| format!("run doctor --json: {error}"))?;
+    let report: serde_json::Value = serde_json::from_slice(&json.stdout)
+        .map_err(|error| format!("doctor JSON did not parse: {error}"))?;
+    let cargo_toml = report["checks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|check| check["name"] == "cargo_toml")
+        .cloned()
+        .ok_or_else(|| format!("missing cargo_toml: {report}"))?;
+    let evidence = cargo_toml["evidence"].as_str().unwrap_or("");
+    let json_result = if cargo_toml["status"] != "pass"
+        || !evidence.contains("via workspace root")
+        || !evidence.contains("rust")
+    {
+        Err(format!(
+            "polyglot git-root nested workspace must pass cargo_toml: {cargo_toml}"
+        ))
+    } else {
+        Ok(())
+    };
+
+    let human = run_command_with_env(env!("CARGO_BIN_EXE_ripr"), &workspace, &["doctor"], &[])
+        .map_err(|error| format!("run doctor: {error}"))?;
+    let stdout = String::from_utf8_lossy(&human.stdout);
+    let human_result = if stdout.contains("Cargo.toml check skipped")
+        || stdout.contains("! no Cargo.toml found")
+        || !stdout.contains("via workspace root")
+    {
+        Err(format!(
+            "human doctor must not skip cargo_toml at a TypeScript polyglot git root:\n{stdout}"
+        ))
+    } else {
+        Ok(())
+    };
 
     ignore_remove_dir_all(&workspace);
     json_result.and(human_result)
@@ -14076,6 +14228,14 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(stdout.contains("Rerun without --dry-run to apply."));
     assert!(stdout.contains(".github"));
     assert!(stdout.contains("RIPR advisory reports"));
+    assert!(
+        stdout.contains(
+            "# CI guide: https://github.com/EffortlessMetrics/ripr/blob/main/docs/CI.md\n"
+        )
+    );
+    assert!(stdout.contains(
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+    ));
     assert!(stdout.contains("continue-on-error: true"));
     assert!(stdout.contains("RIPR_UPLOAD_SARIF"));
     assert!(stdout.contains("actions/upload-artifact@v7"));
@@ -14136,6 +14296,7 @@ fn init_refuses_existing_config_without_force() -> Result<(), String> {
 #[test]
 fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    assert!(!workspace.join("docs/CI.md").exists());
     let root = workspace.display().to_string();
     let output = run_ripr(&["init", "--root", &root, "--ci", "github"]);
     assert_success(&output);
@@ -14144,6 +14305,16 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     let workflow = std::fs::read_to_string(&workflow_path)
         .map_err(|e| format!("read generated workflow: {e}"))?;
     assert!(workspace.join("ripr.toml").exists());
+    assert!(
+        workflow.starts_with(
+            "name: RIPR\n\n# CI guide: https://github.com/EffortlessMetrics/ripr/blob/main/docs/CI.md\non:\n"
+        ),
+        "the adopter has no local CI guide; the generated header must give its public URL"
+    );
+    assert!(workflow.contains(
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+    ));
+    assert!(!workspace.join("docs/CI.md").exists());
     assert!(workflow.contains("pull_request:"));
     assert!(workflow.contains("workflow_dispatch:"));
     // #5208: the pin/warning pair must stay consistent in both release
@@ -27918,6 +28089,33 @@ fn review_comments_help_survives_invalid_admission_environment()
             "{stderr}"
         );
     }
+    Ok(())
+}
+
+/// RIPR-SPEC-0231 rule 1: a seam whose only test is `assert_ne!(score(2), 0)`
+/// is weakly gripped in the repo audit. Before the rule, the inequality read
+/// `exact_value` / strong and the seam counted as strongly gripped.
+#[test]
+fn repo_exposure_does_not_count_an_inequality_assertion_as_a_strong_grip()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = workspace_root().join("fixtures/inequality_assertion_not_exact/input");
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--format",
+        "repo-exposure-json",
+    ]);
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let metrics = &report["metrics"];
+    assert_eq!(
+        metrics["seams_total"], 1,
+        "fixture seam not parsed: {metrics}"
+    );
+    assert_eq!(metrics["strongly_gripped"], 0, "{metrics}");
+    assert_eq!(metrics["weakly_gripped"], 1, "{metrics}");
     Ok(())
 }
 

@@ -82,6 +82,11 @@ document should branch on `exit`, not on free-text `stop_states`.
   shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
+- **Gate `--root` refusal**: `ripr gate evaluate --root <path>` that is
+  missing or not a directory is an argv-level usage refusal: it exits `2`,
+  names the root, and does not write `gate-decision.{json,md}`. Evaluation
+  does not start. This is distinct from a completed `config_error` decision
+  (also exit `2`), which still writes the report before returning.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
@@ -168,13 +173,18 @@ tree; and a repair `--phase after` whose edit cage recorded a violation.
 any check fails (including missing language runtimes that are enabled in
 the effective configuration).
 
-The `Cargo.toml`, `cargo`, and `rustc` checks apply only when Rust is in
-scope for the root: Rust is enabled and either Rust markers (`Cargo.toml` or
-`.rs` files) are detected or no other language is detected or enabled. A
-Python-only or TypeScript-only root reports those checks as `skipped` with
-the reason and does not fail on them. A Cargo.toml at the selected root, an
+The `Cargo.toml` check applies only when Rust is in scope for the root:
+Rust is enabled and either a Cargo.toml is found at the selected root, an
+ancestor Cargo project bounded by git, or nested in this tree; Rust markers
+(`.rs` files) are detected at the selected root; or no other language is
+detected or enabled. A Python-only or TypeScript-only root with no nested
+or ancestor Cargo.toml reports `cargo_toml` as `skipped` with the reason.
+The analysis profile also skips `cargo` and `rustc`; `--profile source-build`
+still probes those tools and can exit `2` if they are missing.
+A Cargo.toml at the selected root, an
 ancestor Cargo project bounded by git, or a nested Cargo.toml in this tree
-(for example `rust/Cargo.toml` at a polyglot git root) passes `cargo_toml`.
+(for example `rust/Cargo.toml` at a polyglot git root that also has
+`package.json`) passes `cargo_toml`.
 A root with Rust sources but no Cargo.toml anywhere in that bounded search,
 and an empty root under the Rust-only default, still fail on a missing
 manifest.
@@ -218,6 +228,9 @@ empty (the default, advisory) or `visible-only` never fails the job;
 a nonzero step exit. `ripr check` is advisory here as everywhere: it exits
 `0` whether or not it found gaps. When `RIPR_GATE_MODE` is set, the packet
 evaluates the gate, and `ripr gate evaluate` exits `3` when it blocks and
-`2` on a `config_error`; it treats an incomplete, partial, or unsupported
+`2` on a `config_error`; those completed decisions still write
+`gate-decision.{json,md}`. A `--root` that is missing or not a directory is
+argv-level exit `2`, names the root, and writes no report. `ripr gate evaluate`
+treats an incomplete, partial, or unsupported
 analysis outcome as a `config_error` in every mode, so a gate never passes
 on a partial denominator.

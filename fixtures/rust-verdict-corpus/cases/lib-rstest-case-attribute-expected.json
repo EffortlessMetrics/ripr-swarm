@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-rstest-case-attribute-expected",
+  "subject_id": "authored-lib-rstest",
+  "diff": "cases/lib-rstest-case-attribute-expected.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "rstest_case_attribute_table",
+  "hard_case": "The expected values exist only in `#[case(2, 4)]` / `#[case(5, 10)]`; ripr resolves the inputs from the case rows but drops the assertion of the #[rstest] test (oracle unknown/none).",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "x + 2",
+        "mutated_line": "x + 2",
+        "outcome": "tests_failed",
+        "failing_test": "tests::scale_cases::case_2",
+        "equivalence_review": "not equivalent: x=5 gives 7 not 10"
+      },
+      {
+        "replacement": "x * 3",
+        "mutated_line": "x * 3",
+        "outcome": "tests_failed",
+        "failing_test": "tests::scale_cases::case_1",
+        "equivalence_review": "not equivalent: x=2 gives 6 not 4"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "rstest expands each `#[case]` row into a test that runs `assert_eq!(scale(input), expected)` with literal values; x+2 fails case_2 and x*3 fails both.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

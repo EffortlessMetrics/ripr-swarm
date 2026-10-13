@@ -161,6 +161,37 @@ constructors of literals in the grammar above, with different values. Any
 other result expression (`1 + 1` against `2`, a call, a binding) gives no
 credit, because different text can compute the same value.
 
+### Exact pattern pins through a local `assert_matches!` (#6616)
+
+A test may pin the owner's result with a test-local macro instead of
+`assert_eq!`:
+`assert_matches!(parse_unit("q"), Err(UnitError::Unknown))`. Such an
+assertion confirms a selected arm only when ripr can read from source that
+it fails on any other value (`crates/ripr/src/analysis/syntax/pattern_pin.rs`):
+
+- the test's file defines exactly one macro of that name, a `macro_rules!`
+  with no attributes in a module enclosing the test and before it, imports
+  nothing of that name, has no `macro_use` and no item-position macro call;
+- the macro's first rule takes exactly `$v:expr, $p:pat` (optionally
+  `$(,)?`) and the invocation is exactly one expression and one pattern, so
+  that rule is the one that runs; its transcriber is `match $v { $p => {}
+  <catch-all> => panic!(..) }` (or `unreachable!`), and the panic arguments
+  cannot leave the test;
+- the test is a plain `#[test] fn` with no parameters or return type, the
+  invocation is a top-level statement, and every earlier statement is on an
+  allowlist that completes or fails the test (a plain `let` or expression
+  built from calls, paths, literals and operators, a standard assertion
+  macro, another admitted `assert_matches!`);
+- the pattern is exact (constructors, paths, literals, tuples; no binding,
+  `_`, `..`, range, alternative or reference), and the value operand is a
+  direct owner call whose input selects the changed arm;
+- the shared owner-pin binding authority finds no visible rebinding of the
+  standard macros the pin relies on (`panic`, `stringify`, earlier
+  assertions).
+
+Anything else leaves the assertion to the token rule. Any invocation
+delimiter takes the same rule, so it opens no other credit path.
+
 ### Selection outranks tokens
 
 When every related call is resolved and none selects the changed arm, a
@@ -215,20 +246,43 @@ credits one.
 Implemented:
 
 - integer, char, bool, and cooked or raw string literals, compared by value;
+- integer ranges with literal bounds (`a..=b`, `a..b`, `..=b`, `a..`),
+  matched by value against an integer input (#5992);
 - enum variant paths, qualified or bare imported, including `Some`, `None`,
   `Ok` and `Err`, when the payload is only `_`, `..` or bare bindings;
 - or-patterns of these, and a top-level `_` or bare binding;
 - first-match order: a guarded earlier arm blocks selection, and an earlier
   arm that provably matches means the input selects another arm;
-- a changed pattern earns no selection credit, and names the arm only when
-  neither the original nor the changed pattern selects any observed input.
+- a changed pattern names the arm only when neither the original nor the
+  changed pattern selects any observed input. It earns selection credit
+  only from an input that moved: the input runs this arm under exactly one
+  of the two patterns, the first later arm that provably takes it under
+  the other is found with no guarded arm in between, and the two arms'
+  results are provably unequal values (#5992). The original `match` is
+  read as the current one with this arm's old pattern restored, so the
+  credit says the test notices this line reverting. When the diff adds or
+  removes more than one arm line in the owner, the other arms may not be
+  the original ones, so the diff keeps the whole old line instead of a
+  head cut (guarded arms excepted) and the moved input earns no credit.
+  The credit needs the diff's old
+  text to be a head cut anchored on this arm's unchanged body. A whole
+  old line never earns it, even with an equal body, and an uncut old head
+  arrives joined to the next line of the old file, so it never passes for
+  a cut. It also needs
+  the `match` to be the owner body's tail expression, so an arm's result
+  is the return value. Results compare as literals of one kind, or as
+  variants under the same qualifier by name, so `Kind::Alpha` and an
+  imported `Alpha` never read as unequal. Only `Some`, `Ok` and `Err`
+  compare by literal payload: another CamelCase path with arguments may be
+  a function call (`Make(1)`) whose value need not keep its arguments.
   A pattern whose alternatives were only reordered (`"CA" | "MX"` to
   `"MX" | "CA"`) takes the same inputs and reads as unchanged.
   A changed arm's original is the adjacent removed arm with the same
   pattern, else the first adjacent removed line sharing a token. A
   qualified enum name is such a token for every arm of a multi-line hunk,
   so a token-paired original counts as read only when it shares an
-  alternative with the changed pattern. A token-paired original that
+  alternative with the changed pattern, or is a head cut anchored on this
+  line's unchanged body (`1..=8 =>` for `1..=9 => "digit",`). A token-paired original that
   shares one may still be another arm of the hunk; the arm is then named
   against that arm's pattern;
 - selection outranks tokens whenever the scrutinee is a direct owner input.
@@ -241,10 +295,10 @@ Implemented:
 
 Not yet implemented (each reads as not provable):
 
-- integer ranges, tuple patterns, refutable payload subpatterns and `@`;
+- char ranges, path-bounded ranges, tuple patterns, refutable payload
+  subpatterns and `@`;
 - arguments resolved through an immutable `let` in the test;
-- credit through a `let` binding of the call (RIPR-SPEC-0186 pairing);
-- credit for an input that moved between arms with unequal literal results.
+- credit through a `let` binding of the call (RIPR-SPEC-0186 pairing).
 
 The implementation adds these fail-closed conditions, which the Behavior
 implies but does not spell out:
@@ -346,7 +400,22 @@ the diff changes `None => 1` to `None => 0`.
    `0..=3` to `0..=4`. Test `assert_eq!(f(4), 2)`: not `exposed` (4 moved
    arms, but both arms return 2).
 
+10. `fn parse_unit(raw: &str) -> Result<u32, E> { match raw { "" =>
+    Err(E::Blank), "k" => Ok(1_000), _ => Err(E::Unknown) } }`, the diff
+    changes the `_` arm's body. Test
+    `assert_matches!(parse_unit("q"), Err(E::Unknown))` through a local
+    macro whose first rule panics on a mismatch: `exposed`. The same test
+    with input `"k"` or `""`, pattern `Err(_)`, the invocation after a
+    `return;` or inside a closure, or a local macro that does not panic:
+    not `exposed`.
+
 ## Test Mapping
+
+- `crates/ripr/src/analysis/syntax/pattern_pin/tests.rs` and the
+  `arm_selection.rs` pattern-pin unit tests (#6616): the verified macro,
+  per-rule trust, delimiters, broad patterns, skipped invocations and
+  rebindings. Verdict corpus cases `old-unit-assert-matches-macro` and
+  `old-unit-assert-matches-sibling-arm` (negative control).
 
 - `fixtures/match_arm_blind` (example 1, with the arm added rather than
   changed; the expected result is the same)
@@ -363,10 +432,23 @@ the diff changes `None => 1` to `None => 0`.
   drops the unchanged return value; a body edit, or a line with no other
   shape holding the edit, keeps it. Verdict corpus case
   `config-log-level-warn`.
-- Planned: fixtures for examples 3, 7, 8 and 9 once ranges and `let`
-  arguments are implemented.
+- `crates/ripr/src/analysis/classify/arm_selection.rs` unit tests for
+  ranges and moved-input credit (examples 7 to 9):
+  `integer_range_arms_select_by_value`,
+  `an_input_that_moved_to_an_unequal_result_credits_a_changed_pattern`,
+  `moved_input_credit_needs_provably_unequal_results`; and
+  `crates/ripr/src/analysis/probes/diff.rs`
+  `an_uncut_old_arm_head_carries_its_old_body`.
+- Verdict corpus cases `spec0229-unselected-range-arm` (example 7),
+  `spec0229-range-widened-inside-input` and
+  `spec0229-range-widened-moved-input` (example 8).
+- Planned: a fixture for example 3 once `let` arguments are implemented.
 
 ## Implementation Mapping
+
+- `crates/ripr/src/analysis/syntax/pattern_pin.rs` and
+  `OwnerPinSyntax::exact_pattern_pin_value`: exact pattern pins through a
+  verified local `assert_matches!`, parsed once per file per run.
 
 - `crates/ripr/src/analysis/classify/arm_selection.rs`: pattern and input
   reading, scrutinee binding and first-match selection.

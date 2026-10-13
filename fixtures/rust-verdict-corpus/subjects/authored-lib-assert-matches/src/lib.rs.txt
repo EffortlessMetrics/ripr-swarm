@@ -1,0 +1,55 @@
+//! A tiny decimal parser and a level bonus, tested with `assert_matches!`.
+
+#[derive(Debug, PartialEq)]
+pub enum ParseError {
+    Empty,
+    BadDigit { pos: usize },
+    TooLarge,
+}
+
+pub fn parse_num(s: &str) -> Result<u32, ParseError> {
+    if s.is_empty() {
+        return Err(ParseError::Empty);
+    }
+    let mut acc: u32 = 0;
+    for (i, c) in s.chars().enumerate() {
+        let d = c.to_digit(10).ok_or(ParseError::BadDigit { pos: i })?;
+        acc = acc * 10 + d;
+    }
+    Ok(acc)
+}
+
+pub fn bonus(level: u32) -> Result<u32, ParseError> {
+    if level > 5 {
+        return Err(ParseError::TooLarge);
+    }
+    Ok(level * 4 + 3)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use assert_matches::assert_matches;
+
+    #[test]
+    fn bad_digit_reports_position() {
+        assert_matches!(parse_num("x1"), Err(ParseError::BadDigit { pos: 0 }));
+        assert_matches!(parse_num("1x"), Err(ParseError::BadDigit { pos: 1 }));
+    }
+
+    #[test]
+    fn digits_parse() {
+        assert_matches!(parse_num("42"), Ok(_));
+    }
+
+    #[test]
+    fn empty_is_rejected() {
+        assert_matches!(parse_num(""), Err(ParseError::Empty));
+    }
+
+    #[test]
+    fn bonus_is_large_enough() {
+        assert_matches!(bonus(3), Ok(n) if n > 10);
+        assert_matches!(bonus(9), Err(ParseError::TooLarge));
+    }
+}

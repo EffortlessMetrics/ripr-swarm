@@ -1,0 +1,22 @@
+{
+  "case_id": "lib-assert-matches-variant-field-pinned",
+  "subject_id": "authored-lib-assert-matches",
+  "origin": "authored",
+  "anchor": "src/lib.rs:16",
+  "behavior_family": "error_variant",
+  "test_shape": "assert_matches_variant_field_pattern",
+  "hard_case": true,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "false_actionable",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
