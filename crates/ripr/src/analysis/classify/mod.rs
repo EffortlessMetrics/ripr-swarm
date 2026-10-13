@@ -46,7 +46,7 @@ pub(in crate::analysis) use helper_transfer::{
     HELPER_RESULT_NOT_FORWARDED, HelperChain, ReturnedLedger,
     ambiguous_helper_entry_called_by_tests, callee_is_unique, chain_forwards_to_observed_hops,
     chain_passes_effect_target_to_observed_hops, helper_only_reach,
-    macro_hop_reach_without_exact_pin, resolve_chain, returned_ledger,
+    hop_reach_keeps_weak_oracle_gap, resolve_chain, returned_ledger,
     returned_ledger_caller_is_observed, selected_inherent_calls,
 };
 pub(in crate::analysis) use infection::infection_evidence_with_boundary_input;

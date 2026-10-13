@@ -1034,24 +1034,131 @@ pub(crate) fn chain_forwards_owner_result(owner_name: &str, chain: &HelperChain)
     hops_forward_owner_result(owner_name, &chain.hops)
 }
 
-/// Whether the observed hops of `chain` include a local-macro argument hop
-/// (#6614) and no related caller-calling test holds an exact oracle. Such
-/// reach is the macro-argument edge alone; when every oracle is weak on its
-/// own terms the weakness is established without expanding the macro, so
-/// the not-forwarded abstention does not apply and the existing evidence
-/// (a weak oracle's gap) stands.
-pub(crate) fn macro_hop_reach_without_exact_pin(
+/// Whether reach through a non-forwarding hop keeps the existing evidence
+/// instead of the not-forwarded abstention (#6614, #7549).
+///
+/// The abstention exists because an oracle on a caller's result cannot be
+/// paired with the owner's result: it might or might not discriminate the
+/// owner's change. When every oracle the caller-calling tests hold is weak
+/// on its own terms, that question does not arise: the oracle cannot
+/// discriminate the caller's result exactly, so it cannot discriminate the
+/// owner's either, and the weak oracle's gap is established without
+/// pairing. Value families take this for any hop; side-effect and
+/// call-deletion families keep their target-passing rule except across a
+/// local-macro argument hop, which never passes a target either way.
+pub(crate) fn hop_reach_keeps_weak_oracle_gap(
     chain: &HelperChain,
     related_tests: &[(
         &crate::analysis::facts::TestSummary,
         crate::domain::RelationReason,
     )],
+    effect_family: bool,
 ) -> bool {
     let hops = observed_hops(chain, related_tests);
-    if !hops.iter().any(|hop| hop.through_macro) {
+    if !caller_oracles_are_all_weak(hops, related_tests) {
         return false;
     }
-    !macro_argument::exactly_pins_a_caller(related_tests)
+    !effect_family || hops.iter().any(|hop| hop.through_macro)
+}
+
+/// Whether the related tests that call a caller hold at least one oracle
+/// and every one is weak on its own terms. Fail closed: any doubt answers
+/// `false` and the abstention stands.
+///
+/// - Every observed hop's caller is production code. A test-local helper
+///   (`fn reads_back(v: u32) -> bool { read_u32(&v.to_be_bytes()) == v }`)
+///   is part of the oracle, so `assert!(reads_back(v))` is exact however
+///   the assertion itself reads.
+/// - Every assertion is a plain `assert!` whose condition, under any `!`
+///   or parentheses, is an ordering or `!=` comparison without a `bool`
+///   literal (`assert!(doubled_rate() > 0)`) or one of the broad
+///   projections `is_empty`, `is_some`, `is_none`, `is_ok`, `is_err`.
+///   Exact, snapshot, mock or unknown oracles, a bare caller call
+///   (`assert!(caller(..))`, an exact pin of its `bool`), and projections
+///   such as `assert_eq!(banner().len(), 6)` might pin the owner through
+///   the caller.
+fn caller_oracles_are_all_weak(
+    hops: &[HelperHop],
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> bool {
+    use crate::analysis::facts::FunctionSourceRole;
+    use crate::domain::{OracleKind, RelationReason};
+    if hops
+        .iter()
+        .any(|hop| hop.caller.source_role != FunctionSourceRole::Production)
+    {
+        return false;
+    }
+    let mut assertions = related_tests
+        .iter()
+        .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
+        .flat_map(|(test, _)| test.assertions.iter())
+        .peekable();
+    assertions.peek().is_some()
+        && assertions.all(|assertion| {
+            matches!(
+                assertion.kind,
+                OracleKind::RelationalCheck | OracleKind::BroadError | OracleKind::SmokeOnly
+            ) && crate::analysis::extract::outer_assertion_condition(&assertion.text)
+                .is_some_and(|condition| condition_is_weak(&condition))
+        })
+}
+
+/// See [`caller_oracles_are_all_weak`]: the condition of a plain `assert!`.
+fn condition_is_weak(condition: &str) -> bool {
+    use ra_ap_syntax::AstNode;
+    use ra_ap_syntax::ast::{self, BinaryOp, CmpOp};
+    let source = format!("fn __condition() {{ {} }}", condition.trim());
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return false;
+    };
+    let tail = parse
+        .tree()
+        .syntax()
+        .children()
+        .find_map(ast::Fn::cast)
+        .and_then(|function| function.body())
+        .and_then(|body| body.stmt_list())
+        .filter(|list| list.statements().next().is_none())
+        .and_then(|list| list.tail_expr());
+    let mut expr = tail;
+    while let Some(current) = expr.clone() {
+        expr = match current {
+            ast::Expr::ParenExpr(paren) => paren.expr(),
+            ast::Expr::PrefixExpr(prefix) if prefix.op_kind() == Some(ast::UnaryOp::Not) => {
+                prefix.expr()
+            }
+            _ => break,
+        };
+    }
+    match expr {
+        Some(ast::Expr::BinExpr(bin)) => {
+            let ordering_or_not_equal = matches!(
+                bin.op_kind(),
+                Some(BinaryOp::CmpOp(
+                    CmpOp::Ord { .. } | CmpOp::Eq { negated: true }
+                ))
+            );
+            let bool_literal = [bin.lhs(), bin.rhs()].into_iter().flatten().any(|side| {
+                matches!(
+                    side,
+                    ast::Expr::Literal(literal)
+                        if matches!(literal.kind(), ast::LiteralKind::Bool(_))
+                )
+            });
+            ordering_or_not_equal && !bool_literal
+        }
+        Some(ast::Expr::MethodCallExpr(call)) => call.name_ref().is_some_and(|name| {
+            matches!(
+                &*name.text(),
+                "is_empty" | "is_some" | "is_none" | "is_ok" | "is_err"
+            )
+        }),
+        _ => false,
+    }
 }
 
 /// [`chain_forwards_owner_result`] over only the hops the related tests

@@ -166,33 +166,6 @@ fn unique_local_macro_rules(macro_name: &str, index: &RustIndex) -> bool {
     definitions == 1
 }
 
-/// Whether some related test that calls a caller holds an exact oracle
-/// (`assert_eq!` on a value or whole object), in any operand shape:
-/// `assert_eq!(doubled_rate(), 14)`, `let r = doubled_rate(); assert_eq!(r,
-/// 14)`, `assert_eq!(doubled_rate().to_string(), "14")`. ripr does not
-/// expand the macro, so it cannot tell whether such an oracle observes the
-/// owner at all: crediting it would be unsupported, and so would a gap. Only
-/// a test whose every oracle is weak on its own terms (`assert!(doubled_rate()
-/// > 0)`) keeps the existing evidence.
-pub(in crate::analysis::classify) fn exactly_pins_a_caller(
-    related_tests: &[(
-        &crate::analysis::facts::TestSummary,
-        crate::domain::RelationReason,
-    )],
-) -> bool {
-    use crate::domain::{OracleKind, RelationReason};
-    related_tests
-        .iter()
-        .filter(|(_, reason)| *reason == RelationReason::HelperOwnerCall)
-        .flat_map(|(test, _)| test.assertions.iter())
-        .any(|assertion| {
-            matches!(
-                assertion.kind,
-                OracleKind::ExactValue | OracleKind::WholeObjectEquality
-            )
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::{invocations_naming, may_hand_name_to_macro};

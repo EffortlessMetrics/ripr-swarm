@@ -833,3 +833,120 @@ fn owner_named_only_in_a_wrapper_string_literal_does_not_abstain() -> Result<(),
     );
     Ok(())
 }
+
+const TITLE_DIFF: &str = "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1,3 +1,3 @@\n fn title() -> &'static str {\n-    \"ripr\"\n+    concat!(\"ri\", \"pr\")\n }\n";
+
+fn banner_finding(wrapper: &str, test: &str) -> Result<Value, String> {
+    let source = format!(
+        "fn title() -> &'static str {{\n    concat!(\"ri\", \"pr\")\n}}\n\npub fn banner() -> String {{\n    {wrapper}\n}}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
+    );
+    let finding = family_finding(&source, TITLE_DIFF, "return_value")?;
+    assert_eq!(
+        relation_of(&finding, "banner_check"),
+        Some("helper_owner_call"),
+        "{wrapper} | {test}: {finding}"
+    );
+    Ok(finding)
+}
+
+#[test]
+fn weak_oracle_behind_a_non_forwarding_hop_keeps_its_gap() -> Result<(), String> {
+    // #7549: the oracle cannot discriminate the caller's result exactly, so
+    // it cannot discriminate the owner's either; no pairing is needed.
+    for (wrapper, test) in [
+        ("format!(\"[{}]\", title())", "assert!(banner().len() > 0);"),
+        (
+            "format!(\"[{}]\", title())",
+            "assert!(!banner().is_empty());",
+        ),
+        (
+            "title().to_string() + \"!\"",
+            "assert!(!banner().is_empty());",
+        ),
+    ] {
+        let finding = banner_finding(wrapper, test)?;
+        assert_eq!(
+            finding["classification"], "weakly_exposed",
+            "{wrapper} | {test}: {finding}"
+        );
+        let propagate = finding["ripr"]["propagate"]["summary"]
+            .as_str()
+            .unwrap_or_default();
+        assert!(
+            !propagate.contains("helper_result_not_forwarded"),
+            "{wrapper} | {test}: {finding}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn exact_or_mixed_oracle_behind_a_non_forwarding_hop_abstains() -> Result<(), String> {
+    // An exact oracle on the caller (even on a projection such as `.len()`)
+    // might pin the owner through the transform: neither credit nor gap.
+    for (wrapper, test) in [
+        (
+            "format!(\"[{}]\", title())",
+            "assert_eq!(banner().len(), 6);",
+        ),
+        (
+            "title().to_string() + \"!\"",
+            "assert_eq!(banner(), \"ripr!\");",
+        ),
+        (
+            "title().to_string() + \"!\"",
+            "assert!(!banner().is_empty());\n        assert_eq!(banner(), \"ripr!\");",
+        ),
+        // A bare call of a caller pins its whole result.
+        (
+            "title().to_string() + \"!\"",
+            "assert!(banner().len() == 5);",
+        ),
+        (
+            "title().to_string() + \"!\"",
+            "assert!(!banner().is_empty() != true);",
+        ),
+        (
+            "title().to_string() + \"!\"",
+            "assert!(banner().contains(\"pr\"));",
+        ),
+    ] {
+        let finding = banner_finding(wrapper, test)?;
+        assert_eq!(
+            finding["classification"], "propagation_unknown",
+            "{wrapper} | {test}: {finding}"
+        );
+        assert_not_forwarded(&finding);
+    }
+    Ok(())
+}
+
+#[test]
+fn bool_caller_pinned_by_a_plain_assert_abstains() -> Result<(), String> {
+    // `assert!(caller(..))` is `assert_eq!(caller(..), true)`, and a
+    // test-local helper is part of the oracle (#7549 corpus regression:
+    // `mined-bool-property-read-u32`).
+    for (item, test) in [
+        (
+            "pub fn titled() -> bool {\n    title() == \"ripr\"\n}",
+            "assert!(titled());",
+        ),
+        (
+            "pub fn titled() -> bool {\n    title() == \"ripr\"\n}",
+            "assert!(!titled());",
+        ),
+    ] {
+        let source = format!(
+            "fn title() -> &'static str {{\n    concat!(\"ri\", \"pr\")\n}}\n\n{item}\n\n#[cfg(test)]\nmod tests {{\n    use super::*;\n\n    #[test]\n    fn banner_check() {{\n        {test}\n    }}\n}}\n"
+        );
+        let finding = family_finding(&source, TITLE_DIFF, "return_value")?;
+        assert_ne!(
+            finding["classification"], "weakly_exposed",
+            "{test}: {finding}"
+        );
+    }
+    let source = "fn title() -> &'static str {\n    concat!(\"ri\", \"pr\")\n}\n\n#[cfg(test)]\nmod tests {\n    use super::*;\n\n    fn titled(len: usize) -> usize {\n        if title() == \"ripr\" { len } else { 0 }\n    }\n\n    #[test]\n    fn banner_check() {\n        assert!(titled(4) > 0);\n    }\n}\n";
+    let finding = family_finding(source, TITLE_DIFF, "return_value")?;
+    assert_ne!(finding["classification"], "weakly_exposed", "{finding}");
+    Ok(())
+}
