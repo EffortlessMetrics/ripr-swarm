@@ -2419,6 +2419,12 @@ mod tests {
         git_ok(&fixture.root, &["commit", "-qm", "seed binary"])?;
         let policy = policy()?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        // The focused test edit the attempt exists for.
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            "fn boundary() {}\n\n#[test]\nfn focused() {}\n",
+        )
+        .map_err(|err| format!("write focused test edit: {err}"))?;
         fs::write(
             fixture.root.join("src/pricing.rs"),
             b"pub fn price() {}\r\n\x00\r\n",
