@@ -409,9 +409,10 @@ rule only for an assertion whose context was admitted.
    early `return Some(..);` (or `return Ok(..);`): every other `return` and
    the tail are exactly `None` (or one `Err(..)` call), and the pinned value
    must be `Some(..)` (or `Ok(..)`). A `?` builds only `None` (or `Err`), so
-   it is not a second source here. Its propagation witness completes only
-   when the owner's return sink is that same constructor on the changed
-   line, so an identical value returned elsewhere is a different exit. An owner
+   it is not a second source here. The propagation witness of any changed
+   `return X;` completes only when the owner's return sink is that same `X`
+   on the changed line, so an identical value returned elsewhere is a
+   different exit. An owner
    body that invokes any macro outside a fixed non-returning set
    (`assert!`, `format!`, `panic!`, `vec!`, ...), however it is spaced
    (`ensure !(..)`), leaves the return paths unestablished.
@@ -420,7 +421,10 @@ rule only for an assertion whose context was admitted.
    and refuses the pin. Only bare standard names qualify; qualified paths stay unknown because
    their roots can be rebound.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
-   also refuse it; nested expansion is not interpreted. Any visible
+   also refuse it; nested expansion is not interpreted, except that a bare,
+   unqualified nested `matches!` expands to one `match` over operands the
+   scan already reads, so it is admitted and its name joins this binding
+   check (see "Literal `matches!` pins"). Any visible
    workspace definition/import binding of a trusted macro, a foreign glob,
    `macro_use`, `no_implicit_prelude`, or macro-generation arguments naming a
    trusted macro used by that test refuses the pin. This scan

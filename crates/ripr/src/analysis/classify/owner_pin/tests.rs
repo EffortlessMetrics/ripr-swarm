@@ -1021,6 +1021,15 @@ fn an_early_some_or_ok_return_is_pinned_beside_opposite_exits() {
         ),
         Some(ReturnPathGate::Head("Some"))
     ));
+    // A second `return None;` and a `?` build only `None`, so neither
+    // competes with an early `Some`.
+    assert!(matches!(
+        gate(
+            "fn f(k: u32) -> Option<u32> {\n    let j = k.checked_sub(1)?;\n    if j == 7 {\n        return None;\n    }\n    if j == 0 {\n        return Some(3);\n    }\n    None\n}",
+            "return Some(3);"
+        ),
+        Some(ReturnPathGate::Head("Some"))
+    ));
     // A `?` builds only `Err`, so it does not compete with an early `Ok`.
     assert!(matches!(
         gate(
@@ -6244,6 +6253,7 @@ fn a_literal_matches_pattern_pins_the_owner_value() {
     let pinned = [
         "assert!(matches!(check(5), Ok(5)));",
         "assert!(matches!(check(5), Ok(x @ 5)));",
+        "assert!(matches!(check(5), Ok(-5)));",
         "assert!(matches!(check(5), Ok( 5 ),));",
         "assert_eq!(check(5), Ok(5));",
     ];
@@ -6263,7 +6273,15 @@ fn a_literal_matches_pattern_pins_the_owner_value() {
         "assert!(matches!(check(5), Ok(-)));",
         // A rooted `matches!` can be rebound; another nested macro may exit.
         "assert!(std::matches!(check(5), Ok(5)));",
+        "assert!(core::matches!(check(5), Ok(5)));",
         "assert!(matches!(check(dbg!(5)), Ok(5)));",
+        "assert!(matches!(check(5), Ok(x @ _)));",
+        "assert!(matches!(check(5), Ok(mut x @ 5)));",
+        "assert!(matches!(check(5), Ok(X @ 5)));",
+        "assert!(matches!(check(5), Ok((5, 6))));",
+        "assert!(matches!(check(5), Ok([5])));",
+        "assert!(matches!(check(5), Ok(&5)));",
+        "assert!(matches!(check(5), Ok(b'5')));",
     ];
     for (assertion, expected) in pinned
         .iter()
@@ -6274,6 +6292,32 @@ fn a_literal_matches_pattern_pins_the_owner_value() {
         let index = index(&[(LIB, lib), (TESTS, &tests)]);
         let pin = establish(&index, "check", "Ok(x + 0)");
         assert!(pin.is_some());
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            admitted(&index, &pin),
+            vec![(assertion.to_string(), expected)],
+            "{assertion}"
+        );
+    }
+    // Other literal shapes normalize to the value `assert_eq!` would pin.
+    for (lib, owner_line, assertion, expected) in [
+        (
+            "pub fn check(x: u32) -> Option<bool> {\n    Some(x > 0)\n}\n",
+            "Some(x > 0)",
+            "assert!(matches!(check(5), Some(true)));",
+            true,
+        ),
+        (
+            "pub fn check(x: u32) -> Result<Option<u32>, String> {\n    Ok(Some(x + 0))\n}\n",
+            "Ok(Some(x + 0))",
+            "assert!(matches!(check(5), Ok(Some(5))));",
+            true,
+        ),
+    ] {
+        let tests = format!("use demo::check;\n\n#[test]\nfn checks() {{\n    {assertion}\n}}\n");
+        let index = index(&[(LIB, lib), (TESTS, &tests)]);
+        let pin = establish(&index, "check", owner_line);
+        assert!(pin.is_some(), "{lib}");
         let Some(pin) = pin else { return };
         assert_eq!(
             admitted(&index, &pin),

@@ -406,18 +406,20 @@ fn edge_status_for_kind(kind: &PropagationEdgeKind, source: &str, sink: &str) ->
 /// stripping it before the identity comparison lets the supported
 /// direct-return path complete instead of staying a candidate. Constructor-
 /// wrapped forms (`return Ok(amount)`, `return Err(error)`) and call results
-/// keep their parentheses and are deliberately not normalized: the wrapper
-/// payload relationship is not established by this adapter, so they fail
-/// closed as candidate edges.
+/// keep their parentheses and are not normalized here, so a sink on another
+/// line fails closed as a candidate edge; [`returns_itself_on_its_line`]
+/// completes them only when the sink is the same expression on the probe's
+/// own line.
 fn direct_return_identity(text: &str) -> Option<String> {
     let normalized = normalize_semantic_text(text);
     let payload = normalized.strip_prefix("return ")?.trim();
     (!payload.is_empty() && !payload.contains('(')).then(|| payload.to_string())
 }
 
-/// RIPR-SPEC-0231 example 23: `return Some(1 + 2);` whose return sink is
-/// `Some(1 + 2)` on the changed line itself is one expression, not a wrapper
-/// around a payload, so the edge is established as it is for the same tail.
+/// RIPR-SPEC-0231 example 23: any `return X;` whose return sink is `X` on the
+/// changed line itself (`return Some(1 + 2);`, `return Ok(amount);`,
+/// `return f(x);`) is one expression, not a wrapper around a payload, so the
+/// edge is established as it is for the same tail.
 /// The sink must sit on the probe's line: an identical constructor returned
 /// elsewhere in the owner is a different exit.
 fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
@@ -1358,7 +1360,8 @@ mod tests {
     }
 
     #[test]
-    fn unwrapped_direct_return_completes_and_wrapped_stays_candidate() -> Result<(), String> {
+    fn unwrapped_direct_return_completes_and_wrapped_on_another_line_stays_candidate()
+    -> Result<(), String> {
         // `return amount;` is the same value as the `amount` sink: the keyword
         // is normalized before the identity comparison so the supported
         // direct-return path completes (XQFa).
@@ -1373,8 +1376,8 @@ mod tests {
         assert_eq!(witness.completeness, PathCompleteness::Complete);
         assert!(complete_direct_witness(&direct_probe, Some(&witness)));
 
-        // A constructor-wrapped return keeps the adapter fail-closed: the
-        // wrapper payload relationship is not established here.
+        // A constructor-wrapped return whose sink sits on another line keeps
+        // the adapter fail-closed: that sink may be a different exit.
         let wrapped = current_path_witness(
             &probe(ProbeFamily::ReturnValue, "return Ok(amount);"),
             &[sink(FlowSinkKind::ReturnValue, "Ok(amount)", 14)],
@@ -1411,6 +1414,16 @@ mod tests {
         .ok_or_else(|| "other-line wrapped return witness was absent".to_string())?;
         assert_eq!(elsewhere.edges[0].status, EdgeStatus::Candidate);
         assert!(!complete_direct_witness(&wrapped, Some(&elsewhere)));
+
+        // Any wrapped `return X;` completes against `X` on its own line.
+        let ok_return = probe(ProbeFamily::ReturnValue, "return Ok(amount);");
+        let ok_witness = current_path_witness(
+            &ok_return,
+            &[sink(FlowSinkKind::ReturnValue, "Ok(amount)", 10)],
+        )
+        .ok_or_else(|| "same-line Ok return witness was absent".to_string())?;
+        assert_eq!(ok_witness.edges[0].status, EdgeStatus::Established);
+        assert!(complete_direct_witness(&ok_return, Some(&ok_witness)));
 
         // A different payload on the same line stays a candidate.
         let other = current_path_witness(
