@@ -50,5 +50,10 @@
   },
   "spec_examples": [
     "RIPR-SPEC-0231#23"
-  ]
+  ],
+  "expected_oracle": {
+    "kind": "smoke_only",
+    "strength": "smoke",
+    "spec": "RIPR-SPEC-0231#23"
+  }
 }

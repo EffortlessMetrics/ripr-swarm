@@ -1,0 +1,63 @@
+{
+  "case_id": "perl-testmore-round-cents-like",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-testmore-round-cents-like.diff",
+  "anchor": {
+    "file": "lib/Shop/Pricing.pm",
+    "line": 54
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_format",
+  "test_shape": "testmore_like_format_regex",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return sprintf(\"%.2f\", $value + 1);",
+        "mutated_line": "return sprintf(\"%.2f\", $value + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 2 rounds to 3.00"
+      },
+      {
+        "replacement": "return sprintf(\"%.2f\", -$value);",
+        "mutated_line": "return sprintf(\"%.2f\", -$value);",
+        "outcome": "tests_failed",
+        "failing_test": "t/qualified.t: money has two decimals",
+        "equivalence_review": "not equivalent: 2 rounds to -2.00"
+      },
+      {
+        "replacement": "return sprintf(\"%.3f\", $value);",
+        "mutated_line": "return sprintf(\"%.3f\", $value);",
+        "outcome": "tests_failed",
+        "failing_test": "t/qualified.t: money has two decimals",
+        "equivalence_review": "not equivalent: three decimals"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "like() checks only the two-decimal shape: a mutant that shifts the value keeps the shape and passes, while sign or precision mutants fail. Spec cells: RIPR-SPEC-0064 like/weak_broad.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testmore-round-cents-like.json",
+    "sha256": "edeeebb8de94294cf58702c54143f5725de4eca040e11d48acd0ebab630afb54",
+    "provenance": "producer"
+  }
+}

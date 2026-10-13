@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-test2-fee-isnt-zero",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-test2-fee-isnt-zero.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 39
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test2_isnt_single_value",
+  "hard_case": "isnt() rejects one value; the producer maps it to a strong exact oracle and records the changed line as its observed sink.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 0.02 * $amount;",
+        "mutated_line": "return 0.02 * $amount;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the fee doubles"
+      },
+      {
+        "replacement": "return 0.001 * $amount;",
+        "mutated_line": "return 0.001 * $amount;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the fee drops tenfold"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "isnt(fee(100), 0) only rejects zero, so a doubled or tenfold-smaller fee keeps it green. Spec cells: RIPR-SPEC-0064 oracle strength (isnt).",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-test2-fee-isnt-zero.json",
+    "sha256": "affdde8bdd59ede6e207125e4e1373b1bd93e689cb1a5e8893444b9c9897545c",
+    "provenance": "producer"
+  }
+}

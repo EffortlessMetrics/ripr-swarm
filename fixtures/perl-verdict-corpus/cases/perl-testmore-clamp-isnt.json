@@ -1,0 +1,63 @@
+{
+  "case_id": "perl-testmore-clamp-isnt",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-testmore-clamp-isnt.diff",
+  "anchor": {
+    "file": "lib/Shop/Pricing.pm",
+    "line": 78
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "testmore_isnt_single_value",
+  "hard_case": "isnt() rejects exactly one value; the producer maps it to a strong exact oracle and records the changed predicate as its observed sink.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 99 if 100 < $qty;",
+        "mutated_line": "return 99 if 100 < $qty;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: an order of 100 is no longer clamped"
+      },
+      {
+        "replacement": "return 99 if 120 < $qty;",
+        "mutated_line": "return 99 if 120 < $qty;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 110 is no longer clamped"
+      },
+      {
+        "replacement": "return 98 if 99 < $qty;",
+        "mutated_line": "return 98 if 99 < $qty;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: clamped orders become 98"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "isnt(clamp_qty(150), 150) only rejects 150, so moving the clamp threshold or the clamp value keeps it green. Spec cells: RIPR-SPEC-0064 oracle strength (isnt).",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testmore-clamp-isnt.json",
+    "sha256": "21aa3a126d49c07e0dc10caf929f8b64e00993649c9dbe289c76f15209066f13",
+    "provenance": "producer"
+  }
+}

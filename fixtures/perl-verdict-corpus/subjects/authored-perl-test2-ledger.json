@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-perl-test2-ledger",
+  "origin": "authored",
+  "version_label": "authored@28e86e6",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "lib/Ledger.pm",
+      "sha256": "feb5e60ef79bc754c5c918525cde8cb3258e05e04b82bb2d27cd788e42a6cdf4"
+    },
+    {
+      "path": "t/ledger.t",
+      "sha256": "3dceac387a906f34dde83da8729b6e603ee6059221d1a430d97747840ec322b2"
+    }
+  ]
+}

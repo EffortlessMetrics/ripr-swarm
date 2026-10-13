@@ -254,3 +254,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — error_variant_wrapper_wrong_receiver_pin (20)
+
+Reason:
+RIPR-SPEC-0005: the shared reach-bearing relation rule (#5335 review) downgrades the name-anchored tests to weak reach, lowering finding confidence; classes stay weakly_exposed
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_wrong_receiver_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
