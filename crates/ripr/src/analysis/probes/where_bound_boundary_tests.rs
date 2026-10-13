@@ -787,16 +787,9 @@ fn inline_bound_owner_cannot_admit_shared_runtime_or_type_expressions() -> Resul
                 ..Default::default()
             });
             let admitted = if removed {
-                {
-                    let old = super::classify::old_source(&index, &changed);
-                    super::classify::removed_type_bounds(
-                        Path::new("."),
-                        &[],
-                        old.as_deref(),
-                        &changed,
-                    )
+                let old = super::classify::old_source(&index, &changed);
+                super::classify::removed_type_bounds(Path::new("."), &[], old.as_deref(), &changed)
                     .lines
-                }
             } else {
                 super::classify::added_type_bound_lines(&index, &changed)
             };
