@@ -1186,7 +1186,7 @@ fn condition_is_weak(condition: &str) -> bool {
         }
         Some(ast::Expr::MethodCallExpr(call)) => call.name_ref().is_some_and(|name| {
             matches!(
-                &*name.text(),
+                name.text(),
                 "is_empty" | "is_some" | "is_none" | "is_ok" | "is_err"
             )
         }),
@@ -1329,7 +1329,7 @@ fn caller_carries_callee_as_data(body: &str, callee: &str) -> bool {
                 .is_some_and(|args| args.args().next().is_none())
                 && call
                     .name_ref()
-                    .is_some_and(|name| METHODS.contains(&&*name.text()))
+                    .is_some_and(|name| METHODS.contains(&name.text()))
         }),
         SyntaxKind::BIN_EXPR => ast::BinExpr::cast(node).is_some_and(|bin| {
             bin.op_kind() == Some(BinaryOp::ArithOp(ArithOp::Add))
@@ -1340,7 +1340,7 @@ fn caller_carries_callee_as_data(body: &str, callee: &str) -> bool {
                 .path()
                 .and_then(|path| path.segment())
                 .and_then(|segment| segment.name_ref())
-                .is_some_and(|name| matches!(&*name.text(), "format" | "concat"));
+                .is_some_and(|name| matches!(name.text(), "format" | "concat"));
             named
                 && call.token_tree().is_some_and(|tree| {
                     tree.syntax()
