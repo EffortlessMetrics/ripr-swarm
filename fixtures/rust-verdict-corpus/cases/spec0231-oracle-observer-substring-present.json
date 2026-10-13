@@ -50,5 +50,10 @@
   },
   "spec_examples": [
     "RIPR-SPEC-0231#8"
-  ]
+  ],
+  "expected_oracle": {
+    "kind": "relational_check",
+    "strength": "weak",
+    "spec": "RIPR-SPEC-0231#8"
+  }
 }
