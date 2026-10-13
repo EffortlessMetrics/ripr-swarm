@@ -125,8 +125,27 @@ rule only for an assertion whose context was admitted.
    a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
    does not compile and refuses.
    An assertion inside an `async` block (`tokio::spawn(async { .. })`) keeps
-   the async-context refusal below. Every other attribute (`ignore`, other
-   async runtime tests, parameterizing macros such as `rstest` or
+   the async-context refusal below. An `#[rstest]` case table is admitted
+   (cluster 12a, #6578): rstest runs the body once per `#[case(..)]` row with
+   the row's values bound to the parameters, so
+   `assert_eq!(scale(input), expected)` under `#[case(2, 4)]` pins the owner
+   as `assert_eq!(scale(2), 4)` does. `#[rstest]` (or `rstest::rstest`, or a
+   bare name bound by one explicit `use rstest::rstest`) takes no arguments
+   and appears once; every parameter is an identifier binding (`mut`
+   allowed, no `ref` or `@` pattern) carrying exactly `#[case]`; every row
+   follows `#[rstest]` and holds one value per parameter, each a non-string
+   literal, `-literal`, `true` or `false` (a string literal reaches the
+   parameter through `FromStr`, which runs user code). A parameterless
+   `#[rstest]` with no rows runs its body once, like `#[test]`. `rstest` must be the crate in
+   the test's module under the `serial_test` rule, jointly with the other
+   trusted crates; its `#[rstest]` and `#[fixture]` attributes, and a case
+   row on a function whose `#[rstest]` above it consumes the row, count as
+   emitting only items named after the function they decorate, so a function
+   named after a checked crate refuses. A bare `#[case]` anywhere else, or in
+   a module whose `use` binds `case`, is an unknown attribute macro. A computed row value (which could
+   call the owner), `#[rstest(..)]` arguments, fixture-injected or
+   `#[values]` parameters refuse. Every other attribute (`ignore`,
+   `timeout`, other async runtime tests, other parameterizing macros such as
    `test_case`) and every inner attribute refuses the pin. The
    parser must match the exact indexed function body and the assertion's
    line/text identity uniquely. Identical same-line invocations fail closed.
