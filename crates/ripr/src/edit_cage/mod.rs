@@ -981,16 +981,22 @@ fn eol_only_line_ending_flip(old: &RepositoryPathState, new: &RepositoryPathStat
 /// and must keep naming an author in the delta. A probe failure fails
 /// closed — the change stays in the delta.
 fn git_applies_eol_normalization(root: &Path, path: &str) -> bool {
-    // `git check-attr` prints `<path>: text: set|unset|unspecified`; taking
-    // the segment after the final colon keeps a colon in the path from
-    // spoofing the attribute value.
+    // `git check-attr` prints `<path>: text: set|unset|auto|unspecified`;
+    // taking the segment after the final colon keeps a colon in the path
+    // from spoofing the attribute value.
     let Ok(attrs) = git_text(root, &["check-attr", "text", "--", path]) else {
         return false;
     };
-    match attrs.rsplit(':').next().map(str::trim).unwrap_or_default() {
+    let configured = match attrs.rsplit(':').next().map(str::trim).unwrap_or_default() {
+        // `text` rewrites line endings regardless of content or config.
         "set" => true,
+        // `-text` never rewrites.
         "unset" => false,
+        // `text=auto` rewrites text content even when `core.autocrlf` is
+        // false: the attribute alone opts the file into normalization.
+        "auto" => true,
         _ => {
+            // Unspecified: `core.autocrlf` decides.
             let Ok(autocrlf) = git_text(root, &["config", "--get", "core.autocrlf"]) else {
                 return false;
             };
@@ -999,7 +1005,24 @@ fn git_applies_eol_normalization(root: &Path, path: &str) -> bool {
                 "" | "false" | "no" | "off" | "0"
             )
         }
+    };
+    if !configured {
+        return false;
     }
+    // Git's conversion is content-gated: files it sniffs as binary (a NUL
+    // in the first 8000 bytes, convert.c FIRST_FEW_BYTES) are never
+    // rewritten, under `text=auto` and `core.autocrlf` alike. A CRLF-only
+    // change in such a file stays git-visible and must keep naming an
+    // author; an unreadable file fails closed the same way (#7377 review).
+    let Ok(mut file) = std::fs::File::open(root.join(path)) else {
+        return false;
+    };
+    use std::io::Read as _;
+    let mut head = [0u8; 8000];
+    let Ok(read) = file.read(&mut head) else {
+        return false;
+    };
+    !head[..read].contains(&0)
 }
 
 /// `committed` is the tree diff from the baseline head to the after head
@@ -2270,6 +2293,89 @@ mod tests {
         {
             return Err(format!(
                 "a git-visible EOL flip must refuse as a forbidden path: {verdict:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// `text=auto` opts a file into normalization even when
+    /// `core.autocrlf` is false (#7377 review): the attribute alone makes
+    /// an LF->CRLF flip of a text file git-invisible, so the skip must
+    /// fire and the verdict stays Compliant beside the real test edit.
+    #[test]
+    fn eol_flip_with_text_auto_is_skipped_even_when_autocrlf_false() -> Result<(), String> {
+        let fixture = git_fixture("eol-flip-text-auto")?;
+        fs::write(fixture.root.join(".gitattributes"), "*.rs text=auto\n")
+            .map_err(|err| format!("write attributes: {err}"))?;
+        git_ok(&fixture.root, &["add", ".gitattributes"])?;
+        git_ok(&fixture.root, &["commit", "-qm", "attributes"])?;
+        let policy = policy()?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        // The focused test edit the attempt exists for.
+        fs::write(
+            fixture.root.join("tests/pricing.rs"),
+            "fn boundary() {}\n\n#[test]\nfn focused() {}\n",
+        )
+        .map_err(|err| format!("write focused test edit: {err}"))?;
+        // The attribute-driven rewrite: only the production file's endings move.
+        fs::write(fixture.root.join("src/pricing.rs"), "pub fn price() {}\r\n")
+            .map_err(|err| format!("rewrite CRLF production file: {err}"))?;
+        let (delta, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+        if delta
+            .changes
+            .iter()
+            .any(|change| change.path.as_path() == std::path::Path::new("src/pricing.rs"))
+        {
+            return Err(format!(
+                "the text=auto EOL flip entered the delta as an edit: {delta:?}"
+            ));
+        }
+        if verdict.status != EditCageVerdictStatus::Compliant {
+            return Err(format!(
+                "the text=auto EOL flip moved the verdict beside a real test edit: {verdict:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Git never rewrites content it sniffs as binary (a NUL in the first
+    /// 8000 bytes), under `text=auto` and `core.autocrlf` alike (#7377
+    /// review): a CRLF-only change in such a forbidden file stays
+    /// git-visible, so the skip must NOT fire and the cage must refuse it
+    /// as a forbidden path.
+    #[test]
+    fn eol_flip_of_git_binary_content_remains_an_edit() -> Result<(), String> {
+        let fixture = git_fixture("eol-flip-binary")?;
+        git_ok(&fixture.root, &["config", "core.autocrlf", "true"])?;
+        // Seed the worktree with binary content while the index still
+        // holds the fixture's LF blob, so the flip below is CRLF-only.
+        fs::write(fixture.root.join("src/pricing.rs"), b"pub fn price() {}\n\x00\n")
+            .map_err(|err| format!("seed binary production file: {err}"))?;
+        let policy = policy()?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::write(
+            fixture.root.join("src/pricing.rs"),
+            b"pub fn price() {}\r\n\x00\r\n",
+        )
+        .map_err(|err| format!("rewrite CRLF binary production file: {err}"))?;
+        let (delta, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+        if !delta
+            .changes
+            .iter()
+            .any(|change| change.path.as_path() == std::path::Path::new("src/pricing.rs"))
+        {
+            return Err(format!(
+                "a git-visible binary EOL flip left the delta: {delta:?}"
+            ));
+        }
+        if verdict.status != EditCageVerdictStatus::Violated
+            || !verdict
+                .violations
+                .iter()
+                .any(|violation| violation.kind == EditCageViolationKind::ForbiddenPath)
+        {
+            return Err(format!(
+                "a git-visible binary EOL flip must refuse as a forbidden path: {verdict:?}"
             ));
         }
         Ok(())
