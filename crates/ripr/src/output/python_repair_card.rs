@@ -58,11 +58,27 @@ pub(crate) fn python_repair_card(finding: &Finding) -> Option<PythonRepairCard> 
         .to_string();
     // Placement already selects the first eligible runnable test. Keep the
     // card's evidence attached to that identity rather than ranking again.
-    let related_test = finding.related_tests.iter().find(|test| {
+    let suggested_test_line = evidence_value(finding, "suggested_test_line: ")
+        .map(str::parse::<usize>)
+        .transpose()
+        .ok()?;
+    let mut related_tests = finding.related_tests.iter().filter(|test| {
         test.name == suggested_test_name
             && super::path::display_path_text(&test.file.to_string_lossy()).trim_start_matches("./")
                 == suggested_test_file
-    })?;
+    });
+    let related_test = match suggested_test_line {
+        Some(line) => related_tests.find(|test| test.line == line)?,
+        None => {
+            // Older reports have no selected-line metadata. A unique row
+            // retains its identity; duplicate rows cannot establish it.
+            let test = related_tests.next()?;
+            if related_tests.next().is_some() {
+                return None;
+            }
+            test
+        }
+    };
 
     Some(PythonRepairCard {
         card_version: "python_repair_card.v1".to_string(),

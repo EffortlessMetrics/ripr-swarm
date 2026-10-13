@@ -87,6 +87,7 @@ pub(super) struct PythonRepairPlacement {
     pub(super) repair_action: &'static str,
     pub(super) suggested_test_file: String,
     pub(super) suggested_test_name: String,
+    pub(super) suggested_test_line: Option<usize>,
     pub(super) suggested_test_node_id: Option<String>,
     pub(super) verify_command: String,
     pub(super) verify_command_confidence: &'static str,
@@ -255,6 +256,16 @@ pub(super) fn python_repair_placement(
             verify_command_for_test(candidate.test).map(|command| (candidate, command))
         })?;
     let path = normalized_path(&candidate.test.file);
+    // Public rows use bare names, so two classes/frameworks in one file can
+    // share the same file/name identity. Carry the selected source line only
+    // where consumers need it to distinguish those rows.
+    let suggested_test_line = related_candidates
+        .iter()
+        .filter(|other| {
+            other.test.name == candidate.test.name && normalized_path(&other.test.file) == path
+        })
+        .nth(1)
+        .map(|_| candidate.test.line);
     match candidate.test.framework {
         "pytest" => {
             let node = candidate.test.qualified_name.replace('.', "::");
@@ -263,6 +274,7 @@ pub(super) fn python_repair_placement(
                 repair_action: "strengthen_existing_test",
                 suggested_test_file: path,
                 suggested_test_name: candidate.test.name.clone(),
+                suggested_test_line,
                 suggested_test_node_id: Some(node_id),
                 verify_command,
                 verify_command_confidence: "high",
@@ -273,6 +285,7 @@ pub(super) fn python_repair_placement(
             repair_action: "strengthen_existing_test",
             suggested_test_file: path,
             suggested_test_name: candidate.test.name.clone(),
+            suggested_test_line,
             suggested_test_node_id: None,
             verify_command,
             verify_command_confidence: "high",

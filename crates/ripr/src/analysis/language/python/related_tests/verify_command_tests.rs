@@ -99,6 +99,7 @@ fn repair_placement_uses_first_runnable_oracle_relation() -> Result<(), String> 
         .ok_or("later runnable oracle relation must retain a repair route")?;
     assert_eq!(placement.suggested_test_file, "tests/test_plain.py");
     assert_eq!(placement.suggested_test_name, "test_same");
+    assert_eq!(placement.suggested_test_line, None);
     assert_eq!(
         placement.verify_command,
         "python -m unittest tests.test_plain.CheckoutTests.test_same"
@@ -107,6 +108,32 @@ fn repair_placement_uses_first_runnable_oracle_relation() -> Result<(), String> 
         python_repair_placement(&ExposureClass::WeaklyExposed, &candidates[..2]),
         None,
         "an advisory relation cannot replace a refused oracle relation"
+    );
+    Ok(())
+}
+
+#[test]
+fn repair_placement_distinguishes_same_file_method_names() -> Result<(), String> {
+    let tests = extract_tests(
+        Path::new("tests/test_mixed.v2.py"),
+        "import unittest\nfrom checkout import checkout\nclass Bad(unittest.TestCase):\n    def test_same(self):\n        self.assertTrue(checkout())\nclass TestGood:\n    def test_same(self):\n        checkout()\n",
+    );
+    assert_eq!(tests.len(), 2);
+    let candidates: Vec<_> = tests
+        .iter()
+        .map(|test| PythonRelatedCandidate {
+            test,
+            relation: PythonRelationKind::SyntacticCall,
+        })
+        .collect();
+    let placement = python_repair_placement(&ExposureClass::WeaklyExposed, &candidates)
+        .ok_or("pytest fallback must keep its source identity")?;
+    assert_eq!(placement.suggested_test_file, "tests/test_mixed.v2.py");
+    assert_eq!(placement.suggested_test_name, "test_same");
+    assert_eq!(placement.suggested_test_line, Some(7));
+    assert_eq!(
+        placement.verify_command,
+        "python -m pytest tests/test_mixed.v2.py::TestGood::test_same"
     );
     Ok(())
 }

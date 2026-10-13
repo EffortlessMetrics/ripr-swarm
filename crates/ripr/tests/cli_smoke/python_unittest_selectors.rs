@@ -254,3 +254,81 @@ fn python_repair_route_and_card_use_the_same_runnable_test() -> TestResult {
     }
     result
 }
+
+#[test]
+fn python_repair_card_distinguishes_mixed_framework_duplicate_names() -> TestResult {
+    let root = unique_temp_workspace("python-mixed-method-selectors");
+    let result = (|| -> TestResult {
+        fs::create_dir_all(root.join("src"))?;
+        fs::create_dir_all(root.join("tests"))?;
+        fs::write(
+            root.join("ripr.toml"),
+            "[languages]\nenabled = [\"rust\", \"python\"]\n",
+        )?;
+        fs::write(
+            root.join("src/pricing.py"),
+            "def calculate_discount(amount, threshold):\n    if amount >= threshold:\n        return amount - 10\n    return amount\n",
+        )?;
+        fs::write(
+            root.join("tests/test_mixed.v2.py"),
+            "import unittest\nfrom src.pricing import calculate_discount\nclass Bad(unittest.TestCase):\n    def test_same(self):\n        self.assertTrue(calculate_discount(150, 100))\nclass TestGood:\n    def test_same(self):\n        calculate_discount(150, 100)\n",
+        )?;
+        fs::write(
+            root.join("change.patch"),
+            "diff --git a/src/pricing.py b/src/pricing.py\n--- a/src/pricing.py\n+++ b/src/pricing.py\n@@ -1,4 +1,4 @@\n def calculate_discount(amount, threshold):\n-    if amount > threshold:\n+    if amount >= threshold:\n         return amount - 10\n     return amount\n",
+        )?;
+        run_git(&root, &["init", "-b", "main"])?;
+        let output = run_command(
+            env!("CARGO_BIN_EXE_ripr"),
+            Some(&root),
+            &[
+                "check",
+                "--root",
+                ".",
+                "--diff",
+                "change.patch",
+                "--mode",
+                "fast",
+                "--format",
+                "json",
+            ],
+        )?;
+        assert!(output.status.success(), "{output:?}");
+        let report: Value = serde_json::from_slice(&output.stdout)?;
+        let findings = report["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(findings.len(), 1, "{report}");
+        let finding = &findings[0];
+        assert_eq!(finding["classification"], "weakly_exposed");
+        let related = finding["related_tests"]
+            .as_array()
+            .ok_or("missing related")?;
+        assert_eq!(related.len(), 2);
+        assert_eq!(related[0]["line"], 4);
+        assert_eq!(related[0]["oracle_strength"], "smoke");
+        assert_eq!(related[1]["line"], 7);
+        assert_eq!(related[1]["oracle_strength"], "unknown");
+        let command = "python -m pytest tests/test_mixed.v2.py::TestGood::test_same";
+        assert_eq!(finding["repair_placement"]["verify_command"], command);
+        let card = &finding["python_repair_card"];
+        assert_eq!(card["verify"]["command"], command);
+        assert_eq!(
+            card["suggested_location"]["pytest_node_id"],
+            "tests/test_mixed.v2.py::TestGood::test_same"
+        );
+        assert_eq!(
+            card["current_test_evidence"],
+            "tests/test_mixed.v2.py:7 test_same currently has oracle_strength=unknown, oracle_kind=unknown"
+        );
+        let evidence = finding["evidence"].as_array().ok_or("missing evidence")?;
+        assert!(
+            evidence
+                .iter()
+                .any(|entry| entry == "suggested_test_line: 7")
+        );
+        Ok(())
+    })();
+    if root.exists() {
+        fs::remove_dir_all(&root)?;
+    }
+    result
+}

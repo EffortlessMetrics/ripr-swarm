@@ -662,6 +662,9 @@ pub(super) fn classify_change_with_context(
             "suggested_test_name: {}",
             placement.suggested_test_name
         ));
+        if let Some(line) = placement.suggested_test_line {
+            evidence.push(format!("suggested_test_line: {line}"));
+        }
         if let Some(node_id) = &placement.suggested_test_node_id {
             evidence.push(format!("suggested_test_node_id: {node_id}"));
         }
