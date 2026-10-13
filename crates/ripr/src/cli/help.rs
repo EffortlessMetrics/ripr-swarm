@@ -676,6 +676,8 @@ mod tests {
         assert!(GATE_HELP.contains("stdout contains human `Wrote ...` status lines"));
         assert!(GATE_HELP.contains("after a completed"));
         assert!(GATE_HELP.contains("`config_error` reports stay quiet"));
+        assert!(GATE_HELP.contains("Must be an existing directory"));
+        assert!(GATE_HELP.contains("message naming the root"));
         assert!(BASELINE_HELP.contains("ripr baseline create --from PATH"));
         assert!(BASELINE_HELP.contains("--dry-run"));
         assert!(BASELINE_HELP.contains("it prints the candidate JSON"));

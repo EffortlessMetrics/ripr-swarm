@@ -234,6 +234,8 @@ RIPR-SPEC-0243 rule 7 (2026-10-04) makes the TypeScript observation guard
 honor the `exposed` class this spec states: an observed expression naming
 the alias `local`, directly or through a one-hop local initializer,
 counts as referencing the owner. Default-import locals get no such credit.
+RIPR-SPEC-0251 (proposed) later gives a renamed default import of a
+default-exported owner the same observation credit.
 
 ## Metrics
 

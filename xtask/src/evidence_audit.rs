@@ -5728,10 +5728,8 @@ pub(crate) fn audit_actionable_gap_projection_exclusion_reasons(
     {
         audit_push_projection_exclusion_reason(&mut reasons, "missing_target_test_shape");
     }
-    if !matches!(
-        input.verify_command_source,
-        "canonical_item.verify_command" | "related_test_or_observer.name"
-    ) || audit_guidance_field_is_missing(input.verify_command)
+    if !ripr::domain::actionable_verify_source_is_supported(input.verify_command_source)
+        || audit_guidance_field_is_missing(input.verify_command)
         || input.verify_command.trim() == "verify_command_unknown"
     {
         audit_push_projection_exclusion_reason(&mut reasons, "missing_verify_command");
@@ -5801,11 +5799,7 @@ fn audit_raw_evidence_ref_is_structured(value: &Value) -> bool {
 pub(crate) fn audit_verify_command_is_unbounded_repo_exposure_snapshot_compare(
     command: &str,
 ) -> bool {
-    let normalized = command.trim().replace('\\', "/");
-    normalized.contains("ripr agent verify")
-        && normalized.contains("--before")
-        && normalized.contains("--after")
-        && normalized.contains("repo-exposure.json")
+    ripr::domain::verify_command_is_unbounded_repo_exposure_snapshot_compare(command)
 }
 
 pub(crate) fn audit_push_projection_exclusion_reason(reasons: &mut Vec<String>, reason: &str) {

@@ -1,4 +1,6 @@
+mod all;
 mod allow_attributes;
+mod changelog_fragments;
 mod ci_lane_whitelist;
 mod covered_by;
 mod dependency_expiry;
@@ -22,7 +24,11 @@ mod test_inventory;
 mod text_encoding;
 mod workflows;
 
+pub(crate) use all::check_policy_all;
 pub(crate) use allow_attributes::check_allow_attributes;
+pub(crate) use changelog_fragments::{
+    check_changelog_fragments, check_changelog_fragments_with_args,
+};
 pub(crate) use ci_lane_whitelist::check_ci_lane_whitelist;
 pub(crate) use covered_by::check_covered_by;
 pub(crate) use dependency_expiry::check_dependency_suppression_expiry;

@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-pytest-pricing",
+  "origin": "authored",
+  "version_label": "authored@127309619",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pricing/__init__.py",
+      "sha256": "2a9d1ed248f2bda615e7f56144bd320e03e215ee735c9b4f20369fafe9246c81"
+    },
+    {
+      "path": "pricing/core.py",
+      "sha256": "3bdf63984cdee714df0c199cc35d115def7479eebb836511d3029337019f5756"
+    },
+    {
+      "path": "pricing/receipts.py",
+      "sha256": "46407347c59ab7e65fa5f8a45cda57ef08659b2d7fc4bfa24d3698a29fa40b04"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "9e38fe998cffe3ffe658244b392696a13bdc461962665235a271a7c2b27f9b72"
+    },
+    {
+      "path": "tests/test_pricing.py",
+      "sha256": "34f207961a539ccf234a4fbb4f331724ac2e883301374d5dd4e45c30d6b339c0"
+    }
+  ]
+}
