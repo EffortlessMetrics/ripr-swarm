@@ -1247,7 +1247,7 @@ fn inventory_repair_attempts_in(
         }
         // Lossy names can alias distinct filesystem entries, so inventory
         // consumers cannot safely identify or bind a continuation to them.
-        let directory = entry.file_name().into_string().map_err(|_| {
+        let directory = entry.file_name().into_string().map_err(|_invalid_name| {
             "repair attempt directory name is not UTF-8; inventory cannot preserve its identity"
                 .to_string()
         })?;
