@@ -1,6 +1,7 @@
 ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/ts_node_ordinary_test_control/input
+config: <cwd>/fixtures/ts_node_ordinary_test_control/input/ripr.toml
 
 Summary: 1 probe(s), 1 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
 

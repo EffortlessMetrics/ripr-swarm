@@ -9344,6 +9344,68 @@ fn allow_attribute_detection_ignores_untracked_lints() {
 }
 
 #[test]
+fn allow_attribute_detection_preserves_literal_multiline_byte_lines() {
+    let text = format!(
+        "// 🦀 # noise\n{}\nconst HASH: &str = \"#\";\n{}\n dead_code,\n warnings,\n clippy::module_name_repetitions,\n reason = \"🦀 #\")]\nfn f() {{}}\n{}\n// {}\n",
+        concat!("#", "[cfg(any())]"),
+        concat!("#", "[allow("),
+        concat!("#", "![expect(unused_imports)]"),
+        concat!("#", "[allow(unsafe_code)]"),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    // The existing text scanner also recognizes attribute text in comments.
+    assert_eq!(
+        findings,
+        vec![
+            (4, "allow(dead_code)".to_string()),
+            (4, "allow(warnings)".to_string()),
+            (10, "expect(unused_imports)".to_string()),
+            (11, "allow(unsafe_code)".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn allow_attribute_detection_keeps_malformed_and_unguarded_shapes_ignored() {
+    for text in [
+        "#",
+        "#!",
+        "#[]",
+        concat!("#", "[allow]"),
+        concat!("#", "[allow(warnings"),
+        concat!("#", "[allows(warnings)]"),
+        concat!("#", "[expect = (warnings)]"),
+        concat!("#", "[allow(warning)]"),
+        concat!("#", "[allow(reason = \"warnings\")]"),
+        concat!("#", "[allow(clippy::module_name_repetitions)]"),
+    ] {
+        assert!(
+            guarded_allow_attributes_in_text(text, &guarded_allow_attribute_lints()).is_empty(),
+            "unexpected finding in {text:?}",
+        );
+    }
+}
+
+#[test]
+fn allow_attribute_detection_counts_lines_after_many_rejected_hashes() {
+    let mut text = format!("// 🦀 # # # {}\n", concat!("#", "[cfg(any())]")).repeat(128);
+    text.push_str(concat!("#", "[allow(dead_code, warnings, warnings)]"));
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (129, "allow(dead_code)".to_string()),
+            (129, "allow(warnings)".to_string()),
+            (129, "allow(warnings)".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn allow_attribute_budget_fails_stale_shrunk_and_orphaned_rows() {
     let guarded = guarded_allow_attribute_lints();
     let mut allowlist = BTreeMap::new();
@@ -28476,6 +28538,40 @@ upload_debug_artifacts: false
     assert!(!violations.iter().any(|v| v.contains("same-repo guard")));
 }
 
+#[test]
+fn check_droid_common_flags_missing_contents_read() {
+    let mut violations = Vec::new();
+    check_droid_common(
+        &mut violations,
+        "test.yml",
+        "review_model: \"custom:MiniMax-M3-0\"\n",
+        true,
+        true,
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must set contents: read"))
+    );
+}
+
+#[test]
+fn check_droid_common_flags_contents_write() {
+    let mut violations = Vec::new();
+    check_droid_common(
+        &mut violations,
+        "test.yml",
+        "contents: write\nreview_model: \"custom:MiniMax-M3-0\"\n",
+        true,
+        true,
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant contents: write"))
+    );
+}
+
 fn valid_droid_security_scan_yaml() -> &'static str {
     r#"
 on:
@@ -28487,6 +28583,11 @@ concurrency:
   cancel-in-progress: false
 jobs:
   droid-security-scan:
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
     env:
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
     steps:
@@ -28657,6 +28758,40 @@ fn check_droid_security_scan_flags_debug_artifact_upload() {
         violations
             .iter()
             .any(|v| v.contains("debug artifact upload"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_contents_write() {
+    let yaml = valid_droid_security_scan_yaml().replace("contents: read", "contents: write");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant contents: write"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_id_token_write() {
+    let yaml = valid_droid_security_scan_yaml()
+        .replace("contents: read", "contents: read\n      id-token: write");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant id-token: write"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_missing_contents_read() {
+    let yaml = valid_droid_security_scan_yaml().replace("      contents: read\n", "");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must set contents: read"))
     );
 }
 
@@ -29882,7 +30017,9 @@ fn assert_packet_coverage_report() -> Result<(), String> {
     let report = crate::read_text_lossy(Path::new("target/ripr/reports/file-policy.md"))?;
     let common = report
         .lines()
-        .find(|line| line.ends_with("`cargo test -p xtask --locked --offline portable_consumer`"))
+        .find(|line| {
+            line.ends_with("`cargo test -p xtask --bin xtask --locked --offline portable_consumer`")
+        })
         .ok_or("common packet coverage is absent from the policy report")?;
     let common_tests = packet_coverage_selected_tests(common)?;
     for subject in [
@@ -29983,7 +30120,7 @@ fn packet_coverage_report_fixture() -> String {
             "- line 1; host={host}; declared=all; applicable; selected=2; tests=[",
             "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client, ",
             "portable_consumer::tests::packet_digest_matches_the_producer_formula]; ",
-            "`cargo test -p xtask --locked --offline portable_consumer`\n",
+            "`cargo test -p xtask --bin xtask --locked --offline portable_consumer`\n",
             "- line 1; host={host}; declared=unix; {native}; ",
             "`cargo test -p ripr --locked --offline --test portable_consumer_packet`\n",
         ),
@@ -30006,6 +30143,23 @@ fn packet_coverage_report_accepts_exact_selected_names() -> Result<(), String> {
         );
         write(&path, &extra);
         assert_packet_coverage_report()
+    })
+}
+
+#[test]
+fn packet_coverage_report_rejects_unpinned_or_wrong_common_binary() -> Result<(), String> {
+    with_temp_cwd("packet-coverage-common-binary", |root| {
+        let path = root.join("target/ripr/reports/file-policy.md");
+        let report = packet_coverage_report_fixture();
+        write(&path, &report);
+        assert_packet_coverage_report()?;
+        for target in ["", "--bin neighboring_binary "] {
+            write(&path, &report.replacen("--bin xtask ", target, 1));
+            if assert_packet_coverage_report().is_ok() {
+                return Err(format!("wrong common packet target accepted: {target:?}"));
+            }
+        }
+        Ok(())
     })
 }
 

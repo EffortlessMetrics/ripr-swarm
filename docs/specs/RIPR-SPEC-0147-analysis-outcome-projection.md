@@ -77,6 +77,14 @@ limitation exists. JSON/status output must expose the same DTO and derive
 `analysis_complete` from its closed kind; it must not maintain an independent
 completeness flag.
 
+The diff-scoped `check` CLI maps the producer's `unsupported_input` kind to
+exit `2` after writing the original report (#7440). Retained findings, counts,
+input identity and limitation recovery remain intact; a second refusal document
+must not be appended. Complete kinds, including explicit empty-input `no_scope`,
+and `partial_with_limitations` retain advisory exit `0`. Neither incomplete
+analysis generally nor zero findings owns this decision. Repo-only formats do
+not consume this diff outcome and keep their own status contract.
+
 ## PR boundary
 
 PR A of #2829 owns parser-to-pipeline, human, JSON, and status projection plus
@@ -214,6 +222,14 @@ and
   explicit repo-only non-applicability.
 
 ## Test Mapping
+
+`cli_smoke::unsupported_check_exit::check_json_outcome_exit_preserves_subject_and_coverage`
+executes named-file and stdin inputs with literal complete, partial, empty,
+garbage and truncated-section outcomes, independently hashed input identity,
+coverage counts and nonempty retained finding coordinates.
+`unsupported_check_keeps_rendered_formats_and_repo_scope` covers human, SARIF,
+native/Shields badge reports and the repo-only agent packet control;
+`check_json_malformed_options_remain_empty_exit_two` separates usage failure.
 
 The focused pipeline and JSON/human parity tests above cover limitation
 propagation, complete-versus-incomplete zero-result behavior, and shared

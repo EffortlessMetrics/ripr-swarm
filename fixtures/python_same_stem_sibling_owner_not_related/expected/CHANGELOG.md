@@ -217,3 +217,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (19)
+
+Reason:
+#7592 / RIPR-SPEC-0028: card evidence describes selected tests/test_pricing.py:8 test_discounts_far_above_threshold; unrelated loyalty_price findings and all other report fields remain unchanged.
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (20)
+
+Reason:
+RIPR-SPEC-0255: check discloses the loaded ripr.toml - human header gains a config: line and check JSON gains a top-level config_path member exactly when a config file loaded; fixture inputs carry ripr.toml, so both surfaces add the disclosure (#7536)
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_same_stem_sibling_owner_not_related (21)
+
+Reason:
+RIPR-SPEC-0255: check discloses the loaded ripr.toml - human header gains a config: line and check JSON gains a top-level config_path member exactly when a config file loaded; fixture inputs carry ripr.toml, so both surfaces add the disclosure (#7536)
+
+Command:
+`cargo xtask goldens bless python_same_stem_sibling_owner_not_related --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

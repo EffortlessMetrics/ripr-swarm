@@ -5,6 +5,123 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_slice_ordinary_call_cannot_credit_skipped_rows",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_table_call_exit",
+      "vector": "successful_termination_inside_assertion_does_not_execute_every_slice_row",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_slice_try_exit_cannot_credit_skipped_rows",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_table_try_exit",
+      "vector": "discarded_fallible_closure_does_not_execute_every_slice_row",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "infection_unknown"
+        }
+      ]
+    },
+    {
+      "id": "rust_slice_element_zero_is_not_empty_input",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_slice_table_zero_elements",
+      "vector": "literal_slice_elements_cannot_supply_length_boundary",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "ts_reexported_expect_cannot_credit_local_rejection_helper",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_rejects_reexport_shadow",
+      "vector": "reexport_relation_does_not_bind_runner_assertion",
+      "probe_family": "error_path",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
+      ]
+    },
+    {
+      "id": "ts_literal_rejection_equality_error_path",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_rejects_literal_equality",
+      "vector": "literal_rejection_equality_observes_rejected_reason",
+      "control": "must_stay_exposed",
+      "probe_family": "error_path",
+      "assertions": [
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_promote" },
+        { "type": "expected_class", "class": "exposed" },
+        { "type": "expected_oracle", "kind": "exact_error_variant", "strength": "strong" }
+      ]
+    },
+    {
+      "id": "ts_literal_rejection_equality_not_return_value",
+      "language": "typescript",
+      "tier": "pure",
+      "source_fixture": "fixtures/typescript_rejects_literal_equality",
+      "vector": "rejected_reason_cannot_observe_resolved_return",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
+      ]
+    },
+    {
       "id": "rust_commented_module_orphan",
       "language": "rust",
       "tier": "pure",
@@ -2142,6 +2259,22 @@
         { "type": "must_not_have_receipt_command" },
         { "type": "must_not_promote" },
         { "type": "expected_class", "class": "static_unknown" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "py_replaced_block_non_delta_operand",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_adversarial_replaced_block_non_delta_operand",
+      "vector": "replaced_block_later_line_non_delta_operand",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
         { "type": "maximum_class", "class": "weakly_exposed" }
       ]
     },

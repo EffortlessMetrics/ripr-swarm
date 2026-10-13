@@ -1,0 +1,68 @@
+{
+  "case_id": "jest-mined-tomatchobject-name-only",
+  "subject_id": "authored-ts-jest-mined",
+  "diff": "cases/jest-mined-tomatchobject-name-only.diff",
+  "anchor": {
+    "file": "src/profileName.ts",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "field_construction",
+  "test_shape": "jest_tomatchobject_other_field_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "npx jest --ci --runInBand",
+    "toolchain": "node 22.22.0; jest 30.5.2, ts-jest 29.4.14, typescript 5.9.3; mutants hand-applied to the anchor line (the set StrykerJS 10 listed for the same line in `jest-mined-tomatchobject-field`), each run with the test command on the whole package",
+    "mutants": [
+      {
+        "replacement": "adult: true,",
+        "mutated_line": "adult: true,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 17 would read as adult, but no test checks adult"
+      },
+      {
+        "replacement": "adult: false,",
+        "mutated_line": "adult: false,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 18 reads as not adult, but no test checks adult"
+      },
+      {
+        "replacement": "adult: 18 < age,",
+        "mutated_line": "adult: 18 < age,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 18 reads as not adult, but no test checks adult"
+      },
+      {
+        "replacement": "adult: 18 > age,",
+        "mutated_line": "adult: 18 > age,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 18 reads as not adult, but no test checks adult"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0250's problem change with the only assertion `expect(buildProfileName(\"bo\", 18)).toMatchObject({ name: \"bo\" })`, which leaves `adult` out, so no mutant of the changed field fails it. RIPR-SPEC-0250 example 3: not `exposed`. ripr reports `weakly_exposed` with relational_check / weak, matching the spec and the truth.",
+  "labeling_observation": {
+    "ripr_commit": "9073928",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0250#3"
+  ]
+}

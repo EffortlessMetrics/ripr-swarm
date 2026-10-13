@@ -30,6 +30,10 @@
       "sha256": "50cf6260d4aff29cfaadaac771a61c2c10b674e23118da3a179eb51d842ccc90"
     },
     {
+      "path": "src/fee33.ts",
+      "sha256": "c526f7d07c6a28b24b5c3e64e7c877d751b0a3739410d806685f44afd1c4d9fd"
+    },
+    {
       "path": "src/other24.ts",
       "sha256": "4ab17e36fbb4ec87d85c18d66621f3ba8f7ba2ff158b0db146c8c12fcc461528"
     },
@@ -70,6 +74,10 @@
       "sha256": "01f210c2de52af2efbc596494390af062f5a69b93a8b44e1fbd0250825a307ae"
     },
     {
+      "path": "src/priceTwoFiles.ts",
+      "sha256": "46e8373600b63699b71a11ac72e3894a9124ce65ae7b78d658c9fb2a1450487c"
+    },
+    {
       "path": "src/priceUnobserved.ts",
       "sha256": "a96e2a875fd37ce9d2cfaf3187161f70ce1f431ba7fa1a06d7462507df1c1eb8"
     },
@@ -80,6 +88,14 @@
     {
       "path": "src/save.ts",
       "sha256": "c974f80138160b38055ce3742d838aa926ca150c966d9156d8f30bdcf4c8c508"
+    },
+    {
+      "path": "src/saveFactory.ts",
+      "sha256": "5286230bec833897c31c4ed2848c80c1bda2f6fb41d028e474896eb846b47a13"
+    },
+    {
+      "path": "src/saveSpread.ts",
+      "sha256": "0ec5c9db3b84ba4299210218232d0457c93fc841a8fe9002045711dd33824c77"
     },
     {
       "path": "src/unrelated32.ts",
@@ -126,6 +142,14 @@
       "sha256": "a4261b15f06d92f17b0080a35eb2fbdd9726b1eaca391906688fd8906e81915e"
     },
     {
+      "path": "test/priceTwoFilesMocked.test.ts",
+      "sha256": "279eabe6c06e91531c4882a1461caccc2a11aad4068c0ae03bd14a74d6972ef4"
+    },
+    {
+      "path": "test/priceTwoFilesUnmocked.test.ts",
+      "sha256": "33ca7e4c4c2f95171c065632c7db9cd5bbc5ff1ff291e3c75783a4ee706b0d20"
+    },
+    {
       "path": "test/priceUnobserved.test.ts",
       "sha256": "56f177a1b915ef8e9810a82da1c495912b8ee3bfdba128d20165478df87c700d"
     },
@@ -136,6 +160,14 @@
     {
       "path": "test/save.test.ts",
       "sha256": "4ce935359cceafe8b072b1f7f0ffa0e555b4025cb0d9dfdb6313888e8bec2f7a"
+    },
+    {
+      "path": "test/saveFactory.test.ts",
+      "sha256": "cbdea2e20b21dde94f5a5584f5a2aca3beb43eb69b0efbd2cdd573d172b71219"
+    },
+    {
+      "path": "test/saveSpread.test.ts",
+      "sha256": "42f6686de8775091a7bba6f4a5189c825f10af4b2ef371ba42af1ede5707cb83"
     },
     {
       "path": "tsconfig.json",

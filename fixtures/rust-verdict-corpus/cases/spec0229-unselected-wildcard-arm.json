@@ -9,7 +9,7 @@
   "edit_kind": "behavior_change",
   "behavior_family": "match_arm",
   "test_shape": "integration_test_input_selects_earlier_arm",
-  "hard_case": "Measured gap against RIPR-SPEC-0229 example 4: the class matches (weakly_exposed) but ripr names no missing discriminator `_`, because arm_selection's is_variant_name refuses single-letter variant names such as Kind::A as ambiguous, so the earlier Kind::A arm is not provably matched and selection of `_` is undecided. With CamelCase variants the same crate names `_`.",
+  "hard_case": "RIPR-SPEC-0229 example 4 with single-letter variants: Kind::A could be an associated constant, so arm_selection reads it as a variant only because src/lib.rs declares enum Kind with variant A (#7543). It then proves the earlier Kind::A arm takes the only test input and names the missing discriminator `_`.",
   "truth": {
     "state": "not_discriminated",
     "method": "runtime_mutant_kill",
@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "tests/it.rs pins f(Kind::A) to 1; Kind::A matches the earlier Kind::A arm, so by first match no test selects the changed _ arm and the edit passes. Spec cells: RIPR-SPEC-0229 example 4. ripr reads weakly_exposed, the example's class, but names no missing discriminator `_`.",
+  "reasoning": "tests/it.rs pins f(Kind::A) to 1; Kind::A matches the earlier Kind::A arm, so by first match no test selects the changed _ arm and the edit passes. Spec cells: RIPR-SPEC-0229 example 4. ripr reads weakly_exposed, the example's class, and names the missing discriminator `_`.",
   "labeling_observation": {
     "ripr_commit": "dd5a66b5",
     "full_checkout_verdict": "gap",

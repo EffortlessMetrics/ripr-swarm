@@ -47,17 +47,22 @@ document should branch on `exit`, not on free-text `stop_states`.
   `--diff` path, or a directory), the diff exceeded the hard
   `RIPR_MAX_DIFF_*` guards (`diff_scope_oversized` with no analysis run), the
   base ref could not be resolved, or the workspace root could not be
-  determined. A diff that is read but does not parse (no file headers or
-  hunks) is not an exit-2 error: `ripr check` exits `0` with the typed
-  outcome `unsupported_input` (the human header reads
-  `Analysis outcome: the input is not supported (analysis incomplete; unsupported_input).`). A run that analyzed only
+  determined. A read diff whose typed outcome is `unsupported_input`
+  (for example malformed input or a truncated declared hunk) exits `2`
+  after writing its original report, including retained advisory findings,
+  counts, input identity, limitations and recovery routes. JSON stdout remains
+  one ordinary check document, with `analysis_complete: false`; it is not
+  replaced by a refusal envelope. This changes the earlier unsupported-input
+  exit-`0` contract (#7440). Empty or whitespace-only input stays complete
+  `no_scope` with exit `0`; it does not establish analyzed behavior.
+  A run that analyzed only
   part of its scope also exits `0`, with `partial_with_limitations`: a diff
   over the smaller partial budget (its limitation is also named
   `diff_scope_oversized`), a changed Rust file the parser refused and read
   lexically, or a changed file whose language adapter is unavailable. The
   parser follows stable Rust, so a changed file using nightly-only syntax it
   cannot parse (guard patterns, never patterns) also makes the run partial.
-  With `--json`, every post-argv-parse `check` failure — the analysis errors
+  With `--json`, every pre-report, post-argv-parse `check` failure — the analysis errors
   above, an unreadable config or suppression policy, a git timeout, or any
   other failure the command can produce — also writes a machine-readable
   refusal document to stdout naming the failure; the exit stays `2` and the
@@ -70,9 +75,12 @@ document should branch on `exit`, not on free-text `stop_states`.
   For `check`, the machine-readable formats also carry their own refusal
   document on stdout (#7332): SARIF renders a schema-valid run whose only
   signal is a tool-configuration notification, GitHub renders one workflow
-  error annotation, and `badge-json`, `repo-exposure-json`, and
-  `agent-seam-packets-json` render their format's degraded/refused envelope
-  (zeroed counts, `run_status: "refused"`). Machine formats without an
+  error annotation, `badge-json` renders the badge family's degraded-state
+  convention (`status: "warn"`, `color: "lightgrey"`, zeroed counts,
+  `message: "refused: <identity>"`, repair route in the first warning,
+  `analysis_outcome: null`; no `run_status` field), and
+  `repo-exposure-json` and `agent-seam-packets-json` render their format's
+  refused envelope (zeroed counts, `run_status: "refused"`). Machine formats without an
   honest refusal shape yet — `repo-sarif`, `badge-plus`, `repo-badge-*`,
   `shields`, `repo-seams-*`, and `repo-exposure-summary-json` — write
   nothing to stdout and put the prose diagnostic on stderr for now; that

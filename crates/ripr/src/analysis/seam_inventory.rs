@@ -362,7 +362,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
-        corpus_key: Some(key),
+        corpus_key: key.is_reusable().then_some(key),
         limit_info,
         skipped_generated,
         naming_only_skips,
@@ -385,10 +385,12 @@ pub(crate) fn workspace_cache_key_at_with_config(
     if let Some(key) =
         fingerprint_cached_workspace_key(root, &inputs, corpus.fingerprint.as_deref())
     {
+        key.require_reusable()?;
         return Ok(key);
     }
     let state = collect_workspace_state_from_files(root, config, corpus.analyzable)?;
     let key = state.cache_key();
+    key.require_reusable()?;
     store_corpus_fingerprint_mapping(&state, corpus.fingerprint, &key);
     Ok(key)
 }
@@ -2371,6 +2373,37 @@ fn workspace_key_inputs(root: &Path, config: &RiprConfig) -> WorkspaceKeyInputs 
         test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
         suppressions_text: read_optional(&root.join(config.suppressions().path())),
     }
+}
+
+/// Read-only selection for current-input export. Use the ordinary corpus and
+/// key authorities, but never update the live fingerprint cache during export.
+pub(crate) fn current_cache_keys_at(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<
+    (
+        RepoSeamCacheKey,
+        Vec<super::seam_cache::RepoFileFactCacheKey>,
+    ),
+    String,
+> {
+    repo_exposure_seam_limit()?;
+    let mut files = discover_analyzable_rust_corpus(root, config)?.analyzable;
+    files.sort();
+    let inputs = workspace_key_inputs(root, config);
+    let mut builder = FilesContentHashBuilder::new();
+    let mut keys = Vec::with_capacity(files.len());
+    for path in files {
+        cancellation::checkpoint()?;
+        let bytes = std::fs::read(root.join(&path))
+            .map_err(|error| format!("read {} for cache export: {error}", path.display()))?;
+        let key = super::seam_cache::RepoFileFactCacheKey::new(&path, &bytes);
+        builder.push_digest(&path, key.content_hash());
+        keys.push(key);
+    }
+    let key = inputs.cache_key(root, builder.finish());
+    key.require_reusable()?;
+    Ok((key, keys))
 }
 
 impl WorkspaceKeyInputs {

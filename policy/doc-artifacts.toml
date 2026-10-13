@@ -1309,6 +1309,14 @@ owner = "product-analysis"
 standalone_reason = "Reads node:test's t.assert.<method> as legacy node:assert, amending the RIPR-SPEC-0243 receiver table from corpus mutation evidence."
 
 [[artifact]]
+id = "RIPR-SPEC-0256"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0256-typescript-mock-object-argument.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Extends the RIPR-SPEC-0247 literal mock-payload credit to a mock passed in an inline object and to owners with nested functions away from the changed line, from corpus mutation evidence."
+
+[[artifact]]
 id = "RIPR-SPEC-0254"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0254-typescript-lookup-table-entry.md"
@@ -1467,6 +1475,22 @@ path = "docs/specs/RIPR-SPEC-0242-canonical-next-action.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #6304 records the canonical next action: typed producers project one CanonicalNextActionV1 from current state through a single selector authority with a closed action-class vocabulary, a gate-ordered selection law, typed stops, human/JSON projections, and one focused negative per gate; doctor/pilot/inventory renderer migration stays out of scope."
+
+[[artifact]]
+id = "RIPR-SPEC-0257"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0257-current-cache-export.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records the producer-owned current-input cache snapshot contract (#7517): ordinary key selection, copied-byte validation, source preservation, exclusive independent outputs, explicit failure ownership and restored reuse without retaining historical generations."
+
+[[artifact]]
+id = "RIPR-SPEC-0255"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0255-check-config-path-disclosure.md"
+status = "proposed"
+owner = "product-swarm"
+standalone_reason = "Issue #7536 names the loaded ripr.toml in ripr check's human header and JSON (config_path), exactly when a file was loaded; built-in defaults stay an explicit absence, no change to which file loads."
 [[artifact]]
 id = "RIPR-SPEC-0253"
 kind = "spec"
@@ -1476,9 +1500,9 @@ owner = "repo-infra"
 standalone_reason = "Issue #5073 defines the bounded local check-policy-all contract over nine existing independent policy scans, with actual-driver tests for collect-all errors, preserved leaf diagnostics, stale-report I/O failures and aggregate write failures; no product policy composition, hosted gate or timing-budget change."
 
 [[artifact]]
-id = "RIPR-SPEC-0255"
+id = "RIPR-SPEC-0259"
 kind = "spec"
-path = "docs/specs/RIPR-SPEC-0255-coverage-binary-id-diagnostics.md"
+path = "docs/specs/RIPR-SPEC-0259-coverage-binary-id-diagnostics.md"
 status = "proposed"
 owner = "repo-policy"
 standalone_reason = "Issue #4978 covers an additive CI failure-manifest diagnostic: bounded LLVM profile IDs associate only with exact GNU build IDs in instrumented ELF candidates, with explicit partiality and no test, termination, or cause attribution."
