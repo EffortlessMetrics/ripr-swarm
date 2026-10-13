@@ -31,7 +31,10 @@ Every RIPR-SPEC-0243 acceptance example has at least one case. Example 33
 (two test files, one mocked) is `jest-spec0243-ex33-two-files-one-mocked`;
 examples 34 and 35 are `nodetest-spec0243-ex34-throws-anchored-regex` and
 `nodetest-spec0243-ex35-rejects-message-changed`, whose edits change the
-message the payload pins. The older `nodetest-currency-throws-regex` and
+message the payload pins. Where an example's test pins the post-change value
+(examples 30, 34 and 35), the case pins the stored pre-change value instead,
+because corpus tests must pass on the stored package; the static oracle grade
+the example is about is the same. The older `nodetest-currency-throws-regex` and
 `nodetest-charge-rejects-message` keep the message unchanged and cite no
 example. Case ids containing `spec0234` were named before the
 TypeScript rules were renumbered; they refer to today's RIPR-SPEC-0243.
