@@ -1599,8 +1599,33 @@ fn typescript_corpus_dir() -> PathBuf {
 
 #[test]
 fn committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels() -> Result<(), String> {
+    // The coverage read requires the spec-example ledger, so deleting
+    // `spec-coverage.toml` fails here instead of silently ungating the
+    // TypeScript corpus in `check-all`.
     let dir = typescript_corpus_dir();
-    let corpus = validated_corpus_without_coverage(&dir)?;
+    let coverage = coverage::spec_example_coverage_for_corpus(&dir)?;
+    assert_eq!(
+        coverage.ledger,
+        "fixtures/typescript-verdict-corpus/spec-coverage.toml"
+    );
+    assert!(
+        coverage.floor >= 45 && coverage.floor <= coverage.covered_examples,
+        "typescript ledger floor {} against {} covered",
+        coverage.floor,
+        coverage.covered_examples
+    );
+    // RIPR-SPEC-0243 example 33 (#7099) has no case, and 30, 34 and 35 have
+    // cases that label only part of the example; the ledger keeps all four
+    // visible as uncovered rather than waived.
+    let spec = coverage
+        .by_spec
+        .iter()
+        .find(|row| row.spec == "RIPR-SPEC-0243")
+        .ok_or("RIPR-SPEC-0243 is not in scope in the typescript ledger")?;
+    assert_eq!(spec.in_scope_examples, 35);
+    assert_eq!(spec.uncovered, vec![30, 33, 34, 35]);
+    assert_eq!(spec.waived, 0);
+    let corpus = load_corpus(&dir)?;
     assert!(
         corpus.cases.len() >= 40,
         "typescript corpus shrank to {}",
@@ -2134,23 +2159,32 @@ fn validate_spellings_parse_language_without_out_or_cases() -> Result<(), String
 }
 
 #[test]
-fn declared_validation_keeps_the_rust_ledger_mandatory_and_discloses_only_non_rust()
--> Result<(), String> {
-    // The declared funnel is the single coverage-mode decision: a non-Rust
-    // language validates structurally with no coverage attached, while the
-    // Rust corpus keeps its spec-example ledger mandatory (#6686 review) —
-    // deleting that ledger fails instead of dropping the coverage floor.
-    // (The gated half needs the repo-relative specs tree, so the `validate`
-    // and `check-all` CLI runs prove it, not a unit test.)
-    let rust = crate::tests::temp_dir("verdict-declared-rust-ledger");
-    crate::tests::copy_dir_recursive(&repo_corpus_dir(), &rust)?;
-    fs::remove_file(rust.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
-    let err = validated_corpus_declared(&rust)
-        .err()
-        .ok_or("a Rust corpus without its spec-example ledger validated")?;
-    assert!(err.contains(coverage::LEDGER_FILE), "{err}");
+fn declared_validation_keeps_every_ledger_but_perl_mandatory() -> Result<(), String> {
+    // The declared funnel is the single coverage-mode decision: the Perl
+    // corpus validates structurally with no coverage attached, while every
+    // other corpus keeps its spec-example ledger mandatory (#6686 review for
+    // Rust, #7650 for TypeScript and Python) — deleting that ledger fails
+    // instead of dropping the coverage floor from `check-all`. (The gated
+    // half needs the repo-relative specs tree, so the `validate` and
+    // `check-all` CLI runs prove it, not a unit test.)
+    for (name, source) in [
+        ("verdict-declared-rust-ledger", repo_corpus_dir()),
+        ("verdict-declared-ts-ledger", typescript_corpus_dir()),
+        ("verdict-declared-py-ledger", python_corpus_dir()),
+    ] {
+        // Keep the source directory name: the coverage mode is keyed on it,
+        // so a copy named anything else would read as the Rust corpus.
+        let leaf = source.file_name().ok_or("corpus dir has no name")?;
+        let copy = crate::tests::temp_dir(name).join(leaf);
+        crate::tests::copy_dir_recursive(&source, &copy)?;
+        fs::remove_file(copy.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
+        let err = validated_corpus_declared(&copy)
+            .err()
+            .ok_or_else(|| format!("{name}: a corpus without its spec-example ledger validated"))?;
+        assert!(err.contains(coverage::LEDGER_FILE), "{name}: {err}");
+    }
 
-    let (corpus, coverage) = validated_corpus_declared(&typescript_corpus_dir())?;
+    let (corpus, coverage) = validated_corpus_declared(&perl_corpus_dir())?;
     assert!(coverage.is_none());
     assert!(!corpus.cases.is_empty());
     Ok(())
