@@ -1,0 +1,45 @@
+{
+  "format": "utf8-raw-prove-logs.v1",
+  "logs": {
+    "prove-baseline-load.log": {
+      "sha256": "dbd3eef02a36974049b16ddd7105bd395a9aa0f9b40ffd50a8e73936ebc5a26f",
+      "utf8": "t/load.t .. \nok 1 - Checkout->can('total_cents')\n1..1\nok\nAll tests successful.\nFiles=1, Tests=1,  0 wallclock secs ( 0.01 usr  0.01 sys +  0.03 cusr  0.01 csys =  0.06 CPU)\nResult: PASS\n"
+    },
+    "prove-baseline-smoke_more.log": {
+      "sha256": "fe6bdd54351a1b6320df5d381c55817621e93f80c3126d425b329d14e0e12e1d",
+      "utf8": "t/smoke_more.t .. \nok 1 - has a total\n1..1\nok\nAll tests successful.\nFiles=1, Tests=1,  0 wallclock secs ( 0.02 usr  0.00 sys +  0.04 cusr  0.00 csys =  0.06 CPU)\nResult: PASS\n"
+    },
+    "prove-baseline-total_test2.log": {
+      "sha256": "042f0b1c774171f282d78c4676d71e5bd473c67abd251ee0cf785817425effe9",
+      "utf8": "t/total_test2.t .. \n# Seeded srand with seed '20261013' from local date.\nok 1 - line item total {\n    ok 1 - price times quantity\n    ok 2 - empty quantity\n    1..2\n}\n1..1\nok\nAll tests successful.\nFiles=1, Tests=1,  0 wallclock secs ( 0.01 usr  0.00 sys +  0.07 cusr  0.00 csys =  0.08 CPU)\nResult: PASS\n"
+    },
+    "prove-defective-load.log": {
+      "sha256": "6dd55d0b24813df3e424f460cb4546cea93bbfb380d8fd1b03eca554bb6544d4",
+      "utf8": "t/load.t .. \nok 1 - Checkout->can('total_cents')\n1..1\nok\nAll tests successful.\nFiles=1, Tests=1,  0 wallclock secs ( 0.01 usr  0.00 sys +  0.02 cusr  0.01 csys =  0.04 CPU)\nResult: PASS\n"
+    },
+    "prove-defective-total_more.log": {
+      "sha256": "8a3843b8fd6f77b960dabc992a21ff6ccffc1cc19f7e3d966f0080ab5dffa7b9",
+      "utf8": "t/total_more.t .. \n# Subtest: line item total\n    not ok 1 - price times quantity\n    not ok 2 - empty quantity\n    1..2\nnot ok 1 - line item total\n1..1\nDubious, test returned 1 (wstat 256, 0x100)\nFailed 1/1 subtests \n\nTest Summary Report\n-------------------\nt/total_more.t (Wstat: 256 (exited 1) Tests: 1 Failed: 1)\n  Failed test:  1\n  Non-zero exit status: 1\nFiles=1, Tests=1,  0 wallclock secs ( 0.02 usr  0.00 sys +  0.03 cusr  0.01 csys =  0.06 CPU)\nResult: FAIL\n\n    #   Failed test 'price times quantity'\n    #   at t/total_more.t line 7.\n    #          got: '128'\n    #     expected: '375'\n\n    #   Failed test 'empty quantity'\n    #   at t/total_more.t line 8.\n    #          got: '125'\n    #     expected: '0'\n    # Looks like you failed 2 tests of 2.\n\n#   Failed test 'line item total'\n#   at t/total_more.t line 9.\n# Looks like you failed 1 test of 1.\n"
+    },
+    "prove-baseline-total_more.log": {
+      "sha256": "44c4e2e26f85876c8a5fcd6569b04f1148a2f7e2136d7fafef73d7669c864e7e",
+      "utf8": "t/total_more.t .. \n# Subtest: line item total\n    ok 1 - price times quantity\n    ok 2 - empty quantity\n    1..2\nok 1 - line item total\n1..1\nok\nAll tests successful.\nFiles=1, Tests=1,  0 wallclock secs ( 0.01 usr  0.01 sys +  0.04 cusr  0.01 csys =  0.07 CPU)\nResult: PASS\n"
+    },
+    "prove-defective-smoke_test2.log": {
+      "sha256": "818ccd281c80d51aa0ea349b6d4d716c0f16f6cfadd267dc827646a1110e4c5a",
+      "utf8": "t/smoke_test2.t .. \n# Seeded srand with seed '20261013' from local date.\nok 1 - has a total\n1..1\nok\nAll tests successful.\nFiles=1, Tests=1,  0 wallclock secs ( 0.01 usr  0.00 sys +  0.05 cusr  0.01 csys =  0.07 CPU)\nResult: PASS\n"
+    },
+    "prove-defective-smoke_more.log": {
+      "sha256": "eaf3ed87b4495dbba442fbd888f0a6bad8ed2f3070586dd905da560f10ff7bd9",
+      "utf8": "t/smoke_more.t .. \nok 1 - has a total\n1..1\nok\nAll tests successful.\nFiles=1, Tests=1,  0 wallclock secs ( 0.02 usr  0.00 sys +  0.05 cusr  0.00 csys =  0.07 CPU)\nResult: PASS\n"
+    },
+    "prove-defective-total_test2.log": {
+      "sha256": "c94a5221312264684e14112d3479695f7dc80824cfdcf930e6c6248f61fa74f2",
+      "utf8": "t/total_test2.t .. \n# Seeded srand with seed '20261013' from local date.\nnot ok 1 - line item total {\n    not ok 1 - price times quantity\n    not ok 2 - empty quantity\n    1..2\n}\n1..1\nDubious, test returned 1 (wstat 256, 0x100)\nFailed 1/1 subtests \n\nTest Summary Report\n-------------------\nt/total_test2.t (Wstat: 256 (exited 1) Tests: 1 Failed: 1)\n  Failed test:  1\n  Non-zero exit status: 1\nFiles=1, Tests=1,  0 wallclock secs ( 0.01 usr  0.00 sys +  0.08 cusr  0.00 csys =  0.09 CPU)\nResult: FAIL\n    # Failed test 'price times quantity'\n    # at t/total_test2.t line 7.\n    # +-----+----+-------+\n    # | GOT | OP | CHECK |\n    # +-----+----+-------+\n    # | 128 | eq | 375   |\n    # +-----+----+-------+\n    # Failed test 'empty quantity'\n    # at t/total_test2.t line 8.\n    # +-----+----+-------+\n    # | GOT | OP | CHECK |\n    # +-----+----+-------+\n    # | 125 | eq | 0     |\n    # +-----+----+-------+\n\n# Failed test 'line item total'\n# at t/total_test2.t line 9.\n"
+    },
+    "prove-baseline-smoke_test2.log": {
+      "sha256": "7bc9d100b0457fd851cf55a41c6d2a744f304f935aa4bd4456b6ab3e7f3f1d93",
+      "utf8": "t/smoke_test2.t .. \n# Seeded srand with seed '20261013' from local date.\nok 1 - has a total\n1..1\nok\nAll tests successful.\nFiles=1, Tests=1,  0 wallclock secs ( 0.02 usr  0.00 sys +  0.06 cusr  0.01 csys =  0.09 CPU)\nResult: PASS\n"
+    }
+  }
+}

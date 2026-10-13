@@ -1,4 +1,4 @@
-t/total_more.t .. 
+t/total_more.t ..
 # Subtest: line item total
     not ok 1 - price times quantity
     not ok 2 - empty quantity
@@ -6,7 +6,7 @@ t/total_more.t ..
 not ok 1 - line item total
 1..1
 Dubious, test returned 1 (wstat 256, 0x100)
-Failed 1/1 subtests 
+Failed 1/1 subtests
 
 Test Summary Report
 -------------------

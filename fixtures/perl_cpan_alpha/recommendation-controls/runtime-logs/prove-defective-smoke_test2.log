@@ -1,4 +1,4 @@
-t/smoke_test2.t .. 
+t/smoke_test2.t ..
 # Seeded srand with seed '20261013' from local date.
 ok 1 - has a total
 1..1

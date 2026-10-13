@@ -1,4 +1,4 @@
-t/total_more.t .. 
+t/total_more.t ..
 # Subtest: line item total
     ok 1 - price times quantity
     ok 2 - empty quantity

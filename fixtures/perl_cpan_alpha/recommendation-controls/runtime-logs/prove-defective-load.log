@@ -1,4 +1,4 @@
-t/load.t .. 
+t/load.t ..
 ok 1 - Checkout->can('total_cents')
 1..1
 ok

@@ -34,6 +34,12 @@ including array permutations. Separate manual `prove -lv t/<test>.t` runs use
 `input/` unchanged, then an owned copy whose multiplication is replaced by
 addition. `runtime-receipt.json` and `runtime-logs/` retain the actual native
 statuses, diagnostics, source hashes and versions from 2026-10-13.
+Readable `.log` views trim trailing line whitespace. `runtime-raw-logs.json`
+retains each exact original UTF-8 log and its SHA-256; the receipt binds both
+views. Authored source/provenance ranges are bounded to the fixture files.
+The compact diff hunk keeps the same changed line and updates `input.diff_id`;
+neither provenance ranges nor that diff ID participates in the current
+identity fingerprint. No fingerprint/authenticity claim is added.
 
 ## Then
 

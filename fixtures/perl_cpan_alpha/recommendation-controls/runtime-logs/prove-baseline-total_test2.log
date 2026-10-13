@@ -1,4 +1,4 @@
-t/total_test2.t .. 
+t/total_test2.t ..
 # Seeded srand with seed '20261013' from local date.
 ok 1 - line item total {
     ok 1 - price times quantity
