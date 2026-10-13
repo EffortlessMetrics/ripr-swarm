@@ -77,7 +77,17 @@ edited package (Node 22.22.0, tsx 4.23.15, jest 30.5.2, ts-jest 29.4.14,
 typescript 5.9.3). The four `jest-mined-*-bound-local`, `-error-twice` and
 `-name-only` rewrites list, hand-applied, the mutant set StrykerJS listed
 for the same line in `jest-mined-tobeinstanceof` and
-`jest-mined-tomatchobject-field`.
+`jest-mined-tomatchobject-field`. The 37 `*-spec0246-*` to `*-spec0256-*`
+cases added after them were labeled the same way, in new source and test
+files so no older case's truth could move; the five
+`jest-spec0249-ex0[3-8]-*` rewrites list, hand-applied, the same StrykerJS
+set for their `if` line (with the block and string mutants a one-line `if`
+adds), `jest-spec0248-drop-literal-zero` lists the arithmetic mutant
+StrykerJS makes of its `+`, and the `vitest-spec0254-*` cases ran the subject's pinned vitest
+4.1.11. In `jest-spec0246-ex09-async-foreach` no test reports a failure:
+the discarded async callback's failing `expect` is an unhandled rejection
+that ends the jest process with exit code 1, so the test command fails and
+the case names the test whose callback raised it.
 
 ## Layout
 
