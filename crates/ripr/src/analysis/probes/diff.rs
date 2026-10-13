@@ -165,6 +165,17 @@ pub(crate) fn probes_for_file_with_relations(
                     if shape.family == ProbeFamily::MatchArm && line.matches("=>").count() > 1 {
                         return line;
                     }
+                    if shape.family == ProbeFamily::MatchArm
+                        && keeps_whole_old_arm(
+                            &line,
+                            &canonical_text,
+                            shape.start_line,
+                            changed,
+                            index,
+                        )
+                    {
+                        return with_old_arm_body(&line, changed, index);
+                    }
                     match removed_span_of_shape(text, &canonical_text, &line) {
                         // A cut that is the whole old head line (`1..=9 =>`
                         // for `1..=8 =>`, maybe with a trailing comment) cut
@@ -188,19 +199,6 @@ pub(crate) fn probes_for_file_with_relations(
                         None => line,
                     }
                 });
-                let before = before.map(|before| {
-                    if shape.family == ProbeFamily::MatchArm {
-                        mark_when_another_arm_changed(
-                            before,
-                            &canonical_text,
-                            shape.start_line,
-                            changed,
-                            index,
-                        )
-                    } else {
-                        before
-                    }
-                });
                 let probe = build_probe(
                     &build_context,
                     &canonical_line,
@@ -214,16 +212,8 @@ pub(crate) fn probes_for_file_with_relations(
         }
         if !parser_shapes.is_empty() {
             for shape in parser_shapes {
-                let before = removed_before(added.new_side_line, text, changed).map(|line| {
-                    arm_before(
-                        &shape.family,
-                        line,
-                        text,
-                        added.new_side_line,
-                        changed,
-                        index,
-                    )
-                });
+                let before = removed_before(added.new_side_line, text, changed)
+                    .map(|line| arm_before(&shape.family, line, changed, index));
                 probes.push(SeededProbe::from_probe(build_probe(
                     &build_context,
                     added,
@@ -250,7 +240,7 @@ pub(crate) fn probes_for_file_with_relations(
         }
         for family in families {
             let before = removed_before(added.new_side_line, text, changed)
-                .map(|line| arm_before(&family, line, text, added.new_side_line, changed, index));
+                .map(|line| arm_before(&family, line, changed, index));
             probes.push(SeededProbe::from_probe(build_probe(
                 &build_context,
                 added,
@@ -1094,36 +1084,35 @@ fn removed_before(
 fn arm_before(
     family: &ProbeFamily,
     line: String,
-    after: &str,
-    new_line: usize,
     changed: &ChangedFile,
     index: &RustIndex,
 ) -> String {
     if *family == ProbeFamily::MatchArm {
-        let before = with_old_arm_body(&line, changed, index);
-        mark_when_another_arm_changed(before, after, new_line, changed, index)
+        with_old_arm_body(&line, changed, index)
     } else {
         line
     }
 }
 
-/// An arm whose pattern changed reads the original `match` as the current
-/// one with only its own old pattern restored. When the diff also changes
-/// another arm line of the same function, the arms around it may not be
-/// the original ones, so the old text is marked: it never reads as this
-/// arm with its body unchanged (#5992 review).
-fn mark_when_another_arm_changed(
-    before: String,
+/// Whether a changed arm pattern keeps its whole old line instead of a
+/// head cut. Arm selection reads a head cut as this arm with only its
+/// pattern changed and the rest of the current `match` as the original
+/// one; when the diff also changes another arm line of the owner, that
+/// reading may be false, so the cut is not made (#5992 review). A guarded
+/// arm is never judged by arm selection and keeps its cut.
+fn keeps_whole_old_arm(
+    line: &str,
     after: &str,
     new_line: usize,
     changed: &ChangedFile,
     index: &RustIndex,
-) -> String {
-    let pattern = |text: &str| text.split("=>").next().map(str::trim).map(str::to_string);
-    if pattern(&before) == pattern(after) || !another_arm_changed(new_line, changed, index) {
-        return before;
-    }
-    format!("{} /* another arm changed */", before.trim_end())
+) -> bool {
+    let guarded = |text: &str| {
+        text.split("=>")
+            .next()
+            .is_some_and(|head| head.split_whitespace().any(|word| word == "if"))
+    };
+    !guarded(line) && !guarded(after) && another_arm_changed(new_line, changed, index)
 }
 
 /// Whether the diff adds, or removes, more than one arm line (a line with
@@ -1550,10 +1539,11 @@ mod tests {
     }
 
     /// #5992 review: when the diff changes another arm of the same
-    /// function, a changed pattern's old text is marked so arm selection
-    /// never reads the rest of the current `match` as the original one.
+    /// function, a changed pattern keeps its whole old line, so arm
+    /// selection never reads the rest of the current `match` as the
+    /// original one.
     #[test]
-    fn a_changed_pattern_is_marked_when_another_arm_changed() {
+    fn a_changed_pattern_keeps_its_whole_old_line_when_another_arm_changed() {
         let path = PathBuf::from("src/lib.rs");
         let line = |line: usize, text: &str| ChangedLine {
             line,
@@ -1601,31 +1591,23 @@ mod tests {
                 line(4, "        1..=8 => \"digit\","),
             ],
         };
-        assert_eq!(
-            mark_when_another_arm_changed("1..=8 =>".into(), "1..=9 =>", 4, &both, &index),
-            "1..=8 => /* another arm changed */"
-        );
-        // A body-only change keeps its old text.
-        assert_eq!(
-            mark_when_another_arm_changed(
-                "1..=9 => \"old\",".into(),
-                "1..=9 => \"digit\",",
-                4,
-                &both,
-                &index
-            ),
-            "1..=9 => \"old\","
-        );
-        // One changed arm keeps its old text.
+        let line8 = "        1..=8 => \"digit\",";
+        assert!(keeps_whole_old_arm(line8, "1..=9 =>", 4, &both, &index));
+        // A guarded arm keeps its cut: arm selection never judges it.
+        assert!(!keeps_whole_old_arm(
+            "        x if x < 8 => \"digit\",",
+            "x if x < 9 =>",
+            4,
+            &both,
+            &index
+        ));
+        // One changed arm keeps its cut.
         let one = ChangedFile {
             path,
             added_lines: vec![line(4, "        1..=9 => \"digit\",")],
-            removed_lines: vec![line(4, "        1..=8 => \"digit\",")],
+            removed_lines: vec![line(4, line8)],
         };
-        assert_eq!(
-            mark_when_another_arm_changed("1..=8 =>".into(), "1..=9 =>", 4, &one, &index),
-            "1..=8 =>"
-        );
+        assert!(!keeps_whole_old_arm(line8, "1..=9 =>", 4, &one, &index));
     }
 
     /// #7020: an edit inside a match arm's head cuts `before` to the old

@@ -281,7 +281,7 @@ impl ArmSelector {
         )?;
         // The first arm from the changed line on is the changed arm itself;
         // the rest are the arms an input that misses it falls through to.
-        let (result, later, current_body) = match arms_from_changed.as_deref() {
+        let (result, later) = match arms_from_changed.as_deref() {
             Some([(changed_pattern, changed_body), rest @ ..])
                 if same_pattern(changed_pattern, &pattern_text) =>
             {
@@ -295,23 +295,15 @@ impl ArmSelector {
                             })
                             .collect::<Vec<_>>(),
                     ),
-                    Some(changed_body.clone()),
                 )
             }
-            _ => (None, None, None),
+            _ => (None, None),
         };
-        let original_same_body = before_head_cut
-            || probe
-                .before
-                .as_deref()
-                .and_then(without_comments)
-                .is_some_and(|before| {
-                    find_fat_arrow(&before).is_some_and(|arrow| {
-                        current_body.as_deref().is_some_and(|current| {
-                            arm_body_text(&before[arrow + 2..]) == arm_body_text(current)
-                        })
-                    })
-                });
+        // Only a head cut says the old text is this arm with its body
+        // unchanged and nothing else in the hunk: the diff keeps the whole
+        // old line when another arm of the owner changed too, so a whole
+        // old line, even with an equal body, never reads as one.
+        let original_same_body = before_head_cut;
         let earlier = earlier_patterns
             .iter()
             .map(|pattern| earlier_arm(pattern))
@@ -2366,7 +2358,8 @@ mod tests {
     -> Result<(), String> {
         let body = "pub fn kind(k: Kind) -> u8 {\n    match k {\n        Kind::Alpha => 1,\n        Kind::Beta => 2,\n        Kind::Gamma => 3,\n    }\n}\n";
         let mut probe = arm_probe("Kind::Beta => 2,", 4);
-        probe.before = Some("Kind::Beta | Kind::Gamma => 2,".to_string());
+        // The diff's head cut of `Kind::Beta | Kind::Gamma => 2,`.
+        probe.before = Some("Kind::Beta | Kind::Gamma =>".to_string());
         let selector = ArmSelector::establish(&probe, &owner(body, "kind"))
             .ok_or_else(|| "premise: the changed arm is readable".to_string())?;
         // `Kind::Beta` runs this arm under both patterns: no discriminator.
@@ -2585,11 +2578,12 @@ mod tests {
         let selector = ArmSelector::establish(&rebodied, &owner(kinds, "kind"))
             .ok_or_else(|| "premise: the rebodied arm is readable".to_string())?;
         assert!(!selector.assertion_selects("assert_eq!(kind(Kind::Gamma), 3);"));
-        // A comment on the old line does not change its body.
-        rebodied.before = Some("Kind::Beta | Kind::Gamma => 2, // old".to_string());
+        // A whole old line with an equal body is not a head cut either: the
+        // diff keeps whole lines when another arm of the hunk changed.
+        rebodied.before = Some("Kind::Beta | Kind::Gamma => 2,".to_string());
         let selector = ArmSelector::establish(&rebodied, &owner(kinds, "kind"))
-            .ok_or_else(|| "premise: the commented arm is readable".to_string())?;
-        assert!(selector.assertion_selects("assert_eq!(kind(Kind::Gamma), 3);"));
+            .ok_or_else(|| "premise: the whole old arm is readable".to_string())?;
+        assert!(!selector.assertion_selects("assert_eq!(kind(Kind::Gamma), 3);"));
         // An old head that shares no leading text with the current pattern
         // is not an anchored cut of this line (#5992 review: `0 =>` paired
         // with `1..=9 => 2,` from another arm of the hunk).

@@ -262,12 +262,13 @@ Implemented:
   read as the current one with this arm's old pattern restored, so the
   credit says the test notices this line reverting. When the diff adds or
   removes more than one arm line in the owner, the other arms may not be
-  the original ones, so the old text is marked and the changed pattern
-  reads as unknown for credit. The credit needs the diff's old
-  text to be this arm with the same body (a head cut anchored on the
-  unchanged body, or a whole old line with an equal body; an uncut old
-  head arrives joined to the next line of the old file, so it never
-  passes for a cut), and
+  the original ones, so the diff keeps the whole old line instead of a
+  head cut (guarded arms excepted) and the moved input earns no credit.
+  The credit needs the diff's old
+  text to be a head cut anchored on this arm's unchanged body. A whole
+  old line never earns it, even with an equal body, and an uncut old head
+  arrives joined to the next line of the old file, so it never passes for
+  a cut. It also needs
   the `match` to be the owner body's tail expression, so an arm's result
   is the return value. Results compare as literals of one kind, or as
   variants under the same qualifier by name, so `Kind::Alpha` and an
