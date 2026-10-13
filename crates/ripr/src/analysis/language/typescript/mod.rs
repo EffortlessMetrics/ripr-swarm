@@ -62,6 +62,9 @@ mod bounded_read;
 mod bun_bridge;
 mod classifier;
 mod committed_snapshot;
+mod deleted_lines;
+#[cfg(test)]
+mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
 mod error_payload_guard;
@@ -594,6 +597,36 @@ impl TypeScriptAdapter {
                     }
                     findings.push(finding);
                 }
+            }
+            let deleted = deleted_lines::deleted_line_findings(
+                changed,
+                &counterparts,
+                source_by_normalized
+                    .get(&normalized_path(&changed.path))
+                    .map(|source| source.as_str()),
+                &all_owners,
+                &findings,
+                |line, text, owner| {
+                    // Only the resolved owner is offered, so the classifier's
+                    // owner lookup cannot land on a different one.
+                    classify_change_with_alias_state(
+                        &changed.path,
+                        line,
+                        text,
+                        None,
+                        std::slice::from_ref(owner),
+                        &all_tests,
+                        Some(&options.root),
+                        &reexport_index,
+                        alias_map_ref,
+                        alias_load_gap.as_ref(),
+                    )
+                },
+            );
+            for mut finding in deleted {
+                test_index_consumed = true;
+                finding.evidence.extend(discovery_evidence.clone());
+                findings.push(finding);
             }
         }
         let mut changed_files_by_language = Vec::new();

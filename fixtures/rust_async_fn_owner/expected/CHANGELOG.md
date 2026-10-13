@@ -468,3 +468,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_async_fn_owner (25)
+
+Reason:
+RIPR-SPEC-0197: #[tokio::test] bodies are admitted and the awaited async owner value is read (#5040), so the exact-value oracle is strong; 100/50 is not an equality input, so the predicate boundary stays weakly_exposed
+
+Command:
+`cargo xtask goldens bless rust_async_fn_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

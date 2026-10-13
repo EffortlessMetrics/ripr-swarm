@@ -10466,6 +10466,8 @@ tests = [
   "crates/ripr/src/lsp/lens.rs::currentness_lens_tests::base_deleted_findings_get_no_code_lens",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_line_beside_a_moved_comment_is_base_side_evidence",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::even_block_leaves_no_base_side_record",
+  "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::pure_deletion_is_base_side_evidence_on_its_owner",
+  "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::even_block_leaves_no_base_side_record",
 ]
 fixtures = [
   "fixtures/currentness_matrix_tail",
@@ -10473,10 +10475,12 @@ fixtures = [
   "fixtures/currentness_matrix_move",
   "fixtures/currentness_matrix_whole_delete",
   "fixtures/currentness_matrix_python_deleted_statement",
+  "fixtures/currentness_matrix_typescript_deleted_statement",
 ]
 code = [
   "crates/ripr/src/lsp/lens.rs",
   "crates/ripr/src/analysis/language/python/deleted_lines.rs",
+  "crates/ripr/src/analysis/language/typescript/deleted_lines.rs",
 ]
 outputs = []
 metrics = [
@@ -12270,6 +12274,8 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_async_owner_is_read_through_one_await_and_a_sync_owner_is_not",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_imported_owner_among_same_named_rivals_is_pinned_only_through_its_import",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_no_import_settles_pins_neither_rival",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_mixed_owner_and_rival_test_pins_only_through_the_asserted_call",
@@ -12317,12 +12323,15 @@ tests = [
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::an_arithmetic_mix_with_a_call_keeps_the_credit",
   "crates/ripr/src/analysis/classify/operand_pin.rs::tests::a_string_anywhere_in_the_owner_keeps_the_credit",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_for_loop_over_a_constant_row_table_runs_its_assertion",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_literal_matches_pattern_pins_the_owner_value",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_early_some_or_ok_return_is_pinned_beside_opposite_exits",
+  "crates/ripr/src/analysis/classify/propagation_witness.rs::tests::a_wrapped_return_completes_only_on_its_own_line",
   "crates/ripr/tests/owner_pin_execution.rs::predicate_pairing_cannot_reuse_refused_boundary_equalities",
   "crates/ripr/tests/owner_pin_execution.rs::local_empty_macro_preserves_independent_equality_execution",
   "crates/ripr/tests/owner_pin_execution.rs::empty_macro_arguments_cannot_activate_a_real_far_oracle",
   "crates/ripr/src/analysis/seam_cache.rs::tests::empty_macro_call_predecessor_from_another_build_misses_and_current_reuses",
   "crates/ripr/src/analysis/syntax/ra/property_macros.rs::tests::empty_local_macro_calls_preserve_real_call_text_and_original_source",
-  "crates/ripr/tests/owner_pin_execution.rs::async_test_discovery_does_not_supply_execution_provenance",
+  "crates/ripr/tests/owner_pin_execution.rs::tokio_test_regains_the_exact_oracle_but_not_the_boundary",
   "crates/ripr/tests/owner_pin_execution.rs::equality_execution_uses_statement_prefix_and_closure_invocation",
   "crates/ripr/tests/owner_pin_execution.rs::spawned_thread_assertion_matched_static_and_runtime_controls",
   "crates/ripr/tests/owner_pin_execution.rs::unit_struct_receiver_matched_static_and_runtime_controls",
@@ -14301,6 +14310,8 @@ tests = [
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_negated_pattern_must_be_the_whole_condition",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_negated_matches_operand_in_equality_is_weak",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_negated_conjunct_respects_or_precedence",
+  "crates/ripr/src/analysis/extract/oracles/relational_tests.rs::ensure_disjunctions_and_nested_equalities_are_never_exact",
+  "crates/ripr/src/analysis/extract/oracles/patterns.rs::spec_0106_tests::deciding_disjunctions_are_found_past_comments_and_groups",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_spellings_are_weak",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_helper_keeps_observer_readings",
   "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_matches_comparison_polarity_is_structural",

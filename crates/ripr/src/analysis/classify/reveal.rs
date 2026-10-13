@@ -441,6 +441,230 @@ pub(in crate::analysis) fn owner_call_precedes_read(
         })
 }
 
+/// Whether nothing from the first unconditional `binding.method(..)` call
+/// before `read_line` up to that line may write through `binding` or copy
+/// what the call left, so the read sees the owner's value and nothing else
+/// holds it. Fails closed:
+/// - every owner call in the window must be a bare statement
+///   `binding.method(..);`, optionally ending in `.unwrap()`, `.expect(..)`
+///   or `?`: a bound or chained result (`let o = order.add(..)`,
+///   `order.add(..).clear()`) may write through `binding` without naming it;
+/// - the read line must start with its assertion, so nothing earlier on it
+///   runs between;
+/// - any other statement in the window may name `binding` only as a plain
+///   field read that is a whole `assert!`/`assert_eq!`/`assert_ne!`
+///   argument (`assert_eq!(order.total, 4)`); any other mention
+///   (`order.log.clear()`, `let before = order.log.clone()`,
+///   `order.log[0] = ..`, `&mut order`, a `ref mut` pattern, a block)
+///   refuses. Starting at the first call, not the last, also refuses a
+///   snapshot taken between two calls, however it is spelled.
+pub(in crate::analysis) fn binding_untouched_after_owner_call(
+    body: &str,
+    start_line: usize,
+    binding: &str,
+    method: &str,
+    read_line: usize,
+) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let Some(lines_before) = read_line.checked_sub(start_line) else {
+        return false;
+    };
+    let read_at: usize = masked
+        .split_inclusive('\n')
+        .take(lines_before)
+        .map(str::len)
+        .sum();
+    if !masked
+        .get(read_at..)
+        .is_some_and(|line| line.trim_start().starts_with("assert"))
+    {
+        return false;
+    }
+    let call = format!("{binding}.{method}(");
+    let Some(call_at) = masked[..read_at]
+        .match_indices(&call)
+        .map(|(at, _)| at)
+        .find(|at| {
+            !masked[..*at]
+                .chars()
+                .next_back()
+                .is_some_and(|before| ident(before) || before == '.')
+                && runs_unconditionally(&masked, *at)
+        })
+    else {
+        return false;
+    };
+    let statement_start = masked[..call_at]
+        .rfind([';', '{', '}'])
+        .map_or(0, |index| index + 1);
+    if !masked[statement_start..call_at].trim().is_empty() {
+        return false;
+    }
+    let Some(mut window_at) = bare_call_end(&masked[..read_at], call_at, call.len()) else {
+        return false;
+    };
+    while window_at < read_at {
+        let statement_len = masked[window_at..read_at]
+            .find(';')
+            .map_or(read_at - window_at, |semi| semi + 1);
+        let statement = &masked[window_at..window_at + statement_len];
+        let leading = statement.len() - statement.trim_start().len();
+        // A later owner call on the binding, itself a bare statement whose
+        // arguments do not name the binding: an argument runs before the
+        // call and may copy what the earlier one left
+        // (`order.add((snap = order.log.clone(), 4).1)`).
+        if statement.trim_start().starts_with(&call)
+            && bare_call_end(&masked[..read_at], window_at + leading, call.len())
+                == Some(window_at + statement_len)
+            && statement.trim_start()[call.len()..]
+                .match_indices(binding)
+                .all(|(at, name)| {
+                    let arguments = &statement.trim_start()[call.len()..];
+                    arguments[..at].chars().next_back().is_some_and(ident)
+                        || arguments[at + name.len()..].starts_with(ident)
+                })
+        {
+            window_at += statement_len;
+            continue;
+        }
+        if !plain_assertion_or_unrelated(statement.trim_end_matches(';'), binding) {
+            return false;
+        }
+        window_at += statement_len;
+    }
+    true
+}
+
+/// The offset just past the `;` that ends the bare call statement whose
+/// `binding.method(` (`call_len` bytes) starts at `call_at` in masked
+/// `code`. Only `.unwrap()`, `.expect(..)` or `?` may follow the call: they
+/// consume its result, so a returned `&mut Self` is never written.
+fn bare_call_end(code: &str, call_at: usize, call_len: usize) -> Option<usize> {
+    let args_at = call_at + call_len;
+    let mut depth = 0usize;
+    let mut close = None;
+    for (offset, ch) in code.get(args_at..)?.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' if depth == 0 => {
+                close = Some(args_at + offset);
+                break;
+            }
+            ')' => depth -= 1,
+            _ => {}
+        }
+    }
+    let mut tail = code[close? + 1..].trim_start();
+    loop {
+        if let Some(rest) = tail.strip_prefix(".unwrap()") {
+            tail = rest.trim_start();
+        } else if let Some(rest) = tail.strip_prefix('?') {
+            tail = rest.trim_start();
+        } else if let Some(rest) = tail.strip_prefix(".expect(") {
+            let end = rest.find(')')?;
+            if rest[..end].contains('(') {
+                return None;
+            }
+            tail = rest[end + 1..].trim_start();
+        } else {
+            break;
+        }
+    }
+    tail.starts_with(';').then(|| code.len() - tail.len() + 1)
+}
+
+/// Whether a masked `statement` (no trailing `;`) leaves `binding` alone:
+/// it does not name it, or names it only as plain field reads that are
+/// whole arguments of a top-level `assert!`/`assert_eq!`/`assert_ne!` with
+/// no block, closure or nested macro other than `vec!`/`format!`.
+fn plain_assertion_or_unrelated(statement: &str, binding: &str) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let mentions: Vec<usize> = statement
+        .match_indices(binding)
+        .map(|(at, _)| at)
+        .filter(|at| {
+            !statement[..*at].chars().next_back().is_some_and(ident)
+                && !statement[at + binding.len()..].starts_with(ident)
+        })
+        .collect();
+    if mentions.is_empty() {
+        return true;
+    }
+    let trimmed = statement.trim_start();
+    let opener = ["assert!(", "assert_eq!(", "assert_ne!("]
+        .iter()
+        .find(|plain| trimmed.starts_with(**plain));
+    // `reset![order]` and other macros may write through the binding.
+    opener.is_some_and(|opener| {
+        let inner = &trimmed[opener.len()..];
+        inner.match_indices('!').all(|(bang, _)| {
+            let invoked = inner[bang + 1..].starts_with(['(', '[', '{']);
+            let name_start = inner[..bang]
+                .rfind(|ch: char| !ident(ch))
+                .map_or(0, |index| index + 1);
+            !invoked
+                || (matches!(&inner[name_start..bang], "vec" | "format")
+                    && !inner[..name_start].ends_with(':'))
+        })
+    }) && !statement.contains(['{', '|'])
+        && mentions.iter().all(|at| {
+            let before = statement[..*at].trim_end();
+            let mut rest = &statement[at + binding.len()..];
+            while let Some(member) = rest.strip_prefix('.') {
+                let len = member.find(|ch: char| !ident(ch)).unwrap_or(member.len());
+                if len == 0 {
+                    return false;
+                }
+                rest = &member[len..];
+            }
+            // A whole argument of the assertion itself, not of a call
+            // nested in it (`assert!(reset(&mut (order)))`).
+            before.matches('(').count() == before.matches(')').count() + 1
+                && (before.ends_with('(') || before.ends_with(','))
+                && rest.trim_start().starts_with([',', ')'])
+        })
+}
+
+/// Whether the test body calls `method` on anything but `binding`: another
+/// receiver (`expected.add(..)`, `o.add(..)` in a block), a path call
+/// (`Order::add(&mut expected, ..)`) or a chained receiver
+/// (`Order::new().add(..)`). Such a value may carry the owner's changed
+/// value into the other side of the equality, which then cannot fail on it.
+/// Fails closed: a call on an unrelated value also counts.
+pub(in crate::analysis) fn owner_called_on_other_receiver(
+    body: &str,
+    binding: &str,
+    method: &str,
+) -> bool {
+    let masked = mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices(method).any(|(at, name)| {
+        let before = &masked[..at];
+        if before.chars().next_back().is_some_and(ident)
+            || masked[at + name.len()..].starts_with(ident)
+        {
+            // Part of a longer name.
+            return false;
+        }
+        // A path (`Order::add(..)`, `let f = Order::add;`) may run the owner
+        // on any value.
+        if before.trim_end().ends_with("::") {
+            return true;
+        }
+        let Some(receiver_end) = before.trim_end().strip_suffix('.').map(str::len) else {
+            // A free function or local of the same name is not the method.
+            return false;
+        };
+        let receiver_end = masked[..receiver_end].trim_end().len();
+        let receiver_start = masked[..receiver_end]
+            .rfind(|ch: char| !ident(ch))
+            .map_or(0, |index| index + 1);
+        masked[..receiver_start].trim_end().ends_with('.')
+            || masked[receiver_start..receiver_end] != *binding
+    })
+}
+
 /// Whether the call at `at` in a test body (masked, starting at its `fn`)
 /// is a top-level statement of that body: not inside a nested block, branch,
 /// loop or closure, any of which may never run it. Fails closed.
@@ -3389,6 +3613,91 @@ mod tests {
 
     /// RIPR-SPEC-0228 rule 2: the field collection is read after the owner
     /// call on the same, unrebound binding; comments and strings never call.
+    #[test]
+    fn binding_untouched_after_owner_call_refuses_writes_between_call_and_read() {
+        // The body starts at file line 10; the read sits on line 14.
+        let body = |lines: &str| format!("fn case() {{\n{lines}\n}}");
+        let untouched =
+            |lines: &str| binding_untouched_after_owner_call(&body(lines), 10, "order", "add", 14);
+        for kept in [
+            "    let mut order = Order::new();\n    order.add(4);\n\n    assert_eq!(order.log, vec![4]);",
+            // Plain field reads in an assertion between are not writes.
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.total, 4);\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.tags, vec![]);\n    assert_eq!(order.log, vec![4]);",
+            // Statements that do not name the binding.
+            "    let mut order = Order::new();\n    order.add(4);\n    let expected = vec![4];\n    assert_eq!(order.log, expected);",
+            // The result consumed by `unwrap`, `expect` or `?`.
+            "    let mut order = Order::new();\n    order.add(4).unwrap();\n    order.add(5).expect(\"added\")?;\n    assert_eq!(order.log, vec![4, 5]);",
+            // Further bare owner calls in the window.
+            "    let mut order = Order::new();\n    order.add(1);\n    order.add(4);\n    assert_eq!(order.log, vec![1, 4]);",
+        ] {
+            assert!(untouched(kept), "{kept}");
+        }
+        for refused in [
+            "    order.add(4);\n    order.log.clear();\n    order.log.push(4);\n    assert_eq!(order.log, vec![4]);",
+            // A snapshot between two calls, however it is spelled.
+            "    order.add(4);\n    let before = order.log.clone();\n    order.add(4);\n    assert_eq!(order.log, before);",
+            "    order.add(4);\n    let before = if true { order.log.clone() } else { vec![] };\n    order.add(4);\n    assert_eq!(order.log, before);",
+            "    order.add(4);\n    before.extend_from_slice(&order.log);\n    order.add(4);\n    assert_eq!(order.log, before);",
+            "    order.add(1);\n    order.log.clear();\n    order.add(4);\n    assert_eq!(order.log, vec![4]);",
+            // A later owner call whose arguments copy the binding.
+            "    let mut order = Order::new();\n    order.add(4);\n    order.add((snap = order.log.clone(), 4).1);\n    assert_eq!(order.log, [snap.clone(), snap].concat());",
+            // A later owner call that is not a bare statement.
+            "    let mut order = Order::new();\n    order.add(1);\n    order.add(4).clear();\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    order.log = vec![4];\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    let log = &mut order.log;\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.log.pop(), Some(4));\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    normalize(&mut order);\n    assert_eq!(order.log, vec![4]);",
+            // No call before the read, or only one that may not run.
+            "    let mut order = Order::new();\n\n\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    if false { order.add(4); }\n\n    assert_eq!(order.log, vec![4]);",
+            // A chained or bound call result may write without naming `order`.
+            "    let mut order = Order::new();\n    order.add(4).clear();\n\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4).unwrap().clear();\n\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    let o = order.add(4);\n    o.log.clear();\n    assert_eq!(order.log, vec![]);",
+            // A write earlier on the read line.
+            "    let mut order = Order::new();\n    order.add(4);\n\n    order.log.clear(); assert_eq!(order.log, vec![]);",
+            // Assertions that write, or are not plain assertions.
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!({ order.log[0] = 1; true });\n    assert_eq!(order.log, vec![1]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.log[0], 4);\n    assert_eq!(order.log, vec![4]);",
+            "    order.add(4);\n    assert!(match order { Order { ref mut log, .. } => { log.clear(); true } });\n\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!(reset(&mut (order)));\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_reset!(order);\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!(reset![1, order, 2], \"m\");\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!(my::vec![1, order, 2].is_empty());\n    assert_eq!(order.log, vec![]);",
+        ] {
+            assert!(!untouched(refused), "{refused}");
+        }
+    }
+
+    /// #7688 review: a value built through the owner on another receiver
+    /// may carry the changed value into the other side of the equality.
+    #[test]
+    fn owner_called_on_other_receiver_sees_every_other_owner_call() {
+        let called = |lines: &str| {
+            owner_called_on_other_receiver(&format!("fn case() {{\n{lines}\n}}"), "order", "add")
+        };
+        for kept in [
+            "    order.add(1);\n    order.add(2);",
+            "    order.add(1);\n    readd(3);\n    order.address();",
+            "    order.add(1);\n    // other.add(2);\n    let s = \"x.add(1)\";",
+        ] {
+            assert!(!called(kept), "{kept}");
+        }
+        for refused in [
+            "    other.add(1);\n    order.add(1);",
+            "    let exp = { let mut o = Order::new(); o.add(4); o };\n    order.add(4);",
+            "    Order::add(&mut exp, 4);\n    order.add(4);",
+            "    let exp = Order::new().add(4).clone();\n    order.add(4);",
+            "    let exp = self.order.add(4);\n    order.add(4);",
+            "    let f = Order::add;\n    f(&mut exp, 4);\n    order.add(4);",
+            "    exp. add(4);\n    order.add(4);",
+            "    Order::new()\n        .add(4);\n    order.add(4);",
+        ] {
+            assert!(called(refused), "{refused}");
+        }
+    }
+
     #[test]
     fn owner_call_precedes_read_needs_an_earlier_call_on_the_same_binding() {
         // The body starts at file line 10; the read sits on line 13.
