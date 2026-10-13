@@ -53,6 +53,11 @@ fn mock_in_an_inline_object_is_credited() {
         &called_with("notify", "\"ann\", \"charged 360\""),
         "it(\"t\", () => {\n    const notify = jest.fn();\n    checkout(\"ann\", [apple], { send: notify, flush: jest.fn() });\n    expect(notify).toHaveBeenCalledWith(\"ann\", \"charged 360\");\n  });"
     ));
+    // The owner call as an `if` condition runs once.
+    assert!(facts.credits(
+        &charged_payload(),
+        "it(\"t\", () => {\n    const send = vi.fn();\n    if (checkout(\"ann\", [apple], { send })) {\n      log(1);\n    }\n    expect(send).toHaveBeenCalledWith(\"ann\", \"charged 360\");\n  });"
+    ));
     // The owner call as an argument of an assertion, after a mock factory
     // with an implementation.
     assert!(facts.credits(
@@ -233,6 +238,9 @@ fn mock_the_object_may_not_carry_is_not_credited() {
         "const send = vi.fn(); const h = { run(r = checkout(\"ann\", [apple], { send })) { return r; } }; h.run(); h.run();",
         "const send = vi.fn(); const run = (r = checkout(\"ann\", [apple], { send })): number => r; run(); run();",
         "const send = vi.fn(); const n = vi.fn<9; const h = { run() { if (n > 1) checkout(\"ann\", [apple], { send }); } }; h.run(); h.run();",
+        "const send = vi.fn(); const odd = vi.fn<3; [\"ann\", \"bo\"].forEach(function (w) { if (w.length>(0)) checkout(w, [apple], { send }); });",
+        "const send = vi.fn(); const odd = vi.fn<3 && [\"ann\", \"bo\"].forEach((w) => w.length>(0) && checkout(w, [apple], { send }));",
+        "const send = vi.fn(); const odd = vi.fn<3; const h = { run() { odd>(1) && checkout(\"ann\", [apple], { send }); } }; h.run(); h.run();",
     ] {
         let test = format!(
             "it(\"t\", () => {{\n    {body}\n    expect(send).toHaveBeenCalledWith(\"ann\", \"charged 360\");\n  }});"
@@ -266,4 +274,67 @@ fn mock_the_object_may_not_carry_is_not_credited() {
         ..charged_payload()
     };
     assert!(!facts.credits(&times, CHECKOUT_TEST));
+}
+
+/// A test that reaches the owner only through a module entry
+/// (`ModuleEntryCall`) does not bind a mock payload to the owner's call: the
+/// one textual `helpers._announce(...)` call may reach another function.
+#[test]
+fn mock_payload_through_a_module_entry_is_not_credited() -> Result<(), String> {
+    let mut owner = super::test_owner("_announce", "src/lib.ts");
+    owner.params = vec!["id".to_string(), "send".to_string()];
+    owner.source_text =
+        Some("function _announce(id, send) {\n  send(\"order \" + id);\n}".to_string());
+    owner.module_entries = vec![TypeScriptModuleEntry {
+        name: "announce".to_string(),
+        exported_as_default: false,
+    }];
+    let tests = extract_tests(
+        Path::new("tests/lib.test.ts"),
+        r#"import { announce } from "../src/lib";
+test("announces", () => {
+    const send = vi.fn();
+    announce(1);
+    helpers._announce(7, send);
+    expect(send).toHaveBeenCalledWith("order 7");
+});
+"#,
+    );
+    let classify = |tests: &[TypeScriptTest]| {
+        classify_change(
+            Path::new("src/lib.ts"),
+            2,
+            "  send(\"order \" + id);",
+            std::slice::from_ref(&owner),
+            tests,
+            None,
+            &ReExportIndex::empty(),
+            None,
+        )
+        .ok_or_else(|| "expected TypeScript preview finding".to_string())
+    };
+    let finding = classify(&tests)?;
+    assert!(
+        matches!(finding.class, ExposureClass::WeaklyExposed),
+        "{:?}",
+        finding.class
+    );
+    // Control: the same payload on a direct owner call credits.
+    let direct = extract_tests(
+        Path::new("tests/lib.test.ts"),
+        r#"import { _announce } from "../src/lib";
+test("announces", () => {
+    const send = vi.fn();
+    _announce(7, send);
+    expect(send).toHaveBeenCalledWith("order 7");
+});
+"#,
+    );
+    let finding = classify(&direct)?;
+    assert!(
+        matches!(finding.class, ExposureClass::Exposed),
+        "{:?}",
+        finding.class
+    );
+    Ok(())
 }

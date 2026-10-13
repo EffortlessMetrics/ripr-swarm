@@ -130,10 +130,12 @@ as rule 1, which also covers `function` and class bodies), so a callback
 field that may hold the call refuses. So does a call inside a parameter
 list, an enclosing `(` whose `)` is followed by `=>`, `{` or a `:` return
 type (`(r = announce(7, send)) => r`), since a default runs on every call
-that omits it. A `vi.fn` or `jest.fn` factory's own type arguments and
+that omits it; an `if`, `switch` or `with` condition is not a parameter
+list. A `vi.fn` or `jest.fn` factory's own type arguments and
 implementation (`vi.fn<(m: string) => void>()`, `jest.fn((a, b) => a)`)
 are skipped when they close before the call; type arguments count only
-when a `(` follows them, so a comparison such as `cfg.fn<3` hides nothing.
+when a `(` follows them and they hold no `;`, `{` or `}` and balanced
+parentheses, so a comparison such as `cfg.fn<3` hides nothing.
 Any other arrow before the call refuses, even one that ends before it,
 which under-credits rather than credit a call that may run twice. A call site that runs twice records
 two calls, and `toHaveBeenCalledWith` passes when any of them matches. This

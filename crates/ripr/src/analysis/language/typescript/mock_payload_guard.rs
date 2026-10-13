@@ -544,7 +544,8 @@ fn opens_function_before_call(before: &str) -> bool {
 /// in a parameter list: an enclosing `(` whose matching `)` is followed by
 /// `=>`, `{` or a `:` return type (`(r = owner(...)) => r`,
 /// `function run(r = owner(...)) {`). A default runs on every call that
-/// omits the argument. An enclosing `(` that never closes also refuses.
+/// omits the argument. An enclosing `(` that never closes also refuses; an
+/// `if`, `switch` or `with` condition does not.
 fn inside_parameter_list(scope: &str, at: usize) -> bool {
     let mut open = Vec::new();
     for (offset, c) in scope[..at].char_indices() {
@@ -557,6 +558,13 @@ fn inside_parameter_list(scope: &str, at: usize) -> bool {
         }
     }
     open.into_iter().any(|start| {
+        // An `if`, `switch` or `with` condition runs once, though its `)` is
+        // followed by `{`.
+        let head = scope[..start].trim_end();
+        let word = trailing_identifier(head);
+        if ["if", "switch", "with"].contains(&word) && !is_property_name(head, word) {
+            return false;
+        }
         let Some(end) = closing_offset(&scope[start..], '(', ')') else {
             return true;
         };
@@ -567,7 +575,8 @@ fn inside_parameter_list(scope: &str, at: usize) -> bool {
 
 /// `text` with each `vi.fn` / `jest.fn` mock factory's type arguments and
 /// arguments removed (`vi.fn<...>(...)`, `jest.fn(impl)`). Type arguments
-/// count only when a `(` follows them. A group that does not close inside
+/// count only when a `(` follows them and they read as types (see
+/// [`type_like`]). A group that does not close inside
 /// `text` is kept, so a call inside a mock implementation still reads as
 /// nested. An `=>` inside the type arguments does not close the `<`.
 fn without_closed_mock_factories(text: &str) -> String {
@@ -586,7 +595,9 @@ fn without_closed_mock_factories(text: &str) -> String {
         let mut end = 0;
         if rest.starts_with('<') {
             match closing_offset(rest, '<', '>') {
-                Some(close) if rest[close..].starts_with('(') => end = close,
+                Some(close) if rest[close..].starts_with('(') && type_like(&rest[1..close - 1]) => {
+                    end = close
+                }
                 _ => continue,
             }
         }
@@ -601,6 +612,14 @@ fn without_closed_mock_factories(text: &str) -> String {
     }
     kept.push_str(rest);
     kept
+}
+
+/// `true` when the text inside a factory's `<...>` reads as type arguments:
+/// no `;`, `{` or `}`, and balanced parentheses. A comparison such as
+/// `vi.fn<3; xs.forEach((w) => w>(0) && owner(...))` that only looks closed
+/// keeps its text, so the callback in it still refuses.
+fn type_like(text: &str) -> bool {
+    !text.contains([';', '{', '}']) && text.matches('(').count() == text.matches(')').count()
 }
 
 /// The byte offset just past the `close` matching the `open` that starts
