@@ -385,3 +385,188 @@ fn repeated_deleted_line_gets_an_ordinal_id() -> Result<(), String> {
     assert!(ids[1].ends_with(".2"), "{ids:?}");
     Ok(())
 }
+
+/// The owner of every base-side record, in order.
+fn base_side_owners(findings: &[Finding]) -> Vec<String> {
+    base_side(findings)
+        .into_iter()
+        .map(|(_, owner, _)| owner)
+        .collect()
+}
+
+/// An assignment whose value passes a callback is a behavior line, not a
+/// named arrow function's header.
+#[test]
+fn deleted_assignment_holding_a_callback_is_base_side_evidence() -> Result<(), String> {
+    let findings = analyze(
+        "assignment-with-callback",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = 0;",
+            "-  total = items.reduce((sum, item) => sum + item, 0);",
+            "   return Math.min(total, 100);",
+            " }",
+        ],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![record(3, "cappedTotal")],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A deleted `const x = items.map((item) => {` block is a callback inside
+/// the live function: every line of it is that function's.
+#[test]
+fn deleted_assigned_callback_block_stays_with_the_live_function() -> Result<(), String> {
+    let findings = analyze(
+        "assigned-callback",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "-  const doubled = items.map((item) => {",
+            "-    return item * 2;",
+            "-  });",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(
+        base_side_owners(&findings),
+        vec!["cappedTotal".to_string(), "cappedTotal".to_string()],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A call whose object argument opens on the call's line is not a method
+/// header.
+#[test]
+fn deleted_call_with_an_object_argument_stays_with_the_live_function() -> Result<(), String> {
+    let findings = analyze(
+        "call-with-object",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "-  emit(\"total\", {",
+            "-    size: items.length,",
+            "-  });",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    let owners = base_side_owners(&findings);
+    assert!(!owners.is_empty(), "{findings:?}");
+    assert!(
+        owners.iter().all(|owner| owner == "cappedTotal"),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A deleted `if` block leads on to the function that held it.
+#[test]
+fn deleted_control_block_stays_with_the_live_function() -> Result<(), String> {
+    let findings = analyze(
+        "control-block",
+        &[
+            " export function cappedTotal(items: number[]): number {",
+            "   let total = items.length;",
+            "-  if (total > 100) {",
+            "-    total = 100;",
+            "-  }",
+            "   return total;",
+            " }",
+        ],
+    )?;
+    let owners = base_side_owners(&findings);
+    assert!(
+        base_side(&findings)
+            .iter()
+            .any(|(_, owner, _)| owner == "cappedTotal"),
+        "the clamp inside the deleted block is the function's: {findings:?}"
+    );
+    assert!(
+        owners.iter().all(|owner| owner == "cappedTotal"),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A method whose parameter list Prettier wrapped is still a header: when
+/// it is deleted, its lines are not given to the object that held it.
+#[test]
+fn deleted_method_with_a_wrapped_signature_records_nothing() -> Result<(), String> {
+    let findings = analyze(
+        "wrapped-signature",
+        &[
+            " export const api = {",
+            "   size: 100,",
+            "-  save(",
+            "-    id: string,",
+            "-  ) {",
+            "-    persist(id);",
+            "-  },",
+            " };",
+            " export function cappedTotal(items: number[]): number {",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// Git lists a block's removed lines before its added ones, so a header
+/// whose types changed and the body line deleted under it both project to
+/// the replacement header's line. The function lives on and keeps the line.
+#[test]
+fn deleted_line_under_a_replaced_header_keeps_its_owner() -> Result<(), String> {
+    let findings = analyze(
+        "replaced-header",
+        &[
+            "-export function cappedTotal(items: number[]): number {",
+            "-  audit(items);",
+            "+export function cappedTotal(items: readonly number[]): number {",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![record(1, "cappedTotal")],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn owner_headers_are_told_from_lines_that_only_hold_a_callback() {
+    for header in [
+        "export function cappedTotal(items: number[]): number {",
+        "  async *pages() {",
+        "  capped(total: number): number {",
+        "  subscribe(listener: (state: State) => void): () => void {",
+        "export const cappedTotal = (items: number[]): number => {",
+        "const load = async (id: string) => {",
+        "  handler = (event: Event) => {",
+        "  onClick: (event) => {",
+        "const parse: Parser = (text) => {",
+        "export class Cart {",
+    ] {
+        assert!(super::deleted_lines::opens_an_owner(header), "{header}");
+    }
+    for line in [
+        "  total = items.reduce((sum, item) => sum + item, 0);",
+        "  const doubled = items.map((item) => {",
+        "  let found = items.find((item) => item.id === id);",
+        "  const message = \"a => b\";",
+        "  items.forEach((item) => {",
+        "  setState({",
+        "  post(url, {",
+        "  setTimeout(function () {",
+        "  const listener: (state: State) => void = noop;",
+        "  if (total > 100) {",
+    ] {
+        assert!(!super::deleted_lines::opens_an_owner(line), "{line}");
+    }
+}

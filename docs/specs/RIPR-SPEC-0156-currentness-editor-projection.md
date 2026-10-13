@@ -50,8 +50,10 @@ no end-to-end corpus a downstream consumer could run against.
     TypeScript and JavaScript: an unpaired removed behavior line is a
     removed-only probe on the narrowest live owner that held it. A line
     deleted in the same removed run as its own function, method, class
-    or named arrow function records nothing; a removed callback or
-    control-block header leads on to the enclosing owner, and a header
+    or named arrow function records nothing, whether its header sits on
+    one line or wraps its parameters across several; a removed callback,
+    call argument or control-block header leads on to the enclosing
+    owner, and a header
     an added header replaces (a type-only edit) keeps its owner live. A
     removed import, re-export, comment or closing bracket records
     nothing, and a module-level deletion has no owner and records
