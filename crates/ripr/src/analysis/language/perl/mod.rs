@@ -665,6 +665,23 @@ fn packet_to_findings_with_currentness(
         let concrete_discriminator = concrete_change_discriminator(change);
         let has_concrete_discriminator = concrete_discriminator.is_some();
 
+        // Advice must name an established direct call, not whichever advisory
+        // row the producer listed first (#6734). Prefer admitted exact evidence;
+        // stable identities break ties without raising any evidence strength.
+        let suggested_test = related_evidence
+            .iter()
+            .filter(|ev| {
+                ev.relation_kind.supports_positive_reachability()
+                    && ev.reachability_hint == ReachabilityHint::Reachable
+            })
+            .min_by_key(|ev| {
+                (
+                    ev.class != ExposureClass::WeaklyExposed,
+                    &ev.test_id,
+                    &ev.relation_id,
+                )
+            });
+
         // Use the selected eligible oracle's assertion shape (the one actually
         // linked to this change), not a generic behavior-hint default.
         let selected_assertion_shape = related_evidence
@@ -731,22 +748,21 @@ fn packet_to_findings_with_currentness(
         } else if !is_already_observed
             && !actionability_blocked
             && has_concrete_discriminator
-            && let Some(first) = related.first()
+            && let Some(selected) = suggested_test
         {
             evidence.push(format!(
                 "perl_suggested_test_location: {}::{}",
-                first.file.display(),
-                first.name
+                selected.test_path, selected.test_name
             ));
             evidence.push(format!(
                 "perl_suggested_assertion: {}",
                 change.behavior_hint.default_missing_discriminator()
             ));
         }
-        // Verify command: per-test, from the related evidence (already keyed by
-        // test_id). Never a global CommandScope::Test scan.
-        if let Some(first_ev) = related_evidence.first()
-            && let Some(argv) = first_ev.verify_command.as_ref()
+        // Verification belongs to the same selected test as the location.
+        // A missing command cannot be replaced by another row's command.
+        if let Some(selected) = suggested_test
+            && let Some(argv) = selected.verify_command.as_ref()
             && !argv.is_empty()
         {
             evidence.push(format!("perl_verify_command: {}", argv.join(" ")));
@@ -1523,7 +1539,8 @@ impl PerlFactPacket {
     fn verify_command_for_test(&self, test_id: &str) -> Option<&VerifyCommandFact> {
         self.verify_commands
             .iter()
-            .find(|command| command.test_id.as_deref() == Some(test_id))
+            .filter(|command| command.test_id.as_deref() == Some(test_id))
+            .min_by(|left, right| left.command_id.cmp(&right.command_id))
     }
 
     fn test(&self, test_id: &str) -> Option<&TestFact> {

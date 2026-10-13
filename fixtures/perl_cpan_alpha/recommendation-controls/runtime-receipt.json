@@ -1,0 +1,144 @@
+{
+  "claim": "RIPR #6734 recommendation consumer",
+  "observed_date": "2026-10-13",
+  "base_sha": "de63466000c63427eb78cd9a5bcee761cd6d57c4",
+  "fixture_license": "MIT OR Apache-2.0 (newly authored; patterns referenced, no upstream implementation copied)",
+  "runtime": {
+    "perl": "5.40.1",
+    "Test::More": "1.302199",
+    "Test2::V0": "0.000162",
+    "TAP::Harness": "3.48"
+  },
+  "defect": {
+    "before": "return $price_cents * $quantity;",
+    "after": "return $price_cents + $quantity;"
+  },
+  "runs": [
+    {
+      "implementation": "baseline",
+      "test": "load",
+      "argv": [
+        "prove",
+        "-lv",
+        "t/load.t"
+      ],
+      "status": 0,
+      "source_sha256": "3ecf5281f6498400c0438efc9198f1f4b63ea9a8b455cb1711a455fcabcd3983",
+      "log": "runtime-logs/prove-baseline-load.log"
+    },
+    {
+      "implementation": "baseline",
+      "test": "total_more",
+      "argv": [
+        "prove",
+        "-lv",
+        "t/total_more.t"
+      ],
+      "status": 0,
+      "source_sha256": "3ecf5281f6498400c0438efc9198f1f4b63ea9a8b455cb1711a455fcabcd3983",
+      "log": "runtime-logs/prove-baseline-total_more.log"
+    },
+    {
+      "implementation": "baseline",
+      "test": "total_test2",
+      "argv": [
+        "prove",
+        "-lv",
+        "t/total_test2.t"
+      ],
+      "status": 0,
+      "source_sha256": "3ecf5281f6498400c0438efc9198f1f4b63ea9a8b455cb1711a455fcabcd3983",
+      "log": "runtime-logs/prove-baseline-total_test2.log"
+    },
+    {
+      "implementation": "defective",
+      "test": "load",
+      "argv": [
+        "prove",
+        "-lv",
+        "t/load.t"
+      ],
+      "status": 0,
+      "source_sha256": "110cf08480a1e846c4a4956691b7b6130436e532551d3c50d342c375476c3c56",
+      "log": "runtime-logs/prove-defective-load.log"
+    },
+    {
+      "implementation": "defective",
+      "test": "total_more",
+      "argv": [
+        "prove",
+        "-lv",
+        "t/total_more.t"
+      ],
+      "status": 1,
+      "source_sha256": "110cf08480a1e846c4a4956691b7b6130436e532551d3c50d342c375476c3c56",
+      "log": "runtime-logs/prove-defective-total_more.log"
+    },
+    {
+      "implementation": "defective",
+      "test": "total_test2",
+      "argv": [
+        "prove",
+        "-lv",
+        "t/total_test2.t"
+      ],
+      "status": 1,
+      "source_sha256": "110cf08480a1e846c4a4956691b7b6130436e532551d3c50d342c375476c3c56",
+      "log": "runtime-logs/prove-defective-total_test2.log"
+    },
+    {
+      "implementation": "baseline",
+      "test": "smoke_more",
+      "status": 0,
+      "argv": [
+        "prove",
+        "-lv",
+        "t/smoke_more.t"
+      ],
+      "source_sha256": "3ecf5281f6498400c0438efc9198f1f4b63ea9a8b455cb1711a455fcabcd3983",
+      "log": "runtime-logs/prove-baseline-smoke_more.log"
+    },
+    {
+      "implementation": "defective",
+      "test": "smoke_more",
+      "status": 0,
+      "argv": [
+        "prove",
+        "-lv",
+        "t/smoke_more.t"
+      ],
+      "source_sha256": "110cf08480a1e846c4a4956691b7b6130436e532551d3c50d342c375476c3c56",
+      "log": "runtime-logs/prove-defective-smoke_more.log"
+    },
+    {
+      "implementation": "baseline",
+      "test": "smoke_test2",
+      "status": 0,
+      "argv": [
+        "prove",
+        "-lv",
+        "t/smoke_test2.t"
+      ],
+      "source_sha256": "3ecf5281f6498400c0438efc9198f1f4b63ea9a8b455cb1711a455fcabcd3983",
+      "log": "runtime-logs/prove-baseline-smoke_test2.log"
+    },
+    {
+      "implementation": "defective",
+      "test": "smoke_test2",
+      "status": 0,
+      "argv": [
+        "prove",
+        "-lv",
+        "t/smoke_test2.t"
+      ],
+      "source_sha256": "110cf08480a1e846c4a4956691b7b6130436e532551d3c50d342c375476c3c56",
+      "log": "runtime-logs/prove-defective-smoke_test2.log"
+    }
+  ],
+  "limits": [
+    "Authored fixtures only, not real-repository accuracy or ranking samples.",
+    "Actual prove executions are independent fixture oracles, not RIPR runtime mutation outcomes.",
+    "Authored packets prove consumer selection only; no live exporter or static Perl extraction was exercised.",
+    "Direct truthiness controls pass the defective implementation; direct reach alone earns no exact-discrimination claim."
+  ]
+}

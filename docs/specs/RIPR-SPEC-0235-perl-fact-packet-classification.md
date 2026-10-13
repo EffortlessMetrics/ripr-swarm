@@ -264,6 +264,14 @@ For each change, the first match wins:
       new: today a `static_unknown` hint, a `weakly_reachable` hint and a
       capped relation still emit a location built from the first bound
       relation, and a `static_unknown` hint still emits a gap.
+    - When multiple rows bind, standalone advice and verification select only
+      a `direct_owner_call` / `reachable` row. Prefer a row whose bound oracle
+      is admitted as `weakly_exposed`; break ties by stable `test_id`, then
+      `relation_id`. Location and verification come from that same row, and
+      a missing command stays missing. Multiple commands for that test use
+      stable `command_id` order. Array permutations cannot redirect advice to
+      an advisory test (#6734). This selection changes no exposure class or
+      oracle strength.
 14. **Fingerprint scope.** The packet fingerprint is a consistency check
     on identity facts, not an authenticity control: it is an unkeyed
     SHA-256 that any writer can recompute. No output, doc or comment may

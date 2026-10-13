@@ -1955,6 +1955,13 @@ JSON fields:
   `public_repair_packet = false`, `repair_packet_ready = false`,
   `agent_packet_ready = false`, `gate_candidate = false`,
   `badge_candidate = false`, and `ripr_zero_candidate = false`.
+  Standalone `perl_suggested_test_location` and `perl_verify_command` evidence
+  select the same packet-established direct/reachable test, preferring admitted
+  exact evidence and then stable test/relation identity. If that test has no
+  command, another row's command is not substituted. Multiple commands for the
+  selected test use stable command-ID order; array permutations cannot change
+  the recommendation (RIPR-SPEC-0235 rule 13, #6734). This selection grants no
+  additional class, oracle strength or execution authority.
   `verify.command` is copied from fact evidence with
   `verify.status = "fact_only_not_delegated"`. `receipt.command` is always
   `null` even though receipt evidence is required internally, and

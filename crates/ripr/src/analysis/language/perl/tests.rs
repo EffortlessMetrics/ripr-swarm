@@ -5271,10 +5271,9 @@ fn perl_unconfirmed_miss_follows_row_identity_not_position() -> Result<(), Strin
 /// Cases 16 and 17: shuffled fact arrays with stable IDs and edited metadata
 /// outside the packet identity keep the same fingerprint, finding identity,
 /// rows, tokens and the inputs the shared sentence is rendered from. Rows are compared by test name: row order, and
-/// the suggested test and verify command read from the first row, follow the
-/// packet's relation order (RIPR-SPEC-0064 asks producers to sort arrays by
-/// ID; the consumer does not re-sort), so they are not asserted under
-/// reordering.
+/// guidance is excluded from this reason-only projection. The independent
+/// recommendation_tests controls require stable direct-test guidance under
+/// reordering, including canonical arrays whose first row is advisory (#6734).
 #[test]
 fn perl_packet_array_order_and_metadata_do_not_move_reasons() -> Result<(), String> {
     fn projection(
@@ -5400,3 +5399,6 @@ fn perl_related_test_miss_is_the_only_field_the_rule_writes() -> Result<(), Stri
     assert_eq!(explained_rows, 5);
     Ok(())
 }
+
+#[path = "recommendation_tests.rs"]
+mod recommendation_tests;

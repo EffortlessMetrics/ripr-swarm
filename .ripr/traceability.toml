@@ -14308,8 +14308,15 @@ metrics = [
 id = "RIPR-SPEC-0235"
 name = "Perl fact-packet classification"
 spec = "docs/specs/RIPR-SPEC-0235-perl-fact-packet-classification.md"
-tests = []
-fixtures = []
+tests = [
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_selects_direct_test_under_packet_permutations",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_does_not_borrow_an_advisory_verify_command",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_requires_a_direct_reachable_relation",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_prefers_admitted_exact_row_then_stable_test_identity",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_verify_choice_is_stable_within_selected_test",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_real_fixtures_reach_check_and_json",
+]
+fixtures = ["fixtures/perl_cpan_alpha/recommendation-controls"]
 code = [
   "crates/ripr/src/analysis/language/perl/mod.rs",
   "crates/ripr/src/analysis/language/perl/static_limit.rs",
