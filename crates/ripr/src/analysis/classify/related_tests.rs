@@ -4091,6 +4091,7 @@ mod tests {
                 caller: helper,
                 call_text: "target_owner(value)".to_string(),
                 arguments: vec!["value".to_string()],
+                through_macro: false,
             }],
             stop_above: None,
         };
@@ -4129,6 +4130,7 @@ mod tests {
                 caller: wrapper,
                 call_text: "if is_bulk(qty) {".to_string(),
                 arguments: vec!["qty".to_string()],
+                through_macro: false,
             }],
             stop_above: None,
         };
@@ -4181,6 +4183,7 @@ mod tests {
                 caller: wrapper,
                 call_text: "if is_bulk(qty) {".to_string(),
                 arguments: vec!["qty".to_string()],
+                through_macro: false,
             }],
             stop_above: None,
         };

@@ -226,17 +226,32 @@ pub(crate) fn render_full_with_config_and_navigation(
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
-    let mut findings_rendered = 0usize;
-    for finding in &output.findings {
-        if suppressed_ids.contains(finding.id.as_str()) {
-            continue;
+    let visible: Vec<_> = output
+        .findings
+        .iter()
+        .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
+        .collect();
+    // Navigation is the established CLI/library compatibility boundary. Build
+    // sharing only from visible donors; public library legacy bytes stay exact.
+    // Decide once to avoid rescanning the catalogue for each finding.
+    let shared = drill_in
+        .map(|_| shared::SharedReport::build(&visible))
+        .filter(shared::SharedReport::is_shared);
+    if let Some(shared) = &shared {
+        shared.render_catalogue(&mut out);
+    }
+    let findings_rendered = visible.len();
+    for (ordinal, finding) in visible.iter().enumerate() {
+        let shared_sections = shared.as_ref().map(|shared| &shared.findings[ordinal]);
+        if shared_sections.is_some() {
+            out.push_str(&format!("Finding {}: ", ordinal + 1));
         }
-        findings_rendered += 1;
-        out.push_str(&render_finding_with_config(
+        out.push_str(&sections::render_finding_with_shared_sections(
             finding,
             config,
             &output.root,
             JsonPointerWording::CheckFlag,
+            shared_sections,
         ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
@@ -927,6 +942,7 @@ fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
 mod evidence_lines;
 mod explain;
 mod sections;
+mod shared;
 mod triage;
 
 pub(crate) use evidence_lines::JsonPointerWording;
@@ -5141,7 +5157,7 @@ mod tests {
         );
     }
 
-    fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
+    pub(super) fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
         let count = findings.len();
         CheckOutput {
             harness_projections: Vec::new(),
@@ -5170,7 +5186,7 @@ mod tests {
         }
     }
 
-    fn sample_finding() -> Finding {
+    pub(super) fn sample_finding() -> Finding {
         Finding {
             id: "probe:sample.rs:7:predicate".to_string(),
             canonical_gap: None,

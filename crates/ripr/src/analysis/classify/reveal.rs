@@ -1,8 +1,12 @@
 use super::super::rust_index::{
     OracleFact, OracleTextShape, TestSummary, extract_identifier_tokens, has_oracle_text_shape,
+    is_inequality_assertion,
 };
 
 use super::arm_selection::ArmSelector;
+use super::builder_override::{
+    OwnerCall, overridden_fields_read, setter_names, struct_literal_fields,
+};
 use super::propagation_witness::{
     assertion_observes_direct_collection, direct_collection_mutation_receiver,
 };
@@ -40,6 +44,11 @@ pub(in crate::analysis) struct ReturnOracleAdmission<'a> {
     /// the changed effect writes (`EffectStateCarrier::admits`). Consulted
     /// only for effect families after `effect_observer_confirms`.
     pub(in crate::analysis) effect_state_carried: &'a dyn Fn(&TestSummary, &OracleFact) -> bool,
+    /// RIPR-SPEC-0040 builder override (#6613): whether the owner type's
+    /// method `(type, setter, field)` plainly stores its argument in the
+    /// field (`builder_override::setter_plainly_writes`). Only a verified
+    /// setter defeats a changed default.
+    pub(in crate::analysis) setter_writes_field: &'a dyn Fn(&str, &str, &str) -> bool,
 }
 
 #[cfg(test)]
@@ -61,6 +70,7 @@ fn reveal_evidence(
             owner_parameters: &[],
             expected_reaches_owner: &|_, _| false,
             effect_state_carried: &|_, _| true,
+            setter_writes_field: &|_, _, _| true,
         },
         None,
     );
@@ -174,6 +184,12 @@ pub(in crate::analysis) fn reveal_outcome(
             Confidence::Medium,
             "Strongest oracle does not confirm observation of the changed expression; a weaker assertion cannot supply its confirmation (oracle_confirmation_mixed)",
         )
+    } else if analysis.observation_unverified && analysis.override_defeated {
+        StageEvidence::new(
+            StageState::Weak,
+            Confidence::Medium,
+            BUILDER_OVERRIDE_UNOBSERVED_SUMMARY,
+        )
     } else if analysis.observation_unverified && analysis.proximity_confirmation_withheld {
         // The generic unconfirmed summary says no assertion text references
         // the arm, which is false when a same-file test names its variant.
@@ -204,6 +220,12 @@ pub(in crate::analysis) fn reveal_outcome(
     }
 }
 
+/// Discriminator summary for a struct literal (or one of its fields) whose
+/// read field the test overwrote on the owner's result before asserting on
+/// it (RIPR-SPEC-0040 builder override, #6613). Keeps the
+/// `(observation_unverified)` token downstream consumers key on.
+const BUILDER_OVERRIDE_UNOBSERVED_SUMMARY: &str = "Discriminator unconfirmed: the related test overwrites the changed field on the owner's result before asserting on it, so no assertion observes this probe's changed value (observation_unverified)";
+
 const PROXIMITY_CONFIRMATION_WITHHELD: &str = "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed arm; a test that only shares its file or module, and calls nothing that reaches the function, cannot confirm the arm (observation_unverified)";
 
 const PROXIMITY_VARIANT_CONFIRMATION_WITHHELD: &str = "Discriminator unconfirmed: no assertion in a test that calls or otherwise reaches this function names the changed error variant; a test that only shares its file or module pins that variant on another function's result (observation_unverified)";
@@ -224,6 +246,11 @@ struct RevealAssertionAnalysis {
     /// but could not confirm a match arm, because another related test reaches
     /// the owner (#6297).
     proximity_confirmation_withheld: bool,
+    /// True when a matched assertion's only confirming tokens were struct
+    /// fields the test overwrote on the owner's result before reading them
+    /// (`builder_override`, #6613). Names the downgrade only; the class is
+    /// decided by `observation_unverified`.
+    override_defeated: bool,
     /// True when this probe's family requires a `token_match` to confirm that
     /// an assertion actually references the specific changed sub-expression, and
     /// no such match has fired yet.
@@ -510,10 +537,47 @@ fn analyze_related_assertions(
         }),
         arm_selector: arm_selector.filter(|_| matches!(probe.family, ProbeFamily::MatchArm)),
         arm_inputs_readable: false,
+        arm_pattern_pinned: false,
         owner_scoped_tokens: &owner_scoped_tokens,
         owner_shadowed: false,
     };
     let confirm_required = needs_token_confirmation(&probe.family);
+    // RIPR-SPEC-0040 builder override (#6613): the fields a changed struct
+    // literal (`return_value`) or field initializer (`field_construction`)
+    // writes. Such a field's token confirms nothing in an assertion that
+    // reads the field only after the test overwrote it on the owner's result.
+    let override_fields: Vec<String> = match probe.family {
+        ProbeFamily::ReturnValue => {
+            let fields = struct_literal_fields(&probe.expression);
+            if !fields.is_empty() {
+                fields
+            } else if constructed_field.is_some() {
+                constructed_field.map(str::to_string).into_iter().collect()
+            } else {
+                struct_literal_fields(analysis_expression)
+            }
+        }
+        ProbeFamily::FieldConstruction => {
+            constructed_field.map(str::to_string).into_iter().collect()
+        }
+        _ => Vec::new(),
+    };
+    let override_owner = probe
+        .owner
+        .as_ref()
+        .and_then(|symbol| OwnerCall::from_symbol(&symbol.0));
+    let mut override_setters = Vec::new();
+    if let Some(impl_type) = override_owner.and_then(|owner| owner.impl_type()) {
+        for field in &override_fields {
+            for setter in setter_names(field) {
+                if (return_admission.setter_writes_field)(impl_type, &setter, field) {
+                    override_setters.push(setter);
+                }
+            }
+        }
+    }
+    let override_owner = override_owner.map(|owner| owner.with_setters(&override_setters));
+    let mut override_defeated = false;
     let mut related = Vec::new();
     let mut strongest = OracleStrength::None;
     let mut strongest_kind = OracleKind::Unknown;
@@ -710,8 +774,14 @@ fn analyze_related_assertions(
                     &test.body,
                     match_context.owner_callee,
                 );
-            let (matched, has_token_match) = assertion_matches_probe_detail_with_literals(
-                &match_context,
+            let assertion_context = RevealMatchContext {
+                arm_pattern_pinned: match_context
+                    .arm_selector
+                    .is_some_and(|selector| selector.pattern_pin_selects(test, assertion)),
+                ..match_context
+            };
+            let (matched, mut has_token_match) = assertion_matches_probe_detail_with_literals(
+                &assertion_context,
                 assertion,
                 assertion_count,
                 import_defeats_owner,
@@ -719,6 +789,37 @@ fn analyze_related_assertions(
                 owner_pinned,
                 owner_bound,
             );
+            // RIPR-SPEC-0040 builder override (#6613): drop the field tokens
+            // the test overwrote before this assertion reads them, and ask
+            // again whether anything else confirms.
+            let overridden = match override_owner {
+                Some(owner) if has_token_match && !override_fields.is_empty() => {
+                    overridden_fields_read(test, assertion, owner, &override_fields)
+                }
+                _ => Vec::new(),
+            };
+            if !overridden.is_empty() {
+                let unoverridden: Vec<String> = probe_tokens
+                    .iter()
+                    .filter(|token| !overridden.contains(token))
+                    .cloned()
+                    .collect();
+                let narrowed = RevealMatchContext {
+                    probe_tokens: &unoverridden,
+                    ..assertion_context
+                };
+                let (_, narrowed_token_match) = assertion_matches_probe_detail_with_literals(
+                    &narrowed,
+                    assertion,
+                    assertion_count,
+                    import_defeats_owner,
+                    cross_package_defeats_owner,
+                    owner_pinned,
+                    owner_bound,
+                );
+                override_defeated |= !narrowed_token_match;
+                has_token_match = narrowed_token_match;
+            }
             // RIPR-SPEC-0035 / #5830: an equality whose expected side is
             // computed through the changed owner moves with it, so it
             // neither pins the value nor confirms observation.
@@ -866,6 +967,7 @@ fn analyze_related_assertions(
         refused_context,
         observation_unverified,
         proximity_confirmation_withheld,
+        override_defeated,
     }
 }
 
@@ -1134,6 +1236,10 @@ struct RevealMatchContext<'a> {
     /// direct call the selector reads. A `let reason = |x| ..` closure or
     /// any other local use of the name may shadow the owner.
     arm_inputs_readable: bool,
+    /// RIPR-SPEC-0229 (#6616): the current assertion is an admitted exact
+    /// pattern pin (a verified local `assert_matches!`) whose value
+    /// operand is a direct owner call selecting the arm.
+    arm_pattern_pinned: bool,
     /// Probe tokens that name a binding only the owner holds (a parameter
     /// or `let` local) on a value probe. They confirm observation only in
     /// an assertion that calls the owner; anywhere else the shared name is
@@ -2020,6 +2126,7 @@ fn assertion_matches_probe_detail_with_literals(
         owner_callee,
         arm_selector,
         arm_inputs_readable,
+        arm_pattern_pinned,
         owner_scoped_tokens,
         owner_shadowed: _,
     } = *context;
@@ -2144,7 +2251,7 @@ fn assertion_matches_probe_detail_with_literals(
         arm_inputs_readable
             && !import_defeats_owner
             && !cross_package_defeats_owner
-            && selector.assertion_selects(&assertion.text)
+            && (selector.assertion_selects(&assertion.text) || arm_pattern_pinned)
     } else if matches!(family, ProbeFamily::MatchArm) {
         !match_arm_guarded
             && (match_arm_variants
@@ -2282,6 +2389,7 @@ fn assertion_matches_probe_detail(
             owner_callee,
             arm_selector: None,
             arm_inputs_readable: false,
+            arm_pattern_pinned: false,
             owner_scoped_tokens: &[],
             owner_shadowed: false,
         },
@@ -3293,11 +3401,14 @@ fn probe_relative_oracle_strength(family: &ProbeFamily, assertion: &OracleFact) 
     // RIPR-SPEC-0231: no rule raises a strength. A family override may lower
     // the classifier's reading, but an assertion the classifier weakened
     // (`assert_ne!` against a struct literal keeps `whole_object_equality`
-    // at weak) never comes back as strong because of its kind.
-    if matches!(
+    // at weak) never comes back as strong because of its kind. Rule 1: an
+    // inequality is never lifted above its classified strength, whatever
+    // that strength is.
+    if (matches!(
         assertion.strength,
         OracleStrength::Medium | OracleStrength::Weak | OracleStrength::Smoke
-    ) && overridden.rank() > assertion.strength.rank()
+    ) || is_inequality_assertion(&assertion.text))
+        && overridden.rank() > assertion.strength.rank()
     {
         assertion.strength.clone()
     } else {
@@ -3639,6 +3750,7 @@ mod tests {
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
+                    setter_writes_field: &|_, _, _| true,
                 },
                 None,
             )
@@ -3732,6 +3844,7 @@ mod tests {
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
+                    setter_writes_field: &|_, _, _| true,
                 },
                 None,
             )
@@ -4082,6 +4195,7 @@ mod tests {
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -4151,6 +4265,7 @@ mod tests {
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -4427,6 +4542,7 @@ mod tests {
                 owner_callee: Some("route"),
                 arm_selector: None,
                 arm_inputs_readable: false,
+                arm_pattern_pinned: false,
                 owner_scoped_tokens: &empty,
                 owner_shadowed: false,
             };
@@ -5230,6 +5346,59 @@ return Err(\"typed pin\".into());
         }
     }
 
+    /// RIPR-SPEC-0231 rule 1 (#6670 review): the classifier keeps
+    /// `assert_ne!(build(), Config { retries: 9 })` at
+    /// `whole_object_equality` / weak, and the family override that gives
+    /// that kind strong credit for equality must not lift the inequality.
+    #[test]
+    fn probe_relative_oracle_strength_never_promotes_an_inequality() {
+        let fact = |text: &str| {
+            let classification = crate::analysis::rust_index::classify_assertion(text);
+            oracle(text, classification.kind, classification.strength)
+        };
+        let inequality = fact("assert_ne!(build(), Config { retries: 9 });");
+        let debug_inequality = fact("debug_assert_ne!(build(), Config { retries: 9 });");
+        let equality = fact("assert_eq!(build(), Config { retries: 9 });");
+        assert_eq!(inequality.kind, OracleKind::WholeObjectEquality);
+        assert_eq!(inequality.strength, OracleStrength::Weak);
+        assert_eq!(debug_inequality.kind, OracleKind::WholeObjectEquality);
+        assert_eq!(debug_inequality.strength, OracleStrength::Weak);
+        assert_eq!(equality.kind, OracleKind::WholeObjectEquality);
+        assert_eq!(equality.strength, OracleStrength::Strong);
+        for family in [
+            ProbeFamily::ReturnValue,
+            ProbeFamily::Predicate,
+            ProbeFamily::FieldConstruction,
+            ProbeFamily::SideEffect,
+        ] {
+            assert_eq!(
+                probe_relative_oracle_strength(&family, &inequality),
+                OracleStrength::Weak,
+                "{family:?} lifted an inequality"
+            );
+            assert_eq!(
+                probe_relative_oracle_strength(&family, &debug_inequality),
+                OracleStrength::Weak,
+                "{family:?} lifted a debug inequality"
+            );
+            assert_eq!(
+                probe_relative_oracle_strength(&family, &equality),
+                OracleStrength::Strong,
+                "{family:?} lost equality's strong credit"
+            );
+        }
+        // A family override may still lower an inequality.
+        let smoke = oracle(
+            "assert_ne!(run(), Config { retries: 9 });",
+            OracleKind::SmokeOnly,
+            OracleStrength::Weak,
+        );
+        assert_eq!(
+            probe_relative_oracle_strength(&ProbeFamily::ReturnValue, &smoke),
+            OracleStrength::Smoke
+        );
+    }
+
     fn owned_probe(family: ProbeFamily, expression: &str, owner: &str) -> Probe {
         Probe {
             owner: Some(SymbolId(format!("src/lib.rs::{owner}"))),
@@ -5720,6 +5889,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -5774,6 +5944,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -5799,6 +5970,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -5843,6 +6015,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -5889,6 +6062,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -6060,6 +6234,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -6088,6 +6263,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -6129,6 +6305,100 @@ return Err(\"typed pin\".into());
             "summary must name the reason: got `{}`",
             discriminate.summary
         );
+    }
+
+    /// RIPR-SPEC-0040 builder override (#6613): the related test and its
+    /// assertion for the retry builder shapes, with the assertion on body
+    /// line 2 (file line 3).
+    fn builder_override_test(statement: &str, assertion: &str) -> TestSummary {
+        test_with_body_assertions(
+            "override_sets_attempts",
+            &format!("fn override_sets_attempts() {{\n    {statement}\n    {assertion}\n}}"),
+            vec![OracleFact {
+                line: 3,
+                ..oracle(assertion, OracleKind::ExactValue, OracleStrength::Strong)
+            }],
+        )
+    }
+
+    fn builder_override_probe(family: ProbeFamily, expression: &str) -> Probe {
+        Probe {
+            owner: Some(SymbolId(
+                "src/settings.rs::impl RetryBuilder::new".to_string(),
+            )),
+            ..probe(family, expression)
+        }
+    }
+
+    /// RIPR-SPEC-0040 builder override (#6613): a struct literal, or one of
+    /// its field initializers, whose only confirming token is a field the
+    /// test overwrites on the owner's result (`.attempts(5)`) before reading
+    /// it does not reach the assertion, so the exact-value oracle cannot
+    /// read `exposed`.
+    #[test]
+    fn struct_literal_field_overridden_by_test_is_unverified() {
+        let test = builder_override_test(
+            "let retry = RetryBuilder::new().attempts(5).build();",
+            "assert_eq!(retry.attempts, 5);",
+        );
+        for probe in [
+            builder_override_probe(
+                ProbeFamily::ReturnValue,
+                "RetryBuilder { attempts: 4, delay_ms: 100 }",
+            ),
+            builder_override_probe(ProbeFamily::FieldConstruction, "attempts: 4"),
+        ] {
+            let (observe, discriminate, _related) =
+                reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+            assert_eq!(observe.state, StageState::Yes, "{}", probe.expression);
+            assert_eq!(discriminate.state, StageState::Weak, "{}", probe.expression);
+            assert_eq!(discriminate.summary, BUILDER_OVERRIDE_UNOBSERVED_SUMMARY);
+            assert!(discriminate.summary.contains("(observation_unverified)"));
+        }
+    }
+
+    /// Controls for the builder override: reading the default with no
+    /// setter, a setter on another field, a discarded setter result, and a
+    /// setter inside an argument all still observe the changed literal.
+    #[test]
+    fn struct_literal_default_field_read_stays_exposed() {
+        for (statement, assertion) in [
+            (
+                "let retry = RetryBuilder::new().build();",
+                "assert_eq!(retry.attempts, 3);",
+            ),
+            (
+                "let retry = RetryBuilder::new().delay_ms(5).build();",
+                "assert_eq!(retry.attempts, 3);",
+            ),
+            (
+                "let builder = RetryBuilder::new(); builder.with_attempts(5); let retry = builder.build();",
+                "assert_eq!(retry.attempts, 3);",
+            ),
+            (
+                "let retry = RetryBuilder::new().with_other(other.attempts(5)).build();",
+                "assert_eq!(retry.attempts, 3);",
+            ),
+        ] {
+            let test = builder_override_test(statement, assertion);
+            for probe in [
+                builder_override_probe(
+                    ProbeFamily::ReturnValue,
+                    "RetryBuilder { attempts: 4, delay_ms: 100 }",
+                ),
+                builder_override_probe(ProbeFamily::FieldConstruction, "attempts: 4"),
+            ] {
+                let (_observe, discriminate, _related) =
+                    reveal_evidence(&probe, &[(&test, RelationReason::DirectOwnerCall)]);
+                assert_eq!(
+                    discriminate.state,
+                    StageState::Yes,
+                    "{statement} / {}: {}",
+                    probe.expression,
+                    discriminate.summary
+                );
+            }
+        }
     }
 
     /// A MatchArm probe whose expression DOES have a token that appears in the
@@ -6381,6 +6651,7 @@ return Err(\"typed pin\".into());
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &carried,
+                    setter_writes_field: &|_, _, _| true,
                 },
                 None,
             )
@@ -6655,6 +6926,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -6744,6 +7016,7 @@ return Err(\"typed pin\".into());
                     owner_parameters: &[],
                     expected_reaches_owner: &|_, _| false,
                     effect_state_carried: &|_, _| true,
+                    setter_writes_field: &|_, _, _| true,
                 },
                 None,
             );
@@ -6776,6 +7049,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -7126,6 +7400,7 @@ return Err(\"typed pin\".into());
                 owner_parameters: &[],
                 expected_reaches_owner: &|_, _| false,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );
@@ -7423,6 +7698,7 @@ return Err(\"typed pin\".into());
                 owner_parameters,
                 expected_reaches_owner: reaches,
                 effect_state_carried: &|_, _| true,
+                setter_writes_field: &|_, _, _| true,
             },
             None,
         );

@@ -815,6 +815,68 @@ fn only_plain_pub_use_statements_can_export_to_another_crate() {
 }
 
 #[test]
+fn library_export_import_extraction_is_bounded_to_selected_files() {
+    let source = "pub mod a { pub fn score() -> i64 { 1 } }\nmod b {}\nmod c {}\nmod d {}\npub use self::a::score;\n";
+    let library = index(&[(LIB, source)]);
+    assert_eq!(library.files().len(), 1);
+    assert_eq!(library.functions().len(), 1);
+    LIBRARY_IMPORT_EXTRACTIONS.with(|count| count.set(0));
+
+    assert!(!library_may_export_other(&library, Path::new(LIB), "score"));
+    assert_eq!(
+        LIBRARY_IMPORT_EXTRACTIONS.with(std::cell::Cell::get),
+        1,
+        "each selected source is extracted once, regardless of module count"
+    );
+}
+
+#[test]
+fn library_export_without_module_names_does_not_extract_imports() {
+    let library = index(&[(LIB, "pub fn score() -> i64 { 1 }\n")]);
+    assert_eq!(library.functions().len(), 1);
+    LIBRARY_IMPORT_EXTRACTIONS.with(|count| count.set(0));
+
+    assert!(!library_may_export_other(&library, Path::new(LIB), "score"));
+    assert_eq!(LIBRARY_IMPORT_EXTRACTIONS.with(std::cell::Cell::get), 0);
+}
+
+#[test]
+fn library_export_imports_in_another_file_still_defeat_a_module_name() {
+    let lib =
+        "pub mod fs { pub fn score() -> i64 { 1 } }\nmod helpers;\npub use self::fs::score;\n";
+    let provenance = SourceRoleProvenance {
+        edges: vec![module_edge(LIB, HELPERS, "helpers", 2, false)],
+        ..Default::default()
+    };
+    for (helpers, expected) in [
+        ("use other_crate as fs;\n", true),
+        ("extern crate other_crate as fs;\n", true),
+        (
+            "// use other_crate as fs;\nconst DOC: &str = \"use other_crate as fs;\";\n",
+            false,
+        ),
+    ] {
+        let library = index_with_provenance(
+            &[(LIB, lib), (HELPERS, helpers)],
+            &[(HELPERS, provenance.clone())],
+        );
+        assert_eq!(library.files().len(), 2);
+        assert_eq!(library.functions().len(), 1);
+        LIBRARY_IMPORT_EXTRACTIONS.with(|count| count.set(0));
+
+        assert_eq!(
+            library_may_export_other(&library, Path::new(LIB), "score"),
+            expected,
+            "{helpers}"
+        );
+        assert!(
+            LIBRARY_IMPORT_EXTRACTIONS.with(std::cell::Cell::get) <= 2,
+            "cross-file checks reuse each file's own extracted imports"
+        );
+    }
+}
+
+#[test]
 fn an_unsafe_block_holding_only_the_owner_call_pins_it() {
     // `assert_eq!(unsafe { byte_at(b"xyz", 1) }, b'y')`: calling an
     // `unsafe fn` needs the block, and its value is the call's value.
