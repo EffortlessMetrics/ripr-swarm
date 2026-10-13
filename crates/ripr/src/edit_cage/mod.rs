@@ -987,33 +987,49 @@ fn git_applies_eol_normalization(root: &Path, path: &str) -> bool {
     let Ok(attrs) = git_text(root, &["check-attr", "text", "--", path]) else {
         return false;
     };
-    let configured = match attrs.rsplit(':').next().map(str::trim).unwrap_or_default() {
+    // `automatic` marks decisions where Git sniffs content before
+    // converting: `text=auto` and `core.autocrlf` both leave files Git
+    // classifies as binary untouched. A forced `text` attribute rewrites
+    // line endings regardless of content, so the NUL gate must not apply
+    // there (#7537 review).
+    let (configured, automatic) = match attrs
+        .rsplit(':')
+        .next()
+        .map(str::trim)
+        .unwrap_or_default()
+    {
         // `text` rewrites line endings regardless of content or config.
-        "set" => true,
+        "set" => (true, false),
         // `-text` never rewrites.
-        "unset" => false,
+        "unset" => return false,
         // `text=auto` rewrites text content even when `core.autocrlf` is
         // false: the attribute alone opts the file into normalization.
-        "auto" => true,
+        "auto" => (true, true),
         _ => {
             // Unspecified: `core.autocrlf` decides.
             let Ok(autocrlf) = git_text(root, &["config", "--get", "core.autocrlf"]) else {
                 return false;
             };
-            !matches!(
-                autocrlf.to_ascii_lowercase().as_str(),
-                "" | "false" | "no" | "off" | "0"
+            (
+                !matches!(
+                    autocrlf.to_ascii_lowercase().as_str(),
+                    "" | "false" | "no" | "off" | "0"
+                ),
+                true,
             )
         }
     };
     if !configured {
         return false;
     }
-    // Git's conversion is content-gated: files it sniffs as binary (a NUL
-    // in the first 8000 bytes, convert.c FIRST_FEW_BYTES) are never
-    // rewritten, under `text=auto` and `core.autocrlf` alike. A CRLF-only
-    // change in such a file stays git-visible and must keep naming an
-    // author; an unreadable file fails closed the same way (#7377 review).
+    if !automatic {
+        return true;
+    }
+    // Git's automatic conversion is content-gated: files it sniffs as
+    // binary (a NUL in the first 8000 bytes, convert.c FIRST_FEW_BYTES)
+    // are never rewritten. A CRLF-only change in such a file stays
+    // git-visible and must keep naming an author; an unreadable file
+    // fails closed the same way (#7377 review).
     let Ok(mut file) = std::fs::File::open(root.join(path)) else {
         return false;
     };
@@ -2379,6 +2395,52 @@ mod tests {
         {
             return Err(format!(
                 "a git-visible binary EOL flip must refuse as a forbidden path: {verdict:?}"
+            ));
+        }
+        Ok(())
+    }
+
+    /// A forced `text` attribute rewrites line endings regardless of
+    /// content — Git's binary sniff only gates automatic detection
+    /// (`text=auto`, `core.autocrlf`), not an explicit attribute (#7537
+    /// review). With the index already holding the NUL-bearing blob, a
+    /// CRLF-only flip of such a file stays git-invisible: the skip must
+    /// fire even though the content contains NUL.
+    #[test]
+    fn eol_flip_with_forced_text_is_skipped_even_for_binary_content() -> Result<(), String> {
+        let fixture = git_fixture("eol-flip-forced-text")?;
+        fs::write(fixture.root.join(".gitattributes"), "src/pricing.rs text\n")
+            .map_err(|err| format!("write attributes: {err}"))?;
+        git_ok(&fixture.root, &["add", ".gitattributes"])?;
+        git_ok(&fixture.root, &["commit", "-qm", "attributes"])?;
+        // Let the index hold the NUL-bearing blob so only CRLF moves.
+        fs::write(
+            fixture.root.join("src/pricing.rs"),
+            b"pub fn price() {}\n\x00\n",
+        )
+        .map_err(|err| format!("seed binary production file: {err}"))?;
+        git_ok(&fixture.root, &["add", "src/pricing.rs"])?;
+        git_ok(&fixture.root, &["commit", "-qm", "seed binary"])?;
+        let policy = policy()?;
+        let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
+        fs::write(
+            fixture.root.join("src/pricing.rs"),
+            b"pub fn price() {}\r\n\x00\r\n",
+        )
+        .map_err(|err| format!("rewrite CRLF binary production file: {err}"))?;
+        let (delta, verdict) = evaluate_repository_edit_cage_with_delta(&baseline)?;
+        if delta
+            .changes
+            .iter()
+            .any(|change| change.path.as_path() == std::path::Path::new("src/pricing.rs"))
+        {
+            return Err(format!(
+                "a forced-text EOL flip entered the delta as an edit: {delta:?}"
+            ));
+        }
+        if verdict.status != EditCageVerdictStatus::Compliant {
+            return Err(format!(
+                "a forced-text EOL flip moved the verdict: {verdict:?}"
             ));
         }
         Ok(())
