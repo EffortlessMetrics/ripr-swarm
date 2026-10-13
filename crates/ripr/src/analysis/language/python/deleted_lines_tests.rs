@@ -584,3 +584,72 @@ fn deleted_try_block_after_a_deleted_nested_def_keeps_the_live_owner() -> Result
     );
     Ok(())
 }
+
+/// Devin review of #7680: an annotation-only header edit pairs the old `def`
+/// with the new one, so the owner is live and the deleted body line keeps
+/// its record.
+#[test]
+fn deleted_body_line_under_an_annotation_only_header_edit_keeps_its_owner() -> Result<(), String> {
+    let source = "def f(x: str):\n    return x\n";
+    let findings = analyze(
+        "annotation-header",
+        source,
+        &[1],
+        vec![
+            line(1, 1, "def f(x: int):"),
+            line(2, 2, "    x = adjust(x)"),
+        ],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![(2, "f".to_string(), SourceCurrentness::BaseDeleted)],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// Devin review of #7680: a module statement deleted at the end of the file
+/// projects past every surviving line and still belongs to the module.
+#[test]
+fn module_line_deleted_at_end_of_file_is_the_modules() -> Result<(), String> {
+    let source = "def f():\n    return 1\n";
+    let findings = analyze("module-eof", source, &[], vec![line(3, 3, "LIMIT = 3")])?;
+    assert_eq!(
+        base_side(&findings),
+        vec![(3, "<module>".to_string(), SourceCurrentness::BaseDeleted)],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// Devin review of #7680: a deleted tail resolves its owner from the line
+/// above it, but every line-bearing fact names the deleted line's own
+/// projected coordinate, not that surviving neighbour.
+#[test]
+fn deleted_tail_evidence_names_its_own_line() -> Result<(), String> {
+    let source = "class Cart:\n    def capped(self, total):\n        total = total + 1\n\n    def size(self):\n        return 0\n";
+    let findings = analyze(
+        "tail-sink-line",
+        source,
+        &[],
+        vec![line(4, 4, "        return min(total, 100)")],
+    )?;
+    let base: Vec<&Finding> = findings
+        .iter()
+        .filter(|finding| finding.source_currentness.is_base_side())
+        .collect();
+    assert_eq!(base.len(), 1, "{findings:?}");
+    let finding = base[0];
+    assert_eq!(finding.probe.location.line, 4);
+    assert!(!finding.flow_sinks.is_empty(), "{finding:?}");
+    for sink in &finding.flow_sinks {
+        assert_eq!(sink.line, 4, "{sink:?}");
+    }
+    for missing in &finding.activation.missing_discriminators {
+        assert!(!missing.reason.contains("line 3"), "{missing:?}");
+        if let Some(sink) = &missing.flow_sink {
+            assert_eq!(sink.line, 4, "{sink:?}");
+        }
+    }
+    Ok(())
+}

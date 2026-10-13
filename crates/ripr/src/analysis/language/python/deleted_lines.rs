@@ -8,11 +8,10 @@
 //! for Python. A base-side record is never a candidate edit target, so every
 //! counted, gated, annotated and diagnostic surface skips it (#3281).
 
-use super::classify::is_python_declaration_line;
+use super::classify::{ChangeSite, classify_change_for_owner, is_python_declaration_line};
 use super::{
-    ChangedFile, Finding, PythonNoBehaviorContext, PythonOwner, PythonTest,
-    classify_change_with_context, is_python_import_line, is_python_no_behavior_line,
-    is_python_structural_line, line_is_in_ranges, normalized_path, owner_for_changed_line,
+    ChangedFile, Finding, PythonNoBehaviorContext, PythonOwner, PythonTest, is_python_import_line,
+    is_python_no_behavior_line, is_python_structural_line, line_is_in_ranges, normalized_path,
 };
 use crate::analysis::diff::ChangedLine;
 use crate::domain::SourceCurrentness;
@@ -42,6 +41,17 @@ pub(super) fn deleted_line_findings(
     findings: &[Finding],
 ) -> Vec<Finding> {
     let paired: BTreeSet<usize> = counterparts.values().map(|removed| removed.line).collect();
+    // Removed headers an added header replaced: the owner they open lives on.
+    let re_headed: BTreeSet<usize> = counterparts
+        .iter()
+        .filter(|(added_line, _)| {
+            changed
+                .added_lines
+                .iter()
+                .any(|added| added.line == **added_line && is_python_declaration_line(&added.text))
+        })
+        .map(|(_, removed)| removed.line)
+        .collect();
     let mut ids: BTreeMap<String, usize> = BTreeMap::new();
     for finding in findings {
         *ids.entry(finding.probe.id.0.clone()).or_default() += 1;
@@ -51,12 +61,19 @@ pub(super) fn deleted_line_findings(
         if paired.contains(&removed.line) || !is_removed_behavior_line(removed, old_side) {
             continue;
         }
-        let Some(owner_line) = deleted_line_owner_line(changed, removed, new_source, owners) else {
+        let Some(owner) = deleted_line_owner(changed, removed, &re_headed, new_source, owners)
+        else {
             continue;
         };
-        let Some(mut finding) = classify_change_with_context(
-            &changed.path,
-            owner_line,
+        // Evidence names the projected new-side coordinate, as the Rust
+        // adapter records it; only the owner comes from a live neighbour.
+        let site = ChangeSite {
+            file: &changed.path,
+            line: removed.new_side_line,
+            owner,
+        };
+        let Some(mut finding) = classify_change_for_owner(
+            site,
             &removed.text,
             None,
             owners,
@@ -79,8 +96,6 @@ pub(super) fn deleted_line_findings(
         };
         finding.probe.before = Some(removed.text.clone());
         finding.probe.after = None;
-        // The projected new-side coordinate, as the Rust adapter records it.
-        finding.probe.location.line = removed.new_side_line;
         let count = ids.entry(finding.probe.id.0.clone()).or_default();
         *count += 1;
         if *count > 1 {
@@ -104,25 +119,26 @@ fn is_removed_behavior_line(removed: &ChangedLine, old_side: &OldSideRanges<'_>)
         && !is_python_declaration_line(&removed.text)
 }
 
-/// The new-side line whose owner held the deleted line. The diff parser
+/// The live owner that held the deleted line. The diff parser
 /// records a removed line at the new-side line that follows it, so a line
 /// deleted from the middle of a body sits inside its owner. A line deleted
 /// from the end of a body sits after it, so the line before is the owner's
 /// last line. Either owner must have its header indented less than the
 /// deleted line, and when both qualify the narrower one held it: a method's
 /// last line deleted where its class goes on is the method's, not the
-/// class's. A line outside every `def` and `class` belongs to the module,
-/// resolved at a neighbouring line no narrower owner claims. A line whose own
+/// class's. A line outside every `def` and `class` belongs to the module. A
+/// line whose own
 /// `def` or `class` was deleted with it belonged to an owner that no longer
 /// exists, and resolves to none.
-fn deleted_line_owner_line(
+fn deleted_line_owner<'a>(
     changed: &ChangedFile,
     removed: &ChangedLine,
+    re_headed: &BTreeSet<usize>,
     new_source: NewSource<'_>,
-    owners: &[PythonOwner],
-) -> Option<usize> {
+    owners: &'a [PythonOwner],
+) -> Option<&'a PythonOwner> {
     let indent = indent_width(&removed.text);
-    if lost_its_owner(changed, removed) {
+    if lost_its_owner(changed, removed, re_headed) {
         return None;
     }
     let at = removed.new_side_line;
@@ -133,9 +149,8 @@ fn deleted_line_owner_line(
             .map(indent_width)
     };
     let holds_it = |owner: &PythonOwner| header_indent(owner).is_some_and(|header| header < indent);
-    let around_body = scope_owner(changed, at, owners)
-        .filter(|owner| owner.start_line < at && holds_it(owner))
-        .map(|owner| (owner, at));
+    let around_body =
+        scope_owner(changed, at, owners).filter(|owner| owner.start_line < at && holds_it(owner));
     // The owner's last line is the last code line above the deletion: blank
     // and comment lines kept between the body and the deleted tail are not
     // part of any owner's span.
@@ -143,14 +158,13 @@ fn deleted_line_owner_line(
     let after_tail = tail_line.and_then(|tail| {
         scope_owner(changed, tail, owners)
             .filter(|owner| owner.end_line >= tail && owner.end_line < at && holds_it(owner))
-            .map(|owner| (owner, tail))
     });
-    if let Some((_, line)) = around_body
+    if let Some(owner) = around_body
         .into_iter()
         .chain(after_tail)
-        .min_by_key(|(owner, _)| (owner.span_width(), owner.specificity_rank()))
+        .min_by_key(|owner| (owner.span_width(), owner.specificity_rank()))
     {
-        return Some(line);
+        return Some(owner);
     }
     let inside_a_scope = |line: usize| scope_owner(changed, line, owners).is_some();
     if indent > 0
@@ -160,12 +174,12 @@ fn deleted_line_owner_line(
     {
         return None;
     }
-    // `classify_change_with_context` resolves the narrowest owner itself, so
-    // a module line is classified at a line only the module holds.
-    before.into_iter().chain([at]).find(|&line| {
-        owner_for_changed_line(&changed.path, line, owners)
-            .is_some_and(|owner| owner.name == MODULE_OWNER)
-    })
+    // Held by no `def` or `class`: the module's, even where the deletion
+    // projects past the module's last surviving line.
+    let file = normalized_path(&changed.path);
+    owners
+        .iter()
+        .find(|owner| owner.name == MODULE_OWNER && normalized_path(&owner.file) == file)
 }
 
 /// Whether the `def` or `class` that enclosed `removed` was deleted with it.
@@ -173,8 +187,14 @@ fn deleted_line_owner_line(
 /// stay contiguous there (an added line interrupting the block takes no old
 /// line, and the diff parser gives the lines after it a new coordinate), and
 /// follows each shallower code line outward: an enclosing `if` leads on to the
-/// `def` around it. A kept line breaks contiguity, and its owner is live.
-fn lost_its_owner(changed: &ChangedFile, removed: &ChangedLine) -> bool {
+/// `def` around it. A kept line breaks contiguity, and its owner is live; so
+/// is a removed header an added header pairs with, as when only its
+/// annotations changed.
+fn lost_its_owner(
+    changed: &ChangedFile,
+    removed: &ChangedLine,
+    re_headed: &BTreeSet<usize>,
+) -> bool {
     let by_old_line: BTreeMap<usize, &ChangedLine> = changed
         .removed_lines
         .iter()
@@ -213,7 +233,7 @@ fn lost_its_owner(changed: &ChangedFile, removed: &ChangedLine) -> bool {
         let previous_indent = indent_width(&previous.text);
         if previous_indent < threshold {
             if is_python_declaration_line(&previous.text) {
-                return true;
+                return !re_headed.contains(&previous.line);
             }
             threshold = previous_indent;
         }
