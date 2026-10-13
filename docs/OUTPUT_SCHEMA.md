@@ -524,7 +524,12 @@ state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
 `missing_scope`), one selected finding digest when available, an omitted-finding
 count, and pointers to `--format human-full` and `--format json`.
 `ripr check --format human-full` (alias `text-full`) preserves the exhaustive
-per-finding human report. These human text formats do not change
+per-finding human report. Navigation-aware CLI reports may define identical
+facts or guidance once with explicit finding-ordinal references; every finding
+retains its complete private record and drill-in commands. Sharing distinguishes
+full owner/test metadata and currentness, including raw contextual facts hidden
+by display normalization. Public library renders without navigation preserve
+legacy full-report bytes. These human text formats do not change
 `schema_version`; the machine-readable contract remains `--format json`.
 Repo-scoped formats such as `repo-exposure-json`, `repo-exposure-md`,
 `repo-sarif`, and `agent-seam-packets-json` warn on stderr when paired with
