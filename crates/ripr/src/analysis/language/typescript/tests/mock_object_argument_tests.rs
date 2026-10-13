@@ -53,6 +53,12 @@ fn mock_in_an_inline_object_is_credited() {
         &called_with("notify", "\"ann\", \"charged 360\""),
         "it(\"t\", () => {\n    const notify = jest.fn();\n    checkout(\"ann\", [apple], { send: notify, flush: jest.fn() });\n    expect(notify).toHaveBeenCalledWith(\"ann\", \"charged 360\");\n  });"
     ));
+    // The owner call as an argument of an assertion, after a mock factory
+    // with an implementation.
+    assert!(facts.credits(
+        &charged_payload(),
+        "it(\"t\", () => {\n    const send = vi.fn((m: string) => m);\n    expect(checkout(\"ann\", [apple], { send })).toBe(360);\n    expect(send).toHaveBeenCalledWith(\"ann\", \"charged 360\");\n  });"
+    ));
     let plain = checkout_facts(&checkout_owner("  const total = sum(lines);", RETURN));
     assert!(plain.credits(&charged_payload(), CHECKOUT_TEST));
     // Control blocks, object literals and `try` are not nested functions:
@@ -224,6 +230,9 @@ fn mock_the_object_may_not_carry_is_not_credited() {
         "const send = vi.fn(); class H { run(w) { checkout(w, [apple], { send }); } } new H().run(\"ann\"); new H().run(\"bo\");",
         "const send = vi.fn(); [{ who: \"ann\" }, { who: \"bo\" }].forEach(function ({ who }) { checkout(who, [apple], { send }); });",
         "const send = vi.fn(); [\"ann\", \"bo\"].forEach((who) => wrap<string, number>(checkout(who, [apple], { send })));",
+        "const send = vi.fn(); const h = { run(r = checkout(\"ann\", [apple], { send })) { return r; } }; h.run(); h.run();",
+        "const send = vi.fn(); const run = (r = checkout(\"ann\", [apple], { send })): number => r; run(); run();",
+        "const send = vi.fn(); const n = vi.fn<9; const h = { run() { if (n > 1) checkout(\"ann\", [apple], { send }); } }; h.run(); h.run();",
     ] {
         let test = format!(
             "it(\"t\", () => {{\n    {body}\n    expect(send).toHaveBeenCalledWith(\"ann\", \"charged 360\");\n  }});"

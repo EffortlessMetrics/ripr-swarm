@@ -345,6 +345,7 @@ fn owner_call_argument_at(test_body: &str, owner_name: &str, index: usize) -> Op
         .any(|word| !identifier_offsets(&masked[range.clone()], word).is_empty())
         || !range.contains(&at)
         || opens_function_before_call(&masked[range.start..at])
+        || inside_parameter_list(&masked[range.clone()], at - range.start)
     {
         return None;
     }
@@ -539,30 +540,64 @@ fn opens_function_before_call(before: &str) -> bool {
     before.contains("=>") || has_method_like_block(&before)
 }
 
-/// `text` with each `.fn<...>(...)` mock factory's type arguments and
-/// arguments removed (`vi.fn<...>`, `jest.fn(impl)`). A group that does not
-/// close inside `text` is kept, so a call inside a mock implementation still
-/// reads as nested. An `=>` inside the type arguments does not close the `<`.
+/// `true` when the owner call at byte `at` of the masked test `scope` sits
+/// in a parameter list: an enclosing `(` whose matching `)` is followed by
+/// `=>`, `{` or a `:` return type (`(r = owner(...)) => r`,
+/// `function run(r = owner(...)) {`). A default runs on every call that
+/// omits the argument. An enclosing `(` that never closes also refuses.
+fn inside_parameter_list(scope: &str, at: usize) -> bool {
+    let mut open = Vec::new();
+    for (offset, c) in scope[..at].char_indices() {
+        match c {
+            '(' => open.push(offset),
+            ')' => {
+                open.pop();
+            }
+            _ => {}
+        }
+    }
+    open.into_iter().any(|start| {
+        let Some(end) = closing_offset(&scope[start..], '(', ')') else {
+            return true;
+        };
+        let after = scope[start + end..].trim_start();
+        after.starts_with("=>") || after.starts_with('{') || after.starts_with(':')
+    })
+}
+
+/// `text` with each `vi.fn` / `jest.fn` mock factory's type arguments and
+/// arguments removed (`vi.fn<...>(...)`, `jest.fn(impl)`). Type arguments
+/// count only when a `(` follows them. A group that does not close inside
+/// `text` is kept, so a call inside a mock implementation still reads as
+/// nested. An `=>` inside the type arguments does not close the `<`.
 fn without_closed_mock_factories(text: &str) -> String {
     let mut kept = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find(".fn") {
         let after = start + ".fn".len();
+        let factory = ["vi", "jest"].iter().any(|receiver| {
+            rest[..start].ends_with(receiver) && word_boundary_before(rest, start - receiver.len())
+        });
         kept.push_str(&rest[..after]);
         rest = &rest[after..];
-        if rest.starts_with(is_identifier_part) {
+        if !factory || rest.starts_with(is_identifier_part) {
             continue;
         }
-        for (open, close) in [('<', '>'), ('(', ')')] {
-            if !rest.starts_with(open) {
-                continue;
+        let mut end = 0;
+        if rest.starts_with('<') {
+            match closing_offset(rest, '<', '>') {
+                Some(close) if rest[close..].starts_with('(') => end = close,
+                _ => continue,
             }
-            let Some(end) = closing_offset(rest, open, close) else {
+        }
+        if rest[end..].starts_with('(') {
+            let Some(close) = closing_offset(&rest[end..], '(', ')') else {
                 kept.push_str(rest);
                 return kept;
             };
-            rest = &rest[end..];
+            end += close;
         }
+        rest = &rest[end..];
     }
     kept.push_str(rest);
     kept

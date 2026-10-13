@@ -127,11 +127,15 @@ block: the block holds no `for`, `while` or `do`, and the block's text
 before the call holds no `=>` and no method-like `{` (the same allowlist
 as rule 1, which also covers `function` and class bodies), so a callback
 (`[7, 8].forEach((id) => announce(id, send))`), a method, getter or class
-field that may hold the call refuses. A mock factory's own type arguments
-and implementation (`vi.fn<(m: string) => void>()`, `jest.fn((a, b) => a)`)
-are skipped when they close before the call. Any other arrow before the
-call refuses, even one that ends before it, which can under-credit but
-never credits a call that runs twice. A call site that runs twice records
+field that may hold the call refuses. So does a call inside a parameter
+list, an enclosing `(` whose `)` is followed by `=>`, `{` or a `:` return
+type (`(r = announce(7, send)) => r`), since a default runs on every call
+that omits it. A `vi.fn` or `jest.fn` factory's own type arguments and
+implementation (`vi.fn<(m: string) => void>()`, `jest.fn((a, b) => a)`)
+are skipped when they close before the call; type arguments count only
+when a `(` follows them, so a comparison such as `cfg.fn<3` hides nothing.
+Any other arrow before the call refuses, even one that ends before it,
+which under-credits rather than credit a call that may run twice. A call site that runs twice records
 two calls, and `toHaveBeenCalledWith` passes when any of them matches. This
 tightens RIPR-SPEC-0247.
 
@@ -233,8 +237,8 @@ the literal (`{ send }.self`) and any further mention of the mock refuse.
   `runs_changed_line_once`, `has_method_like_block`, `control_keyword_at`,
   `brace_context`,
   `changed_line_is_top_level_statement` and `starts_new_statement` (rule 1);
-  `owner_call_argument_at`, `opens_function_before_call` and
-  `without_closed_mock_factories` (the one-call
+  `owner_call_argument_at`, `opens_function_before_call`,
+  `inside_parameter_list` and `without_closed_mock_factories` (the one-call
   rule); `MockCallFacts::credits_object_argument` and
   `object_literal_binds` (rule 2).
 

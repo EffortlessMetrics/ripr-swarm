@@ -194,6 +194,13 @@ fn mock_payload_another_call_could_satisfy_is_not_credited() {
         // arrow's expression body, does not end the function early.
         "const send = jest.fn(); [{ id: 7 }, { id: 8 }].forEach(function ({ id }) { announce(id, send); });",
         "const send = jest.fn(); [7, 8].forEach((id) => wrap<number, number>(announce(id, send)));",
+        // A default parameter value runs on every call that omits it.
+        "const send = jest.fn(); const run = (r = announce(7, send)) => r; run(); run();",
+        "const send = jest.fn(); function run(r = announce(7, send)) { return r; } run(); run();",
+        // A `.fn<` that is a comparison, not a mock factory's type
+        // arguments, does not hide the callback after it.
+        "const send = jest.fn(); const small = cfg.fn<3; [7, 8].forEach((id) => id > 0 && announce(id, send));",
+        "const send = jest.fn(); const small = cfg.fn<3; [7, 8].forEach((id) => { if (id >(0)) announce(id, send); });",
         // A local definition with the owner's name reads as a second call
         // and fails safe.
         "function announce(a, b) {} const send = jest.fn(); announce(7, send);",
@@ -201,6 +208,12 @@ fn mock_payload_another_call_could_satisfy_is_not_credited() {
         assert!(
             !notify_facts(Some(NOTIFY_OWNER)).credits(&payload, test),
             "{test}"
+        );
+        // Inside a test callback, so the scope is the test's own block.
+        let wrapped = format!("it(\"t\", () => {{\n    {test}\n  }});");
+        assert!(
+            !notify_facts(Some(NOTIFY_OWNER)).credits(&payload, &wrapped),
+            "{wrapped}"
         );
     }
 }
