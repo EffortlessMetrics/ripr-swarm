@@ -7597,8 +7597,10 @@ language = "rust"
             "calibrated-gate entry does not state what it narrows to:\n{mode_doc}"
         );
         assert!(
-            workflow.contains("Each setting and step is explained in docs/CI.md"),
-            "the workflow no longer points at the setting docs"
+            workflow.contains(
+                "# CI guide: https://github.com/EffortlessMetrics/ripr/blob/main/docs/CI.md\n"
+            ),
+            "the workflow no longer gives the adopter a public CI guide URL"
         );
 
         Ok(())

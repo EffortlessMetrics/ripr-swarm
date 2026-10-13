@@ -82,6 +82,11 @@ document should branch on `exit`, not on free-text `stop_states`.
   shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
+- **Gate `--root` refusal**: `ripr gate evaluate --root <path>` that is
+  missing or not a directory is an argv-level usage refusal: it exits `2`,
+  names the root, and does not write `gate-decision.{json,md}`. Evaluation
+  does not start. This is distinct from a completed `config_error` decision
+  (also exit `2`), which still writes the report before returning.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
@@ -218,6 +223,9 @@ empty (the default, advisory) or `visible-only` never fails the job;
 a nonzero step exit. `ripr check` is advisory here as everywhere: it exits
 `0` whether or not it found gaps. When `RIPR_GATE_MODE` is set, the packet
 evaluates the gate, and `ripr gate evaluate` exits `3` when it blocks and
-`2` on a `config_error`; it treats an incomplete, partial, or unsupported
+`2` on a `config_error`; those completed decisions still write
+`gate-decision.{json,md}`. A `--root` that is missing or not a directory is
+argv-level exit `2`, names the root, and writes no report. `ripr gate evaluate`
+treats an incomplete, partial, or unsupported
 analysis outcome as a `config_error` in every mode, so a gate never passes
 on a partial denominator.

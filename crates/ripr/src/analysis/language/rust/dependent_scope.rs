@@ -37,7 +37,8 @@
 //! and composition or subprocess markers are admitted outright. The macro
 //! bindings of withheld files are folded into the owner-pin unions without
 //! indexing them. The witness walks run only for `no_static_path` findings
-//! and proximity-only `weakly_exposed` ones (#7071);
+//! and `weakly_exposed` ones with only proximity evidence (#7071) or a weak
+//! direct discriminator beside an unresolved macro route (#7542);
 //! [`NarrowedScope::reach_index`] widens to the owner's caller levels on
 //! demand, bounded by the walks' own depth, and names an unsearched reach
 //! when that widening would exceed the narrowing threshold.
@@ -407,7 +408,9 @@ pub(super) fn admission_query(
 /// The witness search for this finding's owner would need more files than
 /// the narrowing threshold allows. Today's full selection refused the whole run in
 /// this case; this keeps the run and names the unsearched reach instead of
-/// letting `no_static_path` read as a searched-and-empty result.
+/// letting `no_static_path` read as a searched-and-empty result. The same
+/// disclosure also withholds an unsupported mixed weak-direct gap when its
+/// dependent macro-witness search could not run (#7542).
 pub(super) fn apply_reach_search_over_limit(
     finding: &mut crate::domain::Finding,
     probe: &crate::domain::Probe,

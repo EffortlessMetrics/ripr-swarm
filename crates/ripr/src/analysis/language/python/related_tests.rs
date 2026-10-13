@@ -302,7 +302,7 @@ pub(super) fn related_test_relation(
     if let Some(class) = dunder_method_class(owner) {
         return dunder_method_relation(test, owner, class);
     }
-    if body_calls_owner(&test.body_text, owner) {
+    if body_calls_owner(&test.body_text, owner) || exception_assertion_calls_owner(test, owner) {
         return Some(PythonRelationKind::SyntacticCall);
     }
     if import_alias_calls_owner(test, owner) {
@@ -544,6 +544,17 @@ pub(super) fn test_may_reach_owner_class(
                 || imports_owner_class(import, owner, top)
                 || module_contains_owner(&import.source_module, owner)
         })
+}
+
+/// RIPR-SPEC-0238 rule 13: an exception assertion passed the owner as its
+/// callable (`assertRaisesRegex(KeyError, 'empty', parse, '')`) calls it.
+fn exception_assertion_calls_owner(test: &PythonTest, owner: &PythonOwner) -> bool {
+    test.assertions.iter().any(|assertion| {
+        assertion
+            .callable_call
+            .as_deref()
+            .is_some_and(|call| body_calls_owner(call, owner))
+    })
 }
 
 pub(super) fn body_calls_owner(body_text: &str, owner: &PythonOwner) -> bool {
