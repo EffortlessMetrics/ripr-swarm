@@ -55,6 +55,45 @@ fn finding_for_owner(
     .ok_or_else(|| "fixture must produce a finding".to_string())
 }
 
+/// The negative-provenance controls: under the combined RIPR-SPEC-0243
+/// rule 3, a shadowed or re-exported `expect` is not the runner's matcher
+/// API, so extraction may abstain entirely and the assertion count is not
+/// the pinned fact. The verdict still is: no rejection credit may reach
+/// the finding, and the row stays `unknown`.
+fn finding_for_owner_without_required_assertion(
+    owner_source: &str,
+    test_source: &str,
+    line: usize,
+) -> Result<Finding, String> {
+    let owners = extract_owners(Path::new("src/load.ts"), owner_source);
+    assert_eq!(
+        owners.len(),
+        1,
+        "fixture must contain its exported async owner"
+    );
+    let tests = extract_tests(Path::new("tests/load.test.ts"), test_source);
+    assert_eq!(tests.len(), 1, "fixture must register its async test");
+    assert!(
+        tests[0].assertions.len() <= 1,
+        "fixture must not extract multiple assertions"
+    );
+    let line_text = owner_source
+        .lines()
+        .nth(line - 1)
+        .ok_or("fixture line absent")?;
+    classify_change(
+        Path::new("src/load.ts"),
+        line,
+        line_text,
+        &owners,
+        &tests,
+        None,
+        &ReExportIndex::empty(),
+        None,
+    )
+    .ok_or_else(|| "fixture must produce a finding".to_string())
+}
+
 #[test]
 fn literal_rejection_equality_observes_error_path() -> Result<(), String> {
     for (module, matcher) in [
@@ -91,7 +130,7 @@ fn unknown_or_shadowed_expect_does_not_gain_rejection_credit() -> Result<(), Str
         TEST.replace("async () =>", "async (expect) =>"),
         format!("import {{ expect, test, describe }} from 'vitest';\nimport {{ load }} from '../src/load';\ndescribe('nested', () => {{\n{shadow}test('missing token', async () => {{ await expect(load()).rejects.toBe('TOKEN_REQUIRED'); }});\n}});"),
     ] {
-        let got = finding(&test, 3)?;
+        let got = finding_for_owner_without_required_assertion(OWNER, &test, 3)?;
         assert_eq!(got.class, ExposureClass::WeaklyExposed, "{got:?}");
         assert_eq!(got.related_tests[0].oracle_kind, OracleKind::Unknown);
     }
@@ -157,7 +196,7 @@ fn unresolved_rejection_checks_do_not_gain_exact_error_credit() {
 
 #[test]
 fn reexport_does_not_bind_the_local_rejection_assertion() -> Result<(), String> {
-    let got = finding(REEXPORT_SHADOW, 3)?;
+    let got = finding_for_owner_without_required_assertion(OWNER, REEXPORT_SHADOW, 3)?;
     assert_eq!(got.class, ExposureClass::WeaklyExposed, "{got:?}");
     assert_eq!(got.related_tests[0].oracle_kind, OracleKind::Unknown);
     Ok(())

@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — typescript_rejects_reexport_shadow (3)
+
+Reason:
+Combined RIPR-SPEC-0243 rule 3 (#6798): a local expect helper fed by a relation-only re-export is not the runner matcher API, so no assertion extracts through it; the leaf-era exact-value credit on the return probe was a name coincidence and both probes now read weakly_exposed with an unknown oracle. Pinned by reexport_does_not_bind_the_local_rejection_assertion and the corpus row ts_reexported_expect_cannot_credit_local_rejection_helper.
+
+Command:
+`cargo xtask goldens bless typescript_rejects_reexport_shadow --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

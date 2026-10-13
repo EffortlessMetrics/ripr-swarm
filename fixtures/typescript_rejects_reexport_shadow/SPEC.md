@@ -32,5 +32,10 @@ A relation-only re-export does not establish an imported runner assertion.
 - Treat a passing wrong-reason runtime control as evidence that its value was compared.
 - Repair ordinary/global matcher binding behavior, separately owned by #6798.
 
-The inherited return-value classification is preserved here; this control's
-honesty row selects only `error_path`, the new credit governed by #7315.
+Under the combined RIPR-SPEC-0243 rule 3 (#6798), the local `expect`
+helper fed by a relation-only re-export is not the runner's matcher API,
+so no assertion is extracted through it: the changed throw and the return
+value both read `weakly_exposed` with an unknown oracle. The leaf-era
+exact-value credit on the return probe was a name coincidence, not a
+runner oracle. This control's honesty row selects only `error_path`, the
+new credit governed by #7315.

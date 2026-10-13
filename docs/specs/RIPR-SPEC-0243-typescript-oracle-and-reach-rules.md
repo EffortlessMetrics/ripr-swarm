@@ -266,10 +266,15 @@ negated forms retain their existing admission rules. This bounded extension
 is pinned by `typescript_rejects_literal_equality` and
 `rejection_equality_tests`.
 
-The #7315 proposal remains blocked by its live unexercised-error-branch
-regression until the #6798 expected-value error-liveness owner integrates
-the rejected literal. The new literal uses `expected_value_or_variant`,
-not `error_payload`; this missing guard is not a readiness claim.
+The rejected literal integrates the #6798 expected-value error-liveness
+owner: `literal_rejection_credits` reads the pinned reason from
+`expected_value_or_variant` (the promoted literal's `error_payload` stays
+`None`). On a message-only change the pinned reason must separate the old
+and new thrown messages; otherwise it must match the changed line's own
+thrown message, so a reason the changed line never produces — the
+unexercised second throw — reads `broad_error` / weak for that change.
+`rejection_literal_cannot_expose_an_unexercised_error_branch` pins this
+verdict.
 
 A snapshot never reaches
 `exposed` by itself, because only a strong oracle does; it carries
@@ -867,7 +872,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
 - #7315: `expect_assertion_from_expression` reads the rejection modifier and
   concrete expected argument; `TypeScriptAssertionBindings` supplies the
   explicit runner import and existing scope filter. The existing
-  `ts_oracle_kind_matches_seam` authority handles the resulting error kind.
+  `ts_oracle_kind_matches_seam` authority handles the resulting error kind,
+  and `literal_rejection_credits` in the shared error-payload guard owner
+  reads the pinned reason for error-branch liveness.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`: rules 2 to 4, 9
   and 10
   (`expect_call_from_assertion_inner`, `call_expression_is_expect`,
