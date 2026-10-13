@@ -319,14 +319,18 @@ changes `self.count += 2` to `self.count += 1`.
   may do so; an unresolved method counts as a write. The assertion must be
   an `assert_eq!` whose one operand is the whole collection (`inv.log`,
   `inv.history()`, optionally borrowed) read after the owner call as above,
-  and whose other operand names neither that binding nor any binding the
-  test also calls the owner on. Either operand may be the read. Between
+  and whose other operand does not name that binding. Either operand may
+  be the read. The test must call the owner on nothing but that binding (no
+  `other.add(..)`, `Order::add(&mut other, ..)` or chained
+  `Order::new().add(..)`): a value built through the owner may carry the
+  changed field into the other operand. Between
   the owner call and the assertion the test may write nothing through the
   binding (`binding_untouched_after_owner_call` in `reveal.rs`): the call is
   a bare statement (optionally ending in `.unwrap()`, `.expect(..)` or `?`,
   never bound or chained), the assertion starts its line, and a statement
   between may name the binding only as a plain field read that is a whole
-  argument of `assert!`, `assert_eq!` or `assert_ne!`. Projections
+  argument of `assert!`, `assert_eq!` or `assert_ne!`, with no block,
+  closure or nested macro other than `vec!` or `format!`. Projections
   (`.len()`, `[0].qty`, `.iter().map(..)`), `assert_ne!`, literals built in
   a local and pushed later, `insert`, and a push preceded by another
   statement on its line are not credited and keep the missing field-value

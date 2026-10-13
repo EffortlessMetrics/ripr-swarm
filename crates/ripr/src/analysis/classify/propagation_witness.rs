@@ -852,12 +852,12 @@ fn delimited_closer(after_open: &str, open: char, close: char) -> Option<usize> 
 /// owner's value and cannot fail on it.
 ///
 /// Both sides may qualify (`assert_eq!(expected.log, actual.log)`), so every
-/// admissible read is returned, each with the other operand, and the caller
-/// decides which binding ran the owner.
+/// admissible read is returned and the caller decides which binding ran the
+/// owner.
 pub(in crate::analysis) fn assertion_whole_collection_equality(
     assertion_text: &str,
     path: &str,
-) -> Vec<(FieldCollectionRead, String)> {
+) -> Vec<FieldCollectionRead> {
     let Some(payload) = macro_payload(assertion_text, "assert_eq").map(str::trim_start) else {
         return Vec::new();
     };
@@ -875,7 +875,7 @@ pub(in crate::analysis) fn assertion_whole_collection_equality(
         .into_iter()
         .filter_map(|(side, other)| {
             let read = whole_collection_read(side, path)?;
-            (!names_ident(other, &read.binding)).then(|| (read, other.clone()))
+            (!names_ident(other, &read.binding)).then_some(read)
         })
         .collect()
 }
@@ -2135,19 +2135,16 @@ mod tests {
         };
         assert_eq!(
             whole("assert_eq!(inv.history(), &[Event::A]);"),
-            vec![(read("inv", Some("history")), "&[Event::A]".to_string())]
+            vec![read("inv", Some("history"))]
         );
         assert_eq!(
             whole("assert_eq!(vec![Event::A], inv.log);"),
-            vec![(read("inv", None), "vec![Event::A]".to_string())]
+            vec![read("inv", None)]
         );
         // Both sides qualify: each is a candidate for the owner's binding.
         assert_eq!(
             whole("assert_eq!(expected.log, actual.log);"),
-            vec![
-                (read("expected", None), "actual.log".to_string()),
-                (read("actual", None), "expected.log".to_string()),
-            ]
+            vec![read("expected", None), read("actual", None)]
         );
         for other in [
             "assert_eq!(inv.history().len(), 1);",

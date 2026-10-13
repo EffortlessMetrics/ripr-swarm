@@ -551,10 +551,22 @@ pub(in crate::analysis) fn binding_untouched_after_owner_call(
             return true;
         }
         let trimmed = statement.trim_start();
-        ["assert!(", "assert_eq!(", "assert_ne!("]
+        let opener = ["assert!(", "assert_eq!(", "assert_ne!("]
             .iter()
-            .any(|plain| trimmed.starts_with(plain))
-            && !statement.contains(['{', '|'])
+            .find(|plain| trimmed.starts_with(**plain));
+        // No block, closure or nested macro other than `vec!`/`format!`
+        // (`reset![order]`) in the statement: any of them may write through
+        // the binding.
+        opener.is_some_and(|opener| {
+            let inner = &trimmed[opener.len()..];
+            inner.match_indices('!').all(|(bang, _)| {
+                let invoked = inner[bang + 1..].starts_with(['(', '[', '{']);
+                let name_start = inner[..bang]
+                    .rfind(|ch: char| !ident(ch))
+                    .map_or(0, |index| index + 1);
+                !invoked || matches!(&inner[name_start..bang], "vec" | "format")
+            })
+        }) && !statement.contains(['{', '|'])
             && mentions.iter().all(|at| {
                 let before = statement[..*at].trim_end();
                 let mut rest = &statement[at + binding.len()..];
@@ -574,28 +586,37 @@ pub(in crate::analysis) fn binding_untouched_after_owner_call(
     })
 }
 
-/// Whether `operand` names a binding the test body calls `method` on: then
-/// both sides of an equality may carry the owner's changed value, and the
-/// comparison cannot fail on it.
-pub(in crate::analysis) fn operand_names_owner_receiver(
+/// Whether the test body calls `method` on anything but `binding`: another
+/// receiver (`expected.add(..)`, `o.add(..)` in a block), a path call
+/// (`Order::add(&mut expected, ..)`) or a chained receiver
+/// (`Order::new().add(..)`). Such a value may carry the owner's changed
+/// value into the other side of the equality, which then cannot fail on it.
+/// Fails closed: a call on an unrelated value also counts.
+pub(in crate::analysis) fn owner_called_on_other_receiver(
     body: &str,
-    operand: &str,
+    binding: &str,
     method: &str,
 ) -> bool {
     let masked = mask_comments_and_strings(body);
-    let operand = mask_comments_and_strings(operand);
     let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
-    let call = format!(".{method}(");
+    let call = format!("{method}(");
     masked.match_indices(&call).any(|(at, _)| {
-        let receiver_start = masked[..at]
+        let before = &masked[..at];
+        if before.chars().next_back().is_some_and(ident) {
+            // A longer name ending in `method`.
+            return false;
+        }
+        if before.ends_with("::") {
+            return true;
+        }
+        let Some(receiver_end) = before.strip_suffix('.').map(str::len) else {
+            // A free function of the same name is not the owner method.
+            return false;
+        };
+        let receiver_start = masked[..receiver_end]
             .rfind(|ch: char| !ident(ch))
             .map_or(0, |index| index + 1);
-        let receiver = &masked[receiver_start..at];
-        !receiver.is_empty()
-            && operand.match_indices(receiver).any(|(found, name)| {
-                !operand[..found].chars().next_back().is_some_and(ident)
-                    && !operand[found + name.len()..].starts_with(ident)
-            })
+        masked[..receiver_start].ends_with('.') || masked[receiver_start..receiver_end] != *binding
     })
 }
 
@@ -3588,21 +3609,35 @@ mod tests {
             "    order.add(4);\n    assert!(match order { Order { ref mut log, .. } => { log.clear(); true } });\n\n    assert_eq!(order.log, vec![]);",
             "    let mut order = Order::new();\n    order.add(4);\n    assert!(reset(&mut (order)));\n    assert_eq!(order.log, vec![]);",
             "    let mut order = Order::new();\n    order.add(4);\n    assert_reset!(order);\n    assert_eq!(order.log, vec![]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert!(reset![1, order, 2], \"m\");\n    assert_eq!(order.log, vec![]);",
         ] {
             assert!(!untouched(refused), "{refused}");
         }
     }
 
-    /// #7688 review: an equality whose other side also ran the owner cannot
-    /// fail on the owner's changed value.
+    /// #7688 review: a value built through the owner on another receiver
+    /// may carry the changed value into the other side of the equality.
     #[test]
-    fn operand_names_owner_receiver_finds_a_second_owner_call() {
-        let body = "fn case() {\n    let mut a = Order::new();\n    a.add(1);\n    let mut b = Order::new();\n    b.lines.push(line());\n}";
-        assert!(operand_names_owner_receiver(body, "a.lines", "add"));
-        assert!(operand_names_owner_receiver(body, "expected(&a)", "add"));
-        assert!(!operand_names_owner_receiver(body, "b.lines", "add"));
-        assert!(!operand_names_owner_receiver(body, "vec![line()]", "add"));
-        assert!(!operand_names_owner_receiver(body, "ab.lines", "add"));
+    fn owner_called_on_other_receiver_sees_every_other_owner_call() {
+        let called = |lines: &str| {
+            owner_called_on_other_receiver(&format!("fn case() {{\n{lines}\n}}"), "order", "add")
+        };
+        for kept in [
+            "    order.add(1);\n    order.add(2);",
+            "    order.add(1);\n    readd(3);\n    order.address();",
+            "    order.add(1);\n    // other.add(2);\n    let s = \"x.add(1)\";",
+        ] {
+            assert!(!called(kept), "{kept}");
+        }
+        for refused in [
+            "    other.add(1);\n    order.add(1);",
+            "    let exp = { let mut o = Order::new(); o.add(4); o };\n    order.add(4);",
+            "    Order::add(&mut exp, 4);\n    order.add(4);",
+            "    let exp = Order::new().add(4).clone();\n    order.add(4);",
+            "    let exp = self.order.add(4);\n    order.add(4);",
+        ] {
+            assert!(called(refused), "{refused}");
+        }
     }
 
     #[test]
