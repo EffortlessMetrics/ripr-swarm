@@ -159,7 +159,7 @@ impl ClassifiedProbeEvidence {
                 }
                 PropagationWitnessDiagnostic::from_witness(witness)
             });
-        let gathered = activation_and_boundary_input(
+        let mut gathered = activation_and_boundary_input(
             context.probe,
             context.owner_fn,
             &test_summaries,
@@ -168,6 +168,12 @@ impl ClassifiedProbeEvidence {
             context.index,
             context.workspace_complete,
             context.test_value_facts,
+        );
+        crate::analysis::classify::refine_slice_boundary(
+            context,
+            pin_syntax,
+            &mut gathered,
+            &flow_sinks,
         );
         let mut activation = gathered.activation;
         // #3731 review (F11, G1): the changed owner's package scope, computed

@@ -17,6 +17,7 @@ mod reach;
 mod related_tests;
 mod reveal;
 mod scanner_transfer;
+mod slice_boundary;
 mod text;
 mod transitive_reach;
 mod value_transfer;
@@ -76,6 +77,7 @@ pub(in crate::analysis) use reveal::{
     ASSERTION_CONTEXT_UNESTABLISHED, FileUseStatements, oracle_crediting_relations,
 };
 pub(in crate::analysis) use reveal::{ReturnOracleAdmission, contains_as_whole_word};
+pub(in crate::analysis) use slice_boundary::refine_slice_boundary;
 // RIPR-SPEC-0106: re-export the variant parsers so test_grip_evidence.rs can
 // apply variant-binding without reaching into the private `text` submodule.
 pub(in crate::analysis) use text::{
