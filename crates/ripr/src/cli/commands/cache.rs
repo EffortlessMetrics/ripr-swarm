@@ -761,6 +761,37 @@ mod tests {
             );
             assert_eq!(source_bytes, cache_contents(&source_cache)?);
         }
+        let source_bytes = cache_contents(&source_cache)?;
+        let unavailable_config = root.join(".cargo/config.toml");
+        assert!(!unavailable_config.exists());
+        fs::create_dir_all(&unavailable_config).map_err(|error| error.to_string())?;
+        let refused_output = root.join("export-unavailable");
+        assert!(!refused_output.exists());
+        let refusal = run(&[
+            "export".to_owned(),
+            "--root".to_owned(),
+            root.to_string_lossy().into_owned(),
+            "--out".to_owned(),
+            refused_output.to_string_lossy().into_owned(),
+        ])
+        .err()
+        .ok_or("unavailable Cargo identity unexpectedly exported")?;
+        assert!(refusal.contains("cargo_configuration_identity_unavailable"));
+        assert!(!refused_output.exists(), "refuse before creating output");
+        assert_eq!(source_bytes, cache_contents(&source_cache)?);
+        fs::remove_dir(&unavailable_config).map_err(|error| error.to_string())?;
+        run(&[
+            "export".to_owned(),
+            "--root".to_owned(),
+            root.to_string_lossy().into_owned(),
+            "--out".to_owned(),
+            refused_output.to_string_lossy().into_owned(),
+        ])?;
+        assert_eq!(source_bytes, cache_contents(&source_cache)?);
+        assert_eq!(
+            crate::analysis::seam_cache::inspect_cache_root(&refused_output).entry_count,
+            2
+        );
         let overlap = source_cache.join("nested-export");
         assert!(
             run(&[
