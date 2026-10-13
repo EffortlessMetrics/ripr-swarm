@@ -201,6 +201,11 @@ struct GeneratedTestSite<'a> {
     test_name: String,
 }
 
+/// One test's transitive witness as it sorts: rank (0 corroborated call, 1
+/// uncorroborated call, 2 derive), test file, line and name, entry symbol,
+/// and the derive name for a derive entry.
+type TransitiveCandidate<'t> = (u8, &'t Path, usize, &'t str, &'t str, Option<String>);
+
 /// An entry's receiver types, split for [`ReachGraph::test_calls_on_any_type`].
 /// `method_call_resolves_to_impl_type_in` accepts an identifier-shaped type
 /// only where the type is an identifier run of the test's masked body or of
@@ -797,7 +802,7 @@ impl<'a> TransitiveReachIndex<'a> {
         // Rank 0 is a corroborated call entry, 1 an uncorroborated one and 2 a
         // derive entry, which no call fact backs, so any call witness wins.
         // Only the best witness is kept; the others are counted.
-        let mut best: Option<(u8, &Path, usize, &str, &str, Option<String>)> = None;
+        let mut best: Option<TransitiveCandidate<'_>> = None;
         let mut witness_count = 0usize;
         // The receiver types depend only on the entry and this owner, so
         // they are resolved once per entry rather than once per test.
