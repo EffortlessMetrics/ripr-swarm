@@ -1096,7 +1096,7 @@ export class RiprClientController {
 
   async copyContext(target?: RiprContextTarget): Promise<void> {
     const targetUri = uriFromTarget(target);
-    const rootBlocker = this.repairActionRootBlocker(targetUri);
+    const rootBlocker = this.copyActionRootBlocker(targetUri);
     if (rootBlocker) {
       this.runtime.showInformationMessage(rootBlocker);
       return;
@@ -1175,7 +1175,7 @@ export class RiprClientController {
           command: 'ripr.collectContext',
           arguments: [collectContextTarget],
         });
-        if (!this.actionRootStillCurrent(generation, documentUri)) {
+        if (!this.actionRootStillCurrent(generation, documentUri, (target) => this.copyActionRootBlocker(target))) {
           return;
         }
         if (packet && typeof packet === 'object') {
@@ -1189,7 +1189,7 @@ export class RiprClientController {
       }
     }
 
-    if (!this.actionRootStillCurrent(generation, documentUri)) {
+    if (!this.actionRootStillCurrent(generation, documentUri, (target) => this.copyActionRootBlocker(target))) {
       return;
     }
     const workspaceFolder = this.workspaceFolderForUri(documentUri);
@@ -1200,7 +1200,7 @@ export class RiprClientController {
 
     const config = this.runtime.getConfig();
     const server = this.server ?? await this.resolveServerForCommand(config);
-    if (!server || !this.actionRootStillCurrent(generation, documentUri)) {
+    if (!server || !this.actionRootStillCurrent(generation, documentUri, (target) => this.copyActionRootBlocker(target))) {
       return;
     }
     const relativePath = path.relative(workspaceFolder.uri.fsPath, documentUri.fsPath);
@@ -1222,7 +1222,7 @@ export class RiprClientController {
 
     try {
       const context = await this.runtime.runRipr(server.command, args, workspaceFolder.uri.fsPath);
-      if (!this.actionRootStillCurrent(generation, documentUri)) {
+      if (!this.actionRootStillCurrent(generation, documentUri, (target) => this.copyActionRootBlocker(target))) {
         return;
       }
       await this.runtime.writeClipboard(context.trim());
@@ -1347,7 +1347,7 @@ export class RiprClientController {
       return;
     }
 
-    const rootBlocker = this.repairActionRootBlocker(uriFromTarget(target));
+    const rootBlocker = this.copyActionRootBlocker(uriFromTarget(target));
     if (rootBlocker) {
       this.runtime.showInformationMessage(rootBlocker);
       return;
@@ -1355,7 +1355,7 @@ export class RiprClientController {
 
     const generation = this.startGeneration;
     const command = validatedAgentLoopCommand(target, await workspaceRedirectRoots(this.workspaceRoot));
-    if (!this.actionRootStillCurrent(generation, uriFromTarget(target))) {
+    if (!this.actionRootStillCurrent(generation, uriFromTarget(target), (checkTarget) => this.copyActionRootBlocker(checkTarget))) {
       return;
     }
     if (!command) {
@@ -2642,6 +2642,25 @@ export class RiprClientController {
     if (blocker) {
       return blocker;
     }
+    return this.trustedFileRootBlocker(targetUri);
+  }
+
+  // The context and agent-loop copies keep their no-client fallback: the
+  // context path resolves a server binary and runs the CLI without a live
+  // client, and the agent-loop copy only validates the server-rendered
+  // command text. A failed or stopped server start (root and binary already
+  // selected) must not hide a copy path a trusted, in-root file still needs
+  // (#7408 review). A missing selected root, a queued root transition, and
+  // removal quarantine still fail closed, and the cross-root check below
+  // still binds every copy to the selected root.
+  private copyActionRootBlocker(targetUri?: vscode.Uri): string | undefined {
+    if (!this.workspaceRoot || this.pendingWorkspaceRoot || this.workspaceRootSelectionSuppressed) {
+      return 'ripr action requires a running server with a selected workspace root.';
+    }
+    return this.trustedFileRootBlocker(targetUri);
+  }
+
+  private trustedFileRootBlocker(targetUri?: vscode.Uri): string | undefined {
     const uri = targetUri ?? vscode.window.activeTextEditor?.document.uri;
     if (!uri) {
       return 'ripr repair actions require an active file or target URI in the current workspace.';
@@ -2672,8 +2691,12 @@ export class RiprClientController {
     return undefined;
   }
 
-  private actionRootStillCurrent(generation: number, uri?: vscode.Uri): boolean {
-    if (generation !== this.startGeneration || this.repairActionRootBlocker(uri)) {
+  private actionRootStillCurrent(
+    generation: number,
+    uri?: vscode.Uri,
+    rootBlocker: (targetUri?: vscode.Uri) => string | undefined = (target) => this.repairActionRootBlocker(target)
+  ): boolean {
+    if (generation !== this.startGeneration || rootBlocker(uri)) {
       this.runtime.showInformationMessage('ripr action requires a running server with the current workspace root.');
       return false;
     }

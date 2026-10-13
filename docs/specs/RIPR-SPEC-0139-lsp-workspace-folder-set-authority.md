@@ -185,7 +185,9 @@ exactly one transition to `selected_single_root`.
 - Simultaneous per-root servers or analyzing multiple roots at once.
 - Analyzer evidence changes of any kind.
 - Extension-side restart/session behavior (#2015) and the real two-root
-  client fixture (#1873); those consume this model.
+  client fixture's delivery (#1873); those consume this model. Listing their
+  matrices under Required Evidence names the consuming acceptance surface,
+  not implementation scope owned by this spec.
 - Symlink canonicalization of root identity and any output schema version
   bump.
 - Status payload shape changes; root state disclosure reuses the existing
