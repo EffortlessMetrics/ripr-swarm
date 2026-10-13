@@ -634,6 +634,9 @@ mod tests {
         assert!(CHECK_HELP.contains("agent-seam-packets-json"));
         assert!(CHECK_HELP.contains("repo-sarif"));
         assert!(CHECK_HELP.contains("walks up to a Cargo.toml containing [workspace]"));
+        assert!(CHECK_HELP.contains("skips a closer ripr.toml"));
+        assert!(CHECK_HELP.contains("which one governed"));
+        assert!(CHECK_HELP.contains("`--root .`"));
         assert!(CHECK_HELP.contains("needs test-efficiency"));
         assert!(CHECK_HELP.contains("docs/BADGE_ADOPTION.md"));
         assert!(CHECK_HELP.contains("--mode ready --json"));
@@ -798,6 +801,8 @@ mod tests {
         assert!(CALIBRATE_HELP.starts_with("Import cargo-mutants outcomes"));
         assert!(CALIBRATE_HELP.contains("Usage: ripr calibrate cargo-mutants"));
         assert!(CALIBRATE_HELP.contains("--mutants-json PATH"));
+        assert!(CALIBRATE_HELP.contains("Limitation: the join matches by seam_id"));
+        assert!(CALIBRATE_HELP.contains("does not carry a head SHA"));
         assert!(AGENT_HELP.starts_with("Create a bounded repair transaction for a coding agent"));
         assert!(AGENT_HELP.contains("Usage: ripr agent"));
         assert!(AGENT_START_HELP.starts_with("Start a source-edit-free workflow packet"));

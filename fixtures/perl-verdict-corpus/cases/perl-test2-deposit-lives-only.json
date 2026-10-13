@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-test2-deposit-lives-only",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-test2-deposit-lives-only.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 34
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "test2_ok_lives_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return $amount - $balance;",
+        "mutated_line": "return $amount - $balance;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the deposit subtracts the balance"
+      },
+      {
+        "replacement": "return $balance;",
+        "mutated_line": "return $balance;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the deposit is ignored"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "ok(lives { deposit(5, 5) }) checks only that deposit does not die; its return value is never asserted. Spec cells: RIPR-SPEC-0064 lives/weak_smoke.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-test2-deposit-lives-only.json",
+    "sha256": "a2ca89791552c7ff2992a49d56014ca387f76dbd4027f223eb5b1934dd957769",
+    "provenance": "producer"
+  }
+}

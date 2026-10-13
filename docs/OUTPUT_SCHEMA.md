@@ -12983,9 +12983,15 @@ Field contract:
 
 Report packet index field contract:
 
-- `entries[].status` is `available`, `missing`, `pass`, `warn`, `fail`,
+- `entries[].status` is `available`, `missing`, `malformed`, `pass`, `warn`,
+  `fail`,
   `actionable`, `blocked`, `acknowledged`, `suppressed`, `stale`, `incomplete`,
-  `unreadable`, or `not_applicable`.
+  `unreadable`, or `not_applicable`. `malformed` marks a JSON-kind artifact
+  whose bytes do not parse as a JSON object (or cannot be read): existence
+  alone never credits it, the entry keeps its regeneration command, and the
+  packet cannot report `pass` while any entry is `malformed` (#7380). Receipt
+  JSONs discovered in the advertised receipts directory are indexed under
+  `validation_receipts` with the same status vocabulary (#7381).
 - `lane1_readiness.status` is `present`, `warn`, or `fail`.
 - `lane1_readiness.missing_artifacts`,
   `lane1_readiness.warning_artifacts`, and
@@ -17452,6 +17458,16 @@ validator kept closed becomes a report-only `StaticLimitation` record with
 exposed Python preview finding without a `python_repair_card` becomes one with
 `static_limit_kind = "python_repair_card_unavailable"`; neither carries a repair
 route, verify command, or receipt (RIPR-SPEC-0046).
+
+Passive and command-time LSP admission recognize the producer-owned operational
+`python_preview` and `python_repair_card_unavailable` markers without extending
+the analyzer limitation enum or promoting ineligible records. Producer-issued
+comparison identities remain unchanged: literal `<`/`>` may occur in the
+existing balanced inert single-quoted command form. Safety and root binding
+distinguish that data from the one allowed trailing stdout redirect; other
+operator, substitution, redirect-target and source-subject guards remain in
+force. Unknown scalar kinds remain refused. Admitted Python ledgers retain the
+explicit unavailable preview/mixed corpus scope (RIPR-SPEC-0077).
 
 The command writes JSON to `target/ripr/reports/gap-decision-ledger.json` and
 Markdown to `target/ripr/reports/gap-decision-ledger.md` by default. It does

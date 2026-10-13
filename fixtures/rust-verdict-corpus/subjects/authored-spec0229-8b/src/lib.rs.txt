@@ -1,0 +1,9 @@
+//! RIPR-SPEC-0229 acceptance example 8.
+
+pub fn f(n: u32) -> &'static str {
+    match n {
+        0 => "zero",
+        1..=8 => "digit",
+        _ => "many",
+    }
+}

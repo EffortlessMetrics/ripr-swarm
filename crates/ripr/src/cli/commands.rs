@@ -1196,6 +1196,18 @@ pub(super) fn calibrate(args: &[String]) -> Result<(), String> {
         &repo_exposure_json,
         &mutants_json,
     )?;
+    // Disclose on stderr (machine JSON output on stdout is unchanged) what
+    // can actually be said about artifact identity. The join is file/line
+    // capable and cargo-mutants JSON usually carries no head, so a silent
+    // success lets a foreign same-line mutant inherit the static seam's
+    // authority. Mirror `ripr outcome`'s disclosure (#7449 / #1942).
+    eprintln!(
+        "{}",
+        output::mutation_calibration::calibrate_head_provenance_disclosure(
+            &repo_exposure_json,
+            &mutants_json,
+        )
+    );
     let rendered = match options.format {
         CalibrateFormat::Markdown => {
             output::mutation_calibration::render_mutation_calibration_md(&report)
@@ -8010,9 +8022,11 @@ language = "rust"
             overridden.map(|options| (options.base_ref, options.comment_mode)),
             Ok(("release".to_string(), "off".to_string()))
         );
-        // Outside any workflow the base falls back to `main`.
+        // #7368: with no base_ref/default_branch anywhere, the base stays
+        // empty so the summary renders its fail-closed "no base derivable"
+        // wording instead of inventing `origin/main`.
         let bare = super::ci_summary::parse_ci_summary_options(&[]);
-        assert_eq!(bare.map(|options| options.base_ref), Ok("main".to_string()));
+        assert_eq!(bare.map(|options| options.base_ref), Ok(String::new()));
     }
 
     #[test]

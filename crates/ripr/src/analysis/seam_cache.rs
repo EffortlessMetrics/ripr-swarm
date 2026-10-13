@@ -1095,6 +1095,8 @@ pub(crate) struct RepoSeamCacheKey {
     pub(crate) seam_limit_key: String,
 }
 
+const CARGO_INPUT_IDENTITY_UNAVAILABLE: &str = "cargo_configuration_identity_unavailable";
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct RepoFileFactCacheKey {
     schema_version: String,
@@ -1148,6 +1150,23 @@ impl RepoFileFactCacheKey {
 }
 
 impl RepoSeamCacheKey {
+    /// Unknown Cargo configuration must never admit or publish classified
+    /// evidence. Per-file parser facts remain independently reusable.
+    pub(crate) fn is_reusable(&self) -> bool {
+        !self
+            .workspace_manifests_hash
+            .ends_with(CARGO_INPUT_IDENTITY_UNAVAILABLE)
+    }
+
+    pub(crate) fn require_reusable(&self) -> Result<(), String> {
+        if self.is_reusable() {
+            Ok(())
+        } else {
+            Err(format!(
+                "{CARGO_INPUT_IDENTITY_UNAVAILABLE}: restore readable regular Cargo/toolchain configuration within the 1 MiB per-file and 16 MiB total identity limits, and use a nonempty Cargo home, then retry"
+            ))
+        }
+    }
     /// Filename component derived from the canonical key fields. The
     /// FNV-1a 64-bit hash is stable across releases (unlike
     /// `DefaultHasher`) and produces a 16-char lowercase hex string.
@@ -1318,6 +1337,18 @@ impl WorkspaceKeyContext<'_> {
         } else {
             workspace_manifests_hash
         };
+        // The registered-harness premise is producer-owned Cargo metadata.
+        // Raw configuration, including malformed bytes and absence, changes
+        // that premise independently of Rust sources, HEAD and ripr.toml.
+        let workspace_manifests_hash = super::workspace::cargo_input_identity(self.workspace_root)
+            .map(|identity| {
+                hash_str(&format!(
+                    "{workspace_manifests_hash}:cargo-inputs:{identity}"
+                ))
+            })
+            .unwrap_or_else(|| {
+                format!("{workspace_manifests_hash}:{CARGO_INPUT_IDENTITY_UNAVAILABLE}")
+            });
         let lockfile_hash = hash_named_workspace_files(self.workspace_root, "Cargo.lock");
         let toolchain_hash = hash_str(
             std::env::var("RUSTUP_TOOLCHAIN")
@@ -1688,6 +1719,9 @@ impl RepoSeamFactCache {
         Option<CachedSeamLimitInfo>,
         Vec<PathBuf>,
     )> {
+        if !key.is_reusable() {
+            return CacheLoad::Miss;
+        }
         match self.load_single_classified_seams(key) {
             CacheLoad::Miss => self.load_sharded_classified_seams(key),
             other => other,
@@ -5011,6 +5045,51 @@ mod tests {
             }
         }
         ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    #[test]
+    fn unavailable_cargo_identity_refuses_valid_full_and_compact_cache_payloads()
+    -> Result<(), String> {
+        let mut key = empty_state().cache_key();
+        key.workspace_manifests_hash.push(':');
+        key.workspace_manifests_hash
+            .push_str(CARGO_INPUT_IDENTITY_UNAVAILABLE);
+        assert!(!key.is_reusable());
+        match key.require_reusable() {
+            Err(reason) => assert!(reason.contains(CARGO_INPUT_IDENTITY_UNAVAILABLE)),
+            Ok(()) => return Err("unavailable key passed admission".to_string()),
+        }
+        for label in ["full-unavailable", "compact-unavailable"] {
+            let dir = isolated_dir(label);
+            let cache = RepoSeamFactCache::at_dir(dir.clone());
+            std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+            let envelope = CacheEnvelope::new(key.clone(), vec![sample_classified()], None);
+            let bytes = codec::encode(&envelope)?;
+            std::fs::write(cache.entry_path(&key), bytes).map_err(|error| error.to_string())?;
+            // This is a valid checksummed same-key payload, so a miss must
+            // come from admission, not missing or malformed cache bytes.
+            assert!(matches!(
+                cache.load_single_classified_seams(&key),
+                CacheLoad::Hit(_)
+            ));
+            assert!(matches!(
+                cache.load_classified_seams_with_fallback(&key),
+                CacheLoad::Miss
+            ));
+            for result in [
+                cache.store_classified_seams_with_limit(&key, &[sample_classified()], None, 10),
+                cache.store_compact_classified_seams_with_limit(&key, &[sample_classified()], 10),
+            ] {
+                match result {
+                    Err(reason) => assert!(reason.contains(CARGO_INPUT_IDENTITY_UNAVAILABLE)),
+                    Ok(_) => {
+                        return Err("unavailable key published classified evidence".to_string());
+                    }
+                }
+            }
+            std::fs::remove_dir_all(dir).map_err(|error| error.to_string())?;
+        }
         Ok(())
     }
 

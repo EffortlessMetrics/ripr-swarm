@@ -1,0 +1,6 @@
+use spec0229_4::{Kind, f};
+
+#[test]
+fn kind_a_is_one() {
+    assert_eq!(f(Kind::A), 1);
+}

@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-testmore-can-ok-only",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-testmore-can-ok-only.diff",
+  "anchor": {
+    "file": "lib/Shop/Pricing.pm",
+    "line": 84
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "testmore_can_ok_use_ok_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 4 * $items;",
+        "mutated_line": "return 4 * $items;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: wrapping costs 4 per item"
+      },
+      {
+        "replacement": "return 3 + $items;",
+        "mutated_line": "return 3 + $items;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: two items cost 5"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "t/load.t only loads Shop::Pricing and checks can_ok for gift_wrap_fee; no test calls it, so both mutants survive. ripr reports no_static_path, a limit rather than the ideal gap, because a mention-only oracle gives no relation to the change.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testmore-can-ok-only.json",
+    "sha256": "135e72d52472fc532608a29d811370ad240e9d78c999c22a5b1deb90e66451cc",
+    "provenance": "producer"
+  }
+}

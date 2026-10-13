@@ -265,6 +265,12 @@ fn analysis_artifact_metadata(
         "kind": artifact_kind,
         "schema_version": ARTIFACT_IDENTITY_SCHEMA_VERSION,
         "canonicalization": CONTENT_COMMITMENT_CANONICALIZATION,
+        // Wall-clock generation time in the same `unix_ms:` shape the
+        // gap-decision ledger uses, so a retained CI artifact can be aged
+        // from its own bytes (#7369). It is stamped once, here, so the
+        // two-pass content-hash scheme keeps it fixed across both passes
+        // (unlike `content_sha256`, it never changes after hashing).
+        "generated_at": artifact_generated_at_unix_ms(),
         "producer": {
             "tool": "ripr",
             "version": env!("CARGO_PKG_VERSION"),
@@ -289,6 +295,17 @@ fn analysis_artifact_metadata(
 
 fn repo_exposure_snapshot_identity(input_identity: &str, repository_head: &str) -> String {
     format!("snapshot:{input_identity};revision:{repository_head}")
+}
+
+/// The artifact's wall-clock generation stamp, `unix_ms:<millis>` like the
+/// gap-decision ledger. A clock that predates the Unix epoch reports an
+/// explicit `unavailable` instead of failing artifact production: the
+/// timestamp is disclosure, not integrity authority.
+fn artifact_generated_at_unix_ms() -> String {
+    match std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        Ok(duration) => format!("unix_ms:{}", duration.as_millis()),
+        Err(_) => "unavailable".to_string(),
+    }
 }
 
 // Deferred negatives (#2921 claim boundary): main has no migration producer
@@ -369,6 +386,20 @@ pub(crate) fn validate_repo_exposure_artifact(
     {
         return Err(format!(
             "agent verify {label} artifact has invalid or unknown producer identity"
+        ));
+    }
+    // #7369: a present stamp must carry the same `unix_ms:` millisecond
+    // disclosure shape the producer pins, or the producer's documented
+    // `unavailable` fallback for a clock that predates the Unix epoch. A
+    // legacy artifact without the field stays acceptable — the absence is a
+    // missing disclosure, not invalid identity — but any other stamp fails
+    // closed instead of passing.
+    if let Some(stamp) = identity.generated_at.as_deref()
+        && stamp != "unavailable"
+        && !stamp.starts_with("unix_ms:")
+    {
+        return Err(format!(
+            "agent verify {label} artifact carries a generated_at stamp that is neither a unix_ms millisecond disclosure nor the documented \"unavailable\" fallback: {stamp}"
         ));
     }
     // Version gate (#2823): only the current input-identity algorithm
@@ -701,6 +732,10 @@ struct ArtifactIdentity {
     kind: String,
     schema_version: String,
     canonicalization: String,
+    /// Wall-clock generation stamp (#7369). Optional at read time so
+    /// artifacts produced before the field existed keep validating; the
+    /// absence is a missing disclosure, not invalid identity.
+    generated_at: Option<String>,
     producer: ProducerIdentity,
     repository: RepositoryIdentity,
     analysis: AnalysisIdentity,
@@ -2098,6 +2133,69 @@ mod tests {
     }
 
     #[test]
+    fn repo_exposure_metadata_carries_generated_at_unix_ms() -> Result<(), String> {
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let context = RepoExposureArtifactContext::for_repo_exposure(
+                root.clone(),
+                "draft".to_string(),
+                None,
+                &crate::config::RiprConfig::default(),
+            )?;
+            let metadata = repo_exposure_artifact_metadata(&context, CONTENT_SHA256_PLACEHOLDER)?;
+            let generated_at = metadata["generated_at"]
+                .as_str()
+                .ok_or_else(|| "artifact metadata omitted generated_at".to_string())?;
+            let millis = generated_at.strip_prefix("unix_ms:").ok_or_else(|| {
+                format!("generated_at must use the unix_ms: shape, got {generated_at}")
+            })?;
+            if millis.parse::<u128>().is_err() {
+                return Err(format!(
+                    "generated_at millis must parse, got {generated_at}"
+                ));
+            }
+
+            // The two-pass content commitment must keep the stamp fixed:
+            // the spliced document carries the same generated_at the hash
+            // pass committed.
+            let raw_with_placeholder = serde_json::to_string_pretty(&json!({
+                "schema_version": crate::output::repo_exposure::REPO_EXPOSURE_SCHEMA_VERSION,
+                "scope": "repo",
+                "run_status": "complete",
+                "artifact": metadata,
+                "seams": [],
+            }))
+            .map_err(|error| format!("render artifact document: {error}"))?;
+            let digest = content_sha256_with_placeholder(&raw_with_placeholder)
+                .map_err(|error| error.to_string())?;
+            let committed = replace_content_commitment(&raw_with_placeholder, &digest)
+                .map_err(|error| error.to_string())?;
+            let committed_value: Value = serde_json::from_str(&committed)
+                .map_err(|error| format!("parse committed document: {error}"))?;
+            if committed_value["artifact"]["generated_at"] != metadata["generated_at"] {
+                return Err("content commitment changed generated_at across passes".to_string());
+            }
+            // And a fresh metadata stamp must land within the same run.
+            let seams_metadata =
+                repo_seams_artifact_metadata(&context, CONTENT_SHA256_PLACEHOLDER)?;
+            let seams_generated_at = seams_metadata["generated_at"]
+                .as_str()
+                .ok_or_else(|| "repo-seams metadata omitted generated_at".to_string())?;
+            if !seams_generated_at.starts_with("unix_ms:") {
+                return Err(format!(
+                    "repo-seams generated_at must use the unix_ms: shape, got {seams_generated_at}"
+                ));
+            }
+            Ok(())
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup
+    }
+
+    #[test]
     fn repo_exposure_validation_requires_exact_snapshot_identity() -> Result<(), String> {
         let root = temporary_git_root()?;
         let result = (|| -> Result<(), String> {
@@ -2278,6 +2376,54 @@ mod tests {
                 mutated,
                 "unsupported repo-exposure schema",
             )
+        })();
+        let cleanup =
+            std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
+        result?;
+        cleanup?;
+        Ok(())
+    }
+
+    #[test]
+    fn repo_exposure_validation_rejects_malformed_generated_at_stamp() -> Result<(), String> {
+        // #7369 follow-up from the Rust Small clippy gate: the disclosure
+        // stamp is part of the identity envelope, so validation reads it — a
+        // stamp that is not a `unix_ms:` millisecond disclosure fails closed,
+        // while a well-formed one keeps validating.
+        let root = temporary_git_root()?;
+        let result = (|| -> Result<(), String> {
+            commit_fixture_file(&root)?;
+            let placeholder_raw = repo_exposure_raw_with_placeholder(&root)?;
+            let document: Value = serde_json::from_str(&placeholder_raw)
+                .map_err(|error| format!("parse placeholder document: {error}"))?;
+            let malformed = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["generated_at"] = json!("2026-10-12T12:00:00Z");
+            })?;
+            expect_identity_rejection(
+                "non-unix_ms generated_at stamp",
+                malformed,
+                "neither a unix_ms millisecond disclosure nor",
+            )?;
+            let fallback = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["generated_at"] = json!("unavailable");
+            })?;
+            match fallback {
+                Ok(_) => {}
+                Err(error) => {
+                    return Err(format!(
+                        "the documented unavailable fallback must keep validating: {error}"
+                    ));
+                }
+            }
+            let well_formed = validate_mutated_identity(&root, &document, |document| {
+                document["artifact"]["generated_at"] = json!("unix_ms:1760000000000");
+            })?;
+            match well_formed {
+                Ok(_) => Ok(()),
+                Err(error) => Err(format!(
+                    "a well-formed unix_ms stamp must keep validating: {error}"
+                )),
+            }
         })();
         let cleanup =
             std::fs::remove_dir_all(&root).map_err(|error| format!("remove temp root: {error}"));
