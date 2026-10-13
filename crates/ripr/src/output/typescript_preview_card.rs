@@ -109,6 +109,9 @@ pub(crate) fn typescript_preview_card(finding: &Finding) -> Option<TypeScriptPre
         finding.language,
         Some(LanguageId::TypeScript | LanguageId::JavaScript)
     ) || finding.language_status != Some(LanguageStatus::Preview)
+        // A deleted or moved line is base-side evidence (#7689): it names a
+        // line the candidate no longer has, so it gets no card.
+        || finding.source_currentness.is_base_side()
     {
         return None;
     }
@@ -814,6 +817,31 @@ mod tests {
         StageEvidence, StageState, StaticLimitKind,
     };
     use std::path::PathBuf;
+
+    /// #7689: a deleted or moved line is base-side evidence and names a line
+    /// the candidate no longer has, so the finding that carries a card on
+    /// the candidate side carries none.
+    #[test]
+    fn base_side_finding_gets_no_preview_card() {
+        let mut finding = sample_finding(OracleKind::SmokeOnly, OracleStrength::Smoke);
+        finding.activation.missing_discriminators = vec![MissingDiscriminatorFact {
+            value: "amount == threshold".to_string(),
+            reason: "missing exact boundary".to_string(),
+            flow_sink: None,
+        }];
+        assert!(typescript_preview_card(&finding).is_some());
+        for currentness in [
+            crate::domain::SourceCurrentness::BaseDeleted,
+            crate::domain::SourceCurrentness::MovedOrRenamed,
+        ] {
+            let mut base_side = finding.clone();
+            base_side.source_currentness = currentness;
+            assert!(
+                typescript_preview_card(&base_side).is_none(),
+                "{currentness:?}"
+            );
+        }
+    }
 
     #[test]
     fn typescript_preview_card_projects_advisory_fields() -> Result<(), String> {

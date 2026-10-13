@@ -1,0 +1,48 @@
+{
+  "case_id": "nodetest-subtest-t2-assert-strictequal",
+  "subject_id": "authored-ts-nodetest-billing",
+  "diff": "cases/nodetest-subtest-t2-assert-strictequal.diff",
+  "anchor": {
+    "file": "src/creditnote.ts",
+    "line": 2
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "nodetest_subtest_context_t2_assert_strictequal",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "node --import tsx --test test/*.test.ts",
+    "toolchain": "node 22.22.0; tsx 4.23.15; node:test + node:assert (built in); edit applied by hand and the test command run on the whole package",
+    "mutants": [
+      {
+        "replacement": "return amount - 6;",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "takes five off the amount",
+        "equivalence_review": "not equivalent: 30 gives 24 instead of 25"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The parent test awaits `t.test(\"takes five off the amount\", (t2) => { t2.assert.strictEqual(creditNote(30), 25); })`; the edit takes six off, so the subtest (and with it its parent) fails. RIPR-SPEC-0252 example 5 reads the assertion on the subtest's own receiver `t2`, and example 2 grades `t.assert.strictEqual` exact_value / strong. ripr reports `exposed` with exact_value / strong (the related test is the parent `credit note`), matching the spec and the truth.",
+  "labeling_observation": {
+    "ripr_commit": "9073928",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0252#5"
+  ]
+}

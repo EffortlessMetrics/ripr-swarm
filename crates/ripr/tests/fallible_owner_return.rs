@@ -143,7 +143,10 @@ fn fallible_literal_helper_refuses_unbound_or_ineffective_oracles() -> Result<()
         let report = subject.check()?;
         let finding = answer(&report)?;
         assert_ne!(finding["classification"], "exposed", "{name}");
-        assert_ne!(finding["ripr"]["propagate"]["state"], "yes", "{name}");
+        // A refused receipt grants no observation credit. Propagation of the
+        // constant tail `7` is established independently of any receipt
+        // (#6617), so it is not a refusal signal.
+        assert_ne!(finding["ripr"]["discriminate"]["state"], "yes", "{name}");
     }
     Ok(())
 }
@@ -189,7 +192,7 @@ fn warm_analysis_revalidates_config_lock_and_source_role() -> Result<(), String>
         let changed = subject.check()?;
         assert_ne!(answer(&changed)?["classification"], "exposed", "{mutation}");
         assert_ne!(
-            answer(&changed)?["ripr"]["propagate"]["state"],
+            answer(&changed)?["ripr"]["discriminate"]["state"],
             "yes",
             "{mutation}"
         );

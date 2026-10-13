@@ -286,6 +286,29 @@ fn doctor_exit_code_guide_distinguishes_analysis_and_source_build() -> Result<()
     Ok(())
 }
 
+/// #7450: the targeted-test workflow must produce cargo-mutants artifacts,
+/// not assume `target/ripr/workflow/cargo-mutants.json` already exists.
+#[test]
+fn targeted_test_workflow_names_the_cargo_mutants_producer() -> Result<(), String> {
+    let doc = include_str!("../../docs/TARGETED_TEST_WORKFLOW.md");
+    let help = rendered_help(&["calibrate", "cargo-mutants", "--help"])?;
+    for needle in [
+        "cargo install cargo-mutants --locked",
+        "cargo mutants",
+        "mutants.out",
+    ] {
+        assert_contains("docs/TARGETED_TEST_WORKFLOW.md", doc, needle)?;
+        assert_contains("ripr calibrate cargo-mutants --help", &help, needle)?;
+    }
+    if doc.contains("target/ripr/workflow/cargo-mutants.json") {
+        return Err(
+            "docs/TARGETED_TEST_WORKFLOW.md still points at a producer-less cargo-mutants.json path"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 /// Every flag a public guide passes to a `ripr` command must be an option that
 /// command's rendered help lists. The parser/help direction is already pinned
 /// (#2342); this pins the guide/help direction so a renamed or removed flag
@@ -317,6 +340,7 @@ const PORTABLE_TESTS: &[&str] = &[
     "exhaustive_help_keeps_the_same_roles_and_boundaries",
     "exhaustive_help_marks_non_public_rows_visibly",
     "help_screens_state_the_surfaces_the_parsers_accept",
+    "calibrate_help_names_how_to_produce_the_imported_artifacts",
     "outcome_help_matches_the_enforced_canonical_gap_contract",
     "agent_help_makes_repair_primary_without_removing_control_surfaces",
     "agent_repair_help_names_the_primary_transaction_and_its_limits",
@@ -352,7 +376,7 @@ fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), St
         .iter()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
-    if actual != expected || actual.len() != 16 {
+    if actual != expected || actual.len() != 17 {
         return Err(format!(
             "portable test inventory drifted: expected {expected:?}, got {actual:?}"
         ));
@@ -361,7 +385,7 @@ fn packaged_help_target_compiles_and_runs_every_portable_case() -> Result<(), St
     execute.arg("--test-threads=1").current_dir(&scratch.0);
     let result = require_success(run(execute)?, "extracted help execution")?;
     let text = String::from_utf8(result.stdout).map_err(|error| error.to_string())?;
-    if !text.contains("test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
+    if !text.contains("test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out")
     {
         return Err(format!(
             "extracted target did not run all 16 portable cases:\n{text}"

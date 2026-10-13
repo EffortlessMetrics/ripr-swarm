@@ -78,8 +78,9 @@ wrong in three shapes, each of which an earlier candidate credited:
 
 ## Behavior
 
-An `assert_eq!` confirms a `return_value` probe's discriminator when all of
-the following hold. Each rule fails closed: when ripr cannot establish it,
+An `assert_eq!` confirms a `return_value` probe's discriminator (or an
+`error_path` probe's, for a changed early `return Err(..)`; rule 3) when all
+of the following hold. Each rule fails closed: when ripr cannot establish it,
 the owner-specific pin is refused. Before either the pin or token matching
 can supply any return-value oracle credit, bare `assert_eq!` assertions pass
 the same execution/macro-context admission below. A refused context contributes
@@ -92,7 +93,8 @@ rule only for an assertion whose context was admitted.
 
 1. Oracle shape. The assertion is one plain `assert_eq!` (never
    `assert_ne!`, `debug_assert_eq!`, a path-qualified or crate-specific
-   `*_assert_eq!`) with an exact-value or whole-object oracle kind, on a line
+   `*_assert_eq!`) with an exact-value, whole-object or `exact_error_variant`
+   oracle kind, on a line
    inside the test's own body (or borrowed from a check helper under
    rule 7), in a test without `#[should_panic]`. The
    test's outer attributes admit only `#[test]` and the `serial_test` locks
@@ -110,9 +112,24 @@ rule only for an assertion whose context was admitted.
    attribute or derive macro could emit a module), and imports no glob except
    `super::*` into an enclosing in-file module that meets the same rule. The
    crate name is trusted: a manifest `package = ..` rename that points
-   `serial_test` at another crate is outside what source can show. Every other
-   attribute (`ignore`, async runtime tests, parameterizing macros such as
-   `rstest` or `test_case`) and every inner attribute refuses the pin. The
+   `serial_test` at another crate is outside what source can show. An
+   `async fn` test is admitted only under `#[tokio::test]` (#5040) (never a bare
+   `test` imported from tokio), which runs the body to completion
+   on a fresh runtime and fails the test when it panics, as libtest does for a
+   plain body. `tokio` must be the crate in the test's module under the same
+   rule as `serial_test` (a module using both crates' attributes must hold
+   for both at once), and its arguments may only pick the runtime:
+   `flavor`, `worker_threads` and `start_paused`, each `= literal`;
+   `crate = ..` swaps the runtime path and `unhandled_panic = ..` changes what
+   a panic does, so they refuse. An `async` owner's return value is then read
+   through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
+   3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
+   a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
+   does not compile and refuses.
+   An assertion inside an `async` block (`tokio::spawn(async { .. })`) keeps
+   the async-context refusal below. Every other attribute (`ignore`, other
+   async runtime tests, parameterizing macros such as `rstest` or
+   `test_case`) and every inner attribute refuses the pin. The
    parser must match the exact indexed function body and the assertion's
    line/text identity uniquely. Identical same-line invocations fail closed.
    The test itself must have item ancestry through modules/item lists to the
@@ -423,14 +440,33 @@ rule only for an assertion whose context was admitted.
    `match`, `&&`/`||` or skipping combinator, as for the tail), and
    the pinned value is exactly `None` (or an `Err(..)` call). bytesize's
    `as_whole_units` (`return None;` beside a `Some(self.0 / unit)` tail) is
-   the motivating shape. The same holds the other way round for a changed
+   the motivating shape. ripr files a changed `return Err(..);` as both a
+   `return_value` and an `error_path` probe; this gate admits both, and
+   their pin is an `exact_error_variant` assertion such as
+   `assert_eq!(check(20), Err(String::from("big")))` (RIPR-SPEC-0231
+   example 5). An `error_path` probe gets an established return path only
+   on an early `return Err(..)` or on the owner's tail, under the same
+   rules as a `return_value` probe there; on any other line (a `let`, a
+   `map_err(..)?` statement) it gets none. The expected `Err(..)`,
+   `Ok(..)`, `Some(..)` or `None` resolves in the test's scope, so a test
+   file that declares, binds or imports that name by name refuses the
+   pin. A test file's glob import does not: `use super::sub::*;` in a test
+   module is routine, and refusing on it withdrew credits the corpus pins
+   (`cell-0197-ok-return-path`). The same holds the other way round for a changed
    early `return Some(..);` (or `return Ok(..);`): every other `return` and
    the tail are exactly `None` (or one `Err(..)` call), and the pinned value
    must be `Some(..)` (or `Ok(..)`). A `?` builds only `None` (or `Err`), so
    it is not a second source here. Because the other exits are read by
    their spelling, an owner file that binds either name the gate relies on
    (`Some` and `None`, or `Ok` and `Err`) as a value (a `const`, `fn`, pattern binding or import, or a glob it
-   cannot see through) refuses this mirror case. The propagation witness of a changed
+   cannot see through) refuses an early `return Err(..);`, `return Some(..);`
+   or `return Ok(..);`. An early `return None;` keeps its earlier rule: it
+   does not read the binding scan, so an owner file's opaque glob does not
+   withdraw a pin it already earned.
+   A bare `None` (or `Ok`, `Err`, `Some`) in a `match` arm or `if let`
+   pattern names the variant, since a pattern may not shadow it (E0530), so
+   it is not such a binding unless the file carries a
+   `#![no_implicit_prelude]` attribute (a comment naming it does not count). The propagation witness of a changed
    `return Some(..);` (or `Ok(..)` / `Err(..)`) around a call-free payload
    completes only when the owner's return sink is that same constructor on
    the changed line, so an identical value returned elsewhere is a
@@ -827,7 +863,10 @@ snapshot; a strong related oracle never substitutes for a missing premise.
    before any favorable receipt is constructed. Independence alone does not
    establish the right discriminator: owner `7` with expected `8` fails on the
    current source and passes after changing the owner to `8`. That inverted
-   oracle supplies no new observation credit or complete propagation witness.
+   oracle supplies no new observation credit and no receipt-bound propagation
+   witness. (Since #6617 the constant tail `7` completes its own propagation
+   witness under "Constant owner tails"; that settles propagation only and
+   grants this oracle nothing.)
    Value equality is checked only for this already source-bound literal pair;
    it is not token matching or credit for an unrelated equal number. The
    local's only references are its declaration and the whole left comparison operand.
@@ -890,7 +929,7 @@ Acceptance/control matrix:
 | Subject | Runtime with answer 8 | Required static result |
 | --- | --- | --- |
 | Frozen helper-exact, unchanged source/patch/manifest/lock | one test fails | answer `exposed`, complete digest-valid owner/value witness, no gap |
-| Inverted literal oracle: current owner 7 with fixed expected 8 | one test passes (current owner 7 fails) | no favorable receipt, new observation credit or complete propagation witness |
+| Inverted literal oracle: current owner 7 with fixed expected 8 | one test passes (current owner 7 fails) | no favorable receipt, new observation credit or receipt-bound propagation witness |
 | Frozen helper-no-oracle | one test passes | retains `reachable_unrevealed` |
 | Frozen helper-self-expected | one test passes | no new receipt, retains non-exposed |
 | Frozen production-lookalike | one test fails | answer retains `reachable_unrevealed`; production subjects retained |
@@ -932,6 +971,36 @@ Implementation and validation obligations:
    helper-suite preservation, warm-cache dependency/source mutations, golden
    blast-radius and focused policy checks before a coherent implementation draft.
    General oracle-strength work (#6764/#6670) remains with its existing owners.
+
+### Constant owner tails (#6617)
+
+Rule 7a's literal adapter stays the only route for its fallible helper
+shape. Separately, `constant_tail_witness` in
+`classify/propagation_witness.rs` completes a DirectReturn witness for a
+`return_value` probe when all of these hold:
+
+- the owner's whole body is one tail expression with no statement;
+- that expression is built only from literals, unary and binary operators
+  and parentheses (`42`, `40 + 2`, `-(1 << 3)`, `"ripr"`);
+- its normalized text is the probe's changed expression, on the probe's
+  line;
+- the owner's local return-value sink has that same text on that line.
+
+Nothing sits between such an expression and the owner's return, so every
+value it produces is the value the owner returns. Without this witness, an
+exact pin such as `assert_eq!(answer(), 42)` on `fn answer() -> u32 { 40 + 2 }`
+read as a false `weakly_exposed` gap, because a literal has no semantic
+tokens to pair with its sink.
+
+A name, call, method, cast, closure, macro, block, branch or preceding
+statement anywhere in the body yields no witness (fail closed). The witness
+settles propagation only; relation, activation and oracle strength keep
+their own rules, so a weak oracle on a constant tail keeps its gap.
+`current_path_witness`, `semantic_tokens` and the rule-7a receipt are
+unchanged. Rule 7a's refusal controls therefore check that a refused receipt
+grants no observation credit (`discriminate` is not `yes`) instead of reading
+propagation, which the rule-7a fixture's constant `u8` tail now establishes
+on its own.
 
 ### Same-named module-level functions (#6544)
 
@@ -1469,7 +1538,8 @@ assertions. This repair shares the existing callback without that larger migrati
   (`an_early_return_is_pinned_when_it_is_the_only_source_of_its_value`,
   `an_early_err_return_needs_to_be_the_only_err_source`,
   `an_early_return_pin_admits_only_the_value_that_return_produces`,
-  `an_early_some_or_ok_return_is_pinned_beside_opposite_exits`);
+  `an_early_some_or_ok_return_is_pinned_beside_opposite_exits`,
+  `an_error_path_probe_is_pinned_like_a_changed_err_return`);
   literal `matches!` pins
   (`a_literal_matches_pattern_pins_the_owner_value`);
   inline constructor receivers
