@@ -47,17 +47,22 @@ document should branch on `exit`, not on free-text `stop_states`.
   `--diff` path, or a directory), the diff exceeded the hard
   `RIPR_MAX_DIFF_*` guards (`diff_scope_oversized` with no analysis run), the
   base ref could not be resolved, or the workspace root could not be
-  determined. A diff that is read but does not parse (no file headers or
-  hunks) is not an exit-2 error: `ripr check` exits `0` with the typed
-  outcome `unsupported_input` (the human header reads
-  `Analysis outcome: the input is not supported (analysis incomplete; unsupported_input).`). A run that analyzed only
+  determined. A read diff whose typed outcome is `unsupported_input`
+  (for example malformed input or a truncated declared hunk) exits `2`
+  after writing its original report, including retained advisory findings,
+  counts, input identity, limitations and recovery routes. JSON stdout remains
+  one ordinary check document, with `analysis_complete: false`; it is not
+  replaced by a refusal envelope. This changes the earlier unsupported-input
+  exit-`0` contract (#7440). Empty or whitespace-only input stays complete
+  `no_scope` with exit `0`; it does not establish analyzed behavior.
+  A run that analyzed only
   part of its scope also exits `0`, with `partial_with_limitations`: a diff
   over the smaller partial budget (its limitation is also named
   `diff_scope_oversized`), a changed Rust file the parser refused and read
   lexically, or a changed file whose language adapter is unavailable. The
   parser follows stable Rust, so a changed file using nightly-only syntax it
   cannot parse (guard patterns, never patterns) also makes the run partial.
-  With `--json`, every post-argv-parse `check` failure — the analysis errors
+  With `--json`, every pre-report, post-argv-parse `check` failure — the analysis errors
   above, an unreadable config or suppression policy, a git timeout, or any
   other failure the command can produce — also writes a machine-readable
   refusal document to stdout naming the failure; the exit stays `2` and the
@@ -173,13 +178,18 @@ tree; and a repair `--phase after` whose edit cage recorded a violation.
 any check fails (including missing language runtimes that are enabled in
 the effective configuration).
 
-The `Cargo.toml`, `cargo`, and `rustc` checks apply only when Rust is in
-scope for the root: Rust is enabled and either Rust markers (`Cargo.toml` or
-`.rs` files) are detected or no other language is detected or enabled. A
-Python-only or TypeScript-only root reports those checks as `skipped` with
-the reason and does not fail on them. A Cargo.toml at the selected root, an
+The `Cargo.toml` check applies only when Rust is in scope for the root:
+Rust is enabled and either a Cargo.toml is found at the selected root, an
+ancestor Cargo project bounded by git, or nested in this tree; Rust markers
+(`.rs` files) are detected at the selected root; or no other language is
+detected or enabled. A Python-only or TypeScript-only root with no nested
+or ancestor Cargo.toml reports `cargo_toml` as `skipped` with the reason.
+The analysis profile also skips `cargo` and `rustc`; `--profile source-build`
+still probes those tools and can exit `2` if they are missing.
+A Cargo.toml at the selected root, an
 ancestor Cargo project bounded by git, or a nested Cargo.toml in this tree
-(for example `rust/Cargo.toml` at a polyglot git root) passes `cargo_toml`.
+(for example `rust/Cargo.toml` at a polyglot git root that also has
+`package.json`) passes `cargo_toml`.
 A root with Rust sources but no Cargo.toml anywhere in that bounded search,
 and an empty root under the Rust-only default, still fail on a missing
 manifest.

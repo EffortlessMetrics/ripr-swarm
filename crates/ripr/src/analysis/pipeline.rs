@@ -1270,9 +1270,14 @@ fn run_pipeline_for_diff_text(
     })
 }
 
+/// Distinct finding lines on the candidate side. A base-side record (a
+/// deleted or moved line, #7587) sits at a projected coordinate, not a changed
+/// candidate line, so it is left out. Only preview adapters reach this count;
+/// the Rust adapter reports its own `candidate_line_count`.
 fn candidate_lines_from_findings(findings: &[Finding]) -> usize {
     findings
         .iter()
+        .filter(|finding| !finding.source_currentness.is_base_side())
         .map(|finding| {
             (
                 finding.probe.location.file.clone(),

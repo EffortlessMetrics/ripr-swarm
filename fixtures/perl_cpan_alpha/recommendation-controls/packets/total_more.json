@@ -1,0 +1,337 @@
+{
+  "schema_version": "ripr-perl-facts-v1",
+  "packet_id": "perl-facts:authored:direct-guidance:total_more",
+  "packet_status": "complete",
+  "packet_fingerprint": "sha256:21ebf114e9d77c84381413f4ce786b8874f6e7deaa3c05b895b655f9b5005d3b",
+  "producer": {
+    "name": "perl-lsp",
+    "version": "0.0.0-authored-not-exported",
+    "capabilities": [
+      "syntax",
+      "workspace",
+      "test_facts"
+    ]
+  },
+  "root": {
+    "repo_relative": ".",
+    "vcs_head": "abc123",
+    "path_style": "repo_relative"
+  },
+  "input": {
+    "base": "origin/main",
+    "head": "HEAD",
+    "diff_id": "sha256:fa1f8921019c02409e66503a1e2793545a7008795b689ef882c1292f4f7c07a3",
+    "requested_fact_classes": [
+      "owners",
+      "tests",
+      "oracles"
+    ]
+  },
+  "files": [
+    {
+      "file_id": "file:lib/Checkout.pm",
+      "path": "lib/Checkout.pm",
+      "role": [
+        "source"
+      ],
+      "digest": "sha256:3ecf5281f6498400c0438efc9198f1f4b63ea9a8b455cb1711a455fcabcd3983",
+      "package_names": [
+        "Checkout"
+      ],
+      "provenance_refs": [
+        "prov:file-index:source"
+      ]
+    },
+    {
+      "file_id": "file:t/load.t",
+      "path": "t/load.t",
+      "role": [
+        "test"
+      ],
+      "digest": "sha256:fe84244de1cb7d5dac53546c857caa737d2d2802910a50df1eb44e90361cecfb",
+      "package_names": [],
+      "provenance_refs": [
+        "prov:file-index:load"
+      ]
+    },
+    {
+      "file_id": "file:t/total_more.t",
+      "path": "t/total_more.t",
+      "role": [
+        "test"
+      ],
+      "digest": "sha256:ab15c80f5e6f915b53a45d96ee03f2680b26897927c432340ebc9ff6f820ea1e",
+      "package_names": [],
+      "provenance_refs": [
+        "prov:file-index:test"
+      ]
+    }
+  ],
+  "owners": [
+    {
+      "owner_id": "perl:lib/Checkout.pm::Checkout::total_cents",
+      "file_id": "file:lib/Checkout.pm",
+      "kind": "sub",
+      "package": "Checkout",
+      "name": "total_cents",
+      "range": {
+        "start_line": 5,
+        "start_column": 1,
+        "end_line": 8,
+        "end_column": 2
+      },
+      "confidence": "high",
+      "provenance_refs": [
+        "prov:syntax:total_cents"
+      ]
+    }
+  ],
+  "changes": [
+    {
+      "change_id": "change:lib/Checkout.pm:7:return",
+      "file_id": "file:lib/Checkout.pm",
+      "owner_id": "perl:lib/Checkout.pm::Checkout::total_cents",
+      "range": {
+        "start_line": 7,
+        "start_column": 1,
+        "end_line": 7,
+        "end_column": 37
+      },
+      "behavior_hint": "return_value",
+      "changed_text_digest": "discriminator:pin price times quantity",
+      "provenance_refs": [
+        "prov:diff:1"
+      ]
+    }
+  ],
+  "tests": [
+    {
+      "test_id": "test:t/load.t:can_total",
+      "file_id": "file:t/load.t",
+      "framework": "Test::More",
+      "name": "can_total",
+      "range": {
+        "start_line": 6,
+        "start_column": 1,
+        "end_line": 6,
+        "end_column": 35
+      },
+      "runner_hints": [
+        "prove"
+      ],
+      "confidence": "medium",
+      "provenance_refs": [
+        "prov:load"
+      ]
+    },
+    {
+      "test_id": "test:t/total_more.t:line_item_total",
+      "file_id": "file:t/total_more.t",
+      "framework": "Test::More",
+      "name": "line_item_total",
+      "range": {
+        "start_line": 6,
+        "start_column": 1,
+        "end_line": 9,
+        "end_column": 3
+      },
+      "runner_hints": [
+        "prove"
+      ],
+      "confidence": "medium",
+      "provenance_refs": [
+        "prov:test-discovery:1"
+      ]
+    }
+  ],
+  "oracles": [
+    {
+      "oracle_id": "oracle:t/total_more.t:8:is",
+      "test_id": "test:t/total_more.t:line_item_total",
+      "kind": "exact_return_assertion",
+      "strength": "strong_exact",
+      "target_owner_id": "perl:lib/Checkout.pm::Checkout::total_cents",
+      "expression": "is(Checkout::total_cents(125, 3), 375, 'price times quantity')",
+      "range": {
+        "start_line": 7,
+        "start_column": 1,
+        "end_line": 7,
+        "end_column": 68
+      },
+      "confidence": "medium",
+      "provenance_refs": [
+        "prov:oracle:1"
+      ]
+    }
+  ],
+  "relations": [
+    {
+      "relation_id": "relation:a-load",
+      "change_id": "change:lib/Checkout.pm:7:return",
+      "owner_id": "perl:lib/Checkout.pm::Checkout::total_cents",
+      "test_id": "test:t/load.t:can_total",
+      "oracle_id": null,
+      "relation_kind": "package_reference",
+      "reachability_hint": "reachable",
+      "confidence": "medium",
+      "provenance_refs": [
+        "prov:load"
+      ]
+    },
+    {
+      "relation_id": "relation:z-direct",
+      "change_id": "change:lib/Checkout.pm:7:return",
+      "owner_id": "perl:lib/Checkout.pm::Checkout::total_cents",
+      "test_id": "test:t/total_more.t:line_item_total",
+      "oracle_id": "oracle:t/total_more.t:8:is",
+      "relation_kind": "direct_owner_call",
+      "reachability_hint": "reachable",
+      "confidence": "medium",
+      "provenance_refs": [
+        "prov:relation:1"
+      ]
+    }
+  ],
+  "dynamic_boundaries": [],
+  "verify_commands": [
+    {
+      "command_id": "verify:t/load.t:prove",
+      "runner": "prove",
+      "argv": [
+        "prove",
+        "-l",
+        "t/load.t"
+      ],
+      "scope": "file",
+      "test_id": "test:t/load.t:can_total",
+      "confidence": "medium",
+      "preconditions": [
+        "prove_on_path"
+      ],
+      "provenance_refs": [
+        "prov:load"
+      ]
+    },
+    {
+      "command_id": "verify:t/total_more.t:prove",
+      "runner": "prove",
+      "argv": [
+        "prove",
+        "-l",
+        "t/total_more.t"
+      ],
+      "scope": "file",
+      "test_id": "test:t/total_more.t:line_item_total",
+      "confidence": "medium",
+      "preconditions": [
+        "prove_on_path"
+      ],
+      "provenance_refs": [
+        "prov:runner:1"
+      ]
+    }
+  ],
+  "limitations": [],
+  "provenance": [
+    {
+      "provenance_id": "prov:diff:1",
+      "source": "diff",
+      "file_id": "file:lib/Checkout.pm",
+      "range": {
+        "start_line": 7,
+        "start_column": 1,
+        "end_line": 7,
+        "end_column": 37
+      },
+      "confidence": "high"
+    },
+    {
+      "provenance_id": "prov:file-index:load",
+      "source": "workspace",
+      "file_id": "file:t/load.t",
+      "range": null,
+      "confidence": "high"
+    },
+    {
+      "provenance_id": "prov:file-index:source",
+      "source": "workspace",
+      "file_id": "file:lib/Checkout.pm",
+      "range": null,
+      "confidence": "high"
+    },
+    {
+      "provenance_id": "prov:file-index:test",
+      "source": "workspace",
+      "file_id": "file:t/total_more.t",
+      "range": null,
+      "confidence": "high"
+    },
+    {
+      "provenance_id": "prov:load",
+      "source": "test_discovery",
+      "file_id": "file:t/load.t",
+      "range": {
+        "start_line": 6,
+        "start_column": 1,
+        "end_line": 6,
+        "end_column": 35
+      },
+      "confidence": "medium"
+    },
+    {
+      "provenance_id": "prov:oracle:1",
+      "source": "oracle_extraction",
+      "file_id": "file:t/total_more.t",
+      "range": {
+        "start_line": 7,
+        "start_column": 1,
+        "end_line": 7,
+        "end_column": 68
+      },
+      "confidence": "medium"
+    },
+    {
+      "provenance_id": "prov:relation:1",
+      "source": "semantic",
+      "file_id": "file:t/total_more.t",
+      "range": {
+        "start_line": 7,
+        "start_column": 1,
+        "end_line": 7,
+        "end_column": 68
+      },
+      "confidence": "medium"
+    },
+    {
+      "provenance_id": "prov:runner:1",
+      "source": "runner_detection",
+      "file_id": "file:t/total_more.t",
+      "range": null,
+      "confidence": "medium"
+    },
+    {
+      "provenance_id": "prov:syntax:total_cents",
+      "source": "syntax",
+      "file_id": "file:lib/Checkout.pm",
+      "range": {
+        "start_line": 5,
+        "start_column": 1,
+        "end_line": 8,
+        "end_column": 2
+      },
+      "confidence": "high"
+    },
+    {
+      "provenance_id": "prov:test-discovery:1",
+      "source": "test_discovery",
+      "file_id": "file:t/total_more.t",
+      "range": {
+        "start_line": 6,
+        "start_column": 1,
+        "end_line": 9,
+        "end_column": 3
+      },
+      "confidence": "medium"
+    }
+  ]
+}

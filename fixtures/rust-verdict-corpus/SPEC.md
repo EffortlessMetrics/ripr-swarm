@@ -12,7 +12,8 @@ crates written to fill cells the real crates leave empty (`authored-pricing`,
 `authored-ledger` and `authored-config` for verdict and probe-family cells;
 `authored-accounts`, `authored-checkout`, `authored-tokens`, `authored-shop`,
 `authored-roles`, `authored-old-errors`, `authored-old-tool`,
-`authored-old-shell` and `authored-old-deps` for test shapes other RIPR specs
+`authored-old-shell`, `authored-old-deps` and `authored-namesakes`
+(same-named module-level functions) for test shapes other RIPR specs
 define, each case naming its specs in its reasoning; one
 `authored-specNNNN-<k>` crate per acceptance
 example of RIPR-SPEC-0225 to 0229 and of the reach, macro and miss-evidence

@@ -32,6 +32,9 @@ use std::time::{Duration, Instant};
 #[path = "common/mod.rs"]
 mod common;
 
+#[path = "support/mcp_attempt_inventory.rs"]
+mod attempt_inventory;
+
 use common::fixture_git::{fixture_git_ok, fixture_git_output};
 
 const PROTOCOL_VERSION: &str = "2025-11-25";
@@ -759,20 +762,24 @@ fn canonical_for_file(list: &Value, suffix: &str, context: &str) -> Result<Strin
 
 /// Run `ripr agent card --json` for one seam and parse its stdout card.
 fn cli_repair_card(root: &Path, seam_id: &str) -> Result<Value, String> {
+    cli_agent_document(root, "card", &["--seam-id", seam_id, "--json"])
+}
+
+fn cli_agent_document(root: &Path, command: &str, args: &[&str]) -> Result<Value, String> {
     let output = Command::new(env!("CARGO_BIN_EXE_ripr"))
-        .args(["agent", "card", "--root"])
+        .args(["agent", command, "--root"])
         .arg(root)
-        .args(["--seam-id", seam_id, "--json"])
+        .args(args)
         .output()
-        .map_err(|error| format!("spawn ripr agent card: {error}"))?;
+        .map_err(|error| format!("spawn ripr agent {command}: {error}"))?;
     if !output.status.success() {
         return Err(format!(
-            "ripr agent card failed for {seam_id}: {}",
+            "ripr agent {command} failed: {}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
     serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("agent card stdout is not JSON: {error}"))
+        .map_err(|error| format!("agent {command} stdout is not JSON: {error}"))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

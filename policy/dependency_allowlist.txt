@@ -23,6 +23,8 @@
 # ra_ap_syntax parsing in the facts index build; the parallel collect preserves
 # input order and byte-identical output. Add the Cargo dependency only in the
 # scoped parallelism PR.
+# home|production_configuration_identity|analysis|#7573 pins Cargo's canonical
+# safe home resolver to 0.5.12 for OS fallback and relative-home configuration.
 
 Cargo.lock|rust_workspace_lockfile|rust|Pinned Cargo dependency graph.
 Cargo.toml|rust_workspace_manifest|rust|Root Cargo workspace manifest.

@@ -58,6 +58,7 @@ use std::{
 };
 mod boundary;
 mod classify;
+mod deleted_lines;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
@@ -813,16 +814,20 @@ impl PythonAdapter {
             // (`from a import x` -> `from b import x`, or `old as x,` inside a
             // parenthesized import), so it is behavior of its own; any other
             // added import line is not.
+            // Every removed line of a replacement block shares the new-side
+            // line where the added run starts, so matching on that coordinate
+            // alone finds an old line only for the run's first added line
+            // (#7556, #7524 for TypeScript). Every old-line reader below takes
+            // it from one pairing: by position in an even block, by content in
+            // an uneven one, by coordinate where a removed line interrupts the
+            // run.
+            let counterparts = changed.aligned_counterparts();
             let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
                 line_is_in_ranges(added.line, import_ranges)
-                    && changed
-                        .removed_lines
-                        .iter()
-                        .find(|removed| removed.new_side_line == added.line)
-                        .is_none_or(|removed| {
-                            !line_is_in_ranges(removed.line, &old_import_ranges)
-                                && !is_python_import_line(&removed.text)
-                        })
+                    && counterparts.get(&added.line).is_none_or(|removed| {
+                        !line_is_in_ranges(removed.line, &old_import_ranges)
+                            && !is_python_import_line(&removed.text)
+                    })
             };
             let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
                 line_is_in_ranges(added.line, new_docstring_ranges)
@@ -833,12 +838,9 @@ impl PythonAdapter {
             // Header span per owner, computed once per changed file.
             let mut header_spans: BTreeMap<usize, Option<(usize, usize)>> = BTreeMap::new();
             for (added_index, added) in changed.added_lines.iter().enumerate() {
-                // Pair the in-place removed line (same new-side position) so the
-                // classifier can credit the changed-sink token on the DELTA only.
-                let old_line = changed
-                    .removed_lines
-                    .iter()
-                    .find(|removed| removed.new_side_line == added.line);
+                // Pair the replaced old line so the classifier can credit the
+                // changed-sink token on the DELTA only.
+                let old_line = counterparts.get(&added.line).copied();
                 // Git pairs a rewritten block line by line, so a comment, a
                 // lone bracket or an import that lands where old code stood is
                 // not the carrier of that code's change: the behavioral lines of
@@ -911,6 +913,25 @@ impl PythonAdapter {
                     findings.push(finding);
                 }
             }
+            // A deleted behavior line no added line pairs with is kept as
+            // base-side evidence on its owner, as the Rust adapter keeps it
+            // (#7587, RIPR-SPEC-0156).
+            let deleted = deleted_lines::deleted_line_findings(
+                changed,
+                &counterparts,
+                &deleted_lines::OldSideRanges {
+                    docstrings: &old_docstring_ranges,
+                    imports: &old_import_ranges,
+                },
+                workspace_read
+                    .sources
+                    .get(&changed.path)
+                    .map(String::as_str),
+                &all_owners,
+                &all_tests,
+                &findings,
+            );
+            findings.extend(deleted);
         }
         Ok(LanguageDiffResult {
             findings,
@@ -965,6 +986,9 @@ impl PythonAdapter {
 mod assertion_selection_tests;
 
 #[cfg(test)]
+mod deleted_lines_tests;
+
+#[cfg(test)]
 mod new_declaration_tests;
 
 #[cfg(test)]
@@ -972,6 +996,9 @@ mod python_tests;
 
 #[cfg(test)]
 mod reexport_tests;
+
+#[cfg(test)]
+mod replaced_block_tests;
 
 #[cfg(test)]
 mod tests;

@@ -226,6 +226,47 @@ impl McpServer {
         }
     }
 
+    async fn list_repair_attempts_tool(
+        &self,
+        arguments: Option<serde_json::Map<String, Value>>,
+        request_id: &RequestId,
+    ) -> Result<CallToolResponse, ErrorData> {
+        reject_unknown_arguments(&arguments, &["inventory_id", "offset", "limit"])?;
+        let requested = optional_string_argument(&arguments, "inventory_id")?;
+        let offset = optional_nonnegative_argument(&arguments, "offset")?.unwrap_or(0);
+        let limit = optional_positive_argument(&arguments, "limit")?;
+        // Pinned rmcp adds JSON-RPC fields and modern resultType after the
+        // tool envelope is measured. Reserve those, the delimiter, and the
+        // actual JSON-escaped ID so near-cap pages keep structuredContent.
+        let id_bytes = serde_json::to_vec(request_id)
+            .map_err(|_error| ErrorData::internal_error("serialize inventory request id", None))?
+            .len();
+        let max_envelope_bytes =
+            super::MAX_RESPONSE_BYTES.saturating_sub(id_bytes.saturating_add(128));
+        let root = self.analysis_root.clone();
+        let root_identity = self.root_identity.clone();
+        let result = blocking_repair_read(move || {
+            super::attempt_inventory::list_document(
+                root.as_deref(),
+                root_identity.as_deref(),
+                requested.as_deref(),
+                offset,
+                limit,
+                max_envelope_bytes,
+            )
+        })
+        .await;
+        match result {
+            Ok(document) => self.bounded_tool_result(
+                document,
+                super::attempt_inventory::SCHEMA_VERSION,
+                "serialize durable attempt inventory",
+                super::attempt_inventory::RECOVERY_TOO_LARGE,
+            ),
+            Err(failure) => self.typed_failure(failure, super::attempt_inventory::SCHEMA_VERSION),
+        }
+    }
+
     async fn get_repair_attempt_tool(
         &self,
         arguments: Option<serde_json::Map<String, Value>>,
@@ -563,7 +604,7 @@ impl ServerHandler for McpServer {
     async fn call_tool(
         &self,
         request: CallToolRequestParams,
-        _: RequestContext<RoleServer>,
+        context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, ErrorData> {
         match request.name.as_ref() {
             protocol::STATUS_TOOL_NAME => {
@@ -604,9 +645,13 @@ impl ServerHandler for McpServer {
             repair_card::GET_REPAIR_CARD_TOOL_NAME => {
                 self.get_repair_card_tool(request.arguments).await
             }
+            super::attempt_inventory::TOOL_NAME => {
+                self.list_repair_attempts_tool(request.arguments, &context.id)
+                    .await
+            }
             _other => Err(ErrorData::new(
                 ErrorCode::METHOD_NOT_FOUND,
-                "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card",
+                "unknown tool; available: ripr_workspace_status, ripr_refresh, ripr_list_gaps, ripr_get_gap, ripr_prepare_repair, ripr_get_repair_attempt, ripr_get_receipt_status, ripr_get_repair_card, ripr_list_repair_attempts",
                 Some(serde_json::json!({
                     "available": [
                         protocol::STATUS_TOOL_NAME,
@@ -617,6 +662,7 @@ impl ServerHandler for McpServer {
                         protocol::GET_REPAIR_ATTEMPT_TOOL_NAME,
                         protocol::GET_RECEIPT_STATUS_TOOL_NAME,
                         repair_card::GET_REPAIR_CARD_TOOL_NAME,
+                        super::attempt_inventory::TOOL_NAME,
                     ]
                 })),
             )),

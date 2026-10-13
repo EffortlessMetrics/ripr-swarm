@@ -103,6 +103,7 @@ pub(super) fn publish_classified_generation(
     record_limit: usize,
     byte_ceiling: usize,
 ) -> Result<CacheStoreStatus, String> {
+    key.require_reusable()?;
     #[cfg(test)]
     {
         reset_classified_seam_clone_count();
