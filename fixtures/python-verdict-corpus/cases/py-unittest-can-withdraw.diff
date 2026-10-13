@@ -1,0 +1,12 @@
+diff --git a/accounts/ledger.py b/accounts/ledger.py
+--- a/accounts/ledger.py
++++ b/accounts/ledger.py
+@@ -19,7 +19,7 @@ class Account:
+         self.balance_cents += amount_cents
+ 
+     def can_withdraw(self, amount_cents):
+-        return amount_cents <= self.balance_cents
++        return amount_cents < self.balance_cents
+ 
+     def withdraw(self, amount_cents):
+         if amount_cents > self.balance_cents:

@@ -1,0 +1,13 @@
+diff --git a/lib/Shop/Pricing.pm b/lib/Shop/Pricing.pm
+index 2bfb0c0..275a4f9 100644
+--- a/lib/Shop/Pricing.pm
++++ b/lib/Shop/Pricing.pm
+@@ -75,7 +75,7 @@ sub bundle_price {
+ sub clamp_qty {
+     my ($qty) = @_;
+     return 1 if $qty < 1;
+-    return 99 if $qty > 99;
++    return 99 if 99 < $qty;
+     return $qty;
+ }
+ 

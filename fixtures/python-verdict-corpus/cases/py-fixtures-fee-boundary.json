@@ -1,0 +1,52 @@
+{
+  "case_id": "py-fixtures-fee-boundary",
+  "subject_id": "authored-py-pytest-fixtures",
+  "diff": "cases/py-fixtures-fee-boundary.diff",
+  "anchor": {
+    "file": "shop/__init__.py",
+    "line": 17
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "pytest_parametrized_fixture_boundary_pinned",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return 0 if amount > 100 else 5",
+        "mutated_line": "return 0 if amount > 100 else 5",
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_shop.py::test_handling_fee_boundary[at]",
+        "equivalence_review": "not equivalent: 100 pays the 5 fee"
+      },
+      {
+        "replacement": "return 0 if amount > 98 else 5",
+        "mutated_line": "return 0 if amount > 98 else 5",
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_shop.py::test_handling_fee_boundary[below]",
+        "equivalence_review": "not equivalent: 99 pays no fee"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The parametrized conftest fixture fee_case feeds (99, 5) and (100, 0) to test_handling_fee_boundary, so each boundary shift fails one id. ripr reports static_unknown with unresolved_pytest_fixture, an acceptable limit.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

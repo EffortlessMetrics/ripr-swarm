@@ -1,0 +1,29 @@
+{
+  "subject_id": "authored-py-hypothesis-stats",
+  "origin": "authored",
+  "version_label": "authored@127309619",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "pyproject.toml",
+      "sha256": "d72a073027f6ec940107398e03e60c27d8c096a188a38d5062879df68a9ad44e"
+    },
+    {
+      "path": "stats/__init__.py",
+      "sha256": "011f20deae05f8802d9c7d2f2b2ff80ac5ad6921e9e47f03d68a83776bb47748"
+    },
+    {
+      "path": "tests/__init__.py",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "tests/conftest.py",
+      "sha256": "77be4d98395481ee773755ba6a7fb10a5b4aaa4f720c1bc8f26d40deec572b7a"
+    },
+    {
+      "path": "tests/test_stats.py",
+      "sha256": "31dc727ee259cd25f25b1205a14f9a986b87a7ec1992d3bd251ee8c9c4efe10d"
+    }
+  ]
+}

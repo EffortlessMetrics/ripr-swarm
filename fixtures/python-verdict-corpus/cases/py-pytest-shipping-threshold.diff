@@ -1,0 +1,12 @@
+diff --git a/pricing/core.py b/pricing/core.py
+--- a/pricing/core.py
++++ b/pricing/core.py
+@@ -6,7 +6,7 @@ FLAT_SHIPPING_CENTS = 499
+ 
+ def shipping_fee(subtotal_cents):
+     """Orders at or above the free-shipping threshold ship free."""
+-    if subtotal_cents >= FREE_SHIPPING_CENTS:
++    if subtotal_cents > FREE_SHIPPING_CENTS - 1:
+         return 0
+     return FLAT_SHIPPING_CENTS
+ 

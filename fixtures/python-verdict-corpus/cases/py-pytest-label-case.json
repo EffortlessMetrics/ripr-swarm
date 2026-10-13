@@ -1,0 +1,44 @@
+{
+  "case_id": "py-pytest-label-case",
+  "subject_id": "authored-py-pytest-pricing",
+  "diff": "cases/py-pytest-label-case.diff",
+  "anchor": {
+    "file": "pricing/core.py",
+    "line": 57
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "return_value",
+  "test_shape": "pytest_not_equal_only",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return tier.title()",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the gold label is \"Gold\" instead of \"GOLD\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "test_label_is_not_the_raw_tier asserts `!= \"gold\"`, a relational_check / weak oracle (RIPR-SPEC-0028 as amended by RIPR-SPEC-0238); title() returns \"Gold\", which still differs. ripr's weakly_exposed is the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

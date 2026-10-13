@@ -1,0 +1,6 @@
+use spec0229_6::{Kind, f};
+
+#[test]
+fn a_maps_to_b() {
+    assert_eq!(f(Kind::A), Kind::B);
+}
