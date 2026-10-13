@@ -13161,6 +13161,11 @@ id = "RIPR-SPEC-0214"
 name = "MCP repair transaction projection"
 spec = "docs/specs/RIPR-SPEC-0214-mcp-repair-transaction-projection.md"
 tests = [
+  "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_discovery_empty_store_and_argument_refusals",
+  "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_refuses_lossy_directory_identity_and_recovers",
+  "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_real_durable_attempt_edit_refresh_and_corruption_recovery",
+  "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_byte_pages_preserve_every_invalid_identity",
+  "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_near_cap_keeps_structured_pages_for_small_and_escaped_ids",
   "crates/ripr/src/mcp/repair.rs::tests::complete_route_creates_one_replay_resistant_attempt",
   "crates/ripr/src/mcp/repair.rs::tests::missing_producer_facts_never_create_a_misleading_attempt",
   "crates/ripr/src/mcp/repair.rs::tests::stale_snapshot_and_unknown_items_fail_closed",
@@ -13212,6 +13217,7 @@ tests = [
 ]
 code = [
   "crates/ripr/src/mcp/repair.rs",
+  "crates/ripr/src/mcp/attempt_inventory.rs",
   "crates/ripr/src/app/repair_attempt/mod.rs::repair_attempt_head_reading",
   "crates/ripr/src/app/agent_status.rs::selected_attempt_status_reading",
   "crates/ripr/src/mcp/gaps.rs",
