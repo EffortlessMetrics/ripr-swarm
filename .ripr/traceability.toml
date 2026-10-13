@@ -13750,6 +13750,7 @@ tests = [
   "xtask/src/work_portfolio.rs::tests::work_portfolio_ranking_is_explicit_ordered_factors_without_hidden_score",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_serialized_ranking_key_reproduces_order",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_ranking_key_preserves_legacy_and_rejects_malformed_rows",
+  "xtask/src/work_portfolio.rs::tests::work_portfolio_ranking_key_preserves_first_issue_risk_lookup",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_explain_view_matches_snapshot_and_fails_closed",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_markdown_derives_from_same_dto_without_strengthening",
   "xtask/src/work_portfolio.rs::tests::work_portfolio_markdown_renders_lists_as_plain_markdown_not_debug",

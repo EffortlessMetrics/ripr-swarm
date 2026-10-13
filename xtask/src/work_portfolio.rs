@@ -2487,12 +2487,20 @@ pub(crate) fn compile_work_portfolio(
         };
         candidate.ranking_factors =
             build_ranking_factors(issue, open_prs.first().copied(), &candidate);
-        candidate.ranking_key = Some(ranking_tuple(
-            &candidate,
-            issue.honesty_risk.as_deref(),
-            !open_prs.is_empty(),
-        ));
         candidates.push(candidate);
+    }
+    let rank_key = |candidate: &WorkCandidateV1| {
+        let risk = issues
+            .iter()
+            .find(|issue| issue.number == candidate.issue)
+            .and_then(|issue| issue.honesty_risk.as_deref());
+        let has_open_pr = pull_requests
+            .iter()
+            .any(|pr| pr.state == "open" && pr.linked_issues.contains(&candidate.issue));
+        ranking_tuple(candidate, risk, has_open_pr)
+    };
+    for candidate in &mut candidates {
+        candidate.ranking_key = Some(rank_key(candidate));
     }
     candidates.sort_by(|left, right| {
         left.ranking_key
@@ -3921,6 +3929,33 @@ mod tests {
         let empty_json: Value = serde_json::from_str(&work_portfolio_json(&empty)?)
             .map_err(|error| error.to_string())?;
         assert_eq!(empty_json["candidates"], serde_json::json!([]));
+        Ok(())
+    }
+
+    #[test]
+    fn work_portfolio_ranking_key_preserves_first_issue_risk_lookup() -> Result<(), String> {
+        let mut captured =
+            load_work_captured_dir(&workspace_path("fixtures/work_portfolio/corpus"))?;
+        let issues = &mut captured.issues.as_mut().ok_or("issues missing")?.issues;
+        let mut duplicate = issues
+            .iter()
+            .find(|issue| issue.number == 9105)
+            .ok_or("issue 9105 missing")?
+            .clone();
+        duplicate.honesty_risk = Some("high".to_string());
+        issues.push(duplicate);
+        let snapshot = compile_work_portfolio(&captured, None)?;
+        let rows: Vec<_> = snapshot
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.issue == 9105)
+            .collect();
+        assert_eq!(rows.len(), 2);
+        // The pre-existing sorter resolves risk by the first matching issue,
+        // even when captured input repeats an issue with conflicting metadata.
+        for row in rows {
+            assert_eq!(row.ranking_key, Some([1, 1, 0, 1, 0, 2, 0, 0]));
+        }
         Ok(())
     }
 
