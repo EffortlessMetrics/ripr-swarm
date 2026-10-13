@@ -292,6 +292,20 @@ mod tests {
             report.corpus_key.is_none(),
             "unknown configuration cannot stamp comparable corpus provenance"
         );
+        // Inventory stores the corpus fingerprint mapping even when classified
+        // publication is refused. The warmed current-key route must refuse it
+        // just like the initial content-derived route above.
+        match super::super::super::seam_inventory::workspace_cache_key_at_with_config(
+            &root, &config,
+        ) {
+            Err(reason) => assert!(reason.contains("cargo_configuration_identity_unavailable")),
+            Ok(_) => {
+                return Err(
+                    "unavailable configuration returned a warmed comparable current key"
+                        .to_string(),
+                );
+            }
+        }
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 }
