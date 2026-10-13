@@ -1330,16 +1330,64 @@ fn declared_enum_variants(
             || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
             || parent_glob_outside_this_file(&node)
-            || (ast::MacroCall::can_cast(node.kind())
-                && node.parent().is_some_and(|parent| {
-                    ast::SourceFile::can_cast(parent.kind())
-                        || ast::ItemList::can_cast(parent.kind())
-                }))
+            || may_expand_to_items(&node)
         {
             return None;
         }
     }
     found
+}
+
+/// Whether `node` is a macro call whose unread expansion may declare items:
+/// one at file or module item level, or one in statement position in a
+/// block (`shadow!();`, which may expand to `struct Kind;` scoped to the
+/// match) other than a standard expression or assertion macro (#7686
+/// review). A macro in expression position expands to an expression.
+fn may_expand_to_items(node: &ra_ap_syntax::SyntaxNode) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    let Some(call) = ast::MacroCall::cast(node.clone()) else {
+        return false;
+    };
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    if ast::SourceFile::can_cast(parent.kind()) || ast::ItemList::can_cast(parent.kind()) {
+        return true;
+    }
+    let statement = ast::MacroExpr::can_cast(parent.kind())
+        && parent.parent().is_some_and(|holder| {
+            ast::ExprStmt::can_cast(holder.kind()) || ast::StmtList::can_cast(holder.kind())
+        })
+        || ast::MacroStmts::can_cast(parent.kind());
+    let name = call
+        .path()
+        .and_then(|path| path.segment())
+        .map(|segment| segment.syntax().text().to_string())
+        .unwrap_or_default();
+    statement
+        && !matches!(
+            name.as_str(),
+            "assert"
+                | "assert_eq"
+                | "assert_ne"
+                | "debug_assert"
+                | "debug_assert_eq"
+                | "debug_assert_ne"
+                | "print"
+                | "println"
+                | "eprint"
+                | "eprintln"
+                | "panic"
+                | "unreachable"
+                | "todo"
+                | "unimplemented"
+                | "write"
+                | "writeln"
+                | "dbg"
+                | "format"
+                | "matches"
+                | "vec"
+        )
 }
 
 /// #7675: the variants of the enum `type_name` when the owner's file binds
@@ -1348,17 +1396,23 @@ fn declared_enum_variants(
 /// (`use kinds::Kind;` after `mod kinds;`, `use crate::a::b::Kind;`,
 /// `use self::..`/`use super::..`), and that file declares the enum
 /// (`declared_enum_variants`). An owner item or item macro that may define
-/// `Kind`, an inline or `cfg`-duplicated module step, a chain that does not
-/// start at `src/lib.rs` or `src/main.rs`, a re-export, an external or
-/// package-named root, an `include!` edge, or any unresolved edge reads
-/// nothing, so `Kind::A` stays unreadable.
+/// `Kind`, an inline or `cfg`-duplicated module step, a `cfg`-gated import
+/// or step, a chain that does not start at `src/lib.rs` or `src/main.rs`, a
+/// re-export, an external or package-named root, an `include!` edge, or any
+/// unresolved edge reads nothing, so `Kind::A` stays unreadable.
 fn imported_enum_variants(
     index: &crate::analysis::rust_index::RustIndex,
     owner_file: &std::path::Path,
     type_name: &str,
 ) -> Option<std::collections::BTreeSet<String>> {
     use crate::analysis::facts::SourceRoleProvenanceEdgeKind;
-    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
+    // A `cfg` or `cfg_attr` on the import or a module step may compile it
+    // out, leaving `Kind` to a glob or another item (#7686 review).
+    let cfg_gated = |item: &dyn HasAttrs| {
+        item.attrs()
+            .any(|attr| attr.syntax().text().to_string().contains("cfg"))
+    };
     let files = index.files();
     let owner = files.get(owner_file)?;
     let parse = crate::analysis::syntax::parse_clean_source_file(&owner.source)?;
@@ -1373,11 +1427,7 @@ fn imported_enum_variants(
             || ast::Enum::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
-            || (ast::MacroCall::can_cast(node.kind())
-                && node.parent().is_some_and(|parent| {
-                    ast::SourceFile::can_cast(parent.kind())
-                        || ast::ItemList::can_cast(parent.kind())
-                }))
+            || may_expand_to_items(&node)
         {
             return None;
         }
@@ -1400,7 +1450,10 @@ fn imported_enum_variants(
             if import.alias.as_deref() == Some(type_name)
                 || (import.alias.is_none() && last == type_name)
             {
-                bindings.push((top_level && import.alias.is_none(), import.path));
+                bindings.push((
+                    top_level && import.alias.is_none() && !cfg_gated(&item),
+                    import.path,
+                ));
             }
         }
     }
@@ -1428,17 +1481,29 @@ fn imported_enum_variants(
     // An out-of-line `mod` inside an inline module records no edge, so a
     // chain can start below the crate root; `crate::` and `super::` are
     // read only when it starts at `src/lib.rs` or `src/main.rs`. A file
-    // shared by several crates (`tests/common/mod.rs`) never does.
+    // shared by several crates (`tests/common/mod.rs`) never does. A module
+    // file can carry that name below inline modules (`mod outer { mod src
+    // { mod main; } }` places `src/outer/src/main.rs`), so no workspace file
+    // may declare a `mod` of the root's stem or use `#[path]` (#7686 review).
     let root = owner_chain
         .first()
         .map_or(owner_file, |edge| edge.parent.as_path());
-    let crate_root = root
-        .file_name()
-        .is_some_and(|name| name == "lib.rs" || name == "main.rs")
+    let stem = root.file_stem().and_then(|stem| stem.to_str());
+    let crate_root = matches!(stem, Some("lib" | "main"))
+        && root.extension().is_some_and(|extension| extension == "rs")
         && root
             .parent()
             .and_then(|dir| dir.file_name())
-            .is_some_and(|dir| dir == "src");
+            .is_some_and(|dir| dir == "src")
+        && !files.values().any(|facts| {
+            let masked = mask_comments_and_strings(&facts.source);
+            masked.contains("#[path")
+                || stem.is_some_and(|stem| {
+                    whole_word_offsets(&masked, stem)
+                        .into_iter()
+                        .any(|offset| masked[..offset].trim_end().ends_with("mod"))
+                })
+        });
     if !crate_root {
         return None;
     }
@@ -1463,7 +1528,7 @@ fn imported_enum_variants(
             .filter_map(ast::Module::cast)
             .filter(|module| module.name().is_some_and(|name| name.text() == *step));
         let only = modules.next()?;
-        if only.item_list().is_some() || modules.next().is_some() {
+        if only.item_list().is_some() || cfg_gated(&only) || modules.next().is_some() {
             return None;
         }
         let mut children = files.iter().filter_map(|(child, facts)| {

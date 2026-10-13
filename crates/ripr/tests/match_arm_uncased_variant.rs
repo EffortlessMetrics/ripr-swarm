@@ -3,9 +3,10 @@
 //!
 //! `Kind::A` may name a variant or an associated constant, which a pattern
 //! compares by value. Arm selection reads it as a variant only when the
-//! owner's file declares `enum Kind` with that variant, so examples 4 and 6
-//! name their missing discriminators with single-letter variants, and the
-//! same crate with `Kind` imported from another file names none.
+//! owner's file declares `enum Kind` with that variant, or imports `Kind`
+//! from the one module file that does (#7675). So examples 4 and 6 name
+//! their missing discriminators with single-letter variants, and a `Kind`
+//! that may be a struct with constants names none.
 
 use ripr::{CheckInput, CheckOutput, Mode, OutputFormat, ProbeFamily, check_workspace};
 use std::path::PathBuf;
@@ -388,6 +389,61 @@ fn a_crate_path_from_below_an_inline_module_names_no_arm() -> Result<(), String>
     let test = "use uncased_variant::{kinds::Kind, outer::mid::x::f};\n\n#[test]\nfn kind_a_is_one() {\n    assert_eq!(f(Kind::A), 1);\n}\n";
     assert_eq!(
         changed_wildcard(lib, &files, test, "src/outer/mid/x.rs")?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_cfg_gated_enum_import_names_no_arm() -> Result<(), String> {
+    // #7686 review: the enum import is compiled out, so `Kind` comes from
+    // the glob of a module holding a struct with constants.
+    let lib = format!(
+        "#[cfg(any())]\nmod kinds;\n#[cfg(any())]\npub use kinds::Kind;\nmod constants;\npub use constants::*;\n\n{}",
+        body(WILDCARD_ARMS, "i32")
+    );
+    let files = [("src/kinds.rs", ENUM), ("src/constants.rs", CONSTANTS)];
+    assert_eq!(
+        changed_wildcard(&lib, &files, WILDCARD_TEST, "src/lib.rs")?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_crate_root_named_file_below_inline_modules_names_no_arm() -> Result<(), String> {
+    // #7686 review: `src/outer/src/main.rs` is a module below inline
+    // modules, not a crate root, so `crate::kinds` is `src/kinds.rs`
+    // (constants), not the enum beside it.
+    let owner = format!(
+        "use crate::kinds::Kind;\nmod kinds;\n\n{}",
+        body(WILDCARD_ARMS, "i32")
+    );
+    let files = [
+        ("src/kinds.rs", CONSTANTS),
+        ("src/outer/src/kinds.rs", ENUM),
+        ("src/outer/src/main.rs", owner.as_str()),
+        ("src/outer/src/main/kinds.rs", ENUM),
+    ];
+    let lib =
+        "pub mod kinds;\npub mod outer {\n    pub mod src {\n        pub mod main;\n    }\n}\n";
+    let test = "use uncased_variant::{kinds::Kind, outer::src::main::f};\n\n#[test]\nfn kind_a_is_one() {\n    assert_eq!(f(Kind::A), 1);\n}\n";
+    assert_eq!(
+        changed_wildcard(lib, &files, test, "src/outer/src/main.rs")?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_statement_macro_that_may_shadow_the_type_names_no_arm() -> Result<(), String> {
+    // #7686 review: `shadow!()` declares a local `Kind` whose `A` holds the
+    // enum's `B`, so `f(Kind::A)` takes the changed wildcard arm.
+    let lib = "mod kinds;\npub use kinds::Kind;\n\nmacro_rules! shadow {\n    () => {\n        struct Kind;\n        impl Kind {\n            const A: crate::kinds::Kind = crate::kinds::Kind::B;\n        }\n    };\n}\n\npub fn f(k: Kind) -> i32 {\n    shadow!();\n    match k {\n        Kind::A => 1,\n        _ => 2,\n    }\n}\n";
+    let kinds = ENUM.replace("PartialEq)", "PartialEq, Eq)");
+    let test = "use uncased_variant::{Kind, f};\n\n#[test]\nfn shadowed_a_is_two() {\n    assert_eq!(f(Kind::A), 2);\n}\n";
+    assert_eq!(
+        changed_wildcard(lib, &[("src/kinds.rs", kinds.as_str())], test, "src/lib.rs")?,
         Vec::<String>::new()
     );
     Ok(())
