@@ -28,13 +28,13 @@ pub(super) enum ChangedEffect {
     /// `param.write_text(...)` / `param.write_bytes(...)` on an owner parameter.
     FileWrite { receiver: String },
     /// `param.method(...)`, or `param(...)` with an empty `method`, on an
-    /// owner parameter, observable through a mock. `infects_every_input`
-    /// records whether the changed arguments differ from the old ones
-    /// whatever the inputs, so a pinned expectation fails on any call.
+    /// owner parameter, observable through a mock. `pinnable_rewrite`
+    /// records whether the argument rewrite is one a pinned expectation
+    /// reads as a different call (`arguments_rewritten_visibly`).
     CallOnParameter {
         receiver: String,
         method: String,
-        infects_every_input: bool,
+        pinnable_rewrite: bool,
     },
     /// `self.attr = ...` (or an augmented assignment) in a method owner.
     SelfField { attr: String },
@@ -90,10 +90,19 @@ impl ChangedEffect {
                     _ => Self::CallOnParameter {
                         receiver,
                         method: method.to_string(),
-                        infects_every_input: old_line_text
-                            .and_then(|old| statement_call(old.trim()))
-                            .filter(|(old_callee, _)| *old_callee == callee)
-                            .is_none_or(|(_, old_args)| arguments_always_differ(old_args, args)),
+                        // No old line: the call is new. An old line that is
+                        // not a call statement (a comment, an assignment)
+                        // cannot be compared, so it fails closed. A call to
+                        // another callee never made the pinned call.
+                        pinnable_rewrite: match old_line_text {
+                            None => true,
+                            Some(old) => {
+                                statement_call(old.trim()).is_some_and(|(old_callee, old_args)| {
+                                    old_callee != callee
+                                        || arguments_rewritten_visibly(old_args, args)
+                                })
+                            }
+                        },
                     },
                 })
             }
@@ -108,7 +117,7 @@ impl ChangedEffect {
         matches!(
             self,
             Self::CallOnParameter {
-                infects_every_input: true,
+                pinnable_rewrite: true,
                 ..
             }
         )
@@ -148,7 +157,7 @@ impl EffectReads {
             ChangedEffect::CallOnParameter {
                 receiver,
                 method,
-                infects_every_input: true,
+                pinnable_rewrite: true,
             } => {
                 let mut mocks = owner_call_argument_locals(test, owner, receiver);
                 // An owner that hands the parameter back makes its result the
@@ -476,13 +485,16 @@ fn split_top_level<'a>(text: &'a str, separator: &str) -> Vec<&'a str> {
     parts
 }
 
-/// Whether a call's new argument list differs from its old one at the test's
-/// input, so an expectation pinning the call's arguments fails (#7586). A
-/// changed argument count or keyword set always does, and so does a
-/// rewritten argument, except one that wraps the old value in a call or
-/// unwraps it: `abs(n)`, `int(n)` or `round(n)` can return `n` unchanged at
-/// the input the test passes, so the pinned expectation still holds.
-fn arguments_always_differ(old: &str, new: &str) -> bool {
+/// Whether a pinned expectation reads the new argument list as a different
+/// call (#7586). A changed argument count or keyword set does. So does a
+/// rewritten argument that does not keep the old one inside it (`'hi'` to
+/// `'welcome'`), or keeps it only under literal arithmetic (`n + 1`,
+/// `n * 100`). Any other rewrite that keeps the old argument inside it, such
+/// as `abs(n)`, `max(n, 0)`, `n or 0` or `(n)`, can return `n` unchanged
+/// at the input the test passes, so the pinned expectation may still hold.
+/// Literal arithmetic is credited as RIPR-SPEC-0238 Decision 15 records:
+/// `n * 100` equals `n` only at 0.
+fn arguments_rewritten_visibly(old: &str, new: &str) -> bool {
     let (old, new) = (split_top_level_args(old), split_top_level_args(new));
     if old
         .iter()
@@ -532,24 +544,92 @@ fn arguments_always_differ(old: &str, new: &str) -> bool {
                 .map(|(_, value)| value)
                 .zip(new_keywords.iter().map(|(_, value)| value)),
         )
-        .any(|(old, new)| old != new && !wraps(old, new) && !wraps(new, old))
+        .any(|(old, new)| old.trim() != new.trim() && visible_rewrite(old, new))
 }
 
-/// Whether `outer` is one call whose only argument is `inner`: `abs(n)`
-/// around `n`.
-fn wraps(inner: &str, outer: &str) -> bool {
-    let outer = outer.trim();
-    let Some(open) = outer.find('(') else {
-        return false;
-    };
-    let callee = outer[..open].trim_end();
-    !callee.is_empty()
-        && callee
+/// Whether one rewritten argument reads as a different value: neither side
+/// keeps the other inside it, or one side is the other under literal
+/// arithmetic.
+fn visible_rewrite(old: &str, new: &str) -> bool {
+    let (old, new) = (old.trim(), new.trim());
+    if is_literal(old) && is_literal(new) {
+        // `2` and `2.0` are the same value.
+        let number = |text: &str| text.replace('_', "").parse::<f64>().ok();
+        number(old)
+            .zip(number(new))
+            .is_none_or(|(old, new)| old != new)
+    } else if contains_expression(new, old) {
+        literal_arithmetic(old, new)
+    } else if contains_expression(old, new) {
+        literal_arithmetic(new, old)
+    } else {
+        true
+    }
+}
+
+/// A plain numeric or string literal: `2`, `2.5`, `'hi'`.
+fn is_literal(text: &str) -> bool {
+    let text = text.trim();
+    let digits = text.strip_prefix('-').unwrap_or(text);
+    (digits.starts_with(|ch: char| ch.is_ascii_digit())
+        && digits
             .chars()
-            .all(|ch| ch == '.' || is_python_identifier_char(ch))
-        && super::no_behavior::matching_call_paren(outer, open).is_some_and(|close| {
-            close + 1 == outer.len() && outer[open + 1..close].trim() == inner.trim()
+            .all(|ch| ch.is_ascii_digit() || matches!(ch, '.' | '_')))
+        || text.chars().next().is_some_and(|quote| {
+            matches!(quote, '\'' | '"')
+                && text.len() >= 2
+                && text.ends_with(quote)
+                && !text[1..text.len() - 1].contains([quote, '\\'])
         })
+}
+
+/// Whether `outer` holds `inner` as an identifier-bounded piece of code.
+fn contains_expression(outer: &str, inner: &str) -> bool {
+    !inner.is_empty()
+        && outer.match_indices(inner).any(|(start, _)| {
+            let end = start + inner.len();
+            !outer[..start]
+                .chars()
+                .next_back()
+                .is_some_and(|ch| ch == '.' || is_python_identifier_char(ch))
+                && !outer[end..]
+                    .chars()
+                    .next()
+                    .is_some_and(is_python_identifier_char)
+                && !python_text_hides_code(outer, start)
+        })
+}
+
+/// Whether `outer` is `base <op> literal` or `literal <op> base` for an
+/// arithmetic operator and a numeric or string literal, with `base` one
+/// operand that binds tighter than any operator: `int(text) + 1`.
+fn literal_arithmetic(base: &str, outer: &str) -> bool {
+    const OPERATORS: [&str; 7] = ["**", "//", "+", "-", "*", "/", "%"];
+    let atomic = !base.is_empty()
+        && [
+            " ", "+", "-", "*", "/", "%", "<", ">", "=", "|", "&", "^", ",", "~",
+        ]
+        .iter()
+        .all(|operator| split_top_level(base, operator).len() == 1);
+    let operator_then_literal = |rest: &str| {
+        let rest = rest.trim();
+        OPERATORS.iter().any(|operator| {
+            rest.strip_prefix(operator).is_some_and(|literal| {
+                !literal.trim_start().starts_with(['*', '/']) && is_literal(literal)
+            })
+        })
+    };
+    let literal_then_operator = |rest: &str| {
+        let rest = rest.trim();
+        OPERATORS.iter().any(|operator| {
+            rest.strip_suffix(operator).is_some_and(|literal| {
+                !literal.trim_end().ends_with(['*', '/']) && is_literal(literal)
+            })
+        })
+    };
+    atomic
+        && (outer.strip_prefix(base).is_some_and(operator_then_literal)
+            || outer.strip_suffix(base).is_some_and(literal_then_operator))
 }
 
 /// Live, identifier-bounded occurrences of `needle`, as (before, after) text.

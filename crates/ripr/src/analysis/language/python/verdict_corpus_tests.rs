@@ -1272,7 +1272,8 @@ fn a_mock_passed_for_a_called_parameter_pins_its_arguments() -> Result<(), Strin
 #[test]
 fn a_wrapped_argument_does_not_credit_a_mocked_collaborator() -> Result<(), String> {
     // The gate applies to `p.m(...)` too: `abs(user)` may hand the mock the
-    // same value, while a scaled or added argument differs at a nonzero input.
+    // same value, while a scaled or added argument differs at a nonzero input
+    // (RIPR-SPEC-0238 Decision 15).
     let class = |new: &str, old: &str| {
         classify(
             &format!("def notify(client, user):\n    client.send({new})\n"),
@@ -1284,10 +1285,60 @@ fn a_wrapped_argument_does_not_credit_a_mocked_collaborator() -> Result<(), Stri
             ),
         )
     };
-    assert_eq!(class("abs(user)", "user")?, ExposureClass::WeaklyExposed);
-    assert_eq!(class("user", "int(user)")?, ExposureClass::WeaklyExposed);
-    assert_eq!(class("user * 100", "user")?, ExposureClass::Exposed);
-    assert_eq!(class("user, 1", "user")?, ExposureClass::Exposed);
-    assert_eq!(class("abs(user), 1", "user, 2")?, ExposureClass::Exposed);
+    // Any rewrite that keeps the old argument inside it, other than literal
+    // arithmetic, can return it unchanged at the test's input.
+    for (new, old) in [
+        ("abs(user)", "user"),
+        ("user", "int(user)"),
+        ("abs(abs(user))", "user"),
+        ("float(abs(user))", "user"),
+        ("max(user, 0)", "user"),
+        ("user or 0", "user"),
+        ("(user)", "user"),
+        ("user.real", "user"),
+        ("2.0", "2"),
+        ("*users", "user"),
+    ] {
+        assert_eq!(
+            class(new, old)?,
+            ExposureClass::WeaklyExposed,
+            "{old} -> {new}"
+        );
+    }
+    for (new, old) in [
+        ("user * 100", "user"),
+        ("user + 1", "user"),
+        ("1 + user", "user"),
+        ("user", "user - 1"),
+        ("user, 1", "user"),
+        ("abs(user), 1", "user, 2"),
+        ("2.5", "2"),
+        ("'welcome'", "'hi'"),
+        ("other", "user"),
+        ("user, tag=1", "user"),
+        ("user, tag=1", "user, kind=1"),
+    ] {
+        assert_eq!(class(new, old)?, ExposureClass::Exposed, "{old} -> {new}");
+    }
+    // An old line that is not a call statement cannot be compared: it fails
+    // closed rather than reading the new call as a change.
+    for old in [
+        "    client.send(user)  # notify",
+        "    sent = client.send(user)",
+    ] {
+        assert_eq!(
+            classify(
+                "def notify(client, user):\n    client.send(abs(user))\n",
+                2,
+                old,
+                &test_module(
+                    "from unittest.mock import Mock\n\nfrom src.shop import notify",
+                    "def test_notify():\n    client = Mock()\n    notify(client, 3)\n    client.send.assert_called_once_with(3)\n",
+                ),
+            )?,
+            ExposureClass::WeaklyExposed,
+            "{old}"
+        );
+    }
     Ok(())
 }

@@ -559,16 +559,25 @@ mutant calibrates the rule; ripr reports only the static shape.
       the same method, so none of them credits. A changed `p(...)` that
       calls the parameter itself is read the same way, through
       `L.assert_called_once_with(`. When the owner's only `return` is its
-      last statement, `return p`, the owner is undecorated and not a
-      generator, and `p` is never rebound, a local the test binds once to
-      the owner's result is the mock it passed as well (#7586).
-      Either form credits only when the change alters the call's arguments
-      at the test's input: a changed argument count or keyword set does,
-      and so does any rewritten argument except one that wraps the old
-      value in a call or unwraps it (`n` to `abs(n)`, `int(n)` to `n`). A
-      wrapping call can return its argument unchanged at the input the
-      test passes (`abs(1) == 1`), so the pinned expectation may still
-      hold.
+      last statement, `return p`, the owner is undecorated, synchronous
+      and not a generator, `p` is never rebound, and the body has no
+      `lambda`, `for` or `:=` that could rebind it, a local the test binds
+      once to the owner's result is the mock it passed as well, for both
+      `p(...)` and `p.m(...)` (#7586).
+      Either form credits only when the pinned expectation reads the new
+      arguments as a different call. A changed argument count or keyword
+      set does. So does a rewritten argument when neither side keeps the
+      other inside it (`'hi'` to `'welcome'`, two different literals), or
+      when one side is the other, a single operand, under literal
+      arithmetic (`n + 1`, `n * 100`). Any other rewrite that keeps the old
+      argument inside it (`abs(n)`, `max(n, 0)`, `n or 0`, `(n)`, `n.real`,
+      or `int(n)` to `n`) can return it unchanged at the input the test
+      passes (`abs(1) == 1`), so the pinned expectation may still hold and
+      the change does not credit. A starred argument on either side
+      cannot be aligned and does not credit. An old line that is not one call
+      statement (it carries a comment or assigns the result) cannot be
+      compared and does not credit; a call to another callee, or a line
+      with no old counterpart, does.
     - `self.a = ...` or an augmented assignment in a method owner:
       `L.a`, where `L` is a local bound to the owner's class whose
       method the test calls (rule 9's bound receiver).
@@ -768,15 +777,18 @@ rejected alternative. Any can be reversed later without touching the rest.
     #7586): rule 17 reads a changed `p(...)` like `p.m(...)`, and reaches
     the mock through the owner's result when the owner returns `p`. The
     corpus case `py-spec0233-ex09-mock-arg` fails at runtime on the
-    handed 2 while ripr read it `weakly_exposed`. A wrapped or unwrapped
-    argument does not credit on either form: `py-spec0233-ex09-mock-sign`
-    wraps the argument in `abs`, and the test's positive input hands the
-    mock the same value. Rejected: promote `mock_expectation` to strong
+    handed 2 while ripr read it `weakly_exposed`. A rewrite that keeps the
+    old argument inside it, other than literal arithmetic, does not credit
+    on either form: `py-spec0233-ex09-mock-sign` wraps the argument in
+    `abs`, and the test's positive input hands the mock the same value. Rejected: promote `mock_expectation` to strong
     for exact arguments, because it would credit the `abs` case too.
     Rejected: require every argument rewrite to change the value at every
     input, because a scaled argument (`amount * 100`, case
     `py-unittest-transfer-notify`) differs at every input except 0 and
-    its test fails at runtime.
+    its test fails at runtime. Literal arithmetic is therefore credited,
+    accepting the miss at the one input where it is the identity.
+    Rejected: gate only a single wrapping call, because `max(n, 0)`,
+    `n or 0` and nested wrappers return `n` unchanged just as often.
 
 ## Required Evidence
 
@@ -1119,9 +1131,11 @@ and the test is `tests/test_subject.py`, which imports each owner from
   the returned and the passed-local mock, the `abs` wrap, an owner that
   returns another value, rebinds the parameter or has a second `return`,
   and the argument-free and last-call-only expectations. A second test
-  pins the wrapped-argument gate on `p.m(...)`: a wrapped or unwrapped
-  argument does not credit, and a scaled argument or an added argument
-  does.
+  pins the gate on `p.m(...)`: nested and multi-argument wrappers, `or`,
+  parentheses, an attribute read, an equal numeric literal and an old line
+  with a comment or an assignment, and a starred argument do not credit;
+  literal arithmetic on either side, an added argument, a changed keyword
+  set, different literals and another name do.
 
 ## Implementation Mapping
 
@@ -1147,7 +1161,7 @@ and the test is `tests/test_subject.py`, which imports each owner from
   changed call term and the guarded-return callee (rule 20).
 - `crates/ripr/src/analysis/language/python/effect_alignment.rs`: effect
   channels (rule 17), including the called-parameter form and the
-  wrapped-argument gate, and self-computed expected values (rule 18).
+  argument-rewrite gate, and self-computed expected values (rule 18).
   `term_activation.rs` records the parameter an owner returns.
 - `crates/ripr/src/analysis/language/python/hypothesis.rs` and
   `owners_tests.rs`: generated inputs and `@example` rows (rule 19).
