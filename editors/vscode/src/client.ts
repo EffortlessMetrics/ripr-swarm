@@ -14,7 +14,7 @@ import { missingServerRemedy, requestedServerVersion, resolveServer, ResolveFail
 import { setupFilePath, hasUnsafeShellMetacharacter, redirectTargetMatches, redirectStaysInWorkspace, serverShellArg, normalizePath, sameWorkspaceRoot, rootMatchesWorkspace, objectField, stringField, boundedStringField, arrayLength, numberFieldValue, TEST_RUNNER_VERIFY_COMMAND_PREFIXES, testRunnerCommandLeavesScope } from './packetJson';
 import { riprDocumentSelectorsForWorkspace, extensionVersion, traceFromConfig, currentWorkspaceRootState, workspaceRootStateNoWorkspace, workspaceRootStateLabel, workspaceRootStateDetail, workspaceRootPickItems } from './workspaceHelpers';
 import type { WorkspaceRootPickItem } from './workspaceHelpers';
-import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction } from './statusRender';
+import { statusText, statusSummary, statusBarColors, canProjectFirstUsefulAction, shouldShowMainStatusBar } from './statusRender';
 import type { RiprStatusKind, RiprStatusState, FirstUsefulActionStatus, StatusBarColors } from './statusRender';
 import {
   validateFirstPrPacket,
@@ -1791,7 +1791,11 @@ export class RiprClientController {
     const colors = statusBarColors(this.status.kind);
     this.statusBar.backgroundColor = colors?.background;
     this.statusBar.color = colors?.foreground;
-    this.statusBar.show();
+    if (shouldShowMainStatusBar(this.status.kind)) {
+      this.statusBar.show();
+    } else {
+      this.statusBar.hide();
+    }
   }
 
   private async showStatusAsync(): Promise<void> {

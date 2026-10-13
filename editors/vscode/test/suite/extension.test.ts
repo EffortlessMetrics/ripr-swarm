@@ -19,6 +19,7 @@ import {
   messageClaimsHungServer
 } from '../../src/cockpitRequest';
 import { compatibleLspEvidence } from './testCompatibility';
+import { shouldShowMainStatusBar, type RiprStatusKind } from '../../src/statusRender';
 
 suite('Extension Smoke', () => {
   suiteSetup(async function (this: Mocha.Context) {
@@ -3735,6 +3736,11 @@ suite('Extension Smoke', () => {
       await context.controller.start();
 
       assert.ok(context.status.text.includes('ripr: disabled'));
+      assert.strictEqual(
+        context.statusVisible(),
+        false,
+        'disabled configuration must hide the main status-bar item'
+      );
       assert.ok(String(context.status.tooltip).includes('Set ripr.enabled to true'));
       assert.ok(String(context.status.tooltip).includes('Workspace:'));
       assert.ok(String(context.status.tooltip).includes('Server: not resolved'));
@@ -3747,12 +3753,49 @@ suite('Extension Smoke', () => {
     }
   });
 
+  test('status bar hides when disabled and reappears after re-enable', async () => {
+    const context = createControllerTestContext({});
+    try {
+      await context.controller.start();
+      assert.strictEqual(context.statusVisible(), true, 'enabled start keeps the main item visible');
+      assert.ok(!context.status.text.includes('ripr: disabled'));
+      assert.strictEqual(context.client.startCalls, 1);
+
+      context.setEnabled(false);
+      await context.controller.restart();
+      assert.strictEqual(
+        context.statusVisible(),
+        false,
+        'setting ripr.enabled to false must hide the main item'
+      );
+      assert.ok(context.status.text.includes('ripr: disabled'));
+      assert.strictEqual(context.client.startCalls, 1, 'disabled restart must not start a second server');
+
+      context.setEnabled(true);
+      await context.controller.restart();
+      assert.strictEqual(
+        context.statusVisible(),
+        true,
+        're-enabling ripr.enabled must show the main item again'
+      );
+      assert.ok(!context.status.text.includes('ripr: disabled'));
+      assert.strictEqual(context.client.startCalls, 2, 're-enable restart must start the server again');
+    } finally {
+      await context.dispose();
+    }
+  });
+
   test('status bar reports missing workspace without starting server', async () => {
     const context = createControllerTestContext({ workspaceRoot: null });
     try {
       await context.controller.start();
 
       assert.ok(context.status.text.includes('ripr: open workspace'));
+      assert.strictEqual(
+        context.statusVisible(),
+        true,
+        'noWorkspace stays visible as an actionable next-step cue'
+      );
       assert.ok(String(context.status.tooltip).includes('needs a workspace folder'));
       assert.ok(String(context.status.tooltip).includes('Workspace: not open'));
       assert.ok(String(context.status.tooltip).includes('Config: ripr.toml (no workspace'));
@@ -3761,6 +3804,38 @@ suite('Extension Smoke', () => {
       assert.strictEqual(context.client.startCalls, 0);
     } finally {
       await context.dispose();
+    }
+  });
+
+  test('main status bar visibility hides only disabled and keeps noWorkspace', () => {
+    const expectedVisible: Record<RiprStatusKind, boolean> = {
+      disabled: false,
+      noWorkspace: true,
+      workspaceUntrusted: true,
+      workspaceAmbiguous: true,
+      resolvingServer: true,
+      serverUnavailable: true,
+      starting: true,
+      analysisQueued: true,
+      ready: true,
+      analysisRunning: true,
+      analysisReady: true,
+      analysisLimited: true,
+      gapActionable: true,
+      gapNoAction: true,
+      gapArtifactWarning: true,
+      noActionableSeams: true,
+      noEnabledLanguages: true,
+      stale: true,
+      analysisFailed: true,
+      stopped: true
+    };
+    for (const [kind, visible] of Object.entries(expectedVisible) as Array<[RiprStatusKind, boolean]>) {
+      assert.strictEqual(
+        shouldShowMainStatusBar(kind),
+        visible,
+        `${kind} should ${visible ? 'show' : 'hide'} the main status-bar item`
+      );
     }
   });
 
@@ -5449,6 +5524,18 @@ function createControllerTestContext(options: ControllerTestOptions) {
   const outputLines: string[] = [];
   const output = fakeOutputChannel(outputLines);
   const status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 99);
+  let statusVisible = false;
+  const nativeShow = status.show.bind(status);
+  const nativeHide = status.hide.bind(status);
+  status.show = () => {
+    statusVisible = true;
+    nativeShow();
+  };
+  status.hide = () => {
+    statusVisible = false;
+    nativeHide();
+  };
+  let enabled = options.enabled ?? true;
   const runRiprCalls: Array<{ command: string; args: string[]; cwd: string }> = [];
   const watcherPatterns: vscode.GlobPattern[] = [];
   const clipboardWrites: string[] = [];
@@ -5463,7 +5550,7 @@ function createControllerTestContext(options: ControllerTestOptions) {
     getConfig: (resource) => {
       configResources.push(resource);
       return {
-        enabled: options.enabled ?? true,
+        enabled,
         serverPath: '',
         serverArgs: ['lsp', '--stdio'],
         autoDownload: false,
@@ -5525,6 +5612,10 @@ function createControllerTestContext(options: ControllerTestOptions) {
     client,
     controller,
     status,
+    statusVisible: () => statusVisible,
+    setEnabled: (value: boolean) => {
+      enabled = value;
+    },
     runRiprCalls,
     clipboardWrites,
     watcherPatterns,
