@@ -136,6 +136,8 @@ enum ExitJson {
         completed: i32,
         could_not_complete: i32,
         findings_including_exposed: i32,
+        unsupported_input: i32,
+        partial_with_limitations: i32,
     },
     GateEvaluate {
         completed: i32,
@@ -190,6 +192,8 @@ fn exit_json(contract: CommandExitContract) -> ExitJson {
             completed: EXIT_COMPLETED,
             could_not_complete: EXIT_COULD_NOT_COMPLETE,
             findings_including_exposed: EXIT_COMPLETED,
+            unsupported_input: EXIT_COULD_NOT_COMPLETE,
+            partial_with_limitations: EXIT_COMPLETED,
         },
         CommandExitContract::GateEvaluate => ExitJson::GateEvaluate {
             completed: EXIT_COMPLETED,
@@ -939,6 +943,8 @@ mod tests {
         if check["findings_including_exposed"] != EXIT_COMPLETED
             || check["completed"] != EXIT_COMPLETED
             || check["could_not_complete"] != EXIT_COULD_NOT_COMPLETE
+            || check["unsupported_input"] != EXIT_COULD_NOT_COMPLETE
+            || check["partial_with_limitations"] != EXIT_COMPLETED
         {
             return Err(format!("cmd:check codes contradict CommandError: {check}"));
         }
