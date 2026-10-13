@@ -952,6 +952,18 @@ fn result_value(body: &str) -> Option<ResultValue> {
     let qualifier = input_qualifier(body).unwrap_or_default().to_string();
     let payload = match payload {
         None => Vec::new(),
+        // A CamelCase path with arguments may be a function call (`Make(1)`)
+        // whose value need not keep its arguments, so only the prelude's
+        // `Some`, `Ok` and `Err` constructors read as payload variants.
+        Some(_)
+            if !(matches!(name, "Some" | "Ok" | "Err")
+                && matches!(
+                    qualifier.rsplit("::").next().unwrap_or_default(),
+                    "" | "Option" | "Result"
+                )) =>
+        {
+            return None;
+        }
         Some(inner) => split_top_level_arguments(inner)?
             .into_iter()
             .map(literal_value)
@@ -2515,6 +2527,11 @@ mod tests {
                 .is_some_and(|(l, r)| provably_unequal(&l, &r))
         );
         assert_eq!(some("Some(x)"), None);
+        // A CamelCase call with literal arguments is not a variant: `Make(1)`
+        // and `Make(2)` may return the same value (#5992 review).
+        assert_eq!(some("Make(1)"), None);
+        assert_eq!(some("Kind::Make(2)"), None);
+        assert!(some("Option::Some(1)").is_some());
         assert_eq!(some("{ 1 }"), None);
         // A `match` the call may skip credits nothing.
         let skipped = "pub fn f(n: u32) -> &'static str {\n    if n == 7 { return \"seven\"; }\n    match n {\n        0 => \"zero\",\n        1..=9 => \"digit\",\n        _ => \"many\",\n    }\n}\n";

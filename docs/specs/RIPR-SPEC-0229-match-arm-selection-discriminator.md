@@ -229,17 +229,20 @@ Implemented:
   the other is found with no guarded arm in between, and the two arms'
   results are provably unequal values (#5992). The original `match` is
   read as the current one with this arm's old pattern restored, so the
-  credit says the test notices this line reverting. That is narrower than
-  the Behavior above when one hunk also changes or removes a later arm:
-  the later arm is read as it stands now. The credit needs the diff's old
+  credit says the test notices this line reverting. When the diff adds or
+  removes more than one arm line in the owner, the other arms may not be
+  the original ones, so the old text is marked and the changed pattern
+  reads as unknown for credit. The credit needs the diff's old
   text to be this arm with the same body (a head cut anchored on the
   unchanged body, or a whole old line with an equal body; an uncut old
   head arrives joined to the next line of the old file, so it never
   passes for a cut), and
   the `match` to be the owner body's tail expression, so an arm's result
   is the return value. Results compare as literals of one kind, or as
-  variants under the same qualifier by name and literal payload, so
-  `Kind::Alpha` and an imported `Alpha` never read as unequal.
+  variants under the same qualifier by name, so `Kind::Alpha` and an
+  imported `Alpha` never read as unequal. Only `Some`, `Ok` and `Err`
+  compare by literal payload: another CamelCase path with arguments may be
+  a function call (`Make(1)`) whose value need not keep its arguments.
   A pattern whose alternatives were only reordered (`"CA" | "MX"` to
   `"MX" | "CA"`) takes the same inputs and reads as unchanged.
   A changed arm's original is the adjacent removed arm with the same

@@ -188,6 +188,19 @@ pub(crate) fn probes_for_file_with_relations(
                         None => line,
                     }
                 });
+                let before = before.map(|before| {
+                    if shape.family == ProbeFamily::MatchArm {
+                        mark_when_another_arm_changed(
+                            before,
+                            &canonical_text,
+                            shape.start_line,
+                            changed,
+                            index,
+                        )
+                    } else {
+                        before
+                    }
+                });
                 let probe = build_probe(
                     &build_context,
                     &canonical_line,
@@ -201,8 +214,16 @@ pub(crate) fn probes_for_file_with_relations(
         }
         if !parser_shapes.is_empty() {
             for shape in parser_shapes {
-                let before = removed_before(added.new_side_line, text, changed)
-                    .map(|line| arm_before(&shape.family, line, changed, index));
+                let before = removed_before(added.new_side_line, text, changed).map(|line| {
+                    arm_before(
+                        &shape.family,
+                        line,
+                        text,
+                        added.new_side_line,
+                        changed,
+                        index,
+                    )
+                });
                 probes.push(SeededProbe::from_probe(build_probe(
                     &build_context,
                     added,
@@ -229,7 +250,7 @@ pub(crate) fn probes_for_file_with_relations(
         }
         for family in families {
             let before = removed_before(added.new_side_line, text, changed)
-                .map(|line| arm_before(&family, line, changed, index));
+                .map(|line| arm_before(&family, line, text, added.new_side_line, changed, index));
             probes.push(SeededProbe::from_probe(build_probe(
                 &build_context,
                 added,
@@ -1073,14 +1094,54 @@ fn removed_before(
 fn arm_before(
     family: &ProbeFamily,
     line: String,
+    after: &str,
+    new_line: usize,
     changed: &ChangedFile,
     index: &RustIndex,
 ) -> String {
     if *family == ProbeFamily::MatchArm {
-        with_old_arm_body(&line, changed, index)
+        let before = with_old_arm_body(&line, changed, index);
+        mark_when_another_arm_changed(before, after, new_line, changed, index)
     } else {
         line
     }
+}
+
+/// An arm whose pattern changed reads the original `match` as the current
+/// one with only its own old pattern restored. When the diff also changes
+/// another arm line of the same function, the arms around it may not be
+/// the original ones, so the old text is marked: it never reads as this
+/// arm with its body unchanged (#5992 review).
+fn mark_when_another_arm_changed(
+    before: String,
+    after: &str,
+    new_line: usize,
+    changed: &ChangedFile,
+    index: &RustIndex,
+) -> String {
+    let pattern = |text: &str| text.split("=>").next().map(str::trim).map(str::to_string);
+    if pattern(&before) == pattern(after) || !another_arm_changed(new_line, changed, index) {
+        return before;
+    }
+    format!("{} /* another arm changed */", before.trim_end())
+}
+
+/// Whether the diff adds, or removes, more than one arm line (a line with
+/// `=>`) inside the function that owns `new_line`.
+fn another_arm_changed(new_line: usize, changed: &ChangedFile, index: &RustIndex) -> bool {
+    let Some(owner) = find_owner_function(index, &changed.path, new_line) else {
+        return false;
+    };
+    let arm_lines = |lines: &[ChangedLine]| {
+        lines
+            .iter()
+            .filter(|line| {
+                (owner.start_line..=owner.end_line).contains(&line.new_side_line)
+                    && line.text.contains("=>")
+            })
+            .count()
+    };
+    arm_lines(&changed.added_lines) > 1 || arm_lines(&changed.removed_lines) > 1
 }
 
 /// A whole old arm head that ends at `=>` (`0 =>`), joined with the line
@@ -1485,6 +1546,85 @@ mod tests {
         assert_eq!(
             arm.and_then(|probe| probe.before.as_deref()),
             Some("1..=9 => \"many\",")
+        );
+    }
+
+    /// #5992 review: when the diff changes another arm of the same
+    /// function, a changed pattern's old text is marked so arm selection
+    /// never reads the rest of the current `match` as the original one.
+    #[test]
+    fn a_changed_pattern_is_marked_when_another_arm_changed() {
+        let path = PathBuf::from("src/lib.rs");
+        let line = |line: usize, text: &str| ChangedLine {
+            line,
+            new_side_line: line,
+            text: text.to_string(),
+        };
+        let function = FunctionFact {
+            id: SymbolId("f".to_string()),
+            name: "f".to_string(),
+            file: path.clone(),
+            start_line: 1,
+            end_line: 7,
+            body: String::new().into(),
+            calls: vec![],
+            returns: vec![],
+            literals: vec![],
+            source_role: FunctionSourceRole::Production,
+            attrs: vec![],
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        };
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            files: BTreeMap::from([(
+                path.clone(),
+                FileFacts {
+                    path: path.clone(),
+                    functions: vec![function],
+                    ..FileFacts::default()
+                },
+            )]),
+            ..Default::default()
+        });
+        // Old `9 =>` / `1..=8 =>` become new `0 =>` / `1..=9 =>`.
+        let both = ChangedFile {
+            path: path.clone(),
+            added_lines: vec![
+                line(3, "        0 => \"zero\","),
+                line(4, "        1..=9 => \"digit\","),
+            ],
+            removed_lines: vec![
+                line(3, "        9 => \"digit\","),
+                line(4, "        1..=8 => \"digit\","),
+            ],
+        };
+        assert_eq!(
+            mark_when_another_arm_changed("1..=8 =>".into(), "1..=9 =>", 4, &both, &index),
+            "1..=8 => /* another arm changed */"
+        );
+        // A body-only change keeps its old text.
+        assert_eq!(
+            mark_when_another_arm_changed(
+                "1..=9 => \"old\",".into(),
+                "1..=9 => \"digit\",",
+                4,
+                &both,
+                &index
+            ),
+            "1..=9 => \"old\","
+        );
+        // One changed arm keeps its old text.
+        let one = ChangedFile {
+            path,
+            added_lines: vec![line(4, "        1..=9 => \"digit\",")],
+            removed_lines: vec![line(4, "        1..=8 => \"digit\",")],
+        };
+        assert_eq!(
+            mark_when_another_arm_changed("1..=8 =>".into(), "1..=9 =>", 4, &one, &index),
+            "1..=8 =>"
         );
     }
 
