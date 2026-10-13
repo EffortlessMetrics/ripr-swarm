@@ -1698,6 +1698,18 @@ fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
         );
         assert!(weight_admitted(&tests).is_empty(), "{tests}");
     }
+    // A bare `#[case]` that no `#[rstest]` consumes is an unknown attribute
+    // macro, which may emit a `tokio` or `serial_test` module.
+    for attributes in [
+        "use other::case;\n#[case]\nfn decoy() {}\n#[tokio::test]",
+        "#[case]\nfn decoy() {}\n#[tokio::test]",
+        "#[case::row]\nstruct Decoy;\n#[tokio::test]\n#[serial_test::serial]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
     // A sync `fn` under `#[tokio::test]` does not compile.
     let tests =
         "use demo::weight;\n#[tokio::test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
@@ -1708,6 +1720,167 @@ fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
         "the sync tokio test must be indexed"
     );
     assert!(weight_admitted(tests).is_empty(), "{tests}");
+}
+
+#[test]
+fn an_rstest_case_table_with_literal_rows_runs_the_body_once_per_row() {
+    let case_test = |prelude: &str, attributes: &str, parameters: &str, name: &str| {
+        format!(
+            "use demo::weight;\n{prelude}\n{attributes}\nfn {name}({parameters}) {{\n    assert_eq!(weight(x), expected);\n}}\n"
+        )
+    };
+    let cases = "#[case] x: u32, #[case] expected: u32";
+    for (prelude, attributes) in [
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]\n#[case(5, 15)]",
+        ),
+        (
+            "use rstest::{fixture, rstest};",
+            "#[rstest]\n#[case::four(4, 12)]",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]\n#[case(5, 15)]\n#[serial_test::serial]",
+        ),
+    ] {
+        let tests = case_test(prelude, attributes, cases, "weighs");
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    // A parameterless `#[rstest]` runs its body once, as `#[test]` does.
+    let tests = "use demo::weight;\nuse rstest::rstest;\n#[rstest]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
+    assert_eq!(weight_admitted(tests).len(), 1, "{tests}");
+    for (prelude, attributes, parameters, name) in [
+        // A row value that is not a literal may compute the owner itself.
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, weight(4))]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 3 * 4)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4)]",
+            cases,
+            "weighs",
+        ),
+        // A row above `#[rstest]` is not consumed by it.
+        (
+            "use rstest::rstest;",
+            "#[case(4, 12)]\n#[rstest]",
+            cases,
+            "weighs",
+        ),
+        // Arguments, fixtures, value matrices and other attributes.
+        (
+            "use rstest::rstest;",
+            "#[rstest(foo)]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, \"12\")]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            "#[case] ref x: u32, #[case] expected: u32",
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            "#[case] x: u32, expected: u32",
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]",
+            "#[values(4, 5)] x: u32, #[case] expected: u32",
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]",
+            "x: u32, expected: u32",
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]\n#[ignore]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]\n#[timeout(std::time::Duration::from_secs(1))]",
+            cases,
+            "weighs",
+        ),
+        // `rstest` is not the crate, or the bare name is another macro.
+        (
+            "use other::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::*;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use rstest::rstest;\nuse rstest::fixture as case;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "mod rstest { pub use other::rstest; }\nuse rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        (
+            "use other as rstest;\nuse rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "weighs",
+        ),
+        // A test named after a checked crate expands to a module that
+        // shadows it.
+        (
+            "use rstest::rstest;",
+            "#[rstest]\n#[case(4, 12)]",
+            cases,
+            "rstest",
+        ),
+        (
+            "use rstest::rstest;\nuse serial_test::serial;",
+            "#[rstest]\n#[case(4, 12)]\n#[serial]",
+            cases,
+            "serial_test",
+        ),
+    ] {
+        let tests = case_test(prelude, attributes, parameters, name);
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
 }
 
 #[test]

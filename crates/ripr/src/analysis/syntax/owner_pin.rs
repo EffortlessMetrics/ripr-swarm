@@ -1282,7 +1282,7 @@ fn is_test_function(function: &ast::Fn) -> bool {
         attr.path()
             .and_then(|path| path.segment())
             .and_then(|segment| segment.name_ref())
-            .is_some_and(|name| name.text() == "test")
+            .is_some_and(|name| name.text() == "test" || name.text() == "rstest")
     })
 }
 
@@ -1790,6 +1790,9 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if is_tokio_test_path(&path) {
         return tokio_test_runs_body(attr, test);
     }
+    if let Some(kind) = rstest_attribute(&path, &module) {
+        return rstest_runs_body(attr, kind, test, &module);
+    }
     let admitted = if path.contains("::") {
         serial_test_lock_leaf(&path).is_some() && serial_test_path_is_the_crate(&module)
     } else {
@@ -1870,6 +1873,240 @@ fn tokio_test_arguments_pick_runtime(attr: &ast::Attr) -> bool {
         })
 }
 
+/// An rstest attribute on a test function.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RstestAttribute {
+    /// `#[rstest]`, which expands the function into one test per case row.
+    Rstest,
+    /// `#[case(..)]` or `#[case::name(..)]`: one case row, inert on its own
+    /// and consumed by an `#[rstest]` above it.
+    Case,
+}
+
+/// Which rstest attribute `path` names in `module`: `rstest::rstest`
+/// (rooted or not), a bare `rstest` bound to it by an explicit unrenamed
+/// `use`, or a case row. A rename (`use rstest::rstest as table`) is not
+/// discovered as a test, so it is not admitted here either. The caller
+/// still checks that `rstest` is the crate.
+fn rstest_attribute(path: &str, module: &SyntaxNode) -> Option<RstestAttribute> {
+    if path.strip_prefix("::").unwrap_or(path) == "rstest::rstest"
+        || (path == "rstest" && rstest_leaf_bound(path, module) == Some("rstest"))
+    {
+        return Some(RstestAttribute::Rstest);
+    }
+    let row = match path.split_once("::") {
+        None => path == "case",
+        Some(("case", name)) => is_identifier(name),
+        _ => false,
+    };
+    // A `use` binding `case` makes the name another attribute macro.
+    let rebound = || {
+        module_use_leaves(module).iter().any(
+            |leaf| matches!(&leaf.binding, UseBinding::Name(binding) if unraw(binding) == "case"),
+        )
+    };
+    (row && !rebound()).then_some(RstestAttribute::Case)
+}
+
+/// Whether `attr` is an rstest attribute that expands to items named after
+/// the function it decorates and to nothing else: `#[rstest]`,
+/// `#[fixture]`, or a case row on a function whose `#[rstest]` above it
+/// consumes the row. A bare `#[case]` anywhere else is an unknown attribute
+/// macro and may emit anything.
+fn rstest_attribute_trusted(attr: &ast::Attr, module: &SyntaxNode) -> bool {
+    let Some(path) = attr.path() else {
+        return false;
+    };
+    let path = path.syntax().text().to_string().replace(' ', "");
+    match rstest_attribute(&path, module) {
+        Some(RstestAttribute::Rstest) => true,
+        Some(RstestAttribute::Case) => {
+            attr.syntax()
+                .parent()
+                .and_then(ast::Fn::cast)
+                .is_some_and(|function| {
+                    function.attrs().any(|other| {
+                        other.syntax().text_range().start() < attr.syntax().text_range().start()
+                            && other.path().is_some_and(|other_path| {
+                                rstest_attribute(
+                                    &other_path.syntax().text().to_string().replace(' ', ""),
+                                    module,
+                                ) == Some(RstestAttribute::Rstest)
+                            })
+                    })
+                })
+        }
+        None => {
+            path.strip_prefix("::").unwrap_or(&path) == "rstest::fixture"
+                || (path == "fixture" && rstest_leaf_bound(&path, module) == Some("fixture"))
+        }
+    }
+}
+
+/// The rstest attribute macro (`rstest` or `fixture`) that a bare name is
+/// bound to in `module` by exactly one explicit `use rstest::<macro>`
+/// (renames included); globs and any second binding of the name refuse.
+fn rstest_leaf_bound(name: &str, module: &SyntaxNode) -> Option<&'static str> {
+    let name = unraw(name);
+    let mut bound = None;
+    for leaf in module_use_leaves(module) {
+        let UseBinding::Name(binding) = &leaf.binding else {
+            continue;
+        };
+        if unraw(binding) != name {
+            continue;
+        }
+        let target = match leaf.path.as_slice() {
+            [krate, target] if krate == "rstest" && target == "rstest" => "rstest",
+            [krate, target] if krate == "rstest" && target == "fixture" => "fixture",
+            _ => return None,
+        };
+        if bound.is_some() {
+            return None;
+        }
+        bound = Some(target);
+    }
+    bound
+}
+
+fn is_identifier(text: &str) -> bool {
+    let mut chars = text.chars();
+    chars
+        .next()
+        .is_some_and(|first| first.is_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_alphanumeric() || ch == '_')
+}
+
+/// Whether an rstest attribute on `test` leaves each generated test running
+/// the body unchanged with literal case values. rstest turns
+/// `#[rstest] #[case(2, 4)] fn t(#[case] input: u32, #[case] expected: u32)`
+/// into one `#[test]` per row that binds the row's values to the parameters
+/// and runs the body. Admitted only when `rstest` is the crate in the test's
+/// module, `#[rstest]` takes no arguments and appears once, every parameter
+/// is a plain binding marked `#[case]` and nothing else, and every row
+/// follows `#[rstest]` and holds one scalar literal per parameter. Fixtures,
+/// `#[values]` matrices, `#[future]`, timeouts and computed case values
+/// (which could call the owner) refuse.
+fn rstest_runs_body(
+    attr: &ast::Attr,
+    kind: RstestAttribute,
+    test: &SyntaxNode,
+    module: &SyntaxNode,
+) -> bool {
+    if attr.excl_token().is_some() {
+        return false;
+    }
+    let Some(function) = ast::Fn::cast(test.clone()) else {
+        return false;
+    };
+    if !extern_crate_path_holds(module, "rstest") {
+        return false;
+    }
+    let kinds: Vec<(TextSize, RstestAttribute)> = function
+        .attrs()
+        .filter_map(|attr| {
+            let path = attr.path()?.syntax().text().to_string().replace(' ', "");
+            Some((
+                attr.syntax().text_range().start(),
+                rstest_attribute(&path, module)?,
+            ))
+        })
+        .collect();
+    let rstest_at: Vec<TextSize> = kinds
+        .iter()
+        .filter(|(_, kind)| *kind == RstestAttribute::Rstest)
+        .map(|(at, _)| *at)
+        .collect();
+    let [rstest_at] = rstest_at.as_slice() else {
+        return false;
+    };
+    let Some(parameters) = case_parameters(&function) else {
+        return false;
+    };
+    match kind {
+        RstestAttribute::Rstest => {
+            matches!(attr.meta(), Some(ast::Meta::PathMeta(_)))
+                && (parameters == 0 || kinds.iter().any(|(_, kind)| *kind == RstestAttribute::Case))
+        }
+        RstestAttribute::Case => {
+            attr.syntax().text_range().start() > *rstest_at
+                && case_row_literals(attr) == Some(parameters)
+        }
+    }
+}
+
+/// The number of parameters when each is a plain `ident: Type` binding
+/// marked by exactly one `#[case]` attribute; `None` otherwise.
+fn case_parameters(function: &ast::Fn) -> Option<usize> {
+    let list = function.param_list()?;
+    if list.self_param().is_some() {
+        return None;
+    }
+    let mut count = 0;
+    for param in list.params() {
+        let attrs: Vec<_> = param.attrs().collect();
+        let [case] = attrs.as_slice() else {
+            return None;
+        };
+        if case.excl_token().is_some()
+            || !matches!(case.meta(), Some(ast::Meta::PathMeta(_)))
+            || case.simple_name().as_deref() != Some("case")
+        {
+            return None;
+        }
+        match param.pat()? {
+            ast::Pat::IdentPat(pat) if pat.ref_token().is_none() && pat.pat().is_none() => {}
+            _ => return None,
+        }
+        count += 1;
+    }
+    Some(count)
+}
+
+/// The number of values in a case row when each is a non-string literal,
+/// `-literal`, `true` or `false`; `None` for anything else.
+fn case_row_literals(attr: &ast::Attr) -> Option<usize> {
+    let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
+        return None;
+    };
+    let tokens: Vec<_> = meta
+        .token_tree()?
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    let (first, rest) = tokens.split_first()?;
+    let (last, inner) = rest.split_last()?;
+    if first.text() != "(" || last.text() != ")" {
+        return None;
+    }
+    let mut count = 0;
+    for value in inner.split(|token| token.text() == ",") {
+        // A string literal reaches the parameter through `FromStr`, which
+        // runs user code that may call the owner, so only scalar literals.
+        let scalar = |token: &ra_ap_syntax::SyntaxToken| {
+            token.kind().is_literal()
+                && !matches!(
+                    token.kind(),
+                    ra_ap_syntax::SyntaxKind::STRING
+                        | ra_ap_syntax::SyntaxKind::BYTE_STRING
+                        | ra_ap_syntax::SyntaxKind::C_STRING
+                )
+        };
+        let literal = match value {
+            [token] => scalar(token) || matches!(token.text(), "true" | "false"),
+            [minus, token] => minus.text() == "-" && scalar(token),
+            _ => false,
+        };
+        if !literal {
+            return None;
+        }
+        count += 1;
+    }
+    Some(count)
+}
+
 const SERIAL_TEST_LOCKS: &[&str] = &["serial", "parallel", "file_serial", "file_parallel"];
 
 /// The lock of a crate-qualified `serial_test::<lock>` attribute path,
@@ -1943,7 +2180,7 @@ fn extern_crate_path_holds(module: &SyntaxNode, krate: &str) -> bool {
 
 /// Crates whose own attributes a module check may trust (see
 /// [`extern_crate_path_holds`]).
-const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &["serial_test", "tokio"];
+const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &["serial_test", "tokio", "rstest"];
 
 /// Whether a direct item of `module` carries an attribute of `krate`: a
 /// `krate::..` path, or for `serial_test` a bare name bound to a lock.
@@ -1962,6 +2199,7 @@ fn crate_attribute_appears(module: &SyntaxNode, krate: &str) -> bool {
                 || (krate == "serial_test"
                     && !path.contains("::")
                     && bare_lock_bound_in_module(&path, module))
+                || (krate == "rstest" && rstest_attribute_trusted(&attr, module))
         })
 }
 
@@ -1970,6 +2208,18 @@ fn extern_crate_holds_trusting(module: &SyntaxNode, krate: &str, trusted: &[&str
         if item
             .attrs()
             .any(|attr| !attribute_emits_no_items(&attr, module, trusted))
+        {
+            return false;
+        }
+        // `#[rstest]` and `#[fixture]` emit items named after the function
+        // they decorate (a module of cases, a fixture struct).
+        if let ast::Item::Fn(function) = &item
+            && function
+                .name()
+                .is_some_and(|name| unraw(name.text()) == krate)
+            && function
+                .attrs()
+                .any(|attr| rstest_attribute_trusted(&attr, module))
         {
             return false;
         }
@@ -2002,7 +2252,10 @@ fn extern_crate_holds_trusting(module: &SyntaxNode, krate: &str, trusted: &[&str
     for leaf in module_use_leaves(module) {
         match &leaf.binding {
             UseBinding::Name(binding) => {
-                let real = leaf.path.len() == 1 && leaf.path[0] == krate;
+                // `use rstest::rstest` binds the attribute macro, which
+                // leaves the crate's path in the type namespace untouched.
+                let real = (leaf.path.len() == 1 && leaf.path[0] == krate)
+                    || (krate == "rstest" && leaf.path == ["rstest", "rstest"]);
                 if unraw(binding) == krate && !real {
                     return false;
                 }
@@ -2074,6 +2327,9 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&s
     }
     if unrooted.starts_with("tokio::") {
         return trusted.contains(&"tokio") && is_tokio_test_path(&path);
+    }
+    if rstest_attribute_trusted(attr, module) {
+        return trusted.contains(&"rstest");
     }
     if path == "derive" {
         let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
