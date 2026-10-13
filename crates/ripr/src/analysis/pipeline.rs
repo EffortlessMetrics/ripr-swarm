@@ -1723,13 +1723,7 @@ where
         {
             continue;
         }
-        let generated_name = match language {
-            LanguageId::TypeScript | LanguageId::JavaScript => {
-                crate::config::is_detectable_generated_typescript_path(&changed.path)
-            }
-            LanguageId::Python => crate::config::is_detectable_generated_python_path(&changed.path),
-            LanguageId::Rust | LanguageId::Perl => false,
-        };
+        let generated_name = preview_skip_generated_name(language, &changed.path);
         let skip_class = if generated_name {
             PreviewSkipClass::GeneratedName
         } else {
@@ -1750,6 +1744,32 @@ where
             .position(|ordered| ordered == language)
     });
     skipped
+}
+
+/// Whether a skipped preview path was excluded because its file NAME marks
+/// it generated (versus an excluded-directory convention the
+/// `handwritten_files` list can admit). The TypeScript predicate is gated
+/// behind `lang-typescript`; without that feature the TypeScript adapter
+/// never runs, so no TypeScript path can be a generated-name skip.
+#[cfg(feature = "lang-typescript")]
+fn preview_skip_generated_name(language: LanguageId, path: &std::path::Path) -> bool {
+    match language {
+        LanguageId::TypeScript | LanguageId::JavaScript => {
+            crate::config::is_detectable_generated_typescript_path(path)
+        }
+        LanguageId::Python => crate::config::is_detectable_generated_python_path(path),
+        LanguageId::Rust | LanguageId::Perl => false,
+    }
+}
+
+#[cfg(not(feature = "lang-typescript"))]
+fn preview_skip_generated_name(language: LanguageId, path: &std::path::Path) -> bool {
+    match language {
+        LanguageId::Python => crate::config::is_detectable_generated_python_path(path),
+        LanguageId::Rust | LanguageId::Perl | LanguageId::TypeScript | LanguageId::JavaScript => {
+            false
+        }
+    }
 }
 
 /// Up to three paths, then "and N more", capped at 160 characters. Recovery
