@@ -1446,7 +1446,8 @@ struct WholeValueField {
 }
 
 impl OwnerReturnPin {
-    /// The owner-side gates: `None` when the probe is not a return value,
+    /// The owner-side gates: `None` when the probe is not a return value
+    /// (or a changed `return Err(..)`, filed as `error_path`),
     /// the owner's declaration or return paths are not established, or
     /// another workspace definition could take a call by the owner's name.
     pub(in crate::analysis) fn establish(
@@ -1470,7 +1471,7 @@ impl OwnerReturnPin {
         // A predicate that is a bool owner's whole tail is the owner's return
         // value, so the same pin observes it.
         match probe.family {
-            ProbeFamily::ReturnValue => {}
+            ProbeFamily::ReturnValue | ProbeFamily::ErrorPath => {}
             ProbeFamily::Predicate if returns_bool => {}
             _ => return None,
         }
@@ -2617,8 +2618,8 @@ impl ReturnPathGate {
     /// The prelude variant names this gate's exit reasoning relies on.
     fn prelude_names(&self) -> &'static [&'static str] {
         match self {
-            Self::EarlyHead("Some") => &["Some", "None"],
-            Self::EarlyHead(_) => &["Ok", "Err"],
+            Self::EarlyHead("Some") | Self::Exact("None") => &["Some", "None"],
+            Self::EarlyHead(_) | Self::Head("Err") => &["Ok", "Err"],
             _ => &[],
         }
     }

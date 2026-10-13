@@ -844,9 +844,13 @@ fn analyze_related_assertions(
                 ProbeFamily::ReturnValue => matches!(
                     assertion.kind,
                     OracleKind::ExactValue
+                        | OracleKind::ExactErrorVariant
                         | OracleKind::WholeObjectEquality
                         | OracleKind::RelationalCheck
                 ),
+                // A changed `return Err(..);` is an `error_path` probe; its
+                // pin compares the owner's whole `Err(..)` result.
+                ProbeFamily::ErrorPath => matches!(assertion.kind, OracleKind::ExactErrorVariant),
                 ProbeFamily::Predicate => matches!(assertion.kind, OracleKind::RelationalCheck),
                 ProbeFamily::FieldConstruction => matches!(
                     assertion.kind,

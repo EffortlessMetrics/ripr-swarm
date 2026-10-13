@@ -423,14 +423,20 @@ rule only for an assertion whose context was admitted.
    `match`, `&&`/`||` or skipping combinator, as for the tail), and
    the pinned value is exactly `None` (or an `Err(..)` call). bytesize's
    `as_whole_units` (`return None;` beside a `Some(self.0 / unit)` tail) is
-   the motivating shape. The same holds the other way round for a changed
+   the motivating shape. ripr files a changed `return Err(..);` as an
+   `error_path` probe, which this gate admits like a `return_value` probe of
+   the same line; its pin is an `exact_error_variant` assertion such as
+   `assert_eq!(check(20), Err(String::from("big")))` (RIPR-SPEC-0231
+   example 5). An `error_path` probe on a `?` or any other line is never an
+   established return path. The same holds the other way round for a changed
    early `return Some(..);` (or `return Ok(..);`): every other `return` and
    the tail are exactly `None` (or one `Err(..)` call), and the pinned value
    must be `Some(..)` (or `Ok(..)`). A `?` builds only `None` (or `Err`), so
    it is not a second source here. Because the other exits are read by
    their spelling, an owner file that binds either name the gate relies on
    (`Some` and `None`, or `Ok` and `Err`) as a value (a `const`, `fn`, pattern binding or import, or a glob it
-   cannot see through) refuses this mirror case. The propagation witness of a changed
+   cannot see through) refuses both mirror cases: an early `return None;` /
+   `return Err(..);` and an early `return Some(..);` / `return Ok(..);`. The propagation witness of a changed
    `return Some(..);` (or `Ok(..)` / `Err(..)`) around a call-free payload
    completes only when the owner's return sink is that same constructor on
    the changed line, so an identical value returned elsewhere is a

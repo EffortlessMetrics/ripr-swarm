@@ -1116,6 +1116,65 @@ fn an_early_return_pin_admits_only_the_value_that_return_produces() {
 }
 
 #[test]
+fn an_error_path_probe_is_pinned_like_a_changed_err_return() {
+    // RIPR-SPEC-0231 example 5: ripr files a changed `return Err(..)` as an
+    // `error_path` probe. The early-return gate is the one a `return_value`
+    // probe of the same line gets, so `assert_eq!(f(..), Err(..))` pins it.
+    let lib = "pub fn check(x: u32) -> Result<u32, String> {\n    if x > 10 { return Err(String::from(\"b\") + \"ig\"); }\n    Ok(x)\n}\n";
+    let tests = "use demo::check;\n\n#[test]\nfn checks() {\n    assert_eq!(check(20), Err(String::from(\"big\")));\n    assert_eq!(check(2), Ok(2));\n}\n";
+    let err_index = index(&[(LIB, lib), (TESTS, tests)]);
+    let error_probe = |index: &RustIndex, name: &str, expression: &str| {
+        let owner = owner(index, name);
+        let probe = Probe {
+            family: ProbeFamily::ErrorPath,
+            ..return_probe(owner, expression)
+        };
+        OwnerReturnPin::establish(&probe, owner, index)
+    };
+    let changed = "return Err(String::from(\"b\") + \"ig\");";
+    let pin = error_probe(&err_index, "check", changed);
+    assert!(pin.is_some());
+    let Some(pin) = pin else { return };
+    assert_eq!(
+        admitted_texts(&err_index, &pin),
+        vec!["assert_eq!(check(20), Err(String::from(\"big\")));".to_string()]
+    );
+
+    // A `?` that converts an error is an `Err` source the gate cannot
+    // attribute to one line, so it pins nothing.
+    let lib = "pub fn parse(s: &str) -> Result<u32, String> {\n    let n: u32 = s.parse().map_err(|_| String::from(\"nan\"))?;\n    Ok(n)\n}\n";
+    let question_index = index(&[(LIB, lib)]);
+    assert!(
+        error_probe(
+            &question_index,
+            "parse",
+            "let n: u32 = s.parse().map_err(|_| String::from(\"nan\"))?;"
+        )
+        .is_none()
+    );
+
+    // The gate reads the tail `Ok(x)` as the prelude variant: a rebound
+    // `Ok` in the owner's file can be a second `Err` exit.
+    let shadowed = format!(
+        "{}\n#[allow(non_snake_case)]\nfn Ok(x: u32) -> Result<u32, String> {{\n    Err(x.to_string())\n}}\n",
+        "pub fn check(x: u32) -> Result<u32, String> {\n    if x > 10 { return Err(String::from(\"big\")); }\n    Ok(x)\n}\n"
+    );
+    let shadowed_index = index(&[(LIB, &shadowed)]);
+    assert!(
+        error_probe(
+            &shadowed_index,
+            "check",
+            "return Err(String::from(\"big\"));"
+        )
+        .is_none()
+    );
+    // The same refusal holds for an early `return None;`.
+    let shadowed = "pub fn whole(x: u64) -> Option<u64> {\n    if x == 0 { return None; }\n    Some(x)\n}\n\n#[allow(non_snake_case)]\nfn Some(_: u64) -> Option<u64> {\n    None\n}\n";
+    let shadowed_index = index(&[(LIB, shadowed)]);
+    assert!(establish(&shadowed_index, "whole", "return None;").is_none());
+}
+
+#[test]
 fn an_early_some_or_ok_return_is_pinned_beside_opposite_exits() {
     // RIPR-SPEC-0231 example 23: an early `return Some(..)` beside a `None`
     // tail is the only source of `Some`, so a `Some(..)` pin observes it.
