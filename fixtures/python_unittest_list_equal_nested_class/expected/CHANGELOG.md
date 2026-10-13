@@ -24,3 +24,16 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — python_unittest_list_equal_nested_class (3)
+
+Reason:
+RIPR-SPEC-0028 composition: refresh this new leaf fixture for current config-path rendering; independent class/oracle expectations remain unchanged.
+
+Command:
+`cargo xtask goldens bless python_unittest_list_equal_nested_class --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

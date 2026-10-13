@@ -75,6 +75,13 @@ controls through the real CLI:
   or attribute chain rooted in a name; calls/subscripts in that chain remain
   unknown. The derived-result fixture and honesty row pin the non-promotion.
 
+After the composition repairs, all six focused regressions and all 568 Python
+adapter tests pass. The same real CLI inputs report the duplicate-method case as
+`exposed` / strong / yes and the derived-result case as `static_unknown` /
+unknown. Imported `TestCase` and module-qualified free-call positives retain
+credit; removed, unrelated, fake, effectful and nested-registration controls do
+not. These outcomes retain independent literal expectations.
+
 This proves a bounded static evidence correction and native discrimination of
 these source-derived examples. It does not establish general unittest support,
 runtime test adequacy, hosted CI, branch protection, or merge readiness.
