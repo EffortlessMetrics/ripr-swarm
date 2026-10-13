@@ -1,5 +1,6 @@
 mod arguments;
 mod classify;
+mod pattern_admission;
 mod patterns;
 mod scan;
 

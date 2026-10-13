@@ -267,7 +267,193 @@ fn line_references_variable(line: &str, var: &str) -> bool {
 }
 
 pub(super) fn is_broad_error_assertion(line: &str) -> bool {
-    line.contains("is_err") || line.contains("Err(_)")
+    let masked = mask_comments_and_strings(line);
+    has_method_segment(&masked, "is_err") || masked.contains("Err(_)")
+}
+
+/// RIPR-SPEC-0231 rule 4: `.unwrap(`, `.expect(` and the side checks
+/// `is_ok`, `is_some` and `is_none` as whole method names.
+pub(super) fn is_smoke_check(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    masked.contains(".unwrap(")
+        || masked.contains(".expect(")
+        || has_method_segment(&masked, "is_ok")
+        || has_method_segment(&masked, "is_some")
+        || has_method_segment(&masked, "is_none")
+}
+
+/// RIPR-SPEC-0231 rule 4: `r.is_ok()` with `r.is_err()`, or `r.is_some()`
+/// with `r.is_none()`, as sibling alternatives of one `||` on the same
+/// receiver, accepts every value. `left.is_ok() || right.is_err()` checks two
+/// values, and `r.is_ok() && r.is_err() || fallback` joins the calls with
+/// `&&`, so neither does.
+pub(super) fn tests_both_sides(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    if !masked.contains("||") {
+        return false;
+    }
+    bracket_groups(&masked).into_iter().any(|group| {
+        let calls = split_top_level_operator(group, "||")
+            .into_iter()
+            .filter_map(side_call)
+            .collect::<Vec<_>>();
+        let has = |receiver: &str, name: &str| {
+            calls
+                .iter()
+                .any(|(other, method)| other == receiver && *method == name)
+        };
+        calls.iter().any(|(receiver, method)| match *method {
+            "is_ok" => has(receiver, "is_err"),
+            "is_some" => has(receiver, "is_none"),
+            _ => false,
+        })
+    })
+}
+
+/// The whole text and the contents of every bracket group in it.
+fn bracket_groups(masked: &str) -> Vec<&str> {
+    let bytes = masked.as_bytes();
+    let mut groups = vec![masked];
+    for (open, byte) in bytes.iter().enumerate() {
+        if !matches!(byte, b'(' | b'[' | b'{') {
+            continue;
+        }
+        let mut depth = 0usize;
+        for (index, inner) in bytes.iter().enumerate().skip(open) {
+            match inner {
+                b'(' | b'[' | b'{' => depth += 1,
+                b')' | b']' | b'}' => {
+                    depth = depth.saturating_sub(1);
+                    if depth == 0 {
+                        groups.push(&masked[open + 1..index]);
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    groups
+}
+
+/// Split on a two-byte operator outside brackets.
+fn split_top_level_operator<'a>(text: &'a str, operator: &str) -> Vec<&'a str> {
+    let bytes = text.as_bytes();
+    let op = operator.as_bytes();
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ if depth == 0 && bytes[index..].starts_with(op) => {
+                parts.push(&text[start..index]);
+                index += op.len();
+                start = index;
+                continue;
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    parts.push(&text[start..]);
+    parts
+}
+
+/// A disjunct that is exactly `receiver.is_ok()` (or `is_err`, `is_some`,
+/// `is_none`), optionally parenthesized: the receiver with whitespace
+/// removed, and the method.
+fn side_call(disjunct: &str) -> Option<(String, &'static str)> {
+    let mut text = disjunct.trim();
+    while let Some(inner) = text
+        .strip_prefix('(')
+        .and_then(|rest| rest.strip_suffix(')'))
+        .filter(|inner| balanced(inner))
+    {
+        text = inner.trim();
+    }
+    let call = text
+        .strip_suffix(')')?
+        .trim_end()
+        .strip_suffix('(')?
+        .trim_end();
+    let (receiver, method) = call.rsplit_once('.')?;
+    let method = ["is_ok", "is_err", "is_some", "is_none"]
+        .into_iter()
+        .find(|name| method.trim() == *name)?;
+    let receiver = receiver.trim_end();
+    if receiver.is_empty() || receiver_start(receiver, receiver.len()) != 0 {
+        return None;
+    }
+    Some((receiver.split_whitespace().collect(), method))
+}
+
+fn balanced(text: &str) -> bool {
+    let mut depth = 0isize;
+    for byte in text.bytes() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth -= 1;
+                if depth < 0 {
+                    return false;
+                }
+            }
+            _ => {}
+        }
+    }
+    depth == 0
+}
+
+/// Start of the receiver expression that ends at byte `end`: identifiers,
+/// paths, field and method chains, and balanced brackets.
+fn receiver_start(masked: &str, end: usize) -> usize {
+    let bytes = masked.as_bytes();
+    let mut depth = 0usize;
+    let mut index = end;
+    while index > 0 {
+        let byte = bytes[index - 1];
+        match byte {
+            b')' | b']' => depth += 1,
+            b'(' | b'[' if depth > 0 => depth -= 1,
+            _ if depth > 0 => {}
+            b'.' | b':' | b'_' | b'&' | b'*' | b'?' => {}
+            _ if byte.is_ascii_alphanumeric() => {}
+            _ => break,
+        }
+        index -= 1;
+    }
+    index
+}
+
+/// `name` as a whole method name: a call after `.` (`r.is_ok()`), or a path
+/// after `::` (`Option::is_some`, passed as a function), and not followed by
+/// more identifier characters except the combinator forms `name_and` (and
+/// `is_none_or`). `is_okay`, `this_errs` and a `status.is_err` field are not
+/// `is_ok` / `is_err` checks.
+fn has_method_segment(text: &str, name: &str) -> bool {
+    text.match_indices(name).any(|(index, _)| {
+        let before = text[..index].trim_end();
+        let method = before.ends_with('.');
+        let path = before.ends_with("::");
+        let rest = &text[index + name.len()..];
+        let rest = rest
+            .strip_prefix("_and")
+            .or_else(|| {
+                (name == "is_none")
+                    .then(|| rest.strip_prefix("_or"))
+                    .flatten()
+            })
+            .unwrap_or(rest);
+        let whole = !rest
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '_');
+        let called = rest.trim_start().starts_with('(');
+        whole && ((method && called) || path)
+    })
 }
 
 pub(super) fn is_whole_object_equality_assertion(line: &str) -> bool {
@@ -913,6 +1099,95 @@ pub(super) fn is_side_effect_observer_assertion(line: &str) -> bool {
     has_observer_token && (lower.contains("assert") || lower.contains("expect"))
 }
 
+/// RIPR-SPEC-0231 rule 5: step 9 credits an effect observer only when a
+/// whole identifier segment (`events_sent`, `sentCount`, `events`) names the
+/// effect, in the asserted subject rather than only in a free function call
+/// such as `is_present()`. The words never match inside another word
+/// (`present`, `statement`, `consent`).
+pub(super) fn is_effect_observer_subject_assertion(line: &str) -> bool {
+    const OBSERVER_WORDS: [&str; 11] = [
+        "event",
+        "emitted",
+        "published",
+        "sent",
+        "saved",
+        "persist",
+        "state",
+        "stored",
+        "metric",
+        "counter",
+        "recorded",
+    ];
+    let lower = line.to_ascii_lowercase();
+    if !(lower.contains("assert") || lower.contains("expect")) {
+        return false;
+    }
+    // In a known assertion macro only the asserted operands are subjects,
+    // and a word inside their comments or strings is not one. Other text
+    // keeps the line-level reading.
+    let masked = assertion_oracle_text(line).map_or_else(
+        || line.to_string(),
+        |operands| mask_comments_and_strings(&operands),
+    );
+    identifiers_with_position(&masked).any(|(start, identifier)| {
+        let free_call = masked[start + identifier.len()..]
+            .trim_start()
+            .starts_with('(')
+            && !masked[..start].trim_end().ends_with('.');
+        !free_call
+            && identifier_segments(identifier).any(|segment| {
+                OBSERVER_WORDS.contains(&segment.as_str())
+                    || segment
+                        .strip_suffix('s')
+                        .is_some_and(|base| OBSERVER_WORDS.contains(&base))
+            })
+    })
+}
+
+fn identifiers_with_position(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    let mut start = None;
+    let mut out = Vec::new();
+    for (index, ch) in text
+        .char_indices()
+        .chain(std::iter::once((text.len(), ' ')))
+    {
+        let ident = ch.is_ascii_alphanumeric() || ch == '_';
+        match (start, ident) {
+            (None, true) => start = Some(index),
+            (Some(begin), false) => {
+                let word = &text[begin..index];
+                if word.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+                    out.push((begin, word));
+                }
+                start = None;
+            }
+            _ => {}
+        }
+    }
+    out.into_iter()
+}
+
+/// `_`-separated and case-split segments, lowercased: `sentCount` gives
+/// `sent` and `count`.
+fn identifier_segments(identifier: &str) -> impl Iterator<Item = String> + '_ {
+    identifier.split('_').flat_map(|part| {
+        let mut segments = Vec::new();
+        let mut current = String::new();
+        let mut previous_lower = false;
+        for ch in part.chars() {
+            if ch.is_ascii_uppercase() && previous_lower && !current.is_empty() {
+                segments.push(std::mem::take(&mut current));
+            }
+            previous_lower = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+            current.push(ch.to_ascii_lowercase());
+        }
+        if !current.is_empty() {
+            segments.push(current);
+        }
+        segments
+    })
+}
+
 pub(super) fn is_custom_assertion_helper(line: &str) -> bool {
     let trimmed = line.trim_start();
     !trimmed.contains('!')
@@ -944,13 +1219,21 @@ pub(super) fn is_clear_exact_custom_assertion_helper(line: &str) -> bool {
     let Some(name) = custom_assertion_helper_name(line) else {
         return false;
     };
-    is_comparison_shaped_custom_assertion(line)
-        && (name.contains("_eq")
-            || name.contains("_equal")
-            || name.contains("_matches")
-            || name.ends_with("eq")
-            || name.ends_with("equal")
-            || name.ends_with("matches"))
+    let Some(arguments) = custom_assertion_arguments(line) else {
+        return false;
+    };
+    let argument_count_supports_exact = if line.contains(".assert_") {
+        !arguments.is_empty()
+    } else {
+        arguments.len() >= 2
+    };
+    // RIPR-SPEC-0231 rule 6: only an equality name is strong. Excluding a
+    // `ne`, `not` or `neq` segment is rule 1's case (#6670), not this check.
+    let segments = name.split('_').collect::<Vec<_>>();
+    let last = segments.last().copied();
+    let equality_name = matches!(last, Some("eq" | "equal" | "equals"))
+        || (segments.len() > 1 && matches!(last, Some("matches")));
+    argument_count_supports_exact && equality_name
 }
 
 fn custom_assertion_helper_name(line: &str) -> Option<String> {

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index c2aee27..1b96374 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -22,7 +22,7 @@ pub fn parse(s: &str) -> Comparator {
+             Some(&b'=') => (Op::GreaterEq, &s[2..]),
+             _ => (Op::Greater, &s[1..]),
+         },
+-        Some(&b'=') => (Op::Exact, &s[1..]),
++        Some(&b'>') => (Op::Exact, &s[1..]),
+         Some(&b'^') => (Op::Caret, &s[1..]),
+         _ => (Op::Caret, s),
+     };

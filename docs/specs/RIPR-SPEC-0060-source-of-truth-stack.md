@@ -53,7 +53,9 @@ Claim boundary:
 
 Rollback:
 
-- Revert this spec and index links. No runtime behavior changes.
+- Revert this spec and index links for the documentation slice.
+- Revert the local `check-fast` support-tier routing slice to restore its prior
+  applicability; the standalone validator remains available.
 
 ## Problem
 
@@ -145,6 +147,35 @@ evidence for the graph:
 Validators should report actionable file paths and fields. Advisory rollout
 should precede blocking CI promotion.
 
+### Early local support-tier validation
+
+`cargo xtask check-fast` runs the existing `check-support-tiers` leaf once when
+its established committed `origin/main...HEAD` selector includes any of:
+
+- Markdown below `docs/specs/`;
+- `docs/status/SUPPORT_TIERS.md` or root `README.md`;
+- `metrics/rust-repair-trust/corpus.json`;
+- source below `xtask/src/` (validator and proof-command catalog owners);
+- paths below `.github/workflows/` or `scripts/` (referenced proof paths).
+
+It runs after the existing cheap floor and before compilation-bearing Rust
+checks and workspace Clippy. The leaf predicates, diagnostic reason codes,
+`support-tiers.md` report and native failure status remain unchanged. The
+aggregate retains its existing failure and selector reports. On success its
+`Ran` section names `check-support-tiers`; strict receipt validation requires
+that entry for applicable paths. For unrelated or zero-path selectors, the
+aggregate records `check-support-tiers (not applicable)` in `Skipped` and does
+not run the leaf.
+
+The declaration `- None. No product support claim changes.` does not meet the
+existing no-impact grammar and must fail without a support-tier reference.
+Canonical `- None.` followed by a separate explanation passes. This local
+routing does not widen the selector to uncommitted or untracked changes; use
+`cargo xtask check-support-tiers` explicitly while authoring those changes.
+Other applicable spec/document gates remain necessary. The precommit gate
+table, required hosted policy, advisory source-of-truth workflow and support
+claims are unchanged.
+
 ## Non-Goals
 
 - No runtime analyzer behavior.
@@ -182,6 +213,15 @@ Given a PR that changes only the source-of-truth doctrine docs, the claim
 boundary states that no validator, CI behavior, support-tier claim, or policy
 ledger has changed.
 
+Given a committed spec-only change with the malformed no-impact declaration,
+the standalone leaf and actual `check-fast` dispatch both fail with
+`spec_support_tier_reference_missing`. Canonical `None.` plus a separate
+explanation passes and emits the leaf and aggregate success reports.
+
+Given an applicable selector but an aggregate receipt omitting the support-tier
+leaf, strict dispatch rejects the receipt. Given unrelated near-match paths or
+no changed paths, support-tier validation is not applicable.
+
 ## Test Mapping
 
 Focused tests for `cargo xtask check-doc-artifacts` include:
@@ -202,6 +242,17 @@ Focused tests for `cargo xtask check-goals` source-of-truth coverage include:
 - `rejects_blocked_item_without_blocker`;
 - `rejects_unknown_referenced_artifact`;
 - `rejects_unsupported_policy_field`.
+
+Local routing controls in `xtask/tests/support_tier_fast_route.rs` and
+`xtask/src/check_fast_strict.rs` include:
+
+- `committed_spec_declarations_reach_actual_check_fast_dispatch`: actual leaf
+  and aggregate execution, invalid/canonical declarations, current failure and
+  success receipts, and zero-path no-op;
+- `selected_support_tier_inputs_require_leaf_receipt`: every applicable input
+  family requires a support-tier entry in the bounded `Ran` section;
+- `support_tier_near_matches_keep_noop_applicability`: unrelated paths and empty
+  selectors do not select the leaf.
 
 Focused tests for `cargo xtask check-support-tiers` include:
 
@@ -229,6 +280,9 @@ This spec coordinates these accepted source-of-truth surfaces:
 - `cargo xtask check-doc-artifacts`;
 - support-tier claim map in `docs/status/SUPPORT_TIERS.md`;
 - `cargo xtask check-support-tiers`;
+- local applicability and execution in `xtask/src/main.rs::check_fast_gates` and
+  `::categorize_changed_files`, with strict dispatch receipt validation in
+  `xtask/src/check_fast_strict.rs::validate_fast_report`;
 - active goal manifest documentation and `cargo xtask check-goals` coverage;
 - PR and issue templates under `.github/`;
 - advisory source-of-truth CI before blocking promotion;

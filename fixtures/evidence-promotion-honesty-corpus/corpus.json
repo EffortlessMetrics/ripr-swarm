@@ -3519,7 +3519,7 @@
         { "type": "expected_finding_count", "count": 2 },
         { "type": "maximum_class", "class": "weakly_exposed" },
         { "type": "must_not_promote" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "wrapper_error_binding_unresolved" }
+        { "type": "expected_class", "class": "no_static_path" }
       ]
     },
     {
@@ -3553,7 +3553,7 @@
         { "type": "expected_finding_count", "count": 2 },
         { "type": "maximum_class", "class": "weakly_exposed" },
         { "type": "must_not_promote" },
-        { "type": "must_emit_limitation", "expected_limit_kind": "wrapper_error_binding_unresolved" }
+        { "type": "expected_class", "class": "no_static_path" }
       ]
     },
     {
@@ -3731,6 +3731,78 @@
         { "type": "must_not_have_receipt_command" },
         { "type": "must_not_promote" },
         { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
+      "id": "rust_fallible_owner_literal",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_fallible_literal",
+      "vector": "exact_owner_bound_fallible_literal",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_fallible_owner_literal_inverted",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_fallible_literal_inverted",
+      "vector": "exact_owner_bound_fallible_literal_inverted",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_fallible_owner_literal_message_escape",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/owner_return_pin_fallible_literal_message_escape",
+      "vector": "exact_owner_bound_fallible_literal_message_escape",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -4982,6 +5054,29 @@
         {
           "type": "maximum_class",
           "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_repo_exposure_uncalled_sibling_not_promoted",
+      "language": "rust",
+      "tier": "pure",
+      "source_report": "fixtures/evidence-promotion-honesty-corpus/reports/rust-repo-exposure-uncalled-sibling.json",
+      "vector": "repo_exposure_uncalled_sibling_same_file_affinity_not_reach",
+      "assertions": [
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl Size::as_kb",
+          "expression": "1000.0",
+          "grip_class": "ungripped",
+          "reach": "no"
+        },
+        {
+          "type": "expected_repo_seam_grip",
+          "owner": "src/lib.rs::impl Size::as_kib",
+          "expression": "1024.0",
+          "grip_class": "strongly_gripped",
+          "reach": "yes"
         }
       ]
     }

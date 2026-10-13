@@ -19,8 +19,8 @@
   (`assert_eq!(matches!(r, Err(E::X)), false)`), a negated pattern beside a
   top-level `||`, `*assert_ne!` macros such as `soft_assert_ne!`, and
   helpers named `assert_unequal`, `assert_noteq`, `assert_inequal` or
-  `assert_different`. `mock.assert_not_called()` and `assert_not_sent(..)`
-  keep their `mock_expectation` / medium reading (#6670).
+  `assert_different`. `mock.assert_not_called()` keeps its
+  `mock_expectation` / medium reading (#6670).
 - Oracle strength: one polarity rule now reads every `matches!` compared
   with `==` or `!=`: only `== true`, `!= false` (or `== !false`) keeps the
   pattern's strong reading. `!= true`, `== !true`, a comparison against a

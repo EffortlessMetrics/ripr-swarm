@@ -162,7 +162,7 @@ pub(super) fn is_complete_macro_invocation(text: &str, macro_name: &str) -> bool
     complete_macro_arguments(text, macro_name).is_some()
 }
 
-fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>> {
+pub(super) fn complete_macro_arguments(text: &str, macro_name: &str) -> Option<Vec<String>> {
     let text = text.trim();
     let masked = mask_comments_and_strings(text);
     let open = macro_argument_open(text, macro_name)?;

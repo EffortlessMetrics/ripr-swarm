@@ -180,6 +180,7 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::GoldenDrift => super::reports::golden_drift(),
         XtaskCommand::CiFast => super::ci_fast(),
         XtaskCommand::CiFull => super::ci_full(),
+        XtaskCommand::CheckPolicyAll => super::policy::check_policy_all(),
         XtaskCommand::CheckStaticLanguage => super::check_static_language(),
         XtaskCommand::CheckAgentSkills => super::agent_skills::check(),
         XtaskCommand::CheckNoPanicFamily(args) => {
@@ -211,6 +212,9 @@ pub(crate) fn execute(command: XtaskCommand) -> Result<(), String> {
         XtaskCommand::CheckDocArtifacts => super::check_doc_artifacts(),
         XtaskCommand::CheckSupportTiers => super::check_support_tiers(),
         XtaskCommand::CheckDocIndex => super::check_doc_index(),
+        XtaskCommand::CheckChangelogFragments(args) => {
+            super::policy::check_changelog_fragments_with_args(&args)
+        }
         XtaskCommand::CheckReadmeState => super::check_readme_state(),
         XtaskCommand::MarkdownLinks => super::markdown_links(),
         XtaskCommand::CheckPrShape => super::check_pr_shape(),

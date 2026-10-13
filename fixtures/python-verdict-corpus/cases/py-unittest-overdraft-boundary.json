@@ -1,0 +1,44 @@
+{
+  "case_id": "py-unittest-overdraft-boundary",
+  "subject_id": "authored-py-unittest-accounts",
+  "diff": "cases/py-unittest-overdraft-boundary.diff",
+  "anchor": {
+    "file": "accounts/ledger.py",
+    "line": 25
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_guard_boundary",
+  "test_shape": "unittest_assert_raises_far_from_boundary",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python3 -m unittest",
+    "toolchain": "Python 3.11.15, unittest, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "if amount_cents >= self.balance_cents:",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: withdrawing the exact balance raises InsufficientFunds"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "test_overdraft_is_refused withdraws 500 from 100 under self.assertRaises, far from the boundary, and no test withdraws the exact balance, so `>=` passes. ripr's weakly_exposed is the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

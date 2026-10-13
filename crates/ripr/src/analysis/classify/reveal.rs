@@ -677,7 +677,8 @@ fn analyze_related_assertions(
                     OracleKind::ExactValue | OracleKind::WholeObjectEquality
                 ),
                 _ => false,
-            } && (return_admission.owner_return_pin)(test, assertion);
+            } && pin_strength_admits(assertion)
+                && (return_admission.owner_return_pin)(test, assertion);
             let bool_owner_pinned =
                 owner_pinned && matches!(assertion.kind, OracleKind::RelationalCheck);
             let owner_bound = !match_context.owner_scoped_tokens.is_empty()
@@ -3110,20 +3111,39 @@ fn probe_relative_oracle_strength(family: &ProbeFamily, assertion: &OracleFact) 
     if matches!(family, ProbeFamily::StaticUnknown) {
         return OracleStrength::Unknown;
     }
-    let relative = ORACLE_FAMILY_STRENGTH_OVERRIDES
+    let overridden = ORACLE_FAMILY_STRENGTH_OVERRIDES
         .iter()
         .find(|(rule_family, rule_kind, _)| rule_family == family && rule_kind == &assertion.kind)
         .map_or_else(
             || assertion.strength.clone(),
             |(_, _, strength)| strength.clone(),
         );
-    // RIPR-SPEC-0231 rule 1: an inequality keeps a kind such as
-    // `whole_object_equality` at weak strength, and no probe family may
-    // lift it back to the strong credit that kind earns from equality.
-    if relative.rank() > assertion.strength.rank() && is_inequality_assertion(&assertion.text) {
-        return assertion.strength.clone();
+    // RIPR-SPEC-0231: no rule raises a strength. A family override may lower
+    // the classifier's reading, but an assertion the classifier weakened
+    // (`assert_ne!` against a struct literal keeps `whole_object_equality`
+    // at weak) never comes back as strong because of its kind. Rule 1: an
+    // inequality is never lifted above its classified strength, whatever
+    // that strength is.
+    if (matches!(
+        assertion.strength,
+        OracleStrength::Medium | OracleStrength::Weak | OracleStrength::Smoke
+    ) || is_inequality_assertion(&assertion.text))
+        && overridden.rank() > assertion.strength.rank()
+    {
+        assertion.strength.clone()
+    } else {
+        overridden
     }
-    relative
+}
+
+/// RIPR-SPEC-0231 decision 4: an exact owner pin (`assert_eq!`) needs the
+/// classifier's strong reading. The one exception is RIPR-SPEC-0197's
+/// bool-owner pin: `assert!(owner(..))` / `assert!(!owner(..))` stays the
+/// classifier's weak `relational_check`, but on a `-> bool` owner it fixes
+/// the whole two-valued result, and `owner_pin` alone admits that shape.
+fn pin_strength_admits(assertion: &OracleFact) -> bool {
+    matches!(assertion.kind, OracleKind::RelationalCheck)
+        || assertion.strength == OracleStrength::Strong
 }
 
 #[cfg(test)]
@@ -4899,12 +4919,48 @@ return Err(\"typed pin\".into());
     }
 
     #[test]
+    fn pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin() {
+        // RIPR-SPEC-0231 decision 4: a weak exact oracle never pins.
+        assert!(!pin_strength_admits(&oracle(
+            "assert_ne!(f(), Foo { a: 1 })",
+            OracleKind::WholeObjectEquality,
+            OracleStrength::Weak,
+        )));
+        assert!(!pin_strength_admits(&oracle(
+            "assert_eq!(f(), 1)",
+            OracleKind::ExactValue,
+            OracleStrength::Medium,
+        )));
+        assert!(pin_strength_admits(&oracle(
+            "assert_eq!(f(), 1)",
+            OracleKind::ExactValue,
+            OracleStrength::Strong,
+        )));
+        // RIPR-SPEC-0197: the bool-owner `assert!` pin keeps its weak
+        // relational kind; `owner_pin` decides whether it pins.
+        assert!(pin_strength_admits(&oracle(
+            "assert!(!gate(9))",
+            OracleKind::RelationalCheck,
+            OracleStrength::Weak,
+        )));
+    }
+
+    #[test]
     fn probe_relative_oracle_strength_preserves_family_overrides() {
         let cases = [
             (
                 ProbeFamily::ErrorPath,
                 oracle("exact", OracleKind::ExactErrorVariant, OracleStrength::Weak),
-                OracleStrength::Strong,
+                OracleStrength::Weak,
+            ),
+            (
+                ProbeFamily::ErrorPath,
+                oracle(
+                    "exact",
+                    OracleKind::ExactErrorVariant,
+                    OracleStrength::Medium,
+                ),
+                OracleStrength::Medium,
             ),
             (
                 ProbeFamily::ErrorPath,
@@ -4924,7 +4980,12 @@ return Err(\"typed pin\".into());
             (
                 ProbeFamily::ReturnValue,
                 oracle("exact", OracleKind::ExactValue, OracleStrength::Weak),
-                OracleStrength::Strong,
+                OracleStrength::Weak,
+            ),
+            (
+                ProbeFamily::ReturnValue,
+                oracle("exact", OracleKind::ExactValue, OracleStrength::Medium),
+                OracleStrength::Medium,
             ),
             (
                 ProbeFamily::Predicate,
@@ -4953,7 +5014,7 @@ return Err(\"typed pin\".into());
                     OracleKind::WholeObjectEquality,
                     OracleStrength::Weak,
                 ),
-                OracleStrength::Strong,
+                OracleStrength::Weak,
             ),
             (
                 ProbeFamily::CallDeletion,

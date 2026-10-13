@@ -14,6 +14,51 @@ fn coverage_failure_capture_preserves_original_command_and_failure() -> Result<(
 }
 
 #[test]
+fn linux_llvm_proof_routes_prepare_the_pinned_component_before_tests() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let routes = [
+        (
+            "rust-gates.yml",
+            "cargo nextest run --workspace --profile ci",
+        ),
+        (
+            "test-analytics.yml",
+            "cargo nextest run --workspace --all-features --profile ci",
+        ),
+        (
+            "coverage.yml",
+            "cargo test -p repo-policy --lib coverage_diagnostics",
+        ),
+    ];
+    let prepared = |text: &str, command: &str| {
+        let setup = "      - uses: dtolnay/rust-toolchain@v1\n        with:\n          toolchain: 1.95.0\n          components: llvm-tools-preview";
+        match (text.find(setup), text.find(command)) {
+            (Some(setup), Some(test)) => setup < test,
+            _ => false,
+        }
+    };
+    for (route, command) in routes {
+        let text = fs::read_to_string(root.join(".github/workflows").join(route))
+            .map_err(|error| error.to_string())?;
+        assert!(
+            prepared(&text, command),
+            "{route}: mandatory LLVM proof lacks pinned preparation"
+        );
+        assert!(!prepared(
+            &text.replace("components: llvm-tools-preview", "components: clippy"),
+            command
+        ));
+        assert!(!prepared(
+            &text.replace("toolchain: 1.95.0", "toolchain: stable"),
+            command
+        ));
+        let test_first = format!("{command}\n{text}");
+        assert!(!prepared(&test_first, command));
+    }
+    Ok(())
+}
+
+#[test]
 fn automatic_pr_plan_placeholder_is_retired() -> Result<(), String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     let workflow = ".github/workflows/pr-plan.yml";

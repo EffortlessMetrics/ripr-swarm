@@ -1,0 +1,48 @@
+{
+  "case_id": "py-spec0233-ex29-client-patch",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex29-client-patch.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 149
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_non_mock_patch_call_in_test",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return int(text) + 2",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_subject.py::test_patch_call_and_exact",
+        "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 29: the related test calls a fake client's .patch(\"/x\") and asserts `parse_with_patch_call(\"1\") == 2`, which fails for 3. ripr reports static_unknown with mocked_module (limited, acceptable); the spec says a non-mock .patch call is no limit and credits exposed.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#29"
+  ]
+}

@@ -103,6 +103,12 @@ invent a second owner, treat a compatibility alias as authority, or collapse
 - `cargo xtask check-identity-registry` is network-free and fail-closed on
   unknown governed fields.
 
+The Rust source collector skips character and byte-character token spans using
+the existing Rust syntax lexer, so quote punctuation cannot hide subsequent
+identity-shaped string fields. Unknown and zero-field surfaces still refuse;
+the identity catalog, generated artifacts and source-subject authority do not
+change. Existing quoted-string extraction behavior remains the same.
+
 ## Non-Goals
 
 - No broad DTO migration.
