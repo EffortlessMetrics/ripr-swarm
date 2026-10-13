@@ -73,6 +73,44 @@ fn unittest_dot_free_paths_preserve_qualified_and_quoted_selectors() {
 }
 
 #[test]
+fn repair_placement_uses_first_runnable_oracle_relation() {
+    let dotted = extract_tests(Path::new("tests/test_checkout.v2.py"), UNITTEST);
+    let plain = extract_tests(Path::new("tests/test_plain.py"), UNITTEST);
+    let later = extract_tests(Path::new("tests/test_later.py"), UNITTEST);
+    let candidates = [
+        PythonRelatedCandidate {
+            test: &dotted[0],
+            relation: PythonRelationKind::SyntacticCall,
+        },
+        PythonRelatedCandidate {
+            test: &later[0],
+            relation: PythonRelationKind::SameStem,
+        },
+        PythonRelatedCandidate {
+            test: &plain[0],
+            relation: PythonRelationKind::SyntacticCall,
+        },
+        PythonRelatedCandidate {
+            test: &later[0],
+            relation: PythonRelationKind::SyntacticCall,
+        },
+    ];
+    let placement = python_repair_placement(&ExposureClass::WeaklyExposed, &candidates)
+        .expect("later runnable oracle relation retains a repair route");
+    assert_eq!(placement.suggested_test_file, "tests/test_plain.py");
+    assert_eq!(placement.suggested_test_name, "test_same");
+    assert_eq!(
+        placement.verify_command,
+        "python -m unittest tests.test_plain.CheckoutTests.test_same"
+    );
+    assert_eq!(
+        python_repair_placement(&ExposureClass::WeaklyExposed, &candidates[..2]),
+        None,
+        "an advisory relation cannot replace a refused oracle relation"
+    );
+}
+
+#[test]
 fn pytest_keeps_literal_path_dots_in_its_file_selector() {
     for (path, command) in [
         (
