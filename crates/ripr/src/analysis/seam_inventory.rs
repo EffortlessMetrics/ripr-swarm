@@ -361,7 +361,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
-        corpus_key: Some(key),
+        corpus_key: key.is_reusable().then_some(key),
         limit_info,
         skipped_generated,
         naming_only_skips,
@@ -384,10 +384,12 @@ pub(crate) fn workspace_cache_key_at_with_config(
     if let Some(key) =
         fingerprint_cached_workspace_key(root, &inputs, corpus.fingerprint.as_deref())
     {
+        key.require_reusable()?;
         return Ok(key);
     }
     let state = collect_workspace_state_from_files(root, config, corpus.analyzable)?;
     let key = state.cache_key();
+    key.require_reusable()?;
     store_corpus_fingerprint_mapping(&state, corpus.fingerprint, &key);
     Ok(key)
 }

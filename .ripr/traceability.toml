@@ -10140,6 +10140,13 @@ id = "RIPR-SPEC-0153"
 name = "Rust producer-owned source role"
 spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 tests = [
+  "crates/ripr/tests/cache_clear_safety.rs::classified_cache_cargo_config_edit_revert_rename_delete_matches_cold",
+  "crates/ripr/tests/cache_clear_safety.rs::classified_cache_saved_test_edit_revert_rename_delete_matches_cold",
+  "crates/ripr/tests/cache_clear_safety.rs::compact_classified_cache_cargo_config_change_matches_cold_and_preserves_revert_hit",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::unavailable_cargo_identity_refuses_valid_full_and_compact_cache_payloads",
+  "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::unavailable_cargo_inputs_refuse_current_key_without_claiming_corpus_provenance",
+  "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::cargo_input_identity_covers_ancestor_home_legacy_and_absence",
+  "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::cargo_input_identity_refuses_unreadable_and_oversized_configuration",
   "crates/ripr/src/analysis/facts/index_tests.rs::file_function_membership_retains_only_handle_capacity",
   "crates/ripr/src/analysis/facts/index_tests.rs::compact_membership_preserves_occurrences_replacement_and_finalized_slots",
   "crates/ripr/src/analysis/facts/index_tests.rs::shared_harness_demotion_splits_only_disagreeing_containing_paths",
@@ -10243,6 +10250,8 @@ code = [
   "crates/ripr/src/analysis/facts/index.rs",
   "crates/ripr/src/analysis/workspace/source_role.rs",
   "crates/ripr/src/analysis/workspace/cargo_targets.rs",
+  "crates/ripr/src/analysis/workspace/cargo_input_identity.rs",
+  "crates/ripr/src/analysis/seam_cache/store.rs",
   "crates/ripr/src/analysis/workspace/module_graph.rs",
   "crates/ripr/src/analysis/syntax/module_tree.rs",
   "crates/ripr/src/analysis/language/rust/mod.rs",
