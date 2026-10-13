@@ -254,9 +254,9 @@ Numbers hold for the recorded revision, binary, runner class, and pinned
 corpus. Targets are proposed bars, not product guarantees. Verdict metrics are
 static and do not claim runtime mutation outcomes.
 
-## Verdict-rate case populations
+## Corpus-rate case populations
 
-Verdict-rate samples carry `population` (`ripr-verdict-case-population-v1`):
+Verdict and oracle-rate samples carry `population` (`ripr-verdict-case-population-v1`):
 `rate` and one entry per case with `case_id`, `definition_sha256`, `numerator`
 and `denominator`. Zero-eligible contributions remain in the evidence. The
 corpus owner supplies the contributions; findings, rather than cases, supply
@@ -266,6 +266,11 @@ agreement. It loads and hashes each corpus once for all selected rates.
 Perl packet-provenance projections retain every case identity, with `0/0`
 contributions from the other packet cohort. Unsupported or absent projections
 fail explicitly; they do not manufacture zero rates.
+The two `oracle_accuracy` projections use the corpus owner's oracle summary;
+unlabeled cases retain `0/0` contributions. Case and row oracle labels must
+agree, and the stored observations must reproduce the row through the oracle
+owner's scoring rules. This checks committed records, without recovering
+finding file/line identities or original JSON truncation counts.
 
 The whole-corpus value still determines the absolute target status. Regression
 compares fractions over cases with the same ID and scoring-definition hash in
@@ -285,6 +290,8 @@ replacement/outcome semantics, and the subject origin, upstream pin and actual
 retained-file hashes. Ordered sets are normalized.
 Perl identities also include verified packet bytes, packet provenance and the
 pinned fact producer. Other languages retain their original definition hashes.
+Oracle-rate identities additionally bind the expected oracle kind, strength
+and test selector. Oracle labels do not change verdict-rate identities.
 Reasoning, spec citations,
 labeling observations, replay commands, failing-test annotations, equivalence
 reviews and `mutated_line` replay scaffolding are provenance rather than this

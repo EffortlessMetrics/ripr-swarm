@@ -1,6 +1,7 @@
 //! Case populations for committed verdict rates. These are record comparisons,
 //! not fresh analyzer or runtime mutation measurements.
 
+use super::super::verdict_corpus::oracle;
 use super::super::verdict_corpus::{self, CaseRow, PacketProvenance};
 use super::{MetricDef, allowed_worsening, round};
 use num_bigint::BigUint;
@@ -15,6 +16,12 @@ pub(super) const SCHEMA: &str = "ripr-verdict-case-population-v1";
 /// exposes. Unknown paths must not become excluded (zero) contributions.
 fn projection(rate: &str) -> Result<(Option<PacketProvenance>, &str), String> {
     let unsupported = || format!("unsupported case rate `{rate}`");
+    if let Some(leaf) = rate.strip_prefix("oracle_accuracy.") {
+        return match leaf {
+            "oracle_accuracy" | "oracle_overclaim_rate" => Ok((None, leaf)),
+            _ => Err(unsupported()),
+        };
+    }
     let (provenance, leaf) = if let Some(path) = rate.strip_prefix("by_packet_provenance.") {
         let (cohort, leaf) = path.split_once('.').ok_or_else(unsupported)?;
         let provenance = match cohort {
@@ -68,9 +75,11 @@ impl Population {
                 "abstention_rate" | "ideal_rate" | "false_verdict_rate" => {
                     case.denominator == 1 || (provenance.is_some() && case.denominator == 0)
                 }
-                "false_actionable_rate" | "false_exposed_rate" | "false_silent_rate" => {
-                    case.denominator <= 1
-                }
+                "false_actionable_rate"
+                | "false_exposed_rate"
+                | "false_silent_rate"
+                | "oracle_accuracy"
+                | "oracle_overclaim_rate" => case.denominator <= 1,
                 "contradiction_rate" => true,
                 _ => return Err(format!("unsupported case rate `{}`", self.rate)),
             };
@@ -109,8 +118,61 @@ impl Population {
 /// Loaded once per corpus during a scoreboard run. Definition validation and
 /// byte hashing are shared by all rates over that corpus.
 pub(super) struct Records {
-    rows: Vec<(CaseRow, String)>,
+    rows: Vec<(CaseRow, String, String)>,
     report: Value,
+}
+
+/// Validate the stored oracle observation through its owner. The row does not
+/// retain finding file/line identities or JSON truncation counts, so this is
+/// record consistency, not a replay of the original analyzer findings.
+fn oracle_definition_hash(
+    case: &verdict_corpus::Case,
+    row: &CaseRow,
+    verdict_hash: &str,
+) -> Result<String, String> {
+    match (&case.expected_oracle, &row.oracle) {
+        (None, None) => {}
+        (Some(expected), Some(recorded)) => {
+            if serde_json::to_value(expected).map_err(|err| err.to_string())?
+                != serde_json::to_value(&recorded.expected).map_err(|err| err.to_string())?
+            {
+                return Err(format!(
+                    "oracle row {} disagrees with its case label",
+                    row.case_id
+                ));
+            }
+            let observations: Vec<_> = recorded.observed_all.iter().map(|seen| {
+                json!({"name":seen.test, "oracle_kind":seen.kind, "oracle_strength":seen.strength})
+            }).collect();
+            let findings = json!({"related_tests":observations});
+            let verified = oracle::oracle_row(&row.case_id, expected, &[&findings])?;
+            if serde_json::to_value(&verified).map_err(|err| err.to_string())?
+                != serde_json::to_value(recorded).map_err(|err| err.to_string())?
+            {
+                return Err(format!(
+                    "oracle row {} disagrees with its stored observations",
+                    row.case_id
+                ));
+            }
+        }
+        _ => {
+            return Err(format!(
+                "oracle row {} has missing or unexpected label evidence",
+                row.case_id
+            ));
+        }
+    }
+    // Oracle labels change oracle eligibility/scoring, not the verdict's
+    // scoring definition. Spec citations are annotations, not oracle inputs.
+    let definition = json!({
+        "verdict_definition":verdict_hash,
+        "oracle":case.expected_oracle.as_ref().map(|expected| json!({
+            "kind":expected.kind, "strength":expected.strength, "test":expected.test,
+        })),
+    });
+    Ok(verdict_corpus::sha256_hex(
+        definition.to_string().as_bytes(),
+    ))
 }
 
 impl Records {
@@ -208,10 +270,9 @@ impl Records {
                     "producer": corpus.fact_producer,
                 });
             }
-            rows.push((
-                row,
-                verdict_corpus::sha256_hex(definition.to_string().as_bytes()),
-            ));
+            let hash = verdict_corpus::sha256_hex(definition.to_string().as_bytes());
+            let oracle_hash = oracle_definition_hash(case, &row, &hash)?;
+            rows.push((row, hash, oracle_hash));
         }
         Ok(Self {
             rows,
@@ -221,6 +282,7 @@ impl Records {
 
     pub(super) fn population(&self, rate: &str) -> Result<Population, String> {
         let (provenance, leaf) = projection(rate)?;
+        let oracle_rate = rate.starts_with("oracle_accuracy.");
         let ratio = rate
             .split('.')
             .fold(&self.report, |value, part| &value[part]);
@@ -231,7 +293,7 @@ impl Records {
             .as_u64()
             .ok_or_else(|| format!("missing corpus rate `{rate}`"))?;
         let mut cases = Vec::new();
-        for (row, hash) in &self.rows {
+        for (row, hash, oracle_hash) in &self.rows {
             // The corpus owner supplies denominators, including zero-eligible
             // contributions and per-finding contradiction counts.
             let selected = provenance.is_none_or(|p| row.packet_provenance == Some(p));
@@ -244,7 +306,14 @@ impl Records {
                     Vec::new()
                 },
             );
-            let single = serde_json::to_value(single).map_err(|err| err.to_string())?;
+            let single = if oracle_rate {
+                // The parent report omits oracle_accuracy on an unlabeled
+                // subset; the owner's direct summary still supplies 0/0.
+                serde_json::to_value(single.oracle_accuracy)
+            } else {
+                serde_json::to_value(single)
+            }
+            .map_err(|err| err.to_string())?;
             let n = single[leaf]["numerator"]
                 .as_u64()
                 .ok_or_else(|| format!("unsupported case rate `{rate}`"))?;
@@ -253,7 +322,7 @@ impl Records {
                 .ok_or_else(|| format!("unsupported case rate `{rate}`"))?;
             cases.push(Contribution {
                 case_id: row.case_id.clone(),
-                definition_sha256: hash.clone(),
+                definition_sha256: if oracle_rate { oracle_hash } else { hash }.clone(),
                 numerator: n,
                 denominator: d,
             });
