@@ -1077,8 +1077,10 @@ fn trailing_path_segments(path: &str) -> Vec<&str> {
         None => path,
     };
     let start = path
-        .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
-        .map_or(0, |at| at + 1);
+        .char_indices()
+        .rev()
+        .find(|(_, c)| !(c.is_alphanumeric() || *c == '_' || *c == ':'))
+        .map_or(0, |(at, c)| at + c.len_utf8());
     path[start..]
         .split("::")
         .filter(|segment| !segment.is_empty())
@@ -1131,6 +1133,7 @@ fn preferred_refusal_note(notes: Vec<AssertionRefusalNote>) -> Option<AssertionR
 mod tests {
     use super::evidence_summaries;
     use super::owner_local_binding_names;
+    use super::trailing_path_segments;
     use super::{ClassifiedProbeEvidence, ProbeContext, PropagationWitnessDiagnostic};
     use crate::analysis::classifier::finding::build_finding;
     use crate::analysis::facts::FunctionSourceRole;
@@ -1837,5 +1840,10 @@ mod tests {
             "callee identity must be bound to semantic digest"
         );
         Ok(())
+    }
+
+    #[test]
+    fn trailing_path_segments_steps_past_a_multi_byte_separator() {
+        assert_eq!(trailing_path_segments("x→Stack::new"), vec!["Stack", "new"]);
     }
 }
