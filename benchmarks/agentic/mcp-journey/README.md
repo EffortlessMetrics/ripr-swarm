@@ -117,3 +117,14 @@ same boundary. Inventory fitting now reserves the actual serialized request ID
 and SDK/wrapper bytes. The retained counterexample runs with short and escaped
 IDs through both legacy initialization and the current inline metadata lifecycle;
 it requires complete structured pages and continuing reads, not a generic error.
+
+Remote review identified a second identity counterexample on exact candidate
+`9cd2f0136e9e9ed237dfb937c2c36de6032bbf9d`: renaming a malformed manifest's Unix
+directory from raw byte `ff` to `fe` preserved the lossy displayed row, summary
+digest and accepted continuation. The immutable CLI and actual stdio transcript
+retain that original observation. The shared inventory now refuses names it
+cannot represent as UTF-8. A public Unix control requires whole-store typed
+refusal for both distinct raw names, even when a one-row page would hide them,
+then recovery after the external rename to a UTF-8 directory. The control also
+pins existing publication semantics: a reserved directory without `attempt.json`
+is excluded until the producer publishes its manifest.

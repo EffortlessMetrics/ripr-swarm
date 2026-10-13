@@ -62,6 +62,9 @@ documents without a breaking change.
 `ripr_list_repair_attempts` discovers the default durable CLI store before or
 after refresh through the shared canonical inventory authority. A missing store
 is empty and remains absent. Session transactions are explicitly excluded.
+Only manifest-bearing directories are inventoried; unpublished reservations are
+excluded. Unrepresentable UTF-8 directory identity refuses the canonical store
+inventory and projects typed `attempt_invalid`, without lossy or partial rows.
 Valid summaries retain ID, state, seam, repository head and the existing shared
 receipt/currentness projection. Invalid rows retain directory identity and a
 bounded `attempt_invalid` refusal without unvalidated fields or local-root paths.

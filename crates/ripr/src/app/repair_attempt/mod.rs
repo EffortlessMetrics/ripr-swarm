@@ -1213,6 +1213,8 @@ pub(crate) enum RepairAttemptInventoryEntry {
 /// after phase would refuse. Ordering is by identity, not creation time:
 /// consumers must not read "newest" into it (docs/REPAIR_ATTEMPT.md).
 /// A missing attempts directory is an empty inventory.
+/// Manifest-free reservations are excluded; a manifest-bearing directory whose
+/// name is not UTF-8 refuses the inventory rather than aliasing another entry.
 pub(crate) fn inventory_repair_attempts(
     root: &Path,
 ) -> Result<Vec<RepairAttemptInventoryEntry>, String> {
@@ -1243,7 +1245,12 @@ fn inventory_repair_attempts_in(
         if !path.is_file() {
             continue;
         }
-        let directory = entry.file_name().to_string_lossy().into_owned();
+        // Lossy names can alias distinct filesystem entries, so inventory
+        // consumers cannot safely identify or bind a continuation to them.
+        let directory = entry.file_name().into_string().map_err(|_| {
+            "repair attempt directory name is not UTF-8; inventory cannot preserve its identity"
+                .to_string()
+        })?;
         entries.push(match read_repair_attempt_manifest_at(store, &path) {
             Ok(manifest) => RepairAttemptInventoryEntry::Valid(Box::new(manifest)),
             Err(error) => RepairAttemptInventoryEntry::Invalid { directory, error },

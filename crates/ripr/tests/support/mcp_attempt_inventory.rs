@@ -61,6 +61,80 @@ fn invalid_manifest(root: &Path, directory: &str) -> Result<PathBuf, String> {
     Ok(manifest)
 }
 
+#[cfg(unix)]
+#[test]
+fn inventory_refuses_lossy_directory_identity_and_recovers() -> Result<(), String> {
+    use std::os::unix::ffi::{OsStrExt, OsStringExt};
+    let fixture = install_b4_fixture("inventory-raw-name")?;
+    let store = fixture.root.join("target/ripr/repair-attempts");
+    invalid_manifest(&fixture.root, "ascii-invalid")?;
+    let first = store.join(std::ffi::OsString::from_vec(vec![0xff]));
+    let second = store.join(std::ffi::OsString::from_vec(vec![0xfe]));
+    with_session(&fixture.root, |session, tools| {
+        let clean = inventory(session, tools, json!({"limit": 1}))?;
+        let bound = clean["inventory_id"].clone();
+        std::fs::create_dir(&first).map_err(|error| error.to_string())?;
+        // A reservation without a manifest is not a published attempt.
+        let reserved = inventory(session, tools, json!({"inventory_id": bound}))?;
+        if reserved["total"] != json!(1) || reserved["inventory_id"] != bound {
+            return Err("unpublished reservation changed the manifest inventory".into());
+        }
+        std::fs::write(first.join("attempt.json"), "{not-json")
+            .map_err(|error| error.to_string())?;
+        let name = tool_named(tools, INVENTORY_TOOL)?;
+        for directory in [&first, &second] {
+            if directory == &second {
+                std::fs::rename(&first, &second).map_err(|error| error.to_string())?;
+            }
+            // Raw names, rather than the lossy snapshot helper, own this oracle.
+            let names = std::fs::read_dir(&store)
+                .map_err(|error| error.to_string())?
+                .map(|entry| entry.map(|entry| entry.file_name()))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|error| error.to_string())?;
+            let expected: &[u8] = if directory == &first {
+                &[0xff]
+            } else {
+                &[0xfe]
+            };
+            if !names.iter().any(|name| name.as_bytes() == expected) {
+                return Err("the distinct raw directory stimulus is absent".into());
+            }
+            let before =
+                std::fs::read(directory.join("attempt.json")).map_err(|error| error.to_string())?;
+            for args in [
+                json!({"limit": 1}),
+                json!({"inventory_id": bound, "offset": 1, "limit": 1}),
+            ] {
+                let reply = session.call("unrepresentable-directory", &name, args)?;
+                if tool_failure(&reply, "unrepresentable directory")? != "attempt_invalid"
+                    || reply.pointer("/result/structuredContent/items").is_some()
+                    || reply.pointer("/result/structuredContent/total").is_some()
+                {
+                    return Err(format!(
+                        "raw directory identity must refuse the entire inventory: {reply}"
+                    ));
+                }
+            }
+            if std::fs::read(directory.join("attempt.json")).map_err(|error| error.to_string())?
+                != before
+            {
+                return Err("inventory refusal mutated the invalid manifest".into());
+            }
+        }
+        std::fs::rename(&second, store.join("restored-invalid"))
+            .map_err(|error| error.to_string())?;
+        let recovered = inventory(session, tools, json!({"limit": 2}))?;
+        if recovered["total"] != json!(2)
+            || recovered["invalid"] != json!(2)
+            || entries(&recovered)?[1]["directory"] != json!("restored-invalid")
+        {
+            return Err("restored UTF-8 directory did not recover discovery".into());
+        }
+        Ok(())
+    })
+}
+
 #[test]
 fn inventory_discovery_empty_store_and_argument_refusals() -> Result<(), String> {
     let fixture = install_b4_fixture("inventory-empty")?;

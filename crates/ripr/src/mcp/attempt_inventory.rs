@@ -201,6 +201,7 @@ pub(super) fn list_document(
                 "MCP in-memory transactions are excluded; their IDs are returned by ripr_prepare_repair",
                 "Live observations are not an atomic filesystem snapshot; restart pagination if the inventory changes",
                 "Output is count/byte bounded; canonical inventory validation still reads the whole store",
+                "Only manifest-bearing directories are inventoried; unrepresentable UTF-8 names refuse the store",
                 "Invalid rows retain directory identity only; the CLI store diagnostic owns full refusal detail"
             ]
         })

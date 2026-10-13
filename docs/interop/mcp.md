@@ -62,6 +62,10 @@ a time through the tool or the resource.
 its canonical inventory/validation authority; it works before `ripr_refresh`.
 It never creates a missing store. MCP in-memory transactions are excluded:
 their IDs come from `ripr_prepare_repair`.
+The shared inventory includes manifest-bearing directories; an unpublished
+reservation without `attempt.json` is excluded. A manifest-bearing directory
+whose name cannot be represented as UTF-8 refuses the entire inventory with
+`attempt_invalid`, preserving identity rather than returning lossy or partial rows.
 
 The structured `ripr-mcp-repair-attempt-list-v1` document returns `inventory_id`,
 root identity, observed repository HEAD, `total`, `valid`, `invalid`, `omitted`,
