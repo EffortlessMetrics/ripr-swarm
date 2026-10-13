@@ -89,6 +89,83 @@ fn semantic_config_diagnostic_names_profile_expected_values() {
     assert_eq!(diagnostic.expected_values, ["actionable", "full"]);
 }
 
+/// A typo in `[perl].producer` must fail at parse like the other closed
+/// enums. The runtime `is_managed_perl_producer` allowlist stays the single
+/// accepted set; `check.rs:1504` uses `"custom"` only as a non-managed
+/// predicate token, not as a documented `ripr.toml` value.
+#[test]
+fn perl_producer_typo_fails_closed_with_key_named_error() {
+    let diagnostic = parse_config_diagnostic("[perl]\nproducer = \"perllspp\"\n")
+        .expect_err("typo producer must fail parse");
+    assert_eq!(diagnostic.config_path.as_deref(), Some("perl.producer"));
+    assert_eq!(diagnostic.location_status, ConfigLocationStatus::Exact);
+    assert_eq!(diagnostic.invalid_value.as_deref(), Some("\"perllspp\""));
+    assert_eq!(
+        diagnostic.expected_values,
+        ["perl-ripr-facts", "perllsp", "perl-lsp"]
+    );
+    assert!(
+        diagnostic
+            .message
+            .contains("perl.producer `perllspp` is not supported"),
+        "{}",
+        diagnostic.message
+    );
+    assert!(
+        diagnostic
+            .message
+            .contains("expected perl-ripr-facts, perllsp, or perl-lsp"),
+        "{}",
+        diagnostic.message
+    );
+}
+
+#[test]
+fn perl_producer_custom_is_not_a_documented_unmanaged_value() {
+    let error = parse_config("[perl]\nproducer = \"custom\"\n")
+        .expect_err("custom is not an accepted ripr.toml producer");
+    assert!(
+        error.contains("perl.producer `custom` is not supported"),
+        "{error}"
+    );
+}
+
+#[test]
+fn perl_producer_accepted_managed_values_and_omission_parse() {
+    for value in ["perl-ripr-facts", "perllsp", "perl-lsp"] {
+        let config = parse_config(&format!("[perl]\nproducer = \"{value}\"\n"))
+            .unwrap_or_else(|err| panic!("{value} must parse: {err}"));
+        assert_eq!(config.perl().producer(), Some(value));
+        assert!(
+            crate::app::is_managed_perl_producer(value),
+            "{value} must remain on the existing managed allowlist"
+        );
+    }
+    let omitted =
+        parse_config("[perl]\ntimeout_ms = 1000\n").expect("omitted producer remains valid");
+    assert_eq!(omitted.perl().producer(), None);
+}
+
+#[test]
+fn perl_producer_diagnostic_expected_values_match_managed_allowlist() {
+    let diagnostic =
+        parse_config_diagnostic("[perl]\nproducer = \"nope\"\n").expect_err("unknown producer");
+    assert!(
+        !diagnostic.expected_values.is_empty(),
+        "editor/LSP expected-values must name the closed set"
+    );
+    for value in &diagnostic.expected_values {
+        assert!(
+            crate::app::is_managed_perl_producer(value),
+            "{value} listed as expected but is not a managed producer"
+        );
+    }
+    assert!(
+        !crate::app::is_managed_perl_producer("nope"),
+        "control: the rejected value must stay unmanaged"
+    );
+}
+
 fn temp_root(name: &str) -> Result<PathBuf, String> {
     let stamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1351,9 +1428,13 @@ proptest! {
         max_related_tests in any::<usize>(),
         suppression_path in valid_repository_paths(),
         resolve_tsconfig_paths in any::<bool>(),
-        producer in any::<String>(),
+        producer in prop::option::of(prop::sample::select(vec![
+            "perl-ripr-facts".to_string(),
+            "perllsp".to_string(),
+            "perl-lsp".to_string(),
+        ])),
         executable in any::<String>(),
-        timeout_ms in any::<u64>(),
+        timeout_ms in 1u64..,
         cache_dir in valid_repository_paths(),
     ) {
         let raw = RawConfig {
@@ -1400,7 +1481,7 @@ proptest! {
                 resolve_tsconfig_paths: Some(resolve_tsconfig_paths),
             }),
             perl: Some(RawPerlConfig {
-                producer: Some(producer),
+                producer: spanned_value(producer),
                 executable: Some(executable),
                 timeout_ms: Some(timeout_ms),
                 cache_dir: Some(cache_dir),
