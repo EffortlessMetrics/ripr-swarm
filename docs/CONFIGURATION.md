@@ -28,6 +28,10 @@ the walk. `ripr` does not read global user config or hidden alternate config
 files. Environment variables are process-local tuning knobs and are documented
 separately from repo policy.
 
+Implicit `check` and cache root selection also respect dangling or cyclic
+`.git` entries before adopting an enclosing workspace, preserving the local
+project's config and explicit CLI precedence.
+
 Configuration is for policy and tuning, not a prerequisite for first value.
 `ripr.toml` has no Rust fixture/builder computed-value mapping mechanism.
 Test-harness registrations identify test sources; they do not evaluate their
