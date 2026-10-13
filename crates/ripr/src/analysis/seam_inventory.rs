@@ -9871,6 +9871,68 @@ fn selected() {
                 admitted,
             ));
         }
+        for (label, attribute, admitted) in [
+            (
+                "unsupported-no-std-value",
+                "#![cfg_attr(not(test), no_std=\"opaque\")]",
+                false,
+            ),
+            (
+                "unsupported-no-std-list",
+                "#![cfg_attr(not(test), no_std(opaque))]",
+                false,
+            ),
+            (
+                "unsupported-no-std-path",
+                "#![cfg_attr(not(test), other::no_std)]",
+                false,
+            ),
+            (
+                "mixed-no-std",
+                "#![cfg_attr(not(test), no_std, allow(dead_code))]",
+                false,
+            ),
+            ("inactive-no-std", "#![cfg_attr(not(test), no_std)]", true),
+            ("active-cfg-no-std", "#![cfg_attr(test, no_std)]", false),
+            (
+                "unknown-no-std",
+                "#![cfg_attr(feature=\"maybe\", no_std)]",
+                false,
+            ),
+            (
+                "nested-no-std",
+                "#![cfg_attr(not(test), cfg_attr(not(test), no_std))]",
+                false,
+            ),
+            (
+                "inactive-no-prelude",
+                "#![cfg_attr(not(test), no_implicit_prelude)]",
+                true,
+            ),
+            (
+                "active-cfg-no-prelude",
+                "#![cfg_attr(test, no_implicit_prelude)]",
+                false,
+            ),
+            (
+                "unknown-no-prelude",
+                "#![cfg_attr(feature=\"maybe\", no_implicit_prelude)]",
+                false,
+            ),
+            (
+                "nested-no-prelude",
+                "#![cfg_attr(not(test), cfg_attr(not(test), no_implicit_prelude))]",
+                false,
+            ),
+        ] {
+            cases.push((
+                label.into(),
+                format!("{attribute}\n"),
+                String::new(),
+                "std::assert_eq!(crate::owner(1), 1);".into(),
+                admitted,
+            ));
+        }
         for (label, prefix, dependencies, body, admitted) in cases {
             let root = make_tempdir("qualified-assertion-root")?;
             write_file(

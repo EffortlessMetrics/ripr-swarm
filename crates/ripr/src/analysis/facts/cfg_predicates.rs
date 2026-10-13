@@ -179,6 +179,54 @@ pub(crate) fn attribute_test_build_availability(attr_text: &str) -> Option<bool>
     availability_attribute(body, 0).ok().flatten()
 }
 
+/// A flat `cfg_attr` introducing only bare prelude flags inactive in a test build.
+/// Unknown, malformed and nested introductions retain the existing boundary.
+pub(crate) fn attribute_is_known_inactive_prelude_flags(attr_text: &str) -> bool {
+    let Some(positioned) = positioned_tokens(attr_text) else {
+        return false;
+    };
+    let tokens: Vec<_> = positioned.into_iter().map(|token| token.token).collect();
+    let body = match tokens.as_slice() {
+        [
+            Token::Punct('#'),
+            Token::Punct('['),
+            body @ ..,
+            Token::Punct(']'),
+        ]
+        | [
+            Token::Punct('#'),
+            Token::Punct('!'),
+            Token::Punct('['),
+            body @ ..,
+            Token::Punct(']'),
+        ] => body,
+        _ => return false,
+    };
+    let [
+        Token::Word(name),
+        Token::Punct('('),
+        inner @ ..,
+        Token::Punct(')'),
+    ] = body
+    else {
+        return false;
+    };
+    if name != "cfg_attr" || !body_is_balanced(inner) {
+        return false;
+    }
+    let Ok(parts) = availability_arguments(inner) else {
+        return false;
+    };
+    let Some((condition, introduced)) = parts.split_first() else {
+        return false;
+    };
+    !introduced.is_empty()
+        && introduced.iter().all(|part| {
+            matches!(part, [Token::Word(name)] if matches!(name.as_str(), "no_std" | "no_implicit_prelude"))
+        })
+        && matches!(availability_predicate(condition, 0), Ok(Some(false)))
+}
+
 /// Whether an attribute can only preserve the source items it annotates.
 /// This is narrower than configuration availability: a proc attribute may be
 /// configuration-inert while replacing a module and its bindings entirely.

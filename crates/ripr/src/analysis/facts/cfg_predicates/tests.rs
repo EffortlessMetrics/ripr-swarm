@@ -1,6 +1,48 @@
 use super::*;
 
 #[test]
+fn inactive_prelude_flags_keep_unknown_and_malformed_boundaries() {
+    for attribute in [
+        "#![cfg_attr(not(test), no_std)]",
+        "#![cfg_attr(not(test), no_implicit_prelude)]",
+        "#[ cfg_attr ( any(), no_std, ) ]",
+        "#[cfg_attr(all(not(test), feature = \"maybe\"), no_std)]",
+        "#[cfg_attr(not(test) /* test */, no_std, no_implicit_prelude)]",
+    ] {
+        assert!(
+            attribute_is_known_inactive_prelude_flags(attribute),
+            "{attribute}"
+        );
+    }
+    for attribute in [
+        "#![no_std]",
+        "#![no_implicit_prelude]",
+        "#![cfg_attr(test, no_std)]",
+        "#![cfg_attr(test, no_implicit_prelude)]",
+        "#![cfg_attr(feature = \"maybe\", no_std)]",
+        "#![cfg_attr(feature = \"maybe\", no_implicit_prelude)]",
+        "#![cfg_attr(not(test), cfg_attr(not(test), no_std))]",
+        "#![cfg_attr(not(test), cfg_attr(test, no_implicit_prelude))]",
+        "#![cfg_attr(not(test), no_std =)]",
+        "#![cfg_attr(not(test), no_std +)]",
+        "#![cfg_attr(not(test), no_std::)]",
+        "#![cfg_attr(not(test), no_std(opaque))]",
+        "#![cfg_attr(not(test), no_std, allow(dead_code))]",
+        "#![cfg_attr(not(test), r#no_std)]",
+        "#![cfg_attr(not(test))]",
+        "#![cfg_attr(not(test),)]",
+        "#![cfg_attr(not(test), no_std]",
+        "#![r#cfg_attr(not(test), no_std)]",
+        "#![doc = \"cfg_attr(not(test), no_std)\"]",
+    ] {
+        assert!(
+            !attribute_is_known_inactive_prelude_flags(attribute),
+            "{attribute}"
+        );
+    }
+}
+
+#[test]
 fn cfg_predicate_spelling_table_pins_requires_test_forms() {
     let requires_test = [
         "#[cfg(test)]",

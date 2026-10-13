@@ -2508,6 +2508,9 @@ pub(crate) fn assertion_root_is_available(path: &str, node: &ra_ap_syntax::Synta
                 .descendants_with_tokens()
                 .filter_map(|e| e.into_token())
                 .any(|token| token.text() == name)
+                && !cfg_predicates::attribute_is_known_inactive_prelude_flags(
+                    &attribute.syntax().text().to_string(),
+                )
         })
     };
     !mentions("no_implicit_prelude")
