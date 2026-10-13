@@ -1,0 +1,6 @@
+use spec0229_1::reason;
+
+#[test]
+fn some_five_adds_one() {
+    assert_eq!(reason(Some(5)), 6);
+}

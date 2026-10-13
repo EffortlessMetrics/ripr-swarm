@@ -1,0 +1,13 @@
+diff --git a/lib/Ledger.pm b/lib/Ledger.pm
+index 78101d1..e87859d 100644
+--- a/lib/Ledger.pm
++++ b/lib/Ledger.pm
+@@ -31,7 +31,7 @@ sub withdraw {
+ 
+ sub deposit {
+     my ($balance, $amount) = @_;
+-    return $balance + $amount;
++    return $amount + $balance;
+ }
+ 
+ sub fee {

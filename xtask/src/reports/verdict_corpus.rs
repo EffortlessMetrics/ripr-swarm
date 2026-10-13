@@ -7,7 +7,7 @@
 //! it against that label. It reports false-verdict and contradiction rates; it
 //! does not run mutation testing, and its rates describe this corpus only.
 
-use super::fixtures::ripr_fixture_binary;
+use super::fixtures::{ripr_fixture_binary, ripr_perl_fixture_binary};
 use crate::normalize_path;
 use crate::run::run_output_owned_with_envs;
 use coverage::{Ledger, SpecExampleCoverage, SpecExamples};
@@ -41,6 +41,10 @@ pub(crate) struct Corpus {
     pub(crate) label_method: String,
     pub(crate) verdict_projection: String,
     pub(crate) non_claims: Vec<String>,
+    /// The pinned program that wrote every case's fact packet. Required for
+    /// a Perl corpus and refused in every other (RIPR-SPEC-0245).
+    #[serde(default)]
+    pub(crate) fact_producer: Option<FactProducer>,
     pub(crate) subjects: Vec<Subject>,
     pub(crate) cases: Vec<Case>,
 }
@@ -56,6 +60,50 @@ struct CorpusHeader {
     label_method: String,
     verdict_projection: String,
     non_claims: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fact_producer: Option<FactProducer>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FactProducer {
+    pub(crate) name: String,
+    pub(crate) repository: String,
+    pub(crate) commit: String,
+    pub(crate) command: String,
+}
+
+/// A case's committed fact packet, passed to `ripr check --perl-facts`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PerlFacts {
+    pub(crate) packet: String,
+    pub(crate) sha256: String,
+    pub(crate) provenance: PacketProvenance,
+    /// What was changed in an edited packet, in words a reviewer can check
+    /// against the packet diff. Absent for a producer packet.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) edits: Option<String>,
+}
+
+/// Where a case's packet came from. A producer packet is the pinned
+/// producer's output byte for byte; an edited packet is a producer packet
+/// with named facts changed, to reach a packet shape a spec defines that the
+/// producer does not emit today. The report keeps their rates apart.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum PacketProvenance {
+    Producer,
+    EditedProducer,
+}
+
+impl PacketProvenance {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Producer => "producer",
+            Self::EditedProducer => "edited_producer",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -143,6 +191,9 @@ pub(crate) struct Case {
     /// compares untyped values, where a missing key differs from `[]`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(crate) spec_examples: Vec<String>,
+    /// The fact packet ripr reads for a Perl case; absent elsewhere.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) perl_facts: Option<PerlFacts>,
 }
 
 /// What ripr said when the case was labeled, on the full pinned checkout and
@@ -349,8 +400,18 @@ fn probe_file(finding: &Value) -> String {
     file.strip_prefix("./").unwrap_or(&file).to_string()
 }
 
-fn is_candidate_current(finding: &Value) -> bool {
-    finding.get("source_currentness").and_then(Value::as_str) == Some("candidate_current")
+/// `packet_driven` is true for a case ripr analyzes from a fact packet.
+fn is_candidate_current(finding: &Value, packet_driven: bool) -> bool {
+    match finding.get("source_currentness").and_then(Value::as_str) {
+        Some("candidate_current") => true,
+        // ripr resolves Perl currentness only when the packet's change range
+        // meets a diff line on SPEC-0064's one-based reading (#6586); the
+        // pinned producer writes zero-based lines (#3221), so its findings
+        // stay the explicit unknown `unresolved_subject`. Counting them is
+        // this corpus's projection for packet cases, not a currentness claim.
+        Some("unresolved_subject") => packet_driven,
+        _ => false,
+    }
 }
 
 /// The binding a changed `let` line declares, when the anchor is one.
@@ -437,10 +498,13 @@ fn is_anchor_relation(evidence: &str, anchor_line: &str, binding: &str) -> bool 
 /// hand-editing the anchor line. This couples the projection to the wording
 /// of that evidence line (`analysis/language/rust/probes.rs`); a wording
 /// change stops the following, and a case that retargets then reads silent.
+/// A packet-driven case also counts `unresolved_subject` findings (see
+/// [`is_candidate_current`]).
 pub(crate) fn anchored_findings<'a>(
     check: &'a Value,
     anchor: &Anchor,
     anchor_line: Option<&str>,
+    packet_driven: bool,
 ) -> Vec<&'a Value> {
     let relation = anchor_line.and_then(|line| declared_binding(line).map(|name| (line, name)));
     check
@@ -449,7 +513,7 @@ pub(crate) fn anchored_findings<'a>(
         .map(|findings| {
             findings
                 .iter()
-                .filter(|finding| is_candidate_current(finding))
+                .filter(|finding| is_candidate_current(finding, packet_driven))
                 .filter(|finding| probe_file(finding) == anchor.file)
                 .filter(|finding| {
                     finding.pointer("/probe/line").and_then(Value::as_u64)
@@ -516,7 +580,11 @@ pub(crate) fn finding_contradictions(finding: &Value) -> Vec<&'static str> {
     if stage("reach") == "yes" && total == 0 {
         codes.push("reach_yes_without_related_tests");
     }
-    if class == "no_static_path" && total > 0 {
+    // Since #5424 a `no_static_path` finding lists every test it examined,
+    // each with why it misses, so proximity-linked rows are consistent with
+    // "no path". Only a listed test whose relation reaches the owner
+    // contradicts it.
+    if class == "no_static_path" && lists_a_reaching_test(finding) {
         codes.push("no_static_path_with_related_tests");
     }
     if class == "exposed" && stage("discriminate") != "yes" {
@@ -526,6 +594,30 @@ pub(crate) fn finding_contradictions(finding: &Value) -> Vec<&'static str> {
         codes.push("related_tests_listed_exceed_total");
     }
     codes
+}
+
+/// Relations ripr's reach stage does not count as reaching the owner
+/// (`is_proximity_only` plus the seam-callee rows `reach_evidence` sets
+/// aside, in `crates/ripr/src/analysis/classify/reach.rs`). Any other listed
+/// relation makes reach `yes`, which `no_static_path` contradicts.
+const NON_REACHING_RELATIONS: [&str; 4] = [
+    "same_test_file",
+    "same_module",
+    "weak_token_substring",
+    "seam_callee_call",
+];
+
+fn lists_a_reaching_test(finding: &Value) -> bool {
+    finding
+        .get("related_tests")
+        .and_then(Value::as_array)
+        .is_some_and(|tests| {
+            tests.iter().any(|test| {
+                test.get("relation_reason")
+                    .and_then(Value::as_str)
+                    .is_some_and(|reason| !NON_REACHING_RELATIONS.contains(&reason))
+            })
+        })
 }
 
 const SUMMARY_CLASSES: [&str; 7] = [
@@ -640,6 +732,10 @@ pub(crate) struct CaseRow {
     /// Occurrences per contradiction code, including the per-check
     /// summary-count codes.
     pub(crate) contradiction_counts: BTreeMap<String, usize>,
+    /// Where the case's fact packet came from; absent for languages ripr
+    /// reads itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) packet_provenance: Option<PacketProvenance>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -661,6 +757,11 @@ pub(crate) struct Report {
     /// The verdict rates again, per subject origin. Authored cases are chosen
     /// to fill cells, so only the upstream rates describe real-world tests.
     pub(crate) by_origin: BTreeMap<String, OriginRates>,
+    /// The verdict rates again, per fact-packet provenance (Perl only). An
+    /// edited packet reaches a shape the producer does not emit today, so
+    /// only the producer rates describe what a Perl user gets now.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) by_packet_provenance: BTreeMap<String, OriginRates>,
     /// Which numbered spec acceptance examples carry a case. Filled from the
     /// ledger and the spec files, not from ripr's output.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -721,7 +822,8 @@ pub(crate) fn case_row(
     check: &Value,
     anchor_line: Option<&str>,
 ) -> CaseRow {
-    let anchored = anchored_findings(check, &case.anchor, anchor_line);
+    let packet_driven = case.perl_facts.is_some();
+    let anchored = anchored_findings(check, &case.anchor, anchor_line, packet_driven);
     let followed_retarget = anchored
         .iter()
         .any(|f| f.pointer("/probe/line").and_then(Value::as_u64) != Some(case.anchor.line as u64));
@@ -742,7 +844,7 @@ pub(crate) fn case_row(
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
-        .filter(|f| is_candidate_current(f))
+        .filter(|f| is_candidate_current(f, packet_driven))
     {
         scored += 1;
         let codes = finding_contradictions(finding);
@@ -778,6 +880,7 @@ pub(crate) fn case_row(
         findings_scored: scored,
         findings_contradicted: contradicted,
         contradiction_counts: code_counts,
+        packet_provenance: case.perl_facts.as_ref().map(|facts| facts.provenance),
     }
 }
 
@@ -861,6 +964,16 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
             by_origin.insert(origin.as_str().to_string(), origin_rates(&subset));
         }
     }
+    let mut by_packet_provenance = BTreeMap::new();
+    for provenance in [PacketProvenance::Producer, PacketProvenance::EditedProducer] {
+        let subset: Vec<&CaseRow> = rows
+            .iter()
+            .filter(|r| r.packet_provenance == Some(provenance))
+            .collect();
+        if !subset.is_empty() {
+            by_packet_provenance.insert(provenance.as_str().to_string(), origin_rates(&subset));
+        }
+    }
     Report {
         schema_version: REPORT_SCHEMA.to_string(),
         spec,
@@ -877,6 +990,7 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
         contradiction_rate: ratio(findings_contradicted, findings_scored),
         contradictions_by_code: by_code,
         by_origin,
+        by_packet_provenance,
         spec_example_coverage: None,
         rows,
         non_claims,
@@ -977,6 +1091,26 @@ pub(crate) fn render_report_markdown(report: &Report, language: &str) -> String 
             let cell = |r: &Ratio| format!("{}/{}", r.numerator, r.denominator);
             out.push_str(&format!(
                 "| {origin} | {} | {} | {} | {} | {} | {} | {} |\n",
+                rates.cases_total,
+                cell(&rates.false_verdict_rate),
+                cell(&rates.false_actionable_rate),
+                cell(&rates.false_exposed_rate),
+                cell(&rates.false_silent_rate),
+                cell(&rates.ideal_rate),
+                cell(&rates.abstention_rate),
+            ));
+        }
+    }
+    if !report.by_packet_provenance.is_empty() {
+        out.push_str(
+            "\nBy fact-packet provenance. An edited packet changes named producer facts to reach a shape a spec defines that the producer does not emit today, so only the producer rates describe what a Perl user gets now.\n\n",
+        );
+        out.push_str("| Packet | Cases | False verdicts | False actionable | False exposed | False silent | Ideal | Abstained |\n");
+        out.push_str("| --- | --- | --- | --- | --- | --- | --- | --- |\n");
+        for (provenance, rates) in &report.by_packet_provenance {
+            let cell = |r: &Ratio| format!("{}/{}", r.numerator, r.denominator);
+            out.push_str(&format!(
+                "| {provenance} | {} | {} | {} | {} | {} | {} | {} |\n",
                 rates.cases_total,
                 cell(&rates.false_verdict_rate),
                 cell(&rates.false_actionable_rate),
@@ -1088,6 +1222,16 @@ fn is_rust_corpus(dir: &Path) -> bool {
         .and_then(|name| name.to_str())
         .and_then(|name| name.strip_suffix(CORPUS_SUFFIX))
         .is_none_or(|language| !NON_RUST_LANGUAGES.contains(&language))
+}
+
+/// ripr does not read Perl: its findings come from a fact packet an external
+/// producer writes (RIPR-SPEC-0064), so every case in the Perl corpus, and no
+/// case anywhere else, carries one.
+fn is_perl_corpus(dir: &Path) -> bool {
+    dir.file_name()
+        .and_then(|name| name.to_str())
+        .and_then(|name| name.strip_suffix(CORPUS_SUFFIX))
+        == Some("perl")
 }
 
 /// Corpus languages whose labels record the command they ran instead of a
@@ -1371,6 +1515,7 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
                 case.case_id
             ));
         }
+        violations.extend(perl_facts_violations(case, is_perl_corpus(dir), dir));
         match subjects.get(case.subject_id.as_str()) {
             Some(subject) => violations.extend(case_violations(case, subject, dir)),
             None => violations.push(format!(
@@ -1379,6 +1524,10 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
             )),
         }
     }
+    violations.extend(fact_producer_violations(
+        corpus.fact_producer.as_ref(),
+        is_perl_corpus(dir),
+    ));
     violations.extend(case_dir_violations(corpus, dir));
     let truths: BTreeSet<TruthState> = corpus.cases.iter().map(|c| c.truth.state).collect();
     for required in [TruthState::Discriminated, TruthState::NotDiscriminated] {
@@ -1388,6 +1537,93 @@ pub(crate) fn validate(corpus: &Corpus, dir: &Path) -> Vec<String> {
                 required.as_str()
             ));
         }
+    }
+    violations
+}
+
+/// A Perl corpus names the pinned producer of its packets; no other corpus
+/// names one.
+fn fact_producer_violations(producer: Option<&FactProducer>, is_perl: bool) -> Vec<String> {
+    let mut violations = Vec::new();
+    match producer {
+        None if is_perl => violations.push(
+            "a perl corpus names no `fact_producer`; say which pinned producer wrote the packets"
+                .to_string(),
+        ),
+        None => {}
+        Some(_) if !is_perl => violations.push(
+            "`fact_producer` is for the perl corpus; ripr reads this corpus's language itself"
+                .to_string(),
+        ),
+        Some(producer) => {
+            if [&producer.name, &producer.repository, &producer.command]
+                .iter()
+                .any(|field| field.trim().is_empty())
+            {
+                violations.push("`fact_producer` has an empty field".to_string());
+            }
+            if producer.commit.len() != 40
+                || !producer
+                    .commit
+                    .chars()
+                    .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c))
+            {
+                violations.push(
+                    "`fact_producer.commit` is not a 40-character lowercase hex sha".to_string(),
+                );
+            }
+        }
+    }
+    violations
+}
+
+/// A Perl case must carry a packet whose bytes match its pin, under
+/// `packets/`; an edited packet must say what was edited and a producer
+/// packet must not. No other corpus's case takes a packet.
+pub(crate) fn perl_facts_violations(case: &Case, is_perl: bool, dir: &Path) -> Vec<String> {
+    let id = &case.case_id;
+    let Some(facts) = &case.perl_facts else {
+        return if is_perl {
+            vec![format!(
+                "perl case `{id}` has no `perl_facts`; ripr analyzes Perl only from a fact packet"
+            )]
+        } else {
+            Vec::new()
+        };
+    };
+    if !is_perl {
+        return vec![format!(
+            "case `{id}` carries `perl_facts` outside the perl corpus"
+        )];
+    }
+    let mut violations = Vec::new();
+    if !safe_relative(&facts.packet) || !facts.packet.starts_with("packets/") {
+        violations.push(format!(
+            "case `{id}` packet `{}` is not a safe path under packets/",
+            facts.packet
+        ));
+        return violations;
+    }
+    match fs::read(dir.join(&facts.packet)) {
+        Ok(bytes) if sha256_hex(&bytes) == facts.sha256 => {}
+        Ok(_) => violations.push(format!(
+            "case `{id}` packet `{}` does not match its pinned sha256; a changed packet needs the case relabeled before the sha256 is re-pinned",
+            facts.packet
+        )),
+        Err(err) => violations.push(format!(
+            "case `{id}` packet `{}` is unreadable: {err}",
+            facts.packet
+        )),
+    }
+    let edits = facts.edits.as_deref().map(str::trim).unwrap_or_default();
+    match facts.provenance {
+        PacketProvenance::EditedProducer if edits.is_empty() => violations.push(format!(
+            "case `{id}` has an edited packet but does not say what was edited"
+        )),
+        PacketProvenance::Producer if !edits.is_empty() => violations.push(format!(
+            "case `{id}` names edits but calls its packet the producer's output; mark it edited_producer"
+        )),
+        _ => {}
     }
     violations
 }
@@ -2210,8 +2446,12 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
         .map(str::to_string);
     let cache = std::path::absolute(work_root.join(".cache").join(&case.case_id))
         .map_err(|err| format!("resolve cache dir: {err}"))?;
-    let binary = ripr_fixture_binary()?;
-    let args = vec![
+    let binary = if case.perl_facts.is_some() {
+        ripr_perl_fixture_binary()?
+    } else {
+        ripr_fixture_binary()?
+    };
+    let mut args = vec![
         "check".to_string(),
         "--root".to_string(),
         work.to_string_lossy().into_owned(),
@@ -2219,6 +2459,12 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
         diff.to_string_lossy().into_owned(),
         "--json".to_string(),
     ];
+    if let Some(facts) = &case.perl_facts {
+        let packet = std::path::absolute(dir.join(&facts.packet))
+            .map_err(|err| format!("resolve {}: {err}", facts.packet))?;
+        args.push("--perl-facts".to_string());
+        args.push(packet.to_string_lossy().into_owned());
+    }
     let cache_value = cache.to_string_lossy().into_owned();
     let stdout = run_output_owned_with_envs(&binary, &args, &[(CACHE_ENV, &cache_value)])?;
     let mut check: Value = serde_json::from_str(&stdout).map_err(|err| {
@@ -2227,6 +2473,9 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
             case.case_id
         )
     })?;
+    if case.perl_facts.is_some() {
+        refuse_unavailable_perl(&check, &case.case_id, &binary)?;
+    }
     relativize_probe_files(&mut check, &work);
     // ripr may report the canonical root (macOS `/var` is `/private/var`);
     // strip that spelling too so findings still land on their anchors.
@@ -2234,6 +2483,31 @@ fn run_case(dir: &Path, case: &Case, work_root: &Path) -> Result<(Value, Option<
         relativize_probe_files(&mut check, &canonical);
     }
     Ok((check, anchor_line))
+}
+
+/// A binary without `lang-perl` reports the Perl run `unavailable` and exits
+/// 0 with no findings, which would score every packet case as silent. Refuse
+/// the run instead, so a wrong binary is a named error, never a verdict.
+pub(crate) fn refuse_unavailable_perl(
+    check: &Value,
+    case_id: &str,
+    binary: &str,
+) -> Result<(), String> {
+    let unavailable = check
+        .get("language_runs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .any(|run| {
+            run.get("language").and_then(Value::as_str) == Some("perl")
+                && run.get("status").and_then(Value::as_str) == Some("unavailable")
+        });
+    if unavailable {
+        return Err(format!(
+            "case `{case_id}`: {binary} has no Perl adapter (language run `unavailable`); it is not the lang-perl build, so another build may have replaced it before the copy; rerun the corpus check"
+        ));
+    }
+    Ok(())
 }
 
 /// ripr names probe files by joining them onto the absolute `--root`; the
@@ -2258,7 +2532,12 @@ pub(crate) fn relativize_probe_files(check: &mut Value, root: &Path) {
 /// cache directories, so runs share nothing; rows keep the corpus order.
 fn run_corpus(dir: &Path, corpus: &Corpus, work_root: &Path) -> Result<Report, String> {
     // Build once before fanning out so no case waits on the package lock.
-    ripr_fixture_binary()?;
+    if corpus.cases.iter().any(|case| case.perl_facts.is_some()) {
+        ripr_perl_fixture_binary()?;
+    }
+    if corpus.cases.iter().any(|case| case.perl_facts.is_none()) {
+        ripr_fixture_binary()?;
+    }
     let results: Vec<Result<(Value, Option<String>), String>> = corpus
         .cases
         .par_iter()
@@ -2283,7 +2562,8 @@ pub(crate) fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverag
     let mut violations = validate(&corpus, dir);
     violations.extend(coverage::coverage_violations(&corpus, &ledger, &specs));
     if violations.is_empty() {
-        let coverage = coverage::spec_example_coverage(&corpus, &ledger, &specs);
+        let mut coverage = coverage::spec_example_coverage(&corpus, &ledger, &specs);
+        coverage.ledger = coverage::ledger_label(dir);
         Ok((corpus, coverage))
     } else {
         Err(format!(

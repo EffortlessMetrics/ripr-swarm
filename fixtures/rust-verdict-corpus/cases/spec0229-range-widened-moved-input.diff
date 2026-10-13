@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 8d3cf42..cd85357 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -3,7 +3,7 @@
+ pub fn f(n: u32) -> &'static str {
+     match n {
+         0 => "zero",
+-        1..=8 => "digit",
++        1..=9 => "digit",
+         _ => "many",
+     }
+ }
