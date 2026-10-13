@@ -1933,15 +1933,38 @@ fn call_callee_is_active_each_declaration(
     call: &oxc_ast::ast::CallExpression<'_>,
     root: TestDeclarationRoot,
 ) -> bool {
+    each_declaration_callee(call, root).is_some_and(|each_call| {
+        !each_table_is_empty(each_call) && declaration_options_are_active(call)
+    })
+}
+
+fn each_declaration_callee<'a, 'b>(
+    call: &'b oxc_ast::ast::CallExpression<'a>,
+    root: TestDeclarationRoot,
+) -> Option<&'b oxc_ast::ast::CallExpression<'a>> {
     let Expression::CallExpression(each_call) = &call.callee else {
-        return false;
+        return None;
     };
     let Expression::StaticMemberExpression(member) = &each_call.callee else {
+        return None;
+    };
+    (member.property.name.as_str() == "each"
+        && expression_is_active_declaration(&member.object, root))
+    .then_some(each_call)
+}
+
+/// Zero rows register zero callbacks, unlike a single empty row (`[[]]`).
+/// Extra arguments may invoke tagged-table formatting; only the ordinary
+/// one-argument literal table is decided here. Other tables keep their
+/// existing unresolved-row behavior.
+fn each_table_is_empty(each_call: &oxc_ast::ast::CallExpression<'_>) -> bool {
+    let [table] = each_call.arguments.as_slice() else {
         return false;
     };
-    member.property.name.as_str() == "each"
-        && expression_is_active_declaration(&member.object, root)
-        && declaration_options_are_active(call)
+    table.as_expression().is_some_and(|table| {
+        matches!(runtime_expression(table), Expression::ArrayExpression(array)
+            if array.elements.is_empty())
+    })
 }
 
 fn expression_is_active_declaration(
@@ -2557,6 +2580,26 @@ impl UnextractedTestFinder<'_> {
     /// chains — that the extractor did not index. Only checked at statement
     /// position: nested calls (assertions, helpers) are never registrations.
     fn visit_call(&mut self, call: &oxc_ast::ast::CallExpression<'_>, statement_position: bool) {
+        // A known-empty table's callback cannot register descendants. Keep
+        // scanning evaluated title/options expressions, but do not report
+        // inline callbacks as dropped active registrations.
+        if [TestDeclarationRoot::Test, TestDeclarationRoot::Describe]
+            .into_iter()
+            .any(|root| each_declaration_callee(call, root).is_some_and(each_table_is_empty))
+        {
+            for argument in &call.arguments {
+                if argument.as_expression().is_some_and(|expression| {
+                    matches!(
+                        runtime_expression(expression),
+                        Expression::ArrowFunctionExpression(_) | Expression::FunctionExpression(_)
+                    )
+                }) {
+                    continue;
+                }
+                self.visit_argument(argument);
+            }
+            return;
+        }
         if statement_position && self.gap.is_none() {
             // Tagged-template `.each`: `` test.each`table`('name', fn) `` — the
             // tagged template sits in CALLEE position, so the call's callee is

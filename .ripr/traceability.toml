@@ -2838,6 +2838,8 @@ id = "RIPR-SPEC-0027"
 name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::empty_parameter_tables_register_no_test_evidence",
+  "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::nonempty_zero_parameter_cases_and_ordinary_siblings_retain_exact_credit",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::node_expected_failure_options_cannot_supply_ordinary_test_evidence",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::shadowed_undefined_cannot_disable_test_qualification_options",
   "crates/ripr/src/analysis/language/typescript/tests.rs::node_expected_failure_test_cannot_donate_classifier_oracle_credit",
@@ -2932,6 +2934,7 @@ tests = [
   "crates/ripr/src/analysis/language/typescript/tests.rs::tests::spec_0027_boundary_witness_leaves_return_value_family_exposed"
 ]
 fixtures = [
+  "fixtures/typescript_empty_each",
   "fixtures/benches_harness_evidence",
   "fixtures/typescript_boundary_gap",
   "fixtures/typescript_strong_oracle",

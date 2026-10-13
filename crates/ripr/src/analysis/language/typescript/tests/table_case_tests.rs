@@ -133,3 +133,76 @@ fn non_ascii_table_stays_unresolved() {
         vec![(Some("loyaltyTier(points)".to_string()), None, true, 7)]
     );
 }
+
+// Independent literal-oracle additions for tests/table_case_tests.rs.
+// Reuses its retained public analyze_diff helper `tier_finding`.
+#[test]
+fn empty_parameter_tables_register_no_test_evidence() -> Result<(), String> {
+    for registration in [
+        r#"test.each([])("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"it.each([])("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"test.only.each([])("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"test.concurrent.each([])("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"test.each(([] as const))("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"describe.each([])("dead suite", () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });"#,
+        r#"suite.each([])("dead suite", () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });"#,
+        r#"describe.each(([] satisfies readonly unknown[]))("dead suite", () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });"#,
+        r#"test.skip("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"test.todo("dead", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+    ] {
+        let source = format!("import {{ loyaltyTier }} from \"../src/tier\";\n{registration}\n");
+        let file = Path::new("tests/tier.test.ts");
+        let tests = extract_tests(file, &source);
+        assert_eq!(tests.len(), 0, "{registration}");
+        assert_eq!(observed_and_expected(&source), Vec::new(), "{registration}");
+        assert!(
+            detect_partial_test_extraction(file, &source, &tests).is_none(),
+            "{registration}"
+        );
+        let finding = tier_finding("empty-parameter-table", &source)?;
+        assert_eq!(finding.class, ExposureClass::NoStaticPath, "{registration}");
+        assert_eq!(finding.ripr.reach.state, StageState::No, "{registration}");
+        assert_eq!(finding.related_tests.len(), 0, "{registration}");
+        assert_evidence_lacks(&finding, "typescript_test_extraction_partial");
+    }
+    Ok(())
+}
+
+#[test]
+fn nonempty_zero_parameter_cases_and_ordinary_siblings_retain_exact_credit() -> Result<(), String> {
+    for registration in [
+        r#"test.each([[]])("live", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"test.only.each([[]])("live", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"test.each([1000])("live", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+        r#"describe("live suite", () => { test("live", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });"#,
+        r#"describe.each([])("dead suite", () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });
+           test("live", () => { expect(loyaltyTier(1000)).toBe("gold"); });"#,
+    ] {
+        let source = format!("import {{ loyaltyTier }} from \"../src/tier\";\n{registration}\n");
+        let file = Path::new("tests/tier.test.ts");
+        let tests = extract_tests(file, &source);
+        assert_eq!(tests.len(), 1, "{registration}");
+        assert_eq!(tests[0].local_name, "live", "{registration}");
+        assert_eq!(tests[0].assertions.len(), 1, "{registration}");
+        assert_eq!(
+            tests[0].assertions[0].observed_expression.as_deref(),
+            Some("loyaltyTier(1000)")
+        );
+        assert_eq!(
+            tests[0].assertions[0].expected_value_or_variant.as_deref(),
+            Some("\"gold\"")
+        );
+        assert!(!tests[0].assertions[0].has_dynamic_matcher_arg);
+        let finding = tier_finding("nonempty-or-ordinary-parameter-table", &source)?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{registration}");
+        assert_eq!(finding.ripr.reach.state, StageState::Yes, "{registration}");
+        assert_eq!(finding.related_tests.len(), 1, "{registration}");
+        assert_eq!(finding.related_tests[0].oracle_kind, OracleKind::ExactValue);
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Strong
+        );
+        assert_evidence_lacks(&finding, "typescript_test_extraction_partial");
+    }
+    Ok(())
+}
