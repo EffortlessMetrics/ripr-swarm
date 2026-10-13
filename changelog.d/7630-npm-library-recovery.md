@@ -1,3 +1,4 @@
 <!-- section: Fixed -->
-- The npm launcher gives same-version recovery advice when its packaged library
-  cannot be resolved, while retaining internal import and parser error reasons (#7630).
+- The npm launcher gives same-version recovery advice when a missing-module error
+  prevents resolving its packaged library, while retaining other resolver, internal
+  import and parser error reasons (#7630).

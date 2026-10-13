@@ -47,10 +47,11 @@ The package `@effortlessmetrics/ripr`:
   executable to that package's real root;
 - never downloads, compiles, invokes a shell, or falls back to an ambient
   `ripr` executable;
-- reports direct packaged-library resolution failure on stderr with the
-  authentic reason and same-version restoration/reinstall advice; unavailable
-  display metadata never causes a guessed version, and internal library import
-  or parser errors retain their own reason without library-restoration advice;
+- reports direct packaged-library `MODULE_NOT_FOUND` resolution failure on
+  stderr with the authentic reason and same-version restoration/reinstall advice;
+  unavailable display metadata in that recovery branch never causes a guessed
+  version, and other resolver errors or internal library import/parser errors
+  retain their own reason without library-restoration advice;
 - starts one absolute executable with literal arguments, inherited working
   directory, environment, and standard streams, and `shell: false`;
 - on POSIX, forwards a direct supervisor `SIGTERM` once to the native child;
@@ -88,8 +89,9 @@ The package `@effortlessmetrics/ripr`:
   before and after a directory move; restoring its original bytes reaches native
   validation again;
 - internal import/parser failures remain distinct, and invalid or unavailable
-  display metadata gives exact-selected-version advice without guessing a tag,
-  range or foreign cwd version;
+  display metadata in the direct `MODULE_NOT_FOUND` recovery branch gives
+  exact-selected-version advice without guessing a tag, range or foreign cwd
+  version; metadata rejected earlier by Node retains its original refusal;
 - the guarded test runner observes the required test names as non-skipped TAP
   passes and fails closed when any required control is absent or failing;
 - `cargo xtask check-release-targets` validates the manifest, source guards,
@@ -126,10 +128,11 @@ The package `@effortlessmetrics/ripr`:
    actual package absence all retain Node's resolver reason without inferring
    package-directory absence. The legacy `native_package_missing` code still
    identifies `MODULE_NOT_FOUND`; it does not establish directory presence.
-8. An installed bin with an unresolvable `lib/launcher.cjs` names that library,
-   retains Node's reason, and advises matching-tarball restoration or exact-version
-   reinstall. A resolvable library that fails an internal import or parsing does
-   not receive false library-resolution advice.
+8. Direct `MODULE_NOT_FOUND` resolution of an installed `lib/launcher.cjs` names
+   that library, retains Node's reason, and advises matching-tarball restoration
+   or exact-version reinstall. Other resolver errors and a resolvable library
+   that fails an internal import or parsing do not receive false library-resolution
+   advice.
 
 ## Test Mapping
 
