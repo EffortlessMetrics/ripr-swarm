@@ -8,5 +8,7 @@
   switches the rule off for library and binary owners; a macro inside
   `fn main` does not. Two packages under an absolute path without a
   `crates/` directory stay apart, and an index that mixes absolute and
-  relative paths switches the rule off. Every gap falls back to name-only
-  matching and never grants new credit (#7576).
+  relative paths switches the rule off. A package with only `src/main.rs`
+  composes its `src/` modules into the binary. Every gap either switches the
+  rule off or leaves the call unsettled, so it keeps name-only matching and
+  never grants new credit (#7576).

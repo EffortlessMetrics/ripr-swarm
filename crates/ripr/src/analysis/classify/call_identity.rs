@@ -740,23 +740,30 @@ fn definition_module_path(function: &FunctionSummary) -> Option<Vec<String>> {
     Some(path)
 }
 
-/// The package a file belongs to: [`super::related_tests::package_prefix`]
-/// for a relative path or a `crates/<name>/` layout. That leaves every other
-/// absolute path unscoped (#3235), so two packages under an absolute root
-/// would read as one; here such a path is scoped by the directory above its
-/// last `src/` (else `tests/`), as [`crate_class`] reads the layout (#7576).
+/// The package a file belongs to. A relative path keeps
+/// [`super::related_tests::package_prefix`] (`crates/<name>/`, the directory
+/// above `src/` or `tests/`, or `None` for the root package). That leaves an
+/// absolute path outside a `crates/` layout unscoped (#3235) and drops the
+/// workspace directory from an absolute `crates/<name>/`, so two packages
+/// under absolute roots could read as one (#7576). An absolute path is keyed
+/// by the whole directory above its one `src/` or `tests/` component; a path
+/// with several (an ancestor `/home/u/src/`) cannot be split by its layout,
+/// so it is keyed as its own package and never shares a crate with another
+/// file.
 fn package_key(path: &Path) -> Option<String> {
-    if let Some(prefix) = super::related_tests::package_prefix(path) {
-        return Some(prefix);
-    }
     if !super::related_tests::path_is_absolute_form(path) {
-        return None;
+        return super::related_tests::package_prefix(path);
     }
     let normalized = super::related_tests::normalize_path(path);
-    let at = normalized
-        .rfind("/src/")
-        .or_else(|| normalized.rfind("/tests/"))?;
-    Some(format!("{}/", &normalized[..at]))
+    let markers: Vec<usize> = normalized
+        .match_indices("/src/")
+        .chain(normalized.match_indices("/tests/"))
+        .map(|(at, _)| at)
+        .collect();
+    match markers.as_slice() {
+        [at] => Some(format!("{}/", &normalized[..*at])),
+        _ => Some(format!("{normalized}?")),
+    }
 }
 
 /// The part of a normalized path below its last `src/` directory.
@@ -783,12 +790,13 @@ enum CrateClass {
 type DeclaredModules = Option<BTreeSet<String>>;
 
 /// How the owner's package splits its `src/` modules between the library
-/// and the `src/main.rs` binary (#7576). With one root, every `src/` module
-/// outside `src/bin/` belongs to it and the layout alone decides
-/// ([`crate_class`]). With both, a module belongs to the root whose
-/// top-level `mod` declarations name its first segment; a module both or
-/// neither root names, or any module when a root's scan is incomplete
-/// (a macro, `include!`, a parse error), is [`CrateClass::Ambiguous`].
+/// and the `src/main.rs` binary (#7576). With only `src/lib.rs`, every
+/// `src/` module outside `src/bin/` is the library's; with only
+/// `src/main.rs`, the binary's. With both, a module belongs to the root
+/// whose top-level `mod` declarations name its first segment; a module both
+/// or neither root names, or any module when a root's scan is incomplete
+/// (an item-position macro, `include!`, a parse error), is
+/// [`CrateClass::Ambiguous`].
 #[derive(Debug, Default)]
 struct CrateLayout {
     package: Option<String>,
@@ -796,6 +804,9 @@ struct CrateLayout {
     /// when the package has both; `None` for a root this scan cannot read
     /// completely.
     roots: Option<(DeclaredModules, DeclaredModules)>,
+    /// The package has `src/main.rs` and no `src/lib.rs`: every `src/`
+    /// module outside `src/bin/` that compiles is the binary's.
+    main_only: bool,
 }
 
 impl CrateLayout {
@@ -817,10 +828,12 @@ impl CrateLayout {
             [source] => declared_first_segments(source),
             _ => None,
         };
+        let main_only = lib.is_empty() && !main.is_empty();
         let roots = (!lib.is_empty() && !main.is_empty()).then(|| (declared(lib), declared(main)));
         Self {
             package: package.map(str::to_string),
             roots,
+            main_only,
         }
     }
 
@@ -828,6 +841,9 @@ impl CrateLayout {
         let Some(shape) = crate_class(file) else {
             return CrateClass::Outside;
         };
+        if self.main_only && shape == "lib" && package_key(file) == self.package {
+            return CrateClass::Crate("main".to_string());
+        }
         let Some((lib, main)) = &self.roots else {
             return CrateClass::Crate(shape);
         };
@@ -2185,6 +2201,29 @@ mod tests {
         }
     }
 
+    /// A package with `src/main.rs` and no `src/lib.rs` composes its `src/`
+    /// modules into the binary: the root's `render` and `shell`'s are
+    /// rivals, so `crate::render` from `shell`'s tests settles on the root.
+    #[test]
+    fn a_binary_only_package_composes_its_modules_into_the_binary() {
+        let index = index(&[("src/main.rs", BIN_MAIN), ("src/shell.rs", BIN_SHELL)]);
+        let identity = identity_for(&index, "src/main.rs");
+        assert!(identity.is_some(), "shell's render is the root's rival");
+        let Some(identity) = identity else {
+            return;
+        };
+        let test = |name: &str| index.tests().iter().find(|test| test.name == name);
+        assert!(test("binary_root_render").is_some());
+        assert!(test("binary_shell_render").is_some());
+        let (Some(root_test), Some(shell_test)) =
+            (test("binary_root_render"), test("binary_shell_render"))
+        else {
+            return;
+        };
+        assert_eq!(identity.resolve_test(root_test, &index), CallTarget::Owner);
+        assert_eq!(identity.resolve_test(shell_test, &index), CallTarget::Other);
+    }
+
     /// A `src/bin` owner never shares a crate with a library-shaped module,
     /// so an orphan `src/` namesake leaves its identity on.
     #[test]
@@ -2267,6 +2306,25 @@ mod tests {
             Some("/w/x/".to_string())
         );
         assert_eq!(package_key(Path::new("src/lib.rs")), None);
+        // An ancestor `src/` leaves the layout unreadable: the file is its
+        // own package, never the package of `/home/u/src/proj/src/lib.rs`.
+        assert_eq!(
+            package_key(Path::new("/home/u/src/proj/tests/api.rs")),
+            Some("/home/u/src/proj/tests/api.rs?".to_string())
+        );
+        assert_ne!(
+            package_key(Path::new("/home/u/src/proj/src/lib.rs")),
+            package_key(Path::new("/home/u/src/proj/tests/api.rs"))
+        );
+        // Absolute `crates/<name>/` keeps its workspace directory.
+        assert_ne!(
+            package_key(Path::new("/tmp/one/crates/api/src/a.rs")),
+            package_key(Path::new("/tmp/two/crates/api/src/a.rs"))
+        );
+        assert_eq!(
+            package_key(Path::new("crates/api/src/a.rs")),
+            Some("crates/api/".to_string())
+        );
     }
 
     /// An index spelling one same-named definition absolute and another
