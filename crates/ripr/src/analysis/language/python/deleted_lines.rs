@@ -61,7 +61,7 @@ pub(super) fn deleted_line_findings(
     }
     // A paired line is the candidate side's record, not this deletion's, so
     // it does not use up the one record a run inside a kept statement gets.
-    let continuations = continuation_lines(changed, old_side.source, |removed| {
+    let statement_lines = continuation_lines(changed, old_side.source, |removed| {
         !paired.contains(&removed.line)
             && is_removed_behavior_line(removed, old_side)
             && !opens_only_brackets(&removed.text)
@@ -69,7 +69,7 @@ pub(super) fn deleted_line_findings(
     let mut out = Vec::new();
     for removed in &changed.removed_lines {
         if paired.contains(&removed.line)
-            || continuations.contains(&removed.line)
+            || statement_lines.fragments.contains(&removed.line)
             || !is_removed_behavior_line(removed, old_side)
             || opens_only_brackets(&removed.text)
         {
@@ -79,7 +79,7 @@ pub(super) fn deleted_line_findings(
             changed,
             removed,
             &re_headed,
-            &continuations,
+            &statement_lines.statement_indent,
             new_source,
             owners,
         ) else {
@@ -154,12 +154,15 @@ fn deleted_line_owner<'a>(
     changed: &ChangedFile,
     removed: &ChangedLine,
     re_headed: &BTreeSet<usize>,
-    continuations: &BTreeSet<usize>,
+    statement_indent: &BTreeMap<usize, usize>,
     new_source: NewSource<'_>,
     owners: &'a [PythonOwner],
 ) -> Option<&'a PythonOwner> {
-    let indent = indent_width(&removed.text);
-    if lost_its_owner(changed, removed, re_headed, continuations) {
+    let indent = statement_indent
+        .get(&removed.line)
+        .copied()
+        .unwrap_or_else(|| indent_width(&removed.text));
+    if lost_its_owner(changed, removed, indent, re_headed, statement_indent) {
         return None;
     }
     let at = removed.new_side_line;
@@ -215,15 +218,16 @@ fn deleted_line_owner<'a>(
 fn lost_its_owner(
     changed: &ChangedFile,
     removed: &ChangedLine,
+    indent: usize,
     re_headed: &BTreeSet<usize>,
-    continuations: &BTreeSet<usize>,
+    statement_indent: &BTreeMap<usize, usize>,
 ) -> bool {
     let by_old_line: BTreeMap<usize, &ChangedLine> = changed
         .removed_lines
         .iter()
         .map(|line| (line.line, line))
         .collect();
-    let mut threshold = indent_width(&removed.text);
+    let mut threshold = indent;
     let mut old_line = removed.line;
     while threshold > 0 {
         let Some(previous) = old_line
@@ -233,7 +237,7 @@ fn lost_its_owner(
             return false;
         };
         old_line = previous.line;
-        if continuations.contains(&previous.line) {
+        if statement_indent.contains_key(&previous.line) {
             continue;
         }
         let trimmed = previous.text.trim();
@@ -311,14 +315,18 @@ fn continuation_lines(
     changed: &ChangedFile,
     old_source: Option<&str>,
     is_behavior: impl Fn(&ChangedLine) -> bool,
-) -> BTreeSet<usize> {
+) -> StatementLines {
+    let mut lines = StatementLines::default();
     if changed.removed_lines.is_empty() {
-        return BTreeSet::new();
+        return lines;
     }
     let mut by_old_line: Vec<&ChangedLine> = changed.removed_lines.iter().collect();
     by_old_line.sort_by_key(|line| line.line);
     let old_states = states_before_each_line(old_source);
-    let mut continuations = BTreeSet::new();
+    let old_lines: Vec<&str> = old_source
+        .map(|source| source.lines().collect())
+        .unwrap_or_default();
+    let mut start_indent = 0;
     let mut state = StatementState::default();
     let mut previous_line: Option<usize> = None;
     // The current statement has no record yet: it began on a kept line, or
@@ -333,15 +341,34 @@ fn continuation_lines(
                 .copied()
                 .unwrap_or_default();
             record_pending = state.continues();
+            if state.continues() {
+                // The statement starts on a kept line above the run.
+                let mut start = line.line.saturating_sub(1);
+                while start > 1
+                    && old_states
+                        .get(start - 1)
+                        .is_some_and(|before| before.continues())
+                {
+                    start -= 1;
+                }
+                start_indent = old_lines
+                    .get(start.saturating_sub(1))
+                    .map_or(0, |text| indent_width(text));
+            }
         }
         if !state.continues() {
             record_pending = false;
         }
         let starts_a_statement = !state.continues();
+        if starts_a_statement {
+            start_indent = indent_width(&line.text);
+        } else {
+            lines.statement_indent.insert(line.line, start_indent);
+        }
         if record_pending && is_behavior(line) {
             record_pending = false;
         } else if state.continues() {
-            continuations.insert(line.line);
+            lines.fragments.insert(line.line);
         }
         state = state.after(&line.text);
         // A statement that opens with a lone bracket (`(` on its own line)
@@ -352,7 +379,18 @@ fn continuation_lines(
         }
         previous_line = Some(line.line);
     }
-    continuations
+    lines
+}
+
+/// Removed lines placed by the statement each sits in.
+#[derive(Default)]
+struct StatementLines {
+    /// Lines that are not records of their own.
+    fragments: BTreeSet<usize>,
+    /// Lines that start inside an open statement, record lines included,
+    /// with the indent of the line that starts it: their own indent says
+    /// nothing about which block holds them.
+    statement_indent: BTreeMap<usize, usize>,
 }
 
 /// The statement state at the start of each old-file line, by 0-based

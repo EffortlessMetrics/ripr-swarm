@@ -964,3 +964,27 @@ fn candidate_only_bracket_does_not_merge_later_deletions() -> Result<(), String>
     assert!(texts.contains(&"log_b()".to_string()), "{findings:?}");
     Ok(())
 }
+
+/// A line inside a bracket keeps the indent of the statement it sits in:
+/// a zero-indented call inside a deleted function's lone `(` neither moves
+/// the function's `return` to the kept function above nor records on it
+/// (#7690).
+#[test]
+fn zero_indented_line_inside_a_bracket_does_not_decide_nesting() -> Result<(), String> {
+    let findings = analyze(
+        "zero-indented-in-bracket",
+        KEEP,
+        &[],
+        vec![
+            line(7, 7, ""),
+            line(8, 7, ""),
+            line(9, 7, "def gone():"),
+            line(10, 7, "    ("),
+            line(11, 7, "send_event()"),
+            line(12, 7, "    )"),
+            line(13, 7, "    return 2"),
+        ],
+    )?;
+    assert!(base_side_texts(&findings).is_empty(), "{findings:?}");
+    Ok(())
+}

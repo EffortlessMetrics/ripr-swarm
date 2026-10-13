@@ -10480,6 +10480,7 @@ tests = [
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::argument_deleted_after_a_replaced_one_in_a_kept_call_is_recorded",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::deleted_statement_opening_with_a_lone_bracket_is_recorded",
   "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::candidate_only_bracket_does_not_merge_later_deletions",
+  "crates/ripr/src/analysis/language/python/deleted_lines_tests.rs::zero_indented_line_inside_a_bracket_does_not_decide_nesting",
   "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::pure_deletion_is_base_side_evidence_on_its_owner",
   "crates/ripr/src/analysis/language/typescript/deleted_lines_tests.rs::even_block_leaves_no_base_side_record",
 ]
