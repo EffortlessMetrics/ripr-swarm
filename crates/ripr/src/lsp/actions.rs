@@ -282,10 +282,10 @@ pub(super) fn disable_retained_analysis_actions(
         let CodeActionOrCommand::CodeAction(action) = action else {
             continue;
         };
-        if !action
+        if action
             .diagnostics
             .as_ref()
-            .is_some_and(|diagnostics| !diagnostics.is_empty())
+            .is_none_or(|diagnostics| diagnostics.is_empty())
             || action
                 .data
                 .as_ref()

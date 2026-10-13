@@ -16538,7 +16538,7 @@ fn framed_retained_code_actions_survive_changed_config_failure() -> Result<(), S
             write_lsp_message(&mut writer, serde_json::json!({"jsonrpc":"2.0","method":"workspace/didChangeWatchedFiles","params":{"changes":[{"uri":config_uri.as_str(),"type":1}]}})).await?;
             let failure = tokio::time::timeout(Duration::from_secs(10), async {
                 loop { let message = read_lsp_message(&mut reader).await?; if message["method"] == "ripr/analysisStatus" && message["params"]["state"] == "failed" { return Ok::<_,String>(message); } }
-            }).await.map_err(|_| "config failure was not observed".to_string())??;
+            }).await.map_err(|elapsed| format!("config failure was not observed: {elapsed}"))??;
             assert!(failure["params"]["snapshot_id"].is_string(), "failure must retain the snapshot: {failure}");
             write_lsp_message(&mut writer, serde_json::json!({"jsonrpc":"2.0","id":4,"method":"textDocument/codeAction","params":params})).await?;
             let failed = read_lsp_response(&mut reader, 4).await?;
