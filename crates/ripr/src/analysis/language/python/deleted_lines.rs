@@ -182,6 +182,9 @@ fn lost_its_owner(changed: &ChangedFile, removed: &ChangedLine) -> bool {
         .collect();
     let mut threshold = indent_width(&removed.text);
     let mut old_line = removed.line;
+    // Walking backward, a line opening with triple quotes closes a string
+    // whose body runs up to the line that opened it; none of it is nesting.
+    let mut in_string: Option<&str> = None;
     while threshold > 0 {
         let Some(previous) = old_line
             .checked_sub(1)
@@ -191,7 +194,20 @@ fn lost_its_owner(changed: &ChangedFile, removed: &ChangedLine) -> bool {
         };
         old_line = previous.line;
         let trimmed = previous.text.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
+        if let Some(quotes) = in_string {
+            if trimmed.contains(quotes) {
+                in_string = None;
+            }
+            continue;
+        }
+        if let Some(quotes) = ["\"\"\"", "'''"]
+            .into_iter()
+            .find(|quotes| trimmed.starts_with(quotes) && trimmed.matches(quotes).count() == 1)
+        {
+            in_string = Some(quotes);
+            continue;
+        }
+        if trimmed.is_empty() || trimmed.starts_with('#') || continues_a_statement(&previous.text) {
             continue;
         }
         let previous_indent = indent_width(&previous.text);
@@ -203,6 +219,13 @@ fn lost_its_owner(changed: &ChangedFile, removed: &ChangedLine) -> bool {
         }
     }
     false
+}
+
+/// A line that closes or continues a statement begun above it, so its indent
+/// says nothing about nesting: the `):` closing a multi-line `def` signature,
+/// or a line opening with a closing bracket.
+fn continues_a_statement(text: &str) -> bool {
+    is_python_structural_line(text) || text.trim_start().starts_with([')', ']', '}'])
 }
 
 const MODULE_OWNER: &str = "<module>";

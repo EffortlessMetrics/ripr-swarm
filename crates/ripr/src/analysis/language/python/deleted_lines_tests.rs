@@ -502,3 +502,55 @@ fn kept_owner_between_a_deleted_def_and_a_body_line_keeps_the_record() -> Result
     );
     Ok(())
 }
+
+/// A deleted `def` whose signature spans lines closes with a column-0 `):`;
+/// that line continues the signature, so the walk still reaches the `def`
+/// and the body line is not given to the function above.
+#[test]
+fn deleted_function_with_a_multi_line_signature_is_not_given_to_a_neighbour() -> Result<(), String>
+{
+    let source = "CAP = 100\n\n\ndef keep(items):\n    total = sum(items)\n    return total\n";
+    let findings = analyze(
+        "multi-line-signature",
+        source,
+        &[],
+        vec![
+            line(7, 7, ""),
+            line(8, 7, ""),
+            line(9, 7, "def clamp("),
+            line(10, 7, "    total,"),
+            line(11, 7, "):"),
+            line(12, 7, "    return min(total, CAP)"),
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// The closing quotes of a string written at column 0 inside a deleted body
+/// say nothing about nesting either.
+#[test]
+fn column_zero_string_close_in_a_deleted_body_keeps_the_def() -> Result<(), String> {
+    let source = "CAP = 100\n\n\ndef keep(items):\n    total = sum(items)\n    return total\n";
+    let findings = analyze(
+        "column-zero-string",
+        source,
+        &[],
+        vec![
+            line(7, 7, ""),
+            line(8, 7, ""),
+            line(9, 7, "def clamp(total):"),
+            line(10, 7, "    note = \"\"\""),
+            line(11, 7, "hello"),
+            line(12, 7, "\"\"\""),
+            line(13, 7, "    return min(total, CAP)"),
+        ],
+    )?;
+    assert!(
+        base_side(&findings)
+            .iter()
+            .all(|(_, owner, _)| owner != "keep"),
+        "{findings:?}"
+    );
+    Ok(())
+}
