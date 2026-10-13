@@ -779,6 +779,9 @@ enum CrateClass {
     Crate(String),
 }
 
+/// The first module segments one crate root declares; `None` when unknown.
+type DeclaredModules = Option<BTreeSet<String>>;
+
 /// How the owner's package splits its `src/` modules between the library
 /// and the `src/main.rs` binary (#7576). With one root, every `src/` module
 /// outside `src/bin/` belongs to it and the layout alone decides
@@ -792,7 +795,7 @@ struct CrateLayout {
     /// The first module segments `src/lib.rs` and `src/main.rs` declare,
     /// when the package has both; `None` for a root this scan cannot read
     /// completely.
-    roots: Option<(Option<BTreeSet<String>>, Option<BTreeSet<String>>)>,
+    roots: Option<(DeclaredModules, DeclaredModules)>,
 }
 
 impl CrateLayout {
@@ -2010,8 +2013,9 @@ mod tests {
 
     const BIN_LIB: &str = "pub mod util;\n\npub fn render(x: i32) -> i32 {\n    x + 1\n}\n";
     const BIN_UTIL: &str = "pub fn render(x: i32) -> i32 {\n    x + 2\n}\n";
-    const BIN_MAIN: &str = "mod cli;\n\nfn render(x: i32) -> i32 {\n    x - 1\n}\n\nfn main() {}\n";
-    const BIN_CLI: &str = "\
+    const BIN_MAIN: &str =
+        "mod shell;\n\nfn render(x: i32) -> i32 {\n    x - 1\n}\n\nfn main() {}\n";
+    const BIN_SHELL: &str = "\
 pub fn render(x: i32) -> i32 {
     x * 2
 }
@@ -2024,13 +2028,13 @@ mod tests {
     }
 
     #[test]
-    fn binary_cli_render() {
-        assert_eq!(crate::cli::render(2), 4);
+    fn binary_shell_render() {
+        assert_eq!(crate::shell::render(2), 4);
     }
 }
 ";
 
-    /// #7576 part 1: `src/cli.rs` is declared by `src/main.rs`, so it is the
+    /// #7576 part 1: `src/shell.rs` is declared by `src/main.rs`, so it is the
     /// binary's module. Its `crate::render` names `src/main.rs`'s `render`,
     /// never the library's, and its `render` is a rival of the binary root's
     /// `render` only.
@@ -2040,7 +2044,7 @@ mod tests {
             ("src/lib.rs", BIN_LIB),
             ("src/util.rs", BIN_UTIL),
             ("src/main.rs", BIN_MAIN),
-            ("src/cli.rs", BIN_CLI),
+            ("src/shell.rs", BIN_SHELL),
         ]);
         let lib_owner = index
             .functions()
@@ -2065,7 +2069,7 @@ mod tests {
             CallTarget::Unsettled,
             "the binary's `crate::render` is never the library's render"
         );
-        assert_eq!(identity.definitions.len(), 2, "cli's render is no rival");
+        assert_eq!(identity.definitions.len(), 2, "shell's render is no rival");
 
         let main_owner = index.functions().iter().find(|function| {
             function.file == Path::new("src/main.rs") && function.name == "render"
@@ -2080,14 +2084,14 @@ mod tests {
         let identity = OwnerCallIdentity::new(main_owner, index.functions().iter(), &index);
         assert!(
             identity.is_some(),
-            "the binary root's render has cli's rival"
+            "the binary root's render has shell's rival"
         );
         let Some(identity) = identity else {
             return;
         };
         assert_eq!(identity.resolve_test(root_test, &index), CallTarget::Owner);
-        assert!(test("binary_cli_render").is_some());
-        let Some(cli_test) = test("binary_cli_render") else {
+        assert!(test("binary_shell_render").is_some());
+        let Some(cli_test) = test("binary_shell_render") else {
             return;
         };
         assert_eq!(identity.resolve_test(cli_test, &index), CallTarget::Other);
@@ -2097,32 +2101,32 @@ mod tests {
     /// no settled crate: the rule switches off for its definitions.
     #[test]
     fn a_module_both_roots_declare_switches_the_rule_off() {
-        let shared_lib = format!("pub mod cli;\n{BIN_LIB}");
+        let shared_lib = format!("pub mod shell;\n{BIN_LIB}");
         let shared = index(&[
             ("src/lib.rs", shared_lib.as_str()),
             ("src/util.rs", BIN_UTIL),
             ("src/main.rs", BIN_MAIN),
-            ("src/cli.rs", BIN_CLI),
+            ("src/shell.rs", BIN_SHELL),
         ]);
-        // The library's render has util's rival; cli's render may be either
+        // The library's render has util's rival; shell's render may be either
         // crate's, so the rule switches off.
         assert!(identity_for(&shared, "src/lib.rs").is_none());
-        // Neither root declares `cli`: an orphan has no settled crate either.
+        // Neither root declares `shell`: an orphan has no settled crate either.
         let orphan = index(&[
             ("src/lib.rs", BIN_LIB),
             ("src/util.rs", BIN_UTIL),
             ("src/main.rs", "fn main() {}\n"),
-            ("src/cli.rs", BIN_CLI),
+            ("src/shell.rs", BIN_SHELL),
         ]);
         assert!(identity_for(&orphan, "src/lib.rs").is_none());
         // An item-position macro in a root may declare any module.
         let macro_main =
-            format!("cfg_if::cfg_if! {{ if #[cfg(unix)] {{ mod cli; }} }}\n{BIN_MAIN}");
+            format!("cfg_if::cfg_if! {{ if #[cfg(unix)] {{ mod shell; }} }}\n{BIN_MAIN}");
         let macro_root = index(&[
             ("src/lib.rs", BIN_LIB),
             ("src/util.rs", BIN_UTIL),
             ("src/main.rs", macro_main.as_str()),
-            ("src/cli.rs", BIN_CLI),
+            ("src/shell.rs", BIN_SHELL),
         ]);
         assert!(identity_for(&macro_root, "src/lib.rs").is_none());
         assert_eq!(
@@ -2146,24 +2150,24 @@ mod tests {
     }
 
     /// A body macro in `fn main` (`log::info!`) cannot declare a crate-level
-    /// module, so the roots still settle which crate `cli` is in; an
+    /// module, so the roots still settle which crate `shell` is in; an
     /// integration test never names the binary's crate, so its
     /// `modules::render` stays unsettled for the binary root's render.
     #[test]
     fn a_body_macro_in_main_keeps_the_split_and_tests_never_name_the_binary() {
-        let logged_main = "mod cli;\n\nfn render(x: i32) -> i32 {\n    x - 1\n}\n\nfn main() {\n    log::info!(\"start\");\n}\n";
+        let logged_main = "mod shell;\n\nfn render(x: i32) -> i32 {\n    x - 1\n}\n\nfn main() {\n    log::info!(\"start\");\n}\n";
         let api = "#[test]\nfn api_render() {\n    assert_eq!(modules::render(2), 1);\n}\n";
         let index = index(&[
             ("src/lib.rs", BIN_LIB),
             ("src/util.rs", BIN_UTIL),
             ("src/main.rs", logged_main),
-            ("src/cli.rs", BIN_CLI),
+            ("src/shell.rs", BIN_SHELL),
             ("tests/api.rs", api),
         ]);
         let identity = identity_for(&index, "src/main.rs");
         assert!(
             identity.is_some(),
-            "cli's render is the binary root's rival"
+            "shell's render is the binary root's rival"
         );
         let Some(identity) = identity else {
             return;
