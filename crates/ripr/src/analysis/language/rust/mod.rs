@@ -1221,7 +1221,19 @@ fn apply_probe_and_oracle_limits(
     index: &RustIndex,
     binding_relation: Option<&crate::analysis::probes::ChangedBindingPredicateUse>,
 ) {
-    oracles::apply_rust_macro_wrapped_assertion_limit(finding, index);
+    // #7089 matches a bare `owner(` call, which for a method owner
+    // (`impl Cart::total`) or a trait default method can only be some other
+    // item named `total`. Only a parser-established free function counts;
+    // the lexical fallback leaves the context unknown, so the limit stays off.
+    let free_fn_owner = probe.owner.as_ref().is_some_and(|id| {
+        index.functions().iter().any(|function| {
+            function.id == *id
+                && function.impl_context == crate::analysis::facts::FunctionImplContext::Free
+        })
+    });
+    let owner_name =
+        owner_name_from_id(&probe.owner, &probe.location.file).filter(|_| free_fn_owner);
+    oracles::apply_rust_macro_wrapped_assertion_limit(finding, index, owner_name.as_deref());
     probes::apply_rust_value_propagation_limit(finding, probe, index);
     oracles::apply_wrapper_error_binding_limit(finding, probe);
     probes::attach_changed_binding_predicate_evidence(finding, binding_relation);

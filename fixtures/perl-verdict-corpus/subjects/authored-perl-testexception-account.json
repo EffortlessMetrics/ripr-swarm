@@ -1,0 +1,17 @@
+{
+  "subject_id": "authored-perl-testexception-account",
+  "origin": "authored",
+  "version_label": "authored@28e86e6",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "lib/Account.pm",
+      "sha256": "0e13d20123079744e664f949190a5200a9343acab79bcc715a4247fdd00e2290"
+    },
+    {
+      "path": "t/account.t",
+      "sha256": "dfa10426ef31eff16522eaf5267eb487365bbae35e2289ed9692c79890eb55aa"
+    }
+  ]
+}
