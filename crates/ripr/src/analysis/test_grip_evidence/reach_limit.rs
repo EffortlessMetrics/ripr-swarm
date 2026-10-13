@@ -290,17 +290,26 @@ impl TypeMentionIndex {
         if test_code || gated_trait_uses(&function.body, failure_paths_run).is_empty() {
             return;
         }
-        // A method that uses the syntax on `self`, `Self` or a field
-        // (`self.to_string()`, `format!("{:?}", self.inner)`) runs it for
-        // its own type and the types it holds, which its body never names.
+        // Syntax used on `self`, `Self`, a parameter or a field
+        // (`self.to_string()`, `format!("{:?}", self.inner)`,
+        // `item.kind.to_string()`) runs it for the types those values
+        // hold, which the body never names.
+        let mut roots: Vec<String> = identifiers(&function.body)
+            .into_iter()
+            .map(|(token, _)| token)
+            .filter(|token| self.field_types.contains_key(token))
+            .collect();
         let words = words(&function.body);
-        if !(words.contains("self") || words.contains("Self")) {
+        if words.contains("self") || words.contains("Self") {
+            roots.extend(impl_self_type_name(&function.id.0));
+        }
+        let held: BTreeSet<String> = roots
+            .iter()
+            .flat_map(|root| self.held_types(root))
+            .collect();
+        if held.is_empty() {
             return;
         }
-        let Some(self_type) = impl_self_type_name(&function.id.0) else {
-            return;
-        };
-        let held = self.held_types(&self_type);
         self.add_trait_uses_for(
             &function.body,
             &function.name,
@@ -636,6 +645,16 @@ impl GatedTrait {
                 "contains",
                 "dedup",
                 "dedup_by_key",
+                "starts_with",
+                "ends_with",
+                "strip_prefix",
+                "strip_suffix",
+                "contains_key",
+                // Keyed lookups compare keys with `Eq` after hashing.
+                "HashMap",
+                "HashSet",
+                "IndexMap",
+                "IndexSet",
             ],
             Self::Ord => &[
                 "cmp",

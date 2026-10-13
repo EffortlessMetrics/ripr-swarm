@@ -19,7 +19,8 @@ Support-tier impact:
   gap count. [docs/status/SUPPORT_TIERS.md](../status/SUPPORT_TIERS.md)
 
 Policy impact: none. No new process, network, file-policy or dependency
-surface. The classified-seam cache generations move (`1.31`, `0.37`).
+surface. The classified-seam cache generations move (`1.31`, `0.37`); the #5577 trait gate
+moves them again (`1.64`, `0.70`).
 
 ## Problem
 
@@ -73,7 +74,7 @@ and a test that only builds a value does not run them:
 | --- | --- |
 | `Display` | `to_string`, a `{}` / `{name}` / `{:>8}` placeholder, insta `assert_snapshot!` / `assert_display_snapshot!` |
 | `Debug` | `dbg!`, a `{:?}` / `{x:#?}` placeholder, `assert_debug_snapshot!`, expect_test `assert_debug_eq` |
-| `PartialEq` | `==`, `!=`, `assert_eq!`, `assert_ne!`, `debug_assert_eq!`, `debug_assert_ne!`, `eq`, `ne`, `contains`, `dedup`, `dedup_by_key` |
+| `PartialEq` | `==`, `!=`, `assert_eq!`, `assert_ne!`, `debug_assert_eq!`, `debug_assert_ne!`, `eq`, `ne`, `contains`, `dedup`, `dedup_by_key`, `starts_with`, `ends_with`, `strip_prefix`, `strip_suffix`, `contains_key`, `HashMap`, `HashSet`, `IndexMap`, `IndexSet` |
 | `PartialOrd`, `Ord` | `<`, `>`, `<=`, `>=` (spaced or not; generics, `->`, `=>`, `<<` and `>>` are not comparisons), `cmp`, `partial_cmp`, `lt`, `le`, `gt`, `ge`, `max`, `min`, `clamp`, `sort`, `sort_unstable`, `sort_by_key`, `sort_unstable_by_key`, `max_by_key`, `min_by_key`, `binary_search`, `select_nth_unstable`, `is_sorted`, `BTreeMap`, `BTreeSet`, `BinaryHeap` |
 | `Hash` | `hash`, `hash_one`, `Hasher`, `BuildHasher`, `HashMap`, `HashSet`, `IndexMap`, `IndexSet` |
 | `Clone` | `clone`, `cloned`, `clone_from`, `to_owned`, `to_vec`, `resize`, `extend_from_slice`, `vec![` |
@@ -218,6 +219,9 @@ sits on one of those same seams, so no seam whose mutants all survived
 changed class. The one remaining `ungripped` seam is
 `impl Version::cmp_precedence`.
 
+These counts were taken at #5569, before the trait gate; Metrics, Trait gate
+(#5577) has the counts against a later main.
+
 On the other spot-check repositories: rust-hex and strsim-rs have no
 `ungripped` seams before or after. bytesize moves 2 of 5 (trait dispatch);
 its 3 `ensure-no-std` seams, including a `GlobalAlloc` impl no test reaches,
@@ -234,6 +238,19 @@ stay `ungripped`. humantime moves 8 of 8 (trait dispatch).
 - `crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs::tests::identifiers_keep_type_shaped_tokens_outside_comments_and_strings`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::transitive_reach_limit_kind_names_integration_test_path`
 - `crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_reach_limit_kind_names_direct_test_body_macro_path`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::debug_impl_of_a_type_tests_never_debug_format_stays_ungripped`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::debug_impl_of_a_type_a_test_debug_formats_is_opaque`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::display_impl_names_the_syntax_that_runs_it`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::display_delegation_does_not_reach_an_unused_debug_impl`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_impl_for_a_primitive_is_opaque_when_test_reached_code_names_the_trait`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_impl_for_a_primitive_stays_ungripped_when_nothing_names_the_trait`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_test_does_not_call_a_helper_that_shares_its_name`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::serde_impl_no_test_serializes_stays_ungripped`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::debug_impl_of_a_parameters_field_type_is_opaque`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::debug_impl_a_passing_test_formats_only_in_its_panic_stays_ungripped`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::debug_impl_a_should_panic_test_formats_in_its_panic_is_opaque`
+- `crates/ripr/src/analysis/test_grip_evidence/tests.rs::partial_eq_impl_a_test_looks_up_in_a_hash_map_is_opaque`
+- `crates/ripr/src/analysis/classify/transitive_reach.rs::declaration_tests::a_declaration_is_not_a_call_but_a_one_line_self_call_is`
 
 ## Implementation Mapping
 

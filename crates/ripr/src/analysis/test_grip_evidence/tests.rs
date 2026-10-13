@@ -18789,6 +18789,34 @@ fn debug_impl_of_a_field_type_a_method_formats_is_opaque() -> Result<(), String>
     Ok(())
 }
 
+#[test]
+fn debug_impl_of_a_parameters_field_type_is_opaque() -> Result<(), String> {
+    // #6662 review: `describe` formats `item.inner`, an `Amount`, through a
+    // parameter; only `Wrapper` is named.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "pub struct Amount(pub u32);\n\
+             impl std::fmt::Debug for Amount {\n\
+                 fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { write!(f, \"large\") } else { write!(f, \"small\") }\n\
+                 }\n\
+             }\n\
+             pub struct Wrapper { pub inner: Amount }\n\
+             pub fn describe(item: &Wrapper) -> String { format!(\"{:?}\", item.inner) }\n",
+        ),
+        (
+            "tests/wrapper.rs",
+            "use ripr_fixture::{Amount, Wrapper, describe};\n\
+             #[test] fn renders() { assert_eq!(describe(&Wrapper { inner: Amount(150) }), \"large\"); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
 fn held_depth_case(levels: usize) -> Result<(StageEvidence, SeamGripClass), String> {
     // `Wrapper` holds `Amount` through `levels - 1` intermediate structs;
     // `describe` formats `self.inner` without naming `Amount`.
@@ -19215,6 +19243,33 @@ fn partial_ord_impl_a_test_compares_without_spaces_is_opaque() -> Result<(), Str
             "tests/amount.rs",
             "use ripr_fixture::Amount;\n\
              #[test] fn ordered() { assert!(Amount(1)<Amount(2)); }\n",
+        ),
+    ])?;
+    assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
+    assert_eq!(class, SeamGripClass::Opaque);
+    Ok(())
+}
+
+#[test]
+fn partial_eq_impl_a_test_looks_up_in_a_hash_map_is_opaque() -> Result<(), String> {
+    // #6662 review: a `HashMap` lookup compares keys with `PartialEq`.
+    let (reach, class) = unresolved_reach_case(&[
+        (
+            "src/lib.rs",
+            "#[derive(Hash, Eq)]\n\
+             pub struct Amount(pub u32);\n\
+             impl PartialEq for Amount {\n\
+                 fn eq(&self, other: &Self) -> bool {\n\
+                     let amount = self.0;\n\
+                     if amount > 100 { false } else { amount == other.0 }\n\
+                 }\n\
+             }\n",
+        ),
+        (
+            "tests/amount.rs",
+            "use ripr_fixture::Amount;\n\
+             use std::collections::HashMap;\n\
+             #[test] fn found() { let mut m = HashMap::new(); m.insert(Amount(1), 1); assert!(m.get(&Amount(1)).is_some()); }\n",
         ),
     ])?;
     assert_eq!(reach.state, StageState::Opaque, "{reach:?}");
