@@ -504,6 +504,9 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
                     continue;
                 }
             };
+            if metadata.is_dir() {
+                continue;
+            }
             if metadata.is_symlink() || !metadata.is_file() {
                 unavailable += 1;
                 continue;
