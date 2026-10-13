@@ -653,6 +653,145 @@ test("source bin missing-package failure never falls back to PATH or writes stdo
   }
 });
 
+test("public bin missing-library failure gives exact recovery after a directory move", (t) => {
+  const selected = hostPlatformOrSkip(t);
+  if (!selected) return;
+  const fixture = nativeFixture({ selected, createExecutable: false });
+  const foreignCwd = fixtureRoot("foreign library 工作 café");
+  const libraryBytes = fs.readFileSync(path.join(fixture.launcherRoot, "lib", "launcher.cjs"));
+  writeJson(path.join(foreignCwd, "package.json"), { name: "foreign-package", version: "9.9.9" });
+  const decoy = path.join(foreignCwd, process.platform === "win32" ? "ripr.cmd" : "ripr");
+  fs.writeFileSync(decoy, process.platform === "win32" ? "@echo PATH-FALLBACK\r\n" : "#!/bin/sh\necho PATH-FALLBACK\n");
+  fs.chmodSync(decoy, 0o755);
+  try {
+    for (const moved of [false, true]) {
+      if (moved) {
+        const newRoot = `${fixture.root} moved 工作 café`;
+        fs.renameSync(fixture.root, newRoot);
+        fixture.root = newRoot;
+        fixture.launcherRoot = path.join(newRoot, "launcher");
+      }
+      const library = path.join(fixture.launcherRoot, "lib", "launcher.cjs");
+      const bin = path.join(fixture.launcherRoot, "bin", "ripr.cjs");
+      fs.unlinkSync(library);
+      const options = {
+        cwd: foreignCwd,
+        env: { ...process.env, PATH: `${foreignCwd}${path.delimiter}${process.env.PATH || ""}` },
+        encoding: "utf8",
+      };
+      const result = spawnSync(process.execPath, [bin, "--version"], options);
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.match(result.stderr, /^ripr npm launcher: cannot resolve packaged launcher library lib\/launcher\.cjs:/);
+      assert.match(result.stderr, /Cannot find module '\.\.\/lib\/launcher\.cjs'/);
+      assert.match(result.stderr, /restore lib\/launcher\.cjs from the matching package tarball/);
+      assert.match(result.stderr, /reinstall @effortlessmetrics\/ripr@0\.11\.0 in its owning npm environment/);
+      assert.doesNotMatch(result.stderr, /node:internal|PATH-FALLBACK|foreign-package|9\.9\.9/);
+      fs.writeFileSync(library, libraryBytes);
+      assert.deepEqual(fs.readFileSync(library), libraryBytes);
+      const restored = spawnSync(process.execPath, [bin, "--version"], options);
+      assert.equal(restored.status, 1);
+      assert.equal(restored.stdout, "");
+      assert.match(restored.stderr, /^ripr npm launcher: native package .*@0\.11\.0 does not contain bin\/ripr/);
+      assert.doesNotMatch(restored.stderr, /packaged launcher library|PATH-FALLBACK/);
+    }
+  } finally {
+    cleanup(fixture.root);
+    cleanup(foreignCwd);
+  }
+});
+
+test("public bin preserves internal import and parser failures without library recovery advice", () => {
+  const fixture = nativeFixture({ createExecutable: false });
+  try {
+    for (const [source, reason] of [
+      ['require("ripr-deliberately-absent-internal-module");\n', /Cannot find module 'ripr-deliberately-absent-internal-module'/],
+      ["module.exports = ;\n", /Unexpected token ';'/],
+    ]) {
+      fs.writeFileSync(path.join(fixture.launcherRoot, "lib", "launcher.cjs"), source);
+      const result = spawnSync(process.execPath, [path.join(fixture.launcherRoot, "bin", "ripr.cjs"), "--version"], {
+        cwd: fixture.root,
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.match(result.stderr, /^ripr npm launcher: /);
+      assert.match(result.stderr, reason);
+      assert.doesNotMatch(result.stderr, /cannot resolve packaged launcher library|restore lib\/launcher\.cjs|reinstall|node:internal/);
+    }
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
+test("public bin library recovery never guesses a version from invalid or unavailable metadata", () => {
+  const fixture = nativeFixture({ createExecutable: false });
+  try {
+    fs.unlinkSync(path.join(fixture.launcherRoot, "lib", "launcher.cjs"));
+    for (const metadata of [
+      { name: "foreign-package", version: "0.11.0" },
+      { name: manifest.name, version: 11 },
+      { name: manifest.name, version: "" },
+      { name: manifest.name, version: "^0.11.0" },
+      { name: manifest.name, version: "latest" },
+      { name: manifest.name, version: "0.11.0-01" },
+      { name: manifest.name, version: "0.11.0-rc.01" },
+      { name: manifest.name, version: "9007199254740992.0.0" },
+      { name: manifest.name, version: "0.9007199254740992.0" },
+      { name: manifest.name, version: "0.0.9007199254740992" },
+      { name: manifest.name, version: "0.11.0\n" },
+      { name: manifest.name, version: "v0.11.0" },
+      { name: manifest.name, version: `0.11.0-${"a".repeat(250)}` },
+      null,
+      undefined,
+    ]) {
+      const file = path.join(fixture.launcherRoot, "package.json");
+      if (metadata === undefined) fs.unlinkSync(file);
+      else writeJson(file, metadata);
+      const result = spawnSync(process.execPath, [path.join(fixture.launcherRoot, "bin", "ripr.cjs"), "--version"], {
+        cwd: fixture.root,
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      if (metadata === null) {
+        // Node 20 and 24 refuse this shape differently before display lookup.
+        let resolutionFailure;
+        assert.throws(
+          () => createRequire(path.join(fixture.launcherRoot, "bin", "ripr.cjs")).resolve("../lib/launcher.cjs"),
+          (error) => {
+            resolutionFailure = error;
+            return error.code !== "MODULE_NOT_FOUND";
+          },
+        );
+        assert.equal(result.stderr, `ripr npm launcher: ${resolutionFailure.message}\n`);
+        assert.doesNotMatch(result.stderr, /packaged launcher library|restore lib\/launcher\.cjs|reinstall|node:internal/);
+        continue;
+      }
+      assert.match(result.stderr, /^ripr npm launcher: cannot resolve packaged launcher library/);
+      assert.match(result.stderr, /reinstall the exact @effortlessmetrics\/ripr version selected for this npm installation in its owning npm environment/);
+      assert.doesNotMatch(result.stderr, /foreign-package|@ripr@|\^0\.11\.0|latest|node:internal/);
+    }
+    for (const version of [
+      "0.11.0-0", "0.11.0-rc.1", "0.11.0-01alpha", "0.11.0+01", "0.11.0-rc.1+build.02",
+      "9007199254740991.0.0", `0.11.0-${"a".repeat(249)}`,
+    ]) {
+      writeJson(path.join(fixture.launcherRoot, "package.json"), { name: manifest.name, version });
+      const result = spawnSync(process.execPath, [path.join(fixture.launcherRoot, "bin", "ripr.cjs"), "--version"], {
+        cwd: fixture.root,
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.ok(result.stderr.includes(`reinstall ${manifest.name}@${version} in its owning npm environment`), result.stderr);
+      assert.match(result.stderr, /^ripr npm launcher: cannot resolve packaged launcher library/);
+      assert.doesNotMatch(result.stderr, /node:internal/);
+    }
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
 test("npm package contents are explicit and exclude tests and build residue", () => {
   const root = path.join(__dirname, "..");
   const npmCli = process.env.npm_execpath;

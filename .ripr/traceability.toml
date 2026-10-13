@@ -9,6 +9,10 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/tests/unindexed_guidance.rs::unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim",
+  "crates/ripr/tests/unindexed_guidance.rs::weak_direct_owner_assertion_keeps_exact_value_advice",
+  "crates/ripr/tests/unindexed_guidance.rs::wrapper_error_retains_specific_guidance_for_proximity_reach",
+  "crates/ripr/tests/unindexed_guidance.rs::assertion_helper_retains_oracle_inspection_guidance",
   "crates/ripr/tests/cli_smoke/source_unicode.rs::human_full_source_unicode_wide",
   "crates/ripr/tests/cli_smoke/source_unicode.rs::human_full_source_unicode_combining",
   "crates/ripr/tests/cli_smoke/source_unicode.rs::human_full_source_unicode_emoji",
@@ -8198,6 +8202,9 @@ id = "RIPR-SPEC-0147"
 name = "typed analysis outcome projection"
 spec = "docs/specs/RIPR-SPEC-0147-analysis-outcome-projection.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::check_json_outcome_exit_preserves_subject_and_coverage",
+  "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::unsupported_check_keeps_rendered_formats_and_repo_scope",
+  "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::check_json_malformed_options_remain_empty_exit_two",
   "crates/ripr/src/analysis_outcome.rs::tests::limitation_paths_preserve_whitespace_identity_through_round_trip",
   "crates/ripr/tests/cli_smoke/python_source_admission.rs::shared_absence_disclosure_preserves_rust_path_identity",
   "crates/ripr/src/analysis/pipeline.rs::tests::changed_file_absent_from_worktree_is_a_partial_limitation",
@@ -8257,6 +8264,7 @@ tests = [
   "crates/ripr/src/output/agent_seam_packets.rs::tests::diff_packet_marks_missing_producer_outcome_incomplete",
 ]
 code = [
+  "crates/ripr/src/cli/commands/check.rs",
   "crates/ripr/src/analysis_outcome.rs",
   "crates/ripr/src/analysis/diff/parse.rs",
   "crates/ripr/src/analysis/pipeline.rs",
@@ -9476,6 +9484,9 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::code_action_response_disabled_actions_never_execute_across_scenarios",
   "crates/ripr/src/lsp/tests.rs::code_action_response_disabled_policy_keeps_only_filter_parity",
   "crates/ripr/src/lsp/tests.rs::gap_code_actions_stale_diagnostic_yields_disabled_stale_snapshot_action",
+  "crates/ripr/src/lsp/tests.rs::retained_code_actions_disclose_health_on_the_public_handler",
+  "crates/ripr/src/lsp/tests.rs::retained_code_actions_preserve_client_root_and_item_gates",
+  "crates/ripr/src/lsp/tests.rs::framed_retained_code_actions_survive_changed_config_failure",
   "crates/ripr/src/lsp/tests.rs::gap_code_actions_disable_verify_route_when_verification_commands_missing",
   "crates/ripr/src/lsp/tests.rs::gap_code_actions_disable_receipt_route_when_receipt_command_missing",
   "crates/ripr/src/lsp/tests.rs::gap_code_actions_cross_language_unresolved_yields_disabled_preview_limitation",
@@ -10515,6 +10526,14 @@ tests = [
   "crates/ripr/src/analysis/classify/related_tests.rs::tests::shadowed_wrapper_call_earns_no_helper_owner_call",
   "crates/ripr/tests/helper_wrapper_reach.rs::helper_effect_on_a_wrapper_owned_target_abstains",
   "crates/ripr/tests/helper_wrapper_reach.rs::aliased_or_same_named_wrapper_does_not_relate_or_pair",
+  "crates/ripr/tests/helper_wrapper_reach.rs::weak_oracle_behind_a_non_forwarding_hop_keeps_its_gap",
+  "crates/ripr/tests/helper_wrapper_reach.rs::exact_or_mixed_oracle_behind_a_non_forwarding_hop_abstains",
+  "crates/ripr/tests/helper_wrapper_reach.rs::bool_caller_pinned_by_a_plain_assert_abstains",
+  "crates/ripr/tests/helper_wrapper_reach.rs::caller_that_branches_on_the_owner_abstains_under_a_loose_check",
+  "crates/ripr/tests/helper_wrapper_reach.rs::test_local_helper_hop_is_part_of_the_oracle",
+  "crates/ripr/tests/helper_wrapper_reach.rs::weak_oracle_does_not_lift_the_effect_target_rule",
+  "crates/ripr/tests/helper_wrapper_reach.rs::effect_macro_exception_needs_every_hop_through_the_macro",
+  "crates/ripr/tests/helper_wrapper_reach.rs::user_type_between_owner_and_caller_abstains",
 ]
 fixtures = [
   "fixtures/helper_chain_one_hop",
@@ -10692,6 +10711,7 @@ fixtures = [
   "fixtures/propagate_stdout_macro",
   "fixtures/propagate_swallowed_ok",
   "fixtures/python_adversarial_changed_sink_non_delta_operand",
+  "fixtures/python_adversarial_replaced_block_non_delta_operand",
   "fixtures/python_decorator_indirection_limit",
   "fixtures/python_dynamic_dispatch_limit",
   "fixtures/python_dynamic_import_limit",
@@ -11761,6 +11781,7 @@ id = "RIPR-SPEC-0190"
 name = "versioned machine discovery via help --json"
 spec = "docs/specs/RIPR-SPEC-0190-help-json-machine-discovery.md"
 tests = [
+  "crates/ripr/tests/cli_smoke/unsupported_check_exit.rs::check_discovery_names_unsupported_and_partial_exits",
   "crates/ripr/src/cli/help_json.rs::tests::help_command_reports_json_support_in_the_machine_catalog",
   "crates/ripr/src/cli/help.rs::tests::help_overview_routes_to_first_actions_and_full_reference",
   "crates/ripr/src/cli/help.rs::tests::help_overview_more_block_names_the_machine_catalog",
@@ -13156,6 +13177,11 @@ id = "RIPR-SPEC-0214"
 name = "MCP repair transaction projection"
 spec = "docs/specs/RIPR-SPEC-0214-mcp-repair-transaction-projection.md"
 tests = [
+  "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_discovery_empty_store_and_argument_refusals",
+  "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_refuses_lossy_directory_identity_and_recovers",
+  "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_real_durable_attempt_edit_refresh_and_corruption_recovery",
+  "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_byte_pages_preserve_every_invalid_identity",
+  "crates/ripr/tests/support/mcp_attempt_inventory.rs::inventory_near_cap_keeps_structured_pages_for_small_and_escaped_ids",
   "crates/ripr/src/mcp/repair.rs::tests::complete_route_creates_one_replay_resistant_attempt",
   "crates/ripr/src/mcp/repair.rs::tests::missing_producer_facts_never_create_a_misleading_attempt",
   "crates/ripr/src/mcp/repair.rs::tests::stale_snapshot_and_unknown_items_fail_closed",
@@ -13207,6 +13233,7 @@ tests = [
 ]
 code = [
   "crates/ripr/src/mcp/repair.rs",
+  "crates/ripr/src/mcp/attempt_inventory.rs",
   "crates/ripr/src/app/repair_attempt/mod.rs::repair_attempt_head_reading",
   "crates/ripr/src/app/agent_status.rs::selected_attempt_status_reading",
   "crates/ripr/src/mcp/gaps.rs",
@@ -14548,14 +14575,37 @@ id = "RIPR-SPEC-0235"
 name = "Perl fact-packet classification"
 spec = "docs/specs/RIPR-SPEC-0235-perl-fact-packet-classification.md"
 tests = [
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_selects_direct_test_under_packet_permutations",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_does_not_borrow_an_advisory_verify_command",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_requires_a_direct_reachable_relation",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_prefers_admitted_exact_row_then_stable_test_identity",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_verify_choice_is_stable_within_selected_test",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_empty_command_cannot_hide_usable_same_test_command",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_strict_actionability_keeps_usable_command_and_reference",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_mixed_oracles_keep_canonical_gap_and_probe_stable",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_shape_requires_selected_test_and_owner_binding",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_real_fixtures_reach_check_and_json",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_witness_preserves_declared_tuple",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_gap_projection_preserves_declared_tuple",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_preview_keeps_declared_current_oracle",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_unresolved_or_ambiguous_tuple_does_not_rank_another_test",
+  "crates/ripr/src/analysis/language/perl/composition_tests.rs::perl_composition_producer_excludes_other_owner_with_same_name",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_names_are_exact_in_same_file",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_normalizes_only_file_with_qualified_test_name",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_test_name_whitespace_is_identity",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_real_sparse_packet_stays_advisory",
   "crates/ripr/src/analysis/language/perl/tests.rs::h2_aligned_sink_on_another_tests_oracle_does_not_promote",
 ]
 fixtures = [
+  "fixtures/perl_cpan_alpha/recommendation-controls",
   "fixtures/perl-verdict-corpus/cases/perl-0235-ex28-cross-test-oracle.json",
 ]
 code = [
   "crates/ripr/src/analysis/language/perl/mod.rs",
   "crates/ripr/src/analysis/language/perl/static_limit.rs",
+  "crates/ripr/src/domain/diagnostic_witness.rs",
+  "crates/ripr/src/output/perl_gap_record_projection.rs",
+  "crates/ripr/src/output/perl_preview_card.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0235-perl-fact-packet-classification.md",

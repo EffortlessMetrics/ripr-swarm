@@ -657,6 +657,11 @@ fixture goldens strip the member so analyzer contracts stay finding-shaped.
 the typed outcome and its `limitations[]` rather than infer completeness from
 `findings` or `probes`. For `unsupported_input` and
 `partial_with_limitations`, zero findings is explicitly not a clean result.
+The diff-scoped CLI exits `2` for `unsupported_input` after emitting this
+original report; it does not append or substitute a refusal document. Complete
+and `partial_with_limitations` reports remain advisory exit `0`. Outcome
+counts and identity remain available even when malformed input leaves retained
+findings. Empty input remains complete `no_scope`, rather than analyzed coverage.
 
 `identity.config_identity` (#5988) is the fingerprint of the exact
 `ripr.toml` text loaded for the run. It is non-null exactly when a config
@@ -1978,6 +1983,25 @@ JSON fields:
   `public_repair_packet = false`, `repair_packet_ready = false`,
   `agent_packet_ready = false`, `gate_candidate = false`,
   `badge_candidate = false`, and `ripr_zero_candidate = false`.
+  Standalone `perl_suggested_test_location` and `perl_verify_command` evidence
+  select the same packet-established direct/reachable test, preferring admitted
+  exact evidence and then stable test/relation identity. If that test has no
+  command, another row's command is not substituted. Multiple commands for the
+  selected test exclude empty argv before stable command-ID ordering. Canonical
+  gap and probe assertion shapes use that row's oracle only when its test and
+  target-owner identities bind, with the behavior default otherwise. Array
+  permutations cannot change the recommendation or its gap identity
+  (RIPR-SPEC-0235 rule 13, #6734). This selection grants no additional class,
+  oracle strength or execution authority.
+  Perl diagnostic fix sites and complete preview projections resolve the
+  declared normalized `file::test-name` to one retained oracle-related test,
+  preserving its location and current oracle beside the declared assertion
+  and command. They do not rerank equal-strength rows. Missing, unknown or
+  ambiguous identities leave the fix site unavailable and refuse these
+  projections. Diagnostic suggested assertions remain unavailable without a
+  symbol-resolved producer template; sparse packets remain incomplete.
+  Only file separators normalize; backslashes, whitespace and `::` inside
+  the test name remain exact identity, including the preview location.
   `verify.command` is copied from fact evidence with
   `verify.status = "fact_only_not_delegated"`. `receipt.command` is always
   `null` even though receipt evidence is required internally, and
