@@ -1110,13 +1110,19 @@ pub(super) fn has_top_level_exact_equality(condition: &str) -> bool {
                 if let Some(inner) = super::arguments::parenthesized_contents(masked) {
                     return has_top_level_exact_equality(inner);
                 }
-                // `value == value` compares a value with itself and pins
-                // nothing.
-                top_level_comparison_operator(masked).is_some_and(|(at, _)| {
-                    masked.get(at..).is_some_and(|rest| rest.starts_with("=="))
-                        && !compares_unpinned_pattern_with_bool(conjunct, at)
-                }) && !is_duplicative_comparison(conjunct.trim())
+                is_pinning_equality(conjunct, masked)
             })
+}
+
+/// Whether one conjunct is a top-level `==` that pins a value. `masked` is
+/// the conjunct trimmed and masked. `value == value` compares a value with
+/// itself, and `matches!(r, Ok(_)) == true` restates an unpinned pattern, so
+/// neither pins anything.
+fn is_pinning_equality(conjunct: &str, masked: &str) -> bool {
+    top_level_comparison_operator(masked).is_some_and(|(at, _)| {
+        masked.get(at..).is_some_and(|rest| rest.starts_with("=="))
+            && !compares_unpinned_pattern_with_bool(conjunct, at)
+    }) && !is_duplicative_comparison(conjunct.trim())
 }
 
 /// RIPR-SPEC-0231 rule 3 (#7715): `matches!(r, Ok(_)) == true` states the

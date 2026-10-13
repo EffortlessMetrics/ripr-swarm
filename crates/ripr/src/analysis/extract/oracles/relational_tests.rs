@@ -481,12 +481,14 @@ fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), St
         // Comparing an unpinned pattern with a bool pins nothing.
         ("assert!(matches!(r, Ok(_)) == true);", &weak),
         ("ensure!(matches!(r, Ok(_)) == true);", &weak),
+        ("assert!(matches!(r, _) == true);", &weak),
         // Controls: a pattern that pins keeps exact credit in every form.
         ("assert!(xs.iter().any(|x| matches!(x, Some(3))));", &exact),
         // Rule 1 already reads a compared pattern nested in a chain as not
         // positive, whatever its pattern.
         ("assert!(ready && matches!(r, Ok(3)) == true);", &weak),
         ("ensure!(matches!(r, Ok(3)) == true);", &exact),
+        ("assert!(matches!(r, Ok(3)) == true);", &exact),
         ("assert!(total == 4 && matches!(r, Ok(_)));", &exact),
         ("assert!(flag == true && matches!(r, Ok(_)));", &exact),
         // A user macro whose name ends in `matches!` keeps today's reading.
