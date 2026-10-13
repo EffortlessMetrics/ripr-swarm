@@ -113,7 +113,7 @@ ripr check --committed
 ```
 
 `--worktree` always reads staged and unstaged tracked edits. `--committed`
-always diffs `<base>...HEAD` and notes uncommitted edits it did not analyze.
+always diffs `<base>...HEAD`, even when the tree is dirty.
 Untracked files never select the working-tree default and stay out of the
 diff until staged (`git add -N`).
 
@@ -275,7 +275,7 @@ PR-facing packet. It does not run analysis or repair the code. See
 | --- | --- |
 | Cargo installation fails. | Check the first Cargo error and `rustc --version` (Rust 1.95 or newer). Fix the reported build or download problem before retrying. |
 | ripr is installed, but repository setup fails. | Run `ripr doctor` and inspect its individual capability results. |
-| `check` sees no change after an edit. | Uncommitted tracked edits are included by default. Confirm the resolved base (`--base REF`). Untracked files stay out of the diff until `git add` or `git add -N`. Pass `--committed` to analyze committed history only. |
+| `check` sees no change after an edit. | Uncommitted tracked edits are included by default in this development build. Confirm the resolved base (`--base REF`). Untracked files stay out of the diff until `git add` or `git add -N`. Pass `--committed` to analyze committed history only. A published 0.10 install still needs `--worktree`. |
 | The wrong base is selected. | Use `--base REF` with an existing reference in this repository. |
 | Configuration is rejected. | Run `ripr config validate` and fix the named setting. Configuration is optional, but an invalid file is not ignored. |
 | Editor diagnostics are missing or stale. | Check `ripr: Show Status`, save the file, and use the extension's refresh action. |
