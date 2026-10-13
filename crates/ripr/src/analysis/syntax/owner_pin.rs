@@ -1832,11 +1832,13 @@ enum RstestAttribute {
 }
 
 /// Which rstest attribute `path` names in `module`: `rstest::rstest`
-/// (rooted or not), a bare name bound to it by an explicit `use`, or a case
-/// row. The caller still checks that `rstest` is the crate.
+/// (rooted or not), a bare `rstest` bound to it by an explicit unrenamed
+/// `use`, or a case row. A rename (`use rstest::rstest as table`) is not
+/// discovered as a test, so it is not admitted here either. The caller
+/// still checks that `rstest` is the crate.
 fn rstest_attribute(path: &str, module: &SyntaxNode) -> Option<RstestAttribute> {
     if path.strip_prefix("::").unwrap_or(path) == "rstest::rstest"
-        || (!path.contains("::") && rstest_leaf_bound(path, module) == Some("rstest"))
+        || (path == "rstest" && rstest_leaf_bound(path, module) == Some("rstest"))
     {
         return Some(RstestAttribute::Rstest);
     }
@@ -1884,7 +1886,7 @@ fn rstest_attribute_trusted(attr: &ast::Attr, module: &SyntaxNode) -> bool {
         }
         None => {
             path.strip_prefix("::").unwrap_or(&path) == "rstest::fixture"
-                || (!path.contains("::") && rstest_leaf_bound(&path, module) == Some("fixture"))
+                || (path == "fixture" && rstest_leaf_bound(&path, module) == Some("fixture"))
         }
     }
 }

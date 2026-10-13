@@ -129,9 +129,11 @@ rule only for an assertion whose context was admitted.
    (cluster 12a, #6578): rstest runs the body once per `#[case(..)]` row with
    the row's values bound to the parameters, so
    `assert_eq!(scale(input), expected)` under `#[case(2, 4)]` pins the owner
-   as `assert_eq!(scale(2), 4)` does. `#[rstest]` (or `rstest::rstest`, or a
-   bare name bound by one explicit `use rstest::rstest`) takes no arguments
-   and appears once; every parameter is an identifier binding (`mut`
+   as `assert_eq!(scale(2), 4)` does, and the static contradiction fold
+   (#6026) folds each row with its own literals, so one wrong row
+   contradicts the whole test. `#[rstest]` (or `rstest::rstest`, or a bare
+   `rstest` bound by one explicit, unrenamed `use rstest::rstest`) takes no
+   arguments and appears once; every parameter is an identifier binding (`mut`
    allowed, no `ref` or `@` pattern) carrying exactly `#[case]`; every row
    follows `#[rstest]` and holds one value per parameter, each a non-string
    literal, `-literal`, `true` or `false` (a string literal reaches the
