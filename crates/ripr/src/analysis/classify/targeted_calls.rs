@@ -241,6 +241,11 @@ impl<'index> TargetedCallSyntax<'index> {
                                             lines.line(other.syntax().text_range().start()),
                                             &path,
                                         )
+                                        && (!path.contains("::")
+                                            || crate::analysis::syntax::ra::assertion_root_binding_is_unrebound(
+                                                &path,
+                                                other.syntax(),
+                                            ))
                                 },
                             ));
                     // Keep the full path through both declaration and source

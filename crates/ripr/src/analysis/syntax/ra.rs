@@ -2454,14 +2454,9 @@ enum DropInScope {
     Unknown,
 }
 
-/// Qualified operand capture borrows whole-file root binding only, never
-/// oracle strength or execution. Unknown glob roots remain unproved.
-pub(crate) fn assertion_root_is_unrebound(
-    path: &str,
-    node: &SyntaxNode,
-    statement_bound: &dyn Fn(&ast::MacroCall) -> bool,
-) -> bool {
-    let function = node.ancestors().find_map(ast::Fn::cast);
+/// Nonrecursive whole-file root proof for each qualified statement macro.
+/// Unknown glob roots remain unproved.
+pub(crate) fn assertion_root_binding_is_unrebound(path: &str, node: &SyntaxNode) -> bool {
     drop_in_assertion_leaf(path).is_some()
         && !drop_in_root_may_be_rebound(path, node, DropInScope::WholeFile)
         && node.ancestors().last().is_some_and(|file| {
@@ -2469,12 +2464,24 @@ pub(crate) fn assertion_root_is_unrebound(
                 .descendants()
                 .filter_map(ast::UseTree::cast)
                 .any(|tree| tree.star_token().is_some())
-                && file
-                    .descendants()
-                    .filter_map(ast::MacroCall::cast)
-                    .filter(|call| call.syntax().ancestors().find_map(ast::Fn::cast) == function)
-                    .filter(crate::analysis::syntax::macro_call_is_statement)
-                    .all(|call| statement_bound(&call))
+        })
+}
+
+/// Qualified operand capture requires every statement macro in the same
+/// function to retain its independently proven binding.
+pub(crate) fn assertion_root_is_unrebound(
+    path: &str,
+    node: &SyntaxNode,
+    statement_bound: &dyn Fn(&ast::MacroCall) -> bool,
+) -> bool {
+    let function = node.ancestors().find_map(ast::Fn::cast);
+    assertion_root_binding_is_unrebound(path, node)
+        && node.ancestors().last().is_some_and(|file| {
+            file.descendants()
+                .filter_map(ast::MacroCall::cast)
+                .filter(|call| call.syntax().ancestors().find_map(ast::Fn::cast) == function)
+                .filter(crate::analysis::syntax::macro_call_is_statement)
+                .all(|call| statement_bound(&call))
         })
 }
 
@@ -2508,6 +2515,7 @@ pub(crate) fn assertion_root_is_available(path: &str, node: &SyntaxNode) -> bool
                 .filter_map(ast::ExternCrate::cast)
                 .any(|krate| {
                     krate.rename().is_none()
+                        && crate::analysis::syntax::supported_targeted_item_context(krate.syntax())
                         && krate.name_ref().is_some_and(|name| name.text() == "std")
                 }))
 }

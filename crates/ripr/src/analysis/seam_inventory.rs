@@ -9791,6 +9791,27 @@ fn selected() {
                 false,
             ),
             (
+                "qualified-opaque-statement",
+                "mod fake { macro_rules! assert_eq { ($($t:tt)*) => { () } } pub(crate) use assert_eq; }\n#[macro_export] macro_rules! introduce { () => { use crate::fake as std; } }\nmod pretty_assertions { pub(crate) use crate::introduce as assert_eq; }\n",
+                "[dev-dependencies]\npretty_assertions=\"1\"\n",
+                "pretty_assertions::assert_eq!(); std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "no-std-disabled-extern",
+                "#![no_std]\n#[cfg(any())] extern crate std;\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "no-std-opaque-extern",
+                "#![no_std]\n#[opaque] extern crate std;\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
                 "no-std-unbound",
                 "#![no_std]\n",
                 "",
