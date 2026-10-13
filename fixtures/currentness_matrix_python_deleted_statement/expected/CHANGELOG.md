@@ -23,3 +23,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — currentness_matrix_python_deleted_statement (3)
+
+Reason:
+RIPR-SPEC-0156: combined-tree drift, #7680 merged beside #7577 (config path and next action in check output); no verdict change
+
+Command:
+`cargo xtask goldens bless currentness_matrix_python_deleted_statement --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
