@@ -10223,31 +10223,71 @@ fn selected() {
             &root.join("Cargo.toml"),
             "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
         )?;
-        write_file(
-            &root.join("src/lib.rs"),
-            r#"
+        let prefix = r#"
 pub struct Alpha;
 impl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
 macro_rules! noop { ($($ignored:tt)*) => {}; }
-#[test]
-fn selected() { noop!(foreign::Alpha::new(1)); assert_eq!(Alpha::new(2), 2); }
-"#,
-        )?;
-        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
-            &root,
-            &RiprConfig::default(),
-            Path::new("src/lib.rs"),
-            Some("selected"),
-        )?;
-        assert_eq!(inventory.selected_test_count, 1);
-        assert_eq!(inventory.direct_call_names, ["new"]);
-        assert!(!inventory.classified.is_empty());
-        assert!(
-            inventory
-                .classified
-                .iter()
-                .all(|entry| entry.seam.owner() == "src/lib.rs::impl Alpha::new")
-        );
+"#;
+        for (body, admitted) in [
+            (
+                "noop!(foreign::Alpha::new(1)); assert_eq!(Alpha::new(2), 2);",
+                true,
+            ),
+            ("assert_eq!(Alpha::new(2), 2);", true),
+            // Source-only unresolved-qualifier control: removing the empty
+            // macro must not let the foreign occurrence borrow Alpha's owner.
+            ("assert_eq!(foreign::Alpha::new(1), 1);", false),
+        ] {
+            let file = root.join("src/lib.rs");
+            write_file(
+                &file,
+                &format!("{prefix}#[test] fn selected() {{ {body} }}\n"),
+            )?;
+            let index = crate::analysis::facts::build_index(&root, &[file])?;
+            assert_eq!(index.tests().len(), 1, "{body}: indexed test");
+            assert!(
+                index.tests()[0].calls.iter().any(|call| call.name == "new"),
+                "{body}: captured call"
+            );
+            assert!(
+                index
+                    .files()
+                    .iter()
+                    .all(|(_, file)| !file.used_lexical_fallback),
+                "{body}: parser premise"
+            );
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            if admitted {
+                let inventory = result?;
+                assert_eq!(inventory.selected_test_count, 1);
+                assert_eq!(inventory.direct_call_names, ["new"]);
+                assert!(!inventory.classified.is_empty(), "{body}");
+                assert!(
+                    inventory
+                        .classified
+                        .iter()
+                        .all(|entry| { entry.seam.owner() == "src/lib.rs::impl Alpha::new" }),
+                    "{body}"
+                );
+            } else {
+                assert!(
+                    matches!(
+                        result,
+                        Err(TargetedTestInventoryError::Selector {
+                            kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                            selected_test_count: 1,
+                            ..
+                        })
+                    ),
+                    "{body}: {result:?}"
+                );
+            }
+        }
         std::fs::remove_dir_all(root).map_err(|error| error.to_string())
     }
 
