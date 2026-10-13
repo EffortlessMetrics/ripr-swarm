@@ -2382,7 +2382,9 @@ pub(crate) fn current_cache_keys_at(
         builder.push_digest(&path, key.content_hash());
         keys.push(key);
     }
-    Ok((inputs.cache_key(root, builder.finish()), keys))
+    let key = inputs.cache_key(root, builder.finish());
+    key.require_reusable()?;
+    Ok((key, keys))
 }
 
 impl WorkspaceKeyInputs {
