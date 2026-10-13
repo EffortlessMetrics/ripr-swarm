@@ -1,0 +1,13 @@
+diff --git a/lib/Shop/Pricing.pm b/lib/Shop/Pricing.pm
+index 2bfb0c0..d674789 100644
+--- a/lib/Shop/Pricing.pm
++++ b/lib/Shop/Pricing.pm
+@@ -11,7 +11,7 @@ our @EXPORT_OK = qw(
+ 
+ sub discount {
+     my ($amount) = @_;
+-    if ($amount >= 100) {
++    if (100 <= $amount) {
+         return $amount * 0.9;
+     }
+     return $amount;

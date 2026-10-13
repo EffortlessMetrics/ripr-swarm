@@ -457,6 +457,19 @@ object in `crates/ripr/src/domain/intervention_study.rs` owns study identity
 projects JSON and Markdown. The protocol does not execute agents, grade
 repairs, or claim intervention value.
 
+## Work portfolio ranking keys
+
+The read-only `cargo xtask work portfolio`, `work candidates`, and
+`work explain` v1 JSON documents carry an additive candidate `ranking_key`
+array of exactly eight integers, in the factor order declared by
+[RIPR-SPEC-0234](specs/RIPR-SPEC-0234-work-portfolio-compiler.md).
+Candidates sort by this key ascending lexicographically, then by
+`candidate_id` ascending. The existing `ranking_factors` retain their prose
+and source references. Legacy rows can omit the key; omission or null means
+unavailable, not zero. Regenerated portfolio identities include the key.
+Markdown displays the same key and tie-break; this advisory ordering does
+not select work or grant authority.
+
 ## JSON object key ordering
 
 JSON object key order is not part of the semantic contract for ordinary
@@ -524,7 +537,12 @@ state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
 `missing_scope`), one selected finding digest when available, an omitted-finding
 count, and pointers to `--format human-full` and `--format json`.
 `ripr check --format human-full` (alias `text-full`) preserves the exhaustive
-per-finding human report. These human text formats do not change
+per-finding human report. Navigation-aware CLI reports may define identical
+facts or guidance once with explicit finding-ordinal references; every finding
+retains its complete private record and drill-in commands. Sharing distinguishes
+full owner/test metadata and currentness, including raw contextual facts hidden
+by display normalization. Public library renders without navigation preserve
+legacy full-report bytes. These human text formats do not change
 `schema_version`; the machine-readable contract remains `--format json`.
 Repo-scoped formats such as `repo-exposure-json`, `repo-exposure-md`,
 `repo-sarif`, and `agent-seam-packets-json` warn on stderr when paired with
@@ -1340,7 +1358,8 @@ The evidence-first fields are additive in schema `0.2`:
   not credit `exposed`. They are emitted only on `language == "python"` findings
   and are absent on Rust and TypeScript findings; they do **not** bump
   `schema_version` (still `0.2`). `changed_sink` is the comma-joined significant
-  tokens of the changed line; `observed_sink` is the strongest related oracle's
+  tokens of the changed line; `observed_sink` is the crediting assertion when a
+  branch observes the change, otherwise the strongest related oracle's available
   assertion text; `alignment_reason` is a stable snake_case token. The
   `oracle_alignment` value is a controlled enum (`ORACLE_ALIGNMENT_VALUES`):
   - `direct` — a strong oracle observes the changed owner by name.
@@ -1350,8 +1369,12 @@ The evidence-first fields are additive in schema `0.2`:
   - `orthogonal` — a strong oracle exists but observes a different sink than the
     change (the fail-closed `weakly_exposed` branch); `alignment_reason` is
     `strong_oracle_observes_different_sink`.
-  - `unknown` — no strong oracle observed the changed sink (or a `<module>`
-    owner with no usable token).
+  - `unknown` — no admitted strong oracle observed the changed sink.
+
+  An empty token set never supplies observation credit on its own (#7526).
+  Existing assertion-level call and effect branches can still establish a
+  genuine observation; otherwise a strong unrelated oracle remains `orthogonal`
+  and cannot promote the finding to `exposed`.
 
   On a `weakly_exposed` finding, two `alignment_reason` values mark rows the
   family-relevant assertion selection changed (RIPR-SPEC-0224, #5572), and the
@@ -2510,13 +2533,13 @@ fixtures/ts_static_limit and fixtures/typescript_mocked_module_limit).
 - `unresolved_pytest_fixture`
 - `unsupported_syntax`
 - `cross_language_oracle_visibility_unresolved` — The changed Rust seam owner is FFI/binding-exposed; whether an external-language (e.g. TypeScript) test oracle discriminates this behavior is not statically known — verify the external oracle rather than adding a Rust test.
-- `rust_transitive_reach_unresolved` — (RIPR-SPEC-0114, additive) A test appears to call public API that may transitively reach the changed Rust owner through a pub->pub(crate) helper chain or similar internal call graph, but ripr cannot fully resolve the path (macros, generics, trait dispatch, or depth>5 stop the walk). Classification stays `no_static_path`, or `weakly_exposed` when every related test only shares the owner's file or a name token (#7071); this is a named limitation, not a coverage claim.
+- `rust_transitive_reach_unresolved` — (RIPR-SPEC-0114, additive) A test appears to call public API that may transitively reach the changed Rust owner through a pub->pub(crate) helper chain or similar internal call graph, but ripr cannot fully resolve the path (macros, generics, trait dispatch, or depth>5 stop the walk). Classification stays `no_static_path`, or `weakly_exposed` when every related test only shares the owner's file or a name token (#7071); this is a named limitation, not a coverage claim. The same kind discloses an unsearched dependent caller closure for an eligible finding with a recognized weak direct oracle (#7542), without changing its known direct reach, stages, class or related rows. That over-limit detail names no concrete skipped test or macro witness and withholds canonical gap advice.
 
 - `rust_integration_public_api_path_unresolved` -- (RIPR-SPEC-0118, additive) An integration test appears to call crate public API, or a test helper that calls crate public API, along a candidate path toward the changed Rust owner. RIPR cannot fully resolve that integration/public-API path, so classification stays `no_static_path` (or `weakly_exposed` for a proximity-only finding, #7071); this is a named limitation, not a reach, coverage, or oracle claim.
 
-- `rust_macro_reach_unresolved` -- (RIPR-SPEC-0117, additive) A test appears to call a Rust entry point whose path toward the changed owner stops at a same-repo macro invocation. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for a proximity-only finding, #7071); this is a named limitation, not a coverage claim.
+- `rust_macro_reach_unresolved` -- (RIPR-SPEC-0117, additive) A test appears to call a Rust entry point whose path toward the changed owner stops at a same-repo macro invocation. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for proximity-only reach, #7071, or a recognized weak admitted direct oracle beside an unresolved macro witness, #7542); this is a named limitation, not a coverage claim.
 
-- `rust_macro_wrapped_test_call_unresolved` -- (RIPR-SPEC-0119, additive) A Rust test directly invokes a same-repo macro whose definition mentions the changed owner. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for a proximity-only finding, #7071); this is a named limitation, not a reach, coverage, or oracle claim.
+- `rust_macro_wrapped_test_call_unresolved` -- (RIPR-SPEC-0119, additive) A Rust test directly invokes a same-repo macro whose definition mentions the changed owner. ripr does not expand macros, so classification stays `no_static_path` (or `weakly_exposed` for proximity-only reach, #7071, or a recognized weak admitted direct oracle beside an unresolved macro witness, #7542); this is a named limitation, not a reach, coverage, or oracle claim.
 
 - `rust_macro_wrapped_assertion_unresolved` -- (RIPR-SPEC-0120, additive) A Rust test reaches the changed owner, but its assertion-like custom macro is not classified as an oracle. Classification stays `reachable_unrevealed`; this is a named limitation, not an oracle, coverage, or repair-packet claim.
 
@@ -12971,9 +12994,15 @@ Field contract:
 
 Report packet index field contract:
 
-- `entries[].status` is `available`, `missing`, `pass`, `warn`, `fail`,
+- `entries[].status` is `available`, `missing`, `malformed`, `pass`, `warn`,
+  `fail`,
   `actionable`, `blocked`, `acknowledged`, `suppressed`, `stale`, `incomplete`,
-  `unreadable`, or `not_applicable`.
+  `unreadable`, or `not_applicable`. `malformed` marks a JSON-kind artifact
+  whose bytes do not parse as a JSON object (or cannot be read): existence
+  alone never credits it, the entry keeps its regeneration command, and the
+  packet cannot report `pass` while any entry is `malformed` (#7380). Receipt
+  JSONs discovered in the advertised receipts directory are indexed under
+  `validation_receipts` with the same status vocabulary (#7381).
 - `lane1_readiness.status` is `present`, `warn`, or `fail`.
 - `lane1_readiness.missing_artifacts`,
   `lane1_readiness.warning_artifacts`, and
@@ -17440,6 +17469,16 @@ validator kept closed becomes a report-only `StaticLimitation` record with
 exposed Python preview finding without a `python_repair_card` becomes one with
 `static_limit_kind = "python_repair_card_unavailable"`; neither carries a repair
 route, verify command, or receipt (RIPR-SPEC-0046).
+
+Passive and command-time LSP admission recognize the producer-owned operational
+`python_preview` and `python_repair_card_unavailable` markers without extending
+the analyzer limitation enum or promoting ineligible records. Producer-issued
+comparison identities remain unchanged: literal `<`/`>` may occur in the
+existing balanced inert single-quoted command form. Safety and root binding
+distinguish that data from the one allowed trailing stdout redirect; other
+operator, substitution, redirect-target and source-subject guards remain in
+force. Unknown scalar kinds remain refused. Admitted Python ledgers retain the
+explicit unavailable preview/mixed corpus scope (RIPR-SPEC-0077).
 
 The command writes JSON to `target/ripr/reports/gap-decision-ledger.json` and
 Markdown to `target/ripr/reports/gap-decision-ledger.md` by default. It does

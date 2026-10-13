@@ -1,0 +1,47 @@
+{
+  "case_id": "spec0229-let-made-input",
+  "subject_id": "authored-spec0229-3",
+  "diff": "cases/spec0229-let-made-input.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "match_arm",
+  "test_shape": "integration_test_input_from_helper_binding",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "None => 0,",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: reason(None) returns 0 instead of 1; the test's input comes from make(), which returns Some(5), so reason(x) still returns 6"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "tests/it.rs binds x = make() and pins reason(x) to 6; the input is unresolved statically (a helper call) and is Some(5) at runtime, so the edit passes. Spec cells: RIPR-SPEC-0229 example 3. ripr reads weakly_exposed with no named missing discriminator: the make() input is unresolved, so selection is not decided and the arm stays below exposed, as the example requires.",
+  "labeling_observation": {
+    "ripr_commit": "dd5a66b5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0229#3"
+  ]
+}

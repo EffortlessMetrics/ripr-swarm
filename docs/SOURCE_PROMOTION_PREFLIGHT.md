@@ -57,7 +57,8 @@ The command writes deterministic `source-promotion-preflight.json` and `.md`
 files. It records the merge base, separately named all-reachable and
 first-parent counts for each parent range, exact-parent version surfaces
 (workspace, crate, Cargo.lock ripr package, extension, npm lock root, and
-changelog, with missing changelog evidence represented as unknown), and
+changelog, with missing changelog evidence represented as unknown), each
+parent's unfolded `changelog.d/` fragments, and
 SHA-256 digests. The
 all-reachable digest recipe is:
 
@@ -81,7 +82,9 @@ conflict paths. The automatic `preview_tree` is
 never a final join tree. An
 optional `--resolved-tree <full-tree-sha>` records a separately reviewed
 resolved tree after verifying that the object exists in one supplied
-repository's common object store; omission remains visibly not finalized. The
+repository's common object store; omission remains visibly not finalized. A
+reviewed tree is the folded tree, so the preflight refuses one that still
+holds a `changelog.d/` fragment other than `README.md` and names it. The
 dry merge runs in a disposable repository populated by fetching both exact
 commits. No branch, index, ref, working tree, version, tag, PR, or publication
 state in either authoritative checkout is changed.

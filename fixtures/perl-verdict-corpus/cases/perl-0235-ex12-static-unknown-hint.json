@@ -1,0 +1,58 @@
+{
+  "case_id": "perl-0235-ex12-static-unknown-hint",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-0235-ex12-static-unknown-hint.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "hash_field_value",
+  "test_shape": "test2_is_deep_hash_static_unknown_hint",
+  "hard_case": "RIPR-SPEC-0235 example 12: the relation's reachability_hint is static_unknown.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
+        "mutated_line": "return { count => scalar(@amounts) + 1, total => $total };",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: summary totals and counts",
+        "equivalence_review": "not equivalent: two amounts count as three"
+      },
+      {
+        "replacement": "return { count => scalar @amounts, total => $total * 2 };",
+        "mutated_line": "return { count => scalar @amounts, total => $total * 2 };",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: summary totals and counts",
+        "equivalence_review": "not equivalent: total doubles"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The test discriminates both mutants, but the packet says reachability is unknown, so the spec's answer is static_unknown, a limit. ripr follows the hint.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-0235-ex12-static-unknown-hint.json",
+    "sha256": "a49e517afc90eba2565eeb566336d657f4401c17261e0a5d1a2ce7c1318188d3",
+    "provenance": "edited_producer",
+    "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in relations where {\"change_id\": \"$CHANGE_ID\"} set {\"reachability_hint\": \"static_unknown\"}; the packet fingerprint was recomputed."
+  }
+}

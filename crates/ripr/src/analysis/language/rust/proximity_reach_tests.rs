@@ -1,6 +1,8 @@
 //! RIPR-SPEC-0114/0117 on proximity-only reach: a `weakly_exposed` finding
 //! whose related tests only share the owner's file or a name token names the
-//! transitive or macro reach limit instead of reporting a gap.
+//! transitive or macro reach limit instead of reporting a gap. RIPR-SPEC-0120
+//! (#7089): a direct test whose only observer is an unread assertion macro
+//! names that limit beside a proximity-only weak oracle.
 use super::RustAdapter;
 use crate::analysis::language::LanguageAdapter;
 use crate::analysis::{AnalysisMode, AnalysisOptions, diff};
@@ -194,9 +196,9 @@ mod tests {
 }
 
 #[test]
-fn a_test_calling_the_owner_keeps_the_gap_despite_a_macro_witness() -> Result<(), String> {
+fn a_weak_direct_test_preserves_the_unresolved_macro_witness() -> Result<(), String> {
     // The same macro witness exists, but a test calls the owner directly:
-    // reach is established, so the weak oracle stays a gap.
+    // direct reach is established, but its weak oracle cannot erase the unresolved macro witness.
     let fixture = Fixture::new(
         "direct",
         &format!(
@@ -213,7 +215,12 @@ fn a_test_calling_the_owner_keeps_the_gap_despite_a_macro_witness() -> Result<()
         finding.related_tests
     );
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
     Ok(())
 }
 
@@ -399,6 +406,240 @@ fn a_generator_with_a_second_same_named_definition_names_no_limit() -> Result<()
         ),
     )?;
     let finding = fixture.rate_finding()?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+/// Weak classification can coexist with a confirmed discriminator when an
+/// infection or propagation stage is weak. Do not replace that discriminator
+/// with a macro limit. These are gate-boundary states, not runtime evidence.
+#[test]
+fn mixed_macro_limit_preserves_confirmed_discrimination_and_examined_misses() -> Result<(), String>
+{
+    let fixture = Fixture::new(
+        "mixed-guard",
+        &format!(
+            "{MACRO_ROUTED}    #[test]\n    fn rate_is_positive() {{ assert!(inner_rate(2) > 0); }}\n}}\n"
+        ),
+    )?;
+    let mut finding = fixture.rate_finding()?;
+    finding.static_limit_kind = None;
+    assert!(super::needs_mixed_macro_reach_limit(&finding));
+    let before = finding.clone();
+    for state in [StageState::Weak, StageState::No] {
+        let mut confirmed = before.clone();
+        confirmed.ripr.reveal.discriminate.state = StageState::Yes;
+        confirmed.ripr.infect.state = state.clone();
+        assert!(!super::needs_mixed_macro_reach_limit(&confirmed));
+        confirmed.ripr.infect.state = StageState::Yes;
+        confirmed.ripr.propagate.state = state;
+        assert!(!super::needs_mixed_macro_reach_limit(&confirmed));
+    }
+    let mut miss = before.clone();
+    let mut direct_count = 0;
+    for test in &mut miss.related_tests {
+        if test.relation_reason == Some(RelationReason::DirectOwnerCall) {
+            direct_count += 1;
+            test.miss = Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+        }
+    }
+    assert_eq!(direct_count, 1);
+    assert!(!super::needs_mixed_macro_reach_limit(&miss));
+    let mut no_direct_oracle = before.clone();
+    let mut direct_count = 0;
+    for test in &mut no_direct_oracle.related_tests {
+        if test.relation_reason == Some(RelationReason::DirectOwnerCall) {
+            direct_count += 1;
+            assert!(test.oracle.is_some());
+            test.oracle = None;
+        }
+    }
+    assert_eq!(direct_count, 1);
+    assert!(!super::needs_mixed_macro_reach_limit(&no_direct_oracle));
+    finding.static_limit_kind = Some(StaticLimitKind::RustAssertionContextUnresolved);
+    assert!(!super::needs_mixed_macro_reach_limit(&finding));
+    Ok(())
+}
+
+/// #7089: the only test that calls the owner observes it through a custom
+/// assertion macro ripr cannot read; a weak oracle in a test that only shares
+/// the file made the finding `weakly_exposed`.
+const CUSTOM_ASSERT: &str = "fn inner_rate(x: i64) -> i64 {
+    3 * x
+}
+pub fn other(x: i64) -> i64 {
+    x + 1
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    macro_rules! assert_rate {
+        ($actual:expr, $expected:expr) => {
+            if $actual != $expected {
+                panic!(\"rate mismatch\");
+            }
+        };
+    }
+    #[test]
+    fn rate_triples() {
+        assert_rate!(inner_rate(4), 12);
+    }
+    #[test]
+    fn other_is_positive() {
+        assert!(other(1) > 0);
+    }
+}
+";
+
+/// Fixture construction for the #7089 cases: `rate_triples` is related by a
+/// direct relation with the given oracle presence, and a proximity-only test
+/// holds a recognized oracle.
+fn assert_custom_assert_construction(finding: &Finding, direct_has_oracle: bool) {
+    let direct = finding
+        .related_tests
+        .iter()
+        .find(|test| test.name == "rate_triples");
+    assert!(
+        direct.is_some_and(|test| test
+            .relation_reason
+            .is_some_and(|reason| !crate::analysis::classify::is_proximity_only(reason))
+            && test.oracle.is_some() == direct_has_oracle),
+        "{:?}",
+        finding.related_tests
+    );
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .any(|test| test.oracle.is_some()
+                && test
+                    .relation_reason
+                    .is_some_and(crate::analysis::classify::is_proximity_only)),
+        "{:?}",
+        finding.related_tests
+    );
+}
+
+#[test]
+fn an_owner_call_inside_an_unread_assertion_macro_names_the_macro_limit() -> Result<(), String> {
+    let fixture = Fixture::new("custom-assert", CUSTOM_ASSERT)?;
+    let finding = fixture.rate_finding()?;
+    // Fixture construction: the direct test has no recognized oracle, and the
+    // only recognized one comes from a test that just shares the file.
+    let direct = finding
+        .related_tests
+        .iter()
+        .find(|test| test.name == "rate_triples")
+        .ok_or("rate_triples is not related")?;
+    assert!(direct.oracle.is_none(), "{direct:?}");
+    assert!(
+        finding
+            .related_tests
+            .iter()
+            .filter(|test| test.oracle.is_some())
+            .all(|test| test
+                .relation_reason
+                .is_some_and(crate::analysis::classify::is_proximity_only)),
+        "{:?}",
+        finding.related_tests
+    );
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved),
+        "{:?}",
+        finding.evidence
+    );
+    assert!(
+        finding
+            .evidence
+            .iter()
+            .any(|line| line.contains("`rate_triples`") && line.contains("`assert_rate!`")),
+        "{:?}",
+        finding.evidence
+    );
+    Ok(())
+}
+
+#[test]
+fn an_unread_assertion_macro_without_the_owner_call_keeps_the_gap() -> Result<(), String> {
+    // The owner's value reaches the macro only through a binding.
+    let fixture = Fixture::new(
+        "custom-assert-binding",
+        &CUSTOM_ASSERT.replacen(
+            "        assert_rate!(inner_rate(4), 12);",
+            "        let rate = inner_rate(4);\n        assert_rate!(rate, 12);",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert_custom_assert_construction(&finding, false);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn a_direct_test_with_a_recognized_oracle_keeps_the_gap() -> Result<(), String> {
+    // The direct test's own weak oracle is what ripr judged; the custom macro
+    // beside it does not turn that judgment into a limit.
+    let fixture = Fixture::new(
+        "custom-assert-direct-oracle",
+        &CUSTOM_ASSERT.replacen(
+            "        assert_rate!(inner_rate(4), 12);",
+            "        assert!(inner_rate(4) > 0);\n        assert_rate!(inner_rate(4), 12);",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert_custom_assert_construction(&finding, true);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn an_owner_call_quoted_by_stringify_keeps_the_gap() -> Result<(), String> {
+    // `stringify!` turns the call into text; the owner never runs.
+    let fixture = Fixture::new(
+        "custom-assert-stringify",
+        &CUSTOM_ASSERT.replacen(
+            "        assert_rate!(inner_rate(4), 12);",
+            "        assert_rate!(stringify!(inner_rate(4)), \"inner_rate(4)\");",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert_custom_assert_construction(&finding, false);
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+#[test]
+fn a_trait_default_method_owner_keeps_the_gap() -> Result<(), String> {
+    // A bare `inner_rate(` call cannot name a trait default method, so it is
+    // no evidence that the macro asserts on the owner.
+    let fixture = Fixture::new(
+        "custom-assert-trait-default",
+        &CUSTOM_ASSERT.replacen(
+            "fn inner_rate(x: i64) -> i64 {\n    3 * x\n}\n",
+            "pub trait Rate { fn inner_rate(x: i64) -> i64 {\n    3 * x\n} }\n",
+            1,
+        ),
+    )?;
+    let finding = fixture.rate_finding()?;
+    assert!(
+        finding
+            .probe
+            .owner
+            .as_ref()
+            .is_some_and(|owner| owner.0.ends_with("::inner_rate")),
+        "{:?}",
+        finding.probe.owner
+    );
+    assert_custom_assert_construction(&finding, false);
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
     Ok(())

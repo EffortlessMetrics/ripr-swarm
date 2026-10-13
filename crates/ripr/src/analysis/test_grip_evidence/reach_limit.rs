@@ -26,7 +26,7 @@ use crate::analysis::classify::{
 };
 use crate::analysis::rust_index::{FunctionSummary, TestSummary, is_test_file};
 use crate::domain::{Confidence, StageEvidence, StageState};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
 /// Where an unresolved trait-dispatch path starts: a test that names the
@@ -144,11 +144,24 @@ impl TypeMentionIndex {
         // A dispatch root's callees may name further types whose trait
         // methods are roots in turn. Each round is one more hop, bounded
         // like the transitive walk.
-        let mut trait_methods: Vec<&FunctionSummary> = reach
-            .production_functions()
+        let mut production: Vec<&FunctionSummary> = reach.production_functions().collect();
+        sort_functions(&mut production);
+        // Each function's position in that order, so a root's callees sort
+        // by an integer instead of by path. Keys are the addresses of the
+        // index's own `FunctionSummary` values: `production_functions` and
+        // `functions_reached_from` both borrow them from the reach graph's
+        // `by_name`, which the index owns for this whole build, so every
+        // callee has a key. The `usize::MAX` fallback below is unreachable.
+        let order: HashMap<*const FunctionSummary, usize> = production
+            .iter()
+            .enumerate()
+            .map(|(position, &function)| (std::ptr::from_ref(function), position))
+            .collect();
+        let trait_methods: Vec<&FunctionSummary> = production
+            .iter()
+            .copied()
             .filter(|function| is_trait_impl_method(function))
             .collect();
-        sort_functions(&mut trait_methods);
         // Gated callees a root reached before their trait's syntax was seen;
         // retried each round, since later roots may add that syntax.
         let mut deferred: Vec<(&FunctionSummary, DispatchRoot)> = Vec::new();
@@ -183,8 +196,19 @@ impl TypeMentionIndex {
                 index.add_function_mentions(method, true);
                 index.add_function_trait_uses(method);
                 let calls = calls_after_definition(&method.name, &method.calls);
-                let mut callees = reach.functions_reached_from(calls, MAX_TRANSITIVE_DEPTH);
-                sort_functions(&mut callees);
+                // Only callees not yet reached are recorded, so only they
+                // need ordering.
+                let mut callees: Vec<&FunctionSummary> = reach
+                    .functions_reached_from(calls, MAX_TRANSITIVE_DEPTH)
+                    .into_iter()
+                    .filter(|callee| !reached.contains(callee.id.0.as_str()))
+                    .collect();
+                callees.sort_by_key(|&callee| {
+                    order
+                        .get(&std::ptr::from_ref(callee))
+                        .copied()
+                        .unwrap_or(usize::MAX)
+                });
                 for callee in callees {
                     // Name matching reaches every same-named method; a gated
                     // trait's method still needs its syntax (`Display::fmt`

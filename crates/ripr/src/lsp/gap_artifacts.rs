@@ -1568,11 +1568,11 @@ pub(super) fn command_payload_is_safe(root: &Path, command: &str) -> bool {
     };
     if trimmed
         .chars()
-        .any(|character| matches!(character, ';' | '&' | '|' | '<' | '>' | '`' | '\0'))
+        .any(|character| matches!(character, ';' | '&' | '|' | '`' | '\0'))
     {
         return false;
     }
-    if !substitution_is_quoted(trimmed) {
+    if !literal_metacharacters_are_single_quoted(trimmed, &['$', '(', ')', '<', '>']) {
         return false;
     }
     if trimmed.contains("../") || trimmed.contains("..\\") {
@@ -1616,10 +1616,7 @@ pub(super) fn bind_portable_command(root: &Path, command: &str) -> Option<String
     if !command_payload_is_safe(root, trimmed) {
         return Some(command.to_string());
     }
-    let (body, redirect) = match trimmed.rsplit_once(" > ") {
-        Some((body, tail)) => (body, Some(tail)),
-        None => (trimmed, None),
-    };
+    let (body, redirect) = split_producer_stdout_redirect(trimmed)?;
     // Only a top-level `--root .` pair is the route's root; the same text
     // inside a quoted argument (a recorded `--verify-command '...'`) is data.
     // A whole token written `'.'` is the same root once the shell unquotes it.
@@ -1801,15 +1798,44 @@ fn token_unquotes_to(token: &str, expected: &str) -> bool {
 /// `shell_arg`-rendered token naming a file under `<root>/target/ripr/`.
 /// A command without `>` passes through unchanged.
 fn strip_workspace_redirect<'a>(root: &Path, command: &'a str) -> Option<&'a str> {
-    if !command.contains('>') {
-        return Some(command);
-    }
-    let (body, tail) = command.rsplit_once(" > ")?;
-    if body.contains('>') {
+    let (body, redirect) = split_producer_stdout_redirect(command)?;
+    if !literal_metacharacters_are_single_quoted(body, &['>']) {
         return None;
     }
+    let Some(tail) = redirect else {
+        return Some(body);
+    };
     let target = shell_arg_token(tail)?;
     redirect_target_is_ripr_artifact(root, target).then_some(body)
+}
+
+/// Locate the producer's one space-delimited stdout operator using the same
+/// top-level token spans as portable-root binding. A quoted `>` is argument
+/// data; this split grants no allowance for active operators in the body or
+/// unsafe redirect targets. Those remain the existing validators' decision.
+fn split_producer_stdout_redirect(command: &str) -> Option<(&str, Option<&str>)> {
+    let spans = top_level_token_spans(command);
+    let redirects = spans
+        .iter()
+        .filter(|span| &command[(*span).clone()] == ">")
+        .collect::<Vec<_>>();
+    let redirect = match redirects.as_slice() {
+        [] => return Some((command, None)),
+        [redirect] => *redirect,
+        _ => return None,
+    };
+    // Preserve the existing literal ` > ` producer form. Joined, append and
+    // stderr operators are not stdout redirects under this display contract.
+    if redirect.start == 0
+        || command.as_bytes().get(redirect.start - 1) != Some(&b' ')
+        || command.as_bytes().get(redirect.end) != Some(&b' ')
+    {
+        return None;
+    }
+    Some((
+        &command[..redirect.start - 1],
+        Some(&command[redirect.end + 1..]),
+    ))
 }
 
 /// Undo `loop_commands::shell_arg` for one token: bare when every character is
@@ -1828,7 +1854,7 @@ pub(super) fn shell_arg_token(token: &str) -> Option<&str> {
     let inner = token.strip_prefix('\'')?.strip_suffix('\'')?;
     // PowerShell also closes a `'` span on a typographic quote (U+2018-U+201F),
     // which would expose the rest of the target as commands; mirrors
-    // `substitution_is_quoted` and the VS Code client's `redirectTailPath`.
+    // `literal_metacharacters_are_single_quoted` and the VS Code client's `redirectTailPath`.
     if inner.is_empty()
         || inner.contains(['\'', '\0', '\n', '\r'])
         || inner.contains(|ch: char| ('\u{2018}'..='\u{201f}').contains(&ch))
@@ -1866,16 +1892,16 @@ fn redirect_target_is_ripr_artifact(root: &Path, target: &str) -> bool {
         && components.next().is_some()
 }
 
-/// `$`, `(` and `)` open command or process substitution (`$(cmd)`, `<(cmd)`,
-/// PowerShell `$(...)`/`@(...)`), so they may appear only inside a
-/// single-quoted span, where `shell_arg` puts them (a gap id such as
-/// `'...:len(x)'`). That span is inert in bash, zsh, fish and PowerShell only
+/// Substitution punctuation and literal comparison operators in producer
+/// identities may appear only inside a single-quoted span, where `shell_arg`
+/// puts them (a gap id such as `'...:len(x)'` or `'...:amount>=threshold'`).
+/// That span is inert in bash, zsh, fish and PowerShell only
 /// when the command has no `"`, `\` or typographic quote, so those refuse the
 /// allowance, as does an unterminated span. Mirrors the VS Code client's
 /// `hasUnsafeShellMetacharacter` (#4225, #4239).
-fn substitution_is_quoted(command: &str) -> bool {
-    let is_substitution = |character: char| matches!(character, '$' | '(' | ')');
-    if !command.contains(is_substitution) {
+fn literal_metacharacters_are_single_quoted(command: &str, characters: &[char]) -> bool {
+    let is_metacharacter = |character: char| characters.contains(&character);
+    if !command.contains(is_metacharacter) {
         return true;
     }
     if command.contains(|character| matches!(character, '"' | '\\' | '\u{2018}'..='\u{201f}')) {
@@ -1886,7 +1912,7 @@ fn substitution_is_quoted(command: &str) -> bool {
         && spans
             .iter()
             .step_by(2)
-            .all(|span| !span.contains(is_substitution))
+            .all(|span| !span.contains(is_metacharacter))
 }
 
 fn command_program_is_allowed(tokens: &[String]) -> bool {
@@ -1997,6 +2023,15 @@ fn contains_text_static_limit(value: &Value) -> bool {
 }
 
 fn known_static_limit_kind(kind: &str) -> bool {
+    // These are closed producer-owned ledger markers, not analyzer taxonomy
+    // or permission to project an ineligible record as an action.
+    if matches!(
+        kind,
+        crate::output::gap_decision_ledger::PYTHON_PREVIEW_STATIC_LIMIT_KIND
+            | crate::output::gap_decision_ledger::PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND
+    ) {
+        return true;
+    }
     [
         StaticLimitKind::DynamicDispatch,
         StaticLimitKind::Metaprogramming,
@@ -4273,5 +4308,136 @@ mod tests {
             }
         }
         Ok(())
+    }
+
+    #[test]
+    fn quoted_python_comparison_identity_preserves_payload_binding_and_one_redirect() {
+        let root = &TEST_ROOT;
+        let identity = "gap:python:src/discount.py:apply_discount:predicate_boundary:predicate:amount>=threshold";
+        let portable = format!("ripr receipt write --root . --gap '{identity}' --status not_run");
+        assert!(command_payload_is_safe(root, &portable));
+        let bound = bind_portable_command(root, &portable);
+        assert!(bound.as_ref().is_some_and(|command| {
+            command.contains(&format!("--gap '{identity}'"))
+                && !command.contains("--root .")
+                && editor_command_is_safe(root, command)
+        }));
+        let redirected = format!(
+            "{portable} > '{}'",
+            root.join("target/ripr/receipt.json").display()
+        );
+        assert!(command_payload_is_safe(root, &redirected));
+        assert!(bind_portable_command(root, &redirected).is_some());
+        // Retain the existing narrowly inert single-quote substitution rule.
+        assert!(command_payload_is_safe(
+            root,
+            "ripr receipt write --gap 'gap:len(x):$(literal)' --status not_run"
+        ));
+    }
+
+    #[test]
+    fn comparison_identity_does_not_relax_active_shell_or_ambiguous_quote_payloads() {
+        let root = &TEST_ROOT;
+        for command in [
+            "ripr receipt write --gap gap:amount>=threshold",
+            "ripr receipt write --gap gap:amount<threshold",
+            "ripr receipt write --gap 'gap:amount>=threshold",
+            "ripr receipt write --gap \"gap:amount>=threshold\"",
+            "ripr receipt write --gap 'gap:amount>=threshold’'",
+            "ripr receipt write --gap 'gap:amount>=threshold'\\\"",
+            "ripr receipt write --gap \"$(echo injected)\"",
+            "ripr receipt write --gap `echo injected`",
+            "ripr agent verify --root ../outside --json",
+            "ripr agent verify --root . --json; echo injected",
+            "ripr agent verify --root . --json < outside",
+            "ripr agent verify --root . --json >> target/ripr/verify.json",
+            "ripr agent verify --root . --json>target/ripr/verify.json",
+            "ripr agent verify --root . --json > ../outside.json",
+        ] {
+            assert!(
+                !command_payload_is_safe(root, command),
+                "active/ambiguous input must remain refused: {command:?}"
+            );
+        }
+        assert!(!known_static_limit_kind("runtime_magic"));
+        assert!(!known_static_limit_kind("python_arbitrary_new_limit"));
+    }
+
+    #[test]
+    fn quoted_spaced_comparison_identity_and_destination_preserve_one_redirect()
+    -> Result<(), String> {
+        let root = &TEST_ROOT;
+        for (identity, target) in [
+            ("gap:python:comparison:amount > threshold", None),
+            (
+                "gap:python:comparison:amount > threshold",
+                Some("target/ripr/receipt.json"),
+            ),
+            (
+                "gap:python:comparison:amount",
+                Some("target/ripr/receipt > data.json"),
+            ),
+            (
+                "gap:python:comparison:amount > threshold",
+                Some("target/ripr/receipt > data.json"),
+            ),
+        ] {
+            let body = format!("ripr receipt write --root . --gap '{identity}' --status not_run");
+            let command = match target {
+                Some(target) => format!("{body} > '{target}'"),
+                None => body.clone(),
+            };
+            assert!(
+                command_payload_is_safe(root, &command),
+                "a whole single-quoted comparison is data: {command:?}"
+            );
+            assert_eq!(
+                strip_workspace_redirect(root, &command),
+                Some(body.as_str()),
+                "only the real trailing redirect may be removed: {command:?}"
+            );
+            let bound = bind_portable_command(root, &command)
+                .ok_or_else(|| format!("the safe portable route must bind: {command:?}"))?;
+            assert!(
+                bound.contains(&format!("--gap '{identity}'")) && !bound.contains("--root ."),
+                "binding must preserve the entire quoted identity and select the root: {bound:?}"
+            );
+            assert!(editor_command_is_safe(root, &bound), "{bound:?}");
+            if let Some(target) = target {
+                // This is a lexical in-root target. No file is created, and
+                // it makes no claim that this filename is valid on Windows.
+                assert!(
+                    bound.ends_with(&format!("/{target}'"))
+                        || (!target.contains('>') && bound.ends_with(&format!("/{target}"))),
+                    "binding must preserve and anchor the whole target: {bound:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn quoted_comparison_data_keeps_duplicate_redirects_and_other_metacharacters_refused() {
+        let root = &TEST_ROOT;
+        for command in [
+            "ripr receipt write --root . --gap 'gap:amount > threshold' > target/ripr/one.json > target/ripr/two.json",
+            "ripr receipt write --root . --gap 'gap:amount > threshold' > 'target/ripr/one.json' extra",
+            "ripr receipt write --root . --gap 'gap:amount > threshold' >> target/ripr/one.json",
+            "ripr receipt write --root . --gap 'gap:amount;threshold' --status not_run",
+            "ripr receipt write --root . --gap 'gap:amount|threshold' --status not_run",
+            "ripr receipt write --root . --gap 'gap:amount&threshold' --status not_run",
+            "ripr receipt write --root . --gap 'gap:amount;threshold' > target/ripr/one.json",
+            "ripr receipt write --root . --gap 'gap:amount|threshold' > target/ripr/one.json",
+            "ripr receipt write --root . --gap 'gap:amount&threshold' > target/ripr/one.json",
+        ] {
+            assert!(
+                !command_payload_is_safe(root, command),
+                "comparison quoting must not admit unrelated syntax: {command:?}"
+            );
+            assert!(
+                !editor_command_is_safe(root, command),
+                "unsafe input must also be withheld at the editor guard: {command:?}"
+            );
+        }
     }
 }

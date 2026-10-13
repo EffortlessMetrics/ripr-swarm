@@ -18,16 +18,27 @@ mod build_commit_record;
 mod check_artifact_stdin;
 #[path = "common/mod.rs"]
 mod common;
+#[cfg(all(unix, feature = "lang-rust"))]
+#[path = "cli_smoke/diff_selection.rs"]
+mod diff_selection;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/discarded_matches.rs"]
 mod discarded_matches;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/human_full_shared.rs"]
+mod human_full_shared;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/javascript_awaited_roots.rs"]
+mod javascript_awaited_roots;
 #[path = "cli_smoke/next_action.rs"]
 mod next_action;
+#[path = "cli_smoke/output_leaf_identity.rs"]
+mod output_leaf_identity;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
@@ -44,6 +55,9 @@ mod repair_orderfile;
 mod rerun_ledger_recovery;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/source_unicode.rs"]
+mod source_unicode;
 #[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
@@ -994,6 +1008,12 @@ fn normalize_unchanged_repo_exposure_producer_fixture(
     let input_identity = json_pointer_str(&value, "/artifact/analysis/input_identity")?;
     value["artifact"]["snapshot_identity"] =
         serde_json::json!(format!("snapshot:{input_identity};revision:{stable_head}"));
+    // The wall-clock generated_at stamp (#7369) is volatile by design: the
+    // portable fixture pins identity fields, so it drops out of the
+    // normalization rather than pinning a fake clock.
+    if let Some(artifact) = value["artifact"].as_object_mut() {
+        artifact.remove("generated_at");
+    }
     let mut raw = serde_json::to_string_pretty(&value)?;
     raw.push('\n');
     serde_json::from_str(&recommit_repo_exposure_json(raw)).map_err(Into::into)
@@ -1953,6 +1973,109 @@ fn check_from_a_subcrate_discloses_workspace_root_and_honors_explicit_root() -> 
         !String::from_utf8_lossy(&explicit.stderr).contains("resolved workspace root to"),
         "explicit --root must skip implicit resolution; stderr:\n{}",
         String::from_utf8_lossy(&explicit.stderr)
+    );
+    Ok(())
+}
+
+/// #7468: from a workspace member that has its own `ripr.toml`, implicit
+/// `check` still applies the workspace file and names both paths. Explicit
+/// `--root` at the member loads the closer file and stays quiet.
+#[test]
+fn check_from_a_member_crate_warns_when_it_skips_the_closer_ripr_toml() -> Result<(), String> {
+    let bin = env!("CARGO_BIN_EXE_ripr");
+    let workspace = unique_temp_workspace("check-skipped-closer-config");
+    let member = workspace.join("crates/alpha");
+    std::fs::create_dir_all(member.join("src"))
+        .map_err(|error| format!("create member src: {error}"))?;
+    run_git(&workspace, &["init", "-q", "-b", "main"])
+        .map_err(|error| format!("git init fixture: {error}"))?;
+    std::fs::write(
+        workspace.join("Cargo.toml"),
+        "[workspace]\nmembers = [\"crates/alpha\"]\n",
+    )
+    .map_err(|error| format!("write workspace manifest: {error}"))?;
+    std::fs::write(
+        member.join("Cargo.toml"),
+        "[package]\nname = \"alpha\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .map_err(|error| format!("write member manifest: {error}"))?;
+    std::fs::write(member.join("src/lib.rs"), "pub fn value() -> i32 { 1 }\n")
+        .map_err(|error| format!("write member source: {error}"))?;
+    std::fs::write(workspace.join("ripr.toml"), "[analysis]\nmode = \"deep\"\n")
+        .map_err(|error| format!("write workspace config: {error}"))?;
+    std::fs::write(member.join("ripr.toml"), "[analysis]\nmode = \"instant\"\n")
+        .map_err(|error| format!("write member config: {error}"))?;
+    let diff = member.join("change.diff");
+    std::fs::write(
+        &diff,
+        "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-pub fn value() -> i32 { 1 }\n+pub fn value() -> i32 { 2 }\n",
+    )
+    .map_err(|error| format!("write member diff: {error}"))?;
+    let diff_arg = diff.display().to_string();
+
+    let implicit = run_command(
+        bin,
+        Some(&member),
+        &["check", "--diff", &diff_arg, "--format", "json"],
+    )
+    .map_err(|error| format!("run implicit member check: {error}"))?;
+    let explicit = run_command(
+        bin,
+        Some(&member),
+        &[
+            "check",
+            "--root",
+            &member.display().to_string(),
+            "--diff",
+            &diff_arg,
+            "--format",
+            "json",
+        ],
+    )
+    .map_err(|error| format!("run explicit member check: {error}"))?;
+    let implicit_stderr = String::from_utf8_lossy(&implicit.stderr).into_owned();
+    let explicit_stderr = String::from_utf8_lossy(&explicit.stderr).into_owned();
+    let implicit_ok = implicit.status.success();
+    let explicit_ok = explicit.status.success();
+    let implicit_json: Result<serde_json::Value, _> = serde_json::from_slice(&implicit.stdout);
+    let explicit_json: Result<serde_json::Value, _> = serde_json::from_slice(&explicit.stdout);
+    std::fs::remove_dir_all(&workspace).map_err(|error| format!("remove fixture: {error}"))?;
+
+    if !implicit_ok {
+        return Err(format!(
+            "implicit member check failed\nstdout:\n{}\nstderr:\n{implicit_stderr}",
+            String::from_utf8_lossy(&implicit.stdout)
+        ));
+    }
+    if !explicit_ok {
+        return Err(format!(
+            "explicit member --root check failed\nstdout:\n{}\nstderr:\n{explicit_stderr}",
+            String::from_utf8_lossy(&explicit.stdout)
+        ));
+    }
+    assert!(
+        implicit_stderr.contains("ignored closer"),
+        "implicit check must name the skipped member config:\n{implicit_stderr}"
+    );
+    assert!(
+        implicit_stderr.contains("applied") && implicit_stderr.contains("ripr.toml"),
+        "implicit check must name the workspace file that governed:\n{implicit_stderr}"
+    );
+    let implicit_report = implicit_json.map_err(|error| format!("parse implicit json: {error}"))?;
+    assert_eq!(
+        implicit_report.get("mode").and_then(|value| value.as_str()),
+        Some("deep"),
+        "workspace config must still govern implicit check: {implicit_report}"
+    );
+    assert!(
+        !explicit_stderr.contains("ignored closer"),
+        "explicit --root at the member must load that file without a skip warning:\n{explicit_stderr}"
+    );
+    let explicit_report = explicit_json.map_err(|error| format!("parse explicit json: {error}"))?;
+    assert_eq!(
+        explicit_report.get("mode").and_then(|value| value.as_str()),
+        Some("instant"),
+        "explicit --root at the member must apply the closer file: {explicit_report}"
     );
     Ok(())
 }
@@ -8356,6 +8479,7 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
         for bad in [
             ["--base", "no-such-ref-4445"],
             ["--diff", missing_diff.as_str()],
+            ["--diff", root_arg.as_str()],
         ] {
             let output = run_ripr(&[
                 "check", "--root", &root_arg, bad[0], bad[1], "--format", format,
@@ -8389,6 +8513,61 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
                 stderr.contains(bad[1]),
                 "{format} {bad:?}: stderr does not name the rejected input: {stderr}"
             );
+            if bad[0] == "--diff" {
+                let diagnostic = format!(
+                    "check: --diff {} is not a readable file; pass an existing unified diff file, or omit --diff for repo-scoped analysis",
+                    bad[1]
+                );
+                assert!(
+                    stderr.contains(&diagnostic),
+                    "{format} {bad:?}: stderr must name how to recover: {stderr}"
+                );
+                if format != "repo-sarif" {
+                    let refusal: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                    assert_eq!(refusal["limitations"][0]["message"], diagnostic);
+                }
+            }
+        }
+    }
+
+    // The diff-scoped loader keeps its existing recovery, including stdin.
+    for (bad, recovery) in [
+        (
+            missing_diff.as_str(),
+            "pass the path of an existing unified diff file",
+        ),
+        (root_arg.as_str(), "pass a diff file path"),
+    ] {
+        let output = run_ripr(&[
+            "check", "--root", &root_arg, "--diff", bad, "--format", "json",
+        ]);
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(recovery), "{stderr}");
+        assert!(
+            stderr.contains("or `-` to read the diff from stdin"),
+            "{stderr}"
+        );
+        assert_check_json_refusal(&output, "analysis_failed", "analysis/failure")?;
+    }
+
+    // Both remedies must work on the real CLI. Repo formats validate the named
+    // input but do not consume the diff, and omitting it retains repo scope.
+    let existing_diff = root.join("existing.diff");
+    std::fs::write(
+        &existing_diff,
+        "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-    x >= 10\n+    x > 10\n",
+    )?;
+    let existing_diff_arg = existing_diff.display().to_string();
+    for format in [
+        "repo-exposure-json",
+        "repo-sarif",
+        "agent-seam-packets-json",
+    ] {
+        for remedy in [vec!["--diff", existing_diff_arg.as_str()], vec![]] {
+            let mut argv = vec!["check", "--root", &root_arg, "--format", format];
+            argv.extend(remedy);
+            assert_success(&run_ripr(&argv));
         }
     }
 
@@ -13967,6 +14146,14 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(stdout.contains("Rerun without --dry-run to apply."));
     assert!(stdout.contains(".github"));
     assert!(stdout.contains("RIPR advisory reports"));
+    assert!(
+        stdout.contains(
+            "# CI guide: https://github.com/EffortlessMetrics/ripr/blob/main/docs/CI.md\n"
+        )
+    );
+    assert!(stdout.contains(
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+    ));
     assert!(stdout.contains("continue-on-error: true"));
     assert!(stdout.contains("RIPR_UPLOAD_SARIF"));
     assert!(stdout.contains("actions/upload-artifact@v7"));
@@ -14027,6 +14214,7 @@ fn init_refuses_existing_config_without_force() -> Result<(), String> {
 #[test]
 fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    assert!(!workspace.join("docs/CI.md").exists());
     let root = workspace.display().to_string();
     let output = run_ripr(&["init", "--root", &root, "--ci", "github"]);
     assert_success(&output);
@@ -14035,6 +14223,16 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     let workflow = std::fs::read_to_string(&workflow_path)
         .map_err(|e| format!("read generated workflow: {e}"))?;
     assert!(workspace.join("ripr.toml").exists());
+    assert!(
+        workflow.starts_with(
+            "name: RIPR\n\n# CI guide: https://github.com/EffortlessMetrics/ripr/blob/main/docs/CI.md\non:\n"
+        ),
+        "the adopter has no local CI guide; the generated header must give its public URL"
+    );
+    assert!(workflow.contains(
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+    ));
+    assert!(!workspace.join("docs/CI.md").exists());
     assert!(workflow.contains("pull_request:"));
     assert!(workflow.contains("workflow_dispatch:"));
     // #5208: the pin/warning pair must stay consistent in both release
@@ -14857,6 +15055,21 @@ fn pilot_withholds_static_limitations_and_keeps_a_true_gap()
     Ok(())
 }
 
+/// #7369 follow-up: repo artifacts carry a wall-clock `generated_at`
+/// disclosure stamp now, so two identical runs differ by milliseconds (and
+/// the content commitment covers those bytes). Cross-run equality checks drop
+/// the volatile artifact identity fields and keep comparing everything else.
+fn without_volatile_repo_artifact_fields(mut value: serde_json::Value) -> serde_json::Value {
+    if let Some(artifact) = value
+        .get_mut("artifact")
+        .and_then(|part| part.as_object_mut())
+    {
+        artifact.remove("generated_at");
+        artifact.remove("content_sha256");
+    }
+    value
+}
+
 /// When the pilot seam budget truncates the inventory, pilot's snapshot holds
 /// fewer seams than the after snapshot `ripr check` takes. It must not carry
 /// the comparable identity, or verify would compare two populations.
@@ -15149,7 +15362,11 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let still_inventory_packets: serde_json::Value = serde_json::from_str(
         &std::fs::read_to_string(root.join("target/ripr/pilot/agent-seam-packets.json"))?,
     )?;
+    let still_inventory = without_volatile_repo_artifact_fields(still_inventory);
+    let inventory = without_volatile_repo_artifact_fields(inventory);
     assert_eq!(still_inventory, inventory);
+    let still_inventory_packets = without_volatile_repo_artifact_fields(still_inventory_packets);
+    let inventory_packets = without_volatile_repo_artifact_fields(inventory_packets);
     assert_eq!(still_inventory_packets, inventory_packets);
     assert_eq!(
         packet_count(&still_inventory_packets)?,
@@ -15180,6 +15397,8 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
         "{wrong_control}"
     );
 
+    let wrong_control = without_volatile_repo_artifact_fields(wrong_control);
+    let before = without_volatile_repo_artifact_fields(before);
     assert_eq!(
         wrong_control, before,
         "lifting the wrong control must preserve the pilot cut"
@@ -15188,6 +15407,8 @@ fn pilot_snapshot_truncated_by_the_seam_budget_is_not_a_verify_baseline()
     let wrong_control_packets: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(
         root.join("target/ripr/pilot/agent-seam-packets.json"),
     )?)?;
+    let wrong_control_packets = without_volatile_repo_artifact_fields(wrong_control_packets);
+    let packets = without_volatile_repo_artifact_fields(packets);
     assert_eq!(
         wrong_control_packets, packets,
         "lifting the inventory control must preserve the pilot packet cut"
@@ -18126,6 +18347,122 @@ fn calibrate_cargo_mutants_writes_json_when_requested() -> Result<(), String> {
     assert!(json.contains(r#""matches""#));
 
     ignore_remove_dir_all(&out_dir);
+    Ok(())
+}
+
+/// The issue's foreign same-line mutant still joins, and the production
+/// binary now warns on stderr that neither artifact carries a head.
+#[test]
+fn calibrate_foreign_same_line_join_discloses_missing_head() -> Result<(), String> {
+    let workspace = unique_temp_workspace("calibrate-foreign-sameline");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let root = workspace_root();
+    let repo =
+        root.join("fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json");
+    let mutants = workspace.join("foreign-sameline.json");
+    std::fs::write(
+        &mutants,
+        r#"{"mutants":[{"id":"other-repo-mutant","file":"src/lib.rs","line":2,"operator":"replace - with +","outcome":"missed"}]}"#,
+    )
+    .map_err(|e| format!("write foreign mutants: {e}"))?;
+
+    let output = run_ripr(&[
+        "calibrate",
+        "cargo-mutants",
+        "--mutants-json",
+        &mutants.display().to_string(),
+        "--repo-exposure-json",
+        &repo.display().to_string(),
+    ]);
+    assert_success(&output);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stdout.contains("`67fc764ba37d77bd`"),
+        "the coincidental file:line must still join:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("`file_line`") && stdout.contains("`contradicts_static_clean`"),
+        "the joined row must keep the high-signal label:\n{stdout}"
+    );
+    assert!(
+        stderr.contains("does not carry a head SHA")
+            && stderr.contains("same repository and adjacent commits"),
+        "identity-free snapshot plus cargo-mutants JSON must warn on stderr:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("does not carry a head SHA"),
+        "the caveat is stderr-only so JSON/markdown stdout stays the report:\n{stdout}"
+    );
+
+    ignore_remove_dir_all(&workspace);
+    Ok(())
+}
+
+/// A headed snapshot names the assumed subject; cargo-mutants still has no
+/// head, so the same-repo caveat remains. JSON written with `--out` must
+/// stay free of the stderr sentence.
+#[test]
+fn calibrate_headed_snapshot_names_the_assumed_subject() -> Result<(), String> {
+    let workspace = unique_temp_workspace("calibrate-headed-snapshot");
+    std::fs::create_dir_all(&workspace).map_err(|e| format!("create workspace: {e}"))?;
+    let root = workspace_root();
+    let repo_src =
+        root.join("fixtures/boundary_gap/calibration/after-targeted-test.repo-exposure.json");
+    let repo = workspace.join("repo-exposure.json");
+    std::fs::copy(&repo_src, &repo).map_err(|e| format!("copy snapshot: {e}"))?;
+    let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+    stamp_outcome_snapshot_head(&repo, head)?;
+
+    let mutants = workspace.join("foreign-sameline.json");
+    std::fs::write(
+        &mutants,
+        r#"{"mutants":[{"id":"other-repo-mutant","file":"src/lib.rs","line":2,"operator":"replace - with +","outcome":"missed"}]}"#,
+    )
+    .map_err(|e| format!("write foreign mutants: {e}"))?;
+    let out_path = workspace.join("mutation-calibration.json");
+
+    let output = run_ripr(&[
+        "calibrate",
+        "cargo-mutants",
+        "--mutants-json",
+        &mutants.display().to_string(),
+        "--repo-exposure-json",
+        &repo.display().to_string(),
+        "--format",
+        "json",
+        "--out",
+        &out_path.display().to_string(),
+    ]);
+    assert_success(&output);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(head),
+        "a headed snapshot must be named on stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains("join assumes that subject"),
+        "stderr must state which subject the join assumes: {stderr}"
+    );
+    assert!(
+        stderr.contains("does not carry a head SHA"),
+        "cargo-mutants without a head must still get the caveat: {stderr}"
+    );
+
+    let json =
+        std::fs::read_to_string(&out_path).map_err(|e| format!("read calibration json: {e}"))?;
+    assert!(
+        !json.contains("does not carry a head SHA") && !json.contains(head),
+        "JSON report schema is unchanged; provenance stays on stderr:\n{json}"
+    );
+    assert!(
+        json.contains(r#""join_method": "file_line""#),
+        "the foreign same-line mutant must still join in the JSON report:\n{json}"
+    );
+
+    ignore_remove_dir_all(&workspace);
     Ok(())
 }
 
@@ -27670,6 +28007,33 @@ fn review_comments_help_survives_invalid_admission_environment()
             "{stderr}"
         );
     }
+    Ok(())
+}
+
+/// RIPR-SPEC-0231 rule 1: a seam whose only test is `assert_ne!(score(2), 0)`
+/// is weakly gripped in the repo audit. Before the rule, the inequality read
+/// `exact_value` / strong and the seam counted as strongly gripped.
+#[test]
+fn repo_exposure_does_not_count_an_inequality_assertion_as_a_strong_grip()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = workspace_root().join("fixtures/inequality_assertion_not_exact/input");
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--format",
+        "repo-exposure-json",
+    ]);
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let metrics = &report["metrics"];
+    assert_eq!(
+        metrics["seams_total"], 1,
+        "fixture seam not parsed: {metrics}"
+    );
+    assert_eq!(metrics["strongly_gripped"], 0, "{metrics}");
+    assert_eq!(metrics["weakly_gripped"], 1, "{metrics}");
     Ok(())
 }
 

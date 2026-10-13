@@ -21,7 +21,9 @@ K.parent[1] = SOURCE_RELEASE_HEAD
 The verifier checks exact 40-character commit/tree inputs, repository identity,
 an actual `refs/tags/<tag>` release tag, parent reachability, reviewed tree
 equality, every retained swarm development surface, release/changelog evidence
-bound to version/head/K/tree, and a deterministic input/policy manifest. The
+bound to version/head/K/tree, a released source head with no unfolded
+`changelog.d/` fragment (fragments from the rolling swarm parent are expected
+in K), and a deterministic input/policy manifest. The
 before, temporary approved exception, and after policy files are mandatory and
 must prove merge commits are disabled before and after. Policy files are read
 and hashed only; this command never mutates the temporary merge-policy

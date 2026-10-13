@@ -1,0 +1,11 @@
+use spec0229_7::f;
+
+#[test]
+fn zero_is_zero() {
+    assert_eq!(f(0), "zero");
+}
+
+#[test]
+fn forty_two_is_many() {
+    assert_eq!(f(42), "many");
+}

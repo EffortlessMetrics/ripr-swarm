@@ -1,0 +1,13 @@
+diff --git a/lib/Ledger.pm b/lib/Ledger.pm
+index 78101d1..0124a2e 100644
+--- a/lib/Ledger.pm
++++ b/lib/Ledger.pm
+@@ -42,7 +42,7 @@ sub fee {
+ sub net_change {
+     my (@amounts) = @_;
+     my $net = 0;
+-    $net += $_ for @amounts;
++    $net = $net + $_ for @amounts;
+     return $net;
+ }
+ 

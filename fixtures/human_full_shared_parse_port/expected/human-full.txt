@@ -1,0 +1,213 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/human_full_shared_parse_port/input
+
+Summary: 7 probe(s), 0 exposed, 7 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 7 of 7 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 3 changed line(s), 2 candidate line(s), 7 probe(s), 7 finding(s).
+
+Shared evidence and guidance
+  E1 [findings 1, 4, 6, 7]: reach yes: Related tests appear to reach parse_port: parses_valid_port
+  E2 [findings 1, 4, 6, 7]: infection yes: Reachable tests can plausibly activate this changed behavior
+  E3 [findings 1, 4, 6, 7]: observation yes: A related test observes a value or effect near the changed behavior
+  E4 [findings 1, 4, 6, 7]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  E5 [findings 1, 4, 6, 7]: related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port("8080").unwrap(), 8080); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E6 [findings 1, 4, 6, 7]: source assertion argument value 8080 at line 15
+  E7 [findings 1, 4, 6, 7]: source function argument value input = "8080" at line 15
+  N1 [findings 1, 7]: Strengthen the related assertion so it discriminates the changed behavior.
+  E8 [findings 2, 5]: reach yes: Related tests appear to reach parse_port: parses_valid_port
+  E9 [findings 2, 5]: infection yes: Reachable tests can plausibly activate this changed behavior
+  E10 [findings 2, 5]: observation yes: A related test observes a value or effect near the changed behavior
+  E11 [findings 2, 5]: discriminator weak: Discriminator unconfirmed: no assertion text references this probe's changed expression (observation_unverified)
+  E12 [findings 2, 5]: related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port("8080").unwrap(), 8080); unconfirmed: ripr could not confirm that this assertion observes the changed behavior
+  E13 [findings 2, 5]: source assertion argument value 8080 at line 15
+  E14 [findings 2, 5]: source function argument value input = "8080" at line 15
+
+Finding 1: WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:match_arm:6b71a4f5
+Changed
+  before: Ok(p) =>
+  after:  Ok(p) if p > 0 =>
+Probe
+  family: match_arm
+  delta:  control
+  owner:  src/lib.rs::parse_port
+  canonical gap: gap:rust:src/lib.rs:parse_port:match_arm:match_arm:ok_p_if_p>0
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Changed behavior appears to influence match arm result: Ok(p) if p > 0 =>
+  shared evidence: E3, E4
+  - local flow reaches match arm result: Ok(p) if p > 0 => (line 3)
+  shared evidence: E5, E6, E7
+Weakness
+  - No strong discriminator was detected
+Next step
+  shared guidance: N1
+Drill in:
+  ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:match_arm:6b71a4f5
+  ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:match_arm:6b71a4f5
+
+Finding 2: WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:match_arm:35759cb1
+Changed
+  before: Ok(p) => Ok(p),
+  expr:   Ok(p) => Ok(p),
+  source:  base_deleted — base-side evidence, not a candidate edit target
+Probe
+  family: match_arm
+  delta:  control
+  owner:  src/lib.rs::parse_port
+  canonical gap: gap:rust:src/lib.rs:parse_port:match_arm:match_arm:ok_p=>ok_p
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E8, E9
+  - propagation yes: Changed behavior appears to influence match arm result: Ok(p)
+  shared evidence: E10, E11
+  - local flow reaches match arm result: Ok(p) (line 3)
+  shared evidence: E12, E13, E14
+Weakness
+  - No strong discriminator was detected
+Next step
+  - Strengthen the related assertion so it discriminates the changed behavior.
+Drill in:
+  ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:match_arm:35759cb1
+  ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:match_arm:35759cb1
+
+Finding 3: WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:predicate:27488362
+Changed
+  before: Ok(p) => Ok(p),
+  after:  p > 0
+Probe
+  family: predicate
+  delta:  control
+  owner:  src/lib.rs::parse_port
+  canonical gap: gap:rust:src/lib.rs:parse_port:predicate_boundary:predicate:p==0
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  - reach yes: Related tests appear to reach parse_port: parses_valid_port
+  - infection weak: Related tests contain input values, but the equality-boundary discriminator is missing
+  - propagation yes: Changed behavior appears to influence error variant: Result::Err("zero port")
+  - observation yes: A related test observes a value or effect near the changed behavior
+  - discriminator missing: `p == 0`; related oracle: Strong oracle found: exact value or pattern assertion
+  - local flow reaches error variant: Result::Err("zero port") (line 4)
+  - related test src/lib.rs:14 parses_valid_port uses strong exact value oracle: assert_eq!(parse_port("8080").unwrap(), 8080); misses: no test input reaches `p == 0`
+  - source assertion argument value 8080 at line 15
+  - source function argument value input = "8080" at line 15
+Weakness
+  - missing discriminator p == 0: No related test call uses p equal to 0; observed p values: "8080"; target 0 value: 0
+Next step
+  - Add boundary tests for below, equal, and above the changed threshold with exact assertions.
+Drill in:
+  ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:predicate:27488362
+  ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:predicate:27488362
+
+Finding 4: WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:return_value:d9dae5de
+Changed
+  before: Ok(p) => Ok(p),
+  after:  Ok(p)
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::parse_port
+  canonical gap: gap:rust:src/lib.rs:parse_port:return_value:return_value:ok_p
+Static exposure
+  weakly_exposed (warning, confidence 0.66)
+Evidence
+  shared evidence: E1, E2
+  - propagation weak: Propagation witness is incomplete for returned value: Ok(p) if p > 0 => Ok(p)
+  shared evidence: E3, E4
+  - local flow reaches returned value: Ok(p) if p > 0 => Ok(p) (line 3)
+  shared evidence: E5, E6, E7
+Weakness
+  - No strong discriminator was detected
+Next step
+  - Replace broad assertions with exact equality or a property that constrains the changed returned value.
+Drill in:
+  ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:return_value:d9dae5de
+  ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:return_value:d9dae5de
+
+Finding 5: WARNING ./src/lib.rs:3
+  id: probe:src_lib.rs:return_value:a207aa93
+Changed
+  before: Ok(p) => Ok(p),
+  expr:   Ok(p) => Ok(p),
+  source:  base_deleted — base-side evidence, not a candidate edit target
+Probe
+  family: return_value
+  delta:  value
+  owner:  src/lib.rs::parse_port
+  canonical gap: gap:rust:src/lib.rs:parse_port:return_value:return_value:ok_p=>ok_p
+Static exposure
+  weakly_exposed (warning, confidence 0.66)
+Evidence
+  shared evidence: E8, E9
+  - propagation weak: Propagation witness is incomplete for returned value: Ok(p) if p > 0 => Ok(p)
+  shared evidence: E10, E11
+  - local flow reaches returned value: Ok(p) if p > 0 => Ok(p) (line 3)
+  shared evidence: E12, E13, E14
+Weakness
+  - No strong discriminator was detected
+Next step
+  - Replace broad assertions with exact equality or a property that constrains the changed returned value.
+Drill in:
+  ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:return_value:a207aa93
+  ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:return_value:a207aa93
+
+Finding 6: WARNING ./src/lib.rs:4
+  id: probe:src_lib.rs:error_path:d71ee10b
+Changed
+  before: Ok(p) => Ok(p),
+  after:  Err("zero port")
+Probe
+  family: error_path
+  delta:  value
+  owner:  src/lib.rs::parse_port
+  canonical gap: gap:rust:src/lib.rs:parse_port:error_variant:error_path:err_lit7a65726f20706f7274
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Complete propagation witness reaches error variant: Result::Err("zero port")
+  shared evidence: E3, E4
+  - local flow reaches error variant: Result::Err("zero port") (line 4)
+  shared evidence: E5, E6, E7
+Weakness
+  - No exact error variant discriminator was detected
+Next step
+  - Assert the exact error variant or payload instead of only is_err().
+Drill in:
+  ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:error_path:d71ee10b
+  ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:error_path:d71ee10b
+
+Finding 7: WARNING ./src/lib.rs:4
+  id: probe:src_lib.rs:match_arm:d87ff4a4
+Changed
+  before: Ok(p) => Ok(p),
+  after:  Ok(_) =>
+Probe
+  family: match_arm
+  delta:  control
+  owner:  src/lib.rs::parse_port
+  canonical gap: gap:rust:src/lib.rs:parse_port:match_arm:match_arm:ok
+Static exposure
+  weakly_exposed (warning, confidence 0.92)
+Evidence
+  shared evidence: E1, E2
+  - propagation yes: Changed behavior appears to influence match arm result: Ok(_) =>
+  shared evidence: E3, E4
+  - local flow reaches match arm result: Ok(_) => (line 4)
+  shared evidence: E5, E6, E7
+Weakness
+  - No strong discriminator was detected
+Next step
+  shared guidance: N1
+Drill in:
+  ripr explain --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast probe:src_lib.rs:match_arm:d87ff4a4
+  ripr context --root <cwd>/fixtures/human_full_shared_parse_port/input --diff <cwd>/fixtures/human_full_shared_parse_port/diff.patch --mode fast --at probe:src_lib.rs:match_arm:d87ff4a4
