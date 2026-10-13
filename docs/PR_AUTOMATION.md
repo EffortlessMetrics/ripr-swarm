@@ -41,6 +41,64 @@ review artifacts described here. Machine-readable receipts record which gates
 and report commands ran so agents and reviewers can inspect evidence without
 reading raw logs.
 
+## Draft to Ready handoff
+
+Publish a coherent candidate as Draft. The delivery owner completes this order
+before spending the Ready-triggered `Ripr Rust Small Result` qualification:
+
+1. Bind the exact candidate head and integration basis. Complete independent
+   substantive review through `review-pr`, disposition every known finding, and
+   compose accepted repairs into that candidate while Draft.
+2. Run applicable local proof on the composed head and refresh affected review.
+   Follow changed expectations into their consumers: corpus rows can change a
+   scoreboard's literal tuple; shared rendering can have a Rust-only mock beyond
+   passing Python/card tests. Check the relevant test placement, private imports,
+   targets and feature selection. Preserve independent literal oracles and
+   meaningful negative controls; derive expected values from the contract, not
+   from the implementation being tested. This selects focused proof, not every
+   possible test or a duplicate of the hosted matrix.
+3. Reconcile actual conflicts, changed prerequisites and affected combined-tree
+   proof. Unrelated main movement alone needs no branch update or repeated proof.
+   If an applicable required gate has a known deterministic failure on this
+   basis, keep Draft, link the existing repair and its owner, and name the event
+   that permits resumption. Do not repeat that failure on each dependent PR,
+   duplicate its repair, or bless baseline failures. After the prerequisite lands,
+   verify the resulting basis and refresh only affected proof and review.
+4. Read back the live PR head, reviews, threads and workflow runs. Mark Ready
+   only for the unchanged, reviewed and locally qualified candidate, with no
+   unresolved material finding or known applicable gate blocker. Missing
+   Ready-triggered hosted proof is expected here: `REVIEW_INCOMPLETE` may name
+   that remaining evidence, but must not conceal unfinished semantic review or
+   applicable local proof. Ready requests qualification; `REVIEW_READY` and
+   required proof still govern merge under the current `finish-pr` contract.
+
+A new head or material finding returns the candidate to Draft for one joined
+repair/proof/review wave before another Ready transition. Preserve unaffected
+evidence. Do not re-toggle an unchanged head with a queued or running required
+run: the toggle cancels it. Retain its run link and yield the remote wait.
+
+### PR-native continuation record
+
+Keep one current block in the existing PR body or owned issue/PR comment. Edit
+it at a transition; link the underlying reviews and reports instead of repeating
+their prose. Live GitHub metadata remains authoritative over a stale block.
+
+```text
+Owner / governing claim:
+Candidate: PR / exact head / integration basis (combined tree if exercised)
+Review: exact-head record / remaining findings or evidence
+Validation: command + result links / unrun applicable dimensions
+Dependency: canonical issue or PR / owner / blocking reason, or none
+Next: action / owner / exact resume condition
+```
+
+For pending local work include its original task/driver and log paths; a missing
+terminal exit is not a pass. When native writes are unavailable, return this
+record to the capable delivery owner. A fresh worker reads the native objects
+and takes the earliest missing judgment; no separate tracker or idle polling
+worker is needed. [Continuation scenarios](agent-context/delivery-continuation-scenarios.md)
+exercise both proceed and hold decisions without claiming actual CI or merge.
+
 ## Current Commands
 
 The current repo automation surface is:
