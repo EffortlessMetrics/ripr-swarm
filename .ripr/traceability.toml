@@ -14545,14 +14545,37 @@ id = "RIPR-SPEC-0235"
 name = "Perl fact-packet classification"
 spec = "docs/specs/RIPR-SPEC-0235-perl-fact-packet-classification.md"
 tests = [
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_selects_direct_test_under_packet_permutations",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_does_not_borrow_an_advisory_verify_command",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_requires_a_direct_reachable_relation",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_prefers_admitted_exact_row_then_stable_test_identity",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_verify_choice_is_stable_within_selected_test",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_empty_command_cannot_hide_usable_same_test_command",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_strict_actionability_keeps_usable_command_and_reference",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_mixed_oracles_keep_canonical_gap_and_probe_stable",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_review_shape_requires_selected_test_and_owner_binding",
+  "crates/ripr/src/analysis/language/perl/recommendation_tests.rs::perl_guidance_real_fixtures_reach_check_and_json",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_witness_preserves_declared_tuple",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_gap_projection_preserves_declared_tuple",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_preview_keeps_declared_current_oracle",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_unresolved_or_ambiguous_tuple_does_not_rank_another_test",
+  "crates/ripr/src/analysis/language/perl/composition_tests.rs::perl_composition_producer_excludes_other_owner_with_same_name",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_names_are_exact_in_same_file",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_normalizes_only_file_with_qualified_test_name",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_test_name_whitespace_is_identity",
+  "crates/ripr/src/output/perl_composition_tests.rs::perl_composition_real_sparse_packet_stays_advisory",
   "crates/ripr/src/analysis/language/perl/tests.rs::h2_aligned_sink_on_another_tests_oracle_does_not_promote",
 ]
 fixtures = [
+  "fixtures/perl_cpan_alpha/recommendation-controls",
   "fixtures/perl-verdict-corpus/cases/perl-0235-ex28-cross-test-oracle.json",
 ]
 code = [
   "crates/ripr/src/analysis/language/perl/mod.rs",
   "crates/ripr/src/analysis/language/perl/static_limit.rs",
+  "crates/ripr/src/domain/diagnostic_witness.rs",
+  "crates/ripr/src/output/perl_gap_record_projection.rs",
+  "crates/ripr/src/output/perl_preview_card.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0235-perl-fact-packet-classification.md",
