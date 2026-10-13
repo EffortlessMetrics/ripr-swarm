@@ -303,9 +303,8 @@ owner's own result, so a change that returned `E::Bad` would fail it.
 Reveal admits it as `relational_check` / weak for every family, whatever
 the classifier read, when all of these hold:
 
-- the assertion is `assert_ne!` / `debug_assert_ne!` with one of its two
-  operands exactly a bare call to the changed owner, or `assert!` /
-  `debug_assert!` whose whole condition is one negated `matches!` with
+- the assertion is `assert_ne!` with one of its two operands exactly a
+  bare call to the changed owner, or `assert!` whose whole condition is one negated `matches!` with
   that call as the whole scrutinee and an unguarded pattern (message
   arguments never count, and nothing such as `||` or `^` may sit beside
   the `matches!`);

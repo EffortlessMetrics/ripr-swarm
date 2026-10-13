@@ -958,10 +958,7 @@ fn excludes_only_sibling_variant(
     let masked = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
     let statement = masked.trim();
     let statement = statement.strip_suffix(';').unwrap_or(statement).trim_end();
-    let excluded = if let Some(rest) = ["assert_ne!", "debug_assert_ne!"]
-        .iter()
-        .find_map(|head| statement.strip_prefix(head))
-    {
+    let excluded = if let Some(rest) = statement.strip_prefix("assert_ne!") {
         // The message arguments after the two operands never decide it.
         let operands = macro_arguments(rest);
         match operands.as_slice() {
@@ -969,10 +966,7 @@ fn excludes_only_sibling_variant(
             [left, right, ..] if is_whole_owner_call(right, owner) => Some(*left),
             _ => None,
         }
-    } else if let Some(rest) = ["assert!", "debug_assert!"]
-        .iter()
-        .find_map(|head| statement.strip_prefix(head))
-    {
+    } else if let Some(rest) = statement.strip_prefix("assert!") {
         // The negated `matches!` must be the whole condition (no `||`,
         // `^` or other operand beside it) with an unguarded pattern.
         macro_arguments(rest)

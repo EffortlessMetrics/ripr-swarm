@@ -627,6 +627,11 @@ fn ok_literal() {
                 vec![(ExactErrorVariant, Strong)],
             ),
             (
+                "compared_split_let",
+                "let e =\n        check(300).unwrap_err();\n    assert_eq!(e, E::TooLong);",
+                vec![(ExactErrorVariant, Strong)],
+            ),
+            (
                 "compared_argument_tail",
                 "let e = check(\n        300,\n    ).unwrap_err();\n    assert_eq!(e, E::TooLong);",
                 vec![(ExactErrorVariant, Strong)],

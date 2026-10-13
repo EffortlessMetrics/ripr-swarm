@@ -61,7 +61,10 @@ pub(crate) fn extract_assertions(body: &str, start_line: usize) -> Vec<OracleFac
         // compared panics only when `r` is `Ok`, so it observes the `Err`
         // side. `expect_err` lines keep their `expect_` admission below
         // (#7604 tracks that reading).
-        if trimmed.ends_with("unwrap_err();") && !is_assertion_line(&trimmed) {
+        if trimmed.ends_with("unwrap_err();")
+            && !is_assertion_line(&trimmed)
+            && starts_statement(body, offset)
+        {
             let rest = body.lines().skip(offset + 1).collect::<Vec<_>>().join("\n");
             if let Some(text) = uncompared_unwrap_err(&trimmed, &rest) {
                 out.push(OracleFact {
@@ -2396,6 +2399,18 @@ fn extract_unwrap_err_binding(line: &str) -> Option<String> {
 /// the statement) never mentions. A binding that a later assertion reads is
 /// that assertion's oracle (RIPR-SPEC-0106), not a side check, and an
 /// assignment or any other statement shape is not admitted.
+/// Whether body line `offset` starts a statement: the previous non-empty
+/// line ends one. After `let e =` the next line is the value, not a
+/// discarded expression.
+fn starts_statement(body: &str, offset: usize) -> bool {
+    body.lines()
+        .take(offset)
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .last()
+        .is_none_or(|previous| previous.ends_with([';', '{', '}']))
+}
+
 pub(crate) fn uncompared_unwrap_err(statement: &str, rest: &str) -> Option<String> {
     let statement = statement.trim();
     let expression = statement.strip_suffix(';')?.trim_end();

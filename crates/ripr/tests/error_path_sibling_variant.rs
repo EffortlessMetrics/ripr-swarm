@@ -616,9 +616,14 @@ fn spec_0231_inequality_excluding_a_sibling_reads_relational_weak() -> Result<()
     for assertion in [
         "assert_ne!(withdraw(10, 20), Err(PayError::Limit))",
         "assert!(!matches!(withdraw(10, 20), Err(PayError::Limit)))",
+        "assert_ne!(withdraw(10, 20), Err(PayError::Limit), \"not the limit\")",
     ] {
         let (class, oracles) = sibling_exclusion_reading(assertion)?;
-        assert_eq!(class, ExposureClass::WeaklyExposed, "{assertion}");
+        assert_eq!(
+            class,
+            ExposureClass::WeaklyExposed,
+            "{assertion}: {oracles:?}"
+        );
         assert_eq!(oracles, vec!["relational_check/weak"], "{assertion}");
     }
     Ok(())
@@ -642,6 +647,8 @@ fn spec_0231_sibling_inequality_off_the_owner_call_stays_refused() -> Result<(),
         "assert!(!matches!(withdraw(10, 20), Err(PayError::Limit) if other.is_ok()))",
         // A local closure shadows the owner's name.
         "let _ = withdraw(1, 0);\n    let withdraw = |_: u64, _: u64| other;\n    assert_ne!(withdraw(10, 20), Err(PayError::Limit))",
+        // So does a nested function.
+        "let _ = withdraw(1, 0);\n    fn withdraw(_: u64, _: u64) -> Result<u64, PayError> { Ok(0) }\n    assert_ne!(withdraw(10, 20), Err(PayError::Limit))",
     ] {
         let (class, oracles) = sibling_exclusion_reading(assertion)?;
         assert_ne!(class, ExposureClass::WeaklyExposed, "{assertion}");
