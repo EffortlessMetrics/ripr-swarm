@@ -166,7 +166,7 @@ fn raw_contextual_miss_provenance_is_not_replaced_by_normalized_caption() {
     }
     input[1].activation.missing_discriminators[0]
         .reason
-        .push_str(" ");
+        .push(' ');
     let report = render(input);
     assert!(definitions_for(&report, "related test ").is_empty());
     assert_eq!(report.matches("  - related test ").count(), 2);
