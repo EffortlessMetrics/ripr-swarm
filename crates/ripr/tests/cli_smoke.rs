@@ -32,8 +32,13 @@ mod human_full_shared;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
+#[cfg(feature = "lang-typescript")]
+#[path = "cli_smoke/javascript_awaited_roots.rs"]
+mod javascript_awaited_roots;
 #[path = "cli_smoke/next_action.rs"]
 mod next_action;
+#[path = "cli_smoke/output_leaf_identity.rs"]
+mod output_leaf_identity;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/python_source_admission.rs"]
 mod python_source_admission;
