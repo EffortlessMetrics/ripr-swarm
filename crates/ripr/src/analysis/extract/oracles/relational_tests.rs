@@ -261,6 +261,10 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
         // credit; joined by `&&` it keeps its medium reading.
         ("assert!(ready || events_sent.contains(&id));", &weak),
         ("assert!(ready || !events.is_empty());", &weak),
+        (
+            "assert!(ready || { insta::assert_snapshot!(value); true });",
+            &weak,
+        ),
         ("assert!(ready && (done || mock.was_called()));", &weak),
         ("assert!(xs.iter().position(|x| *x == 1) != None);", &weak),
         // A deciding `||`, top-level or in a parenthesized conjunct, gates

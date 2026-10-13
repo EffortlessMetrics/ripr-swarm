@@ -268,9 +268,15 @@ fn classify_whole_condition(line: &str, scalar_integer_relation: bool) -> Oracle
             strength: OracleStrength::Strong,
         }
     } else if is_snapshot_assertion(line) {
-        OracleClassification {
-            kind: OracleKind::Snapshot,
-            strength: OracleStrength::Medium,
+        // `assert!(ready || { assert_snapshot!(v); true })` may never run
+        // the snapshot, so a deciding `||` earns no snapshot credit either.
+        if disjunction {
+            RELATION
+        } else {
+            OracleClassification {
+                kind: OracleKind::Snapshot,
+                strength: OracleStrength::Medium,
+            }
         }
     } else if is_smoke_check(line) {
         OracleClassification {

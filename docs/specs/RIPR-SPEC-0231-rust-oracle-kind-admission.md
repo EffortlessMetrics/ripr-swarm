@@ -236,7 +236,8 @@ Two pattern terms are used below.
    would otherwise earn `broad_error` or an observer such as
    `events_sent.contains(&id)` that would otherwise earn step 9's
    `mock_expectation` (`assert!(ready || events_sent.contains(&id))` passes
-   without observing the event). A parenthesized `&&` conjunct that
+   without observing the event), or a snapshot in a block arm that would
+   otherwise earn step 6's `snapshot`. A parenthesized `&&` conjunct that
    such a `||` decides pins nothing, so, as beside a negated pattern, the
    other conjuncts decide with their own reading, or `relational_check` /
    weak when no other conjunct remains (`ensure!(c == d && (a || b))` reads

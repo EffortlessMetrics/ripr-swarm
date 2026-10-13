@@ -6,3 +6,6 @@
   alone. A chain with a pinning `==` conjunct (`total == 4 && ..`) keeps its
   reading (RIPR-SPEC-0231 rule 3, example 7;
   [#7695](https://github.com/EffortlessMetrics/ripr-swarm/issues/7695)).
+  A snapshot inside a deciding `||` arm
+  (`assert!(ready || { assert_snapshot!(v); true })`) no longer earns
+  `snapshot` / medium.
