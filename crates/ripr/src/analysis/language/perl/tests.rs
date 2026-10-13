@@ -2844,6 +2844,69 @@ fn h2_sink_aligned_oracle_classifies_exposed_and_suppresses_repair_gap() -> Resu
     Ok(())
 }
 
+/// RIPR-SPEC-0235 rule 5 and example 28: sink alignment uses the same oracle
+/// binding as classification. An oracle whose `test_id` is not the relation's
+/// test is absent for that relation, so an aligned sink in another test's
+/// oracle must not make the change `Exposed`.
+#[test]
+fn h2_aligned_sink_on_another_tests_oracle_does_not_promote() -> Result<(), String> {
+    let aligned = EXACT_RETURN_PACKET
+        .replace(
+            "\"changed_text_digest\": \"sha256:return\",",
+            "\"changed_text_digest\": \"sha256:return\",\n      \"changed_observable\": \"$amount / 2\",",
+        )
+        .replace(
+            "\"expression\": \"is($got, 10, 'discount threshold')\",",
+            "\"expression\": \"is($got, 10, 'discount threshold')\",\n      \"observed_sink\": \"$amount / 2\",",
+        );
+    // Control: the same packet with the oracle bound to the relation's test
+    // is Exposed, so the cross-test packet below differs only in the binding.
+    let control = findings_from_packet(&aligned)?;
+    assert_eq!(
+        control.first().map(|finding| &finding.class),
+        Some(&crate::domain::ExposureClass::Exposed),
+        "control: an aligned sink on the relation's own test is Exposed"
+    );
+    let oracle_test = "\"oracle_id\": \"oracle:t/app.t:8:is\",\n      \"test_id\": \"test:t/app.t:test_discount_threshold\",";
+    if !aligned.contains(oracle_test) {
+        return Err("fixture drifted: oracle test_id line not found".to_string());
+    }
+    let cross_test = aligned.replace(
+        oracle_test,
+        "\"oracle_id\": \"oracle:t/app.t:8:is\",\n      \"test_id\": \"test:t/other.t:test_other\",",
+    );
+    let findings = findings_from_packet(&cross_test)?;
+    let finding = findings
+        .first()
+        .ok_or_else(|| "expected one finding".to_string())?;
+    assert_eq!(
+        finding.class,
+        crate::domain::ExposureClass::ReachableUnrevealed,
+        "another test's oracle is absent for the relation"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|e| e.starts_with("perl_already_discriminated:")),
+        "a cross-test oracle must not emit already-discriminated evidence"
+    );
+    let related = finding
+        .related_tests
+        .first()
+        .ok_or_else(|| "expected the relation's related test".to_string())?;
+    assert_eq!(
+        related.oracle, None,
+        "another test's assertion is not displayed as this test's oracle"
+    );
+    assert_eq!(
+        related.oracle_strength,
+        crate::domain::OracleStrength::Unknown,
+        "another test's oracle strength is not credited to this test"
+    );
+    Ok(())
+}
+
 /// A strong-exact oracle whose `observed_sink` does NOT match the change's
 /// `changed_observable` must NOT classify Exposed. Owner-target identity is
 /// not sink observation — this is the cardinal false-exposed guard.
