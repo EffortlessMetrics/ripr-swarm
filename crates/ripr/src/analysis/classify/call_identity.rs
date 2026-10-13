@@ -640,13 +640,30 @@ fn has_path_attribute(source: &str) -> bool {
     false
 }
 
+fn is_ident_char(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
+}
+
+/// Whether the char ending just before byte `at` continues an identifier.
+/// Char-aware, so `dulo` inside `módulo` is not read as a whole word.
+fn ident_char_before(text: &str, at: usize) -> bool {
+    text.get(..at)
+        .and_then(|before| before.chars().next_back())
+        .is_some_and(is_ident_char)
+}
+
+/// Whether the char starting at byte `at` continues an identifier.
+fn ident_char_at(text: &str, at: usize) -> bool {
+    text.get(at..)
+        .and_then(|rest| rest.chars().next())
+        .is_some_and(is_ident_char)
+}
+
 /// Whether the attribute text holds `path =` as a whole word.
 fn attribute_sets_path(attribute: &str) -> bool {
-    let bytes = attribute.as_bytes();
-    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
     attribute.match_indices("path").any(|(start, _)| {
         let end = start + "path".len();
-        if start > 0 && bytes.get(start - 1).copied().is_some_and(is_ident) {
+        if ident_char_before(attribute, start) {
             return false;
         }
         let tail = attribute[end..].trim_start();
@@ -770,15 +787,13 @@ fn file_module_segments(file: &Path) -> Option<Vec<String>> {
 /// Method calls (`x.name(..)`) and the `fn name` definition are skipped.
 fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
     let masked = mask_comments_and_strings(body);
-    let bytes = masked.as_bytes();
-    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
     let mut calls = Vec::new();
     for (start, _) in masked.match_indices(name) {
         let end = start + name.len();
-        if start > 0 && bytes.get(start - 1).copied().is_some_and(is_ident) {
+        if ident_char_before(&masked, start) {
             continue;
         }
-        if bytes.get(end).copied().is_some_and(is_ident) {
+        if ident_char_at(&masked, end) {
             continue;
         }
         let tail = masked[end..].trim_start();
@@ -802,16 +817,14 @@ fn call_qualifiers(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
 /// items are skipped; anything else counts, which only fails closed.
 fn value_mentions(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
     let masked = mask_comments_and_strings(body);
-    let bytes = masked.as_bytes();
-    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
     let use_items = use_item_ranges(&masked);
     let mut mentions = Vec::new();
     for (start, _) in masked.match_indices(name) {
         let end = start + name.len();
-        if start > 0 && bytes.get(start - 1).copied().is_some_and(is_ident) {
+        if ident_char_before(&masked, start) {
             continue;
         }
-        if bytes.get(end).copied().is_some_and(is_ident) {
+        if ident_char_at(&masked, end) {
             continue;
         }
         if use_items.iter().any(|range| range.contains(&start)) {
@@ -851,13 +864,8 @@ fn value_mentions(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
 /// Byte ranges of the `use` items in masked `text`, each from its `use`
 /// keyword through its `;`.
 fn use_item_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
-    let bytes = text.as_bytes();
-    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
     text.match_indices("use")
-        .filter(|(start, _)| {
-            (*start == 0 || !bytes.get(start - 1).copied().is_some_and(is_ident))
-                && !bytes.get(start + 3).copied().is_some_and(is_ident)
-        })
+        .filter(|(start, _)| !ident_char_before(text, *start) && !ident_char_at(text, start + 3))
         .map(|(start, _)| {
             let end = text[start..]
                 .find(';')
@@ -871,11 +879,8 @@ fn use_item_ranges(text: &str) -> Vec<std::ops::Range<usize>> {
 /// whole identifier.
 fn mentions_word(body: &str, word: &str) -> bool {
     let masked = mask_comments_and_strings(body);
-    let bytes = masked.as_bytes();
-    let is_ident = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
     masked.match_indices(word).any(|(start, _)| {
-        (start == 0 || !bytes.get(start - 1).copied().is_some_and(is_ident))
-            && !bytes.get(start + word.len()).copied().is_some_and(is_ident)
+        !ident_char_before(&masked, start) && !ident_char_at(&masked, start + word.len())
     })
 }
 
@@ -885,7 +890,7 @@ fn head_word(head: &str) -> &str {
     let start = head
         .char_indices()
         .rev()
-        .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_'))
+        .find(|(_, ch)| !is_ident_char(*ch))
         .map_or(0, |(index, ch)| index + ch.len_utf8());
     head.get(start..).unwrap_or_default()
 }
@@ -925,6 +930,29 @@ mod tests {
         assert_eq!(
             qualifier_before("assert_eq!(crate::módulo::"),
             Some(strings(&["crate", "módulo"]))
+        );
+    }
+
+    #[test]
+    fn a_name_inside_a_longer_non_ascii_identifier_is_not_a_call_of_it() {
+        assert!(call_qualifiers("fn t() { assert_eq!(módulo(), 2); }", "dulo").is_empty());
+        assert!(value_mentions("fn t() { let x = mó; }", "m").is_empty());
+        assert!(!mentions_word("let x = módulo;", "dulo"));
+        let index = index(&[(
+            "src/lib.rs",
+            "pub mod a {\n    pub fn dulo() -> u32 { 1 }\n    pub fn módulo() -> u32 { 2 }\n    \
+             #[cfg(test)]\n    mod tests {\n        use super::*;\n        \
+             #[test]\n        fn only_modulo() { assert_eq!(módulo(), 2); }\n        \
+             #[test]\n        fn only_qualified_modulo() { assert_eq!(crate::a::módulo(), 2); }\n    }\n}\n\
+             pub mod b {\n    pub fn dulo() -> u32 { 3 }\n}\n",
+        )]);
+        assert_ne!(
+            settle(&index, "::a::dulo", "only_modulo"),
+            Some(CallTarget::Owner)
+        );
+        assert_ne!(
+            settle(&index, "::a::dulo", "only_qualified_modulo"),
+            Some(CallTarget::Owner)
         );
     }
 
