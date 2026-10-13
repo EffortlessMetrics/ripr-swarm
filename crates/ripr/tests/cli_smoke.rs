@@ -8465,6 +8465,7 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
         for bad in [
             ["--base", "no-such-ref-4445"],
             ["--diff", missing_diff.as_str()],
+            ["--diff", root_arg.as_str()],
         ] {
             let output = run_ripr(&[
                 "check", "--root", &root_arg, bad[0], bad[1], "--format", format,
@@ -8498,6 +8499,61 @@ fn repo_scope_formats_reject_unresolvable_base_and_missing_diff()
                 stderr.contains(bad[1]),
                 "{format} {bad:?}: stderr does not name the rejected input: {stderr}"
             );
+            if bad[0] == "--diff" {
+                let diagnostic = format!(
+                    "check: --diff {} is not a readable file; pass an existing unified diff file, or omit --diff for repo-scoped analysis",
+                    bad[1]
+                );
+                assert!(
+                    stderr.contains(&diagnostic),
+                    "{format} {bad:?}: stderr must name how to recover: {stderr}"
+                );
+                if format != "repo-sarif" {
+                    let refusal: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+                    assert_eq!(refusal["limitations"][0]["message"], diagnostic);
+                }
+            }
+        }
+    }
+
+    // The diff-scoped loader keeps its existing recovery, including stdin.
+    for (bad, recovery) in [
+        (
+            missing_diff.as_str(),
+            "pass the path of an existing unified diff file",
+        ),
+        (root_arg.as_str(), "pass a diff file path"),
+    ] {
+        let output = run_ripr(&[
+            "check", "--root", &root_arg, "--diff", bad, "--format", "json",
+        ]);
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains(recovery), "{stderr}");
+        assert!(
+            stderr.contains("or `-` to read the diff from stdin"),
+            "{stderr}"
+        );
+        assert_check_json_refusal(&output, "analysis_failed", "analysis/failure")?;
+    }
+
+    // Both remedies must work on the real CLI. Repo formats validate the named
+    // input but do not consume the diff, and omitting it retains repo scope.
+    let existing_diff = root.join("existing.diff");
+    std::fs::write(
+        &existing_diff,
+        "--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -2 +2 @@\n-    x >= 10\n+    x > 10\n",
+    )?;
+    let existing_diff_arg = existing_diff.display().to_string();
+    for format in [
+        "repo-exposure-json",
+        "repo-sarif",
+        "agent-seam-packets-json",
+    ] {
+        for remedy in [vec!["--diff", existing_diff_arg.as_str()], vec![]] {
+            let mut argv = vec!["check", "--root", &root_arg, "--format", format];
+            argv.extend(remedy);
+            assert_success(&run_ripr(&argv));
         }
     }
 
