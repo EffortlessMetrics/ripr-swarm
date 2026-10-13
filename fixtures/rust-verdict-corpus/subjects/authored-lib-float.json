@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-lib-float",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against approx 0.5.1, float-cmp 0.10.0 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "c1f0f4e46b067704bcbe8f0177392980924387b9002126d05506fcb0f0ecc782"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "f0598791fcc49d0da926bb71e6f6884eea89f6b45c75c27fbe530b7a12a52f8e"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "a4407c0c73383627c9ba10967a7d27484e3d72fc90255834eb1c5d3fa259a507"
+    }
+  ]
+}

@@ -1363,6 +1363,121 @@ fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
 }
 
 #[test]
+fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
+    for attributes in [
+        "use serial_test::serial;\n#[test]\n#[serial]",
+        "use serial_test::serial;\n#[serial]\n#[test]",
+        "#[test]\n#[serial_test::serial(env)]",
+        "#[test]\n#[serial_test::file_serial]",
+        "use serial_test::parallel;\n#[test]\n#[parallel]",
+        "use serial_test::{parallel, serial};\n#[test]\n#[serial]",
+        "use ::serial_test::serial as locked;\n#[test]\n#[locked]",
+        "use serial_test::file_serial;\n#[test]\n#[file_serial(db)]",
+        "use serial_test::serial;\n#[derive(Debug, Clone)]\nstruct Fixture;\n#[test]\n#[serial]",
+        "extern crate serial_test;\n#[test]\n#[serial_test::serial]",
+        "use serial_test;\n#[test]\n#[serial_test::serial]",
+        // `macro_rules!` alone emits nothing at item position.
+        "macro_rules! helper { () => {}; }\n#[test]\n#[serial_test::serial]",
+        // A rooted path names the same crate.
+        "#[test]\n#[::serial_test::serial]",
+        "#[::serial_test::serial]\nfn helper() {}\n#[test]\n#[serial_test::serial]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        // A bare `serial` with no serial_test in the file may be any macro.
+        "#[test]\n#[serial]",
+        "#[test]\n#[other::serial]",
+        "#[test]\n#[ignore]",
+        "#[test]\n#[serial_test::serial]\n#[ignore]",
+        "#[test]\n#[serial_test::unknown_lock]",
+        "#[test]\n#[::serial_test::unknown_lock]",
+        "#[test]\n#[::other::serial]",
+        // The lock can hand the body to other macros or another runtime.
+        "#[test]\n#[serial_test::serial(inner_attrs = [my_macros::skip_body])]",
+        "#[test]\n#[serial_test::serial(crate = my_runtime)]",
+        "#[test]\n#[serial_test::file_serial(path => \"/tmp/lock\")]",
+        // A mention outside a `use` item does not import the macro.
+        "// serial_test is not used here\nuse my_macros::skip_body as serial;\n#[test]\n#[serial]",
+        // Importing another serial_test item does not bind `serial`.
+        "use serial_test::parallel;\nuse my_macros::serial;\n#[test]\n#[serial]",
+        "use serial_test::parallel;\n#[test]\n#[serial]",
+        // A competing binding of the same name in the module refuses,
+        // raw spellings included.
+        "use serial_test::serial;\nuse my_macros::skip_body as serial;\n#[test]\n#[serial]",
+        "use serial_test::serial;\nuse my_macros::r#serial;\n#[test]\n#[serial]",
+        // Only the test's own module binds its attribute: an import in a
+        // function body, a sibling module or a macro token tree does not.
+        "mod a { use serial_test::serial; }\nuse my_macros::serial as r#serial;\n#[test]\n#[serial]",
+        "use my_macros::r#serial;\nfn helper() { use serial_test::serial; }\n#[test]\n#[serial]",
+        "macro_rules! bring { () => { use my_macros::serial; }; }\nbring!();\nfn helper() { use serial_test::serial; }\n#[test]\n#[serial]",
+        // A local `serial_test` shadows the crate for a qualified lock.
+        "mod serial_test { pub use my_macros::serial; }\n#[test]\n#[serial_test::serial]",
+        "use my_macros as serial_test;\n#[test]\n#[serial_test::serial]",
+        "extern crate my_macros as serial_test;\n#[test]\n#[serial_test::serial]",
+        "extern crate my_macros as serial_test;\n#[test]\n#[::serial_test::serial]",
+        // A glob, an item macro or an attribute or derive macro may bring
+        // one.
+        "use crate::common::*;\n#[test]\n#[serial_test::serial]",
+        "bring!();\n#[test]\n#[serial_test::serial]",
+        "#[my_macros::emit_mod]\nfn helper() {}\n#[test]\n#[serial_test::serial]",
+        "#[derive(my_macros::EmitMod)]\nstruct Marker;\n#[test]\n#[serial_test::serial]",
+        "#[cfg_attr(all(), my_macros::emit_mod)]\nfn helper() {}\n#[test]\n#[serial_test::serial]",
+        "use my_macros::serial;\n#[serial]\nfn helper() {}\n#[test]\n#[serial_test::serial]",
+        // An import can rebind a prelude derive or `derive` itself.
+        "use my_macros::EmitMod as Debug;\n#[derive(Debug)]\nstruct Marker;\n#[test]\n#[serial_test::serial]",
+        "use my_macros::emit_mod as derive;\n#[derive(Debug)]\nstruct Marker;\n#[test]\n#[serial_test::serial]",
+        "use serial_test::serial;\nuse my_macros::EmitMod as Debug;\n#[derive(Debug)]\nstruct Marker;\n#[test]\n#[serial]",
+        "extern crate my_macros as Debug;\n#[test]\n#[serial_test::serial]",
+        // The bare import's `serial_test` must be the crate too, and an
+        // out-of-line module's `super::*` may bring another one.
+        "use super::*;\nuse serial_test::serial;\n#[test]\n#[serial]",
+        "mod serial_test { pub use my_macros::serial; }\nuse serial_test::serial;\n#[test]\n#[serial]",
+        "extern crate my_macros as serial_test;\nuse serial_test::serial;\n#[test]\n#[serial]",
+        // A foreign glob may also bind the owner name.
+        "use serial_test::serial;\nuse my_macros::*;\n#[test]\n#[serial]",
+        "use serial_test::serial as _;\n#[test]\n#[serial]",
+        "use serial_test::*;\n#[test]\n#[serial]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+}
+
+#[test]
+fn serial_test_locks_resolve_in_the_tests_own_module() {
+    let module = |body: &str| {
+        format!(
+            "use demo::weight;\nmod tests {{\n{body}\n#[test]\n#[serial_test::serial]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n}}\n"
+        )
+    };
+    // `use super::*` reaches an enclosing module of this file, which binds
+    // no `serial_test`.
+    assert_eq!(weight_admitted(&module("use super::*;")).len(), 1);
+    // The common inline test module: `#[cfg(test)]` emits no items.
+    let common = "use demo::weight;\n#[cfg(test)]\nmod tests {\nuse super::*;\nuse serial_test::serial;\n#[test]\n#[serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert_eq!(weight_admitted(common).len(), 1, "{common}");
+    let tests = "use demo::weight;\nmod serial_test { pub use my_macros::serial; }\nmod tests {\nuse super::*;\n#[test]\n#[serial_test::serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert!(weight_admitted(tests).is_empty(), "{tests}");
+    let bare = "use demo::weight;\nuse serial_test::serial;\nmod tests {\nuse super::*;\n#[test]\n#[serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    let shadowed = "use demo::weight;\nmod serial_test { pub use my_macros::serial; }\nmod tests {\nuse super::*;\nuse serial_test::serial;\n#[test]\n#[serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert!(weight_admitted(shadowed).is_empty(), "{shadowed}");
+    let rebound = "use demo::weight;\nuse my_macros::EmitMod as Debug;\n#[derive(Debug)]\nstruct Marker;\nmod tests {\nuse super::*;\n#[test]\n#[serial_test::serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert!(weight_admitted(rebound).is_empty(), "{rebound}");
+    // `#[macro_use]` can rebind `Debug` with no import; the file-wide
+    // macro-binding scan refuses it.
+    let macro_use = "#[macro_use]\nextern crate my_macros;\nuse demo::weight;\nmod tests {\nuse super::*;\n#[derive(Debug)]\nstruct Marker;\n#[test]\n#[serial_test::serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert!(weight_admitted(macro_use).is_empty(), "{macro_use}");
+    // The bare lock is bound only through the glob, which proves nothing.
+    assert!(weight_admitted(bare).is_empty(), "{bare}");
+}
+
+#[test]
 fn an_assertion_outside_the_test_body_is_not_its_pin() {
     // A harness trial's `body` is only its registration; an assertion the
     // index attributes to it from a helper does not see the helper's
@@ -2372,16 +2487,22 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "assert_eq!(weight(input), 12);",
         "#[cfg(any())] assert_eq!(weight(input), 12);",
         "assert_eq!(weight(input), 12, \"{}\", stringify!(value));",
+        "std::assert_eq!(weight(input), 12);",
+        "::core::assert_eq!(weight(input), 12);",
+        "pretty_assertions::assert_eq!(weight(input), 12);",
+        "similar_asserts :: assert_eq !(weight(input), 12);",
     ] {
-        assert!(is_bare_assert_eq_invocation(assertion), "{assertion}");
+        assert!(is_admission_gated_assert_eq(assertion), "{assertion}");
     }
     for assertion in [
         "assert!({ assert_eq!(weight(input), 12); true });",
-        "std::assert_eq!(weight(input), 12);",
+        "other::assert_eq!(weight(input), 12);",
+        "pretty_assertions::assert_ne!(weight(input), 12);",
+        "pretty_assertions::nested::assert_eq!(weight(input), 12);",
         "matches!(value, Some(_));",
         "match value { _ => assert_eq!(weight(input), 12) }",
     ] {
-        assert!(!is_bare_assert_eq_invocation(assertion), "{assertion}");
+        assert!(!is_admission_gated_assert_eq(assertion), "{assertion}");
     }
 }
 
