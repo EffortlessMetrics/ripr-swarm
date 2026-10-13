@@ -50,7 +50,10 @@ impl Scratch {
             .duration_since(UNIX_EPOCH)
             .map_err(|error| error.to_string())?
             .as_nanos();
-        let path = parent.join(format!("ripr-wheel-guidance-{}-{nonce}", std::process::id()));
+        let path = parent.join(format!(
+            "ripr-wheel-guidance-{}-{nonce}",
+            std::process::id()
+        ));
         fs::create_dir(&path).map_err(|error| format!("create {}: {error}", path.display()))?;
         Ok(Self(path))
     }
@@ -203,7 +206,10 @@ fn exercise_recipe(
         installed.is_file() || selected.join("bin/ripr").is_file(),
         "wheel installation did not run"
     );
-    assert!(!decoy_marker.exists(), "recipe executed ambient ripr: {stdout}");
+    assert!(
+        !decoy_marker.exists(),
+        "recipe executed ambient ripr: {stdout}"
+    );
     assert_eq!(stdout.lines().last(), Some("selected-wheel-fixture 1.0.0"));
     assert_eq!(
         fs::read(&installed).map_err(|error| format!("read installed fixture: {error}"))?,
@@ -250,7 +256,10 @@ fn local_wheelhouse_recipe_selects_its_installed_executable() -> Result<(), Stri
         .and_then(|(_, after)| after.split_once("```"))
         .map(|(recipe, _)| recipe)
         .ok_or_else(|| "missing POSIX wheelhouse recipe".to_string())?;
-    assert!(recipe.trim().lines().count() >= 2, "empty wheelhouse recipe");
+    assert!(
+        recipe.trim().lines().count() >= 2,
+        "empty wheelhouse recipe"
+    );
     let scratch = Scratch::new()?;
     let deadline = Instant::now() + Duration::from_mins(2);
     for (label, tool_name, wheelhouse_name) in [
