@@ -195,17 +195,13 @@ function resolveNativeExecutable(options) {
   try {
     nativeManifestPath = resolver.resolve(`${selected.package}/package.json`);
   } catch (error) {
-    if (!error || error.code !== "MODULE_NOT_FOUND") {
-      const reason = error && typeof error.message === "string" ? error.message : String(error);
-      throw new LauncherError(
-        "native_package_resolution_failed",
-        `cannot resolve required native package ${selected.package}@${contract.version}: ${reason}; reinstall ${LAUNCHER_NAME}@${contract.version} with optional dependencies enabled`,
-        error,
-      );
-    }
+    const reason = error && typeof error.message === "string" ? error.message : String(error);
+    // MODULE_NOT_FOUND can also mean an installed package's manifest or exports
+    // target is missing. Retain the legacy code without claiming directory absence.
+    const code = error && error.code === "MODULE_NOT_FOUND" ? "native_package_missing" : "native_package_resolution_failed";
     throw new LauncherError(
-      "native_package_missing",
-      `required native package ${selected.package}@${contract.version} is missing; reinstall ${LAUNCHER_NAME}@${contract.version} with optional dependencies enabled`,
+      code,
+      `cannot resolve required native package ${selected.package}@${contract.version}: ${reason}; reinstall ${LAUNCHER_NAME}@${contract.version} with optional dependencies enabled`,
       error,
     );
   }

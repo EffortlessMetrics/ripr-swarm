@@ -1,4 +1,4 @@
 <!-- section: Fixed -->
-- The npm launcher preserves native-package resolution errors and reports
-  non-object manifests with package context, so corrupt installed metadata is
-  distinguishable from an omitted optional dependency (#4491).
+- The npm launcher preserves native-package resolution reasons, including
+  missing manifests and broken exports targets, without inferring package
+  absence, and reports non-object manifests with package context (#4491).

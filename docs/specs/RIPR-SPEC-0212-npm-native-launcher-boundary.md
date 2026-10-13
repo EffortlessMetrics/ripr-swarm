@@ -74,7 +74,7 @@ The package `@effortlessmetrics/ripr`:
   surviving child;
 - a planted `ripr` on `PATH` is never selected when the required package is
   absent;
-- corrupt native package metadata and resolver refusals retain their reason
+- missing or corrupt native package metadata and resolver refusals retain their reason
   and exact package/version in a typed error, instead of claiming the package
   is absent; resolved non-object manifests fail with a contextual typed error;
 - the packed launcher inventory contains only the declared runtime files and
@@ -111,6 +111,10 @@ The package `@effortlessmetrics/ripr`:
    naming the exact native package/version, original reason, and reinstall
    advice. Restoring valid metadata reaches payload validation again; absent
    executables still fail rather than running an ambient `ripr`.
+7. Missing `package.json`, an exports entry targeting a missing manifest, and
+   actual package absence all retain Node's resolver reason without inferring
+   package-directory absence. The legacy `native_package_missing` code still
+   identifies `MODULE_NOT_FOUND`; it does not establish directory presence.
 
 ## Test Mapping
 
@@ -119,6 +123,7 @@ The package `@effortlessmetrics/ripr`:
 - `packaging/npm/launcher/test/launcher.test.cjs::distinguishes native resolution failures from missing optional packages`
 - `packaging/npm/launcher/test/launcher.test.cjs::rejects non-object native manifests with a contextual typed error`
 - `packaging/npm/launcher/test/launcher.test.cjs::public bin identifies corrupt package metadata and recovers after restoration`
+- `packaging/npm/launcher/test/launcher.test.cjs::public bin retains missing-manifest and missing-exports reasons without claiming package absence`
 - `packaging/npm/launcher/test/launcher.test.cjs::rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads`
 - `packaging/npm/launcher/test/launcher.test.cjs::forwards direct SIGTERM to native child exactly once and re-emits signal`
 - `packaging/npm/launcher/test/launcher.test.cjs::retains the first observed signal when a supervisor escalates SIGINT to SIGTERM`
