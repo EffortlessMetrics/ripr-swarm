@@ -97,6 +97,30 @@ silent fallback. An anchorless or stale record in an otherwise usable canonical
 group is a named per-scope limitation, not a reason to discard the group's
 current evidence.
 
+`reports gap-ledger` persists its selected canonical absolute root, including
+when `--root` defaults to `.`. A different root yields `stale_gap_ledger`
+before matching records or recomputing scopes, even with identical source
+bytes. Legacy relative or missing roots cannot recover the producer's working
+directory; they require the existing complete, current `source_subject` stamp.
+Changed subjects yield `stale_subject`; missing, malformed, unsupported,
+incomplete or unreadable provenance yields `unverifiable_subject` with the
+shared reason. Current legacy stamps are checked against the selected root,
+including explicit selection from a foreign working directory. A matching
+absolute-root ledger retains recomputation after source/test edits, including
+unstamped legacy records. This root-binding contract adds no HEAD/base revision
+staleness policy.
+
+Passive editor admission additionally checks the full Rust analysis corpus
+captured by the producer. That guard is not applied to explicit historical
+absolute-root selectors: they keep recomputing current selected scopes after
+corpus edits, including when their old ledger lacks corpus provenance.
+
+Editor gap-artifact admission shares the same existing canonical-directory
+comparison for absolute roots, so a symlink-selected workspace or Windows
+native spelling can consume its physical canonical ledger root. Existing
+relative-root compatibility, command/path safety and complete source-subject
+validation remain required.
+
 `--before` is an explicit prior rerun, repo-exposure, or compatible receipt
 artifact. When it is absent, the result is `current_state_only` and may not
 claim improved, closed, unchanged, or regressed movement. The command must not
@@ -296,6 +320,16 @@ The benchmark does not justify a universal latency claim.
 
 ## Required Evidence
 
+- A missing `--gap-ledger` refuses before writing artifacts and names the
+  existing source-specific ledger producers: `reports gap-ledger
+  --repo-exposure` for Rust inventory and `--check-output` for TypeScript.
+  Capture steps explain saving stdout, preserving the selected root/source
+  scope, and supplying the resulting ledger explicitly. Help describes the
+  same route. A ledger must contain the selected canonical ID: generation
+  does not translate Rust diff finding IDs into repo-inventory identities.
+- The Rust recovery command is replayed from a foreign CWD on an ordinary
+  pricing crate, with nonzero matched records and recomputed seams. An ID
+  absent from that ledger retains `canonical_gap_unresolved` and zero seams.
 - CLI parsing rejects zero or multiple selectors and invalid changed-test nodes.
 - Fixture-backed tests pin `--gap` identity projection and `--changed-test`
   affected-seam selection.
@@ -314,6 +348,9 @@ The benchmark does not justify a universal latency claim.
 
 ## Test Mapping
 
+- `crates/ripr/tests/cli_smoke/rerun_ledger_recovery.rs` pins the missing-ledger
+  refusal, source-specific help, literal command arguments, quoted root,
+  producer execution, exact selected identity and absent-ID limitation.
 - Targeted selection tests prove a canonical gap resolves only through supplied
   domain identity, groups all matching seam records, deduplicates recomputation
   scopes and returned seams, preserves current scopes beside named stale or

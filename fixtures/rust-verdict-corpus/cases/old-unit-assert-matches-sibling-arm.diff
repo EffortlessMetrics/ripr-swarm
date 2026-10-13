@@ -1,0 +1,12 @@
+diff --git a/src/errors.rs b/src/errors.rs
+--- a/src/errors.rs
++++ b/src/errors.rs
+@@ -93,7 +93,7 @@
+     match raw {
+         "" => Err(UnitError::Blank),
+         "k" => Ok(1_000),
+-        "m" => Ok(1_000_000),
++        "m" => Ok(1_000),
+         _ => Err(UnitError::Unknown),
+     }
+ }

@@ -1,0 +1,45 @@
+{
+  "case_id": "py-hypothesis-mean-bounds",
+  "subject_id": "authored-py-hypothesis-stats",
+  "diff": "cases/py-hypothesis-mean-bounds.diff",
+  "anchor": {
+    "file": "stats/__init__.py",
+    "line": 16
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_operator",
+  "test_shape": "hypothesis_relational_property",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, hypothesis 6.168.3, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return sum(xs) / (len(xs) + 1)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_stats.py::test_mean_lies_between_extremes",
+        "equivalence_review": "not equivalent: mean([1]) returns 0.5 instead of 1"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_mean_lies_between_extremes checks `min(xs) <= mean(xs) <= max(xs)`; dividing by len + 1 puts mean([1]) at 0.5, below the minimum, so Hypothesis finds a failure. ripr reports static_unknown with property_based_test, an acceptable limit.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -7,7 +7,7 @@ use crate::output::next_step::reconcile_next_step;
 
 // Keep the registered packet version literal in this renderer path so the
 // output-contract check can verify the JSON surface while the DTO owns values.
-const CONTEXT_PACKET_VERSION_CONTRACT: &str = "1.0";
+pub(crate) const CONTEXT_PACKET_VERSION_CONTRACT: &str = "1.0";
 
 pub fn render_context_packet(finding: &Finding, max_related_tests: usize, root: &Path) -> String {
     render_context_packet_with_explain_command(finding, max_related_tests, None, root)

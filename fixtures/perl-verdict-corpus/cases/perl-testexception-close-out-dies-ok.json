@@ -1,0 +1,56 @@
+{
+  "case_id": "perl-testexception-close-out-dies-ok",
+  "subject_id": "authored-perl-testexception-account",
+  "diff": "cases/perl-testexception-close-out-dies-ok.diff",
+  "anchor": {
+    "file": "lib/Account.pm",
+    "line": 33
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "testexception_dies_ok_far_from_boundary",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "die \"balance must be zero\\n\" if 100 <= $balance;",
+        "mutated_line": "die \"balance must be zero\\n\" if 100 <= $balance;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 100 cannot close"
+      },
+      {
+        "replacement": "die \"balance must be zero\\n\" if 500 < $balance;",
+        "mutated_line": "die \"balance must be zero\\n\" if 500 < $balance;",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: 200 can close"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "dies_ok { close_out(1000) } only checks a balance far above 100, so moving the threshold keeps it green. Spec cells: RIPR-SPEC-0064 dies_ok.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testexception-close-out-dies-ok.json",
+    "sha256": "258780e997b6b7a7b8d42422150702b4a0dfb1186e76955397d2df61e1a3fe12",
+    "provenance": "producer"
+  }
+}

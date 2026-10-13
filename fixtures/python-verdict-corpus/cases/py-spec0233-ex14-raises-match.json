@@ -1,0 +1,48 @@
+{
+  "case_id": "py-spec0233-ex14-raises-match",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex14-raises-match.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 50
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "error_message",
+  "test_shape": "pytest_raises_match_literal",
+  "hard_case": "the edit changes the message the match= pattern reads, not the exception class the spec example changes",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "raise KeyError(\"blank\")",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_subject.py::test_raises_with_match",
+        "equivalence_review": "not equivalent: the KeyError message is 'blank' instead of 'empty'"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Shaped on RIPR-SPEC-0238 example 14, with a message edit instead of a class edit: pytest.raises(KeyError, match=\"empty\") fails when the message becomes 'blank'. ripr reports weakly_exposed, a false actionable verdict; the spec's example (class change) expects exposed through changed_sink_token. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#14"
+  ]
+}

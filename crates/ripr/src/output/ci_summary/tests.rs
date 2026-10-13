@@ -108,9 +108,26 @@ impl Fixture {
         gate_baseline: &str,
         comment_mode: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
+        self.render_with_base(
+            languages,
+            upload_sarif,
+            gate_baseline,
+            comment_mode,
+            "trunk",
+        )
+    }
+
+    fn render_with_base(
+        &self,
+        languages: &[&str],
+        upload_sarif: &str,
+        gate_baseline: &str,
+        comment_mode: &str,
+        base_ref: &str,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let input = CiSummaryInput {
             root: self.root.clone(),
-            base_ref: "trunk".to_string(),
+            base_ref: base_ref.to_string(),
             upload_sarif: upload_sarif == "true",
             gate_baseline: !gate_baseline.is_empty(),
             comment_mode: comment_mode.to_string(),
@@ -308,6 +325,24 @@ fn complete_artifacts_render_every_section_in_order() -> TestResult {
     }
     assert!(!summary.contains("@RIPR_"), "unsubstituted placeholder");
     assert!(summary.ends_with("- No runtime mutation execution is performed by this workflow.\n"));
+    Ok(())
+}
+
+#[test]
+fn empty_base_names_the_missing_base_instead_of_inventing_origin_main() -> TestResult {
+    // #7368: with neither base_ref nor default_branch derivable, the summary
+    // must not print an `origin/main` recovery command that cannot succeed on
+    // a repository whose default branch is anything else.
+    let fixture = Fixture::new("empty-base")?;
+    let summary = fixture.render_with_base(&[], "true", "", "", "")?;
+    assert!(
+        summary.contains("no base is derivable from the event payload"),
+        "must name the real condition:\n{summary}"
+    );
+    assert!(
+        !summary.contains("--base origin/ "),
+        "no invented base refspec may appear:\n{summary}"
+    );
     Ok(())
 }
 

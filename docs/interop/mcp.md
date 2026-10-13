@@ -50,10 +50,44 @@ ripr_prepare_repair     → readiness-gated in-memory repair transaction
 ripr_get_repair_attempt → one session or durable attempt, read-only
 ripr_get_receipt_status → one attempt's receipt state, read-only
 ripr_get_repair_card    → one item's bounded repair card, read-only
+ripr_list_repair_attempts → durable attempt discovery, before or after refresh
 ```
 
 Status and list calls never return the full evidence graph; read one item at
 a time through the tool or the resource.
+
+## Durable attempt discovery
+
+`ripr_list_repair_attempts` reads the default durable CLI attempt store through
+its canonical inventory/validation authority; it works before `ripr_refresh`.
+It never creates a missing store. MCP in-memory transactions are excluded:
+their IDs come from `ripr_prepare_repair`.
+The shared inventory includes manifest-bearing directories; an unpublished
+reservation without `attempt.json` is excluded. A manifest-bearing directory
+whose name cannot be represented as UTF-8 refuses the entire inventory with
+`attempt_invalid`, preserving identity rather than returning lossy or partial rows.
+
+The structured `ripr-mcp-repair-attempt-list-v1` document returns `inventory_id`,
+root identity, observed repository HEAD, `total`, `valid`, `invalid`, `omitted`,
+`items`, `page`, and continuation routes. Valid rows carry `attempt_id`, state,
+seam, repository HEAD, shared live currentness and receipt status, and links to
+the existing detail reads. Invalid rows carry only directory identity and a
+bounded `attempt_invalid` refusal; unvalidated manifest fields are never facts.
+`omitted` counts all rows outside this page, including earlier pages.
+
+Rows sort by identity/directory name, never modification time. `offset` defaults
+to zero; optional positive `limit` is capped at 256 rows and the full structured
+MCP envelope byte budget. Follow `continuation.next_page.arguments`, which pins
+`inventory_id` and advances by the number actually returned. The identity binds
+root, observed HEAD and all summary rows. Changed observations return typed
+`stale_inventory` with `current_inventory_id`; restart at offset zero without
+the old identity. A missing store is an empty inventory, an unavailable root is
+`workspace_unavailable`, and a store-level read refusal is `attempt_invalid`.
+
+This is a live observation, not an atomic filesystem snapshot. Output is bounded;
+canonical validation still reads the whole store. Receipt status retains the
+same currentness and completeness rules as `ripr_get_receipt_status`. Discovery
+runs no tests or verification and grants no execution or edit authority.
 
 ## What it exposes
 
@@ -67,6 +101,7 @@ a time through the tool or the resource.
 | Tool (`attempt_id`) | `ripr_get_repair_attempt` |
 | Tool (`receipt_id`) | `ripr_get_receipt_status` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_repair_card` |
+| Tool (`inventory_id?`, `offset?`, `limit?`) | `ripr_list_repair_attempts` |
 | Resource (`application/json`) | `ripr://workspace/status` |
 | Resource template | `ripr://snapshot/{snapshot_id}` |
 | Resource template | `ripr://gap/{canonical_id}` |
@@ -100,9 +135,16 @@ document, schema `ripr-mcp-workspace-status-v1`. It wraps:
 - the transport, tool, resource, resource-template, and byte bounds under
   `mcp`.
 
-`ripr_refresh` runs one bounded static analysis of the workspace diff through
-the same shared check authority as `ripr check` and the language server, then
-commits the completed snapshot into the session. The call blocks until the
+`ripr_refresh` analyzes the committed default-branch diff through the shared
+check authority, then commits the completed snapshot into the session.
+Staged and unstaged tracked edits and untracked files are outside this scope.
+The initialize/discover instructions, refresh tool description, and MCP help
+disclose this before invocation. `ripr check` defaults to the working tree
+when staged or unstaged tracked edits exist; sharing the authority does not
+mean identical input. `ripr check --committed` selects committed input;
+`ripr check --worktree --format json` analyzes staged and unstaged tracked
+edits outside MCP. The existing response `scope` note discloses detected
+excluded edits. The call blocks until the
 attempt reaches a terminal state and reports it: `completed` with the new
 snapshot identity (a `snapshot:sha256:` digest over the typed outcome, the
 canonical item identities, and each item's evidence digest — equivalent
@@ -139,6 +181,10 @@ with `stale_snapshot` and the current identity.
 Paging (#6021): `offset` (default 0) and `limit` (minimum 1) page over the
 selected items in snapshot order, disclosed through the `page` window
 (`offset`, `limit` when caller-set, `returned`, `has_more`, `next_offset`).
+Optional tool fields must be omitted to use their defaults: explicit `null`
+is invalid for `snapshot_id`, `offset`, and `limit` (#7314). The server
+returns `-32602` Invalid Params naming the field with the same request ID;
+correct the argument or omit it and retry on the same connection.
 When the whole selection cannot fit one wire response, the default call
 returns the first wire-fitting page and `continuation.next_page` names the
 `ripr_list_gaps` call that resumes the walk — pinned to the snapshot

@@ -16,7 +16,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:fragile_fee:predicate_boundary:predicate:weight_grams==2_000
   Changed behavior: weight_grams >= 2_000
   Missing discriminator: No detected boundary input for the changed predicate
-  Related test (1 of 2): tests/fees.rs:4 heavy_crate_pays_fragile_fee_and_eu_tax
+  Related test (1 of 2 matched rows): tests/fees.rs:4 heavy_crate_pays_fragile_fee_and_eu_tax
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator not established
     - reach yes: Related tests appear to reach fragile_fee: heavy_crate_pays_fragile_fee_and_eu_tax

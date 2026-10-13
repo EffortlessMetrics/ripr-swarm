@@ -39,6 +39,7 @@ use super::seams::{
 use super::test_grip_evidence;
 use super::workspace;
 use crate::analysis::cancellation;
+use crate::analysis_outcome::AnalysisLimitation;
 use crate::config::RiprConfig;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
@@ -164,6 +165,10 @@ pub(crate) fn inventory_classified_seams_at(root: &Path) -> Result<Vec<Classifie
 #[derive(Clone, Debug)]
 pub(crate) struct ClassifiedSeamsReport {
     pub(crate) classified: Vec<ClassifiedSeam>,
+    /// The key that admitted or produced this full Rust inventory. Keeping
+    /// its consumed corpus identity avoids a later renderer hashing new
+    /// workspace bytes for old classifications. Synthetic reports have none.
+    pub(crate) corpus_key: Option<RepoSeamCacheKey>,
     pub(crate) limit_info: Option<SeamLimitInfo>,
     pub(crate) skipped_generated: Vec<PathBuf>,
     pub(crate) naming_only_skips: Vec<PathBuf>,
@@ -234,6 +239,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
                 // a warm hit still discloses files added after the cache write.
                 return Ok(ClassifiedSeamsReport {
                     classified: cached,
+                    corpus_key: Some(key),
                     limit_info: cached_limit_info.map(SeamLimitInfo::from),
                     skipped_generated,
                     naming_only_skips,
@@ -290,6 +296,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
             // its SeamLimitInfo in the envelope; a complete run stored None.
             return Ok(ClassifiedSeamsReport {
                 classified: cached,
+                corpus_key: Some(key),
                 limit_info: cached_limit_info.map(SeamLimitInfo::from),
                 skipped_generated,
                 naming_only_skips,
@@ -355,6 +362,7 @@ pub(crate) fn inventory_classified_seams_report_at_with_config(
     trace_latency_phase("total", "computed", total_started.elapsed());
     Ok(ClassifiedSeamsReport {
         classified,
+        corpus_key: key.is_reusable().then_some(key),
         limit_info,
         skipped_generated,
         naming_only_skips,
@@ -377,10 +385,12 @@ pub(crate) fn workspace_cache_key_at_with_config(
     if let Some(key) =
         fingerprint_cached_workspace_key(root, &inputs, corpus.fingerprint.as_deref())
     {
+        key.require_reusable()?;
         return Ok(key);
     }
     let state = collect_workspace_state_from_files(root, config, corpus.analyzable)?;
     let key = state.cache_key();
+    key.require_reusable()?;
     store_corpus_fingerprint_mapping(&state, corpus.fingerprint, &key);
     Ok(key)
 }
@@ -972,16 +982,167 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
         ));
     }
 
-    let candidate_functions = cached
-        .index
-        .functions()
-        .iter()
-        .filter(|function| {
-            !function.source_role.is_evidence_role() && direct_call_names.contains(&function.name)
-        })
-        .collect::<Vec<_>>();
+    let syntax = super::classify::OwnerPinSyntax::default();
+    let mut candidate_functions = BTreeMap::new();
+    let unresolved = |name: &str| {
+        selector_limitation(
+            CHANGED_TEST_OWNER_UNRESOLVED,
+            format!(
+                "targeted rerun changed test `{changed_test}` did not resolve direct production call identity `{name}`"
+            ),
+            selected_tests.len(),
+        )
+    };
+    for test in &selected_tests {
+        let masked_body = crate::analysis::extract::mask_comments_and_strings(&test.body);
+        for call in test.calls.iter().filter(|call| call.name != test.name) {
+            use super::classify::TargetedCallShape;
+            use crate::analysis::facts::FunctionImplContext;
+            let functions = cached
+                .index
+                .functions()
+                .iter()
+                .filter(|function| {
+                    !function.source_role.is_evidence_role() && function.name == call.name
+                })
+                .collect::<Vec<_>>();
+            if super::classify::targeted_name_is_alias(&cached.index, &call.name) {
+                return Err(unresolved(&call.name));
+            }
+            // A line-only fact cannot resolve a qualifier continued from a
+            // previous line, including through masked comments/blank lines.
+            let continued_path = call
+                .line
+                .checked_sub(test.start_line)
+                .is_some_and(|offset| {
+                    masked_body
+                        .split_inclusive('\n')
+                        .take(offset)
+                        .collect::<String>()
+                        .trim_end()
+                        .ends_with("::")
+                        || {
+                            let preceding = masked_body
+                                .split_inclusive('\n')
+                                .take(offset)
+                                .collect::<String>();
+                            preceding.trim_end().ends_with('.')
+                                && !preceding.trim_end().ends_with("..")
+                        }
+                });
+            let shapes = if continued_path {
+                BTreeSet::from([TargetedCallShape::Unsupported])
+            } else {
+                super::classify::targeted_call_shapes(&call.text, &call.name)
+            };
+            for shape in shapes {
+                if matches!(shape, TargetedCallShape::Bare)
+                    && functions
+                        .iter()
+                        .filter(|function| {
+                            matches!(function.impl_context, FunctionImplContext::Free)
+                        })
+                        .count()
+                        > 1
+                {
+                    return Err(selector_limitation(
+                        CHANGED_TEST_OWNER_AMBIGUOUS,
+                        format!(
+                            "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
+                            call.name
+                        ),
+                        selected_tests.len(),
+                    ));
+                }
+                let mut matching = Vec::new();
+                for function in &functions {
+                    match (&shape, &function.impl_context) {
+                        (TargetedCallShape::Bare, FunctionImplContext::Free) => {
+                            if !super::classify::targeted_free_call_reaches_owner(
+                                test,
+                                function,
+                                None,
+                                &cached.index,
+                                &syntax,
+                            ) {
+                                return Err(unresolved(&call.name));
+                            }
+                            matching.push(*function);
+                        }
+                        (
+                            TargetedCallShape::Path { prefix, generic },
+                            FunctionImplContext::Impl { self_type },
+                        ) => {
+                            let type_name = prefix.rsplit("::").next().unwrap_or(prefix);
+                            if super::classify::targeted_type_name_is_unresolved(
+                                test,
+                                &cached.index,
+                                type_name,
+                            ) {
+                                return Err(unresolved(&call.name));
+                            }
+                            if type_name != self_type {
+                                // Parser-established different self types cannot own
+                                // this call (e.g. BTreeMap::new versus Alpha::new).
+                                continue;
+                            }
+                            if *generic
+                                || !syntax.targeted_inherent_call_is_local(
+                                    test,
+                                    function,
+                                    prefix,
+                                    &cached.index,
+                                )
+                            {
+                                return Err(unresolved(&call.name));
+                            }
+                            matching.push(*function);
+                        }
+                        (
+                            TargetedCallShape::Path { prefix, generic },
+                            FunctionImplContext::Free,
+                        ) => {
+                            if super::classify::call_text_may_call_free_function(
+                                &call.text, &call.name,
+                            ) {
+                                if *generic
+                                    || !super::classify::targeted_free_call_reaches_owner(
+                                        test,
+                                        function,
+                                        Some(prefix),
+                                        &cached.index,
+                                        &syntax,
+                                    )
+                                {
+                                    return Err(unresolved(&call.name));
+                                }
+                                matching.push(*function);
+                            }
+                        }
+                        (TargetedCallShape::Unsupported, _) | (_, FunctionImplContext::Unknown) => {
+                            return Err(unresolved(&call.name));
+                        }
+                        (TargetedCallShape::Bare, FunctionImplContext::Impl { .. }) => {}
+                    }
+                }
+                if matching.len() > 1 {
+                    return Err(selector_limitation(
+                        CHANGED_TEST_OWNER_AMBIGUOUS,
+                        format!(
+                            "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{}`",
+                            call.name
+                        ),
+                        selected_tests.len(),
+                    ));
+                }
+                for function in matching {
+                    candidate_functions.insert(function.id.0.replace('\\', "/"), function);
+                }
+            }
+        }
+    }
     let matched_call_names = candidate_functions
-        .iter()
+        .values()
         .map(|function| function.name.clone())
         .collect::<BTreeSet<_>>();
     if matched_call_names.is_empty() {
@@ -993,33 +1154,15 @@ pub(crate) fn inventory_changed_test_classified_seams_at_with_config_node(
             selected_tests.len(),
         ));
     }
-    for call_name in &matched_call_names {
-        let matching_owners = candidate_functions
-            .iter()
-            .filter(|function| function.name == *call_name)
-            .count();
-        if matching_owners > 1 {
-            return Err(selector_limitation(
-                CHANGED_TEST_OWNER_AMBIGUOUS,
-                format!(
-                    "targeted rerun changed test `{changed_test}` has ambiguous direct production owner `{call_name}`"
-                ),
-                selected_tests.len(),
-            ));
-        }
-    }
     let production_files = candidate_functions
-        .into_iter()
+        .values()
         .map(|function| function.file.clone())
+        .collect::<BTreeSet<_>>()
+        .into_iter()
         .collect::<Vec<_>>();
     let seams = inventory_seams_from_index(&production_files, &cached.index)
         .into_iter()
-        .filter(|seam| {
-            seam.owner()
-                .rsplit("::")
-                .next()
-                .is_some_and(|name| matched_call_names.contains(name))
-        })
+        .filter(|seam| candidate_functions.contains_key(seam.owner()))
         .collect::<Vec<_>>();
     let evidence = test_grip_evidence::evidence_for_seams(&seams, &cached.index);
     let classified =
@@ -1328,6 +1471,13 @@ pub(crate) fn inventory_diff_scoped_classified_seams_at_with_config(
     )
 }
 
+/// The current change's classified seams and canonical missing-file coverage.
+#[derive(Debug)]
+pub(crate) struct ClassifiedChangeReport {
+    pub(crate) classified: Vec<ClassifiedSeam>,
+    pub(crate) absent_file_limitations: Vec<AnalysisLimitation>,
+}
+
 /// Classify the seams in `changed_files` (root-relative) for which
 /// `on_change` holds, and only those: the other seams in those files get no
 /// evidence. No owner names are passed, so no caller files join the scope.
@@ -1341,7 +1491,7 @@ pub(crate) fn classify_seams_in_files_at_with_config(
     config: &RiprConfig,
     changed_files: &[PathBuf],
     on_change: &dyn Fn(&RepoSeam) -> bool,
-) -> Result<Vec<ClassifiedSeam>, String> {
+) -> Result<ClassifiedChangeReport, String> {
     let stages = DiffScopeEvidenceStages {
         first: on_change,
         sufficient: &|_| true,
@@ -1355,7 +1505,18 @@ pub(crate) fn classify_seams_in_files_at_with_config(
         Some(&stages),
         None,
     )
-    .map(|inventory| inventory.classified)
+    .and_then(|inventory| {
+        // The supplement keeps its classified seams: an absent-file name the
+        // portable limitation path refuses (a drive-like name on Unix, say)
+        // degrades to the bounded path-less disclosure instead of failing
+        // the whole report (#6976).
+        let absent_file_limitations =
+            workspace::supplement_absent_file_limitations(&inventory.absent_changed_files)?;
+        Ok(ClassifiedChangeReport {
+            classified: inventory.classified,
+            absent_file_limitations,
+        })
+    })
 }
 
 /// The changed Rust files (root-relative) that diff analysis covers but the
@@ -2212,6 +2373,37 @@ fn workspace_key_inputs(root: &Path, config: &RiprConfig) -> WorkspaceKeyInputs 
         test_intent_text: read_optional(&root.join(".ripr").join("test_intent.toml")),
         suppressions_text: read_optional(&root.join(config.suppressions().path())),
     }
+}
+
+/// Read-only selection for current-input export. Use the ordinary corpus and
+/// key authorities, but never update the live fingerprint cache during export.
+pub(crate) fn current_cache_keys_at(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<
+    (
+        RepoSeamCacheKey,
+        Vec<super::seam_cache::RepoFileFactCacheKey>,
+    ),
+    String,
+> {
+    repo_exposure_seam_limit()?;
+    let mut files = discover_analyzable_rust_corpus(root, config)?.analyzable;
+    files.sort();
+    let inputs = workspace_key_inputs(root, config);
+    let mut builder = FilesContentHashBuilder::new();
+    let mut keys = Vec::with_capacity(files.len());
+    for path in files {
+        cancellation::checkpoint()?;
+        let bytes = std::fs::read(root.join(&path))
+            .map_err(|error| format!("read {} for cache export: {error}", path.display()))?;
+        let key = super::seam_cache::RepoFileFactCacheKey::new(&path, &bytes);
+        builder.push_digest(&path, key.content_hash());
+        keys.push(key);
+    }
+    let key = inputs.cache_key(root, builder.finish());
+    key.require_reusable()?;
+    Ok((key, keys))
 }
 
 impl WorkspaceKeyInputs {
@@ -4862,6 +5054,10 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         for path in ["full", "compact", "counts", "review", "rerun"] {
             let root = make_tempdir(&format!("stream-moved-{path}"))?;
             let lib = root.join("src/lib.rs");
+            write_file(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+            )?;
             write_file(&lib, ORIGINAL)?;
             write_file(
                 &root.join("tests/basic.rs"),
@@ -5705,6 +5901,105 @@ pub fn classify(amount: i32, service: &mut Service) -> Result<Quote, Error> {
         }
 
         let _ = std::fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs()
+    -> Result<(), String> {
+        use crate::analysis::seams::SeamGripClass;
+        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../fixtures/owner_return_pin_fallible_literal/input");
+        let config = RiprConfig::default();
+        for mutation in ["replacement", "inverted"] {
+            let root = make_tempdir(&format!("fallible-warm-{mutation}"))?;
+            for file in [
+                "Cargo.toml",
+                "Cargo.lock",
+                "src/lib.rs",
+                "src/test_support.rs",
+            ] {
+                let source =
+                    std::fs::read_to_string(fixture.join(file)).map_err(|e| e.to_string())?;
+                write_file(&root.join(file), &source)?;
+            }
+            assert!(
+                crate::analysis::workspace::verified_anyhow_identity(&root).is_some(),
+                "prepare canonical fixture dependencies first: cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml (same CARGO_HOME)"
+            );
+            let full = inventory_classified_seams_at(&root)?;
+            let compact = inventory_compact_classified_seams_at_with_config(&root, &config)?;
+            for inventory in [&full, &compact] {
+                let answer = inventory
+                    .iter()
+                    .filter(|s| s.seam.owner() == "src/lib.rs::answer")
+                    .collect::<Vec<_>>();
+                assert_eq!(answer.len(), 1, "exact nonempty owner subject");
+                assert_eq!(answer[0].class, SeamGripClass::StronglyGripped);
+            }
+            let key = workspace_cache_key_at_with_config(&root, &config)?;
+            let full_cache = RepoSeamFactCache::at(&root);
+            let compact_cache = RepoSeamFactCache::at_compact_classified(&root);
+            for cache in [&full_cache, &compact_cache] {
+                assert!(matches!(
+                    cache.load_classified_seams_with_fallback(&key),
+                    CacheLoad::Hit(_)
+                ));
+                cache.store_classified_seams_with_limit(&key, &[], None, 10)?;
+            }
+            // A distinct writer payload demonstrates both actual warm readers
+            // serve the cached entry, rather than merely repeating a cold pass.
+            assert!(inventory_classified_seams_at(&root)?.is_empty());
+            assert!(inventory_compact_classified_seams_at_with_config(&root, &config)?.is_empty());
+            // Repo grip uses its separate, existing oracle heuristic. Cache
+            // currentness must be checked independently of that classification:
+            // use a distinct cached class that no cold run here produces.
+            let mut marked_full = full.clone();
+            let mut marked_compact = compact.clone();
+            for item in marked_full.iter_mut().chain(marked_compact.iter_mut()) {
+                item.class = SeamGripClass::Intentional;
+            }
+            full_cache.store_classified_seams_with_limit(&key, &marked_full, None, 10)?;
+            compact_cache.store_classified_seams_with_limit(&key, &marked_compact, None, 10)?;
+            for inventory in [
+                inventory_classified_seams_at(&root)?,
+                inventory_compact_classified_seams_at_with_config(&root, &config)?,
+            ] {
+                assert!(
+                    inventory
+                        .iter()
+                        .all(|s| s.class == SeamGripClass::Intentional)
+                );
+                assert_eq!(inventory.len(), 1, "actual marked warm entry");
+            }
+            if mutation == "replacement" {
+                write_file(
+                    &root.join(".cargo/config.toml"),
+                    "[source.crates-io]\nreplace-with='fake'\n[source.fake]\ndirectory='vendor'\n",
+                )?;
+            } else {
+                let file = root.join("src/test_support.rs");
+                let source = std::fs::read_to_string(&file).map_err(|e| e.to_string())?;
+                write_file(&file, &source.replace("actual == 7", "actual == 8"))?;
+            }
+            assert_ne!(key, workspace_cache_key_at_with_config(&root, &config)?);
+            for inventory in [
+                inventory_classified_seams_at(&root)?,
+                inventory_compact_classified_seams_at_with_config(&root, &config)?,
+            ] {
+                let answer = inventory
+                    .iter()
+                    .filter(|s| s.seam.owner() == "src/lib.rs::answer")
+                    .collect::<Vec<_>>();
+                assert_eq!(answer.len(), 1, "mutation still analyzed");
+                assert_ne!(
+                    answer[0].class,
+                    SeamGripClass::Intentional,
+                    "{mutation}: stale marked cache entry"
+                );
+            }
+            std::fs::remove_dir_all(&root).map_err(|e| e.to_string())?;
+        }
         Ok(())
     }
 
@@ -7835,6 +8130,10 @@ pub fn check_b(x: i32) -> bool { x < 0 }
     fn changed_test_inventory_recomputes_only_directly_called_owner_seams() -> Result<(), String> {
         let root = make_tempdir("targeted-test-owner-selection")?;
         write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"pricing_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
             &root.join("src/lib.rs"),
             r#"
 pub fn discounted_total(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }
@@ -7844,6 +8143,7 @@ pub fn unrelated_total(amount: i32) -> i32 { if amount >= 50 { amount - 5 } else
         write_file(
             &root.join("tests/pricing.rs"),
             r#"
+use pricing_fixture::{discounted_total};
 #[test]
 fn discounted_total_case() {
     assert_eq!(discounted_total(100), 90);
@@ -7903,6 +8203,10 @@ fn discounted_total_case() {
     fn changed_test_inventory_selects_one_test_node_within_a_file() -> Result<(), String> {
         let root = make_tempdir("targeted-test-node-selection")?;
         write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"pricing_fixture\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(
             &root.join("src/lib.rs"),
             r#"
 pub fn discounted_total(amount: i32) -> i32 { if amount >= 100 { amount - 10 } else { amount } }
@@ -7912,6 +8216,7 @@ pub fn surcharge_total(amount: i32) -> i32 { if amount >= 50 { amount + 5 } else
         write_file(
             &root.join("tests/pricing.rs"),
             r#"
+use pricing_fixture::{discounted_total, surcharge_total};
 #[test]
 fn discounted_total_case() { assert_eq!(discounted_total(100), 90); }
 #[test]
@@ -8013,6 +8318,512 @@ fn surcharge_total_case() { assert_eq!(surcharge_total(50), 55); }
             }
             Ok(_) => Err("ambiguous direct owner must fail closed".to_string()),
         }
+    }
+
+    #[test]
+    fn changed_test_inventory_excludes_foreign_constructor_collision() -> Result<(), String> {
+        let root = make_tempdir("targeted-foreign-constructor")?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub struct Plan { pub published_payload_bytes: usize, pub suppressed_payload_bytes: usize }
+pub fn diagnostic_refresh_plan() -> Plan {
+    Plan { published_payload_bytes: 1, suppressed_payload_bytes: 0 }
+}
+pub struct Alpha;
+impl Alpha { pub fn new() -> Self { Self } }
+pub struct Beta;
+impl Beta { pub fn new() -> Self { Self } }
+use std::collections::BTreeMap;
+#[test] fn selected() {
+    let previous = BTreeMap::<usize, usize>::new();
+    let plan = diagnostic_refresh_plan();
+    assert!(plan.published_payload_bytes > 0);
+    assert!(previous.is_empty());
+}
+"#,
+        )?;
+        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lib.rs"),
+            Some("selected"),
+        )?;
+        let owners = inventory
+            .classified
+            .iter()
+            .map(|entry| entry.seam.owner())
+            .collect::<BTreeSet<_>>();
+        if inventory.selected_test_count != 1
+            || inventory.direct_call_names != ["diagnostic_refresh_plan"]
+            || owners != BTreeSet::from(["src/lib.rs::diagnostic_refresh_plan"])
+            || !inventory
+                .classified
+                .iter()
+                .any(|entry| entry.seam.expression().contains("published_payload_bytes"))
+            || !inventory
+                .classified
+                .iter()
+                .any(|entry| entry.seam.expression().contains("suppressed_payload_bytes"))
+        {
+            return Err(format!(
+                "foreign constructor changed exact owner selection: {owners:?}"
+            ));
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    fn composed_grouped_import_fixture(callable_static: bool) -> Result<PathBuf, String> {
+        let root = make_tempdir("targeted-composed-grouped-import")?;
+        write_file(
+            &root.join("Cargo.toml"),
+            "[package]\nname = \"selected_binding\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        )?;
+        write_file(&root.join("src/lib.rs"), "mod lsp;\n")?;
+        write_file(
+            &root.join("src/lsp.rs"),
+            "mod diagnostics;\n#[cfg(test)]\nmod tests;\n#[cfg(test)]\nmod support;\n",
+        )?;
+        write_file(
+            &root.join("src/lsp/diagnostics.rs"),
+            r#"
+pub struct Plan { pub published_payload_bytes: usize, pub suppressed_payload_bytes: usize }
+pub fn diagnostic_refresh_plan() -> Plan {
+    Plan { published_payload_bytes: 1, suppressed_payload_bytes: 0 }
+}
+"#,
+        )?;
+        write_file(
+            &root.join("src/lsp/support.rs"),
+            "pub static diagnostic_refresh_plan: fn() -> super::diagnostics::Plan = || super::diagnostics::Plan { published_payload_bytes: 9, suppressed_payload_bytes: 9 };\n",
+        )?;
+        let module = if callable_static {
+            "support"
+        } else {
+            "diagnostics"
+        };
+        write_file(
+            &root.join("src/lsp/tests.rs"),
+            &format!(
+                r#"
+use super::{module}::{{diagnostic_refresh_plan}};
+#[test] fn selected() {{
+    let plan = diagnostic_refresh_plan();
+    assert!(plan.published_payload_bytes > 0);
+}}
+"#
+            ),
+        )?;
+        let files = [
+            "src/lib.rs",
+            "src/lsp.rs",
+            "src/lsp/diagnostics.rs",
+            "src/lsp/tests.rs",
+            "src/lsp/support.rs",
+        ]
+        .map(|path| root.join(path));
+        let index = crate::analysis::facts::build_index(&root, &files)?;
+        assert!(
+            index
+                .functions()
+                .iter()
+                .any(|function| function.name == "diagnostic_refresh_plan"
+                    && !function.source_role.is_evidence_role())
+        );
+        assert!(
+            index
+                .tests()
+                .iter()
+                .any(|test| test.name == "selected" && test.file == root.join("src/lsp/tests.rs"))
+        );
+        assert!(
+            index
+                .files()
+                .get(&root.join("src/lsp/tests.rs"))
+                .is_some_and(|facts| !facts.used_lexical_fallback)
+        );
+        Ok(root)
+    }
+
+    #[test]
+    fn changed_test_inventory_composed_grouped_import_reaches_exact_owner() -> Result<(), String> {
+        let root = composed_grouped_import_fixture(false)?;
+        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lsp/tests.rs"),
+            Some("selected"),
+        )?;
+        assert_eq!(inventory.selected_test_count, 1);
+        assert_eq!(inventory.direct_call_names, ["diagnostic_refresh_plan"]);
+        assert!(!inventory.classified.is_empty());
+        assert!(
+            inventory.classified.iter().all(
+                |entry| entry.seam.owner() == "src/lsp/diagnostics.rs::diagnostic_refresh_plan"
+            )
+        );
+        for field in ["published_payload_bytes", "suppressed_payload_bytes"] {
+            assert!(
+                inventory
+                    .classified
+                    .iter()
+                    .any(|entry| entry.seam.expression().contains(field)),
+                "missing {field}"
+            );
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_composed_callable_static_refuses_owner() -> Result<(), String> {
+        let root = composed_grouped_import_fixture(true)?;
+        let result = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lsp/tests.rs"),
+            Some("selected"),
+        );
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        assert!(
+            matches!(
+                result,
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                })
+            ),
+            "callable static must select no production seams: {result:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_keeps_distinct_qualified_constructor_owners() -> Result<(), String> {
+        let root = make_tempdir("targeted-qualified-constructors")?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub struct Alpha;
+impl Alpha { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
+pub struct Beta;
+impl Beta { pub fn new(x: i32) -> i32 { if x > 5 { x } else { 5 } } }
+#[test] fn selected() {
+    assert_eq!(crate::Alpha::new(1), 1);
+    assert_eq!(crate::Beta::new(6), 6);
+}
+"#,
+        )?;
+        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lib.rs"),
+            Some("selected"),
+        )?;
+        let owners = inventory
+            .classified
+            .iter()
+            .map(|entry| entry.seam.owner())
+            .collect::<BTreeSet<_>>();
+        if owners != BTreeSet::from(["src/lib.rs::impl Alpha::new", "src/lib.rs::impl Beta::new"])
+            || inventory.direct_call_names != ["new"]
+        {
+            return Err(format!(
+                "qualified constructors lost owner identity: {owners:?}"
+            ));
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_refuses_unresolved_call_identity() -> Result<(), String> {
+        for (label, setup, call) in [
+            ("receiver", "", "unknown.new(1)"),
+            ("foreign-path", "", "foreign::Alpha::new(1)"),
+            ("alias", "type Alias = Alpha;", "Alias::new(1)"),
+            ("rename", "use foreign::Beta as Alpha;", "Alpha::new(1)"),
+            ("foreign-free", "", "foreign::owner(1)"),
+            ("foreign-import", "use foreign::owner;", "owner(1)"),
+            ("mixed", "", "{ owner(1); unknown.new(1) }"),
+            (
+                "same-line",
+                "",
+                "{ crate::Alpha::new(1); foreign::Alpha::new(2) }",
+            ),
+            ("generic", "", "Alpha::<u8>::new(1)"),
+            (
+                "spaced-foreign",
+                "",
+                "{ owner(1); foreign :: Alpha :: new(1) }",
+            ),
+            ("raw-foreign", "", "{ owner(1); foreign::r#Alpha::new(1) }"),
+            ("raw-free", "", "foreign::r#owner(1)"),
+            ("mixed-raw-free", "", "{ owner(1); foreign::r#owner(2) }"),
+            ("receiver-newline", "", "{ owner(1); unknown.\n owner(1) }"),
+            ("generic-parameter", "", "{ owner(1); T::new(1) }"),
+            (
+                "free-alias",
+                "use owner as renamed;",
+                "{ owner(1); renamed(1) }",
+            ),
+            (
+                "multiline-foreign",
+                "",
+                "{ owner(1); foreign::\n Alpha::new(1) }",
+            ),
+        ] {
+            let root = make_tempdir(&format!("targeted-unresolved-{label}"))?;
+            let parameters = if label == "generic-parameter" {
+                "<T>"
+            } else {
+                ""
+            };
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    r#"
+pub struct Alpha;
+impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}
+pub fn owner(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }}
+{setup}
+#[test] fn selected{parameters}() {{ assert_eq!({call}, 1); }}
+"#
+                ),
+            )?;
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            match result {
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                }) => {}
+                other => {
+                    return Err(format!(
+                        "{label} must retain a named unresolved limitation: {other:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_refuses_competing_bare_bindings() -> Result<(), String> {
+        let body =
+            "let _ = std::collections::BTreeMap::<usize, usize>::new(); assert_eq!(owner(1), 1);";
+        let mut controls = [
+            "use crate::support::owner;",
+            "use self::support::{owner};",
+            "use crate::support::*;",
+            "use crate::{support::*};",
+            "use crate::support::r#owner;",
+            "use crate::support::{r#owner};",
+            "use crate::support::owner as r#owner;",
+        ]
+        .into_iter()
+        .map(|import| {
+            (
+                import.to_string(),
+                format!(
+                    "#[cfg(test)]\nmod support {{\n    pub fn owner(x: i32) -> i32 {{ x }}\n}}\n#[test] fn selected() {{ {import} {body} }}"
+                ),
+            )
+        })
+        .collect::<Vec<_>>();
+        controls.push((
+            "lexical-support".into(),
+            format!("#[cfg(test)]\nmod support {{\n    pub fn owner(x: i32) -> i32 {{ x }}\n    #[test] fn selected() {{ {body} }}\n}}"),
+        ));
+        controls.push((
+            "module-value".into(),
+            format!("#[cfg(test)]\nmod tests {{\n    const owner: fn(i32) -> i32 = |x| x;\n    #[test] fn selected() {{ {body} }}\n}}"),
+        ));
+        for (label, tests) in controls {
+            let root = make_tempdir("targeted-competing-bare-binding")?;
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    r#"
+pub fn owner(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }}
+pub struct Alpha;
+impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}
+pub struct Beta;
+impl Beta {{ pub fn new(x: i32) -> i32 {{ if x > 1 {{ x }} else {{ 1 }} }} }}
+{tests}
+"#
+                ),
+            )?;
+            if label != "module-value" {
+                let index = crate::analysis::facts::build_index(&root, &[root.join("src/lib.rs")])?;
+                assert!(
+                    index.functions().iter().any(|function| {
+                        function.name == "owner" && function.source_role.is_evidence_role()
+                    }),
+                    "{label}: fixture must contain the competing evidence-only helper"
+                );
+            }
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            match result {
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                }) => {}
+                other => {
+                    return Err(format!(
+                        "{label} must refuse competing bare binding: {other:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_preserves_exact_constructor_owner() -> Result<(), String> {
+        let root = make_tempdir("targeted-exact-constructor")?;
+        write_file(
+            &root.join("src/lib.rs"),
+            r#"
+pub struct lower;
+impl lower { pub fn new(x: i32) -> i32 { if x > 0 { x } else { 0 } } }
+pub struct Beta;
+impl Beta { pub fn new(x: i32) -> i32 { if x > 5 { x } else { 5 } } }
+#[test] fn selected() { assert_eq!(crate::lower::new(1), 1); }
+"#,
+        )?;
+        let inventory = inventory_changed_test_classified_seams_at_with_config_node(
+            &root,
+            &RiprConfig::default(),
+            Path::new("src/lib.rs"),
+            Some("selected"),
+        )?;
+        let owners = inventory
+            .classified
+            .iter()
+            .map(|entry| entry.seam.owner())
+            .collect::<BTreeSet<_>>();
+        if owners != BTreeSet::from(["src/lib.rs::impl lower::new"]) {
+            return Err(format!(
+                "same-name sibling leaked into selected owner seams: {owners:?}"
+            ));
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
+
+    #[test]
+    fn changed_test_inventory_refuses_shadowed_and_nested_constructor_paths() -> Result<(), String>
+    {
+        for import in [
+            "use crate::support::Alpha;",
+            "use self::support::{Alpha};",
+            "use crate::support::*;",
+            "use crate::{support::*};",
+            "use crate::support::r#Alpha;",
+            "use crate::support::{r#Alpha};",
+            "use crate::support::Alpha as r#Alpha;",
+            "use crate::support::Alpha::{self};",
+        ] {
+            let root = make_tempdir("targeted-import-shadowed-constructor")?;
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    r#"
+pub struct Alpha;
+impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}
+#[cfg(test)] mod support {{
+    pub struct Alpha;
+    impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 1 {{ x }} else {{ 1 }} }} }}
+}}
+#[test] fn selected() {{ {import} assert_eq!(Alpha::new(1), 1); }}
+#[test] fn explicit() {{ {import} assert_eq!(crate::Alpha::new(1), 1); }}
+"#
+                ),
+            )?;
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            let explicit = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("explicit"),
+            )?;
+            let explicit_owners = explicit
+                .classified
+                .iter()
+                .map(|entry| entry.seam.owner())
+                .collect::<BTreeSet<_>>();
+            if explicit.selected_test_count != 1
+                || explicit_owners != BTreeSet::from(["src/lib.rs::impl Alpha::new"])
+            {
+                return Err(format!(
+                    "{import} changed explicit root owner: {explicit_owners:?}"
+                ));
+            }
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            match result {
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                }) => {}
+                other => return Err(format!("{import} must refuse shadowed owner: {other:?}")),
+            }
+        }
+        for call in ["Alpha::new(1)", "crate::first::Alpha::new(1)"] {
+            let root = make_tempdir("targeted-shadowed-constructor")?;
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    r#"
+pub struct Alpha;
+impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 0 {{ x }} else {{ 0 }} }} }}
+mod first {{ pub struct Alpha; impl Alpha {{ pub fn new(x: i32) -> i32 {{ if x > 1 {{ x }} else {{ 1 }} }} }} }}
+#[cfg(test)] mod tests {{
+    struct Alpha;
+    impl Alpha {{ fn new(x: i32) -> i32 {{ x }} }}
+    #[test] fn selected() {{ assert_eq!({call}, 1); }}
+}}
+"#
+                ),
+            )?;
+            let result = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+            match result {
+                Err(TargetedTestInventoryError::Selector {
+                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                    selected_test_count: 1,
+                    ..
+                }) => {}
+                other => {
+                    return Err(format!(
+                        "shadowed/nested path must stay unresolved: {other:?}"
+                    ));
+                }
+            }
+        }
+        Ok(())
     }
 
     const GENERATED_SKIP_PREDICATE: &str = concat!(

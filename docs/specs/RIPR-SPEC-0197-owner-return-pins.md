@@ -78,8 +78,9 @@ wrong in three shapes, each of which an earlier candidate credited:
 
 ## Behavior
 
-An `assert_eq!` confirms a `return_value` probe's discriminator when all of
-the following hold. Each rule fails closed: when ripr cannot establish it,
+An `assert_eq!` confirms a `return_value` probe's discriminator (or an
+`error_path` probe's, for a changed early `return Err(..)`; rule 3) when all
+of the following hold. Each rule fails closed: when ripr cannot establish it,
 the owner-specific pin is refused. Before either the pin or token matching
 can supply any return-value oracle credit, bare `assert_eq!` assertions pass
 the same execution/macro-context admission below. A refused context contributes
@@ -92,9 +93,43 @@ rule only for an assertion whose context was admitted.
 
 1. Oracle shape. The assertion is one plain `assert_eq!` (never
    `assert_ne!`, `debug_assert_eq!`, a path-qualified or crate-specific
-   `*_assert_eq!`) with an exact-value or whole-object oracle kind, on a line
+   `*_assert_eq!`) with an exact-value, whole-object or `exact_error_variant`
+   oracle kind, on a line
    inside the test's own body (or borrowed from a check helper under
    rule 7), in a test without `#[should_panic]`. The
+   test's outer attributes admit only `#[test]` and the `serial_test` locks
+   `serial`, `parallel`, `file_serial` and `file_parallel`, which run the
+   body unchanged, and only with no arguments or bare lock keys;
+   `inner_attrs`, `crate`, `path` or any other argument shape refuses it.
+   Resolution reads the test's own module item list. A bare lock needs a
+   direct `use serial_test::<lock>` item there (optionally renamed, `r#`
+   normalized) and no other `use` binding the same name; imports in function
+   bodies, sibling modules, globs or macro token trees bind nothing. Both
+   forms need `serial_test` in that module to be the crate: the module binds
+   no local `serial_test` (`mod`, `use .. as`, `extern crate .. as`), holds no
+   item-position macro call, carries no attribute on a direct item other than
+   built-ins, std derives and resolved locks (`cfg_attr` and any other
+   attribute or derive macro could emit a module), and imports no glob except
+   `super::*` into an enclosing in-file module that meets the same rule. The
+   crate name is trusted: a manifest `package = ..` rename that points
+   `serial_test` at another crate is outside what source can show. An
+   `async fn` test is admitted only under `#[tokio::test]` (#5040) (never a bare
+   `test` imported from tokio), which runs the body to completion
+   on a fresh runtime and fails the test when it panics, as libtest does for a
+   plain body. `tokio` must be the crate in the test's module under the same
+   rule as `serial_test` (a module using both crates' attributes must hold
+   for both at once), and its arguments may only pick the runtime:
+   `flavor`, `worker_threads` and `start_paused`, each `= literal`;
+   `crate = ..` swaps the runtime path and `unhandled_panic = ..` changes what
+   a panic does, so they refuse. An `async` owner's return value is then read
+   through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
+   3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
+   a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
+   does not compile and refuses.
+   An assertion inside an `async` block (`tokio::spawn(async { .. })`) keeps
+   the async-context refusal below. Every other attribute (`ignore`, other
+   async runtime tests, parameterizing macros such as `rstest` or
+   `test_case`) and every inner attribute refuses the pin. The
    parser must match the exact indexed function body and the assertion's
    line/text identity uniquely. Identical same-line invocations fail closed.
    The test itself must have item ancestry through modules/item lists to the
@@ -405,7 +440,37 @@ rule only for an assertion whose context was admitted.
    `match`, `&&`/`||` or skipping combinator, as for the tail), and
    the pinned value is exactly `None` (or an `Err(..)` call). bytesize's
    `as_whole_units` (`return None;` beside a `Some(self.0 / unit)` tail) is
-   the motivating shape. An owner
+   the motivating shape. ripr files a changed `return Err(..);` as both a
+   `return_value` and an `error_path` probe; this gate admits both, and
+   their pin is an `exact_error_variant` assertion such as
+   `assert_eq!(check(20), Err(String::from("big")))` (RIPR-SPEC-0231
+   example 5). An `error_path` probe gets an established return path only
+   on an early `return Err(..)` or on the owner's tail, under the same
+   rules as a `return_value` probe there; on any other line (a `let`, a
+   `map_err(..)?` statement) it gets none. The expected `Err(..)`,
+   `Ok(..)`, `Some(..)` or `None` resolves in the test's scope, so a test
+   file that declares, binds or imports that name by name refuses the
+   pin. A test file's glob import does not: `use super::sub::*;` in a test
+   module is routine, and refusing on it withdrew credits the corpus pins
+   (`cell-0197-ok-return-path`). The same holds the other way round for a changed
+   early `return Some(..);` (or `return Ok(..);`): every other `return` and
+   the tail are exactly `None` (or one `Err(..)` call), and the pinned value
+   must be `Some(..)` (or `Ok(..)`). A `?` builds only `None` (or `Err`), so
+   it is not a second source here. Because the other exits are read by
+   their spelling, an owner file that binds either name the gate relies on
+   (`Some` and `None`, or `Ok` and `Err`) as a value (a `const`, `fn`, pattern binding or import, or a glob it
+   cannot see through) refuses an early `return Err(..);`, `return Some(..);`
+   or `return Ok(..);`. An early `return None;` keeps its earlier rule: it
+   does not read the binding scan, so an owner file's opaque glob does not
+   withdraw a pin it already earned.
+   A bare `None` (or `Ok`, `Err`, `Some`) in a `match` arm or `if let`
+   pattern names the variant, since a pattern may not shadow it (E0530), so
+   it is not such a binding unless the file carries a
+   `#![no_implicit_prelude]` attribute (a comment naming it does not count). The propagation witness of a changed
+   `return Some(..);` (or `Ok(..)` / `Err(..)`) around a call-free payload
+   completes only when the owner's return sink is that same constructor on
+   the changed line, so an identical value returned elsewhere is a
+   different exit; a returned call result stays a candidate. An owner
    body that invokes any macro outside a fixed non-returning set
    (`assert!`, `format!`, `panic!`, `vec!`, ...), however it is spaced
    (`ensure !(..)`), leaves the return paths unestablished.
@@ -414,7 +479,10 @@ rule only for an assertion whose context was admitted.
    and refuses the pin. Only bare standard names qualify; qualified paths stay unknown because
    their roots can be rebound.
    Escape keywords or nested/ambiguous invocation syntax in opaque macro operands
-   also refuse it; nested expansion is not interpreted. Any visible
+   also refuse it; nested expansion is not interpreted, except that a bare,
+   unqualified nested `matches!` expands to one `match` over operands the
+   scan already reads, so it is admitted and its name joins this binding
+   check (see "Literal `matches!` pins"). Any visible
    workspace definition/import binding of a trusted macro, a foreign glob,
    `macro_use`, `no_implicit_prelude`, or macro-generation arguments naming a
    trusted macro used by that test refuses the pin. This scan
@@ -706,6 +774,245 @@ rule only for an assertion whose context was admitted.
    pin), so every family that consumes the shared admission (`return_value`,
    `error_path`, `predicate`) sees one answer.
 
+### Rule 7a: a fallible literal check (#4478)
+
+A bounded extension separate from accepted rule 7.
+This slice targets only a parameterless free owner with an unconditional `u8`
+literal tail, observed through one test-only helper. The frozen acceptance is
+UB-review `03f351a1e32bba33dbe5090fb428143e85ee3b21`,
+`fixtures/ripr-shadow-813/helper-exact`: the owner returns `7`, the helper
+binds `let actual = super::answer();`, checks `ensure!(actual == 7);`, ends
+in `Ok(())`, and the collected `Result<()>` test ends in `check_answer()`.
+The helper and test are top-level items in the out-of-line module declared by
+`#[cfg(test)] #[path = "test_support.rs"] mod tests;` in the library root.
+
+The initial adapter admits a standalone owning package at the analysis root.
+Its library root has exactly the owner and one module declaration; the child
+file has exactly the canonical import, helper and test. Additional declarations,
+workspace-member ownership and unrecognized token forms yield no receipt. This
+closed grammar is intentionally narrower than general helper admission.
+
+All premises below must come from the same immutable index and dependency
+snapshot; a strong related oracle never substitutes for a missing premise.
+
+1. Owner/value identity. The parser uniquely identifies the changed owner's
+   whole function, its `SymbolId`, source file/body digest and exact literal
+   span. Its signature has no parameters, generics or receiver and explicitly
+   returns primitive `u8`; its complete body is one decimal integer literal
+   in `0..=255`, optionally suffixed `u8`. That expression is the probe's
+   changed expression and exact location. No attributes may conditionally
+   replace the owner, and no lexical fallback, early exit or macro participates.
+   A local return sink must belong to that same owner and literal span. Equal
+   numbers at other locations, in siblings or in expected operands grant nothing.
+2. Module/call identity. The helper and collected test are unique, ordinary,
+   non-async, parameterless, non-generic top-level functions in the same file.
+   The helper's established source role is `CfgTestModule`. For the initial
+   out-of-line shape, existing `role_provenance` must contain exactly one
+   resolved `Module` edge from the owner's library root to that file, with
+   `requires_test = true` and no unresolved reason. Reparse and bind its parent
+   declaration coordinate, module name and exact literal `#[path]` target;
+   both the declaration and file/module attributes pass existing test-build
+   availability gates. `super::owner()` at the child's file root then names
+   the uniquely declared owner in that exact parent module. No re-export,
+   alternate parent, include edge, nested module, raw path, conditional path,
+   competing owner item/import, alias or unresolved composition qualifies.
+   The test's bare helper call must name that sole same-module helper; existing
+   parameter, pattern, local item, import and macro-binding defeats still apply.
+3. Library/macro identity. Initially accept only the canonical external
+   `anyhow` package version `1.0.100`, registry source
+   `registry+https://github.com/rust-lang/crates.io-index`, and lock checksum
+   `a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61`.
+   A bounded read-only `cargo metadata --offline --locked --format-version 1`
+   dependency receipt must resolve the owning package's nonoptional regular
+   extern binding `anyhow` to that exact package ID; spelling or a manifest
+   version requirement alone is insufficient. Before this query, capture both
+   legacy `config` and `config.toml` at every `.cargo` directory from the query
+   working directory through its filesystem ancestors, plus both files in the
+   effective `CARGO_HOME` (or Cargo's default home). Bind present bytes and
+   absent-file identities; unreadable files, indeterminate home/ancestry or
+   unresolved config paths refuse the receipt. Parse every present file, not
+   just the winning precedence entry. Initially reject any `[source]`, `paths`,
+   `[patch]` or `[replace]` entry, or config `[env]` entry setting a `CARGO_*`
+   variable. Reject ambient `CARGO_SOURCE_*`, `CARGO_REGISTRIES_*` and
+   `CARGO_REGISTRY_*` variables; never print their values. This intentionally
+   refuses even unused alternate-source settings. The metadata command has no
+   `--config` arguments; an analysis requiring unobservable consumer CLI config
+   overrides is outside this slice. Cargo's executable and ordinary registry
+   cache integrity remain stated instrument assumptions, not simulated proof.
+   Snapshot effective-home and relevant environment/config identities before
+   and after metadata; any change refuses credit. No renamed dependency,
+   path/git package, replacement/patch in any owning/workspace manifest,
+   alternate source or unresolved graph qualifies.
+   One unconditional module import is exactly `use anyhow::{Result, ensure};`
+   (member order immaterial), without aliases or globs. No item, import,
+   `extern crate`, macro definition, local binding or opaque macro can compete
+   with `anyhow`, `Result`, `ensure`, `Ok` or the helper/owner names in a relevant
+   scope, including the declaring parent. Imported `Result<()>` then denotes
+   this package's standard Result alias; `ensure!` denotes its condition-false
+   early-Err macro. Other versions/import spellings remain unsupported. The
+   dependency receipt states ordinary Cargo registry-integrity assumptions;
+   it does not certify arbitrary cached or vendored crate bytes.
+4. Helper-local observation. The helper's entire statement list is exactly
+   one immutable simple `let actual = super::owner();`, followed by one
+   message-free `ensure!(actual == <decimal u8 literal>);`, followed by tail
+   `Ok(())`. The macro has exactly one condition argument and no message/format
+   arguments: `ensure!(actual == 7, { return Ok(()); "ignored" })` can absorb
+   the failure inside genuine anyhow and is refused, not analyzed as a guard.
+   The expected literal is fixed independently of the owner, and its parsed
+   `u8` value must equal the parsed owner-tail literal value from premise 1
+   before any favorable receipt is constructed. Independence alone does not
+   establish the right discriminator: owner `7` with expected `8` fails on the
+   current source and passes after changing the owner to `8`. That inverted
+   oracle supplies no new observation credit and no receipt-bound propagation
+   witness. (Since #6617 the constant tail `7` completes its own propagation
+   witness under "Constant owner tails"; that settles propagation only and
+   grants this oracle nothing.)
+   Value equality is checked only for this already source-bound literal pair;
+   it is not token matching or credit for an unrelated equal number. The
+   local's only references are its declaration and the whole left comparison operand.
+   Parser identities bind the call, let, comparison and oracle line/text to
+   this helper. No intervening statement, use, rebinding, mutation, borrow,
+   conversion, second owner call, message argument, nested invocation,
+   conditional, closure, attribute or additional return is admitted. Neither
+   self-derived expectations nor unrelated numerically equal locals qualify.
+5. Error forwarding/execution. The helper and test both return the verified
+   imported `Result<()>`. The test's entire body is the sole tail expression
+   `check_answer()`; it passes existing collected-test ancestry, availability,
+   standard libtest and outcome-attribute gates. Cargo's target inventory must
+   identify the declaring root as the owning library target with test collection
+   enabled, and its parsed manifest must retain the default/explicit standard
+   harness; `test = false`, `harness = false`, custom test frameworks and unknown
+   target/harness identities refuse. Imported `anyhow::Result<()>` resolves to
+   `core::result::Result<(), anyhow::Error>` in the verified package: ordinary
+   libtest uses the standard Result Termination implementation, where unit Ok
+   succeeds and a Debug Error fails. Neither a custom Result type nor a custom
+   Termination implementation can supply this receipt. Thus a false comparison
+   returns the helper's Err unchanged to that admitted test harness. Calls used
+   as statements,
+   dropped/bound Results, `.ok()`, `.is_ok()`, catches, conversions, `unwrap`,
+   `?`, `return`, wrappers and additional statements are refused initially.
+   Helpers classified Production remain refused even if a filename or local
+   `#[test]` resembles the accepted module.
+6. Evidence/consumers. Produce one internal fallible-check receipt binding
+   owner/helper/test SymbolIds, source/body digests, module declaration/call/let/
+   assertion spans, the parsed owner-tail/independent expected literal pair
+   and its required equal-value check, and the resolved package,
+   manifest, lock and dependency-configuration identities. Only an exact match
+   of this receipt's test and oracle supplies owner-bound observation and
+   discrimination. A dedicated literal-tail adapter may establish a DirectReturn
+   witness for this exact owner/probe/sink; it requires the complete receipt,
+   embeds its provenance and recomputes the witness digest. A separate validation
+   digest binds exact source bytes/spans; the existing semantic digest retains
+   normalized owner/value relationships without adding line coordinates. Both
+   identities are validated against current inputs before credit or reuse.
+   This adapter does not alter
+   `current_path_witness`, `semantic_tokens` or numeric-token heuristics. No
+   receipt completes a witness for another owner, location, oracle or test.
+   Favorable classified caching requires all receipt inputs in its validity
+   identity; otherwise this narrow result must bypass classified reuse. A
+   generation bump alone cannot make changed dependency inputs safe.
+
+Compiler-flag boundary: ambient `RUSTFLAGS`, `CARGO_ENCODED_RUSTFLAGS`
+and readable Cargo configuration flags are identity-bound, but their compiler
+semantics are not interpreted. A changed flag input invalidates receipt/cache
+currentness; hashing does not establish that arbitrary flags preserve execution
+or qualify a compiler wrapper, custom sysroot or nonstandard harness. The adapter
+assumes ordinary Rust/compiler/libtest semantics in addition to Cargo executable
+and ordinary registry-cache integrity. Independent review reported three harmless
+flag controls preserving the 7-to-8 discriminator and no reproduced flag-based
+false promotion in this closed grammar. Other flag combinations remain untested;
+that discussion is not resolved by these limited observations. Installed
+comparison receipts must name their actual flag context and retain this limit.
+
+Acceptance/control matrix:
+
+| Subject | Runtime with answer 8 | Required static result |
+| --- | --- | --- |
+| Frozen helper-exact, unchanged source/patch/manifest/lock | one test fails | answer `exposed`, complete digest-valid owner/value witness, no gap |
+| Inverted literal oracle: current owner 7 with fixed expected 8 | one test passes (current owner 7 fails) | no favorable receipt, new observation credit or receipt-bound propagation witness |
+| Frozen helper-no-oracle | one test passes | retains `reachable_unrevealed` |
+| Frozen helper-self-expected | one test passes | no new receipt, retains non-exposed |
+| Frozen production-lookalike | one test fails | answer retains `reachable_unrevealed`; production subjects retained |
+| Shadowed ensure, an ensure message with `return Ok(())`, skipped/helper-local closure assertion, or swallowed helper Result | one test passes | no new receipt or exposure |
+| Shadowed owner, rebound actual, unrelated equal numeric local/sink | one test passes | no new receipt or exposure |
+| Aliased/unresolved owner or macro/import/dependency identity | may fail | no new receipt or exposure |
+| Workspace/ancestor/CARGO_HOME/env source replacement, unreadable config or warm-cache config mutation | may pass | no new receipt or exposure, including canonical-looking metadata/lock identities |
+| Refused/ambiguous out-of-line parent, disabled/ignored/panic-expected test, custom Result/Termination or non-libtest target | not reliable | no new receipt or exposure |
+| Existing rule-7 assert_eq helpers and numeric assert_eq control | matched controls retained | accepted admission unchanged; no generic numeric propagation change |
+
+Implementation and validation obligations:
+
+1. Retain the frozen nine-case static/runtime receipts and add the exact positive
+   public-API discriminator first. Observe its intended non-exposed-versus-exposed
+   failure on `601c89c19b4f7a741fc270ff0ff182be3dfce637`, with all refusal
+   controls and dependency/module setup assertions present. Add the inverted
+   oracle refusal discriminator with matched runtime subjects: owner7/oracle7
+   passes, owner7/oracle8 fails, and owner8/oracle8 passes. Changing only the
+   expected literal from 7 to 8 in the indexed baseline must refuse the new
+   receipt, including after a favorable warm-cache result.
+2. Extend the existing owner-pin owner with private bounded extraction and
+   composition modules under `syntax/owner_pin/` and `classify/owner_pin/`.
+   Reuse cfg/source-role provenance, body identity and call-binding defeats;
+   do not broaden `plain_check_helper` or the existing helper producer.
+3. Add a lazily memoized dependency-identity query under `analysis/workspace/`,
+   bounded to structurally eligible shapes and using the existing deadline,
+   output budget and process policy. Failure yields no receipt, without fetching,
+   running package code or changing manifests/locks. Add its exact process site
+   to the existing policy allowance, with a refusal/runtime control.
+4. Add the receipt-bound literal adapter in `classify/propagation_witness.rs`;
+   wire the same receipt into `OwnerReturnPin`/`ReturnOracleAdmission` and
+   `classifier/evidence.rs`. Keep evidence digest validation, stage decisions,
+   oracle-strength classification and generic numeric matching authoritative.
+   Update classified cache validity/generations in `seam_cache.rs` and document
+   the affected internal witness/cache contract in `docs/OUTPUT_SCHEMA.md`.
+5. Extend `tests/owner_pin_execution.rs` and the owner-pin/witness unit suites;
+   register new discriminators in traceability and the exposure-honesty corpus.
+   Require frozen exact CLI JSON/badge output end to end, actual runtime controls,
+   helper-suite preservation, warm-cache dependency/source mutations, golden
+   blast-radius and focused policy checks before a coherent implementation draft.
+   General oracle-strength work (#6764/#6670) remains with its existing owners.
+
+### Constant owner tails (#6617)
+
+Rule 7a's literal adapter stays the only route for its fallible helper
+shape. Separately, `constant_tail_witness` in
+`classify/propagation_witness.rs` completes a DirectReturn witness for a
+`return_value` probe when all of these hold:
+
+- the owner's whole body is one tail expression with no statement;
+- that expression is built only from literals, unary and binary operators
+  and parentheses (`42`, `40 + 2`, `-(1 << 3)`, `"ripr"`);
+- its normalized text is the probe's changed expression, on the probe's
+  line;
+- the owner's local return-value sink has that same text on that line.
+
+Nothing sits between such an expression and the owner's return, so every
+value it produces is the value the owner returns. Without this witness, an
+exact pin such as `assert_eq!(answer(), 42)` on `fn answer() -> u32 { 40 + 2 }`
+read as a false `weakly_exposed` gap, because a literal has no semantic
+tokens to pair with its sink.
+
+A name, call, method, cast, closure, macro, block, branch or preceding
+statement anywhere in the body yields no witness (fail closed). The witness
+settles propagation only; relation, activation and oracle strength keep
+their own rules, so a weak oracle on a constant tail keeps its gap.
+`current_path_witness`, `semantic_tokens` and the rule-7a receipt are
+unchanged. Rule 7a's refusal controls therefore check that a refused receipt
+grants no observation credit (`discriminate` is not `yes`) instead of reading
+propagation, which the rule-7a fixture's constant `u8` tail now establishes
+on its own.
+
+### Same-named module-level functions (#6544)
+
+A bare call used to refuse the pin whenever any other module-level `fn` of
+the owner's name existed. A same-package rival no longer refuses the pin at
+`establish`. Each test must instead settle its bare call on the owner through
+the shared call-identity rule (RIPR-SPEC-0172, "Same-package call identity"):
+`use super::celsius::snap;` pins `celsius::snap`, while a test that imports
+`fahrenheit::snap`, or calls a bare `snap` that nothing in scope binds, pins
+neither. A rival in another package, or one whose container is unknown,
+still refuses the pin outright.
+
 ### Bool-owner pins
 
 An owner whose signature declares `-> bool` has two values, so a bare
@@ -798,6 +1105,39 @@ a parenthesised `(a == b)`; a condition split across lines; a guard
 inside a closure, nested `fn` or async block, whose `return` leaves only
 that body; a second guard or assertion after a guard's `return`; and a
 guard in a file that binds the value name `Err`.
+
+### Literal `matches!` pins
+
+`assert!(matches!(owner(..), Ok(5)))` fails exactly when
+`assert_eq!(owner(..), Ok(5))` does, for the literal patterns below
+(RIPR-SPEC-0231 examples 6 and 23 keep these `exact_value` / strong). The
+pin reads the scrutinee as the actual side and the pattern as the expected
+value when:
+
+1. The assertion is one plain, unqualified `assert!` whose condition is
+   exactly one plain, unqualified `matches!` with nothing outside it: no
+   negation, no `&&`/`||`, no call wrapping it, and no other macro.
+   `std::matches!` and `core::matches!` stay refused, since their roots can
+   be rebound. The syntax-side macro admission lets a bare nested `matches!`
+   through and binds its name like any other invoked macro, so a workspace
+   `macro_rules! matches` still refuses.
+2. `matches!` has the scrutinee and one pattern (a trailing comma is
+   allowed, after the pattern and inside a constructor: `Some(3,)`). A
+   guard (`if ..`) or a comment inside the pattern refuses.
+3. The pattern is a literal value: `Some(..)`, `Ok(..)` and `Err(..)`
+   around further literal patterns, `None`, `true`, `false`, numeric
+   literals (optionally negated), and plain string literals. A lowercase
+   `name @ literal` binding is dropped, since it matches exactly the
+   literal. A wildcard, a bare binding, `ref`/`mut`, a range, an
+   alternative `|`, a path (`Result::Ok`), a constant, a tuple, a slice or
+   a reference refuses: each matches more than one value or names one ripr
+   does not evaluate. A pattern resolves names in the test's scope, so a
+   test file that binds a constructor name the pattern uses (`Some`,
+   `None`, `Ok`, `Err`) as a value, or holds a glob it cannot see through,
+   refuses.
+4. Every other rule above holds unchanged: the scrutinee is the owner call
+   shape, execution and macro admission, `#[should_panic]`, and the
+   return-path gate on the normalized pattern.
 
 ## Required Evidence
 
@@ -1131,7 +1471,11 @@ assertions. This repair shares the existing callback without that larger migrati
 
 - Shared admission covers Rust `return_value`, `error_path` and `predicate`
   evidence from bare `assert_eq!` invocations, a bool owner's `assert!` and
-  the lone-equality forms above. Qualified assertion macros, other
+  the lone-equality forms above, and from `assert_eq!` qualified through a
+  drop-in assertion crate (`std`, `core`, `pretty_assertions`,
+  `similar_asserts`; RIPR-SPEC-0231). The pin itself matches only the bare
+  spelling, so a qualified drop-in `assert_eq!` is refused here and its row
+  reads `assertion_not_credited`. Other qualified assertion macros, other
   oracle kinds/families and general control-flow or macro resolution retain
   their existing authorities; this is not a general execution-proof system.
 
@@ -1170,6 +1514,14 @@ assertions. This repair shares the existing callback without that larger migrati
 - Given `impl Codec { fn decode(input: u32) -> u32 }` and a free
   `fn decode`, a test asserting `assert_eq!(decode(8), 9)` does not confirm
   a change to `Codec::decode`.
+- Given `fn check(x: u32) -> Result<u32, String> { Ok(x + 0) }` changed
+  from `Ok(x)` and a test asserting `assert!(matches!(check(5), Ok(5)))`,
+  the finding reads `exposed`; `Ok(_)`, `Ok(1..=5)`, `Ok(5) | Ok(6)` and a
+  guarded pattern stay below `exposed`.
+- Given `fn lookup(k: u32) -> Option<u32>` whose changed early
+  `return Some(1 + 2);` sits beside a `None` tail and a test asserting
+  `assert!(matches!(lookup(1), Some(x @ 3)))`, the finding reads `exposed`;
+  `assert_eq!(lookup(2), None)` alone stays below `exposed`.
 - Given a trait default `next_word` and `impl Reader for Fixed` overriding
   it, a test asserting `assert_eq!(reader.next_word(), 7)` on a `Fixed`
   receiver does not confirm a change to the default.
@@ -1185,7 +1537,11 @@ assertions. This repair shares the existing callback without that larger migrati
   macros and the sole early `return None;`/`Err` source
   (`an_early_return_is_pinned_when_it_is_the_only_source_of_its_value`,
   `an_early_err_return_needs_to_be_the_only_err_source`,
-  `an_early_return_pin_admits_only_the_value_that_return_produces`);
+  `an_early_return_pin_admits_only_the_value_that_return_produces`,
+  `an_early_some_or_ok_return_is_pinned_beside_opposite_exits`,
+  `an_error_path_probe_is_pinned_like_a_changed_err_return`);
+  literal `matches!` pins
+  (`a_literal_matches_pattern_pins_the_owner_value`);
   inline constructor receivers
   (`an_inline_constructor_types_the_receiver_like_a_binding`); module-path
   calls and let-bound results (#6974:
@@ -1253,7 +1609,8 @@ assertions. This repair shares the existing callback without that larger migrati
   `owner_pin_requires_unambiguous_standard_assert_eq`, `owner_pin_refuses_ambiguous_oracle_coordinates`,
   `owner_pin_macro_ambiguity_in_other_files_and_run_memo`,
   `owner_pin_closure_call_must_share_the_bindings_live_scope`, and
-  `shared_return_admission_uses_the_outer_invocation_identity`, and
+  `shared_return_admission_uses_the_outer_invocation_identity`,
+  `serial_test_locks_keep_the_pin_and_other_attributes_refuse_it`, and
   `owner_pin_requires_test_item_ancestry_and_enabled_cfg` in the same test module.
 - Bitwise tails (#6675): `a_bitwise_or_tail_is_unconditional_but_closures_and_lazy_or_are_not`
   and `bitwise_pipe_reading_distinguishes_operand_position`; the public-API

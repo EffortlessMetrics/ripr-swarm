@@ -25,6 +25,7 @@ Linked issues:
 - #4103 (default-import and dynamic-import owner credit)
 - #4554 (workspace package-name resolution)
 - #6654 (corpus cases scored false actionable under the first draft)
+- #7315 (literal rejection equality observes the rejected reason)
 
 Linked PRs:
 
@@ -104,8 +105,8 @@ contradicting limitation. The rest is either correct but unstated
 ## Behavior
 
 Paths are relative to `crates/ripr/src/analysis/language/typescript/`.
-Paragraphs headed Rule 1 to Rule 8 mark behavior changes, numbered in
-reading order. Every other statement below is current behavior and is
+Paragraphs headed Rule 1 to Rule 11 mark behavior changes. Rules 1 to 8
+are numbered in reading order; rules 9 to 11 were added later. Every other statement below is current behavior and is
 normative.
 
 ### Verdict ladder
@@ -150,6 +151,22 @@ exactly as the bare call does. This covers the node:test ESM form
 `await test("name", fn)`. It extends the `test` root RIPR-SPEC-0027 lists;
 no accepted spec names the awaited form. An awaited subtest
 `await t.test(...)` inside a test body is not a registration.
+Before an awaited registration contributes assertions, the existing admission
+scanner must recognize its runner root at the call site. File-local helpers,
+unrelated imports and enclosing callback/loop bindings cannot turn an unused
+callback into test evidence. This fence applies to the newly supported awaited
+form; it does not change bare-root registration semantics. A sibling suite's
+helper is outside this lexical scope. Re-exports do not create local runner
+bindings, and an ESM namespace object is not a callable registration root.
+The awaited CommonJS exemption requires an immutable runner declaration and
+either ambient `require` syntax or an immutable loader created by a locally
+imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
+or runner bindings and same-spelled helper factories remain uncredited.
+Runtime module-mode and loader resolution are outside this static claim.
+The resolved test/suite kind must agree with the supported local spelling.
+Mismatched aliases (`describe as test` or `test as describe`) receive no trusted
+test record and retain a typed partial-extraction limitation, including an
+assertion-only callback with no nested test call. This does not expand aliases.
 
 ### Assertion collection
 
@@ -158,7 +175,26 @@ no accepted spec names the awaited form. An awaited subtest
   `with`. An assertion is read from an expression statement or a
   `return` argument, after removing one `await`.
 - An assertion inside a nested callback (`forEach`, `waitFor`, `act`, a
-  subtest) or inside a declaration initializer is not collected.
+  subtest) or inside a declaration initializer is not collected, except
+  the three forms RIPR-SPEC-0246 rule 2 names.
+
+**Rule 11. An inline literal table reads one concrete case per row.**
+Added after the TypeScript verdict corpus (#6686, #6654) showed
+`test.each` tables that pin a boundary scored false actionable. When a
+`test.each` / `it.each` table is an inline array, in the same call, of
+at most 64 rows that are each an inline array of literals, and the
+callback's plain parameters bind the row positions one to one, each row
+reads as the callback body with each parameter replaced by that row's
+literal: the input literals reach the boundary witness and the expected
+literal is the assertion's expected value, as a hand-written test per
+row would. Anything else keeps the row-parameter assertions and
+`typescript_table_case_unresolved`: a table held in a variable, a spread
+or non-literal cell, object rows, destructured, defaulted or rest
+parameters, a row whose length differs from the parameter count, a
+parameter used other than as a plain read, a parameter re-declared or
+shadowed in the body, a nested `function`, a template substitution, a
+regular-expression literal, a non-ASCII parameter or callback body, or a
+substituted body that does not re-parse.
 
 ### Recogniser order
 
@@ -215,10 +251,32 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 | `toMatchSnapshot`, `toMatchInlineSnapshot` | `snapshot` / medium |
 | `toHaveBeenCalled`, `toHaveBeenCalledWith`, `toHaveBeenCalledTimes`, `toHaveBeenLastCalledWith`, `toHaveBeenNthCalledWith` | `mock_expectation` / medium |
 | `toBeTruthy`, `toBeFalsy`, `toBeDefined`, `toBeUndefined`, `toBeNull`, `toBeNaN` | `smoke_only` / smoke |
-| `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty` | `relational_check` / weak |
+| `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
 | any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` |
 
-`.resolves` and `.rejects` use the same table. A snapshot never reaches
+`.resolves` uses the same table. For an unshadowed `expect` import from
+`vitest` or `@jest/globals`, `.rejects.toBe`, `.rejects.toEqual` and
+`.rejects.toStrictEqual` with exactly one concrete literal argument instead
+read `exact_error_variant` / strong: they compare the rejected reason, so
+they match an error path and cannot credit a normal return value (#7315).
+The existing literal admission also accepts safe all-literal objects.
+Their rendered oracle retains `.rejects`. Dynamic arguments, unknown
+bindings and implicit globals retain the existing table and limitations;
+negated forms retain their existing admission rules. This bounded extension
+is pinned by `typescript_rejects_literal_equality` and
+`rejection_equality_tests`.
+
+The rejected literal integrates the #6798 expected-value error-liveness
+owner: `literal_rejection_credits` reads the pinned reason from
+`expected_value_or_variant` (the promoted literal's `error_payload` stays
+`None`). On a message-only change the pinned reason must separate the old
+and new thrown messages; otherwise it must match the changed line's own
+thrown message, so a reason the changed line never produces — the
+unexercised second throw — reads `broad_error` / weak for that change.
+`rejection_literal_cannot_expose_an_unexercised_error_branch` pins this
+verdict.
+
+A snapshot never reaches
 `exposed` by itself, because only a strong oracle does; it carries
 `typescript_snapshot_discriminator_unresolved`. A mock matcher never
 reaches `exposed` either, even with a literal payload.
@@ -232,9 +290,10 @@ identifier and a template literal stay `broad_error` / weak.
 
 **Rule 4. A payload that passes on both versions is not exact.** A
 payload whose whole text is `Error` reads `broad_error` / weak, because
-every thrown error is an `Error`, unless the old side of the changed line
-throws a primitive literal (`throw "bad"` changed to
-`throw new Error("bad")`), which no class check matches;
+every thrown error is an `Error`, unless both sides throw under the same
+tokens before `throw`, one a primitive literal and the other a built-in
+error class (`throw "bad"` changed to `throw new Error("bad")`, or back),
+because no class check matches a primitive;
 `globalThis.Error` already reads `broad_error` under the uppercase-first
 gate. A second exception covers a message-only change: the changed line
 is a `throw` line or a `Promise.reject(...)` line, and every token that
@@ -242,14 +301,20 @@ differs between its old and new text lies inside a string literal in the
 message argument of the thrown or rejected error (a literal in a condition on the same line does not count). The
 literal text of a template literal counts; a `${...}` interpolation does
 not, so a changed interpolation is not message-only. On such a change a
-payload credits only if it excludes the old message. A class payload
+payload credits only if it separates the two versions: it matches
+exactly one of the old and new messages. A test that passes on the new
+side and one that pins the old message and fails on the new side both
+discriminate the change; a payload that matches both, or neither, does
+not. A class payload
 (`TypeError`, `Errors.ParseError`) reads `broad_error` / weak, because
 the same class is thrown on both versions. A string payload is a
 substring match in Jest and Vitest, so it reads `exact_error_variant`
-only when it is not a substring of the old message. The old message is
-the old-side message argument with adjacent literals of a `+` chain
+only when it is a substring of exactly one of the old and new messages.
+Each message is
+that side's message argument with adjacent literals of a `+` chain
 joined (`"ba" + "d"` is `bad`); when any operand of that chain is not a
-literal, the payload reads `broad_error` / weak. `toThrow("blank")` after
+literal, the payload reads `broad_error` / weak. A literal respelled
+with the same value (`"bad"` to `'bad'`) is not a changed token. `toThrow("blank")` after
 `"not blank"` changed to `"blank"` reads `broad_error` / weak. On any
 other change, class and string payloads keep
 RIPR-SPEC-0097's reading: a class swap, or a changed condition that
@@ -269,12 +334,15 @@ mirrors RIPR-SPEC-0238 rule 1.
 
 - Execution-context receiver (AVA, tape, node:test `t`): the table in
   RIPR-SPEC-0085. The receiver is the callback's first parameter whatever
-  its name; no runner import is required. A method outside the table, and
-  `t.assert.equal(...)`, yield no assertion.
+  its name; no runner import is required. A method outside the table
+  yields no assertion. In a test registered through a `test` or `it`
+  bound to `node:test`, `t.assert.<method>(...)` on the callback's first
+  parameter reads as legacy `node:assert` (RIPR-SPEC-0252 rule 1).
 - `node:assert` / chai `assert`: `strictEqual` and `deepStrictEqual` are
   `exact_value` / strong; `equal` is strong only under a strict module or
   the `strict` export; `deepEqual` is strong unless the module is legacy
-  `node:assert`; the other equality forms and `match` are
+  `node:assert`; a loose `equal` / `deepEqual` against a literal coercion
+  cannot reach is strong (RIPR-SPEC-0247 rule 2); the other equality forms and `match` are
   `relational_check` / weak; `ok`, chai `is*` and a callable `assert(x)`
   are `smoke_only` / smoke; `throws`, `doesNotThrow`, `rejects` and
   `doesNotReject` are `broad_error` / weak, except as rule 10 states. A binding shadowed in the test
@@ -299,17 +367,24 @@ strong:
   of the message, as Jest matches `toThrow("...")`.
 - `node:assert` `throws` or `rejects` (not chai `assert`, whose
   signature differs) whose second argument is a regex literal anchored
-  with `^` and `$`, with no unescaped `|` outside a character class, or
-  an all-literal object whose `message` is a string literal.
+  with `^` and `$`, with no unescaped `|` outside a character class and
+  no repeated wildcard (`.`, a character class, an escaped class such as
+  `\S`, or a group followed by `*`, `+` or `{`), or an all-literal object
+  whose top-level `message` is a string literal.
 
 Rule 4's message-only guard applies to all of them: on a message-only
-change, a chai string must not be a substring of the old message (as
-rule 4 assembles it), an object `message` must not equal it, and an
+change, a chai string must be a substring of exactly one of the old and
+new messages (as rule 4 assembles them), an object `message` must equal
+exactly one of them, and an
 anchored regex credits only when ripr can match it as a plain literal
-(no metacharacters between the anchors other than escapes) whose text,
-after removing a leading `Identifier: ` prefix (`node:assert` tests the
-regex against `String(err)`, such as `Error: blank`), differs from the
-old message; otherwise each reads `broad_error` / weak. A
+(no flags other than `u`, no metacharacters between the anchors other
+than escapes) whose text equals `String(err)` on exactly one side.
+`node:assert` tests the regex against `String(err)`: ripr knows it as
+`Name: message` for a built-in error class (`Error`, `TypeError`,
+`RangeError`, `SyntaxError`, `ReferenceError`, `EvalError`, `URIError`)
+with a non-empty message, and as the value of a thrown primitive; a user
+class may set any `name`, so it does not credit. Otherwise each reads
+`broad_error` / weak. A
 class argument, an unanchored regex, an identifier and a template literal
 stay `broad_error` / weak, as do `doesNotThrow` and `doesNotReject`.
 
@@ -418,8 +493,12 @@ branch, the observed expression also references the owner when it names,
 as a whole identifier, the `local` of an `import { owner as local }` that
 gives the same test its `ImportAliasOwnerCall` relation. The one-hop
 initializer accepts the same local. This makes RIPR-SPEC-0102's stated
-`exposed` class hold. A default-import local is not covered (see
-Non-Goals).
+`exposed` class hold. RIPR-SPEC-0251 extends this to a renamed default
+import of a default-exported owner, and its rule 2 drops either local
+from owner credit when a body-local destructuring names it
+(`const { p } = helpers`). For the alias rename this also drops the
+`ImportAliasOwnerCall` relation; a default import keeps its
+`ImportedOwnerCall` relation, which the import record proves.
 
 ### Static limits
 
@@ -446,8 +525,13 @@ calls written in the test file; config-level mocks (`setupFiles`,
 discriminate Unknown, `static_limit_kind: mocked_module`,
 `gap_state: static_limitation` and `typescript_mock_only_observer`. The
 mock specifier resolves from the test file and the import source from the
-owner file; both must name the same module. An unresolved mock specifier
-counts as a match (fail closed). Other ladder results are unchanged.
+owner file; both must name the same module, and the same callee's module
+must be mocked in every such file (files that mock different callees each
+run the other callee for real, so `exposed` stands). An unresolved mock
+specifier counts as a match, and so does an unresolved non-relative
+specifier whose last segment names the resolved module's file or
+directory (fail closed: its identity is unknown, and the cost is an
+abstention, not a credit). Other ladder results are unchanged.
 
 Otherwise a static limit is advisory and never moves the class. An
 `exposed` finding then keeps `static_limit_kind`, the limit's `missing`
@@ -466,6 +550,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    `exposed` from a snapshot, which is what RIPR-SPEC-0027's "weak /
    static-limited" protects. RIPR-SPEC-0027 is amended. Rejected: weak,
    which would split TypeScript from Rust for no class difference.
+   Amended by RIPR-SPEC-0247 rule 3: an inline snapshot with literal text
+   reads `snapshot` / strong.
 2. **Value-family guard.** Adopted: the code's guard on ReturnValue and
    FieldConstruction, because it is the fail-closed reading and existing
    tests pin it (`ts_returnvalue_unrelated_strong_assertion_downgrades`).
@@ -474,8 +560,8 @@ rejected alternative. Any can be reversed later without touching the rest.
    assertions.
 3. **Alias rename (D2).** Adopted: rule 7, alias arm only, because
    RIPR-SPEC-0102 is accepted and states the class stays `exposed`. A
-   default-import local gets no new credit, because RIPR-SPEC-0102 puts
-   default imports out of scope. Rejected: amend
+   default-import local got no credit here, because RIPR-SPEC-0102 puts
+   default imports out of scope; RIPR-SPEC-0251 now adds it. Rejected: amend
    RIPR-SPEC-0102 to `weakly_exposed`, which would keep a false downgrade
    of the most direct discriminator.
 4. **Substring owner match (D3).** Adopted: rule 6 in the value branch
@@ -519,7 +605,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 11. **Mock strength.** Adopted: `mock_expectation` / medium, so a mock
     matcher never yields `exposed`, matching RIPR-SPEC-0231 step 9.
     Rejected: strong for `toHaveBeenCalledWith` with literals, which no
-    spec promises.
+    spec promises. Amended by RIPR-SPEC-0247 rule 1: an all-literal
+    payload on a test-local mock the owner calls once through a parameter
+    reads `mock_expectation` / strong.
 12. **chai and `node:assert` message checks (#6686).** Adopted: rule 10,
     because the corpus mutants show the first draft's `broad_error`
     reading was a false actionable verdict for a literal message check,
@@ -527,6 +615,18 @@ rejected alternative. Any can be reversed later without touching the rest.
     weak, which leaves those cases scored false actionable (#6654).
     Rejected: credit any `throws` argument, because a bare or unanchored
     regex can admit both messages.
+13. **Message-only payload reading (#6798).** Adopted: a payload credits
+    when it matches exactly one of the old and new messages. Rejected:
+    "excludes the old message", the first draft, because the corpus
+    scores tests that pin the old message and fail on the new one
+    (`jest-spec0234-ex12`, `mocha-spec14-chai-throw-string`) and those
+    discriminate the change, while a payload that matches neither
+    message fails on both versions whenever the throw runs and so
+    separates nothing.
+14. **Literal tables (#6798).** Adopted: rule 11, because a literal row
+    is the same evidence as a hand-written test with those literals.
+    Rejected: resolve tables held in a `const`, which needs scope
+    resolution the adapter does not have.
 
 ## Required Evidence
 
@@ -537,9 +637,11 @@ rejected alternative. Any can be reversed later without touching the rest.
   fixture `typescript_tothrow_exact_oracle` does not move: its change
   (`input === ""` to `input.trim() === ""`) is not message-only, so its
   class, string and object payloads all stay `exact_error_variant`.
-- Rules 1, 7 and 10 move a finding to a stronger class only for an
-  awaited root (rule 1), an alias-rename local (rule 7) or a literal
-  chai or `node:assert` message check (rule 10).
+- Rules 1, 7, 10 and 11 move a finding to a stronger class only for an
+  awaited root (rule 1), an alias-rename local (rule 7; via
+  RIPR-SPEC-0251, also a renamed default import), a literal
+  chai or `node:assert` message check (rule 10) or an inline literal
+  table row (rule 11).
 - Rule 8 is the only path to a TypeScript `static_unknown`, and an
   `exposed` finding never carries `typescript_mock_only_observer`.
 - No TypeScript finding has class `reachable_unrevealed`.
@@ -548,17 +650,18 @@ rejected alternative. Any can be reversed later without touching the rest.
 
 ## Non-Goals
 
-- No collection of assertions inside nested callbacks or subtests.
+- No collection of assertions inside nested callbacks or subtests,
+  except the literal `forEach`, returned or awaited `.then` and awaited
+  `t.test` forms of RIPR-SPEC-0246 rule 2.
 - No resolution of custom matchers, `expect.extend`, or helper bodies.
 - No expected-value liveness check for ReturnValue or ErrorPath.
 - No infection or propagation modeling.
 - No change to the per-test display oracle (filed separately).
 - No new credit for a default-import local in the observation guard.
-  RIPR-SPEC-0102 puts default imports out of scope, and RIPR-SPEC-0095
-  does not follow default imports through re-export chains. A
-  default-import call whose local name differs from the owner's name
-  keeps `import_path_affinity` and `weakly_exposed`; a default import
-  bound under the owner's own name stays `exposed` (example 17).
+  Superseded by RIPR-SPEC-0251: a renamed default import of a
+  default-exported owner from the owner's own module now counts as the
+  owner; RIPR-SPEC-0095 still does not follow default imports through
+  re-export chains.
 - No change to Rust or Python oracle classification.
 
 ## Acceptance Examples
@@ -600,7 +703,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
    `test("price", ({ expect }) => { expect(price(150)).toBe(130); })`:
    `exposed` (unchanged, measured in review).
 10. `[150].forEach((v) => { expect(price(v)).toBe(130); });`: oracle
-    `unknown`, `weakly_exposed` (unchanged).
+    `unknown`, `weakly_exposed` (unchanged). Amended by RIPR-SPEC-0246
+    rule 2: the literal-array `forEach` body is collected, `exposed` when
+    the assertion pins the changed value.
 11. `if (ok) { expect(price(150)).toBe(130); }`: `exposed` (unchanged).
 12. `src/lib.ts` is `export function parse(s: string): string { if (s ===
     "") { throw new Error("empty"); } return s; }`, formatted with the
@@ -647,8 +752,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
     base body. `import price from "../src/lib"` and
     `expect(price(150)).toBe(130)`: `exposed` (unchanged).
     `import cost from "../src/lib"` and `expect(cost(150)).toBe(130)`:
-    `import_path_affinity`, `weakly_exposed` (unchanged, measured in
-    review).
+    `import_path_affinity`, `exposed` (RIPR-SPEC-0251; this spec read
+    `weakly_exposed`).
 18. `import { price as p } from "../src/lib";` and
     `expect(p(150)).toBe(130)`: `direct_owner_call` / high, `exposed`
     (today `weakly_exposed` with `propagation_unknown`).
@@ -691,7 +796,9 @@ to `amount - 20`, and `tests/lib.test.ts` has
 30. `src/lib.ts` is `export function save(db: Db, v: number) {
     db.write(v + 1); }`, changed to `v + 2`; test
     `save(db, 1); expect(db.write).toHaveBeenCalledWith(3)`:
-    `mock_expectation` / medium, `weakly_exposed` (unchanged).
+    `mock_expectation` / medium, `weakly_exposed` (unchanged). With
+    `const db = { write: jest.fn() }` in the test, RIPR-SPEC-0247 rule 1
+    reads `mock_expectation` / strong, `exposed`.
 31. `src/lib.ts` is `import { fee } from "./other";` plus the base
     `price`, whose line reads `return fee(amount - 10);`, changed to
     `return fee(amount - 20);`; the test
@@ -724,6 +831,21 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Test Mapping
 
+- #7315: `crates/ripr/src/analysis/language/typescript/rejection_equality_tests.rs`
+  pins literal rejection equality, resolved-value domain separation,
+  unshadowed runner imports and unchanged unresolved forms. Fixture
+  `fixtures/typescript_rejects_literal_equality` exercises the real CLI;
+  the shared evidence-promotion honesty corpus pins both verdict directions.
+- `crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs`:
+  `awaited_roots_retain_call_identity_and_complete_extraction` and
+  `awaited_unwalked_root_keeps_the_partial_extraction_disclosure` cover rule 1.
+- `crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs`: the pinned Nano ID
+  consumer covers bare/awaited registration parity, exact/smoke oracles,
+  qualification options, assertion and runner shadows, sibling-suite isolation,
+  callable local imports, unsupported registration positions,
+  and byte-identical upstream provenance through the actual CLI.
+- `fixtures/javascript_awaited_registration`: genuine JavaScript production
+  source with a separately authored Node consumer and independent runtime contrast.
 - Existing: `crates/ripr/src/analysis/language/typescript/tests.rs`:
   `ts_returnvalue_unrelated_strong_assertion_downgrades`,
   `ts_returnvalue_owner_aliased_local_observation_stays_exposed`,
@@ -747,6 +869,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Implementation Mapping
 
+- #7315: `expect_assertion_from_expression` reads the rejection modifier and
+  concrete expected argument; `TypeScriptAssertionBindings` supplies the
+  explicit runner import and existing scope filter. The existing
+  `ts_oracle_kind_matches_seam` authority handles the resulting error kind,
+  and `literal_rejection_credits` in the shared error-payload guard owner
+  reads the pinned reason for error-branch liveness.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`: rules 2 to 4, 9
   and 10
   (`expect_call_from_assertion_inner`, `call_expression_is_expect`,

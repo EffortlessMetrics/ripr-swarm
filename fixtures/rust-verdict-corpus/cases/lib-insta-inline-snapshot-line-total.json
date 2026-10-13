@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-insta-inline-snapshot-line-total",
+  "subject_id": "authored-lib-insta",
+  "diff": "cases/lib-insta-inline-snapshot-line-total.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 22
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "insta_inline_snapshot",
+  "hard_case": "An inline `@\"...\"` snapshot pins the exact rendered text, but ripr does not see the snapshot test reaching line_total (\"No test is seen calling line_total\") and leaves the oracle observation unverified, so it reports weakly_exposed.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "u64::from(item.qty) + item.cents",
+        "mutated_line": "u64::from(item.qty) + item.cents",
+        "outcome": "tests_failed",
+        "failing_test": "tests::receipt_text_is_pinned_inline",
+        "equivalence_review": "not equivalent: qty=3,cents=40 gives 43 not 120"
+      },
+      {
+        "replacement": "u64::from(item.qty - 1) * item.cents",
+        "mutated_line": "u64::from(item.qty - 1) * item.cents",
+        "outcome": "tests_failed",
+        "failing_test": "tests::receipt_text_is_pinned_inline",
+        "equivalence_review": "not equivalent: qty=3,cents=40 gives 80 not 120"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "`assert_snapshot!(render_receipt(..), @\"...\")` compares the whole receipt text, which contains every line_total and the sum; both mutants change the numbers and the inline literal fails.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

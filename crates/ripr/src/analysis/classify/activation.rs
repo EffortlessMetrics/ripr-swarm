@@ -1,4 +1,4 @@
-use super::super::rust_index::{FunctionSummary, TestSummary};
+use super::super::rust_index::{FunctionSummary, OracleFact, TestSummary};
 use super::text::{
     delimited_contents_at, enum_variant_values, exact_error_variant, path_value_is_constant,
 };
@@ -811,12 +811,8 @@ fn missing_discriminator_facts(
         missing.push(fact);
     }
     if matches!(probe.family, ProbeFamily::FieldConstruction)
-        && let Some(fact) = missing_field_value_discriminator(
-            probe,
-            owner_fn.map(|owner| owner.name.as_str()),
-            related_tests,
-            flow_sinks,
-        )
+        && let Some(fact) =
+            missing_field_value_discriminator(probe, owner_fn, related_tests, flow_sinks, index)
     {
         missing.push(fact);
     }
@@ -906,6 +902,9 @@ fn missing_boundary_discriminator(
                     )
                 })
                 .flatten()
+            })
+            .or_else(|| {
+                call_built_input_reason(owner, &parameters, related_tests, compared, &call_values)
             })
             .or_else(|| unreadable_spelled_line_reason(owner, related_tests, helper_chain));
         return None;
@@ -1059,6 +1058,19 @@ fn missing_boundary_discriminator(
         helper_chain,
         &unknown_operands,
         [left_parameter.as_deref(), right_parameter.as_deref()],
+    ) {
+        *unresolved = Some(reason);
+        return None;
+    }
+    // RIPR-SPEC-0032 (#6615): a compared parameter no row gives a value,
+    // fed by a call ripr does not evaluate (`surcharge(big_order())`),
+    // may sit on the boundary. A visible one-sided input keeps its gap.
+    if let Some(reason) = call_built_input_reason(
+        owner,
+        &parameters,
+        related_tests,
+        [left_parameter.clone(), right_parameter.clone()],
+        &call_values,
     ) {
         *unresolved = Some(reason);
         return None;
@@ -1233,6 +1245,53 @@ fn is_simple_operand(operand: &str) -> bool {
         && !masked.starts_with("if ")
         && !masked.contains(['=', '|', '{', '}'])
         && opens == closes
+}
+
+/// Why a compared parameter's input is unreadable when it comes from a
+/// call (RIPR-SPEC-0032, #6615): no row gives the parameter a value, and a
+/// direct owner call passes it an argument the syntax tree reads as built
+/// by a function or method call (`big_order()`, `build::<Order>()`,
+/// `order.amount()`) that carries no visible literal. ripr does not
+/// evaluate the callee, so which side of the boundary that call reaches
+/// is unknown, not missing. A literal-carrying call (`order(5000)`) keeps
+/// its visible value, and a parameter some row already gives a value keeps
+/// the ordinary missing-equality reading.
+fn call_built_input_reason(
+    owner: &FunctionSummary,
+    parameters: &[String],
+    related_tests: &[&TestSummary],
+    compared: [Option<String>; 2],
+    call_values: &[Vec<ParameterValue>],
+) -> Option<String> {
+    let free_owner = is_free(owner);
+    compared.into_iter().flatten().find_map(|parameter| {
+        if call_values
+            .iter()
+            .any(|row| parameter_value(row, &parameter).is_some())
+        {
+            return None;
+        }
+        let position = parameters.iter().position(|name| *name == parameter)?;
+        related_tests.iter().find_map(|test| {
+            test.body_calls()
+                .filter(|call| call.name == owner.name)
+                .find_map(|call| {
+                    let text = owner_name_call_text(&call.text, &owner.name, free_owner)?;
+                    let open = text.find(&format!("{}(", call.name))? + call.name.len();
+                    let contents = delimited_contents_at(text, open)?;
+                    let arguments =
+                        crate::analysis::syntax::fn_signature::call_argument_facts(&contents)?;
+                    let argument = arguments.get(position)?;
+                    (argument.built_by_call && owner_argument_values(test, &argument.text).is_empty())
+                        .then(|| {
+                            format!(
+                                "a related test passes `{parameter}` the result of a call (`{}`), whose value ripr does not evaluate statically, so it cannot tell which side of the boundary that call reaches",
+                                argument.text
+                            )
+                        })
+                })
+        })
+    })
 }
 
 fn computed_argument_reason(parameter: &str) -> String {
@@ -1442,10 +1501,12 @@ fn may_reach_owner_unread(
 /// oracle, the discriminator is NOT missing and this returns `None`.
 fn missing_field_value_discriminator(
     probe: &Probe,
-    owner_name: Option<&str>,
+    owner_fn: Option<&FunctionSummary>,
     related_tests: &[&TestSummary],
     flow_sinks: &[FlowSinkFact],
+    index: &crate::analysis::rust_index::RustIndex,
 ) -> Option<MissingDiscriminatorFact> {
+    let owner_name = owner_fn.map(|owner| owner.name.as_str());
     // Only meaningful when there is a StructField flow sink.
     let has_struct_field_sink = flow_sinks
         .iter()
@@ -1467,6 +1528,32 @@ fn missing_field_value_discriminator(
     // `fallback.retries` on an unrelated value would clear the fact and let
     // the shared field token promote the initializer (#4428 review).
     let field_read = constructed_field_name(&probe.expression).map(|name| format!(".{name}"));
+    // #7131: a literal pushed onto a field collection (`self.log.push(Event
+    // { sku, .. })`) is observed whole by an `assert_eq!` on that whole
+    // collection, read after the owner call directly or through a getter
+    // whose body returns the field (RIPR-SPEC-0228 Decision 2).
+    let pushed_into = owner_fn.and_then(|owner| {
+        let impl_type = super::builder_override::OwnerCall::from_symbol(&owner.id.0)
+            .and_then(|call| call.impl_type());
+        super::propagation_witness::pushed_literal_collection_path(
+            owner.body.as_str(),
+            owner.start_line,
+            probe.location.line,
+            &probe.expression,
+            &|method| {
+                impl_type.and_then(|impl_type| {
+                    super::builder_override::inherent_method_body(index, impl_type, method)
+                        .map(str::to_string)
+                })
+            },
+        )
+        .map(|path| (owner, path))
+    });
+    let pushed_literal_observed = |test: &TestSummary, assertion: &OracleFact| {
+        pushed_into.as_ref().is_some_and(|(owner, path)| {
+            pushed_collection_compared_whole(owner, path, test, assertion, index)
+        })
+    };
     let field_already_observed = related_tests.iter().any(|test| {
         test.assertions.iter().any(|assertion| {
             matches!(
@@ -1482,6 +1569,7 @@ fn missing_field_value_discriminator(
                     .is_some_and(|(read, owner)| {
                         reads_owner_result_field(&test.body, &assertion.text, read, owner)
                     }))
+                || pushed_literal_observed(test, assertion)
         })
     });
     if field_already_observed {
@@ -1499,6 +1587,53 @@ fn missing_field_value_discriminator(
             .find(|sink| sink.kind == FlowSinkKind::StructField)
             .cloned(),
     })
+}
+
+/// #7131: whether `assertion` compares the whole field collection `path`
+/// that `owner` pushes onto, read from the binding the test called `owner`
+/// on, after that call and with nothing between that may write through the
+/// binding, directly or through an inherent getter whose body returns the
+/// field. The test must call `owner` on nothing but that binding and must
+/// not copy the binding between its owner calls and the read
+/// (`binding_untouched_after_owner_call`), since another value built through
+/// the owner, or a snapshot, may carry the same changed value into the other
+/// operand.
+fn pushed_collection_compared_whole(
+    owner: &FunctionSummary,
+    path: &str,
+    test: &TestSummary,
+    assertion: &OracleFact,
+    index: &crate::analysis::rust_index::RustIndex,
+) -> bool {
+    let Some(call) = super::builder_override::OwnerCall::from_symbol(&owner.id.0) else {
+        return false;
+    };
+    super::propagation_witness::assertion_whole_collection_equality(&assertion.text, path)
+        .into_iter()
+        .any(|read| {
+            !super::reveal::owner_called_on_other_receiver(&test.body, &read.binding, call.name())
+                && super::reveal::owner_call_precedes_read(
+                    &test.body,
+                    test.start_line,
+                    &read.binding,
+                    call.name(),
+                    assertion.line,
+                )
+                && super::reveal::binding_untouched_after_owner_call(
+                    &test.body,
+                    test.start_line,
+                    &read.binding,
+                    call.name(),
+                    assertion.line,
+                )
+                && read.getter.as_deref().is_none_or(|getter| {
+                    call.impl_type().is_some_and(|impl_type| {
+                        super::builder_override::getter_plainly_reads(
+                            index, impl_type, getter, path,
+                        )
+                    })
+                })
+        })
 }
 
 /// The field a struct-literal initializer line constructs: `retries: 1,` and
@@ -2261,6 +2396,11 @@ pub(in crate::analysis) fn computed_input_parameters(
     let Some(chain) = helper_chain else {
         return Vec::new();
     };
+    // #6614: a macro-argument hop binds no argument, so no parameter
+    // value crosses it.
+    if chain.hops.iter().any(|hop| hop.through_macro) {
+        return Vec::new();
+    }
     let Some(entry) = chain.hops.last() else {
         return Vec::new();
     };
@@ -2316,6 +2456,10 @@ fn helper_transferred_rows(
     related_tests: &[&TestSummary],
     index: &crate::analysis::rust_index::RustIndex,
 ) -> Vec<Vec<ParameterValue>> {
+    // #6614: a macro-argument hop binds no argument rows.
+    if chain.hops.iter().any(|hop| hop.through_macro) {
+        return Vec::new();
+    }
     let Some(entry) = chain.hops.last() else {
         return Vec::new();
     };
@@ -3050,7 +3194,7 @@ pub(in crate::analysis) fn has_observed_boundary_equality(activation: &Activatio
         .any(|fact| fact.value.contains(" == "))
 }
 
-fn sort_value_facts(facts: &mut Vec<ValueFact>) {
+pub(super) fn sort_value_facts(facts: &mut Vec<ValueFact>) {
     facts.sort_by(|left, right| {
         left.line
             .cmp(&right.line)
@@ -5577,6 +5721,128 @@ assert_eq!(input.amount, 100);"#
     }
 
     #[test]
+    fn call_built_boundary_inputs_are_unresolved_not_missing() {
+        // #6615 / RIPR-SPEC-0032: `score(big_order())` and
+        // `score(small_order())` feed the compared parameter through
+        // calls ripr does not evaluate; the only literals are expected
+        // values, so no missing `amount == 999` is named.
+        let owner = function(
+            "pub fn score(amount: u64) -> u64 {\n    if amount > 999 { 25 } else { 0 }\n}",
+        );
+        let predicate = probe(ProbeFamily::Predicate, "amount > 999");
+        let helpers = test_with_body_calls(
+            "assert_eq!(score(big_order()), 25);\nassert_eq!(score(small_order()), 0);",
+            &[
+                (10, "assert_eq!(score(big_order()), 25);"),
+                (11, "assert_eq!(score(small_order()), 0);"),
+            ],
+        );
+        let gathered = boundary_input(&owner, &predicate, &[&helpers]);
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        let reason = gathered.unresolved_boundary.unwrap_or_default();
+        assert!(
+            reason.contains("passes `amount` the result of a call (`big_order()`)"),
+            "got {reason:?}"
+        );
+
+        // Turbofish, path and method calls are call inputs too, read from
+        // the syntax tree (a comma inside the generics does not split).
+        for argument in [
+            "build::<Order, u8>()",
+            "fixtures::order()",
+            "order.amount()",
+        ] {
+            let line = format!("assert_eq!(score({argument}), 25);");
+            let test = test_with_body_calls(&line, &[(10, line.as_str())]);
+            let gathered = boundary_input(&owner, &predicate, &[&test]);
+            assert!(gathered.activation.missing_discriminators.is_empty());
+            assert!(
+                gathered
+                    .unresolved_boundary
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains(&format!("(`{argument}`)"))),
+                "{argument}: {:?}",
+                gathered.unresolved_boundary
+            );
+        }
+
+        // The call feeding another parameter says nothing about `amount`
+        // when no row reads `amount` either (a call in its slot does).
+        let two = function(
+            "pub fn score(amount: u64, rate: u64) -> u64 {\n    if amount > 999 { rate } else { 0 }\n}",
+        );
+        let compared = test_with_body_calls(
+            "assert_eq!(score(big(), 3), 3);",
+            &[(10, "assert_eq!(score(big(), 3), 3);")],
+        );
+        let gathered = boundary_input(&two, &predicate, &[&compared]);
+        assert!(gathered.activation.missing_discriminators.is_empty());
+        assert!(gathered.unresolved_boundary.is_some());
+    }
+
+    #[test]
+    fn visible_boundary_inputs_keep_their_gap_beside_call_built_inputs() {
+        let owner = function(
+            "pub fn score(amount: u64) -> u64 {\n    if amount > 999 { 25 } else { 0 }\n}",
+        );
+        let predicate = probe(ProbeFamily::Predicate, "amount > 999");
+        let gap = |body: &str, lines: &[(usize, &str)]| {
+            let test = test_with_body_calls(body, lines);
+            let gathered = boundary_input(&owner, &predicate, &[&test]);
+            (
+                gathered.unresolved_boundary,
+                gathered
+                    .activation
+                    .missing_discriminators
+                    .iter()
+                    .map(|fact| fact.value.clone())
+                    .collect::<Vec<_>>(),
+            )
+        };
+        let missing = vec!["amount == 999".to_string()];
+        // A one-sided literal input stays the missing equality.
+        assert_eq!(
+            gap(
+                "assert_eq!(score(5000), 25);",
+                &[(10, "assert_eq!(score(5000), 25);")]
+            ),
+            (None, missing.clone())
+        );
+        // A literal-carrying call is a visible literal (existing reading).
+        assert_eq!(
+            gap(
+                "assert_eq!(score(order(5000)), 25);",
+                &[(10, "assert_eq!(score(order(5000)), 25);")]
+            ),
+            (None, missing.clone())
+        );
+        // A visible one-sided literal beside a call-built input keeps the
+        // missing equality: the visible row already names the boundary.
+        assert_eq!(
+            gap(
+                "assert_eq!(score(5000), 25);\nassert_eq!(score(big_order()), 25);",
+                &[
+                    (10, "assert_eq!(score(5000), 25);"),
+                    (11, "assert_eq!(score(big_order()), 25);"),
+                ]
+            ),
+            (None, missing.clone())
+        );
+        // Call-shaped text in a string literal or a macro is not a call
+        // input, so nothing unresolves the boundary.
+        for argument in [r#""big_order()""#, "amount!()", "base() + 1"] {
+            let line = format!("assert_eq!(score({argument}), 25);");
+            let (unresolved, _) = gap(&line, &[(10, line.as_str())]);
+            assert!(
+                unresolved
+                    .as_deref()
+                    .is_none_or(|reason| !reason.contains("result of a call")),
+                "{argument}: {unresolved:?}"
+            );
+        }
+    }
+
+    #[test]
     fn suffixed_or_shifted_arguments_are_computed_end_to_end() {
         // Review on #6796: `5usize - 1` once read as the literal 1 (the
         // `e` of `usize` passed for a float exponent), which credited the
@@ -5864,11 +6130,13 @@ assert_eq!(input.amount, 100);"#
                     caller: inner.clone(),
                     call_text: format!("score({owner_argument})"),
                     arguments: vec![owner_argument.to_string()],
+                    through_macro: false,
                 },
                 super::super::helper_transfer::HelperHop {
                     caller: entry.clone(),
                     call_text: "inner(x)".to_string(),
                     arguments: vec!["x".to_string()],
+                    through_macro: false,
                 },
             ],
             stop_above: None,

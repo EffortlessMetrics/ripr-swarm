@@ -1,6 +1,7 @@
 ripr static RIPR exposure analysis
 mode: fast
 root: fixtures/mixed_rust_typescript_preview/input
+config: <cwd>/fixtures/mixed_rust_typescript_preview/input/ripr.toml
 
 Summary: 2 probe(s), 0 exposed, 2 weakly_exposed, 0 reachable_unrevealed, 0 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 2 of 2 finding(s) unsuppressed
 
@@ -18,7 +19,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
   Changed behavior: amount >= discount_threshold
   Missing discriminator: amount == discount_threshold
-  Related test (1 of 2): tests/pricing.rs:4 below_threshold_has_no_discount (no test input reaches `amount == discount_threshold`)
+  Related test (1 of 2 matched rows): tests/pricing.rs:4 below_threshold_has_no_discount (no test input reaches `amount == discount_threshold`)
   Next step: Add boundary tests for below, equal, and above the changed threshold with exact assertions.
   Evidence: reach yes · infection weak · propagation yes · observation yes · discriminator missing
     - reach yes: Related tests appear to reach discounted_total: below_threshold_has_no_discount, far_above_threshold_discounts

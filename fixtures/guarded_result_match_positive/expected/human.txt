@@ -15,7 +15,7 @@ Start here:
   Canonical gap: gap:rust:src/lib.rs:expect_ready:error_variant:error_path:err_parseerror_invaliddata
   Changed behavior: return Err(ParseError::InvalidData)
   Discriminator (observed, advisory): ParseError::InvalidData
-  Related test (1 of 2): tests/messages.rs:12 rejects_short_payload_with_variant_pattern
+  Related test (1 of 2 matched rows): tests/messages.rs:12 rejects_short_payload_with_variant_pattern
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
     - reach yes: Related tests appear to reach expect_ready: rejects_short_payload_with_variant_pattern, rejects_unready_kind_with_exact_error_routing
     - infection yes: Reachable tests can plausibly activate this changed behavior

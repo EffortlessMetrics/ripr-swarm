@@ -591,6 +591,14 @@ impl SourceCurrentness {
     pub fn permits_candidate_action(&self) -> bool {
         matches!(self, Self::CandidateCurrent)
     }
+
+    /// Whether the producer established that the source is base-side: the
+    /// expression was deleted or moved on the candidate side. Narrower than
+    /// `!permits_candidate_action()`, which also covers the explicit unknown
+    /// of legacy and packet-driven findings.
+    pub fn is_base_side(&self) -> bool {
+        matches!(self, Self::BaseDeleted | Self::MovedOrRenamed)
+    }
 }
 
 /// Controlled enum values for [`Finding::source_currentness`]. Registered in

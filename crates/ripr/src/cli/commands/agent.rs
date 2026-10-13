@@ -8,7 +8,7 @@
 
 use crate::analysis;
 use crate::app::agent_brief::{
-    AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
+    AgentBriefPolicy, AgentBriefResolvedWorkingSet, AgentBriefSelection, select_agent_brief_seams,
 };
 use crate::app::{self, OutputFormat};
 use crate::cli::CommandError;
@@ -22,8 +22,11 @@ use crate::cli::commands_agent_support::{
     resolve_agent_brief_working_set, validate_agent_receipt_verify_path,
     validate_agent_verify_snapshot_path,
 };
-use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
+use crate::cli::commands_context::{
+    config_load_refusal, ensure_command_root, load_root_input_and_config, refuse_json_envelope,
+};
 use crate::config::{RiprConfig, load_for_root};
+use crate::core_error::CoreError;
 use crate::output;
 use crate::output::human::terminal_safe;
 use std::io::{BufWriter, Write};
@@ -207,7 +210,7 @@ fn write_agent_start_with_report(
     report: &analysis::ClassifiedSeamsReport,
 ) -> Result<AgentStartWritten, String> {
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
-    let selection = select_agent_brief_seams(
+    let mut selection = select_agent_brief_seams(
         &report.classified,
         &working_set,
         1,
@@ -220,6 +223,7 @@ fn write_agent_start_with_report(
             unknown_seam_id_hint(&options.root, &options.seam_id)
         ));
     }
+    add_agent_brief_provenance_warning(&input.root, &mut selection);
 
     let out_dir = resolve_agent_start_out_dir(&input.root, &options.out_dir);
     std::fs::create_dir_all(&out_dir)
@@ -260,35 +264,117 @@ fn write_agent_start_with_report(
 }
 
 fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
-    ensure_command_root(&options.root, "agent brief")?;
-    let (input, config) = load_root_input_and_config(&options.root)?;
+    let json = options.json;
+    match render_agent_brief(&options) {
+        Ok(rendered) => {
+            println!("{rendered}");
+            Ok(())
+        }
+        // #7331: a `--json` brief that fails after argv parsing writes the
+        // shared refusal envelope (keyed with the agent brief schema
+        // version) before the prose error reaches stderr.
+        Err(error) => Err(refuse_agent_brief(&options, error, json)),
+    }
+}
+
+/// The refusal envelope context for `agent brief --json` (#7331): the
+/// brief's own schema version, repo scope, and the caller-supplied base
+/// echoed when the working set selected one.
+fn refuse_agent_brief(options: &AgentBriefOptions, error: CoreError, json: bool) -> String {
+    if !json {
+        return error.to_string();
+    }
+    let base = match &options.working_set {
+        crate::cli::agent::AgentBriefWorkingSet::Base(base) => Some(base.as_str()),
+        _ => None,
+    };
+    refuse_json_envelope(
+        output::agent_brief::AGENT_BRIEF_SCHEMA_VERSION,
+        "repo",
+        None,
+        &options.root,
+        base,
+        error,
+    )
+}
+
+fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> {
+    ensure_command_root(&options.root, "agent brief")
+        .map_err(CoreError::repository_root_unusable)?;
+    let (input, config) = load_root_input_and_config(&options.root)
+        .map_err(|err| config_load_refusal(&options.root, err))?;
 
     let working_set = resolve_agent_brief_working_set(&input.root, &options.working_set)?;
-    let (classified, _) =
-        analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
-    let selection = select_agent_brief_seams(
+    let (classified, _) = analysis::inventory_classified_seams_at_with_config(&input.root, &config)
+        .map_err(CoreError::from)?;
+    let mut selection = select_agent_brief_seams(
         &classified,
         &working_set,
         options.max_seams,
         AgentBriefPolicy::from_config(&config),
     );
-    let rendered = output::agent_brief::render_agent_brief_json(
+    add_agent_brief_provenance_warning(&input.root, &mut selection);
+    output::agent_brief::render_agent_brief_json(
         &input.root,
         &input.mode,
         &config,
         &working_set,
         &selection,
-    )?;
-    println!("{rendered}");
-    Ok(())
+    )
+    .map_err(CoreError::from)
+}
+
+fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSelection<'_>) {
+    // A supplied diff has no base even in a committed Git checkout. Probe the
+    // same HEAD/worktree adapters used by the artifact producer instead of
+    // inferring verification provenance from either brief route's selector.
+    let provenance = crate::agent::artifact::current_git_head(root)
+        .and_then(|_| crate::agent::artifact::current_git_worktree_status(root));
+    if let Err(error) = provenance {
+        selection.warnings.push(format!(
+            "{} This root's Git/revision provenance is unavailable: {error}. Saved-patch analysis and agent brief remain supported; use an existing Git checkout with a committed HEAD and available worktree status for the snapshot/verify flow.",
+            crate::agent::artifact::VERIFY_GIT_PROVENANCE_REQUIREMENT,
+        ));
+    }
 }
 
 fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
-    ensure_command_root(&options.root, "agent packet")?;
+    let json = options.json;
+    // #7331 review: the root check is below argv parsing, so a `--json`
+    // packet run with an unusable `--root` refuses through the same
+    // envelope instead of exiting 2 with empty stdout.
+    if let Err(err) = ensure_command_root(&options.root, "agent packet") {
+        let error = CoreError::repository_root_unusable(err);
+        return Err(refuse_agent_packet(&options, error, json));
+    }
+    match render_agent_packet(&options) {
+        Ok(rendered) => {
+            print!("{rendered}");
+            Ok(())
+        }
+        // #7331: a `--json` packet that fails after argv parsing writes the
+        // shared refusal envelope (keyed with the packet schema version)
+        // before the prose error reaches stderr. This is the exact step
+        // `agent brief`'s documented `next.inspect_packet` loop drives, so
+        // the machine channel survives the failure.
+        Err(error) => Err(refuse_agent_packet(&options, error, json)),
+    }
+}
 
-    let rendered = render_agent_packet(&options)?;
-    print!("{rendered}");
-    Ok(())
+/// The refusal envelope context for `agent packet --json` (#7331): the
+/// packet schema version and repo scope.
+fn refuse_agent_packet(options: &AgentPacketOptions, error: CoreError, json: bool) -> String {
+    if !json {
+        return error.to_string();
+    }
+    refuse_json_envelope(
+        app::AGENT_SEAM_PACKET_SCHEMA_VERSION,
+        "repo",
+        None,
+        &options.root,
+        None,
+        error,
+    )
 }
 
 /// Recovery for an unknown `--seam-id`. Cold agents most often pass the
@@ -311,7 +397,7 @@ pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
     }
 }
 
-fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, String> {
+fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, CoreError> {
     let root = crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
     render_agent_packet_with_context(
         options,
@@ -322,17 +408,19 @@ fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, String> {
 fn render_agent_packet_with_context(
     options: &AgentPacketOptions,
     context: output::agent_seam_packets::PacketCommandContext<'_>,
-) -> Result<String, String> {
+) -> Result<String, CoreError> {
     if let (Some(gap_ledger), Some(gap_id)) = (&options.gap_ledger, &options.gap_id) {
-        return render_agent_packet_from_gap_ledger(&options.root, gap_ledger, gap_id);
+        return render_agent_packet_from_gap_ledger(&options.root, gap_ledger, gap_id)
+            .map_err(CoreError::from);
     }
 
     let seam_id = options.seam_id.as_deref().ok_or_else(|| {
-        "agent packet requires --seam-id or --gap-ledger with --gap-id".to_string()
+        CoreError::from("agent packet requires --seam-id or --gap-ledger with --gap-id")
     })?;
-    let config = load_for_root(&options.root)?;
-    let report =
-        analysis::inventory_classified_seams_report_at_with_config(&options.root, &config)?;
+    let config =
+        load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
+    let report = analysis::inventory_classified_seams_report_at_with_config(&options.root, &config)
+        .map_err(CoreError::from)?;
     render_agent_packet_for_seam_with_report(&options.root, seam_id, &config, &report, context)
 }
 
@@ -347,26 +435,26 @@ fn render_agent_packet_for_seam_with_report(
     config: &RiprConfig,
     report: &analysis::ClassifiedSeamsReport,
     context: output::agent_seam_packets::PacketCommandContext<'_>,
-) -> Result<String, String> {
+) -> Result<String, CoreError> {
     let entry = report
         .classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
         .ok_or_else(|| {
-            format!(
+            CoreError::seam_id_unknown(format!(
                 "agent packet seam_id {seam_id} was not found. {}",
                 unknown_seam_id_hint(root, seam_id)
-            )
+            ))
         })?;
 
     let policy = AgentBriefPolicy::from_config(config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class) {
         // #4332: a policy-omitted seam is a dead end without the listing
         // route; name it like the not-found refusals do.
-        return Err(format!(
+        return Err(CoreError::from(format!(
             "agent packet seam_id {seam_id} {reason}. {}",
             unknown_seam_id_hint(root, seam_id)
-        ));
+        )));
     }
 
     Ok(output::agent_seam_packets::render_agent_seam_packet_json_with_context(entry, context))
@@ -754,10 +842,14 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
             attempt_id,
             error,
             &after_refusal_reason(error, &refusal.narration),
+            refusal.terminal_finish.is_some(),
         )
     {
+        // A persistence miss here is a note, not a second failure: the
+        // refusal itself already printed with its cause and recovery, and a
+        // terminal attempt's verdict is unaffected (#7378).
         eprintln!(
-            "ripr: could not record the after-phase refusal on attempt `{}`: {record_error}",
+            "ripr: note: after-phase refusal narration was not persisted on attempt `{}` for `ripr agent status`: {record_error}",
             attempt_id.as_str()
         );
     }
@@ -805,21 +897,53 @@ pub(in crate::cli) fn run_agent_repair_with_identity(
 /// attempt whose receipt is missing. Every other recorded refusal happens
 /// while the attempt is still resumable and keeps the resumable authority and
 /// its concurrent-finish guard.
+///
+/// `observed_terminal_finish` must attest that THIS invocation reached the
+/// durable finish: the resumable authority's "already has an after verdict"
+/// tail is also the shape a losing concurrent after phase meets after a
+/// sibling phase committed the verdict under it — routing that narration to
+/// the terminal authority would attribute the loser's refusal to the winner's
+/// verdict. Only a phase whose own tail committed the verdict may record
+/// beside it (#7378 review).
 fn record_after_phase_refusal(
     root: &Path,
     store: Option<&Path>,
     attempt_id: &crate::app::repair_attempt::RepairAttemptId,
     error: &str,
     reason: &str,
+    observed_terminal_finish: bool,
 ) -> Result<(), String> {
     if error.contains(crate::app::repair_attempt::TRUSTED_SURFACE_REFUSAL_TAIL) {
         crate::app::repair_attempt::record_repair_attempt_terminal_receipt_refusal_from(
             root, store, attempt_id, reason,
         )
     } else {
-        crate::app::repair_attempt::record_repair_attempt_after_refusal_from(
+        match crate::app::repair_attempt::record_repair_attempt_after_refusal_from(
             root, store, attempt_id, reason,
-        )
+        ) {
+            Ok(()) => Ok(()),
+            // A terminal failure — the edit cage refusing the delta, an
+            // incomparable finish — commits the after verdict before the
+            // refusal records, so the resumable authority refuses the write
+            // by design; the narration still belongs beside the verdict,
+            // where `agent status` reads it (#7378). The fallback is gated on
+            // this phase having reached that finish itself: the same tail
+            // from the resumable authority is also what a concurrent after
+            // phase that LOST the finish commit meets, and its narration must
+            // not land beside a verdict a sibling phase committed. Any other
+            // refusal is genuine and surfaces unchanged.
+            Err(record_error)
+                if observed_terminal_finish
+                    && record_error.contains(
+                        crate::app::repair_attempt::AFTER_VERDICT_RESUMABLE_REFUSAL_TAIL,
+                    ) =>
+            {
+                crate::app::repair_attempt::record_repair_attempt_terminal_after_refusal_from(
+                    root, store, attempt_id, reason,
+                )
+            }
+            Err(record_error) => Err(record_error),
+        }
     }
 }
 
@@ -1125,7 +1249,8 @@ fn run_agent_repair_phase(
                         .as_ref()
                         .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
                 },
-            )?;
+            )
+            .map_err(|error| error.to_string())?;
             let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
                     .map_err(|error| before_phase_refusal(&seam_id, &error))?;
@@ -1793,7 +1918,8 @@ fn write_agent_repo_exposure_snapshot_with_report(
         "ready".to_string(),
         None,
         config,
-    )?;
+    )?
+    .with_rust_corpus_key(report.corpus_key.as_ref());
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -1994,7 +2120,7 @@ fn repair_after_cage_recovery_lines(
         return lines;
     }
     lines.push(format!(
-        "to recover: {uncommit}undo the refused changes, set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
+        "to recover: {uncommit}undo the refused changes, check for a git-invisible line-ending flip (`core.autocrlf` can rewrite CRLF sequences on checkout or `git stash pop` while `git status` stays clean; a pure flip on a path Git normalizes (`core.autocrlf` or a `text` attribute) is not counted as an edit, but one beside a real change hides it from `git stash`), set your test edit aside (for example `git stash`), run `ripr agent repair --root {root_arg}{store_flag} --seam-id {seam_arg} --phase before` while the gap still exists, restore the test edit (`git stash pop`), then run the new --attempt command it prints."
     ));
     lines
 }
@@ -2963,11 +3089,15 @@ mod tests {
         violated_result
     }
 
-    /// The recording dispatch routes by refusal family (#5262 review): the
-    /// trusted-surface refusal — which only ever fires after the durable
-    /// finish — records beside the committed after verdict through the
-    /// terminal authority, while every other family keeps the resumable
-    /// authority, whose concurrent-finish guard refuses beside a verdict.
+    /// The recording dispatch routes by attempt state as well as refusal
+    /// family (#5262 review, #7378): the trusted-surface refusal — which only
+    /// ever fires after the durable finish — records beside the committed
+    /// after verdict through the terminal authority. Every other family keeps
+    /// the resumable authority while the attempt is resumable; once a
+    /// terminal failure (the edit cage, an incomparable finish) has
+    /// committed the verdict, the resumable authority's guard refusal routes
+    /// the narration to the terminal authority instead of dropping it, so
+    /// `agent status` can say why the attempt ended.
     #[test]
     fn after_phase_refusal_recording_routes_trusted_surface_to_the_terminal_authority()
     -> Result<(), String> {
@@ -3008,6 +3138,7 @@ mod tests {
                 attempt_id,
                 &trusted_error,
                 "repair receipt observed repository path outside trusted edit surface: src/lib.rs. To recover: commit the production change, then start a new attempt.",
+                false,
             )?;
             let recorded = load_repair_attempt_manifest(&root, attempt_id)?;
             let refusal = recorded
@@ -3020,13 +3151,52 @@ mod tests {
                 return Err("the terminal record moved the attempt's finish".to_string());
             }
 
+            // A terminal failure family (the edit cage's refusal is the
+            // canonical case) records beside the committed verdict too: the
+            // resumable authority's guard refusal routes it to the terminal
+            // authority, so the narration reaches `agent status` (#7378). The
+            // caller attests its own tail committed the verdict.
             let other_error =
                 "repair attempt changed while the after phase ran; retry the after phase";
-            match record_after_phase_refusal(&root, None, attempt_id, other_error, "changed") {
-                Err(error) if error.contains("already has an after verdict") => {}
+            record_after_phase_refusal(&root, None, attempt_id, other_error, "changed", true)?;
+            let rerouted = load_repair_attempt_manifest(&root, attempt_id)?;
+            match rerouted.last_after_refusal {
+                Some(refusal) if refusal.reason == "changed" => {}
                 other => {
                     return Err(format!(
-                        "the resumable authority must stay guarded beside a verdict: {other:?}"
+                        "the terminal family must record beside the verdict: {other:?}"
+                    ));
+                }
+            }
+            if rerouted.after.is_none() || rerouted.state != RepairAttemptState::ReadyToFinish {
+                return Err("the terminal record moved the attempt's finish".to_string());
+            }
+
+            // A concurrent after phase that LOST the finish commit meets the
+            // same resumable guard tail, but its tail never committed the
+            // verdict: without its own terminal finish the fallback is
+            // refused, so the loser's narration cannot attribute a refusal
+            // to the winner's verdict (#7378 review).
+            let lost = record_after_phase_refusal(
+                &root,
+                None,
+                attempt_id,
+                other_error,
+                "losing phase narration",
+                false,
+            );
+            if lost.is_ok() {
+                return Err(
+                    "a losing phase's refusal must not record beside a verdict it did not commit"
+                        .to_string(),
+                );
+            }
+            let guarded = load_repair_attempt_manifest(&root, attempt_id)?;
+            match guarded.last_after_refusal {
+                Some(refusal) if refusal.reason == "changed" => {}
+                other => {
+                    return Err(format!(
+                        "the losing phase's narration replaced the winner's record: {other:?}"
                     ));
                 }
             }
@@ -3327,7 +3497,7 @@ mod tests {
             return Err("expected a confinement error, got Ok".to_string());
         };
         assert!(
-            message.contains("must stay under root"),
+            message.to_string().contains("must stay under root"),
             "unexpected error: {message}"
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
@@ -3349,7 +3519,7 @@ mod tests {
             return Err("expected a confinement error, got Ok".to_string());
         };
         assert!(
-            message.contains("must stay under root"),
+            message.to_string().contains("must stay under root"),
             "unexpected error: {message}"
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
@@ -3404,7 +3574,7 @@ mod tests {
         };
 
         assert!(
-            err.contains("must stay under root"),
+            err.to_string().contains("must stay under root"),
             "unexpected error: {err}"
         );
 

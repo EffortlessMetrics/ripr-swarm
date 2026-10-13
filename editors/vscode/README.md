@@ -47,8 +47,9 @@ server, analysis state, and next action. `ripr: Show Output` provides the logs.
 No diagnostics can mean no finding, limited analysis, or a setup problem; read
 the status before drawing a conclusion.
 
-Save files before refreshing analysis. Unsaved-buffer overlays are not enabled
-by default.
+Save files before refreshing analysis. The server analyzes on-disk state only;
+unsaved buffer content is never analyzed (any future unsaved-buffer semantics
+are owned by [issue #1625](https://github.com/EffortlessMetrics/ripr-swarm/issues/1625)).
 
 ## Requirements
 

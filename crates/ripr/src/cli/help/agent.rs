@@ -151,14 +151,24 @@ Options:
                    since the stub was computed or the new file exists.
   --json           Emit one `rust_test_stub` JSON document (schema_version
                    `0.1`) with the placement, test name, exact text, the
-                   `todo!()` fill-ins, derived inputs, and run command.
+                   `todo!()` fill-ins, derived inputs, run command, and
+                   inventory `grip_class` plus check `classification`
+                   when known. A strongly_gripped seam stays `state:
+                   ready` (exit 0) and discloses the packet/repair
+                   omission reason in `warnings` and human output.
 
 The stub calls the changed function with its real receiver and parameters,
 fills a boundary input when the changed comparison names one, and stops at a
 labelled `todo!()` for the value the behavior should produce. It compiles and
 fails until that value is written; ripr never invents the expected value.
-Side-effect and call-presence gaps, async, unsafe, and generic owners are
-refused with a named reason (exit `3`); stdout stays empty on a refusal.
+`--at --kind` still selects from that one file's seams without using
+classification to pick the seam; after selection it looks up the inventory
+grip so the stub can disclose it. A strongly_gripped seam is still a
+scaffold (`state: ready`, exit 0) and reuses the packet/repair wording
+("configured off for strongly_gripped seams and is not included in agent
+results"). Side-effect and call-presence gaps, async, unsafe, and generic
+owners are refused with a named reason (exit `3`); stdout stays empty on a
+refusal.
 "#;
 
 pub(super) const AGENT_VERIFY_HELP: &str = r#"Verify static-evidence movement between a before and after snapshot.

@@ -151,7 +151,22 @@ Test discovery:
   cross-spec contract)
 - framework-shaped verify commands for related tests when the static selector
   is known: `python -m pytest path::node` for pytest and
-  `python -m unittest module.Class.test_method` for unittest. The pytest form
+  `python -m unittest module.Class.test_method` for unittest. A literal dot
+  in a unittest path component, after removing the `.py` extension, leaves
+  module identity unresolved: omit that test's verify command while retaining
+  related-test evidence. Repair placement uses the first oracle-eligible test
+  in candidate order with a known verify command, or stays absent when none
+  exists; repair-card and context/diagnostic-witness evidence describe that
+  same selected file and test through one shared row resolver.
+  When related rows share a file and bare method name, placement carries the
+  selected source line as evidence so the card can distinguish them. Older
+  reports without that line require a unique matching row to establish card
+  identity. An incomplete, malformed, or ambiguous declared identity cannot
+  borrow a differently ranked test's oracle. With no declared repair target,
+  the diagnostic witness retains its existing related-test fallback.
+  Shell quoting cannot preserve such
+  a dot against unittest's module splitting. Ordinary quoted paths and pytest
+  file selectors retain their existing behavior. The pytest form
   runs through `python -m` so the working directory is on `sys.path` and a
   flat-layout package at the repository root imports without a `pythonpath`
   setting; bare `pytest path::node` fails collection there with
@@ -528,6 +543,12 @@ read-out: the boolean the classifier uses is derived from the surfaced
   of the same name inside the test replaces the earlier binding, and the
   test's own `import pkg.mod as alias` is not a rebinding of `alias`. Those calls also bind boundary activation, so the
   relational-boundary gate still applies to them.
+  `strong_oracle_observes_changed_effect_channel` (`direct`) credits a
+  changed write (`print`, a file write, a call on a passed collaborator, or
+  a `self` field) whose strong oracle compares the channel that write
+  reaches: captured output, the file read back, a mock call pinned with
+  arguments, or the field read through a bound receiver (RIPR-SPEC-0238
+  rule 17).
 
 These fields are advisory preview evidence; they do not change the
 classification and do not claim runtime maturity. The contract does not bump the

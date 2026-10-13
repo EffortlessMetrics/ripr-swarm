@@ -490,3 +490,39 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — python_call_argument_shape (13)
+
+Reason:
+RIPR-SPEC-0255: check discloses the loaded ripr.toml - human header gains a config: line and check JSON gains a top-level config_path member exactly when a config file loaded; fixture inputs carry ripr.toml, so both surfaces add the disclosure (#7536)
+
+Command:
+`cargo xtask goldens bless python_call_argument_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_call_argument_shape (14)
+
+Reason:
+RIPR-SPEC-0255: check discloses the loaded ripr.toml - human header gains a config: line and check JSON gains a top-level config_path member exactly when a config file loaded; fixture inputs carry ripr.toml, so both surfaces add the disclosure (#7536)
+
+Command:
+`cargo xtask goldens bless python_call_argument_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — python_call_argument_shape (15)
+
+Reason:
+RIPR-SPEC-0238 rule 17 (#7586): a mock passed for a called parameter, with the changed literal argument pinned by assert_called_once_with, discriminates the change
+
+Command:
+`cargo xtask goldens bless python_call_argument_shape --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

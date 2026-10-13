@@ -539,3 +539,63 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (15)
+
+Reason:
+RIPR-SPEC-0247 rule 1: literal toHaveBeenCalledWith on the parameter's own test-local vi.fn() reads strong; notifyStatus and notifyLiteral move to exposed
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (16)
+
+Reason:
+RIPR-SPEC-0247 rule 1: related-test rows for a credited mock payload show mock_expectation/strong, matching the exposed verdict
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (17)
+
+Reason:
+RIPR-SPEC-0247: add notifyAudit, a mock payload rule 1 refuses (name differs from the parameter), as the source finding for the mock_interaction_without_payload_proof audit case
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (18)
+
+Reason:
+RIPR-SPEC-0255: check discloses the loaded ripr.toml - human header gains a config: line and check JSON gains a top-level config_path member exactly when a config file loaded; fixture inputs carry ripr.toml, so both surfaces add the disclosure (#7536)
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+
+## Pending — typescript_jest_vitest_assertion_facts (19)
+
+Reason:
+RIPR-SPEC-0255: check discloses the loaded ripr.toml - human header gains a config: line and check JSON gains a top-level config_path member exactly when a config file loaded; fixture inputs carry ripr.toml, so both surfaces add the disclosure (#7536)
+
+Command:
+`cargo xtask goldens bless typescript_jest_vitest_assertion_facts --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

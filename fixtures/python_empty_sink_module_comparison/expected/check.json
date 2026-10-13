@@ -1,0 +1,108 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/python_empty_sink_module_comparison/input",
+  "config_path": "<cwd>/fixtures/python_empty_sink_module_comparison/input/ripr.toml",
+  "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":"fnv1a64:22d926b58d6300e8","base_revision":null,"input_identity":"sha256:f2d806de7f33e6a96619864ad9008fe4b51cd13c2955cf23ed58f7b266123539","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_constants.py:python_preview:904eec8a",
+      "canonical_gap_id": "gap:python:src/constants.py:<module>:predicate_boundary:predicate:x=1",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:python:src/constants.py:<module>:predicate_boundary:predicate:x=1",
+        "language": "python",
+        "file": "src/constants.py",
+        "owner": "<module>",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "x=1"
+
+      },
+      "classification": "weakly_exposed",
+      "severity": "warning",
+      "confidence": 0.40,
+      "probe": {
+        "id": "probe:src_constants.py:python_preview:904eec8a",
+        "family": "predicate",
+        "delta": "control",
+        "file": "src/constants.py",
+        "line": 1,
+        "expression": "x = 1",
+        "owner": "python:src/constants.py::<module>"
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"low","summary":"1 related Python test(s) found for owner `<module>`"},
+        "infect": {"state":"yes","confidence":"low","summary":"Changed Python expression can alter preview-classified predicate behavior: `x = 1`"},
+        "propagate": {"state":"weak","confidence":"low","summary":"Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink."},
+        "observe": {"state":"weak","confidence":"low","summary":"Strongest extracted Python oracle kind: `exact_value` (rank 5)"},
+        "discriminate": {"state":"weak","confidence":"low","summary":"Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior."}
+       },
+      "evidence_path": ["reach yes: 1 related Python test(s) found for owner `<module>`", "infection yes: Changed Python expression can alter preview-classified predicate behavior: `x = 1`", "propagation weak: Changed Python fallback expression can propagate through selected behavior; preview evidence does not prove the concrete downstream sink.", "observation weak: Strongest extracted Python oracle kind: `exact_value` (rank 5)", "discriminator weak: Related Python test uses a `exact_value` oracle, but static evidence does not establish discrimination of the changed behavior.", "local flow reaches unknown sink: x = 1 (line 1)", "related test tests/test_constants.py:4 test_constants uses strong exact value oracle: assert module == 2"],
+      "flow_sinks": [
+        {"kind":"unknown","text":"x = 1","line":1}
+      ],
+      "evidence": ["owner: <module>", "owner_kind: module_function", "suggested_repair_action: strengthen_existing_test", "suggested_test_file: tests/test_constants.py", "suggested_test_name: test_constants", "suggested_test_node_id: tests/test_constants.py::test_constants", "suggested_verify_command: python -m pytest tests/test_constants.py::test_constants", "suggested_verify_command_confidence: high", "suggested_test_location_reason: strengthen existing weak pytest relation", "test_framework: pytest (test_constants)", "test_verify_command: python -m pytest tests/test_constants.py::test_constants (test_constants)", "related_test_relation: syntactic_call (test_constants)", "test_oracle: exact_value strong (test_constants)"],
+      "missing": ["A strong Python oracle reaches `<module>`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output."],
+      "assertion_texts": {
+      },
+      "activation": {
+        "observed_values": [
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 1,
+      "related_tests": [
+        {
+          "name": "test_constants",
+          "file": "tests/test_constants.py",
+          "line": 4,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert module == 2"
+        }
+      ],
+      "repair_placement": {
+        "suggested_test_file": "tests/test_constants.py",
+        "suggested_test_name": "test_constants",
+        "suggested_test_node_id": "tests/test_constants.py::test_constants",
+        "verify_command": "python -m pytest tests/test_constants.py::test_constants",
+        "verify_command_confidence": "high"
+       },
+      "stop_reasons": [],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "",
+      "suggested_next_action": "",
+      "language": "python",
+      "language_status": "preview",
+      "owner_kind": "module_function",
+      "observed_sink": "assert module == 2",
+      "oracle_alignment": "orthogonal",
+      "alignment_reason": "strong_oracle_observes_different_sink",
+      "source_currentness": "candidate_current"
+    }
+  ],
+  "preview_languages": [
+    {
+      "language": "python",
+      "file_count": 1,
+      "sample_paths": ["src/constants.py"],
+      "enabled": true,
+      "analyzed": true,
+      "category": "preview_language_advisory",
+      "why": "preview adapter; advisory; may be incomplete; empty result is not Rust-grade clean"
+    }
+  ],
+  "source_subject": {"digest_algorithm":"sha256","files":[{"path":"src/constants.py","digest":"sha256:8353afe579a16d27abc038055bf713459ba6ef418c65b143b526a09dd529e500"}]}
+}

@@ -1,0 +1,34 @@
+//! RIPR-SPEC-0118 example 3: a semver-shaped greater-than comparator reached
+//! only through the public requirement API.
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Version {
+    pub major: u64,
+    pub minor: u64,
+}
+
+pub struct VersionReq {
+    major: u64,
+    minor: u64,
+}
+
+impl VersionReq {
+    pub fn parse(s: &str) -> Option<VersionReq> {
+        let (major, minor) = s.strip_prefix('>')?.split_once('.')?;
+        Some(VersionReq {
+            major: major.parse().ok()?,
+            minor: minor.parse().ok()?,
+        })
+    }
+
+    pub fn matches(&self, ver: &Version) -> bool {
+        matches_greater(self, ver)
+    }
+}
+
+fn matches_greater(cmp: &VersionReq, ver: &Version) -> bool {
+    if ver.major != cmp.major {
+        return ver.major > cmp.major;
+    }
+    ver.minor > cmp.minor
+}

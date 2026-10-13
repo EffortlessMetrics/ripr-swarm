@@ -3,7 +3,7 @@
 use super::super::admission::PythonAssertionAdmission;
 use super::super::related_tests::{oracle_operand_calls, owner_module_callees};
 use super::super::{PythonImport, PythonOwner, PythonTest};
-use crate::domain::{OracleKind, OracleStrength, RelatedTest};
+use crate::domain::{OracleKind, OracleStrength};
 use rustpython_parser::ast::{self, Expr, Mod, Stmt};
 use std::path::Path;
 
@@ -117,13 +117,10 @@ pub(in crate::analysis::language::python) fn withhold_modified_oracles(tests: &m
 /// row. Literal coincidence, a neighboring row and a nested wrapper cannot
 /// grant the changed-sink-token fallback. Reuse existing call/import authority.
 pub(in crate::analysis::language::python) fn observes_owner(
-    row: &RelatedTest,
+    text: &str,
+    test: Option<&PythonTest>,
     owner: &PythonOwner,
-    tests: &[PythonTest],
 ) -> bool {
-    let Some(text) = row.oracle.as_deref() else {
-        return true;
-    };
     if !literal_text(text) {
         return true;
     }
@@ -133,15 +130,12 @@ pub(in crate::analysis::language::python) fn observes_owner(
     ) {
         return false;
     }
-    tests
-        .iter()
-        .filter(|test| test.name == row.name && test.file == row.file)
-        .any(|test| {
-            let bindings = &test.constant_rebinding;
-            !bindings.assigns_attribute(&owner.name)
-                && owner_module_callees(test, owner).iter().any(|callee| {
-                    !bindings.rebinds(callee.split('.').next().unwrap_or(callee))
-                        && oracle_operand_calls(text, callee)
-                })
-        })
+    test.is_some_and(|test| {
+        let bindings = &test.constant_rebinding;
+        !bindings.assigns_attribute(&owner.name)
+            && owner_module_callees(test, owner).iter().any(|callee| {
+                !bindings.rebinds(callee.split('.').next().unwrap_or(callee))
+                    && oracle_operand_calls(text, callee)
+            })
+    })
 }

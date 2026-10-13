@@ -429,3 +429,55 @@ Updated:
 - `expected/check.json`
 - `expected/human.txt`
 - `expected/human-full.txt`
+
+## Pending — rust_async_fn_owner (22)
+
+Reason:
+RIPR-SPEC-0003: #7477 gives reason-specific uncertainty-resolution actions without verdict-change promises or unsupported deep/fixture-config routes; classifications, evidence, and decidable guidance unchanged.
+
+Command:
+`cargo xtask goldens bless rust_async_fn_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_async_fn_owner (23)
+
+Reason:
+RIPR-SPEC-0003: #7477 conditional assertion inspection and actual configured runner guidance; whole JSON evidence and classifications independently preserved.
+
+Command:
+`cargo xtask goldens bless rust_async_fn_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_async_fn_owner (24)
+
+Reason:
+RIPR-SPEC-0001: tail if/else sink resolved (#6781); propagation resolved, classification static_unknown on unestablished async assertion provenance (#5040), no gap claimed
+
+Command:
+`cargo xtask goldens bless rust_async_fn_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
+
+## Pending — rust_async_fn_owner (25)
+
+Reason:
+RIPR-SPEC-0197: #[tokio::test] bodies are admitted and the awaited async owner value is read (#5040), so the exact-value oracle is strong; 100/50 is not an equality input, so the predicate boundary stays weakly_exposed
+
+Command:
+`cargo xtask goldens bless rust_async_fn_owner --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`

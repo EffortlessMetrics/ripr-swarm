@@ -4,8 +4,10 @@
 //! unchanged.
 
 mod discarded_matcher_honesty;
+mod fixture_cache;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
+mod rust_corpus_projection;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
@@ -8327,8 +8329,8 @@ fn fixture_run_writes_its_facts_into_the_cache_the_runner_cleared() -> Result<()
     }
 
     with_repo_cwd(|| {
-        let name = "all_no_path_disclosure";
-        let fixture = PathBuf::from("fixtures").join(name);
+        let owned = fixture_cache::Case::new("binding")?;
+        let fixture = owned.fixture.clone();
         let workspace_cache = fixture
             .join("input")
             .join("target")
@@ -8336,7 +8338,7 @@ fn fixture_run_writes_its_facts_into_the_cache_the_runner_cleared() -> Result<()
             .join("cache");
         ignore_remove_dir_all(fixture.join("input").join("target"));
 
-        let cache_dir = super::fixture_cache_dir(name)?;
+        let cache_dir = &owned.cache;
         let stale = cache_dir
             .join("repo-file-facts")
             .join("0.2")
@@ -8362,7 +8364,7 @@ fn fixture_run_writes_its_facts_into_the_cache_the_runner_cleared() -> Result<()
             cache_dir.display()
         );
         assert!(
-            file_count(&cache_dir)? > 0,
+            file_count(cache_dir)? > 0,
             "the cleared cache must be the cache the child populates, but {} is empty",
             cache_dir.display()
         );
@@ -9339,6 +9341,68 @@ fn allow_attribute_detection_ignores_untracked_lints() {
     let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
 
     assert!(findings.is_empty());
+}
+
+#[test]
+fn allow_attribute_detection_preserves_literal_multiline_byte_lines() {
+    let text = format!(
+        "// 🦀 # noise\n{}\nconst HASH: &str = \"#\";\n{}\n dead_code,\n warnings,\n clippy::module_name_repetitions,\n reason = \"🦀 #\")]\nfn f() {{}}\n{}\n// {}\n",
+        concat!("#", "[cfg(any())]"),
+        concat!("#", "[allow("),
+        concat!("#", "![expect(unused_imports)]"),
+        concat!("#", "[allow(unsafe_code)]"),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    // The existing text scanner also recognizes attribute text in comments.
+    assert_eq!(
+        findings,
+        vec![
+            (4, "allow(dead_code)".to_string()),
+            (4, "allow(warnings)".to_string()),
+            (10, "expect(unused_imports)".to_string()),
+            (11, "allow(unsafe_code)".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn allow_attribute_detection_keeps_malformed_and_unguarded_shapes_ignored() {
+    for text in [
+        "#",
+        "#!",
+        "#[]",
+        concat!("#", "[allow]"),
+        concat!("#", "[allow(warnings"),
+        concat!("#", "[allows(warnings)]"),
+        concat!("#", "[expect = (warnings)]"),
+        concat!("#", "[allow(warning)]"),
+        concat!("#", "[allow(reason = \"warnings\")]"),
+        concat!("#", "[allow(clippy::module_name_repetitions)]"),
+    ] {
+        assert!(
+            guarded_allow_attributes_in_text(text, &guarded_allow_attribute_lints()).is_empty(),
+            "unexpected finding in {text:?}",
+        );
+    }
+}
+
+#[test]
+fn allow_attribute_detection_counts_lines_after_many_rejected_hashes() {
+    let mut text = format!("// 🦀 # # # {}\n", concat!("#", "[cfg(any())]")).repeat(128);
+    text.push_str(concat!("#", "[allow(dead_code, warnings, warnings)]"));
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (129, "allow(dead_code)".to_string()),
+            (129, "allow(warnings)".to_string()),
+            (129, "allow(warnings)".to_string()),
+        ]
+    );
 }
 
 #[test]
@@ -11489,52 +11553,6 @@ fixtures/other.rs|ExampleMarker|1|owners|different path
 }
 
 #[test]
-fn executable_allowlist_rejects_stale_row() -> Result<(), String> {
-    let allowlist = BTreeSet::from([
-        "deleted/script.sh".to_string(),
-        "demoted/script.sh".to_string(),
-    ]);
-    let stage = "\
-100644 abcdef0123456789abcdef0123456789abcdef01 0\tdemoted/script.sh
-100644 fedcba0123456789abcdef0123456789abcdef01 0\tordinary.rs
-";
-    let violations = super::executable_file_violations(&allowlist, stage);
-    if !violations.iter().any(|row| {
-        row.contains(
-            "deleted/script.sh allowlist entry is stale: path is not in git ls-files --stage; remove the entry",
-        )
-    }) {
-        return Err(format!(
-            "missing executable allowlist path must fail: {violations:?}"
-        ));
-    }
-    if !violations.iter().any(|row| {
-        row.contains(
-            "demoted/script.sh allowlist entry is stale: mode is 100644, expected 100755; remove the entry",
-        )
-    }) {
-        return Err(format!(
-            "demoted executable allowlist path must fail: {violations:?}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn executable_allowlist_accepts_live_100755_row() -> Result<(), String> {
-    let path = "packaging/npm/launcher/bin/ripr.cjs";
-    let allowlist = BTreeSet::from([path.to_string()]);
-    let stage = format!("100755 9cea22d6aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\t{path}\n");
-    let violations = super::executable_file_violations(&allowlist, &stage);
-    if !violations.is_empty() {
-        return Err(format!(
-            "a live 100755 allowlist row must still pass: {violations:?}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
 fn text_encoding_detects_only_bom_prefix() -> Result<(), String> {
     if !super::has_utf8_bom(&[0xEF, 0xBB, 0xBF, b'#']) {
         return Err("a leading EF BB BF must be detected as a BOM".to_string());
@@ -12950,7 +12968,12 @@ fn goldens_check_failure_message_is_a_repair_card() {
         },
     }];
     let violations = vec!["drift for fixture `python_field_assignment_shape`".to_string()];
-    let message = super::goldens_check_failure_message(&entries, &violations);
+    let provenance = super::GoldenDriftProvenance {
+        binary: "/work/target/debug/ripr".to_string(),
+        ripr_version: "ripr 0.11.0 (abc123)".to_string(),
+        revision: "abc123".to_string(),
+    };
+    let message = super::goldens_check_failure_message(&entries, &violations, &provenance);
     assert!(message.contains("golden-drift.md"), "{message}");
     assert!(
         message.contains("python_field_assignment_shape"),
@@ -12962,6 +12985,9 @@ fn goldens_check_failure_message_is_a_repair_card() {
         message.contains("reproduce: cargo xtask goldens check"),
         "{message}"
     );
+    // #7401: the card names the build that produced the actual side.
+    assert!(message.contains("ripr 0.11.0 (abc123)"), "{message}");
+    assert!(message.contains("/work/target/debug/ripr"), "{message}");
 }
 
 #[test]
@@ -28512,6 +28538,40 @@ upload_debug_artifacts: false
     assert!(!violations.iter().any(|v| v.contains("same-repo guard")));
 }
 
+#[test]
+fn check_droid_common_flags_missing_contents_read() {
+    let mut violations = Vec::new();
+    check_droid_common(
+        &mut violations,
+        "test.yml",
+        "review_model: \"custom:MiniMax-M3-0\"\n",
+        true,
+        true,
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must set contents: read"))
+    );
+}
+
+#[test]
+fn check_droid_common_flags_contents_write() {
+    let mut violations = Vec::new();
+    check_droid_common(
+        &mut violations,
+        "test.yml",
+        "contents: write\nreview_model: \"custom:MiniMax-M3-0\"\n",
+        true,
+        true,
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant contents: write"))
+    );
+}
+
 fn valid_droid_security_scan_yaml() -> &'static str {
     r#"
 on:
@@ -28523,6 +28583,11 @@ concurrency:
   cancel-in-progress: false
 jobs:
   droid-security-scan:
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
     env:
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
     steps:
@@ -28693,6 +28758,40 @@ fn check_droid_security_scan_flags_debug_artifact_upload() {
         violations
             .iter()
             .any(|v| v.contains("debug artifact upload"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_contents_write() {
+    let yaml = valid_droid_security_scan_yaml().replace("contents: read", "contents: write");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant contents: write"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_id_token_write() {
+    let yaml = valid_droid_security_scan_yaml()
+        .replace("contents: read", "contents: read\n      id-token: write");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant id-token: write"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_missing_contents_read() {
+    let yaml = valid_droid_security_scan_yaml().replace("      contents: read\n", "");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must set contents: read"))
     );
 }
 
@@ -29918,7 +30017,9 @@ fn assert_packet_coverage_report() -> Result<(), String> {
     let report = crate::read_text_lossy(Path::new("target/ripr/reports/file-policy.md"))?;
     let common = report
         .lines()
-        .find(|line| line.ends_with("`cargo test -p xtask --locked --offline portable_consumer`"))
+        .find(|line| {
+            line.ends_with("`cargo test -p xtask --bin xtask --locked --offline portable_consumer`")
+        })
         .ok_or("common packet coverage is absent from the policy report")?;
     let common_tests = packet_coverage_selected_tests(common)?;
     for subject in [
@@ -30019,7 +30120,7 @@ fn packet_coverage_report_fixture() -> String {
             "- line 1; host={host}; declared=all; applicable; selected=2; tests=[",
             "portable_consumer::tests::consumer_source_does_not_search_path_or_open_a_network_client, ",
             "portable_consumer::tests::packet_digest_matches_the_producer_formula]; ",
-            "`cargo test -p xtask --locked --offline portable_consumer`\n",
+            "`cargo test -p xtask --bin xtask --locked --offline portable_consumer`\n",
             "- line 1; host={host}; declared=unix; {native}; ",
             "`cargo test -p ripr --locked --offline --test portable_consumer_packet`\n",
         ),
@@ -30042,6 +30143,23 @@ fn packet_coverage_report_accepts_exact_selected_names() -> Result<(), String> {
         );
         write(&path, &extra);
         assert_packet_coverage_report()
+    })
+}
+
+#[test]
+fn packet_coverage_report_rejects_unpinned_or_wrong_common_binary() -> Result<(), String> {
+    with_temp_cwd("packet-coverage-common-binary", |root| {
+        let path = root.join("target/ripr/reports/file-policy.md");
+        let report = packet_coverage_report_fixture();
+        write(&path, &report);
+        assert_packet_coverage_report()?;
+        for target in ["", "--bin neighboring_binary "] {
+            write(&path, &report.replacen("--bin xtask ", target, 1));
+            if assert_packet_coverage_report().is_ok() {
+                return Err(format!("wrong common packet target accepted: {target:?}"));
+            }
+        }
+        Ok(())
     })
 }
 
@@ -52503,12 +52621,12 @@ fn count_policy_gates_have_no_stale_bounds() -> Result<(), String> {
 #[test]
 fn golden_comparison_runs_consume_the_cache_the_runner_cleared() -> Result<(), String> {
     with_repo_cwd(|| {
-        let name = "all_no_path_disclosure";
-        let fixture = PathBuf::from("fixtures").join(name);
+        let owned = fixture_cache::Case::new("golden")?;
+        let fixture = owned.fixture.clone();
         let leaked = fixture.join("input").join("target");
         ignore_remove_dir_all(&leaked);
 
-        let cache_dir = super::fixture_cache_dir(name)?;
+        let cache_dir = &owned.cache;
         let stale = cache_dir
             .join("repo-file-facts")
             .join("0.2")

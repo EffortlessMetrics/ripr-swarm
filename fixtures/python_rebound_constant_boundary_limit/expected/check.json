@@ -3,6 +3,7 @@
   "tool": "ripr",
   "mode": "fast",
   "root": "fixtures/python_rebound_constant_boundary_limit/input",
+  "config_path": "<cwd>/fixtures/python_rebound_constant_boundary_limit/input/ripr.toml",
   "summary": {"changed_rust_files":0,"probes":1,"findings":1,"exposed":0,"weakly_exposed":1,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":0,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"python","files":1},{"language":"rust","files":0}]},
   "analysis_outcome": {
     "analysis_complete": true,
@@ -117,7 +118,7 @@
       "language_status": "preview",
       "owner_kind": "function",
       "changed_sink": "amount, DISCOUNT_THRESHOLD",
-      "observed_sink": "assert discounted_total(5_000) == 5_000",
+      "observed_sink": "assert discounted_total(20_000) == 18_000",
       "oracle_alignment": "direct",
       "alignment_reason": "strong_oracle_observes_owner_name",
       "source_currentness": "candidate_current"

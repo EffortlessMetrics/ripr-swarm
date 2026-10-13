@@ -190,7 +190,9 @@ fn discover_config_path(root: &Path) -> Option<PathBuf> {
 }
 
 fn is_repository_boundary(directory: &Path) -> bool {
-    if directory.join(".git").exists() {
+    // The directory entry bounds repository policy even when its target is
+    // missing or cyclic. Following it would admit an enclosing repo's config.
+    if std::fs::symlink_metadata(directory.join(".git")).is_ok() {
         return true;
     }
 
@@ -228,6 +230,49 @@ pub(crate) fn load_for_root(root: &Path) -> Result<RiprConfig, String> {
 /// posture at built-in defaults (#6825).
 pub(crate) fn config_discovered_for_root(root: &Path) -> bool {
     discover_config_path(root).is_some()
+}
+
+/// When implicit `check` rebinds the analysis root, config discovery walks
+/// only ancestors of *that* root. A `ripr.toml` that `doctor`/`pilot` would
+/// load from the invocation directory is then skipped (#7468). Return the
+/// closer *directory entry* and the file the rebound root actually loads
+/// (`None` means built-in defaults). Same canonical file — including a
+/// symlink to the loaded path — is not a skip. A member symlink to a
+/// *different* file still names the member entry, not the target.
+pub(crate) fn closer_config_skipped_by_analysis_root(
+    invocation_root: &Path,
+    analysis_root: &Path,
+) -> Option<(PathBuf, Option<PathBuf>)> {
+    let closer = discover_config_path(invocation_root)?;
+    let loaded = discover_config_path(analysis_root);
+    if loaded
+        .as_deref()
+        .is_some_and(|loaded| same_config_file(&closer, loaded))
+    {
+        return None;
+    }
+    Some((closer_entry_for_warning(invocation_root, closer), loaded))
+}
+
+/// Direct `ripr.toml` at the invocation directory is the skipped entry even
+/// when [`discover_config_path`] canonicalized a resolvable symlink.
+fn closer_entry_for_warning(invocation_root: &Path, discovered: PathBuf) -> PathBuf {
+    let direct = invocation_root.join(CONFIG_FILE_NAME);
+    if config_entry_present(&direct) {
+        direct
+    } else {
+        discovered
+    }
+}
+
+fn same_config_file(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
 }
 
 fn default_config_for_root(root: &Path) -> Result<RiprConfig, String> {
@@ -536,6 +581,14 @@ impl RiprConfig {
         if let Some(reports) = raw.reports
             && let Some(max) = reports.max_related_tests
         {
+            // #7353: zero silently empties `related_tests` in every context
+            // packet; fail closed like the neighboring keys instead of
+            // accepting a value whose only effect is invisible evidence
+            // loss. The explicit `--max-related-tests 0` render cap keeps
+            // its own deliberate per-invocation contract (#4318).
+            if max == 0 {
+                return Err("reports.max_related_tests must be at least 1; remove the key for the default (5)".to_string().into());
+            }
             config.reports.max_related_tests = max;
         }
         if let Some(suppressions) = raw.suppressions
@@ -566,6 +619,13 @@ impl RiprConfig {
             };
         }
         if let Some(perl) = raw.perl {
+            // #7353: zero used to be silently coerced back to the default
+            // by the accessor, so a user meaning "no timeout" got an
+            // undocumented 30 s limit; fail closed at parse like the other
+            // keys.
+            if perl.timeout_ms == Some(0) {
+                return Err("perl.timeout_ms must be at least 1 millisecond; remove the key for the default (30000)".to_string().into());
+            }
             config.perl = PerlConfig {
                 producer: perl.producer,
                 executable: perl.executable.map(PathBuf::from),

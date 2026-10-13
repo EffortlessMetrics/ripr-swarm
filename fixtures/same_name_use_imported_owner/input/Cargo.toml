@@ -1,0 +1,4 @@
+[package]
+name = "same_name_use_imported_owner_fixture"
+version = "0.0.0"
+edition = "2024"

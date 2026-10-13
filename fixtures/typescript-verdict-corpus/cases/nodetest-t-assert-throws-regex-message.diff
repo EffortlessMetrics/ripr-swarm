@@ -1,0 +1,12 @@
+diff --git a/src/duedays.ts b/src/duedays.ts
+index 0000000..1111111 100644
+--- a/src/duedays.ts
++++ b/src/duedays.ts
+@@ -1,6 +1,6 @@
+ export function dueDays(days: number): number {
+   if (days <= 0) {
+-    throw new Error("days must be positive");
++    throw new Error("days must be at least one");
+   }
+   return days;
+ }

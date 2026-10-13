@@ -3,6 +3,7 @@ import {
   applyDiscount,
   isReady,
   loadProfile,
+  notifyAudit,
   notifyLiteral,
   notifyStatus,
   renderSummary,
@@ -42,6 +43,12 @@ it("records literal status", () => {
   const sink = { record: vi.fn() };
   notifyLiteral(sink);
   expect(sink.record).toHaveBeenCalledWith("ready");
+});
+
+it("records audit status", () => {
+  const record = vi.fn();
+  const sink = { record }; notifyAudit(sink);
+  expect(record).toHaveBeenCalledWith("audit");
 });
 
 test("loads profile", async () => {

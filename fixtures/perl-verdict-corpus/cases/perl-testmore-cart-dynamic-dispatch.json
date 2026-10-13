@@ -1,0 +1,57 @@
+{
+  "case_id": "perl-testmore-cart-dynamic-dispatch",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-testmore-cart-dynamic-dispatch.diff",
+  "anchor": {
+    "file": "lib/Shop/Cart.pm",
+    "line": 26
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "testmore_is_through_dynamic_method_name",
+  "hard_case": "The test reaches item_count only through $self->$action() with the method name as data, a dynamic dispatch no static relation can follow.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return 1 + @{ $self->{items} };",
+        "mutated_line": "return 1 + @{ $self->{items} };",
+        "outcome": "tests_failed",
+        "failing_test": "t/cart.t: run dispatches to the named action",
+        "equivalence_review": "not equivalent: two items count as three"
+      },
+      {
+        "replacement": "return 0 + @{ $self->{items} } - 1;",
+        "mutated_line": "return 0 + @{ $self->{items} } - 1;",
+        "outcome": "tests_failed",
+        "failing_test": "t/cart.t: run dispatches to the named action",
+        "equivalence_review": "not equivalent: two items count as one"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "is($cart->run('item_count'), 2) fails for any change to the count. Spec cells: RIPR-SPEC-0064 dynamic boundaries.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testmore-cart-dynamic-dispatch.json",
+    "sha256": "6091e47ba545fe62464b6b50f93cfe3e4eae5c3f19bbcb7b856735398cb6825b",
+    "provenance": "producer"
+  }
+}

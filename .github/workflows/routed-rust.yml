@@ -94,20 +94,49 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          docs_only=false
-          if [ "$EVENT_NAME" = "pull_request" ] && [ -n "$BASE_SHA" ]; then
-            changed="$(git diff --name-only "$BASE_SHA"...HEAD 2>/dev/null || true)"
-            if [ -n "$changed" ]; then
-              non_docs="$(printf '%s\n' "$changed" | grep -Ev '(^docs/specs/|^docs/handoffs/|\.md$)' || true)"
-              release_surface="$(printf '%s\n' "$changed" | grep -E '^(CHANGELOG\.md|Cargo\.toml|Cargo\.lock|crates/ripr/Cargo\.toml|docs/OUTPUT_SCHEMA\.md)$' || true)"
-              if [ -z "$non_docs" ] && [ -z "$release_surface" ]; then
-                docs_only=true
-              fi
+          docs_only=false reason=not_pull_request
+          classify() {
+            [ "$EVENT_NAME" = "pull_request" ] || return 0
+            reason=missing_identity
+            [ -n "$BASE_SHA" ] && [ -n "$HEAD_SHA" ] || return 0
+            reason=invalid_identity
+            [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] && [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]] || return 0
+            # Checkout stays on the integration commit. Full history is requested
+            # above; recover missing event objects with their ancestry, not depth 1.
+            reason=unavailable_history
+            if ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null || ! git cat-file -e "$HEAD_SHA^{commit}" 2>/dev/null; then
+              git fetch --no-tags origin "$BASE_SHA" "$HEAD_SHA" 2>/dev/null || return 0
             fi
-          fi
+            [ "$(git rev-parse --is-shallow-repository)" = "false" ] || return 0
+            [ "$(git cat-file -t "$BASE_SHA" 2>/dev/null)" = "commit" ] && [ "$(git cat-file -t "$HEAD_SHA" 2>/dev/null)" = "commit" ] || return 0
+            reason=unavailable_merge_base
+            merge_bases="$(git merge-base --all "$BASE_SHA" "$HEAD_SHA" 2>/dev/null)" || return 0
+            [ -n "$merge_bases" ] || return 0
+            reason=ambiguous_merge_base
+            [[ "$merge_bases" != *$'\n'* ]] || return 0
+            changed="$(mktemp)"
+            trap 'rm -f "$changed"' EXIT
+            reason=diff_failed
+            # No rename collapsing: both the removed and added path must qualify.
+            # Read only successful output; a failing diff may have written paths.
+            git diff --no-renames --name-only -z "$BASE_SHA"..."$HEAD_SHA" > "$changed" 2>/dev/null || return 0
+            reason=empty_diff
+            [ -s "$changed" ] || return 0
+            reason=non_docs
+            while IFS= read -r -d '' path; do
+              case "$path" in
+                CHANGELOG.md|Cargo.toml|Cargo.lock|crates/ripr/Cargo.toml|docs/OUTPUT_SCHEMA.md) reason=release_surface; return 0 ;;
+                docs/specs/*|docs/handoffs/*|*.md) ;;
+                *) return 0 ;;
+              esac
+            done < "$changed"
+            docs_only=true reason=docs_only
+          }
+          classify
           echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          { echo "### Docs-Only Surface Detection"; echo ""; echo "- docs_only: \`$docs_only\`"; } >> "$GITHUB_STEP_SUMMARY"
+          { echo "### Docs-Only Surface Detection"; echo ""; echo "- docs_only: \`$docs_only\`"; echo "- reason: \`$reason\`"; } >> "$GITHUB_STEP_SUMMARY"
 
   rust-cx43:
     name: Ripr Rust Small on CX43

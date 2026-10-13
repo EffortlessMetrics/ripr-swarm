@@ -20,7 +20,7 @@
     {
       "id": "mock_interaction_without_payload_proof",
       "source_fixture": "fixtures/typescript_jest_vitest_assertion_facts",
-      "source_finding_id": "probe:src_signals.ts:typescript_preview:5f264af5",
+      "source_finding_id": "probe:src_signals.ts:typescript_preview:b16c08c1",
       "language": "typescript",
       "language_status": "preview",
       "risk_class": "mock interaction without payload proof",
@@ -36,9 +36,9 @@
       "repair_route": "project canonical TypeScript repair packet fields only after verify, receipt, evidence refs, and edit boundaries are available",
       "future_support": "mock payload support must name the callee, expected arguments, verify command, receipt command, evidence refs, and edit boundaries",
       "must_remain_non_actionable": true,
-      "required_evidence_fragment": "mock payloads are not yet a safe discriminator",
+      "required_evidence_fragment": "mock_payload_evidence: expect(record).toHaveBeenCalledWith(\"audit\")",
       "raw_evidence_refs": [
-        "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json#probe:src_signals.ts:typescript_preview:5f264af5"
+        "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json#probe:src_signals.ts:typescript_preview:b16c08c1"
       ],
       "non_claims": [
         "no provider calls",
@@ -52,7 +52,7 @@
         "no RIPR Zero authority",
         "no support-tier promotion"
       ],
-      "reason": "Mock interaction evidence can show an observation shape, but without payload proof it must not ask for an exact-value assertion or emit a repair packet."
+      "reason": "Mock interaction evidence, even with a syntax-bounded payload, shows an observation shape but must not ask for an exact-value assertion or emit a repair packet."
     },
     {
       "id": "broad_throw_or_rejects_without_payload",
@@ -393,7 +393,7 @@
       "source_finding_id": "probe:src_signals.ts:typescript_preview:7878a956",
       "language": "typescript",
       "language_status": "preview",
-      "risk_class": "table-case named limitation",
+      "risk_class": "table-case row binding",
       "evidence_kind": "named_oracle_limitation",
       "oracle_kind": "exact_value",
       "gap_state": "already_observed",
@@ -404,9 +404,9 @@
       "authority_boundary": "preview_advisory_only",
       "why_not_actionable": "related Jest/Vitest evidence already has a strong exact oracle; no repair packet should be emitted",
       "repair_route": "keep the finding advisory preview and verify the existing assertion still targets the changed behavior",
-      "future_support": "table-case support must bind table rows to concrete expected values before row-derived matcher arguments can become packet-ready evidence",
+      "future_support": "inline literal rows bind to concrete expected values (RIPR-SPEC-0243 rule 11); a table held in a variable or with non-literal cells still emits typescript_table_case_unresolved, and neither form is packet-ready evidence",
       "must_remain_non_actionable": true,
-      "required_evidence_fragment": "typescript_limitation: typescript_table_case_unresolved",
+      "required_evidence_fragment": "typescript_oracle_expected: 140",
       "raw_evidence_refs": [
         "fixtures/typescript_jest_vitest_assertion_facts/expected/check.json#probe:src_signals.ts:typescript_preview:7878a956"
       ],
@@ -422,7 +422,7 @@
         "no RIPR Zero authority",
         "no support-tier promotion"
       ],
-      "reason": "A table-driven exact matcher can look complete, but row-derived expected values remain non-packet evidence until table rows are statically bound."
+      "reason": "A table-driven exact matcher whose inline literal row binds a concrete expected value (`140`) is already-observed evidence, not a repair packet; tables whose rows cannot be bound keep typescript_table_case_unresolved."
     },
     {
       "id": "mocked_module_limit",

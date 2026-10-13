@@ -1,10 +1,10 @@
 //! Crate-internal typed error authority (#4859 / ERR1 under #2688).
 //!
 //! Git invocation timeout is the first migrated matchable family. Later
-//! PR-sized slices add cancellation (#4860), oversized-diff (#4861), and
-//! check-refusal (#6834) variants. Unmigrated failures travel as
-//! [`CoreError::Message`] until those migrations; they are not a semantic
-//! family.
+//! PR-sized slices add cancellation (#4860), oversized-diff (#4861),
+//! check-refusal (#6834), and the sibling-command refusal families (#7331)
+//! variants. Unmigrated failures travel as [`CoreError::Message`] until
+//! those migrations; they are not a semantic family.
 //!
 //! Public CLI, JSON, and LSP text is rendered at [`Display`] boundaries.
 //! Semantic consumers match variants (including through
@@ -63,12 +63,16 @@ pub(crate) enum CoreError {
     },
 }
 
-/// Named `check` failure families (#6834), in the owner-ruled vocabulary.
+/// Named refusal failure families (#6834, extended #7331), in the
+/// owner-ruled vocabulary.
 ///
 /// Each kind is both the refusal `run_status`/`category`/`limitation` value
 /// and the `basis`: a refusal names the limiting condition, and there is no
 /// separate budget authority behind it. Scope-guard identities stay owned by
-/// #4861 and are not members here.
+/// #4861 and are not members here. `check` producers cover the first four
+/// families; the sibling `--json` commands (#7331) add their own operational
+/// families so every pinned failure mode carries a discriminating identity
+/// instead of the honest fallback.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum CheckFailureKind {
     /// The requested base revision does not resolve to a commit.
@@ -80,20 +84,38 @@ pub(crate) enum CheckFailureKind {
     ConfigInvalid,
     /// An explicit `--suppression-policy` file is missing or malformed.
     SuppressionPolicyInvalid,
+    /// A `ripr context --from` check artifact is unreadable, malformed, not
+    /// written by ripr, or fails an identity/scope assertion (#7331).
+    CheckArtifactUnusable,
+    /// A `ripr rerun --gap-ledger` file cannot be read (#7331).
+    GapLedgerUnusable,
+    /// A `ripr agent packet --seam-id` names no seam in the current
+    /// inventory (#7331).
+    SeamIdUnknown,
+    /// A `--at`/`--finding`/`explain` selector matched no finding. This is
+    /// usage-class, not an operational failure: the CLI keeps it prose-only
+    /// (empty stdout, exit 2) instead of writing a refusal envelope, so the
+    /// kind is a sentinel for that routing decision, not an envelope
+    /// identity that reaches the wire.
+    SelectorMiss,
 }
 
 impl CheckFailureKind {
-    /// Stable wire identity for the `--json` refusal envelope.
+    /// Stable wire identity for the refusal envelope.
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::BaseUnresolvable => "base_unresolvable",
             Self::RepositoryRootUnusable => "repository_root_unusable",
             Self::ConfigInvalid => "config_invalid",
             Self::SuppressionPolicyInvalid => "suppression_policy_invalid",
+            Self::CheckArtifactUnusable => "check_artifact_unusable",
+            Self::GapLedgerUnusable => "gap_ledger_unusable",
+            Self::SeamIdUnknown => "seam_id_unknown",
+            Self::SelectorMiss => "selector_miss",
         }
     }
 
-    /// Stable repair route for the `--json` refusal envelope, in the
+    /// Stable repair route for the refusal envelope, in the
     /// existing `analysis/<kebab>` vocabulary.
     pub(crate) fn repair_route(self) -> &'static str {
         match self {
@@ -101,6 +123,10 @@ impl CheckFailureKind {
             Self::RepositoryRootUnusable => "analysis/repository-root",
             Self::ConfigInvalid => "analysis/config-load",
             Self::SuppressionPolicyInvalid => "analysis/suppression-policy",
+            Self::CheckArtifactUnusable => "analysis/check-artifact",
+            Self::GapLedgerUnusable => "analysis/gap-ledger",
+            Self::SeamIdUnknown => "analysis/seam-inventory",
+            Self::SelectorMiss => "analysis/selector",
         }
     }
 }
@@ -117,6 +143,18 @@ pub(crate) struct CheckRefusal {
     /// (RIPR-SPEC-0007). Every other family echoes the stderr diagnostic
     /// verbatim, exactly what the caller already sees.
     pub(crate) redact_message: bool,
+}
+
+/// A fully resolved refusal for machine renderers (#7331/#7332): the typed
+/// identity, the repair route, and the machine-safe message (redacted when
+/// the family requires it). One shape feeds every refusal renderer — the
+/// JSON envelope, SARIF notifications, GitHub annotations, and the badge /
+/// repo-exposure / agent-seam-packets JSON documents — so each format's
+/// refusal document carries the same branchable identity.
+pub(crate) struct RefusalNotice {
+    pub(crate) identity: &'static str,
+    pub(crate) repair_route: &'static str,
+    pub(crate) message: String,
 }
 
 impl CoreError {
@@ -171,6 +209,52 @@ impl CoreError {
             kind: CheckFailureKind::SuppressionPolicyInvalid,
             detail: detail.into(),
         }
+    }
+
+    /// A `ripr context --from` check artifact that cannot be used (#7331).
+    /// `detail` is the exact human diagnostic, kept verbatim.
+    pub(crate) fn check_artifact_unusable(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::CheckArtifactUnusable,
+            detail: detail.into(),
+        }
+    }
+
+    /// A `ripr rerun --gap-ledger` file that cannot be read (#7331).
+    /// `detail` is the exact human diagnostic, kept verbatim.
+    pub(crate) fn gap_ledger_unusable(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::GapLedgerUnusable,
+            detail: detail.into(),
+        }
+    }
+
+    /// A `ripr agent packet --seam-id` that names no current seam (#7331).
+    /// `detail` is the exact human diagnostic, kept verbatim.
+    pub(crate) fn seam_id_unknown(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::SeamIdUnknown,
+            detail: detail.into(),
+        }
+    }
+
+    /// A `--at`/`--finding`/`explain` selector that matched no finding.
+    /// Usage-class, not an operational refusal: the CLI routes this to
+    /// prose-only output (empty stdout, exit 2), so the kind is the
+    /// routing sentinel — no artifact or analysis defect is claimed.
+    /// `detail` is the exact human diagnostic, kept verbatim.
+    pub(crate) fn selector_miss(detail: impl Into<String>) -> Self {
+        Self::CheckFailure {
+            kind: CheckFailureKind::SelectorMiss,
+            detail: detail.into(),
+        }
+    }
+
+    /// Whether this error is the usage-class selector miss the CLI keeps
+    /// prose-only instead of enveloping (#7331 review: selector misses
+    /// predate and stay outside the refusal-envelope contract).
+    pub(crate) fn is_selector_miss(&self) -> bool {
+        self.check_failure_kind() == Some(CheckFailureKind::SelectorMiss)
     }
 
     /// Attach human context without dropping a typed timeout kind.
@@ -248,6 +332,24 @@ impl CoreError {
             identity: ANALYSIS_FAILED_IDENTITY,
             repair_route: ANALYSIS_FAILED_REPAIR_ROUTE,
             redact_message: false,
+        }
+    }
+
+    /// The resolved refusal for machine renderers (#7331/#7332): identity and
+    /// repair route from [`CoreError::check_refusal`], plus the message with
+    /// the same redaction duty applied — config file contents never enter
+    /// any machine output (RIPR-SPEC-0007), whatever the target format.
+    pub(crate) fn refusal_notice(&self) -> RefusalNotice {
+        let refusal = self.check_refusal();
+        let message = if refusal.redact_message {
+            crate::config::config_error_summary(&self.to_string())
+        } else {
+            self.to_string()
+        };
+        RefusalNotice {
+            identity: refusal.identity,
+            repair_route: refusal.repair_route,
+            message,
         }
     }
 }

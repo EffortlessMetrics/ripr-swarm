@@ -20,6 +20,14 @@ pub(in crate::analysis) struct PropagationWitnessV1 {
     pub(in crate::analysis) behavior: BehaviorIdentity,
     pub(in crate::analysis) source: PropagationEndpoint,
     pub(in crate::analysis) edges: Vec<PropagationEdge>,
+    /// Declaration/callsite identity receipts only. These do not complete an
+    /// edge or contribute relation, activation, propagation or oracle credit.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(in crate::analysis) selected_helper_calls:
+        Vec<super::helper_transfer::SelectedInherentCall>,
+    /// Exact rule-7a observer provenance; absent preserves existing digests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(in crate::analysis) fallible_check: Option<super::FallibleCheckReceipt>,
     pub(in crate::analysis) sink: PropagationEndpoint,
     pub(in crate::analysis) completeness: PathCompleteness,
     pub(in crate::analysis) limitations: Vec<String>,
@@ -161,7 +169,7 @@ pub(in crate::analysis) fn current_path_witness(
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
     let source_identity = normalize_semantic_text(&probe.expression);
     let sink_identity = normalize_semantic_text(&sink.text);
-    let edge_status = if is_question_mark_sink(sink) {
+    let edge_status = if is_question_mark_sink(sink) || returns_itself_on_its_line(probe, sink) {
         EdgeStatus::Established
     } else {
         edge_status_for_kind(&edge_kind, &source_identity, &sink_identity)
@@ -197,6 +205,8 @@ pub(in crate::analysis) fn current_path_witness(
             identity: source_identity.clone(),
             line: probe.location.line,
         },
+        selected_helper_calls: Vec::new(),
+        fallible_check: None,
         edges: vec![PropagationEdge {
             kind: edge_kind.clone(),
             status: edge_status,
@@ -214,6 +224,244 @@ pub(in crate::analysis) fn current_path_witness(
     };
     witness.semantic_digest = witness.compute_semantic_digest();
     Some(witness)
+}
+
+/// A literal has no semantic tokens. Only the complete rule-7a source/value
+/// receipt can adapt its exact local owner return into a complete witness.
+pub(in crate::analysis) fn fallible_literal_witness(
+    probe: &Probe,
+    sinks: &[FlowSinkFact],
+    receipt: &super::FallibleCheckReceipt,
+) -> Option<PropagationWitnessV1> {
+    if !receipt.valid_for(probe) {
+        return None;
+    }
+    let sink = sinks.iter().find(|sink| {
+        sink.owner == probe.owner
+            && sink.kind == FlowSinkKind::ReturnValue
+            && sink.line == probe.location.line
+            && normalize_semantic_text(&sink.text) == normalize_semantic_text(&probe.expression)
+    })?;
+    let identity = normalize_semantic_text(&probe.expression);
+    let mut witness = PropagationWitnessV1 {
+        schema_version: SCHEMA_VERSION,
+        behavior: BehaviorIdentity {
+            owner: probe.owner.clone()?,
+            family: probe.family.as_str().into(),
+            delta: probe.delta.as_str().into(),
+            expression: identity.clone(),
+        },
+        source: PropagationEndpoint {
+            kind: "changed_behavior".into(),
+            identity: identity.clone(),
+            line: probe.location.line,
+        },
+        edges: vec![PropagationEdge {
+            kind: PropagationEdgeKind::DirectReturn,
+            status: EdgeStatus::Established,
+            from: identity.clone(),
+            to: identity.clone(),
+        }],
+        selected_helper_calls: Vec::new(),
+        fallible_check: Some(receipt.clone()),
+        sink: PropagationEndpoint {
+            kind: sink.kind.as_str().into(),
+            identity,
+            line: sink.line,
+        },
+        completeness: PathCompleteness::Complete,
+        limitations: vec![
+            "bounded_fallible_literal_check".into(),
+            "static_local_flow_only".into(),
+        ],
+        semantic_digest: String::new(),
+    };
+    witness.semantic_digest = witness.compute_semantic_digest();
+    Some(witness)
+}
+
+/// A constant owner tail (#6617): the owner's whole body is one expression
+/// built only from literals, unary and binary operators and parentheses
+/// (`42`, `40 + 2`, `-(1 << 3)`), and that expression is the changed one.
+/// Such an expression has no semantic tokens, so [`current_path_witness`]
+/// cannot pair it with its sink, yet nothing sits between it and the owner's
+/// return: every value it produces is the value the owner returns. Only that
+/// exact shape completes a DirectReturn witness. A statement, a binding, a
+/// name, a call, a cast or a macro anywhere in the body answers `None`, as
+/// does a sink on another line or with other text (fail closed).
+pub(in crate::analysis) fn constant_tail_witness(
+    probe: &Probe,
+    owner: &crate::analysis::facts::FunctionSummary,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    if probe.family != ProbeFamily::ReturnValue || probe.owner.as_ref() != Some(&owner.id) {
+        return None;
+    }
+    let identity = normalize_semantic_text(&probe.expression);
+    let tail_line = constant_owner_tail_line(owner, &identity)?;
+    if tail_line != probe.location.line {
+        return None;
+    }
+    let sink = sinks.iter().find(|sink| {
+        sink.owner.as_ref() == Some(&owner.id)
+            && sink.kind == FlowSinkKind::ReturnValue
+            && sink.line == probe.location.line
+            && normalize_semantic_text(&sink.text) == identity
+    })?;
+    let mut witness = PropagationWitnessV1 {
+        schema_version: SCHEMA_VERSION,
+        behavior: BehaviorIdentity {
+            owner: owner.id.clone(),
+            family: probe.family.as_str().into(),
+            delta: probe.delta.as_str().into(),
+            expression: identity.clone(),
+        },
+        source: PropagationEndpoint {
+            kind: "changed_behavior".into(),
+            identity: identity.clone(),
+            line: probe.location.line,
+        },
+        edges: vec![PropagationEdge {
+            kind: PropagationEdgeKind::DirectReturn,
+            status: EdgeStatus::Established,
+            from: identity.clone(),
+            to: identity.clone(),
+        }],
+        selected_helper_calls: Vec::new(),
+        fallible_check: None,
+        sink: PropagationEndpoint {
+            kind: sink.kind.as_str().into(),
+            identity,
+            line: sink.line,
+        },
+        completeness: PathCompleteness::Complete,
+        limitations: vec![
+            "constant_owner_tail".into(),
+            "static_local_flow_only".into(),
+        ],
+        semantic_digest: String::new(),
+    };
+    witness.semantic_digest = witness.compute_semantic_digest();
+    Some(witness)
+}
+
+/// The line of the owner's body when that body is exactly one constant
+/// expression whose normalized text is `identity`.
+fn constant_owner_tail_line(
+    owner: &crate::analysis::facts::FunctionSummary,
+    identity: &str,
+) -> Option<usize> {
+    use ra_ap_syntax::{AstNode, SyntaxKind, ast};
+    let parse = crate::analysis::syntax::parse_clean_source_file(&owner.body)?;
+    let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let list = function.body()?.stmt_list()?;
+    if list.statements().next().is_some() {
+        return None;
+    }
+    let tail = list.tail_expr()?;
+    let constant = tail.syntax().descendants().all(|node| {
+        matches!(
+            node.kind(),
+            SyntaxKind::LITERAL
+                | SyntaxKind::BIN_EXPR
+                | SyntaxKind::PREFIX_EXPR
+                | SyntaxKind::PAREN_EXPR
+        )
+    });
+    if !constant || normalize_semantic_text(&tail.syntax().text().to_string()) != identity {
+        return None;
+    }
+    let offset = usize::from(tail.syntax().text_range().start());
+    let before = owner.body.get(..offset)?;
+    Some(owner.start_line + before.matches('\n').count())
+}
+
+/// A field-to-push route may contain a macro initializer that the complete
+/// local adapter refuses. Retain its exact local field as a candidate only;
+/// the independently parsed returned-ledger route never completes this path.
+pub(in crate::analysis) fn returned_ledger_witness(
+    probe: &Probe,
+    sinks: &[FlowSinkFact],
+) -> Option<PropagationWitnessV1> {
+    if probe.family != ProbeFamily::FieldConstruction {
+        return None;
+    }
+    let owner = probe.owner.clone()?;
+    let identity = normalize_semantic_text(&probe.expression);
+    let sink = sinks.iter().find(|sink| {
+        sink.owner.as_ref() == Some(&owner)
+            && sink.kind == FlowSinkKind::StructField
+            && normalize_semantic_text(&sink.text) == identity
+    })?;
+    let mut witness = PropagationWitnessV1 {
+        schema_version: SCHEMA_VERSION,
+        behavior: BehaviorIdentity {
+            owner,
+            family: probe.family.as_str().to_string(),
+            delta: probe.delta.as_str().to_string(),
+            expression: identity.clone(),
+        },
+        source: PropagationEndpoint {
+            kind: "changed_behavior".to_string(),
+            identity: identity.clone(),
+            line: probe.location.line,
+        },
+        selected_helper_calls: Vec::new(),
+        fallible_check: None,
+        edges: vec![PropagationEdge {
+            kind: PropagationEdgeKind::StructField,
+            status: EdgeStatus::Candidate,
+            from: identity.clone(),
+            to: identity.clone(),
+        }],
+        sink: PropagationEndpoint {
+            kind: sink.kind.as_str().to_string(),
+            identity,
+            line: sink.line,
+        },
+        completeness: PathCompleteness::Partial,
+        limitations: vec!["observer_binding_not_modeled".to_string()],
+        semantic_digest: String::new(),
+    };
+    witness.semantic_digest = witness.compute_semantic_digest();
+    Some(witness)
+}
+
+/// Retain identity-only helper transfer in the existing witness. The pushed
+/// field is a candidate element, and no indexed observer has been established.
+/// This cannot satisfy the complete-direct-witness gate.
+pub(in crate::analysis) fn retain_returned_ledger(
+    witness: &mut PropagationWitnessV1,
+    owner: &SymbolId,
+    parameter: &str,
+    caller: &SymbolId,
+    local: &str,
+) {
+    let parameter_identity = format!("{}::{parameter}", owner.0);
+    let local_identity = format!("{}::{local}", caller.0);
+    witness.edges.push(PropagationEdge {
+        kind: PropagationEdgeKind::EffectTarget,
+        status: EdgeStatus::Candidate,
+        from: witness.sink.identity.clone(),
+        to: parameter_identity.clone(),
+    });
+    witness.edges.push(PropagationEdge {
+        kind: PropagationEdgeKind::EffectTarget,
+        status: EdgeStatus::Established,
+        from: parameter_identity,
+        to: local_identity.clone(),
+    });
+    witness.edges.push(PropagationEdge {
+        kind: PropagationEdgeKind::DirectReturn,
+        status: EdgeStatus::Established,
+        from: local_identity,
+        to: format!("{}::return {local}", caller.0),
+    });
+    witness.completeness = PathCompleteness::Partial;
+    witness
+        .limitations
+        .push("returned_mutable_ledger_observer_unresolved".to_string());
+    witness.semantic_digest = witness.compute_semantic_digest();
 }
 
 fn completeness_for_edge(kind: &PropagationEdgeKind, status: &EdgeStatus) -> PathCompleteness {
@@ -254,13 +502,39 @@ fn edge_status_for_kind(kind: &PropagationEdgeKind, source: &str, sink: &str) ->
 /// stripping it before the identity comparison lets the supported
 /// direct-return path complete instead of staying a candidate. Constructor-
 /// wrapped forms (`return Ok(amount)`, `return Err(error)`) and call results
-/// keep their parentheses and are deliberately not normalized: the wrapper
-/// payload relationship is not established by this adapter, so they fail
-/// closed as candidate edges.
+/// keep their parentheses and are not normalized here, so a sink on another
+/// line fails closed as a candidate edge; [`returns_itself_on_its_line`]
+/// completes a call-free constructor only when the sink is the same
+/// expression on the probe's own line.
 fn direct_return_identity(text: &str) -> Option<String> {
     let normalized = normalize_semantic_text(text);
     let payload = normalized.strip_prefix("return ")?.trim();
     (!payload.is_empty() && !payload.contains('(')).then(|| payload.to_string())
+}
+
+/// RIPR-SPEC-0231 example 23: `return Some(1 + 2);` whose return sink is
+/// `Some(1 + 2)` on the changed line itself is one expression, so the edge is
+/// established as it is for the same tail. Only a `Some(..)`, `Ok(..)` or
+/// `Err(..)` constructor around a call-free payload qualifies: a call result
+/// (`return f(x);`, `return Ok(self.persist(x));`) may not carry the changed
+/// value at all. The sink must sit on the probe's line: an identical
+/// constructor returned elsewhere in the owner is a different exit.
+fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
+    let source = normalize_semantic_text(&probe.expression);
+    let call_free_constructor = |payload: &str| {
+        ["Some(", "Ok(", "Err("].iter().any(|head| {
+            payload
+                .strip_prefix(head)
+                .and_then(|rest| rest.strip_suffix(')'))
+                .is_some_and(|inner| !inner.trim().is_empty() && !inner.contains(['(', ')']))
+        })
+    };
+    sink.kind == FlowSinkKind::ReturnValue
+        && sink.line == probe.location.line
+        && source.strip_prefix("return ").is_some_and(|payload| {
+            let payload = payload.trim();
+            call_free_constructor(payload) && payload == normalize_semantic_text(&sink.text)
+        })
 }
 
 fn canonical_error_identity(text: &str) -> String {
@@ -285,6 +559,10 @@ pub(in crate::analysis) fn complete_direct_witness(
         return false;
     };
     witness.digest_matches()
+        && witness
+            .fallible_check
+            .as_ref()
+            .is_none_or(|receipt| receipt.valid_for(probe))
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
@@ -330,6 +608,7 @@ pub(in crate::analysis) fn valid_owner_bound_partial_witness(
         return false;
     };
     witness.digest_matches()
+        && witness.fallible_check.is_none()
         && witness.schema_version == SCHEMA_VERSION
         && witness.behavior.owner == *owner
         && witness.behavior.family == probe.family.as_str()
@@ -426,6 +705,324 @@ pub(in crate::analysis) fn assertion_observes_direct_collection(
         return false;
     };
     subject_names_collection(&subject, receiver)
+}
+
+/// The field path of a collection write on `self` (`log` for
+/// `self.log.push(x)`, `stock` for `self.stock.insert(k, v)`, `a.b` for
+/// `self.a.b.push(x)`). RIPR-SPEC-0228 extends the direct-collection
+/// observer to these receivers; any other expression gives `None`.
+pub(in crate::analysis) fn field_collection_write_path(expression: &str) -> Option<&str> {
+    let trimmed = expression.trim().trim_end_matches([';', ',']).trim();
+    let rest = trimmed.strip_prefix("self.")?;
+    let (target, _) = rest.split_once('(')?;
+    let (path, method) = target.rsplit_once('.')?;
+    let path = path.trim();
+    (matches!(method.trim(), "push" | "insert")
+        && path.split('.').all(|segment| is_bare_ident(segment.trim())))
+    .then_some(path)
+}
+
+/// How an assertion's primary subject reads the field collection `path`:
+/// from the local binding `binding`, directly (`inv.log`, `inv.log[0]`,
+/// `inv.log.len()`) or through a method with no arguments
+/// (`inv.history()`), named in `getter`.
+#[derive(Debug, PartialEq, Eq)]
+pub(in crate::analysis) struct FieldCollectionRead {
+    pub(in crate::analysis) binding: String,
+    pub(in crate::analysis) getter: Option<String>,
+}
+
+/// The reads of the field collection `path` by `assertion_text`'s compared
+/// sides: its primary subject (`assert_eq!(subject, ..)`, `assert!(subject)`)
+/// and, for `assert_eq!`, the second operand too, since either side may hold
+/// the actual value. A side that is not rooted at a local binding read of
+/// that field or of one argument-free method reads nothing. Neither does a
+/// side compared with an operand that names the same binding
+/// (`assert_eq!(o.entries(), o.entries())` cannot fail), nor, unless
+/// `count_reads`, a side that reads only how many elements there are
+/// (`.len()`, `.is_empty()`): a changed argument leaves that count alone.
+pub(in crate::analysis) fn assertion_field_collection_reads(
+    assertion_text: &str,
+    path: &str,
+    count_reads: bool,
+) -> Vec<FieldCollectionRead> {
+    let mut subjects: Vec<String> = assertion_primary_subject(assertion_text)
+        .into_iter()
+        .collect();
+    if let Some(payload) = macro_payload(assertion_text, "assert_eq") {
+        let payload = payload.trim_start();
+        if let Some(second) = subjects
+            .first()
+            .and_then(|first| payload.strip_prefix(first.as_str()))
+            .and_then(|rest| rest.trim_start().strip_prefix(','))
+            .and_then(first_call_argument)
+        {
+            subjects.push(second);
+        }
+    }
+    subjects
+        .iter()
+        .enumerate()
+        .filter(|(_, subject)| count_reads || !reads_only_count(subject))
+        .filter_map(|(index, subject)| {
+            let read = subject_field_collection_read(subject, path)?;
+            let other = subjects
+                .get(1 - index.min(1))
+                .filter(|_| subjects.len() == 2);
+            (!other.is_some_and(|other| names_ident(other, &read.binding))).then_some(read)
+        })
+        .collect()
+}
+
+/// Whether `subject` ends in a count of a collection (`.len()`,
+/// `.is_empty()`) rather than a read of its elements.
+fn reads_only_count(subject: &str) -> bool {
+    let compact: String = subject.chars().filter(|ch| !ch.is_whitespace()).collect();
+    compact.ends_with(".len()") || compact.ends_with(".is_empty()")
+}
+
+/// Whether `text` names `ident` as a whole identifier outside comments and
+/// strings.
+fn names_ident(text: &str, ident: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices(ident).any(|(at, name)| {
+        !masked[..at].chars().next_back().is_some_and(is_ident)
+            && !masked[at + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_ident)
+    })
+}
+
+fn subject_field_collection_read(subject: &str, path: &str) -> Option<FieldCollectionRead> {
+    let mut bare = subject.trim();
+    bare = bare.strip_prefix('&').map_or(bare, str::trim);
+    bare = bare.strip_prefix("mut ").map_or(bare, str::trim);
+    let (binding, after) = bare.split_once('.')?;
+    if !is_bare_ident(binding) {
+        return None;
+    }
+    if subject_names_collection(bare, &format!("{binding}.{path}")) {
+        return Some(FieldCollectionRead {
+            binding: binding.to_string(),
+            getter: None,
+        });
+    }
+    let method = collection_read_method(&format!(".{after}"))?.to_string();
+    let getter_call = format!("{binding}.{method}()");
+    subject_names_collection(bare, &getter_call).then(|| FieldCollectionRead {
+        binding: binding.to_string(),
+        getter: Some(method),
+    })
+}
+
+/// #7131: the field path `self.<path>` whose `push` takes, as its whole
+/// argument, the struct or enum literal that encloses `expression` on `line`
+/// of `body` (the owner body, from its `fn`, starting at `start_line`):
+/// `self.log.push(Event::Shipped { sku: sku.to_owned(), qty })` gives `log`
+/// for `sku: sku.to_owned()`. Any other placement gives `None`, and so do:
+/// - an `expression` that occurs twice on its line, since the probe could be
+///   either one;
+/// - a push that is not a top-level statement of the body (inside a branch,
+///   loop, block or closure), which a test may never run;
+/// - anything later in the body that may write the field again: a use of
+///   `self.<path>` other than another `push`, a use of a parent field of
+///   `<path>` (`self.state` for `state.log`), a bare `self`, or a call
+///   `self.m(..)` whose body (from `method_body`, through further `self`
+///   calls) may do so. A method `method_body` cannot resolve counts as a
+///   write.
+pub(in crate::analysis) fn pushed_literal_collection_path(
+    body: &str,
+    start_line: usize,
+    line: usize,
+    expression: &str,
+    method_body: &dyn Fn(&str) -> Option<String>,
+) -> Option<String> {
+    let masked = crate::analysis::extract::mask_comments_and_strings(body);
+    let line_start = masked
+        .split_inclusive('\n')
+        .take(line.checked_sub(start_line)?)
+        .map(str::len)
+        .sum::<usize>();
+    let line_text = body.get(line_start..)?.lines().next()?;
+    let expression = expression.trim();
+    if expression.is_empty() || line_text.matches(expression).count() != 1 {
+        return None;
+    }
+    let probe_at = line_start + line_text.find(expression)?;
+    // The group opened at `from` must close after the probe: a net count of
+    // delimiters would let a later `Ok(` hold an already closed `push(` open.
+    let encloses_probe = |from: usize, open: char, close: char| {
+        delimited_closer(&masked[from + 1..], open, close)
+            .is_some_and(|closer| from + 1 + closer > probe_at)
+    };
+    masked[..probe_at]
+        .rmatch_indices(".push(")
+        .find_map(|(at, call)| {
+            let paren = at + call.len() - 1;
+            if !encloses_probe(paren, '(', ')') || !top_level_statement(&masked, at) {
+                return None;
+            }
+            let argument = &masked[paren + 1..];
+            let literal_path = argument.trim_start();
+            let path_len = literal_path
+                .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
+                .unwrap_or(literal_path.len());
+            let brace = paren + 1 + (argument.len() - literal_path.len()) + path_len;
+            let brace = brace + masked[brace..].len() - masked[brace..].trim_start().len();
+            if path_len == 0 || !masked[brace..].starts_with('{') || brace >= probe_at {
+                return None;
+            }
+            if !encloses_probe(brace, '{', '}') {
+                return None;
+            }
+            let literal_end = brace + 1 + delimited_closer(&masked[brace + 1..], '{', '}')?;
+            let after_literal = masked[literal_end + 1..].trim_start();
+            if !after_literal.starts_with(')') {
+                return None;
+            }
+            let call_line_start = masked[..at].rfind('\n').map_or(0, |index| index + 1);
+            let path = field_collection_write_path(body.get(call_line_start..=paren)?)?;
+            let call_end = masked.len() - after_literal.len();
+            let mut visited = Vec::new();
+            (!may_write_field(&masked[call_end..], path, method_body, &mut visited))
+                .then(|| path.to_string())
+        })
+}
+
+/// Whether the statement at `at` in a body (masked, from its `fn`) sits
+/// directly in the body's block, not in a nested block, branch, loop or
+/// closure.
+fn top_level_statement(masked: &str, at: usize) -> bool {
+    let before = &masked[..at];
+    let depth = before.matches('{').count() as isize - before.matches('}').count() as isize;
+    let statement_start = before.rfind([';', '{', '}']).map_or(0, |index| index + 1);
+    depth == 1 && !before[statement_start..].contains('|')
+}
+
+/// Whether masked `code` may write the field `self.<path>` other than by
+/// another `push`: see [`pushed_literal_collection_path`]. `visited` holds
+/// the `self` methods already followed, so recursion ends.
+fn may_write_field(
+    code: &str,
+    path: &str,
+    method_body: &dyn Fn(&str) -> Option<String>,
+    visited: &mut Vec<String>,
+) -> bool {
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    let field = format!(".{path}");
+    code.match_indices("self").any(|(at, word)| {
+        let rest = &code[at + word.len()..];
+        if code[..at].chars().next_back().is_some_and(ident) || rest.starts_with(ident) {
+            return false;
+        }
+        if let Some(after) = rest.strip_prefix(field.as_str())
+            && !after.starts_with(ident)
+        {
+            return !after.starts_with(".push(");
+        }
+        let Some(member) = rest.strip_prefix('.') else {
+            // A bare `self`: passed on, reborrowed or assigned through.
+            return true;
+        };
+        let name_len = member.find(|ch: char| !ident(ch)).unwrap_or(member.len());
+        let (name, after) = member.split_at(name_len);
+        if name.is_empty() {
+            return true;
+        }
+        if !after.trim_start().starts_with('(') {
+            // A parent of the tracked path (`self.state` for `state.log`)
+            // may replace the collection whole; any other field cannot.
+            return path.starts_with(&format!("{name}."));
+        }
+        if visited.iter().any(|seen| seen == name) {
+            return false;
+        }
+        visited.push(name.to_string());
+        method_body(name).is_none_or(|callee| {
+            let masked = crate::analysis::extract::mask_comments_and_strings(&callee);
+            // The callee's own signature names `self`; scan its block only.
+            let block = masked.find('{').map_or("", |open| &masked[open..]);
+            may_write_field(block, path, method_body, visited)
+        })
+    })
+}
+
+/// The offset in `after_open` of the `close` that balances an `open` just
+/// before it.
+fn delimited_closer(after_open: &str, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    for (index, ch) in after_open.char_indices() {
+        if ch == open {
+            depth += 1;
+        } else if ch == close {
+            if depth == 0 {
+                return Some(index);
+            }
+            depth -= 1;
+        }
+    }
+    None
+}
+
+/// #7131: the read of the whole field collection `path` that an
+/// `assert_eq!` compares with its other operand: `inv.log` or a getter
+/// call `inv.history()`, optionally borrowed. A projection (`.len()`,
+/// `[0]`, `.iter().map(..)`) is not a whole read, and neither is a side
+/// whose other operand names the same binding: that operand may copy the
+/// owner's value and cannot fail on it.
+///
+/// Both sides may qualify (`assert_eq!(expected.log, actual.log)`), so every
+/// admissible read is returned and the caller decides which binding ran the
+/// owner.
+pub(in crate::analysis) fn assertion_whole_collection_equality(
+    assertion_text: &str,
+    path: &str,
+) -> Vec<FieldCollectionRead> {
+    let Some(payload) = macro_payload(assertion_text, "assert_eq").map(str::trim_start) else {
+        return Vec::new();
+    };
+    let Some(first) = first_call_argument(payload) else {
+        return Vec::new();
+    };
+    let Some(second) = payload
+        .strip_prefix(first.as_str())
+        .and_then(|rest| rest.trim_start().strip_prefix(','))
+        .and_then(first_call_argument)
+    else {
+        return Vec::new();
+    };
+    [(&first, &second), (&second, &first)]
+        .into_iter()
+        .filter_map(|(side, other)| {
+            let read = whole_collection_read(side, path)?;
+            (!names_ident(other, &read.binding)).then_some(read)
+        })
+        .collect()
+}
+
+fn whole_collection_read(side: &str, path: &str) -> Option<FieldCollectionRead> {
+    let mut bare = side.trim();
+    bare = bare.strip_prefix('&').map_or(bare, str::trim);
+    bare = bare.strip_prefix("mut ").map_or(bare, str::trim);
+    let (binding, after) = bare.split_once('.')?;
+    if !is_bare_ident(binding) {
+        return None;
+    }
+    if after == path {
+        return Some(FieldCollectionRead {
+            binding: binding.to_string(),
+            getter: None,
+        });
+    }
+    let getter = after
+        .strip_suffix("()")
+        .filter(|name| is_bare_ident(name))?;
+    Some(FieldCollectionRead {
+        binding: binding.to_string(),
+        getter: Some(getter.to_string()),
+    })
 }
 
 fn assertion_primary_subject(text: &str) -> Option<String> {
@@ -939,7 +1536,31 @@ impl PropagationWitnessV1 {
             append_canonical_field(&mut canonical, &edge.from);
             append_canonical_field(&mut canonical, &edge.to);
         }
+        // Source coordinates remain diagnostic, as for existing endpoints.
+        // Empty receipts preserve the historical digest; identities are bound
+        // only when the declaration/callsite producer actually supplies them.
+        if !self.selected_helper_calls.is_empty() {
+            append_canonical_section_header(
+                &mut canonical,
+                "selected-helper-calls",
+                self.selected_helper_calls.len(),
+            );
+            for call in &self.selected_helper_calls {
+                append_canonical_section_header(&mut canonical, "selected-helper-call", 4);
+                append_canonical_field(
+                    &mut canonical,
+                    &call.test_declaration.file.to_string_lossy(),
+                );
+                append_canonical_field(&mut canonical, &call.test_name);
+                append_canonical_field(&mut canonical, &call.callee.0);
+                append_canonical_field(&mut canonical, &call.helper.0);
+            }
+        }
         append_canonical_section_header(&mut canonical, "sink", 2);
+        if let Some(receipt) = &self.fallible_check {
+            append_canonical_section_header(&mut canonical, "fallible-check", 1);
+            append_canonical_field(&mut canonical, &receipt.semantic_digest);
+        }
         append_canonical_field(&mut canonical, &self.sink.kind);
         append_canonical_field(&mut canonical, &self.sink.identity);
         append_canonical_section_header(&mut canonical, "path", 1);
@@ -1076,6 +1697,12 @@ mod tests {
         }
     }
 
+    fn probe_at(family: ProbeFamily, expression: &str, line: usize) -> Probe {
+        let mut probe = probe(family, expression);
+        probe.location = SourceLocation::new("src/lib.rs", line, 5);
+        probe
+    }
+
     fn sink(kind: FlowSinkKind, text: &str, line: usize) -> FlowSinkFact {
         FlowSinkFact {
             kind,
@@ -1116,6 +1743,105 @@ mod tests {
         };
         let flow_sinks = super::super::local_flow_sinks(probe, Some(&owner));
         current_path_witness(probe, &flow_sinks)
+    }
+
+    fn constant_owner(body: &str) -> FunctionSummary {
+        FunctionSummary {
+            id: SymbolId("owner:calculate".to_string()),
+            name: "calculate".to_string(),
+            file: PathBuf::from("src/lib.rs"),
+            start_line: 1,
+            end_line: 3,
+            body: body.into(),
+            calls: Vec::new(),
+            returns: Vec::new(),
+            literals: Vec::new(),
+            source_role: FunctionSourceRole::Production,
+            attrs: Vec::new(),
+            impl_attrs: Vec::new(),
+            nested_fn_names: Vec::new(),
+            let_bindings: Vec::new(),
+            item: Default::default(),
+            impl_context: Default::default(),
+        }
+    }
+
+    /// #6617: only a body that is exactly one literal-only expression is a
+    /// constant tail.
+    #[test]
+    fn constant_owner_tail_is_the_whole_literal_only_body() {
+        for (body, expression) in [
+            ("fn calculate() -> u32 {\n    40 + 2\n}", "40 + 2"),
+            ("fn calculate() -> u32 {\n    7\n}", "7"),
+            ("fn calculate() -> i32 {\n    -(1 << 3)\n}", "-(1 << 3)"),
+            (
+                "fn calculate() -> &'static str {\n    \"ripr\"\n}",
+                "\"ripr\"",
+            ),
+        ] {
+            assert_eq!(
+                constant_owner_tail_line(&constant_owner(body), expression),
+                Some(2),
+                "{body}"
+            );
+        }
+        for (body, expression) in [
+            // A statement before the tail.
+            (
+                "fn calculate() -> u32 {\n    let _x = 1;\n    40 + 2\n}",
+                "40 + 2",
+            ),
+            // A name, a call, a method, a cast, a closure, a macro, a block.
+            ("fn calculate() -> u32 {\n    BASE + 2\n}", "BASE + 2"),
+            ("fn calculate() -> u32 {\n    base() + 2\n}", "base() + 2"),
+            (
+                "fn calculate() -> u32 {\n    40u32.pow(1)\n}",
+                "40u32.pow(1)",
+            ),
+            (
+                "fn calculate() -> u32 {\n    -1i64 as u32\n}",
+                "-1i64 as u32",
+            ),
+            ("fn calculate() -> u32 {\n    (|| 42)()\n}", "(|| 42)()"),
+            ("fn calculate() -> u32 {\n    m!(42)\n}", "m!(42)"),
+            ("fn calculate() -> u32 {\n    { 42 }\n}", "{ 42 }"),
+            (
+                "fn calculate() -> u32 {\n    if true { 42 } else { 0 }\n}",
+                "if true { 42 } else { 0 }",
+            ),
+            // The changed expression is not the whole tail.
+            ("fn calculate() -> u32 {\n    40 + 2\n}", "2"),
+        ] {
+            assert_eq!(
+                constant_owner_tail_line(&constant_owner(body), expression),
+                None,
+                "{body}"
+            );
+        }
+    }
+
+    #[test]
+    fn constant_tail_witness_binds_owner_line_and_sink() {
+        let owner = constant_owner("fn calculate() -> u32 {\n    40 + 2\n}");
+        let probe = probe_at(ProbeFamily::ReturnValue, "40 + 2", 2);
+        let sinks = super::super::local_flow_sinks(&probe, Some(&owner));
+        let witness = constant_tail_witness(&probe, &owner, &sinks);
+        assert!(
+            complete_direct_witness(&probe, witness.as_ref()),
+            "{witness:?} {sinks:?}"
+        );
+        // Another line, another family, or another owner gets nothing.
+        let elsewhere = probe_at(ProbeFamily::ReturnValue, "40 + 2", 3);
+        let sinks = super::super::local_flow_sinks(&elsewhere, Some(&owner));
+        assert!(constant_tail_witness(&elsewhere, &owner, &sinks).is_none());
+        let predicate = probe_at(ProbeFamily::Predicate, "40 + 2", 2);
+        let sinks = super::super::local_flow_sinks(&predicate, Some(&owner));
+        assert!(constant_tail_witness(&predicate, &owner, &sinks).is_none());
+        let mut other = probe_at(ProbeFamily::ReturnValue, "40 + 2", 2);
+        other.owner = Some(SymbolId("owner:other".to_string()));
+        let sinks = super::super::local_flow_sinks(&other, Some(&owner));
+        assert!(!sinks.is_empty());
+        assert!(constant_tail_witness(&other, &owner, &sinks).is_none());
     }
 
     #[test]
@@ -1163,7 +1889,8 @@ mod tests {
     }
 
     #[test]
-    fn unwrapped_direct_return_completes_and_wrapped_stays_candidate() -> Result<(), String> {
+    fn unwrapped_direct_return_completes_and_wrapped_on_another_line_stays_candidate()
+    -> Result<(), String> {
         // `return amount;` is the same value as the `amount` sink: the keyword
         // is normalized before the identity comparison so the supported
         // direct-return path completes (XQFa).
@@ -1178,8 +1905,8 @@ mod tests {
         assert_eq!(witness.completeness, PathCompleteness::Complete);
         assert!(complete_direct_witness(&direct_probe, Some(&witness)));
 
-        // A constructor-wrapped return keeps the adapter fail-closed: the
-        // wrapper payload relationship is not established here.
+        // A constructor-wrapped return whose sink sits on another line keeps
+        // the adapter fail-closed: that sink may be a different exit.
         let wrapped = current_path_witness(
             &probe(ProbeFamily::ReturnValue, "return Ok(amount);"),
             &[sink(FlowSinkKind::ReturnValue, "Ok(amount)", 14)],
@@ -1191,6 +1918,63 @@ mod tests {
             &probe(ProbeFamily::ReturnValue, "return Ok(amount);"),
             Some(&wrapped),
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_wrapped_return_completes_only_on_its_own_line() -> Result<(), String> {
+        // RIPR-SPEC-0231 example 23: `return Some(1 + 2);` returns the
+        // `Some(1 + 2)` sink on its own line, so the edge is established.
+        let wrapped = probe(ProbeFamily::ReturnValue, "return Some(1 + 2);");
+        let witness = current_path_witness(
+            &wrapped,
+            &[sink(FlowSinkKind::ReturnValue, "Some(1 + 2)", 10)],
+        )
+        .ok_or_else(|| "same-line wrapped return witness was absent".to_string())?;
+        assert_eq!(witness.edges[0].status, EdgeStatus::Established);
+        assert_eq!(witness.completeness, PathCompleteness::Complete);
+        assert!(complete_direct_witness(&wrapped, Some(&witness)));
+
+        // The same constructor returned on another line is another exit.
+        let elsewhere = current_path_witness(
+            &wrapped,
+            &[sink(FlowSinkKind::ReturnValue, "Some(1 + 2)", 14)],
+        )
+        .ok_or_else(|| "other-line wrapped return witness was absent".to_string())?;
+        assert_eq!(elsewhere.edges[0].status, EdgeStatus::Candidate);
+        assert!(!complete_direct_witness(&wrapped, Some(&elsewhere)));
+
+        // A call result returned on its own line stays a candidate: the
+        // call may not carry the changed value (`propagate_value_returned`).
+        let call_return = probe(ProbeFamily::ReturnValue, "return self.persist(amount * 9);");
+        let call_witness = current_path_witness(
+            &call_return,
+            &[sink(
+                FlowSinkKind::ReturnValue,
+                "self.persist(amount * 9)",
+                10,
+            )],
+        )
+        .ok_or_else(|| "same-line call return witness was absent".to_string())?;
+        assert_eq!(call_witness.edges[0].status, EdgeStatus::Candidate);
+
+        // A call-free constructor completes against itself on its own line.
+        let ok_return = probe(ProbeFamily::ReturnValue, "return Ok(amount);");
+        let ok_witness = current_path_witness(
+            &ok_return,
+            &[sink(FlowSinkKind::ReturnValue, "Ok(amount)", 10)],
+        )
+        .ok_or_else(|| "same-line Ok return witness was absent".to_string())?;
+        assert_eq!(ok_witness.edges[0].status, EdgeStatus::Established);
+        assert!(complete_direct_witness(&ok_return, Some(&ok_witness)));
+
+        // A different payload on the same line stays a candidate.
+        let other = current_path_witness(
+            &wrapped,
+            &[sink(FlowSinkKind::ReturnValue, "Some(1 + 3)", 10)],
+        )
+        .ok_or_else(|| "different-payload witness was absent".to_string())?;
+        assert_eq!(other.edges[0].status, EdgeStatus::Candidate);
         Ok(())
     }
 
@@ -1484,6 +2268,233 @@ mod tests {
             alternate_limitations.compute_semantic_digest()
         );
         Ok(())
+    }
+
+    /// RIPR-SPEC-0228: a collection write on a field path of `self` names
+    /// its field path; any other receiver or method does not.
+    #[test]
+    fn field_collection_write_path_reads_self_field_receivers() {
+        assert_eq!(
+            field_collection_write_path("self.log.push(x);"),
+            Some("log")
+        );
+        assert_eq!(
+            field_collection_write_path("self.stock.insert(sku.to_string(), n)"),
+            Some("stock")
+        );
+        assert_eq!(field_collection_write_path("self.a.b.push(x)"), Some("a.b"));
+        for other in [
+            "items.push(x)",
+            "self.log.extend(xs)",
+            "self.log.push",
+            "other.log.push(x)",
+            "self.log().push(x)",
+            "self.log[0].push(x)",
+        ] {
+            assert_eq!(field_collection_write_path(other), None, "{other}");
+        }
+    }
+
+    /// #7131: a field credits through a pushed collection only when its
+    /// literal is the whole `push` argument on a field path of `self` and
+    /// nothing after the push writes that field again.
+    #[test]
+    fn pushed_literal_collection_path_needs_the_whole_pushed_literal() {
+        let path = |body: &str, line: usize| {
+            pushed_literal_collection_path(body, 1, line, "sku: sku.to_owned()", &|name| match name
+            {
+                "refresh" => {
+                    Some("fn refresh(&mut self) { self.flag = self.count() > 0; }".to_string())
+                }
+                "count" => Some("fn count(&self) -> usize { self.stock.len() }".to_string()),
+                "normalize" => Some(
+                    "fn normalize(&mut self) { for l in &mut self.log { l.sku.clear(); } }"
+                        .to_string(),
+                ),
+                "deep" => Some("fn deep(&mut self) { self.normalize(); }".to_string()),
+                _ => None,
+            })
+        };
+        let one_line = "fn add(&mut self) {\n    self.log.push(Event::Shipped { sku: sku.to_owned(), qty });\n}";
+        assert_eq!(path(one_line, 2).as_deref(), Some("log"));
+        let split = "fn add(&mut self) {\n    self.a.b.push(Line {\n        sku: sku.to_owned(),\n        qty,\n    });\n    self.a.b.push(other);\n}";
+        assert_eq!(path(split, 3).as_deref(), Some("a.b"));
+        // A later call that resolves to code leaving the field alone keeps it.
+        let refreshed = "fn ship(&mut self) {\n    self.log.push(Event { sku: sku.to_owned() });\n    self.refresh();\n    self.total += 1;\n}";
+        assert_eq!(path(refreshed, 2).as_deref(), Some("log"));
+        for (body, line) in [
+            (
+                "fn add(&mut self) {\n    let e = Line { sku: sku.to_owned() };\n    self.log.push(e);\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() }.clone());\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    items.push(Line { sku: sku.to_owned() });\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.log.clear();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.log = Vec::new();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(wrap(Line { sku: sku.to_owned() }));\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(x);\n    let l = Line { sku: sku.to_owned() };\n}",
+                3,
+            ),
+            (
+                "fn ship(&mut self) {\n    self.log.push(Event::Shipped { qty });\n    Ok(Receipt {\n        sku: sku.to_owned(),\n    })\n}",
+                4,
+            ),
+            (
+                "fn ship(&mut self) {\n    self.log.push(Event::Shipped { qty }); Ok(Receipt { sku: sku.to_owned() })\n}",
+                2,
+            ),
+            // The expression twice on its line: the probe could be either.
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() }); self.other.push(Line { sku: sku.to_owned() });\n}",
+                2,
+            ),
+            // A push that may not run.
+            (
+                "fn add(&mut self) {\n    if qty > 0 { self.log.push(Line { sku: sku.to_owned() }); }\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    let f = |s: &mut Self| s.log.push(Line { sku: sku.to_owned() });\n}",
+                2,
+            ),
+            // A later callee that writes the field, directly or through another call.
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.normalize();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.deep();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    self.unknown();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    *self = Self::default();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    reset(self);\n}",
+                2,
+            ),
+            // A later write to a parent of the path replaces the collection.
+            (
+                "fn add(&mut self) {\n    self.a.b.push(Line { sku: sku.to_owned() });\n    self.a = State::default();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.a.b.push(Line { sku: sku.to_owned() });\n    self.a.reset();\n}",
+                2,
+            ),
+        ] {
+            assert_eq!(path(body, line), None, "{body}");
+        }
+    }
+
+    /// #7131: only an `assert_eq!` on the whole collection, against an
+    /// operand that does not name the same binding, compares every pushed
+    /// field.
+    #[test]
+    fn assertion_whole_collection_equality_rejects_projections_and_copies() {
+        let whole = |text: &str| assertion_whole_collection_equality(text, "log");
+        let read = |binding: &str, getter: Option<&str>| FieldCollectionRead {
+            binding: binding.to_string(),
+            getter: getter.map(str::to_string),
+        };
+        assert_eq!(
+            whole("assert_eq!(inv.history(), &[Event::A]);"),
+            vec![read("inv", Some("history"))]
+        );
+        assert_eq!(
+            whole("assert_eq!(vec![Event::A], inv.log);"),
+            vec![read("inv", None)]
+        );
+        // Both sides qualify: each is a candidate for the owner's binding.
+        assert_eq!(
+            whole("assert_eq!(expected.log, actual.log);"),
+            vec![read("expected", None), read("actual", None)]
+        );
+        for other in [
+            "assert_eq!(inv.history().len(), 1);",
+            "assert_eq!(inv.log[0].qty, 2);",
+            "assert_eq!(inv.log.iter().map(|e| e.qty).sum::<u32>(), 2);",
+            "assert_eq!(inv.history(), inv.history());",
+            "assert_eq!(inv.log, expected(&inv));",
+            "assert_ne!(inv.history(), &[]);",
+            "assert!(inv.history().is_empty());",
+            "assert_eq!(inv.stock, vec![]);",
+        ] {
+            assert!(whole(other).is_empty(), "{other}");
+        }
+    }
+
+    /// RIPR-SPEC-0228: a compared side reads the field collection directly
+    /// or through one argument-free method; another field, another root, or a
+    /// computed value is not such a read.
+    #[test]
+    fn assertion_field_collection_reads_name_binding_and_getter() {
+        let direct = |binding: &str| {
+            vec![FieldCollectionRead {
+                binding: binding.to_string(),
+                getter: None,
+            }]
+        };
+        let through = |binding: &str, getter: &str| {
+            vec![FieldCollectionRead {
+                binding: binding.to_string(),
+                getter: Some(getter.to_string()),
+            }]
+        };
+        let reads = |text: &str| assertion_field_collection_reads(text, "log", false);
+        assert_eq!(reads("assert_eq!(inv.log, vec![1]);"), direct("inv"));
+        assert_eq!(reads("assert_eq!(&inv.log[0], &1);"), direct("inv"));
+        assert_eq!(
+            reads("assert_eq!(inv.history(), &[1]);"),
+            through("inv", "history")
+        );
+        // Either side of an equality may hold the actual value.
+        assert_eq!(reads("assert_eq!(vec![1], inv.log);"), direct("inv"));
+        assert_eq!(
+            reads("assert_eq!(&[1], inv.history());"),
+            through("inv", "history")
+        );
+        for other in [
+            "assert_eq!(inv.logs, vec![1]);",
+            "assert_eq!(inv.at(0), 1);",
+            "assert_eq!(make().log, vec![1]);",
+            "assert_eq!(inv.history().first().copied().unwrap() + 1, 2);",
+            "assert_ne!(vec![1], inv.log);",
+            // Compared with itself, or with a value read from the same binding.
+            "assert_eq!(inv.history(), inv.history());",
+            "assert_eq!(inv.log, expected_for(&inv));",
+            // A count does not read a changed element.
+            "assert_eq!(inv.log.len(), 1);",
+            "assert!(inv.history().is_empty());",
+        ] {
+            assert!(reads(other).is_empty(), "{other}");
+        }
+        // A deleted write changes the count, so a count reads it.
+        assert_eq!(
+            assertion_field_collection_reads("assert_eq!(inv.log.len(), 1);", "log", true),
+            direct("inv")
+        );
     }
 
     #[test]
