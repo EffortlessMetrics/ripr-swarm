@@ -198,13 +198,61 @@ impl<'index> TargetedCallSyntax<'index> {
                     {
                         continue;
                     }
-                    let Some(name) = invocation
-                        .path()
-                        .map(|path| path.syntax().text().to_string())
-                    else {
+                    let Some(name) = invocation.path().map(|path| {
+                        path.syntax()
+                            .descendants_with_tokens()
+                            .filter_map(|element| element.into_token())
+                            .filter(|token| !token.kind().is_trivia())
+                            .map(|token| token.text().to_string())
+                            .collect::<String>()
+                    }) else {
                         continue;
                     };
-                    let operands = match name.as_str() {
+                    let line = lines.line(invocation.syntax().text_range().start());
+                    let qualified = name.contains("::");
+                    let bound = macro_unambiguous(line, &name)
+                        && (!qualified
+                            || crate::analysis::syntax::ra::assertion_root_is_unrebound(
+                                &name,
+                                invocation.syntax(),
+                                &|other| {
+                                    if empty_ranges.iter().any(|range| {
+                                        range.contains(&usize::from(
+                                            other.syntax().text_range().start(),
+                                        ))
+                                    }) {
+                                        return true;
+                                    }
+                                    let Some(path) = other.path() else {
+                                        return false;
+                                    };
+                                    let path: String = path
+                                        .syntax()
+                                        .descendants_with_tokens()
+                                        .filter_map(|e| e.into_token())
+                                        .filter(|t| !t.kind().is_trivia())
+                                        .map(|t| t.text().to_string())
+                                        .collect();
+                                    let leaf =
+                                        crate::analysis::syntax::drop_in_assertion_leaf(&path)
+                                            .unwrap_or(&path);
+                                    crate::analysis::syntax::TRUSTED_MACRO_NAMES.contains(&leaf)
+                                        && macro_unambiguous(
+                                            lines.line(other.syntax().text_range().start()),
+                                            &path,
+                                        )
+                                },
+                            ));
+                    // Keep the full path through both declaration and source
+                    // binding gates before deriving a supported operand shape.
+                    let leaf = if qualified && bound {
+                        crate::analysis::syntax::drop_in_assertion_leaf(&name).unwrap_or("")
+                    } else if !qualified && bound {
+                        name.as_str()
+                    } else {
+                        ""
+                    };
+                    let operands = match leaf {
                         "assert" => 1,
                         "assert_eq" | "assert_ne" => 2,
                         _ => {
@@ -219,8 +267,7 @@ impl<'index> TargetedCallSyntax<'index> {
                             continue;
                         }
                     };
-                    let line = lines.line(invocation.syntax().text_range().start());
-                    if !macro_unambiguous(line, &name) {
+                    if !bound {
                         opaque(
                             invocation.syntax(),
                             opaque_source,

@@ -592,6 +592,61 @@ impl OwnerPinSyntax {
         name: &str,
         index: &RustIndex,
     ) -> bool {
+        let name = if let Some(leaf) = drop_in_assertion_leaf(name) {
+            let Some((root, _)) = name.strip_prefix("::").unwrap_or(name).split_once("::") else {
+                return false;
+            };
+            let verified = if matches!(root, "std" | "core") {
+                matches!(leaf, "assert" | "assert_eq" | "assert_ne")
+                    && index
+                        .drop_in_manifests
+                        .unbound_standard_root(&test.file, root)
+            } else {
+                matches!(leaf, "assert_eq" | "assert_ne")
+                    && index.drop_in_manifests.verified(&test.file, root)
+            };
+            if !verified {
+                return false;
+            }
+            // A qualified root does not borrow a custom bare leaf's
+            // ambiguity. Source availability and all binding-capable
+            // statement macros are checked separately by the collector.
+            let Some(facts) = index.files().get(&test.file) else {
+                return false;
+            };
+            return self.targeted_source_provenance_is_admitted(test, index)
+                && std::iter::once(&test.file)
+                    .chain(facts.role_provenance.edges.iter().map(|e| &e.parent))
+                    .all(|path| {
+                        index.files().get(path).is_some_and(|facts| {
+                            crate::analysis::syntax::parse_clean_source_file(&facts.source)
+                                .is_some_and(|file| {
+                                    crate::analysis::syntax::ra::assertion_root_is_available(
+                                        name,
+                                        file.syntax(),
+                                    )
+                                })
+                        })
+                    })
+                && facts.role_provenance.edges.iter().all(|edge| {
+                    parse_clean_source_file(&edge.declaration).is_some_and(|file| {
+                        file.syntax()
+                            .descendants()
+                            .filter_map(ast::Module::cast)
+                            .all(|module| {
+                                crate::analysis::syntax::ra::assertion_root_is_available(
+                                    name,
+                                    module.syntax(),
+                                )
+                            })
+                    })
+                });
+        } else {
+            if name.contains("::") {
+                return false;
+            }
+            name
+        };
         self.targeted_source_provenance_is_admitted(test, index)
             && !self.trusted_macro_ambiguities(index).contains(name)
             && !self

@@ -9719,6 +9719,214 @@ fn selected() {
     }
 
     #[test]
+    fn changed_test_inventory_qualified_assertion_roots() -> Result<(), String> {
+        let mut cases: Vec<(String, String, String, String, bool)> = Vec::new();
+        for root in ["std", "core"] {
+            for leaf in ["assert", "assert_eq", "assert_ne"] {
+                for spelling in [format!("{root}::{leaf}"), format!("::{root} :: {leaf}")] {
+                    let operands = match leaf {
+                        "assert" => "crate::\nowner(1) == 1",
+                        "assert_eq" => "crate::\nowner(1), 1",
+                        _ => "crate::\nowner(1), 2",
+                    };
+                    cases.push((
+                        spelling.clone(),
+                        String::new(),
+                        String::new(),
+                        format!("{spelling}!({operands});"),
+                        true,
+                    ));
+                }
+            }
+        }
+        for root in ["pretty_assertions", "similar_asserts"] {
+            for leaf in ["assert_eq", "assert_ne"] {
+                cases.push((
+                    format!("{root}-{leaf}"),
+                    String::new(),
+                    format!("[dev-dependencies]\n{root}=\"1\"\n"),
+                    format!(
+                        "{root}::{leaf}!(crate::\nowner(1), {});",
+                        if leaf == "assert_eq" { 1 } else { 2 }
+                    ),
+                    true,
+                ));
+            }
+        }
+        let discarded = "mod fake { macro_rules! assert_eq { ($($t:tt)*) => { () } } pub(crate) use assert_eq; }\n";
+        for (label, prefix, manifest, body, admitted) in [
+            (
+                "bare-shadow",
+                "macro_rules! assert_eq { ($($t:tt)*) => { () } }\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                true,
+            ),
+            (
+                "module-root",
+                "mod std { macro_rules! assert_eq { ($($t:tt)*) => { () } } pub(crate) use assert_eq; }\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "import-root",
+                discarded,
+                "",
+                "use crate::fake as std; std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "glob-root",
+                discarded,
+                "",
+                "use crate::fake::*; std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "opaque-statement",
+                "mod fake { macro_rules! assert_eq { ($($t:tt)*) => { () } } pub(crate) use assert_eq; }\nmacro_rules! introduce { () => { use crate::fake as std; } }\n",
+                "",
+                "introduce!(); std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "no-std-unbound",
+                "#![no_std]\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "no-std-explicit",
+                "#![no_std]\nextern crate std;\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                true,
+            ),
+            (
+                "no-std-core",
+                "#![no_std]\n",
+                "",
+                "core::assert_eq!(crate::owner(1), 1);",
+                true,
+            ),
+            (
+                "no-prelude",
+                "#![no_implicit_prelude]\nextern crate std;\n",
+                "",
+                "std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "std-package-alias",
+                "",
+                "[dependencies]\nstd={package=\"alternate\",path=\"alias\"}\n",
+                "std::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "drop-in-missing",
+                "",
+                "",
+                "pretty_assertions::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+            (
+                "drop-in-alias",
+                "",
+                "[dev-dependencies]\npretty_assertions={package=\"alternate\",path=\"alias\"}\n",
+                "pretty_assertions::assert_eq!(crate::owner(1), 1);",
+                false,
+            ),
+        ] {
+            cases.push((
+                label.into(),
+                prefix.into(),
+                manifest.into(),
+                body.into(),
+                admitted,
+            ));
+        }
+        for (label, prefix, dependencies, body, admitted) in cases {
+            let root = make_tempdir("qualified-assertion-root")?;
+            write_file(
+                &root.join("Cargo.toml"),
+                &format!(
+                    "[package]\nname=\"occurrence\"\nversion=\"0.1.0\"\nedition=\"2024\"\n{dependencies}"
+                ),
+            )?;
+            if dependencies.contains("path=") {
+                write_file(
+                    &root.join("alias/Cargo.toml"),
+                    "[package]\nname=\"alternate\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                )?;
+                write_file(
+                    &root.join("alias/src/lib.rs"),
+                    "#[macro_export] macro_rules! assert_eq { ($($t:tt)*) => { () } }\n",
+                )?;
+            }
+            write_file(
+                &root.join("src/lib.rs"),
+                &format!(
+                    "{prefix}pub fn owner(x:i32)->i32 {{ if x>0 {{x}} else {{0}} }}\n#[test] fn selected() {{ {body} }}\n"
+                ),
+            )?;
+            let index = crate::analysis::facts::build_index(&root, &[root.join("src/lib.rs")])?;
+            assert_eq!(index.tests().len(), 1, "{label}: indexed test");
+            assert!(
+                index.tests()[0]
+                    .calls
+                    .iter()
+                    .any(|call| call.name == "owner"),
+                "{label}: captured call"
+            );
+            assert!(
+                index
+                    .files()
+                    .iter()
+                    .all(|(_, file)| !file.used_lexical_fallback),
+                "{label}: parser premise"
+            );
+            let candidates = inventory_changed_test_classified_seams_at_with_config_node(
+                &root,
+                &RiprConfig::default(),
+                Path::new("src/lib.rs"),
+                Some("selected"),
+            );
+            if admitted {
+                let candidates = candidates.map_err(|error| format!("{label}: {error:?}"))?;
+                assert_eq!(candidates.selected_test_count, 1, "{label}: selected test");
+                assert!(
+                    !candidates.classified.is_empty(),
+                    "{label}: nonempty owner seams"
+                );
+                assert!(
+                    candidates
+                        .classified
+                        .iter()
+                        .all(|entry| entry.seam.owner() == "src/lib.rs::owner"),
+                    "{label}: owner identity"
+                );
+            } else {
+                assert!(
+                    matches!(
+                        candidates,
+                        Err(TargetedTestInventoryError::Selector {
+                            kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                            selected_test_count: 1,
+                            ..
+                        })
+                    ),
+                    "{label}: {candidates:?}"
+                );
+            }
+            std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    #[test]
     fn changed_test_inventory_exact_occurrence_no_implicit_prelude_binding() -> Result<(), String> {
         for layout in ["root", "file-backed"] {
             for rebound in [false, true] {

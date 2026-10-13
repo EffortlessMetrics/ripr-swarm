@@ -115,6 +115,8 @@ run. A parsed method occurrence supplies no receiver type proof: receiver,
 return declaration and field identity remain a separate admission boundary.
 This selection prerequisite does not establish complete field repair readiness.
 
+Qualified std/core forms of these assertions and verified pretty_assertions/similar_asserts equality forms retain their full parser path until source-root, availability and manifest binding checks pass. Leading `::` and trivia do not change mapped operand bytes. Qualified roots cannot borrow bare-leaf identity: source imports, modules, extern renames, globs, unknown binding-capable statements and declared dependency/package aliases retain refusals. Standard roots use a separate closed no-binding declaration verdict, not a registry-package verdict. `no_std` needs an explicit unrenamed std declaration for a std path; core remains distinct. No-implicit-prelude assertion contexts remain outside this admission. Captured operands still pass the established free/inherent owner binding; this grants no receiver, oracle-strength or field readiness authority.
+
 An absent, out-of-root, or stale selector is a named limitation, not a broad
 silent fallback. An anchorless or stale record in an otherwise usable canonical
 group is a named per-scope limitation, not a reason to discard the group's
