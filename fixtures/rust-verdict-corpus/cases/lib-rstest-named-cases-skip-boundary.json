@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-rstest-named-cases-skip-boundary",
+  "subject_id": "authored-lib-rstest",
+  "diff": "cases/lib-rstest-named-cases-skip-boundary.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "rstest_named_case_attribute",
+  "hard_case": "The named cases `#[case::child(10, false)]` and `#[case::grown(30, true)]` never hit age 18, so the off-by-one goes undetected; ripr would need the case literals to see that the boundary is missing.",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "18 < age",
+        "mutated_line": "18 < age",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: age=18 gives false not true"
+      },
+      {
+        "replacement": "10 <= age",
+        "mutated_line": "10 <= age",
+        "outcome": "tests_failed",
+        "failing_test": "tests::adult_cases_skip_boundary::case_1_child",
+        "equivalence_review": "not equivalent: age=10 gives true not false"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The case table pins exact bools but only at 10 and 30, so `18 < age` goes undetected (no case at 18) while `10 <= age` flips case_1_child.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

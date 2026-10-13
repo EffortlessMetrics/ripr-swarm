@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 008cf8f..2088788 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,7 +1,7 @@
+ //! Async pricing helpers exercised from `#[tokio::test]` tests.
+ 
+ pub async fn total(prices: &[u32]) -> u32 {
+-    prices.iter().sum::<u32>() + 5
++    5 + prices.iter().sum::<u32>()
+ }
+ 
+ pub async fn discount(p: u32) -> u32 {

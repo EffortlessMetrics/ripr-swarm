@@ -37,7 +37,9 @@ identity traps (0197); `authored-spec-harness` for harness and package-reach
 cells: libtest-mimic trials (RIPR-SPEC-0173), `cargo_bin` subprocess output
 (0166) and xtask edits (0153); four `authored-grid-*` crates for
 control-flow, changed-binding, Result-match and bitwise or input-length
-cells), and
+cells; `authored-lib-*` for how tests written with common test libraries
+read as oracles, each declaring the library as a crates.io dependency with
+the labeled version in its `version_label`, never vendored), and
 one-line edits under `cases/`. Each case is labeled
 with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned

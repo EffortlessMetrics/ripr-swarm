@@ -1,0 +1,22 @@
+{
+  "case_id": "lib-assert-matches-guarded-arm-partial",
+  "subject_id": "authored-lib-assert-matches",
+  "origin": "authored",
+  "anchor": "src/lib.rs:26",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "assert_matches_guarded_pattern",
+  "hard_case": true,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}
