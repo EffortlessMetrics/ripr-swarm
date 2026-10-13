@@ -409,6 +409,16 @@ fn lookup_table_entry_is_exposed_when_a_test_looks_up_a_changed_key() -> Result<
     ] {
         let finding = lookup_finding(label, &two_params, &vitest(plain, lines))?;
         assert_eq!(finding.class, class, "{label}: {:?}", finding.missing);
+        // A miss still names the changed key, read from the right argument.
+        assert_eq!(
+            class == ExposureClass::WeaklyExposed,
+            finding
+                .missing
+                .iter()
+                .any(|line| line.contains("lookup-table value for `pear`")),
+            "{label}: {:?}",
+            finding.missing
+        );
     }
     Ok(())
 }
