@@ -875,6 +875,7 @@ tests = [
   "crates/ripr/src/cli/commands/check.rs::closer_config_warning_tests::skipped_closer_config_warning_names_the_member_entry_when_it_is_a_symlink_to_a_different_file",
   "crates/ripr/tests/cli_smoke.rs::check_from_a_member_crate_warns_when_it_skips_the_closer_ripr_toml",
   "crates/ripr/src/config.rs::tests::explicit_cli_mode_wins_over_config_mode",
+  "crates/ripr/src/config.rs::tests::config_discovery_stops_at_unresolvable_git_entries",
   "crates/ripr/src/config.rs::tests::config_mode_applies_when_cli_mode_is_not_explicit",
   "crates/ripr/src/config.rs::tests::malformed_or_unknown_config_is_actionable",
   "crates/ripr/src/config.rs::tests::config_rejects_unsafe_suppression_paths",
@@ -1042,6 +1043,7 @@ name = "defaults-first adoption"
 spec = "docs/specs/RIPR-SPEC-0009-defaults-first-adoption.md"
 tests = [
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::invalid_ancestor_git_markers_preserve_python_and_cache_context",
+  "crates/ripr/tests/cli_smoke/implicit_git_root.rs::broken_git_links_keep_implicit_check_and_cache_inside_the_project",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::inherited_git_selectors_cannot_certify_an_inert_ancestor",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::gitless_saved_diff_does_not_cross_a_nested_repository_boundary",
   "crates/ripr/tests/cli_smoke/implicit_git_root.rs::git_launch_failure_stops_root_discovery_with_consumer_recovery",
