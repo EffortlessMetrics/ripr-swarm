@@ -2050,6 +2050,22 @@
       ]
     },
     {
+      "id": "py_replaced_block_non_delta_operand",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_adversarial_replaced_block_non_delta_operand",
+      "vector": "replaced_block_later_line_non_delta_operand",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "must_disclose_scope" },
+        { "type": "must_not_emit_repair_packet" },
+        { "type": "must_not_have_receipt_command" },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "weakly_exposed" },
+        { "type": "maximum_class", "class": "weakly_exposed" }
+      ]
+    },
+    {
       "id": "py_default_value_overridden",
       "language": "python",
       "tier": "pure",

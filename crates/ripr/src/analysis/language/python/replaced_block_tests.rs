@@ -206,6 +206,32 @@ fn renamed_def_paired_with_a_look_alike_header_keeps_its_probe() -> Result<(), S
     Ok(())
 }
 
+/// Review of #7600: a rename that shares almost no tokens with the old header
+/// (`def balance(self):` -> `def amount_on_record(this):`) fails the look-alike
+/// test, but an old `def` header in its place still marks a changed header.
+#[test]
+fn renamed_def_paired_with_an_unlike_old_header_keeps_its_probe() -> Result<(), String> {
+    let source = ACCOUNT_PY
+        .replacen("def balance(self):", "def amount_on_record(this):", 1)
+        .replacen(
+            "return max(0, self._balance)",
+            "return max(0, this._balance)",
+            1,
+        );
+    let findings = analyze(
+        "renamed-def-unlike",
+        &source,
+        &[5, 6, 7],
+        vec![
+            line(5, 5, "    def balance(self):"),
+            line(6, 5, "        # the amount on record"),
+            line(7, 5, "        return self._balance"),
+        ],
+    )?;
+    assert_eq!(classes_on(&findings, 5).len(), 1, "{findings:?}");
+    Ok(())
+}
+
 /// Content pairing compares trimmed text, so a module-scope annotation that
 /// leaves an `if` block pairs with its indented old self. Moving out of the
 /// block is behavior, so the annotation-only guard must not suppress it.

@@ -86,6 +86,11 @@ pub(super) struct PythonNoBehaviorContext {
 /// Python a change of indentation moves the line into or out of a block, which
 /// is behavior of its own. The annotation-only guards suppress a probe, so they
 /// fail closed when the paired lines sit at different depths (#7556).
+fn is_python_def_line(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with("def ") || trimmed.starts_with("async def ")
+}
+
 fn same_indentation(old: &str, new: &str) -> bool {
     let leading = |text: &str| {
         text.chars()
@@ -144,11 +149,12 @@ pub(super) fn classify_change_with_context(
     // carries its own added lines has no behavior of its own — the body lines
     // are the probes. Crediting `exposed` here would claim a discriminator for
     // a line with nothing to discriminate. A replacement block pairs the header
-    // with whatever old line stood in its position, so only an old line that
-    // looks like it marks a changed header (#7556). Fails closed on a changed
-    // header, a default value (runtime behavior), a one-line
-    // `def f(x): return x`, and a multi-line header.
-    if old_line_text.is_none_or(|old| !lines_look_alike(old, line_text))
+    // with whatever old line stood in its position, so only an old `def`
+    // header, or an old line that looks like it, marks a changed header
+    // (#7556): a rename that shares few tokens is still a changed header.
+    // Fails closed on a changed header, a default value (runtime behavior), a
+    // one-line `def f(x): return x`, and a multi-line header.
+    if old_line_text.is_none_or(|old| !is_python_def_line(old) && !lines_look_alike(old, line_text))
         && no_behavior.opens_owner_with_added_body
         && is_new_def_header_without_defaults(line_text)
     {
