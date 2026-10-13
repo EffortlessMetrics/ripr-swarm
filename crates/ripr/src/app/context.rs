@@ -87,7 +87,10 @@ pub(crate) fn collect_context_with_config_and_worktree(
 /// The shared sink projects the same producer-owned stage lines `check`
 /// promises; `None` reproduces the legacy silent behavior for library
 /// callers. The `--from` artifact path runs no pipeline and takes no sink.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the CLI progress route carries the check input, selector, render knob, config, mode flags, sink, and diff source together; splitting the packet would misalign the drill-in contract"
+)]
 pub(crate) fn collect_context_with_config_worktree_and_progress(
     input: CheckInput,
     selector: &str,
