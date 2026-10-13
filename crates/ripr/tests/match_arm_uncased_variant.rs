@@ -29,6 +29,9 @@ impl TempRepo {
             "ripr-match-arm-uncased-variant-{}-{sequence}",
             std::process::id()
         ));
+        // Built before any write so `Drop` removes a partly written root.
+        let repo = Self { root };
+        let root = &repo.root;
         std::fs::create_dir_all(root.join("src"))
             .map_err(|error| format!("create source directory failed: {error}"))?;
         std::fs::create_dir_all(root.join("tests"))
@@ -47,7 +50,7 @@ impl TempRepo {
         }
         write("tests/it.rs", test)?;
         write("diff.patch", diff)?;
-        Ok(Self { root })
+        Ok(repo)
     }
 
     fn check(&self) -> Result<CheckOutput, String> {
