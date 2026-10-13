@@ -15,10 +15,9 @@
 //! `docs/LEARNINGS.md`); reserved variants name their future producer and
 //! the emit guard keeps them unemittable until that producer lands.
 //!
-//! The backend health/root gate (`lsp/backend.rs`) stays omit-only by
-//! design: without a snapshot no diagnostic-addressing action can be
-//! constructed, so there is no action to disable in place — nothing is
-//! suppressed that a client could otherwise see.
+//! The backend health gate can disclose retained actions inert to a
+//! disabled-capable client. Missing snapshots and blocked roots stay
+//! omit-only; retained presentation does not grant execution authority.
 
 use serde_json::Value;
 use tower_lsp_server::ls_types::{Diagnostic, NumberOrString};
@@ -32,6 +31,9 @@ pub(super) const RIPR_CODE_ACTION_DATA_SCHEMA_VERSION: &str = "ripr-code-action-
 /// names why the action cannot execute, never an evidence verdict.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum ActionDisabledReason {
+    /// The shared analysis-health gate blocks current actions on retained
+    /// evidence (#7458).
+    AnalysisNotCurrent,
     /// The current snapshot no longer carries the diagnostic the action
     /// addresses (stale gap-diagnostic suppression in `lsp/actions.rs`).
     StaleSnapshot,
@@ -53,7 +55,7 @@ pub(super) enum ActionDisabledReason {
     /// Reserved: producer is a document-version staleness path that
     /// suppresses actions when the open document moved past the snapshot.
     StaleDocument,
-    /// Reserved: producer is the backend health/root gate, which today
+    /// Reserved: producer is the backend root gate, which today
     /// stays omit-only (see module docs).
     WorkspaceRootBlocked,
     /// Reserved: producer is the quickfix repair-action fix-site resolution
@@ -75,6 +77,7 @@ impl ActionDisabledReason {
     /// Machine-readable reason string for `data.disabled_reason`.
     pub(super) fn as_str(self) -> &'static str {
         match self {
+            Self::AnalysisNotCurrent => "analysis_not_current",
             Self::StaleSnapshot => "stale_snapshot",
             Self::StaleDocument => "stale_document",
             Self::ClientCapabilityMissing => "client_capability_missing",
@@ -94,6 +97,9 @@ impl ActionDisabledReason {
     /// the editor UI). Advisory, conservative wording.
     pub(super) fn human_reason(self) -> &'static str {
         match self {
+            Self::AnalysisNotCurrent => {
+                "Analysis is not current; wait or resolve the failure and refresh analysis"
+            }
             Self::StaleSnapshot => {
                 "Analysis snapshot changed; refresh analysis before using this action"
             }
@@ -122,6 +128,7 @@ impl ActionDisabledReason {
 
 /// Reasons a real producer emits today (#1892).
 pub(super) const EMITTED_DISABLED_REASONS: &[ActionDisabledReason] = &[
+    ActionDisabledReason::AnalysisNotCurrent,
     ActionDisabledReason::StaleSnapshot,
     ActionDisabledReason::ClientCapabilityMissing,
     ActionDisabledReason::VerificationRouteUnavailable,
@@ -486,6 +493,7 @@ mod tests {
     #[test]
     fn closed_disabled_reason_vocabulary_is_disjoint_unique_and_complete() -> Result<(), String> {
         let all = [
+            ActionDisabledReason::AnalysisNotCurrent,
             ActionDisabledReason::StaleSnapshot,
             ActionDisabledReason::StaleDocument,
             ActionDisabledReason::ClientCapabilityMissing,
