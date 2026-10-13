@@ -409,6 +409,33 @@ rule only for an assertion whose context was admitted.
      forward. A definition the parser did not index (a `macro_rules!` body)
      counts when its `fn name` text is visible. A definition in a
      lexical-fallback file always counts.
+   - An associated call `T::name(..)` (#6617) names only an associated
+     function (no `self`) of an inherent `impl T` block, for a
+     `return_value` (or bool-tail `predicate`) probe; a whole-value field
+     pin through `T::new()` is not read. `T` is the owner's self type: one
+     CamelCase identifier other than `Self`, without generics, that exactly
+     one workspace `struct`, `enum` or `union` declares, and that no indexed
+     file gives to a `mod`, `trait` or `type` alias (a module `T` would make
+     the call a free-function path, which is the module-path shape and never
+     this one; a module path never has a CamelCase segment). No other
+     workspace definition of the name may be path-callable: an inherent or
+     trait-impl function of any type, a trait item, an unknown container
+     and every unindexed `fn name` compete; a module-level or local free
+     function cannot be the target of a type path and does not compete
+     (RIPR-SPEC-0172). On the test side the call is exactly
+     `T::name(..)` with nothing chained after it, in the test's own body
+     (no borrowed helper), and the test sits at its file's top level. The
+     file must import `T` at file level as `use <krate>::...::T;` where
+     `<krate>` names the owner's library from the test's crate (the
+     manifest authority, or a workspace package name in a synthetic index
+     without one) and the test's crate does not bind `<krate>` itself.
+     Every `use` in the file that names `T` must be such an import: an
+     alias (`as`), a glob, a brace list, another root or a nested module's
+     import refuses, as does a declaration or `type` alias of `T` in the
+     test's file, a rename to `T`, a `use` or item of `T` in the test body,
+     or a macro in the body that mentions `T`. The owner's library must not
+     export another `T` (a foreign `pub use` or glob). A bare `name(..)`
+     still never names the associated owner (shape 1 above).
 3. Return path. The changed expression must be the owner body's tail (or
    its final `return <expr>;`), and it must evaluate all of its parts on
    every input: no closure, `|=` or non-binary `|`, no `&&`/`||`, no `if`, `match`,
@@ -1466,8 +1493,10 @@ assertions. This repair shares the existing callback without that larger migrati
   are documented residuals.
 - A trait from outside the workspace that is also in scope and also names
   the method is not detected.
-- Type- and trait-qualified calls (`Type::name(..)`,
-  `Trait::name(&mut recv, ..)`) do not pin yet; module paths do (#6974).
+- Trait-qualified calls (`Trait::name(&mut recv, ..)`) and type-qualified
+  method calls do not pin yet; module paths do (#6974), and so does
+  `T::name(..)` for an inherent associated function directly imported
+  from the owner's library (#6617).
 - A path call relies on the name's workspace uniqueness. Items that a
   procedural or foreign macro generates are invisible to it, as they are
   to the bare call.
@@ -1501,6 +1530,11 @@ assertions. This repair shares the existing callback without that larger migrati
   `return Some(1 + 2);` sits beside a `None` tail and a test asserting
   `assert!(matches!(lookup(1), Some(x @ 3)))`, the finding reads `exposed`;
   `assert_eq!(lookup(2), None)` alone stays below `exposed`.
+- Given `impl Gauge { fn reading() -> u32 }` in `meter` and a free
+  `fn reading` in `spare`, a `panel` integration test with
+  `use meter::Gauge;` asserting `assert_eq!(Gauge::reading(), 42)` confirms
+  a change to `Gauge::reading`; the same test through `use meter::Gauge as
+  Knob;`, `use meter::*;` or `use spare::Gauge;` does not (#6617).
 - Given a trait default `next_word` and `impl Reader for Fixed` overriding
   it, a test asserting `assert_eq!(reader.next_word(), 7)` on a `Fixed`
   receiver does not confirm a change to the default.
@@ -1521,7 +1555,13 @@ assertions. This repair shares the existing callback without that larger migrati
   literal `matches!` pins
   (`a_literal_matches_pattern_pins_the_owner_value`);
   inline constructor receivers
-  (`an_inline_constructor_types_the_receiver_like_a_binding`); module-path
+  (`an_inline_constructor_types_the_receiver_like_a_binding`); associated
+  `T::name(..)` calls (#6617:
+  `associated_function_pins_through_a_directly_imported_owner_type`,
+  `associated_function_pin_refuses_other_names_for_the_type`,
+  `associated_function_pin_is_not_established_beside_a_competitor`,
+  `associated_function_pin_resolves_the_importing_crate_through_manifests`,
+  `bare_call_names_only_a_module_level_function`); module-path
   calls and let-bound results (#6974:
   `a_path_through_the_owners_own_crate_pins_the_owner`,
   `a_path_that_may_leave_the_owners_crate_is_not_a_pin`,
