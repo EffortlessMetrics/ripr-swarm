@@ -2638,6 +2638,15 @@ export class RiprClientController {
   }
 
   private repairActionRootBlocker(targetUri?: vscode.Uri): string | undefined {
+    // An untrusted workspace can never hold a running ripr session, so the
+    // session blocker's "requires a running server" would replace the
+    // recoverable trust guidance that repair actions surfaced before the
+    // session gate existed (first hosted vscode run for #7408). Setup
+    // guidance owns the untrusted case; the session gate still owns trusted
+    // cases.
+    if (!this.runtime.isWorkspaceTrusted()) {
+      return setupRepairBlocker(this.statusContext()) ?? this.sessionRootBlocker();
+    }
     const blocker = this.sessionRootBlocker();
     if (blocker) {
       return blocker;
