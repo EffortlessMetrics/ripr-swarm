@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-lib-tokio",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against tokio 1.53.2 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "de34321e39a1de9856489de18b1ba082ec2d3b2884bd4ad9e07423202ae6d46b"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "f838e86e0278253c941592a290c77ec3b468ccff7fa875a764061c77657b03b9"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "936af5e235073054a4ea147ddf8b910e9116100b3913ee5f9901d10302bb0eb9"
+    }
+  ]
+}

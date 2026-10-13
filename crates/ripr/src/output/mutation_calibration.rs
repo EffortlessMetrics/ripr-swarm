@@ -181,6 +181,49 @@ pub(crate) fn mutation_calibration_report_from_json(
     ))
 }
 
+/// The stderr disclosure `ripr calibrate cargo-mutants` prints beside a join.
+///
+/// The join itself matches by `seam_id`, span containment, or file/line in
+/// every case; what changes is what can be said about artifact identity.
+/// cargo-mutants `outcomes.json` does not carry a head, so the usual case is
+/// a snapshot that may or may not name one. A disclosure that stays silent
+/// lets a foreign `file:line` inherit the static seam's authority (#7449).
+/// Reuses the outcome snapshot head reader so "full SHA" means the same thing
+/// on both surfaces.
+pub(crate) fn calibrate_head_provenance_disclosure(
+    repo_exposure_json: &str,
+    mutants_json: &str,
+) -> String {
+    match (
+        crate::output::outcome::snapshot_repository_head(repo_exposure_json),
+        crate::output::outcome::snapshot_repository_head(mutants_json),
+    ) {
+        (Some(snapshot_head), Some(mutants_head)) if snapshot_head == mutants_head => {
+            format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; both artifacts report repository head {snapshot_head}, so they are from the same commit (the working tree may still differ between them)."
+            )
+        }
+        (Some(snapshot_head), Some(mutants_head)) => {
+            format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the artifacts report different repository heads (repo-exposure {snapshot_head}, cargo-mutants {mutants_head}), so matched rows may describe a different subject than the static snapshot."
+            )
+        }
+        (Some(snapshot_head), None) => {
+            format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the repo-exposure snapshot reports repository head {snapshot_head}, so the join assumes that subject. The cargo-mutants JSON does not carry a head SHA, so ensure the mutants were produced from the same repository and adjacent commits."
+            )
+        }
+        (None, Some(mutants_head)) => {
+            format!(
+                "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; the cargo-mutants JSON reports repository head {mutants_head}, but the repo-exposure snapshot does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits."
+            )
+        }
+        (None, None) => {
+            "ripr calibrate cargo-mutants: join matches by seam_id, span containment, or file/line; at least one of the repo-exposure / cargo-mutants artifacts does not carry a head SHA, so ensure both artifacts are from the same repository and adjacent commits.".to_string()
+        }
+    }
+}
+
 fn require_imported_runtime_mutants(
     records: Vec<MutationOutcomeRecord>,
 ) -> Result<Vec<MutationOutcomeRecord>, String> {
@@ -1440,6 +1483,259 @@ mod tests {
             );
         }
         Ok(())
+    }
+
+    fn snapshot_with_head(head: Option<&str>) -> String {
+        match head {
+            Some(head) => serde_json::json!({
+                "schema_version": "0.2",
+                "artifact": { "repository": { "root": "/w", "head": head } },
+                "seams": [{
+                    "seam_id": "67fc764ba37d77bd",
+                    "kind": "predicate_boundary",
+                    "file": "src/lib.rs",
+                    "line": 2,
+                    "grip_class": "strongly_gripped",
+                    "related_tests": [],
+                    "observed_values": [],
+                    "missing_discriminators": []
+                }]
+            }),
+            None => serde_json::json!({
+                "schema_version": "0.2",
+                "seams": [{
+                    "seam_id": "67fc764ba37d77bd",
+                    "kind": "predicate_boundary",
+                    "file": "src/lib.rs",
+                    "line": 2,
+                    "grip_class": "strongly_gripped",
+                    "related_tests": [],
+                    "observed_values": [],
+                    "missing_discriminators": []
+                }]
+            }),
+        }
+        .to_string()
+    }
+
+    fn foreign_same_line_mutants() -> &'static str {
+        r#"{"mutants":[{"id":"other-repo-mutant","file":"src/lib.rs","line":2,"operator":"replace - with +","outcome":"missed"}]}"#
+    }
+
+    fn mutants_with_head(head: Option<&str>) -> String {
+        match head {
+            Some(head) => serde_json::json!({
+                "artifact": { "repository": { "root": "/other", "head": head } },
+                "mutants": [{
+                    "id": "other-repo-mutant",
+                    "file": "src/lib.rs",
+                    "line": 2,
+                    "operator": "replace - with +",
+                    "outcome": "missed"
+                }]
+            }),
+            None => serde_json::json!({
+                "mutants": [{
+                    "id": "other-repo-mutant",
+                    "file": "src/lib.rs",
+                    "line": 2,
+                    "operator": "replace - with +",
+                    "outcome": "missed"
+                }]
+            }),
+        }
+        .to_string()
+    }
+
+    /// A foreign mutant on a coincidental file:line still joins. The
+    /// disclosure is the honesty surface; this PR does not refuse the join.
+    #[test]
+    fn foreign_same_line_mutant_still_joins_by_file_line() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &snapshot_with_head(None),
+            foreign_same_line_mutants(),
+        )?;
+        assert_eq!(
+            report.matched.len(),
+            1,
+            "the issue's coincidental file:line still joins"
+        );
+        assert_eq!(report.matched[0].join_method, "file_line");
+        assert_eq!(
+            confidence_label_for_match(&report.matched[0]),
+            "contradicts_static_clean"
+        );
+        assert_eq!(
+            report.matched[0].mutation.mutant_id.as_deref(),
+            Some("other-repo-mutant")
+        );
+        let markdown = render_mutation_calibration_md(&report);
+        assert!(
+            markdown.contains("`file_line` | `contradicts_static_clean`"),
+            "the rendered row must still carry the high-signal label:\\n{markdown}"
+        );
+        Ok(())
+    }
+
+    /// A mutant whose path is not in the snapshot inventory stays unmatched.
+    /// Pin this so the provenance warning does not start refusing or
+    /// rewriting location joins that already have an unmatched reason.
+    #[test]
+    fn mutant_on_a_file_absent_from_the_snapshot_stays_unmatched() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &snapshot_with_head(None),
+            r#"{"mutants":[{"id":"other-path","file":"src/other.rs","line":2,"operator":"replace - with +","outcome":"missed"}]}"#,
+        )?;
+        assert!(
+            report.matched.is_empty(),
+            "a path not in the snapshot inventory must not join: {:?}",
+            report.matched
+        );
+        assert_eq!(report.unmatched_mutants.len(), 1);
+        assert_eq!(report.unmatched_mutants[0].reason, "no_seam_on_line");
+        Ok(())
+    }
+
+    #[test]
+    fn calibrate_disclosure_warns_when_neither_artifact_has_a_head() {
+        let line = calibrate_head_provenance_disclosure(
+            &snapshot_with_head(None),
+            foreign_same_line_mutants(),
+        );
+        assert!(
+            line.contains("does not carry a head SHA"),
+            "identity-free snapshot plus cargo-mutants JSON must keep the caveat: {line}"
+        );
+        assert!(
+            line.contains("same repository and adjacent commits"),
+            "the caveat must name the same-repo obligation: {line}"
+        );
+        assert!(
+            !line.contains("repository head "),
+            "must not invent a head the artifacts do not carry: {line}"
+        );
+    }
+
+    #[test]
+    fn calibrate_disclosure_names_the_snapshot_head_when_mutants_have_none() {
+        let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+        let line = calibrate_head_provenance_disclosure(
+            &snapshot_with_head(Some(head)),
+            foreign_same_line_mutants(),
+        );
+        assert!(
+            line.contains(head),
+            "the snapshot head must be named: {line}"
+        );
+        assert!(
+            line.contains("join assumes that subject"),
+            "a headed snapshot must state which subject the join assumes: {line}"
+        );
+        assert!(
+            line.contains("does not carry a head SHA"),
+            "cargo-mutants without a head must still get the caveat: {line}"
+        );
+    }
+
+    #[test]
+    fn calibrate_disclosure_flags_different_heads() {
+        let snapshot = "1111111111111111111111111111111111111111";
+        let mutants = "2222222222222222222222222222222222222222";
+        let line = calibrate_head_provenance_disclosure(
+            &snapshot_with_head(Some(snapshot)),
+            &mutants_with_head(Some(mutants)),
+        );
+        assert!(
+            line.contains(snapshot) && line.contains(mutants),
+            "both heads must be named: {line}"
+        );
+        assert!(
+            line.contains("different repository heads"),
+            "a mismatch must be stated as a different subject: {line}"
+        );
+        assert!(
+            !line.contains("does not carry a head SHA"),
+            "must not claim a missing head when both artifacts name one: {line}"
+        );
+    }
+
+    #[test]
+    fn calibrate_disclosure_reports_matching_heads_as_agreement() {
+        let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+        let line = calibrate_head_provenance_disclosure(
+            &snapshot_with_head(Some(head)),
+            &mutants_with_head(Some(head)),
+        );
+        assert!(line.contains(head), "the shared head must be named: {line}");
+        assert!(
+            line.contains("same commit"),
+            "matching heads must be reported as agreement: {line}"
+        );
+        assert!(
+            !line.contains("does not carry a head SHA"),
+            "must not claim the artifacts lack a head they carry: {line}"
+        );
+    }
+
+    #[test]
+    fn calibrate_disclosure_warns_when_only_mutants_name_a_head() {
+        let head = "3333333333333333333333333333333333333333";
+        let line = calibrate_head_provenance_disclosure(
+            &snapshot_with_head(None),
+            &mutants_with_head(Some(head)),
+        );
+        assert!(
+            line.contains(head),
+            "the mutants head must be named: {line}"
+        );
+        assert!(
+            line.contains("does not carry a head SHA"),
+            "a headless snapshot must keep the caveat: {line}"
+        );
+    }
+
+    /// Placeholders and short SHAs are absent heads, using the same
+    /// `is_full_sha` rule as `ripr outcome`. A reader coupled to one
+    /// spelling of "unavailable" would miss the rest.
+    /// Directory input combines outcomes.json + mutants.json into a JSON
+    /// array. That shape has no artifact envelope, so it must not be read
+    /// as a headed cargo-mutants file.
+    #[test]
+    fn calibrate_disclosure_treats_combined_directory_array_as_no_mutants_head() {
+        let head = "2bd22c0b0718157870e2e78c9a70b9da1c9c1b21";
+        let combined = r#"[{"outcomes":[{"id":"m1","file":"src/lib.rs","line":2,"outcome":"missed"}]},{"mutants":[]}]"#;
+        let line = calibrate_head_provenance_disclosure(&snapshot_with_head(Some(head)), combined);
+        assert!(
+            line.contains(head) && line.contains("does not carry a head SHA"),
+            "a combined directory array is not a headed mutants file: {line}"
+        );
+        assert!(
+            !line.contains("different repository heads"),
+            "an array must not be parsed as a conflicting head: {line}"
+        );
+    }
+
+    #[test]
+    fn calibrate_disclosure_treats_a_placeholder_as_no_head() {
+        for placeholder in [
+            "unavailable",
+            "not_available",
+            "none",
+            "2bd22c0b",
+            "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+            "2bd22c0b0718157870e2e78c9a70b9da1c9c1b2",
+            "  ",
+        ] {
+            let line = calibrate_head_provenance_disclosure(
+                &snapshot_with_head(Some(placeholder)),
+                foreign_same_line_mutants(),
+            );
+            assert!(
+                line.contains("does not carry a head SHA")
+                    && !line.contains(&format!("head {placeholder}")),
+                "{placeholder:?} is not a Git object name and must read as an absent head: {line}"
+            );
+        }
     }
 
     #[test]

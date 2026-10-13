@@ -1301,6 +1301,22 @@ owner = "product-analysis"
 standalone_reason = "Reads a renamed TypeScript default import of the owner as the owner in the observation guard, amending the RIPR-SPEC-0243 non-goal from corpus mutation evidence."
 
 [[artifact]]
+id = "RIPR-SPEC-0252"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0252-typescript-node-test-context-assert.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads node:test's t.assert.<method> as legacy node:assert, amending the RIPR-SPEC-0243 receiver table from corpus mutation evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0254"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0254-typescript-lookup-table-entry.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads a changed TypeScript lookup-table entry as a return-value change credited only by a changed-key lookup, from corpus mutation evidence."
+
+[[artifact]]
 id = "RIPR-SPEC-0250"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md"

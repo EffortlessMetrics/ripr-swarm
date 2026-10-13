@@ -1,4 +1,5 @@
 mod assertion_dependency;
+mod cargo_input_identity;
 mod cargo_targets;
 mod classify;
 mod discover;
@@ -10,6 +11,7 @@ mod source_role;
 pub(crate) use assertion_dependency::{
     AnyhowIdentity, config_snapshot_identity, eligible_manifest, verified_anyhow_identity,
 };
+pub(crate) use cargo_input_identity::cargo_input_identity;
 pub(crate) use cargo_targets::{
     CargoHarnessVerdict, ManifestInventory, context_for_files,
     declared_crate_root_paths_from_manifest,
@@ -29,7 +31,8 @@ pub use discover::discover_rust_files;
 pub(crate) use discover::{
     changed_source_files_absent_from_worktree, discover_preview_language_files,
     discover_python_test_files, discover_unanalyzed_source_files,
-    limitations_for_absent_changed_files, worktree_contains_regular_source_file,
+    limitations_for_absent_changed_files, supplement_absent_file_limitations,
+    worktree_contains_regular_source_file,
 };
 pub(crate) use select::{
     select_rust_files_for_mode_with_dependent_packages, with_module_context_files,

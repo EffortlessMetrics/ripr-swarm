@@ -1,0 +1,1260 @@
+{
+  "changes": [
+    {
+      "behavior_hint": "unknown",
+      "change_id": "change:file:lib/Shop/Cart.pm:19:19",
+      "changed_observable": null,
+      "changed_text_digest": "fnv64:759e86c1ef2921ab",
+      "file_id": "file:lib/Shop/Cart.pm",
+      "missing_discriminator": null,
+      "owner_id": "owner:lib/Shop/Cart.pm:sub:Shop::Cart::total:255-390",
+      "provenance_refs": [],
+      "range": {
+        "end_column": 62,
+        "end_line": 19,
+        "start_column": 0,
+        "start_line": 19
+      }
+    }
+  ],
+  "dynamic_boundaries": [
+    {
+      "boundary_id": "boundary:lib/Shop/Cart.pm:dynamic_dispatch:1",
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Cart.pm",
+      "kind": "dynamic_dispatch",
+      "owner_id": "owner:lib/Shop/Cart.pm:sub:Shop::Cart::run:472-542",
+      "provenance_refs": [],
+      "range": {
+        "end_column": 19,
+        "end_line": 30,
+        "start_column": 16,
+        "start_line": 30
+      }
+    }
+  ],
+  "files": [
+    {
+      "digest": "sha256:bcf4f9d45db195917ded2e0f6542e3525dbf4e5e8d0bd25d9834e9f09e97ed76",
+      "file_id": "file:lib/Shop/Cart.pm",
+      "package_names": [
+        "Shop::Cart"
+      ],
+      "path": "lib/Shop/Cart.pm",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Cart.pm"
+      ],
+      "role": [
+        "source"
+      ]
+    },
+    {
+      "digest": "sha256:b8e69fb8c3f602a0ea94bcce0819f706afc1090393abdfcff8cacd79699bc7d0",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "package_names": [
+        "Shop::Pricing"
+      ],
+      "path": "lib/Shop/Pricing.pm",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "role": [
+        "source"
+      ]
+    },
+    {
+      "digest": "sha256:665e9d78103ecba5087b1a1a1b859f90d4c42f66a54b07fe8c5aef33adc872c3",
+      "file_id": "file:t/bulk.t",
+      "package_names": [],
+      "path": "t/bulk.t",
+      "provenance_refs": [
+        "prov:syntax:file:t/bulk.t"
+      ],
+      "role": [
+        "test"
+      ]
+    },
+    {
+      "digest": "sha256:8a52dfdbc0abf659a22aabd9101184b5c5a8331ec1a95dc8f0a6ceead1208996",
+      "file_id": "file:t/cart.t",
+      "package_names": [],
+      "path": "t/cart.t",
+      "provenance_refs": [
+        "prov:syntax:file:t/cart.t"
+      ],
+      "role": [
+        "test"
+      ]
+    },
+    {
+      "digest": "sha256:0ad0daaf9a557eb0bf3d0b8fb505d13847c358ae11bf84104f2370c7c3a64940",
+      "file_id": "file:t/load.t",
+      "package_names": [],
+      "path": "t/load.t",
+      "provenance_refs": [
+        "prov:syntax:file:t/load.t"
+      ],
+      "role": [
+        "test"
+      ]
+    },
+    {
+      "digest": "sha256:5ac5798b356cd1174f899664081910dd51ce6b29a3bed7de7d503c5112b19c4d",
+      "file_id": "file:t/pricing.t",
+      "package_names": [],
+      "path": "t/pricing.t",
+      "provenance_refs": [
+        "prov:syntax:file:t/pricing.t"
+      ],
+      "role": [
+        "test"
+      ]
+    },
+    {
+      "digest": "sha256:9d21fe82fac270e82341af4f72bb7df8838ae641a0dffb63b5ba423798de5813",
+      "file_id": "file:t/qualified.t",
+      "package_names": [],
+      "path": "t/qualified.t",
+      "provenance_refs": [
+        "prov:syntax:file:t/qualified.t"
+      ],
+      "role": [
+        "test"
+      ]
+    }
+  ],
+  "input": {
+    "base": "base",
+    "diff_id": null,
+    "head": "HEAD",
+    "requested_fact_classes": [
+      "files",
+      "owners",
+      "changes",
+      "tests",
+      "oracles",
+      "relations",
+      "dynamic_boundaries",
+      "verify_commands",
+      "limitations",
+      "provenance"
+    ]
+  },
+  "limitations": [
+    {
+      "evidence_refs": [
+        "owner:lib/Shop/Cart.pm:sub:Shop::Cart::run:472-542"
+      ],
+      "kind": "dynamic_dispatch",
+      "limitation_id": "limitation:boundary:lib/Shop/Cart.pm:dynamic_dispatch:1",
+      "message": "Dynamic boundary `->$` detected in lib/Shop/Cart.pm; ripr fails closed on this boundary kind."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "partial_emitter",
+      "limitation_id": "emitter-partial",
+      "message": "Parser-backed tests/oracles, relations/discriminators (incl. a parser-backed direct_owner_call), boundaries/commands, files/owners, (when a diff is supplied) diff-owned changes, and a deterministic packet_fingerprint are emitted. Export-aware relation reachability and the managed-producer diff source land in later slices."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "narrowed_representation",
+      "limitation_id": "oracle-representation",
+      "message": "oracle facts locate the whole assertion call range; the ripr-perl-facts-v1 schema has no observed/expected expression sub-range fields, so those are conveyed as string expressions only."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "unverified_provenance",
+      "limitation_id": "diff-provenance-unverified",
+      "message": "base/head/diff are caller-asserted and not verified against a repository; this packet does not confirm the supplied diff is the actual base->head diff."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "range_precision",
+      "limitation_id": "change-range-imprecise",
+      "message": "change ranges are line-granular with best-effort column data derived from the diff, not the byte-accurate LineIndex ranges used for owners."
+    },
+    {
+      "evidence_refs": [],
+      "kind": "partial_inference",
+      "limitation_id": "change-behavior-hint-partial",
+      "message": "only predicate_boundary / return_value / exception_path behavior_hints are inferred from added-line text; every other change resolves to \"unknown\", and missing_discriminator is always null in this slice. Whole-line comments are skipped, but a die/return/comparison token inside a string literal can still be misclassified (a robust fix needs tokenization)."
+    }
+  ],
+  "oracles": [
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(is_bulk(50), 1, 'fifty is bulk')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/bulk.t:is:133-168",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/bulk.t"
+      ],
+      "range": {
+        "end_column": 39,
+        "end_line": 6,
+        "start_column": 4,
+        "start_line": 6
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/bulk.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(is_bulk(49), 0, 'forty-nine is not')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/bulk.t:is:174-213",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/bulk.t"
+      ],
+      "range": {
+        "end_column": 43,
+        "end_line": 7,
+        "start_column": 4,
+        "start_line": 7
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/bulk.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(tax_for(@{ $case->{in} }), $case->{want}, \"tax for $case->{in}[0]\")",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/bulk.t:is:356-426",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/bulk.t"
+      ],
+      "range": {
+        "end_column": 74,
+        "end_line": 15,
+        "start_column": 4,
+        "start_line": 15
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/bulk.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(bundle_price($items), $want, $name)",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/bulk.t:is:490-528",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/bulk.t"
+      ],
+      "range": {
+        "end_column": 42,
+        "end_line": 20,
+        "start_column": 4,
+        "start_line": 20
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/bulk.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is($cart->total, 25, 'total multiplies price by quantity')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/cart.t:is:117-175",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/cart.t"
+      ],
+      "range": {
+        "end_column": 58,
+        "end_line": 7,
+        "start_column": 0,
+        "start_line": 7
+      },
+      "strength": "strong_exact",
+      "target_owner_id": "owner:lib/Shop/Cart.pm:sub:Shop::Cart::total:255-390",
+      "test_id": "test:t/cart.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is($cart->run('item_count'), 2, 'run dispatches to the named action')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/cart.t:is:177-246",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/cart.t"
+      ],
+      "range": {
+        "end_column": 69,
+        "end_line": 8,
+        "start_column": 0,
+        "start_line": 8
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/cart.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "use_ok('Shop::Pricing')",
+      "kind": "mention_only",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/load.t:use_ok:43-66",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/load.t"
+      ],
+      "range": {
+        "end_column": 23,
+        "end_line": 4,
+        "start_column": 0,
+        "start_line": 4
+      },
+      "strength": "mention_only",
+      "target_owner_id": null,
+      "test_id": "test:t/load.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "can_ok('Shop::Pricing', 'gift_wrap_fee')",
+      "kind": "predicate_boundary_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/load.t:can_ok:68-108",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/load.t"
+      ],
+      "range": {
+        "end_column": 40,
+        "end_line": 5,
+        "start_column": 0,
+        "start_line": 5
+      },
+      "strength": "weak_broad",
+      "target_owner_id": null,
+      "test_id": "test:t/load.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(discount(100), 90, 'discount starts at exactly 100')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/pricing.t:is:75-130",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/pricing.t"
+      ],
+      "range": {
+        "end_column": 55,
+        "end_line": 5,
+        "start_column": 0,
+        "start_line": 5
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/pricing.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(discount(99), 99, 'no discount just below the threshold')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/pricing.t:is:132-192",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/pricing.t"
+      ],
+      "range": {
+        "end_column": 60,
+        "end_line": 6,
+        "start_column": 0,
+        "start_line": 6
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/pricing.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "ok(Shop::Pricing::shipping_fee(25), 'heavy parcels pay shipping')",
+      "kind": "smoke_ok",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/qualified.t:ok:62-127",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/qualified.t"
+      ],
+      "range": {
+        "end_column": 65,
+        "end_line": 5,
+        "start_column": 0,
+        "start_line": 5
+      },
+      "strength": "weak_smoke",
+      "target_owner_id": null,
+      "test_id": "test:t/qualified.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(Shop::Pricing::tier_label(2000), 'gold', 'big spenders are gold')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/qualified.t:is:130-198",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/qualified.t"
+      ],
+      "range": {
+        "end_column": 68,
+        "end_line": 7,
+        "start_column": 0,
+        "start_line": 7
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/qualified.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is(Shop::Pricing::tier_label(10), 'bronze', 'small spenders are bronze')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/qualified.t:is:200-272",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/qualified.t"
+      ],
+      "range": {
+        "end_column": 72,
+        "end_line": 8,
+        "start_column": 0,
+        "start_line": 8
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/qualified.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "cmp_ok(Shop::Pricing::loyalty_points(100), '>', 0, 'spending earns points')",
+      "kind": "predicate_boundary_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/qualified.t:cmp_ok:275-350",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/qualified.t"
+      ],
+      "range": {
+        "end_column": 75,
+        "end_line": 10,
+        "start_column": 0,
+        "start_line": 10
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/qualified.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "is_deeply(\n    Shop::Pricing::quote(100, 5),\n    { subtotal => 90, shipping => 5, total => 95 },\n    'quote adds shippin\u2026",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/qualified.t:is_deeply:353-505",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/qualified.t"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 16,
+        "start_column": 0,
+        "start_line": 12
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/qualified.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "like(Shop::Pricing::round_cents(2), qr/^\\d+\\.\\d\\d$/, 'money has two decimals')",
+      "kind": "predicate_boundary_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/qualified.t:like:508-586",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/qualified.t"
+      ],
+      "range": {
+        "end_column": 78,
+        "end_line": 18,
+        "start_column": 0,
+        "start_line": 18
+      },
+      "strength": "weak_broad",
+      "target_owner_id": null,
+      "test_id": "test:t/qualified.t"
+    },
+    {
+      "confidence": "medium",
+      "expected_expression": null,
+      "expression": "isnt(Shop::Pricing::clamp_qty(150), 150, 'huge orders are clamped')",
+      "kind": "exact_return_assertion",
+      "observed_sink": null,
+      "oracle_id": "oracle:t/qualified.t:isnt:589-656",
+      "provenance_refs": [
+        "prov:oracle_extraction:file:t/qualified.t"
+      ],
+      "range": {
+        "end_column": 67,
+        "end_line": 20,
+        "start_column": 0,
+        "start_line": 20
+      },
+      "strength": "strong_exact",
+      "target_owner_id": null,
+      "test_id": "test:t/qualified.t"
+    }
+  ],
+  "owners": [
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Cart.pm",
+      "kind": "package",
+      "name": "Shop::Cart",
+      "owner_id": "owner:lib/Shop/Cart.pm:package:Shop::Cart:0-18",
+      "package": "main",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Cart.pm"
+      ],
+      "range": {
+        "end_column": 18,
+        "end_line": 0,
+        "start_column": 0,
+        "start_line": 0
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Cart.pm",
+      "kind": "sub",
+      "name": "new",
+      "owner_id": "owner:lib/Shop/Cart.pm:sub:Shop::Cart::new:48-123",
+      "package": "Shop::Cart",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Cart.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 8,
+        "start_column": 0,
+        "start_line": 5
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Cart.pm",
+      "kind": "sub",
+      "name": "add",
+      "owner_id": "owner:lib/Shop/Cart.pm:sub:Shop::Cart::add:125-253",
+      "package": "Shop::Cart",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Cart.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 14,
+        "start_column": 0,
+        "start_line": 10
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Cart.pm",
+      "kind": "sub",
+      "name": "total",
+      "owner_id": "owner:lib/Shop/Cart.pm:sub:Shop::Cart::total:255-390",
+      "package": "Shop::Cart",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Cart.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 21,
+        "start_column": 0,
+        "start_line": 16
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Cart.pm",
+      "kind": "sub",
+      "name": "item_count",
+      "owner_id": "owner:lib/Shop/Cart.pm:sub:Shop::Cart::item_count:392-470",
+      "package": "Shop::Cart",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Cart.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 26,
+        "start_column": 0,
+        "start_line": 23
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Cart.pm",
+      "kind": "sub",
+      "name": "run",
+      "owner_id": "owner:lib/Shop/Cart.pm:sub:Shop::Cart::run:472-542",
+      "package": "Shop::Cart",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Cart.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 31,
+        "start_column": 0,
+        "start_line": 28
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "kind": "package",
+      "name": "Shop::Pricing",
+      "owner_id": "owner:lib/Shop/Pricing.pm:package:Shop::Pricing:0-21",
+      "package": "main",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "range": {
+        "end_column": 21,
+        "end_line": 0,
+        "start_column": 0,
+        "start_line": 0
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "kind": "sub",
+      "name": "discount",
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::discount:212-333",
+      "package": "Shop::Pricing",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 17,
+        "start_column": 0,
+        "start_line": 11
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "kind": "sub",
+      "name": "shipping_fee",
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::shipping_fee:335-471",
+      "package": "Shop::Pricing",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 26,
+        "start_column": 0,
+        "start_line": 19
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "kind": "sub",
+      "name": "tier_label",
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::tier_label:473-612",
+      "package": "Shop::Pricing",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 33,
+        "start_column": 0,
+        "start_line": 28
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "kind": "sub",
+      "name": "loyalty_points",
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::loyalty_points:614-713",
+      "package": "Shop::Pricing",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 39,
+        "start_column": 0,
+        "start_line": 35
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "kind": "sub",
+      "name": "quote",
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::quote:715-944",
+      "package": "Shop::Pricing",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 49,
+        "start_column": 0,
+        "start_line": 41
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "kind": "sub",
+      "name": "round_cents",
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::round_cents:946-1023",
+      "package": "Shop::Pricing",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 54,
+        "start_column": 0,
+        "start_line": 51
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "kind": "sub",
+      "name": "is_bulk",
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::is_bulk:1025-1091",
+      "package": "Shop::Pricing",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 59,
+        "start_column": 0,
+        "start_line": 56
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "kind": "sub",
+      "name": "tax_for",
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::tax_for:1093-1215",
+      "package": "Shop::Pricing",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 65,
+        "start_column": 0,
+        "start_line": 61
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "kind": "sub",
+      "name": "bundle_price",
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::bundle_price:1217-1346",
+      "package": "Shop::Pricing",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 72,
+        "start_column": 0,
+        "start_line": 67
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "kind": "sub",
+      "name": "clamp_qty",
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::clamp_qty:1348-1456",
+      "package": "Shop::Pricing",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 79,
+        "start_column": 0,
+        "start_line": 74
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "kind": "sub",
+      "name": "gift_wrap_fee",
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::gift_wrap_fee:1458-1524",
+      "package": "Shop::Pricing",
+      "provenance_refs": [
+        "prov:syntax:file:lib/Shop/Pricing.pm"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 84,
+        "start_column": 0,
+        "start_line": 81
+      }
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/bulk.t",
+      "kind": "sub",
+      "name": "check_bundle",
+      "owner_id": "owner:t/bulk.t:sub:main::check_bundle:431-531",
+      "package": "main",
+      "provenance_refs": [
+        "prov:syntax:file:t/bulk.t"
+      ],
+      "range": {
+        "end_column": 1,
+        "end_line": 21,
+        "start_column": 0,
+        "start_line": 18
+      }
+    }
+  ],
+  "packet_fingerprint": "sha256:e08f30074ccbaee3dbb342231e5471e453ee4f1a1734a3eb5ed2b6a35c598e6b",
+  "packet_id": "perl-lsp-ripr-facts-ripr-perl-facts-v1-s-files,owners,changes,tests,oracles,relations,dynamic_boundaries,verify_commands,limitations,provenance",
+  "packet_status": "partial",
+  "producer": {
+    "capabilities": [
+      "files",
+      "owners",
+      "changes",
+      "tests",
+      "oracles",
+      "relations",
+      "dynamic_boundaries",
+      "verify_commands",
+      "limitations",
+      "provenance",
+      "test_facts"
+    ],
+    "name": "perl-lsp",
+    "version": "0.17.0"
+  },
+  "provenance": [
+    {
+      "confidence": "high",
+      "provenance_id": "cli-surface",
+      "source": "operator_config"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/bulk.t",
+      "provenance_id": "prov:test_discovery:file:t/bulk.t",
+      "range": "2:0-2:14",
+      "source": "test_discovery"
+    },
+    {
+      "confidence": "medium",
+      "file_id": "file:t/bulk.t",
+      "provenance_id": "prov:oracle_extraction:file:t/bulk.t",
+      "range": null,
+      "source": "oracle_extraction"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/cart.t",
+      "provenance_id": "prov:test_discovery:file:t/cart.t",
+      "range": "2:0-2:14",
+      "source": "test_discovery"
+    },
+    {
+      "confidence": "medium",
+      "file_id": "file:t/cart.t",
+      "provenance_id": "prov:oracle_extraction:file:t/cart.t",
+      "range": null,
+      "source": "oracle_extraction"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/load.t",
+      "provenance_id": "prov:test_discovery:file:t/load.t",
+      "range": "2:0-2:14",
+      "source": "test_discovery"
+    },
+    {
+      "confidence": "medium",
+      "file_id": "file:t/load.t",
+      "provenance_id": "prov:oracle_extraction:file:t/load.t",
+      "range": null,
+      "source": "oracle_extraction"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/pricing.t",
+      "provenance_id": "prov:test_discovery:file:t/pricing.t",
+      "range": "2:0-2:14",
+      "source": "test_discovery"
+    },
+    {
+      "confidence": "medium",
+      "file_id": "file:t/pricing.t",
+      "provenance_id": "prov:oracle_extraction:file:t/pricing.t",
+      "range": null,
+      "source": "oracle_extraction"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/qualified.t",
+      "provenance_id": "prov:test_discovery:file:t/qualified.t",
+      "range": "2:0-2:14",
+      "source": "test_discovery"
+    },
+    {
+      "confidence": "medium",
+      "file_id": "file:t/qualified.t",
+      "provenance_id": "prov:oracle_extraction:file:t/qualified.t",
+      "range": null,
+      "source": "oracle_extraction"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Cart.pm",
+      "provenance_id": "prov:syntax:file:lib/Shop/Cart.pm",
+      "source": "syntax"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:lib/Shop/Pricing.pm",
+      "provenance_id": "prov:syntax:file:lib/Shop/Pricing.pm",
+      "source": "syntax"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/bulk.t",
+      "provenance_id": "prov:syntax:file:t/bulk.t",
+      "source": "syntax"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/cart.t",
+      "provenance_id": "prov:syntax:file:t/cart.t",
+      "source": "syntax"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/load.t",
+      "provenance_id": "prov:syntax:file:t/load.t",
+      "source": "syntax"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/pricing.t",
+      "provenance_id": "prov:syntax:file:t/pricing.t",
+      "source": "syntax"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/qualified.t",
+      "provenance_id": "prov:syntax:file:t/qualified.t",
+      "source": "syntax"
+    }
+  ],
+  "relations": [
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Shop/Pricing.pm:package:Shop::Pricing:0-21",
+      "provenance_refs": [],
+      "reachability_hint": "weakly_reachable",
+      "relation_id": "relation:file:t/bulk.t:lib/Shop/Pricing.pm:owner_lib/Shop/Pricing.pm_package_Shop__Pricing_0-21",
+      "relation_kind": "file_proximity",
+      "test_id": "test:t/bulk.t"
+    },
+    {
+      "change_id": "change:file:lib/Shop/Cart.pm:19:19",
+      "confidence": "medium",
+      "oracle_id": "oracle:t/cart.t:is:117-175",
+      "owner_id": "owner:lib/Shop/Cart.pm:sub:Shop::Cart::total:255-390",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/cart.t:lib/Shop/Cart.pm:owner_lib/Shop/Cart.pm_package_Shop__Cart_0-18",
+      "relation_kind": "method_receiver",
+      "test_id": "test:t/cart.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Shop/Pricing.pm:package:Shop::Pricing:0-21",
+      "provenance_refs": [],
+      "reachability_hint": "weakly_reachable",
+      "relation_id": "relation:file:t/pricing.t:lib/Shop/Pricing.pm:owner_lib/Shop/Pricing.pm_package_Shop__Pricing_0-21",
+      "relation_kind": "file_proximity",
+      "test_id": "test:t/pricing.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::clamp_qty:1348-1456",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/qualified.t:lib/Shop/Pricing.pm:owner_lib/Shop/Pricing.pm_sub_Shop__Pricing__clamp_qty_1348-1456",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/qualified.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::loyalty_points:614-713",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/qualified.t:lib/Shop/Pricing.pm:owner_lib/Shop/Pricing.pm_sub_Shop__Pricing__loyalty_points_614-713",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/qualified.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::quote:715-944",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/qualified.t:lib/Shop/Pricing.pm:owner_lib/Shop/Pricing.pm_sub_Shop__Pricing__quote_715-944",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/qualified.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::round_cents:946-1023",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/qualified.t:lib/Shop/Pricing.pm:owner_lib/Shop/Pricing.pm_sub_Shop__Pricing__round_cents_946-1023",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/qualified.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::shipping_fee:335-471",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/qualified.t:lib/Shop/Pricing.pm:owner_lib/Shop/Pricing.pm_sub_Shop__Pricing__shipping_fee_335-471",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/qualified.t"
+    },
+    {
+      "change_id": "change:unresolved",
+      "confidence": "medium",
+      "oracle_id": null,
+      "owner_id": "owner:lib/Shop/Pricing.pm:sub:Shop::Pricing::tier_label:473-612",
+      "provenance_refs": [],
+      "reachability_hint": "reachable",
+      "relation_id": "relation:file:t/qualified.t:lib/Shop/Pricing.pm:owner_lib/Shop/Pricing.pm_sub_Shop__Pricing__tier_label_473-612",
+      "relation_kind": "direct_owner_call",
+      "test_id": "test:t/qualified.t"
+    }
+  ],
+  "root": {
+    "path_style": "posix",
+    "repo_relative": "s",
+    "vcs_head": "HEAD"
+  },
+  "schema_version": "ripr-perl-facts-v1",
+  "tests": [
+    {
+      "confidence": "high",
+      "file_id": "file:t/bulk.t",
+      "framework": "Test::More",
+      "name": "t/bulk.t",
+      "provenance_refs": [
+        "prov:test_discovery:file:t/bulk.t"
+      ],
+      "range": {
+        "end_column": 0,
+        "end_line": 27,
+        "start_column": 0,
+        "start_line": 0
+      },
+      "runner_hints": [
+        "prove"
+      ],
+      "test_id": "test:t/bulk.t"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/cart.t",
+      "framework": "Test::More",
+      "name": "t/cart.t",
+      "provenance_refs": [
+        "prov:test_discovery:file:t/cart.t"
+      ],
+      "range": {
+        "end_column": 0,
+        "end_line": 11,
+        "start_column": 0,
+        "start_line": 0
+      },
+      "runner_hints": [
+        "prove"
+      ],
+      "test_id": "test:t/cart.t"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/load.t",
+      "framework": "Test::More",
+      "name": "t/load.t",
+      "provenance_refs": [
+        "prov:test_discovery:file:t/load.t"
+      ],
+      "range": {
+        "end_column": 0,
+        "end_line": 8,
+        "start_column": 0,
+        "start_line": 0
+      },
+      "runner_hints": [
+        "prove"
+      ],
+      "test_id": "test:t/load.t"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/pricing.t",
+      "framework": "Test::More",
+      "name": "t/pricing.t",
+      "provenance_refs": [
+        "prov:test_discovery:file:t/pricing.t"
+      ],
+      "range": {
+        "end_column": 0,
+        "end_line": 9,
+        "start_column": 0,
+        "start_line": 0
+      },
+      "runner_hints": [
+        "prove"
+      ],
+      "test_id": "test:t/pricing.t"
+    },
+    {
+      "confidence": "high",
+      "file_id": "file:t/qualified.t",
+      "framework": "Test::More",
+      "name": "t/qualified.t",
+      "provenance_refs": [
+        "prov:test_discovery:file:t/qualified.t"
+      ],
+      "range": {
+        "end_column": 0,
+        "end_line": 23,
+        "start_column": 0,
+        "start_line": 0
+      },
+      "runner_hints": [
+        "prove"
+      ],
+      "test_id": "test:t/qualified.t"
+    }
+  ],
+  "verify_commands": [
+    {
+      "argv": [
+        "prove",
+        "t/bulk.t"
+      ],
+      "command_id": "verify_cmd:t/bulk.t:1",
+      "confidence": "high",
+      "preconditions": [],
+      "provenance_refs": [],
+      "runner": "prove",
+      "scope": "test",
+      "test_id": "test:t/bulk.t"
+    },
+    {
+      "argv": [
+        "prove",
+        "t/cart.t"
+      ],
+      "command_id": "verify_cmd:t/cart.t:2",
+      "confidence": "high",
+      "preconditions": [],
+      "provenance_refs": [],
+      "runner": "prove",
+      "scope": "test",
+      "test_id": "test:t/cart.t"
+    },
+    {
+      "argv": [
+        "prove",
+        "t/load.t"
+      ],
+      "command_id": "verify_cmd:t/load.t:3",
+      "confidence": "high",
+      "preconditions": [],
+      "provenance_refs": [],
+      "runner": "prove",
+      "scope": "test",
+      "test_id": "test:t/load.t"
+    },
+    {
+      "argv": [
+        "prove",
+        "t/pricing.t"
+      ],
+      "command_id": "verify_cmd:t/pricing.t:4",
+      "confidence": "high",
+      "preconditions": [],
+      "provenance_refs": [],
+      "runner": "prove",
+      "scope": "test",
+      "test_id": "test:t/pricing.t"
+    },
+    {
+      "argv": [
+        "prove",
+        "t/qualified.t"
+      ],
+      "command_id": "verify_cmd:t/qualified.t:5",
+      "confidence": "high",
+      "preconditions": [],
+      "provenance_refs": [],
+      "runner": "prove",
+      "scope": "test",
+      "test_id": "test:t/qualified.t"
+    }
+  ]
+}

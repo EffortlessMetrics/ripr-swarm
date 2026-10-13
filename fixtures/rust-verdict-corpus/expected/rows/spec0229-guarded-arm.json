@@ -1,0 +1,22 @@
+{
+  "case_id": "spec0229-guarded-arm",
+  "subject_id": "authored-spec0229-5",
+  "origin": "authored",
+  "anchor": "src/lib.rs:5",
+  "behavior_family": "match_arm",
+  "test_shape": "integration_test_input_through_guarded_arm",
+  "hard_case": false,
+  "truth": "not_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 2,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

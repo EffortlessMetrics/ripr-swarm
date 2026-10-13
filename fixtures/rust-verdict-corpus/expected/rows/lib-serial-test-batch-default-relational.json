@@ -1,0 +1,22 @@
+{
+  "case_id": "lib-serial-test-batch-default-relational",
+  "subject_id": "authored-lib-serial-test",
+  "origin": "authored",
+  "anchor": "src/lib.rs:25",
+  "behavior_family": "return_value",
+  "test_shape": "serial_test_path_qualified_keyed_relational",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "weakly_exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {}
+}

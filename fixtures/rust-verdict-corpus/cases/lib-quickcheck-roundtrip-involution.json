@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-quickcheck-roundtrip-involution",
+  "subject_id": "authored-lib-quickcheck",
+  "diff": "cases/lib-quickcheck-roundtrip-involution.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 4
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "quickcheck_bool_roundtrip_property",
+  "hard_case": "The bool return of a #[quickcheck] fn is the oracle; ripr finds no oracle (unknown/none).",
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "b ^ 0x33",
+        "mutated_line": "b ^ 0x33",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: mask(0) = 0x33 instead of 0x5A (encode output differs)"
+      },
+      {
+        "replacement": "b.wrapping_add(1)",
+        "mutated_line": "b.wrapping_add(1)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::roundtrip",
+        "equivalence_review": "not equivalent: mask(0) = 1 and decode(encode(0)) = 2"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The roundtrip property decode(encode(xs)) == xs only checks that mask is an involution; a different XOR key is still an involution and goes undetected, while wrapping_add(1) breaks it.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "reachable_unrevealed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

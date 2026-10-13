@@ -197,6 +197,55 @@ impl RelationReason {
         }
     }
 
+    /// Proximity alone: file or name nearness, with no captured call, helper
+    /// chain, or assertion affinity tying the test to the owner.
+    pub fn is_proximity_only(self) -> bool {
+        matches!(
+            self,
+            Self::SameTestFile | Self::SameModule | Self::WeakTokenSubstring
+        )
+    }
+
+    /// Whether this relation by itself is evidence that the test runs the
+    /// owner. Reach (diff and repo mode), the `no_static_path` miss reason,
+    /// and the verdict corpus contradiction check all read this one rule
+    /// (#5335, #7531); the match is exhaustive so a new variant must be
+    /// classified here.
+    ///
+    /// Only relations that capture a path to running the owner count: a
+    /// direct call, a call through a helper chain, or (diff mode,
+    /// TypeScript) an import through a verified re-export chain, which
+    /// reveal-reach already credits. Everything else is a candidate-location
+    /// suggestion that never has to run the owner:
+    ///
+    /// - proximity relations ([`Self::is_proximity_only`]) share a file,
+    ///   module, or a token substring;
+    /// - `OwnerNamedTest` matches the owner's name in the test's name, an
+    ///   `ImportPathAffinity` matches a path reference, and
+    ///   `FixtureOwnerAffinity` matches a call to a fixture-shaped helper —
+    ///   none of them invokes the owner (#5335 review: an uncalled `as_kb`
+    ///   inherited a sibling's exact-value oracle through its name);
+    /// - `AssertionTargetAffinity` means a test asserts on a token the seam's
+    ///   expression also names; for a module-level owner (a struct or field
+    ///   with no owning function) that assertion is how the owner is
+    ///   observed, but for a function-bodied owner the token can belong to
+    ///   any code, so it is not a path to the function. Diff mode emits that
+    ///   relation only for owners without a function;
+    /// - `SeamCalleeCall` runs the seam's converted callee, never the owner.
+    pub fn establishes_reach(self, owner_is_function: bool) -> bool {
+        match self {
+            Self::DirectOwnerCall | Self::HelperOwnerCall | Self::ReExportChainFollowed => true,
+            Self::AssertionTargetAffinity => !owner_is_function,
+            Self::SameTestFile
+            | Self::SameModule
+            | Self::OwnerNamedTest
+            | Self::ImportPathAffinity
+            | Self::FixtureOwnerAffinity
+            | Self::WeakTokenSubstring
+            | Self::SeamCalleeCall => false,
+        }
+    }
+
     /// Sort order: lower value sorts first (highest-priority reason first).
     pub fn priority(self) -> u8 {
         match self {

@@ -815,6 +815,68 @@ fn only_plain_pub_use_statements_can_export_to_another_crate() {
 }
 
 #[test]
+fn library_export_import_extraction_is_bounded_to_selected_files() {
+    let source = "pub mod a { pub fn score() -> i64 { 1 } }\nmod b {}\nmod c {}\nmod d {}\npub use self::a::score;\n";
+    let library = index(&[(LIB, source)]);
+    assert_eq!(library.files().len(), 1);
+    assert_eq!(library.functions().len(), 1);
+    LIBRARY_IMPORT_EXTRACTIONS.with(|count| count.set(0));
+
+    assert!(!library_may_export_other(&library, Path::new(LIB), "score"));
+    assert_eq!(
+        LIBRARY_IMPORT_EXTRACTIONS.with(std::cell::Cell::get),
+        1,
+        "each selected source is extracted once, regardless of module count"
+    );
+}
+
+#[test]
+fn library_export_without_module_names_does_not_extract_imports() {
+    let library = index(&[(LIB, "pub fn score() -> i64 { 1 }\n")]);
+    assert_eq!(library.functions().len(), 1);
+    LIBRARY_IMPORT_EXTRACTIONS.with(|count| count.set(0));
+
+    assert!(!library_may_export_other(&library, Path::new(LIB), "score"));
+    assert_eq!(LIBRARY_IMPORT_EXTRACTIONS.with(std::cell::Cell::get), 0);
+}
+
+#[test]
+fn library_export_imports_in_another_file_still_defeat_a_module_name() {
+    let lib =
+        "pub mod fs { pub fn score() -> i64 { 1 } }\nmod helpers;\npub use self::fs::score;\n";
+    let provenance = SourceRoleProvenance {
+        edges: vec![module_edge(LIB, HELPERS, "helpers", 2, false)],
+        ..Default::default()
+    };
+    for (helpers, expected) in [
+        ("use other_crate as fs;\n", true),
+        ("extern crate other_crate as fs;\n", true),
+        (
+            "// use other_crate as fs;\nconst DOC: &str = \"use other_crate as fs;\";\n",
+            false,
+        ),
+    ] {
+        let library = index_with_provenance(
+            &[(LIB, lib), (HELPERS, helpers)],
+            &[(HELPERS, provenance.clone())],
+        );
+        assert_eq!(library.files().len(), 2);
+        assert_eq!(library.functions().len(), 1);
+        LIBRARY_IMPORT_EXTRACTIONS.with(|count| count.set(0));
+
+        assert_eq!(
+            library_may_export_other(&library, Path::new(LIB), "score"),
+            expected,
+            "{helpers}"
+        );
+        assert!(
+            LIBRARY_IMPORT_EXTRACTIONS.with(std::cell::Cell::get) <= 2,
+            "cross-file checks reuse each file's own extracted imports"
+        );
+    }
+}
+
+#[test]
 fn an_unsafe_block_holding_only_the_owner_call_pins_it() {
     // `assert_eq!(unsafe { byte_at(b"xyz", 1) }, b'y')`: calling an
     // `unsafe fn` needs the block, and its value is the call's value.
@@ -882,8 +944,32 @@ fn bare_call_names_only_a_module_level_function() {
 #[test]
 fn bare_call_is_defeated_by_another_free_function_or_a_local_binding() {
     let lib = "pub fn scaled(x: i32) -> i32 {\n    x * 10\n}\n\npub mod other {\n    pub fn scaled(x: i32) -> i32 {\n        x\n    }\n}\n";
-    let index_with_twin = index(&[(LIB, lib)]);
-    assert!(establish(&index_with_twin, "scaled", "x * 10").is_none());
+    // #6544: a same-package module-level twin no longer refuses the pin at
+    // `establish`; each test's import or path must settle the bare call on
+    // the owner, and one that settles on the twin (or on nothing) is still
+    // defeated.
+    for (import, pinned) in [
+        ("use demo::other::scaled;", false),
+        ("use demo::other::*;", false),
+        // The crate-name glob brings the crate root's own `scaled`.
+        ("use demo::*;", true),
+        ("use demo::scaled;", true),
+    ] {
+        let tests =
+            format!("{import}\n\n#[test]\nfn scales() {{\n    assert_eq!(scaled(3), 30);\n}}\n");
+        let index_with_twin = index(&[(LIB, lib), (TESTS, &tests)]);
+        let pin = establish(&index_with_twin, "scaled", "x * 10");
+        assert!(pin.is_some(), "{import}");
+        let admitted = pin
+            .map(|pin| admitted_texts(&index_with_twin, &pin).len())
+            .unwrap_or_default();
+        assert_eq!(admitted, usize::from(pinned), "{import}");
+    }
+    // A twin outside the owner's package is not settled per test and still
+    // refuses the pin outright.
+    let foreign_twin = "pub fn scaled(x: i32) -> i32 {\n    x\n}\n";
+    let index_with_foreign_twin = index(&[(LIB, lib), ("crates/other/src/lib.rs", foreign_twin)]);
+    assert!(establish(&index_with_foreign_twin, "scaled", "x * 10").is_none());
 
     let lib = "pub fn scaled(x: i32) -> i32 {\n    x * 10\n}\n";
     for body in [
@@ -1298,6 +1384,121 @@ fn only_a_plain_assert_eq_against_an_owner_free_value_pins() {
     // A `#[should_panic]` test passes exactly when the values differ.
     let tests = "use demo::weight;\n\n#[test]\n#[should_panic]\nfn weighs() {\n    assert_eq!(weight(4), 13);\n}\n";
     assert!(weight_admitted(tests).is_empty());
+}
+
+#[test]
+fn serial_test_locks_keep_the_pin_and_other_attributes_refuse_it() {
+    for attributes in [
+        "use serial_test::serial;\n#[test]\n#[serial]",
+        "use serial_test::serial;\n#[serial]\n#[test]",
+        "#[test]\n#[serial_test::serial(env)]",
+        "#[test]\n#[serial_test::file_serial]",
+        "use serial_test::parallel;\n#[test]\n#[parallel]",
+        "use serial_test::{parallel, serial};\n#[test]\n#[serial]",
+        "use ::serial_test::serial as locked;\n#[test]\n#[locked]",
+        "use serial_test::file_serial;\n#[test]\n#[file_serial(db)]",
+        "use serial_test::serial;\n#[derive(Debug, Clone)]\nstruct Fixture;\n#[test]\n#[serial]",
+        "extern crate serial_test;\n#[test]\n#[serial_test::serial]",
+        "use serial_test;\n#[test]\n#[serial_test::serial]",
+        // `macro_rules!` alone emits nothing at item position.
+        "macro_rules! helper { () => {}; }\n#[test]\n#[serial_test::serial]",
+        // A rooted path names the same crate.
+        "#[test]\n#[::serial_test::serial]",
+        "#[::serial_test::serial]\nfn helper() {}\n#[test]\n#[serial_test::serial]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert_eq!(weight_admitted(&tests).len(), 1, "{tests}");
+    }
+    for attributes in [
+        // A bare `serial` with no serial_test in the file may be any macro.
+        "#[test]\n#[serial]",
+        "#[test]\n#[other::serial]",
+        "#[test]\n#[ignore]",
+        "#[test]\n#[serial_test::serial]\n#[ignore]",
+        "#[test]\n#[serial_test::unknown_lock]",
+        "#[test]\n#[::serial_test::unknown_lock]",
+        "#[test]\n#[::other::serial]",
+        // The lock can hand the body to other macros or another runtime.
+        "#[test]\n#[serial_test::serial(inner_attrs = [my_macros::skip_body])]",
+        "#[test]\n#[serial_test::serial(crate = my_runtime)]",
+        "#[test]\n#[serial_test::file_serial(path => \"/tmp/lock\")]",
+        // A mention outside a `use` item does not import the macro.
+        "// serial_test is not used here\nuse my_macros::skip_body as serial;\n#[test]\n#[serial]",
+        // Importing another serial_test item does not bind `serial`.
+        "use serial_test::parallel;\nuse my_macros::serial;\n#[test]\n#[serial]",
+        "use serial_test::parallel;\n#[test]\n#[serial]",
+        // A competing binding of the same name in the module refuses,
+        // raw spellings included.
+        "use serial_test::serial;\nuse my_macros::skip_body as serial;\n#[test]\n#[serial]",
+        "use serial_test::serial;\nuse my_macros::r#serial;\n#[test]\n#[serial]",
+        // Only the test's own module binds its attribute: an import in a
+        // function body, a sibling module or a macro token tree does not.
+        "mod a { use serial_test::serial; }\nuse my_macros::serial as r#serial;\n#[test]\n#[serial]",
+        "use my_macros::r#serial;\nfn helper() { use serial_test::serial; }\n#[test]\n#[serial]",
+        "macro_rules! bring { () => { use my_macros::serial; }; }\nbring!();\nfn helper() { use serial_test::serial; }\n#[test]\n#[serial]",
+        // A local `serial_test` shadows the crate for a qualified lock.
+        "mod serial_test { pub use my_macros::serial; }\n#[test]\n#[serial_test::serial]",
+        "use my_macros as serial_test;\n#[test]\n#[serial_test::serial]",
+        "extern crate my_macros as serial_test;\n#[test]\n#[serial_test::serial]",
+        "extern crate my_macros as serial_test;\n#[test]\n#[::serial_test::serial]",
+        // A glob, an item macro or an attribute or derive macro may bring
+        // one.
+        "use crate::common::*;\n#[test]\n#[serial_test::serial]",
+        "bring!();\n#[test]\n#[serial_test::serial]",
+        "#[my_macros::emit_mod]\nfn helper() {}\n#[test]\n#[serial_test::serial]",
+        "#[derive(my_macros::EmitMod)]\nstruct Marker;\n#[test]\n#[serial_test::serial]",
+        "#[cfg_attr(all(), my_macros::emit_mod)]\nfn helper() {}\n#[test]\n#[serial_test::serial]",
+        "use my_macros::serial;\n#[serial]\nfn helper() {}\n#[test]\n#[serial_test::serial]",
+        // An import can rebind a prelude derive or `derive` itself.
+        "use my_macros::EmitMod as Debug;\n#[derive(Debug)]\nstruct Marker;\n#[test]\n#[serial_test::serial]",
+        "use my_macros::emit_mod as derive;\n#[derive(Debug)]\nstruct Marker;\n#[test]\n#[serial_test::serial]",
+        "use serial_test::serial;\nuse my_macros::EmitMod as Debug;\n#[derive(Debug)]\nstruct Marker;\n#[test]\n#[serial]",
+        "extern crate my_macros as Debug;\n#[test]\n#[serial_test::serial]",
+        // The bare import's `serial_test` must be the crate too, and an
+        // out-of-line module's `super::*` may bring another one.
+        "use super::*;\nuse serial_test::serial;\n#[test]\n#[serial]",
+        "mod serial_test { pub use my_macros::serial; }\nuse serial_test::serial;\n#[test]\n#[serial]",
+        "extern crate my_macros as serial_test;\nuse serial_test::serial;\n#[test]\n#[serial]",
+        // A foreign glob may also bind the owner name.
+        "use serial_test::serial;\nuse my_macros::*;\n#[test]\n#[serial]",
+        "use serial_test::serial as _;\n#[test]\n#[serial]",
+        "use serial_test::*;\n#[test]\n#[serial]",
+    ] {
+        let tests = format!(
+            "use demo::weight;\n{attributes}\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
+        );
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
+    }
+}
+
+#[test]
+fn serial_test_locks_resolve_in_the_tests_own_module() {
+    let module = |body: &str| {
+        format!(
+            "use demo::weight;\nmod tests {{\n{body}\n#[test]\n#[serial_test::serial]\nfn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n}}\n"
+        )
+    };
+    // `use super::*` reaches an enclosing module of this file, which binds
+    // no `serial_test`.
+    assert_eq!(weight_admitted(&module("use super::*;")).len(), 1);
+    // The common inline test module: `#[cfg(test)]` emits no items.
+    let common = "use demo::weight;\n#[cfg(test)]\nmod tests {\nuse super::*;\nuse serial_test::serial;\n#[test]\n#[serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert_eq!(weight_admitted(common).len(), 1, "{common}");
+    let tests = "use demo::weight;\nmod serial_test { pub use my_macros::serial; }\nmod tests {\nuse super::*;\n#[test]\n#[serial_test::serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert!(weight_admitted(tests).is_empty(), "{tests}");
+    let bare = "use demo::weight;\nuse serial_test::serial;\nmod tests {\nuse super::*;\n#[test]\n#[serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    let shadowed = "use demo::weight;\nmod serial_test { pub use my_macros::serial; }\nmod tests {\nuse super::*;\nuse serial_test::serial;\n#[test]\n#[serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert!(weight_admitted(shadowed).is_empty(), "{shadowed}");
+    let rebound = "use demo::weight;\nuse my_macros::EmitMod as Debug;\n#[derive(Debug)]\nstruct Marker;\nmod tests {\nuse super::*;\n#[test]\n#[serial_test::serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert!(weight_admitted(rebound).is_empty(), "{rebound}");
+    // `#[macro_use]` can rebind `Debug` with no import; the file-wide
+    // macro-binding scan refuses it.
+    let macro_use = "#[macro_use]\nextern crate my_macros;\nuse demo::weight;\nmod tests {\nuse super::*;\n#[derive(Debug)]\nstruct Marker;\n#[test]\n#[serial_test::serial]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n}\n";
+    assert!(weight_admitted(macro_use).is_empty(), "{macro_use}");
+    // The bare lock is bound only through the glob, which proves nothing.
+    assert!(weight_admitted(bare).is_empty(), "{bare}");
 }
 
 #[test]
@@ -2310,16 +2511,22 @@ fn shared_return_admission_uses_the_outer_invocation_identity() {
         "assert_eq!(weight(input), 12);",
         "#[cfg(any())] assert_eq!(weight(input), 12);",
         "assert_eq!(weight(input), 12, \"{}\", stringify!(value));",
+        "std::assert_eq!(weight(input), 12);",
+        "::core::assert_eq!(weight(input), 12);",
+        "pretty_assertions::assert_eq!(weight(input), 12);",
+        "similar_asserts :: assert_eq !(weight(input), 12);",
     ] {
-        assert!(is_bare_assert_eq_invocation(assertion), "{assertion}");
+        assert!(is_admission_gated_assert_eq(assertion), "{assertion}");
     }
     for assertion in [
         "assert!({ assert_eq!(weight(input), 12); true });",
-        "std::assert_eq!(weight(input), 12);",
+        "other::assert_eq!(weight(input), 12);",
+        "pretty_assertions::assert_ne!(weight(input), 12);",
+        "pretty_assertions::nested::assert_eq!(weight(input), 12);",
         "matches!(value, Some(_));",
         "match value { _ => assert_eq!(weight(input), 12) }",
     ] {
-        assert!(!is_bare_assert_eq_invocation(assertion), "{assertion}");
+        assert!(!is_admission_gated_assert_eq(assertion), "{assertion}");
     }
 }
 
@@ -3258,6 +3465,103 @@ fn a_trait_receiver_pins_only_through_its_one_constructor() {
         BTreeSet::from(["Meter".to_string()])
     );
     assert!(trait_impl_self_type_names(other_meter, "Gauge").is_empty());
+}
+
+const SNAP_LIB: &str = "pub mod celsius {\n    pub fn snap(v: u32) -> u32 {\n        (v + 5) / 10 * 10\n    }\n}\n\npub mod fahrenheit {\n    pub fn snap(v: u32) -> u32 {\n        (v + 6) / 12 * 12\n    }\n}\n\n#[cfg(test)]\nmod snap_tests {\n    use super::celsius::snap;\n\n    #[test]\n    fn snap_seventeen_to_twenty() {\n        assert_eq!(snap(17), 20);\n    }\n}\n";
+
+fn module_owner<'a>(index: &'a RustIndex, id_suffix: &str) -> Option<&'a FunctionSummary> {
+    index
+        .functions()
+        .iter()
+        .find(|function| function.id.0.ends_with(id_suffix))
+}
+
+fn module_pin(index: &RustIndex, id_suffix: &str, expression: &str) -> Option<OwnerReturnPin> {
+    let owner = module_owner(index, id_suffix);
+    assert!(owner.is_some(), "`{id_suffix}` must be indexed");
+    let owner = owner?;
+    assert_eq!(owner.item.container, FunctionContainer::Free);
+    OwnerReturnPin::establish(&return_probe(owner, expression), owner, index)
+}
+
+/// #6544: same-named module-level rivals no longer refuse the pin outright.
+/// The test's `use super::celsius::snap` settles the bare call on
+/// `celsius::snap`, so its exact assert pins that owner and never the
+/// `fahrenheit::snap` rival it does not import.
+#[test]
+fn an_imported_owner_among_same_named_rivals_is_pinned_only_through_its_import() {
+    let index = index(&[(LIB, SNAP_LIB)]);
+    let pin = module_pin(&index, "::celsius::snap", "(v + 5) / 10 * 10");
+    assert!(
+        pin.is_some(),
+        "rivals settled per test must not refuse the pin"
+    );
+    let admitted = pin
+        .map(|pin| admitted_texts(&index, &pin))
+        .unwrap_or_default();
+    assert_eq!(admitted, vec!["assert_eq!(snap(17), 20);".to_string()]);
+
+    let rival_pin = module_pin(&index, "::fahrenheit::snap", "(v + 6) / 12 * 12");
+    assert!(rival_pin.is_some());
+    let rival_admitted = rival_pin
+        .map(|pin| admitted_texts(&index, &pin))
+        .unwrap_or_else(|| vec!["no pin".to_string()]);
+    assert!(
+        rival_admitted.is_empty(),
+        "the import names celsius::snap, never fahrenheit::snap: {rival_admitted:?}"
+    );
+}
+
+/// Review finding 4: the pin resolves the asserted call itself. A test that
+/// imports the rival and also calls the owner by its full path pins the
+/// rival through the bare `snap(17)`, never the owner; with the imports
+/// swapped (control) the same assertion pins the owner. The per-call
+/// resolution is the identity gate; the import-reading reach gate (#7097)
+/// refuses the same shape independently.
+#[test]
+fn a_mixed_owner_and_rival_test_pins_only_through_the_asserted_call() {
+    let mixed = SNAP_LIB.replace(
+        "    use super::celsius::snap;\n\n    #[test]\n    fn snap_seventeen_to_twenty() {\n",
+        "    use super::fahrenheit::snap;\n\n    #[test]\n    fn snap_seventeen_to_twenty() {\n        let _ = crate::celsius::snap(1);\n",
+    );
+    assert_ne!(mixed, SNAP_LIB, "the fixture must be rewritten");
+    let mixed_index = index(&[(LIB, mixed.as_str())]);
+    let pin = module_pin(&mixed_index, "::celsius::snap", "(v + 5) / 10 * 10");
+    assert!(pin.is_some());
+    let admitted = pin
+        .map(|pin| admitted_texts(&mixed_index, &pin))
+        .unwrap_or_else(|| vec!["no pin".to_string()]);
+    assert!(
+        admitted.is_empty(),
+        "`snap(17)` is fahrenheit's; the path call lends it nothing: {admitted:?}"
+    );
+
+    let control = SNAP_LIB.replace(
+        "    #[test]\n    fn snap_seventeen_to_twenty() {\n",
+        "    #[test]\n    fn snap_seventeen_to_twenty() {\n        let _ = crate::fahrenheit::snap(1);\n",
+    );
+    assert_ne!(control, SNAP_LIB, "the control fixture must be rewritten");
+    let control_index = index(&[(LIB, control.as_str())]);
+    let pin = module_pin(&control_index, "::celsius::snap", "(v + 5) / 10 * 10");
+    let admitted = pin
+        .map(|pin| admitted_texts(&control_index, &pin))
+        .unwrap_or_default();
+    assert_eq!(admitted, vec!["assert_eq!(snap(17), 20);".to_string()]);
+}
+
+/// #6544 trap pair: with only `use super::*`, the bare `snap` is bound by
+/// no scope ripr can read (both rivals sit in sibling modules), so neither
+/// rival is pinned.
+#[test]
+fn a_bare_call_no_import_settles_pins_neither_rival() {
+    let source = SNAP_LIB.replace("    use super::celsius::snap;\n", "    use super::*;\n");
+    let index = index(&[(LIB, source.as_str())]);
+    let pin = module_pin(&index, "::celsius::snap", "(v + 5) / 10 * 10");
+    assert!(pin.is_some());
+    let admitted = pin
+        .map(|pin| admitted_texts(&index, &pin))
+        .unwrap_or_else(|| vec!["no pin".to_string()]);
+    assert!(admitted.is_empty(), "{admitted:?}");
 }
 
 const WINDOW_LIB: &str = "#[derive(Debug, PartialEq, Eq)]\npub struct Window {\n    start: u32,\n    end: u32,\n}\n\nimpl Window {\n    pub fn new(start: u32, end: u32) -> Self {\n        Window { start, end }\n    }\n}\n\nimpl Clone for Window {\n    fn clone(&self) -> Self {\n        Window {\n            start: self.start,\n            end: self.end,\n        }\n    }\n}\n";

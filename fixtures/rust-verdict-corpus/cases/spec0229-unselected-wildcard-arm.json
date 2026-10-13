@@ -1,0 +1,47 @@
+{
+  "case_id": "spec0229-unselected-wildcard-arm",
+  "subject_id": "authored-spec0229-4",
+  "diff": "cases/spec0229-unselected-wildcard-arm.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 12
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "match_arm",
+  "test_shape": "integration_test_input_selects_earlier_arm",
+  "hard_case": "RIPR-SPEC-0229 example 4 with single-letter variants: Kind::A could be an associated constant, so arm_selection reads it as a variant only because src/lib.rs declares enum Kind with variant A (#7543). It then proves the earlier Kind::A arm takes the only test input and names the missing discriminator `_`.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "_ => 2,",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: f(Kind::B) returns 2 instead of 0; the only test calls f(Kind::A), which takes the Kind::A arm"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "tests/it.rs pins f(Kind::A) to 1; Kind::A matches the earlier Kind::A arm, so by first match no test selects the changed _ arm and the edit passes. Spec cells: RIPR-SPEC-0229 example 4. ripr reads weakly_exposed, the example's class, and names the missing discriminator `_`.",
+  "labeling_observation": {
+    "ripr_commit": "dd5a66b5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0229#4"
+  ]
+}

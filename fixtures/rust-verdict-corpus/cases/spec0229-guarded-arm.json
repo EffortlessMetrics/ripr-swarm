@@ -1,0 +1,47 @@
+{
+  "case_id": "spec0229-guarded-arm",
+  "subject_id": "authored-spec0229-5",
+  "diff": "cases/spec0229-guarded-arm.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 5
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "match_arm",
+  "test_shape": "integration_test_input_through_guarded_arm",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Some(v) if v > 4 => 1,",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "the edit itself: f(Some(4)) returns 0 instead of 1; the only test calls f(Some(5)), which passes both guards"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "tests/it.rs pins f(Some(5)) to 1; 5 > 3 and 5 > 4 both hold, so the guard edit passes. The changed arm is guarded, so selection is not provable either way. Spec cells: RIPR-SPEC-0229 example 5. ripr reads weakly_exposed on the match arm with no named missing discriminator, as the example requires; the predicate finding on the same line names v == 4 under the boundary rule, not the arm rule.",
+  "labeling_observation": {
+    "ripr_commit": "dd5a66b5",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0229#5"
+  ]
+}

@@ -1,0 +1,13 @@
+diff --git a/src/title.ts b/src/title.ts
+index 0000000..1111111 100644
+--- a/src/title.ts
++++ b/src/title.ts
+@@ -2,7 +2,6 @@ export function parseTitle(s: string): string {
+   const title = s.trim();
+   if (title === "") {
+-    // refuse an empty title
+-    throw new Error("title must not be blank");
++    throw new Error("title is blank");
+   }
+   return title;
+ }

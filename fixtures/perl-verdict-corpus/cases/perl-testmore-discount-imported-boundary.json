@@ -1,0 +1,64 @@
+{
+  "case_id": "perl-testmore-discount-imported-boundary",
+  "subject_id": "authored-perl-testmore-shop",
+  "diff": "cases/perl-testmore-discount-imported-boundary.diff",
+  "anchor": {
+    "file": "lib/Shop/Pricing.pm",
+    "line": 14
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "testmore_is_exported_call_at_boundary",
+  "hard_case": "The test calls discount() imported through Exporter; the producer proves direct_owner_call only for a package-qualified call, so the only relation is file_proximity to the package.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "100 < $amount",
+        "mutated_line": "if (100 < $amount) {",
+        "outcome": "tests_failed",
+        "failing_test": "t/pricing.t: discount starts at exactly 100; t/qualified.t: quote adds shipping to the discounted subtotal",
+        "equivalence_review": "not equivalent: 100 no longer earns the discount"
+      },
+      {
+        "replacement": "101 <= $amount",
+        "mutated_line": "if (101 <= $amount) {",
+        "outcome": "tests_failed",
+        "failing_test": "t/pricing.t: discount starts at exactly 100; t/qualified.t: quote adds shipping to the discounted subtotal",
+        "equivalence_review": "not equivalent: 100 no longer earns the discount"
+      },
+      {
+        "replacement": "99 <= $amount",
+        "mutated_line": "if (99 <= $amount) {",
+        "outcome": "tests_failed",
+        "failing_test": "t/pricing.t: no discount just below the threshold",
+        "equivalence_review": "not equivalent: 99 earns the discount"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "is(discount(100), 90) and is(discount(99), 99) sit on both sides of the threshold, so any move of the boundary fails a test. Spec cells: RIPR-SPEC-0064 (relation kinds), Test::More is().",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-testmore-discount-imported-boundary.json",
+    "sha256": "4d8b5faf9dfedb7036a3a243465633fdcd54bd8a7c5f7c8dc00d5870b9e9e553",
+    "provenance": "producer"
+  }
+}

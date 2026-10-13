@@ -1,0 +1,23 @@
+{
+  "case_id": "perl-testmore-round-cents-like",
+  "subject_id": "authored-perl-testmore-shop",
+  "origin": "authored",
+  "anchor": "lib/Shop/Pricing.pm:54",
+  "behavior_family": "return_value_format",
+  "test_shape": "testmore_like_format_regex",
+  "hard_case": false,
+  "truth": "partially_discriminated",
+  "ideal_verdict": "gap",
+  "observed_verdict": "gap",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "reachable_unrevealed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "packet_provenance": "producer"
+}
