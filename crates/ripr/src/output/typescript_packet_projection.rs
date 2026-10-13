@@ -1084,6 +1084,11 @@ fn static_literal_argument_reaches_boundary(
 ///   shape but fails the packet closed (`agent_packet` ineligible). An
 ///   unresolved named-constant boundary fails closed the same way (#4215).
 pub(crate) fn typescript_gap_record_for(finding: &Finding) -> Option<GapRecord> {
+    // Base-side evidence names a line the candidate no longer has (#7689),
+    // so it is never a repair target (#3281).
+    if !finding.is_candidate_actionable() {
+        return None;
+    }
     // G-A: only the terminal `incomplete_repair_packet` branch is eligible.
     let category = evidence_value(finding, "actionability_category: ")?;
     if category != "incomplete_repair_packet" {
@@ -1480,6 +1485,24 @@ mod tests {
             oracle_alignment: None,
             alignment_reason: None,
             source_currentness: crate::domain::SourceCurrentness::CandidateCurrent,
+        }
+    }
+
+    /// #7689: a deleted or moved line is base-side evidence, so the same
+    /// complete finding projects no gap record once its source is the base.
+    #[test]
+    fn base_side_finding_projects_no_gap_record() {
+        assert!(typescript_gap_record_for(&complete_finding()).is_some());
+        for currentness in [
+            crate::domain::SourceCurrentness::BaseDeleted,
+            crate::domain::SourceCurrentness::MovedOrRenamed,
+        ] {
+            let mut finding = complete_finding();
+            finding.source_currentness = currentness;
+            assert!(
+                typescript_gap_record_for(&finding).is_none(),
+                "{currentness:?}"
+            );
         }
     }
 

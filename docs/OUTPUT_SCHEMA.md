@@ -64,6 +64,7 @@ map is:
 | `ripr feedback record/export` | `schema_version` | `0.1` |
 | badge JSON | `schema_version` | `0.8` |
 | `ripr cache status --json` | `schema_version` | `0.2` |
+| `ripr cache export` success stdout | `schema_version` | `0.1` |
 | `ripr mcp` status tool and resource | `schema_version` | `ripr-mcp-workspace-status-v1` (see [MCP workspace status server](interop/mcp.md)) |
 | `ripr swarm queue --json` | `schema_version` | `0.2` |
 | `ripr help --json` | `schema_version` | `2` |
@@ -232,7 +233,13 @@ already and is not a refusal.
 `ripr agent stub --json` emits one `rust_test_stub` document on stdout when
 the producer yields a stub (`state: ready`, exit 0). A producer refusal
 keeps stdout empty and, under `--json`, writes the same `kind` on stderr
-with `state: refused` (#5355). Additive fields on schema `0.1` (#7290):
+with `state: refused` (#5355). A selector that names no reported gap — a
+stale or mistyped seam id, the most common refusal — renders the envelope
+too, with `refusal.kind: seam_not_found`, `seam_id` repeating the
+requested id (`null` for a location selector, which never resolved to a
+seam id), and `owner` / `grip_class` / `classification` `null` where seam
+resolution would have supplied them (#7390). Additive fields on schema
+`0.1` (#7290):
 
 - `grip_class` — the inventory seam grip class when classification named
   this seam (`strongly_gripped`, `weakly_gripped`, `ungripped`, …), else
@@ -445,6 +452,19 @@ and writes through the alias; `cache clear` keeps its fail-closed symlink
 refusal for the leaf and for symlinked ancestors, and names the real path
 or offending component it protects.
 
+`ripr cache export [--root PATH] --out NEW_DIRECTORY` prints a success JSON object
+with `schema_version: "0.1"`, `cache_dir` (absolute export directory),
+`classified_entries` (available current full/compact families), `file_fact_entries`,
+`missing_file_facts`, `copied_files` (including manifests and referenced shards)
+and `logical_file_bytes` (sum of copied encoded file lengths). These lengths do
+not describe allocated bytes, directory overhead or peak disk use. Missing
+optional file facts are counted; corrupt present entries and incomplete required
+references refuse success. There is no success JSON for incomplete export. Require
+exit zero before consuming the directory. Failures after output creation name the
+retained owned partial output; preflight refusals, including unavailable Cargo
+input identity, occur before the output directory exists and create no output.
+The live cache is unchanged. See [RIPR-SPEC-0257](specs/RIPR-SPEC-0257-current-cache-export.md).
+
 ## Matched intervention-study preregistration
 
 `schemas/ripr/ripr-intervention-study.schema.json` describes one frozen
@@ -566,6 +586,17 @@ invent a committed-source default or executable route. Per-finding
 `suggested_next_action` advice stays compatible and is not this object.
 Unknown top-level fields are rejected by the verification contract. Nested
 finding and seam details may grow additively within the pinned version.
+
+Top-level `config_path` (RIPR-SPEC-0255, #7536) names the `ripr.toml` that
+governed the run, in the lossless stable path spelling used for `root`. It
+is present exactly when a worktree config file was actually loaded; a
+defaults-only run omits the member — absence is the explicit
+built-in-defaults signal, never a placeholder path. A bound
+`--candidate-tree` subject also omits it: the governing file lives in the
+immutable tree, not the worktree, so no worktree path may be claimed for it
+(#3279); that run's config provenance is the `identity.config_identity`
+fingerprint. The human header prints the same worktree fact as
+`config: <path>` after `root:` under the same condition.
 
 Top-level `base` records the base ref the diff loader actually used (#3940):
 the explicit `--base` when one was given, the resolved default base
@@ -17723,7 +17754,7 @@ top-level `source_subject`:
 
 - `digest_algorithm`: always `"sha256"`.
 - `corpus` (additive, full Rust inventory only): the analysis-owned
-  `{ "scope": "rust_workspace", "cache_schema_version": "1.62",
+  `{ "scope": "rust_workspace", "cache_schema_version": "1.65",
   "files_content_hash": "<16 lowercase hex digits>" }` from the actual
   classified inventory cache key, including both production and test Rust
   files after the existing generated-file exclusions. This is the existing
@@ -18434,7 +18465,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.63",
+      "schema_version": "1.65",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",

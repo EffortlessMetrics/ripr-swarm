@@ -58,6 +58,7 @@ use std::{
 };
 mod boundary;
 mod classify;
+mod deleted_lines;
 use classify::{PythonNoBehaviorContext, classify_change_with_context};
 #[cfg(test)]
 use classify::{classify_change, classify_change_with_old};
@@ -912,6 +913,25 @@ impl PythonAdapter {
                     findings.push(finding);
                 }
             }
+            // A deleted behavior line no added line pairs with is kept as
+            // base-side evidence on its owner, as the Rust adapter keeps it
+            // (#7587, RIPR-SPEC-0156).
+            let deleted = deleted_lines::deleted_line_findings(
+                changed,
+                &counterparts,
+                &deleted_lines::OldSideRanges {
+                    docstrings: &old_docstring_ranges,
+                    imports: &old_import_ranges,
+                },
+                workspace_read
+                    .sources
+                    .get(&changed.path)
+                    .map(String::as_str),
+                &all_owners,
+                &all_tests,
+                &findings,
+            );
+            findings.extend(deleted);
         }
         Ok(LanguageDiffResult {
             findings,
@@ -964,6 +984,9 @@ impl PythonAdapter {
 
 #[cfg(test)]
 mod assertion_selection_tests;
+
+#[cfg(test)]
+mod deleted_lines_tests;
 
 #[cfg(test)]
 mod new_declaration_tests;

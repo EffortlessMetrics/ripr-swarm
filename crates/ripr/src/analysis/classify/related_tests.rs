@@ -2135,7 +2135,7 @@ fn normalized_file_stem(path: &Path) -> String {
 /// without a `crates/` segment) and the package guards in
 /// `find_related_tests`, which fail closed when both sides of a candidate
 /// relation are unscopable absolute paths.
-fn path_is_absolute_form(path: &Path) -> bool {
+pub(super) fn path_is_absolute_form(path: &Path) -> bool {
     let normalized = normalize_path(path);
     let has_drive_prefix = normalized.as_bytes().get(1).copied() == Some(b':');
     path.is_absolute() || normalized.starts_with('/') || has_drive_prefix

@@ -139,7 +139,7 @@ guard that pins a value (decision 7).
 0. an `ensure!` condition runs its own sub-chain
    (`classify_fallible_assertion`): `exact_error_variant` / strong, then
    `broad_error` / weak, then an exact comparison that is not duplicative as
-   `exact_value` / strong, then `smoke_only` / smoke, otherwise
+   `exact_value` / strong (rule 1 says which `==` is one), then `smoke_only` / smoke, otherwise
    `relational_check` / weak
 1. `exact_error_variant` / strong
 2. `broad_error` / weak
@@ -219,9 +219,34 @@ Two pattern terms are used below.
    `relational_check` / weak. `assert_ne!` stays an inequality whatever
    the literal. A `!=` in a boolean assertion condition is rule 1's
    inequality only when `!=` is the condition's only comparison
-   (`ensure!(a != b)`); a condition that also has an `==` anywhere outside
-   strings and comments keeps the reading that `==` earns
-   (`ensure!(score == 4 && other != 1)` is `exact_value` / strong). At
+   (`ensure!(a != b)`); a condition that also has a pinning `==` (below)
+   keeps the reading that `==` earns
+   (`ensure!(score == 4 && other != 1)` is `exact_value` / strong). That
+   `==` must be a top-level `&&` conjunct whose own top-level operator is
+   `==`: an `==` inside a closure, call argument or negation pins nothing
+   (`ensure!(f(|x| x == 1))`, `ensure!(!(a == b))` and
+   `ensure!(xs.iter().position(|x| *x == 1) != None)` read
+   `relational_check` / weak). A disjunction that decides the condition
+   passes when any one arm holds, so no arm lends it an exact kind. In an
+   `assert!`, `debug_assert!`, `prop_assert!` or `ensure!` condition, a
+   top-level `||`, or one at the top level of a parenthesized group that
+   is the whole condition (the group read again by the same rule), caps the
+   reading at `relational_check` / weak, including a literal `|| false`
+   arm, which is not read through, and an arm such as `r.is_err()` that
+   would otherwise earn `broad_error` or an observer such as
+   `events_sent.contains(&id)` that would otherwise earn step 9's
+   `mock_expectation` (`assert!(ready || events_sent.contains(&id))` passes
+   without observing the event). A parenthesized `&&` conjunct that
+   such a `||` decides pins nothing, so, as beside a negated pattern, the
+   other conjuncts decide with their own reading, or `relational_check` /
+   weak when no other conjunct remains (`ensure!(c == d && (a || b))` reads
+   as `ensure!(c == d)`). The group drops out before the negated-pattern
+   and compared-pattern caps in this rule apply, so a negated or compared pattern inside
+   it caps nothing (`ensure!(c == d && (!matches!(r, Err(E::X)) || y))`
+   reads `exact_value` / strong). A `||` inside a call argument, closure or pattern
+   does not decide the condition
+   (`assert!(matches!(pick(|x| x > 1 || x < 0), Ok(3)))` keeps
+   `exact_value`). At
    step 4, every `assert_ne!` assigns weak strength: a struct-literal
    operand keeps the `whole_object_equality` kind, as RIPR-SPEC-0225 says,
    with no field credit; any other `{` (a closure or block operand) assigns
@@ -229,7 +254,8 @@ Two pattern terms are used below.
    assertion takes rule 1 before rules 2 and 3. A negated pattern is an
    inequality only when it is the whole condition; in a top-level `&&` chain
    with no top-level `||` the other conjuncts decide the reading, and
-   anywhere else (`||` at any level, a nested group) the reading is capped
+   anywhere else (`||` at any level, a nested group, except inside a
+   deciding `||` group that drops out as above) the reading is capped
    at weak. An inequality-named helper is recognized before any exact-kind
    step, so a `matches!(.., Err(E::X))` argument cannot lend it a kind, and
    the cap keeps a reading already below weak. A call-count or
@@ -468,7 +494,10 @@ rejected alternative. Any can be reversed later without touching the rest.
 11. `assert_not_equal(score(2), 0)`: `relational_check` / weak.
 12. `assert_json_eq(actual, expected)`: `exact_value` / strong (unchanged).
 13. `ensure!(score(2) != 0)`: `relational_check` / weak (today
-    `exact_value` / strong).
+    `exact_value` / strong). `ensure!(score(2) != 0 || score(3) == 6)` and
+    `ensure!(ready && (score(2) == 4 || done))`: `relational_check` / weak
+    (both read `exact_value` / strong before #7558);
+    `ensure!(score(2) == 4 && (ready || done))`: `exact_value` / strong.
 14. `assert_ne!(build(3), Config { retries: 9 })`: `whole_object_equality` /
     weak.
 15. `assert!(opt.is_some_and(|v| v > 1))`: `smoke_only` / smoke (unchanged).
@@ -573,6 +602,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `crates/ripr/src/analysis/extract/oracles/classify.rs` unit tests.
 - Existing: `classify.rs` unit test for `ensure!(s != X)` changes with
   example 13.
+- Existing: `relational_tests.rs::ensure_disjunctions_and_nested_equalities_are_never_exact`
+  and the corpus case `spec0231-ensure-disjunction-not-exact` (the
+  disjunction forms of example 13, #7558).
 - Existing: `pattern_admission.rs::tests::spec_0231_rules_2_and_3_read_the_pattern`
   (the pattern forms of examples 3, 4, 7, 17, 18 and 21 to 26, the pinning
   controls 6, 22 and 23, and decision 7's guards).
