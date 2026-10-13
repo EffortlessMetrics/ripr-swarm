@@ -516,6 +516,7 @@ mod managed_producer {
     use std::time::Instant;
 
     const PARTIAL: &str = "{\"interrupted_export\":";
+    const SIDECAR: &str = "unique successful-export sidecar evidence\n";
     // Empty identity-bearing arrays have the independent SHA-256(empty)
     // fingerprint. This packet carries no invented Perl analysis facts;
     // the real Rust adapter supplies the nonempty workload witness.
@@ -531,6 +532,10 @@ done
 printf '%s\n' "$out" > "${RIPR_LIFECYCLE_MARKER}.path"
 case $RIPR_LIFECYCLE_MODE in
     healthy|held) printf '%s\n' "$RIPR_LIFECYCLE_PACKET" > "$out" ;;
+    sidecar)
+        printf '%s\n' "$RIPR_LIFECYCLE_PACKET" > "$out"
+        printf '%s' "$RIPR_LIFECYCLE_SIDECAR" > "${out%/*}/exporter-sidecar"
+        ;;
     partial|nonzero)
         printf '%s' '{"interrupted_export":' > "$out"
         printf '%s' '{"interrupted_export":' > "${RIPR_LIFECYCLE_MARKER}.partial"
@@ -541,7 +546,7 @@ esac
 printf '%s\n' "$BASHPID" > "${RIPR_LIFECYCLE_MARKER}.pid"
 printf 'ready\n' > "${RIPR_LIFECYCLE_MARKER}.ready"
 case $RIPR_LIFECYCLE_MODE in
-    healthy) exit 0 ;;
+    healthy|sidecar) exit 0 ;;
     nonzero) exit 17 ;;
 esac
 # Builtins only: there is no descendant process to outlive this producer.
@@ -677,11 +682,17 @@ exit 66
                 .map_err(|error| format!("create {label} {extension} capture: {error}"))
         };
         let mut command = fixture.command("managed.diff", &[]);
+        let packet = if mode == "sidecar" {
+            EMPTY_PACKET.replace("lifecycle-empty", "lifecycle-sidecar")
+        } else {
+            EMPTY_PACKET.to_string()
+        };
         command
             .env("RIPR_ALLOW_REPO_PERL_EXECUTABLE", "1")
             .env("RIPR_LIFECYCLE_MODE", mode)
             .env("RIPR_LIFECYCLE_MARKER", &marker)
-            .env("RIPR_LIFECYCLE_PACKET", EMPTY_PACKET)
+            .env("RIPR_LIFECYCLE_PACKET", packet)
+            .env("RIPR_LIFECYCLE_SIDECAR", SIDECAR)
             .stdin(Stdio::null())
             .stdout(exclusive("stdout")?)
             .stderr(exclusive("stderr")?)
@@ -1172,6 +1183,82 @@ exit 66
             &completed.output.stdout,
         )?;
         fixture.preserve_on_drop = false;
+        Ok(())
+    }
+
+    #[test]
+    fn managed_exporter_success_consumes_published_packet_when_sidecar_blocks_staging_cleanup()
+    -> Result<(), String> {
+        let mut fixture = setup("managed-success-sidecar")?;
+        let cold = attempt(&fixture, "cold", "healthy")?;
+        healthy(&cold)?;
+        let packet = published_path(&fixture, &cold.tmp)?;
+        let previous = fs::read(&packet).map_err(|error| error.to_string())?;
+        let exported = attempt(&fixture, "sidecar", "sidecar")?;
+        let expected_packet = format!(
+            "{}\n",
+            EMPTY_PACKET.replace("lifecycle-empty", "lifecycle-sidecar")
+        );
+        let published = fs::read(&packet).map_err(|error| error.to_string())?;
+        if published != expected_packet.as_bytes() || published == previous {
+            return Err(
+                "successful sidecar exporter did not publish its distinguishable valid packet"
+                    .to_string(),
+            );
+        }
+        if exported.tmp.exists() {
+            return Err("successful sidecar exporter retained its unpublished packet".to_string());
+        }
+        let staging = exported
+            .tmp
+            .parent()
+            .ok_or("sidecar packet has no staging parent")?;
+        let sidecar = staging.join("exporter-sidecar");
+        if fs::read(&sidecar).map_err(|error| error.to_string())? != SIDECAR.as_bytes() {
+            return Err(
+                "successful publication changed or deleted unique sidecar evidence".to_string(),
+            );
+        }
+        // Inspect publication and retained bytes before challenging the
+        // rendered outcome: a cleanup error after commit must not report
+        // producer failure while the new packet is already visible.
+        healthy(&exported)?;
+        let stderr = String::from_utf8_lossy(&exported.output.stderr);
+        if !stderr.contains("published")
+            || !stderr.contains("packet")
+            || !stderr.contains(&packet.display().to_string())
+            || !stderr.contains("staging cleanup failed")
+            || !stderr.contains("retained")
+            || !stderr.contains(&staging.display().to_string())
+            || stderr.contains("Perl facts exporter failed:")
+            || String::from_utf8_lossy(&exported.output.stdout).contains("\"producer_failure\"")
+        {
+            return Err(format!(
+                "published packet/staging warning was not truthful: {stderr}"
+            ));
+        }
+
+        let restarted = attempt(&fixture, "restart", "healthy")?;
+        healthy(&restarted)?;
+        if restarted.tmp == exported.tmp || published_path(&fixture, &restarted.tmp)? != packet {
+            return Err(
+                "healthy retry reused retained sidecar staging or changed final identity"
+                    .to_string(),
+            );
+        }
+        staging_removed(&fixture, &restarted.tmp)?;
+        same_result(
+            "successful sidecar retry",
+            &cold.output.stdout,
+            &restarted.output.stdout,
+        )?;
+        if fs::read(&sidecar).map_err(|error| error.to_string())? != SIDECAR.as_bytes() {
+            return Err(
+                "healthy retry changed retained successful-export sidecar evidence".to_string(),
+            );
+        }
+        // Retain the unique sidecar witness for the proof owner on success.
+        fixture.preserve_on_drop = true;
         Ok(())
     }
 }

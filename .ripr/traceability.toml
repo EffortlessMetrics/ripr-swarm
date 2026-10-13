@@ -5865,6 +5865,7 @@ tests = [
   "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_nonzero_exit_rejects_partial_and_preserves_published_packet",
   "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_timeout_retains_directory_evidence_and_reports_cleanup_failure",
   "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_timeout_preserves_overlapping_live_sibling_packet",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_success_consumes_published_packet_when_sidecar_blocks_staging_cleanup",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",

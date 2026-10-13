@@ -1085,6 +1085,8 @@ settled, ripr discards that invocation's partial packet; a cleanup blocker is
 preserved and named in the failure diagnostic. Forced interruption or
 unconfirmed process cleanup can retain staging, which a subsequent invocation
 does not consume.
+If staging cleanup fails after successful publication, ripr names the retained
+staging in a warning and consumes the published packet normally.
 
 To evaluate preview languages, keep Rust enabled and add only the preview
 adapters the repo wants to inspect:

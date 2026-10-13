@@ -127,6 +127,8 @@ recursively removes evidence. Unconfirmed process cleanup or forced interruption
 retains private staging. A subsequent invocation uses fresh staging and cannot
 consume the retained partial packet. This lifecycle contract does not change
 cache identity, reuse policy, or the platform process-containment authority.
+After successful publication, a staging-cleanup blocker is retained and named
+as a warning; the published packet is still consumed as the successful export.
 
 ### Packet status
 

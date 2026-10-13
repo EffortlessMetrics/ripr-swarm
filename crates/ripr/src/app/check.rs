@@ -742,12 +742,18 @@ fn invoke_perl_lsp_producer(
                         packet_path.display()
                     ))
                 })?;
-                staging.remove_empty_directory().map_err(|cleanup| {
-                    format!(
-                        "Perl facts packet published at `{}` but not consumed: {cleanup}",
-                        packet_path.display()
-                    )
-                })?;
+                // Publication already committed. A retained sidecar or a
+                // directory-cleanup error cannot turn that successful export
+                // into a producer failure after replacing the previous packet.
+                if let Err(cleanup) = staging.remove_empty_directory() {
+                    eprintln!(
+                        "{}",
+                        terminal_safe(format!(
+                            "warning: Perl facts packet published at `{}`; {cleanup}",
+                            packet_path.display()
+                        ))
+                    );
+                }
                 return Ok(packet_path);
             }
             Err(staging.settled_failure(format!(
