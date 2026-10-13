@@ -494,20 +494,13 @@ mod tests {
         );
     }
 
-    fn clean_default_gate_reports() {
-        for residue in [
-            "target/ripr/reports/gate-decision.json",
-            "target/ripr/reports/gate-decision.md",
-        ] {
-            let _ = std::fs::remove_file(residue);
-        }
-    }
-
     #[test]
     fn gate_evaluate_missing_input_acknowledges_received_baseline() {
         // `--baseline` is parsed, then rejected as a non-candidate source.
         // The error must name that flag instead of listing only the three
-        // candidate inputs as if nothing was passed (#7654).
+        // candidate inputs as if nothing was passed (#7654). Missing-input
+        // returns before writing reports, so these cases must not delete
+        // shared default paths.
         for argv in [
             args(&[
                 "evaluate",
@@ -522,9 +515,7 @@ mod tests {
                 "baseline-check",
             ]),
         ] {
-            clean_default_gate_reports();
             let result = gate(&argv);
-            clean_default_gate_reports();
             assert_eq!(
                 result,
                 Err(CommandError::Failure(
@@ -540,9 +531,7 @@ mod tests {
     fn gate_evaluate_missing_input_without_baseline_does_not_claim_baseline_was_received() {
         // Discriminator: a message that always mentions a received
         // `--baseline` would fail this `--mode baseline-check` case (#7654).
-        clean_default_gate_reports();
         let result = gate(&args(&["evaluate", "--mode", "baseline-check"]));
-        clean_default_gate_reports();
         assert_eq!(
             result,
             Err(CommandError::Failure(
