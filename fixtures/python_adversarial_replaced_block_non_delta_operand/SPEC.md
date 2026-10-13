@@ -5,8 +5,10 @@ Spec: RIPR-SPEC-0028
 ## Given
 
 The non-delta-operand trap of `python_adversarial_changed_sink_non_delta_operand`
-(#1276), placed as the second line of a two-line replacement block (#7556). The
-comment above the return and the return are rewritten together:
+(#1276) without its `@property`, placed as the second line of a two-line
+replacement block (#7556). The owner is a plain method the test calls, so the
+test is related and reach holds. The comment above the return and the return
+are rewritten together:
 
 ```python
 # changed owner: Account.balance  (delta: wrap in max(0, ...))
@@ -34,7 +36,7 @@ included, reads as delta.
 
 The return pairs with its own old line (`return self._balance`), the only delta
 token is `max`, and the oracle on `_balance` does not observe it. The change
-reads `weakly_exposed`, the same as the one-line edit. Running the test with
+reads `weakly_exposed`, as the same clamp does as a one-line edit. Running the test with
 the clamp applied passes (labeled in the Python verdict corpus as
 `py-blocks-account-clamp-second-line`).
 

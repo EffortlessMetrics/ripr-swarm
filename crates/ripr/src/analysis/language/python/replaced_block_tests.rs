@@ -250,3 +250,22 @@ fn dedented_annotation_change_keeps_its_probe() -> Result<(), String> {
     assert_eq!(classes_on(&findings, 10).len(), 1, "{findings:?}");
     Ok(())
 }
+
+/// A new `def` that takes the place of an old decorator line is a changed
+/// declaration, not a new one, so its header keeps its probe.
+#[test]
+fn def_paired_with_an_old_decorator_keeps_its_probe() -> Result<(), String> {
+    let source = format!("{ACCOUNT_PY}\n\n# helpers\ndef double(x):\n    return x * 2\n");
+    let findings = analyze(
+        "def-over-decorator",
+        &source,
+        &[10, 11, 12],
+        vec![
+            line(10, 10, "# helpers"),
+            line(11, 10, "@cache"),
+            line(12, 10, "RATE = 2"),
+        ],
+    )?;
+    assert_eq!(classes_on(&findings, 11).len(), 1, "{findings:?}");
+    Ok(())
+}
