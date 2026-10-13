@@ -137,16 +137,25 @@ pub(crate) fn run_diff_pipeline_with_oracle_policy_and_rust_config(
     // analysis result is evaluated only after the join, so a worker panic
     // cannot ride the scope destructor through an early error return.
     let probe_base = loaded.effective_base.clone();
+    let loaded_base_commit = loaded.resolved_base_commit.clone();
     let probe_token = cancellation::current_token();
     std::thread::scope(|scope| {
         let probes = probe_base.as_deref().map(|base| {
             scope.spawn(move || {
                 cancellation::with_optional_token(probe_token.as_ref(), || {
+                    // The loader already resolved the base commit while
+                    // verifying it; reuse that id instead of spawning the
+                    // identical `rev-parse` again (#7716). A committed-history
+                    // diff runs `git diff <base>...HEAD`, so its merge base
+                    // was never computed by the loader and the probe keeps
+                    // deriving it (passing `None`).
                     diff::resolve_analyzed_revisions(
                         &options.root,
                         base,
                         false,
                         options.git_timeout,
+                        loaded_base_commit.as_deref(),
+                        None,
                     )
                 })
             })
@@ -226,6 +235,7 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    disclosure_probes: super::DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     if options.diff_file.is_some() {
         return Err("worktree diff mode cannot be combined with --diff"
@@ -251,6 +261,27 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
         options.git_timeout,
     )?;
     cancellation::checkpoint()?;
+    // #7716: consumers that render neither the untracked-routed-files
+    // naming (RIPR-SPEC-0116) nor the analyzed-revisions naming (#5997) —
+    // the LSP diagnostics refresh — run no probe worker at all. The
+    // #7292 overlap hides the probes behind the analysis only while the
+    // analysis keeps the cores; on a loaded host the worker loses that
+    // race and the join extends every refresh by the probes' full wall
+    // time (measured: four git children, ~2.2s of the didOpen →
+    // first-publish window). The disclosure fields stay empty here, which
+    // is honest because this consumer renders neither field; the check
+    // output surfaces (CLI, MCP) keep `Run` and their disclosures.
+    if disclosure_probes == super::DisclosureProbes::Skip {
+        let mut result = run_pipeline_for_diff_text(
+            options,
+            oracle_policy,
+            languages,
+            rust_config,
+            &loaded.text,
+        )?;
+        bind_effective_base(&mut result, loaded.effective_base)?;
+        return Ok(result);
+    }
     // #7292: the untracked-routed-files probe and the analyzed-revisions
     // resolution read the repository without depending on the analysis
     // result. Run them on a worker thread DURING the analysis instead of
@@ -264,6 +295,8 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
     // after the join, so a worker panic cannot ride the scope destructor
     // through an early error return.
     let probe_base = loaded.effective_base.clone();
+    let loaded_base_commit = loaded.resolved_base_commit.clone();
+    let loaded_merge_base = loaded.merge_base_origin.clone();
     let probe_token = cancellation::current_token();
     std::thread::scope(|scope| {
         let probes = scope.spawn(move || {
@@ -276,7 +309,17 @@ pub(crate) fn run_worktree_pipeline_with_oracle_policy_and_rust_config(
                 let untracked =
                     committed_source::untracked_routed_paths(&options.root, options.git_timeout);
                 let analyzed = probe_base.as_deref().map(|base| {
-                    diff::resolve_analyzed_revisions(&options.root, base, true, options.git_timeout)
+                    // The loader already resolved the base commit and this
+                    // diff's merge-base origin; reuse both instead of
+                    // spawning the identical probes again (#7716).
+                    diff::resolve_analyzed_revisions(
+                        &options.root,
+                        base,
+                        true,
+                        options.git_timeout,
+                        loaded_base_commit.as_deref(),
+                        loaded_merge_base.as_deref(),
+                    )
                 });
                 (untracked, analyzed)
             })
@@ -322,6 +365,12 @@ pub(crate) static PROBE_OVERLAP_WAIT_FOR_WORKER: std::sync::atomic::AtomicBool =
 #[cfg(test)]
 pub(crate) static PROBE_OVERLAP_WORKER_STARTED: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
+/// Serializes the tests that drive the probe-worker seams above: the flags
+/// are process-global, and the skip test's "the worker never started"
+/// assertion is only meaningful while no `Run`-path test can flip it
+/// concurrently (#7716).
+#[cfg(test)]
+pub(crate) static PROBE_OVERLAP_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 fn wait_for_probe_worker_for_test() {
@@ -5610,7 +5659,14 @@ index 0000000..1111111 100644
         Ok(())
     }
 
-    fn fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+    /// Run one fixture git command and return its full output, for tests
+    /// that must read what git printed (for example pinning a resolved
+    /// commit id). The file's single process spawn lives here, so both
+    /// setup and read-back go through this one policy-accounted helper.
+    fn fixture_git_output(
+        root: &std::path::Path,
+        args: &[&str],
+    ) -> Result<std::process::Output, String> {
         let output = std::process::Command::new("git")
             .current_dir(root)
             // A hook or caller carrying GIT_DIR/GIT_WORK_TREE would redirect
@@ -5622,6 +5678,11 @@ index 0000000..1111111 100644
             .args(args)
             .output()
             .map_err(|err| format!("run git {args:?}: {err}"))?;
+        Ok(output)
+    }
+
+    fn fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
+        let output = fixture_git_output(root, args)?;
         if !output.status.success() {
             return Err(format!(
                 "git {args:?} failed: {}",
@@ -5645,6 +5706,12 @@ index 0000000..1111111 100644
         use std::sync::atomic::Ordering;
         use std::time::{Duration, Instant};
 
+        // Hold the seam lock so the Skip test cannot observe this test's
+        // worker-start flag (see `PROBE_OVERLAP_TEST_LOCK`). A poisoned lock
+        // means a sibling test panicked; keep serializing anyway.
+        let _seam_guard = PROBE_OVERLAP_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         PROBE_OVERLAP_WAIT_FOR_WORKER.store(true, Ordering::Release);
         PROBE_OVERLAP_WORKER_STARTED.store(false, Ordering::Release);
 
@@ -5687,6 +5754,7 @@ index 0000000..1111111 100644
                 &OraclePolicy::default(),
                 &[LanguageId::Rust],
                 &RustLanguageConfig::default(),
+                crate::analysis::DisclosureProbes::Run,
             );
             let elapsed = started.elapsed();
 
@@ -5722,6 +5790,155 @@ index 0000000..1111111 100644
             }
             if revisions.head_commit.is_none() || revisions.base_commit.is_none() {
                 return Err("resolved commits must be named".to_string());
+            }
+            // #7716 de-dup pin: the named ids must be the repository's real
+            // commits. The base commit now comes from the loader's own
+            // verification probe and the merge base from the loader's diff
+            // origin, so a regression that names a different (or absent)
+            // commit fails here.
+            // Read through the file's one policy-accounted spawn helper
+            // (`fixture_git_output`) instead of spawning a second process.
+            let git_commit = |spec: &str| -> Result<String, String> {
+                let output =
+                    fixture_git_output(&root, &["rev-parse", "--verify", "--quiet", spec])?;
+                if !output.status.success() {
+                    return Err(format!("rev-parse {spec} did not resolve"));
+                }
+                String::from_utf8(output.stdout)
+                    .map_err(|error| format!("non-utf8 rev-parse output: {error}"))
+                    .map(|commit| commit.trim().to_string())
+            };
+            let expected_base = git_commit("HEAD~1^{commit}")?;
+            if revisions.base_commit.as_deref() != Some(expected_base.as_str()) {
+                return Err(format!(
+                    "base_commit must be the loader-verified commit {expected_base}, got {:?}",
+                    revisions.base_commit
+                ));
+            }
+            let expected_head = git_commit("HEAD^{commit}")?;
+            if revisions.head_commit.as_deref() != Some(expected_head.as_str()) {
+                return Err(format!(
+                    "head_commit must be the current HEAD {expected_head}, got {:?}",
+                    revisions.head_commit
+                ));
+            }
+            // Linear history with base `HEAD~1`: the merge base IS the base
+            // tip, and the naming contract keeps the field absent rather
+            // than repeating the base commit.
+            if revisions.merge_base_commit.is_some() {
+                return Err(format!(
+                    "merge_base_commit must stay absent when it equals the base commit, got {:?}",
+                    revisions.merge_base_commit
+                ));
+            }
+            Ok(())
+        })();
+        PROBE_OVERLAP_WAIT_FOR_WORKER.store(false, Ordering::Release);
+        let _ = fs::remove_dir_all(&root);
+        result
+    }
+
+    /// #7716 discriminating test: a consumer that renders neither disclosure
+    /// field (the LSP diagnostics refresh) runs no probe worker at all.
+    /// Before the skip existed, the #7292 worker spawned even for such
+    /// consumers and its four git children could lose the overlap race on a
+    /// loaded host, extending every refresh by the probes' full wall time.
+    /// With the skip the worker-start flag stays unset while the analysis
+    /// still completes, and the unrendered fields stay empty.
+    #[test]
+    fn worktree_pipeline_skip_disclosure_probes_spawns_no_probe_worker() -> Result<(), String> {
+        use crate::config::RustLanguageConfig;
+        use std::sync::atomic::Ordering;
+
+        // Hold the seam lock: the started flag is process-global, and a
+        // concurrent Run-path test would flip it and fail the assertion
+        // below for reasons this test does not own (#7716). A poisoned lock
+        // means a sibling test panicked; keep serializing anyway.
+        let _seam_guard = PROBE_OVERLAP_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+        // Make the seam fail loudly if a probe worker ever starts: the Run
+        // path would wait for it here and the started flag would flip.
+        PROBE_OVERLAP_WAIT_FOR_WORKER.store(true, Ordering::Release);
+        PROBE_OVERLAP_WORKER_STARTED.store(false, Ordering::Release);
+
+        let root = temp_root("probe-skip")?;
+        let result = (|| -> Result<(), String> {
+            fs::create_dir_all(root.join("src")).map_err(|err| format!("create src: {err}"))?;
+            write(
+                &root.join("Cargo.toml"),
+                "[package]\nname = \"probe-skip-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n",
+            )?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 1\n}\n",
+            )?;
+            fixture_git(&root, &["init", "--initial-branch", "main"])
+                .or_else(|_| fixture_git(&root, &["init"]))?;
+            fixture_git(&root, &["config", "user.email", "test@example.com"])?;
+            fixture_git(&root, &["config", "user.name", "Test"])?;
+            fixture_git(&root, &["config", "commit.gpgsign", "false"])?;
+            fixture_git(&root, &["add", "."])?;
+            fixture_git(&root, &["commit", "-m", "base"])?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 2\n}\n",
+            )?;
+            fixture_git(&root, &["add", "."])?;
+            fixture_git(&root, &["commit", "-m", "second"])?;
+            write(
+                &root.join("src/lib.rs"),
+                "pub fn price(a: i32) -> i32 {\n    a - 3\n}\n",
+            )?;
+
+            let mut options = draft_diff_options(root.clone());
+            options.base = Some("HEAD~1".to_string());
+            let analysis = run_worktree_pipeline_with_oracle_policy_and_rust_config(
+                &options,
+                &OraclePolicy::default(),
+                &[LanguageId::Rust],
+                &RustLanguageConfig::default(),
+                crate::analysis::DisclosureProbes::Skip,
+            )
+            .map_err(|err| format!("worktree pipeline failed: {err}"))?;
+
+            if PROBE_OVERLAP_WORKER_STARTED.load(Ordering::Acquire) {
+                return Err(
+                    "the disclosure-probe worker started under Skip: a consumer that renders \
+                     neither disclosure field must run no probe worker"
+                        .to_string(),
+                );
+            }
+            if analysis.analyzed_revisions.is_some() {
+                return Err(
+                    "Skip must leave the analyzed-revisions naming absent; the consumer renders \
+                     it never"
+                        .to_string(),
+                );
+            }
+            if !analysis.untracked_source_paths.is_empty() {
+                return Err(
+                    "Skip must leave the untracked-routed-files naming empty; the consumer \
+                     renders it never"
+                        .to_string(),
+                );
+            }
+            // The analysis itself is unchanged: the live diff is still read
+            // and analyzed to a complete outcome.
+            let outcome = analysis
+                .analysis_outcome
+                .ok_or("the skipped-probe run must still carry its typed outcome")?;
+            if !matches!(
+                outcome.kind,
+                crate::analysis_outcome::AnalysisOutcomeKind::CompleteWithFindings
+                    | crate::analysis_outcome::AnalysisOutcomeKind::CompleteNoFindings
+                    | crate::analysis_outcome::AnalysisOutcomeKind::NoBehavioralCandidates
+            ) {
+                return Err(format!(
+                    "the skipped-probe run must stay a complete analysis, got {:?}",
+                    outcome.kind
+                ));
             }
             Ok(())
         })();

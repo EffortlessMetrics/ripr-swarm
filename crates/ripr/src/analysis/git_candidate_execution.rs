@@ -785,6 +785,7 @@ mod tests {
             &crate::config::OraclePolicy::default(),
             &[crate::analysis::language::LanguageId::Rust],
             &crate::config::RustLanguageConfig::default(),
+            crate::analysis::DisclosureProbes::Run,
         )
         .err()
         .ok_or("worktree mode must fail closed on a subject")?;

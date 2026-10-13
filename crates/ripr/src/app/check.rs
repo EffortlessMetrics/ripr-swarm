@@ -86,11 +86,15 @@ pub(crate) fn check_workspace_worktree_with_sources_open_rust_paths_and_progress
     CoreError,
 > {
     if open_rust_index_paths.is_empty() {
-        return check_with_progress_and_origins(
+        return check_with_progress_and_origins_with_open_rust_paths(
             input,
             config,
             AnalysisProgressScope::Worktree,
             sink,
+            open_rust_index_paths,
+            // #7716: the LSP refresh renders neither disclosure field, so it
+            // runs no probe worker (see the funnel's parameter contract).
+            crate::analysis::DisclosureProbes::Skip,
         );
     }
     check_with_progress_and_origins_with_open_rust_paths(
@@ -99,6 +103,9 @@ pub(crate) fn check_workspace_worktree_with_sources_open_rust_paths_and_progress
         AnalysisProgressScope::Worktree,
         sink,
         open_rust_index_paths,
+        // #7716: the LSP refresh renders neither disclosure field, so it
+        // runs no probe worker (see the funnel's parameter contract).
+        crate::analysis::DisclosureProbes::Skip,
     )
 }
 
@@ -180,6 +187,7 @@ fn check_with_progress_and_origins(
         scope,
         sink,
         &Default::default(),
+        crate::analysis::DisclosureProbes::Run,
     )
 }
 
@@ -189,6 +197,12 @@ fn check_with_progress_and_origins_with_open_rust_paths(
     scope: AnalysisProgressScope,
     sink: Option<&dyn AnalysisProgressSink>,
     open_rust_index_paths: &std::collections::BTreeSet<PathBuf>,
+    // #7716: the LSP diagnostics refresh renders neither the
+    // untracked-routed-files naming (RIPR-SPEC-0116) nor the
+    // analyzed-revisions naming (#5997), so it passes `Skip` and pays no
+    // probe worker; every other consumer renders the check output's
+    // disclosure fields and keeps `Run`.
+    disclosure_probes: crate::analysis::DisclosureProbes,
 ) -> Result<
     (
         CheckOutput,
@@ -284,6 +298,7 @@ fn check_with_progress_and_origins_with_open_rust_paths(
                 config.oracles(),
                 &languages,
                 &config.languages().rust,
+                disclosure_probes,
             )?
         }
         AnalysisProgressScope::Repo => run_repo_analysis_with_oracle_policy_and_rust_config(
