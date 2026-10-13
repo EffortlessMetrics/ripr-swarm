@@ -705,7 +705,8 @@ fn subject_field_collection_read(subject: &str, path: &str) -> Option<FieldColle
 /// - a push that is not a top-level statement of the body (inside a branch,
 ///   loop, block or closure), which a test may never run;
 /// - anything later in the body that may write the field again: a use of
-///   `self.<path>` other than another `push`, a bare `self`, or a call
+///   `self.<path>` other than another `push`, a use of a parent field of
+///   `<path>` (`self.state` for `state.log`), a bare `self`, or a call
 ///   `self.m(..)` whose body (from `method_body`, through further `self`
 ///   calls) may do so. A method `method_body` cannot resolve counts as a
 ///   write.
@@ -809,8 +810,9 @@ fn may_write_field(
             return true;
         }
         if !after.trim_start().starts_with('(') {
-            // Another field.
-            return false;
+            // A parent of the tracked path (`self.state` for `state.log`)
+            // may replace the collection whole; any other field cannot.
+            return path.starts_with(&format!("{name}."));
         }
         if visited.iter().any(|seen| seen == name) {
             return false;
@@ -848,22 +850,34 @@ fn delimited_closer(after_open: &str, open: char, close: char) -> Option<usize> 
 /// `[0]`, `.iter().map(..)`) is not a whole read, and neither is a side
 /// whose other operand names the same binding: that operand may copy the
 /// owner's value and cannot fail on it.
+///
+/// Both sides may qualify (`assert_eq!(expected.log, actual.log)`), so every
+/// admissible read is returned, each with the other operand, and the caller
+/// decides which binding ran the owner.
 pub(in crate::analysis) fn assertion_whole_collection_equality(
     assertion_text: &str,
     path: &str,
-) -> Option<FieldCollectionRead> {
-    let payload = macro_payload(assertion_text, "assert_eq")?.trim_start();
-    let first = first_call_argument(payload)?;
-    let second = payload
+) -> Vec<(FieldCollectionRead, String)> {
+    let Some(payload) = macro_payload(assertion_text, "assert_eq").map(str::trim_start) else {
+        return Vec::new();
+    };
+    let Some(first) = first_call_argument(payload) else {
+        return Vec::new();
+    };
+    let Some(second) = payload
         .strip_prefix(first.as_str())
         .and_then(|rest| rest.trim_start().strip_prefix(','))
-        .and_then(first_call_argument)?;
+        .and_then(first_call_argument)
+    else {
+        return Vec::new();
+    };
     [(&first, &second), (&second, &first)]
         .into_iter()
-        .find_map(|(side, other)| {
+        .filter_map(|(side, other)| {
             let read = whole_collection_read(side, path)?;
-            (!names_ident(other, &read.binding)).then_some(read)
+            (!names_ident(other, &read.binding)).then(|| (read, other.clone()))
         })
+        .collect()
 }
 
 fn whole_collection_read(side: &str, path: &str) -> Option<FieldCollectionRead> {
@@ -2095,6 +2109,15 @@ mod tests {
                 "fn add(&mut self) {\n    self.log.push(Line { sku: sku.to_owned() });\n    reset(self);\n}",
                 2,
             ),
+            // A later write to a parent of the path replaces the collection.
+            (
+                "fn add(&mut self) {\n    self.a.b.push(Line { sku: sku.to_owned() });\n    self.a = State::default();\n}",
+                2,
+            ),
+            (
+                "fn add(&mut self) {\n    self.a.b.push(Line { sku: sku.to_owned() });\n    self.a.reset();\n}",
+                2,
+            ),
         ] {
             assert_eq!(path(body, line), None, "{body}");
         }
@@ -2106,19 +2129,25 @@ mod tests {
     #[test]
     fn assertion_whole_collection_equality_rejects_projections_and_copies() {
         let whole = |text: &str| assertion_whole_collection_equality(text, "log");
+        let read = |binding: &str, getter: Option<&str>| FieldCollectionRead {
+            binding: binding.to_string(),
+            getter: getter.map(str::to_string),
+        };
         assert_eq!(
             whole("assert_eq!(inv.history(), &[Event::A]);"),
-            Some(FieldCollectionRead {
-                binding: "inv".to_string(),
-                getter: Some("history".to_string()),
-            })
+            vec![(read("inv", Some("history")), "&[Event::A]".to_string())]
         );
         assert_eq!(
             whole("assert_eq!(vec![Event::A], inv.log);"),
-            Some(FieldCollectionRead {
-                binding: "inv".to_string(),
-                getter: None,
-            })
+            vec![(read("inv", None), "vec![Event::A]".to_string())]
+        );
+        // Both sides qualify: each is a candidate for the owner's binding.
+        assert_eq!(
+            whole("assert_eq!(expected.log, actual.log);"),
+            vec![
+                (read("expected", None), "actual.log".to_string()),
+                (read("actual", None), "expected.log".to_string()),
+            ]
         );
         for other in [
             "assert_eq!(inv.history().len(), 1);",
@@ -2130,7 +2159,7 @@ mod tests {
             "assert!(inv.history().is_empty());",
             "assert_eq!(inv.stock, vec![]);",
         ] {
-            assert_eq!(whole(other), None, "{other}");
+            assert!(whole(other).is_empty(), "{other}");
         }
     }
 

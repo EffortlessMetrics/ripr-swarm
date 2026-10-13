@@ -1591,8 +1591,10 @@ fn missing_field_value_discriminator(
 
 /// #7131: whether `assertion` compares the whole field collection `path`
 /// that `owner` pushes onto, read from the binding the test called `owner`
-/// on, after that call, directly or through an inherent getter whose body
-/// returns the field.
+/// on, after that call and with nothing between that may write through the
+/// binding, directly or through an inherent getter whose body returns the
+/// field. The other operand must not name a binding the test also called
+/// `owner` on, since it would carry the same changed value.
 fn pushed_collection_compared_whole(
     owner: &FunctionSummary,
     path: &str,
@@ -1604,18 +1606,30 @@ fn pushed_collection_compared_whole(
         return false;
     };
     super::propagation_witness::assertion_whole_collection_equality(&assertion.text, path)
-        .is_some_and(|read| {
-            super::reveal::owner_call_precedes_read(
-                &test.body,
-                test.start_line,
-                &read.binding,
-                call.name(),
-                assertion.line,
-            ) && read.getter.as_deref().is_none_or(|getter| {
-                call.impl_type().is_some_and(|impl_type| {
-                    super::builder_override::getter_plainly_reads(index, impl_type, getter, path)
+        .into_iter()
+        .any(|(read, other)| {
+            !super::reveal::operand_names_owner_receiver(&test.body, &other, call.name())
+                && super::reveal::owner_call_precedes_read(
+                    &test.body,
+                    test.start_line,
+                    &read.binding,
+                    call.name(),
+                    assertion.line,
+                )
+                && super::reveal::binding_untouched_after_owner_call(
+                    &test.body,
+                    test.start_line,
+                    &read.binding,
+                    call.name(),
+                    assertion.line,
+                )
+                && read.getter.as_deref().is_none_or(|getter| {
+                    call.impl_type().is_some_and(|impl_type| {
+                        super::builder_override::getter_plainly_reads(
+                            index, impl_type, getter, path,
+                        )
+                    })
                 })
-            })
         })
 }
 
