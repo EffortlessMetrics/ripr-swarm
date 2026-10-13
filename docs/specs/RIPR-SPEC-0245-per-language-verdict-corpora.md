@@ -112,11 +112,11 @@ mutants applied by hand), recorded per mutant with the failing test, under the
 labeling toolchain and test command each case names.
 
 The TypeScript corpus carries the same kind of ledger,
-`fixtures/typescript-verdict-corpus/spec-coverage.toml`: RIPR-SPEC-0243 and
-its amendments RIPR-SPEC-0246 to RIPR-SPEC-0252 are in scope, and cases cite
-the examples they label in `spec_examples`. Examples a case could label but
-none does yet stay uncovered rather than waived. A deleted ledger fails
-`check-all` and
+`fixtures/typescript-verdict-corpus/spec-coverage.toml`: RIPR-SPEC-0243, its
+amendments RIPR-SPEC-0246 to RIPR-SPEC-0252, and RIPR-SPEC-0254 are in scope,
+and cases cite the examples they label in `spec_examples`. Examples a case
+could label but none does yet stay uncovered rather than waived. A deleted
+ledger fails `check-all` and
 `committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels`.
 
 ### Perl corpus
