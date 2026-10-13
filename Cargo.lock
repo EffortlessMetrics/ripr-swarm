@@ -1506,6 +1506,8 @@ dependencies = [
  "tower",
  "tower-lsp-server",
  "unicode-ident",
+ "unicode-segmentation",
+ "unicode-width",
  "winsafe",
 ]
 

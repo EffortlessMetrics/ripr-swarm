@@ -51,6 +51,9 @@ mod rerun_ledger_recovery;
 #[path = "cli_smoke/shell_words.rs"]
 mod shell_words;
 #[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/source_unicode.rs"]
+mod source_unicode;
+#[cfg(feature = "lang-rust")]
 #[path = "cli_smoke/unknown_explain.rs"]
 mod unknown_explain;
 #[cfg(unix)]
