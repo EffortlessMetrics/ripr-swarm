@@ -659,6 +659,237 @@ fn scoring_fixture() -> Result<PathBuf, String> {
     Ok(dir)
 }
 
+fn oracle_fixture() -> Result<PathBuf, String> {
+    let dir = scoring_fixture()?;
+    let corpus = super::super::verdict_corpus::load_corpus(&dir)?;
+    assert_eq!(corpus.cases.len(), 4);
+    for (i, case) in corpus.cases.iter().enumerate() {
+        let case_path = dir.join("cases").join(format!("{}.json", case.case_id));
+        let row_path = dir
+            .join("expected/rows")
+            .join(format!("{}.json", case.case_id));
+        let mut definition = read_json(&case_path)?;
+        let mut row = read_json(&row_path)?;
+        definition
+            .as_object_mut()
+            .ok_or("case object missing")?
+            .remove("expected_oracle");
+        row.as_object_mut()
+            .ok_or("row object missing")?
+            .remove("oracle");
+        if i < 3 {
+            let expected = json!({"kind":"exact_value", "strength":if i == 2 {"medium"} else {"strong"}, "test":"fixture_test", "spec":"RIPR-SPEC-0227#1"});
+            definition["expected_oracle"] = expected.clone();
+            row["oracle"] = json!({"expected":expected, "observed_kind":"exact_value", "observed_strength":"strong", "observed_all":[{"test":"fixture_test", "kind":"exact_value", "strength":"strong"}], "outcome":if i == 2 {"overclaim"} else {"match"}});
+        }
+        fixture_json(&case_path, &definition)?;
+        fixture_json(&row_path, &row)?;
+    }
+    Ok(dir)
+}
+
+#[test]
+fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), String> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/rust-verdict-corpus");
+    let records = population::Records::load(&dir)?;
+    for (rate, numerator) in [("oracle_accuracy", 26), ("oracle_overclaim_rate", 5)] {
+        let population = records.population(&format!("oracle_accuracy.{rate}"))?;
+        assert_eq!(population.totals()?, (numerator, 34));
+        assert_eq!(
+            population
+                .cases
+                .iter()
+                .filter(|c| c.denominator == 1)
+                .count(),
+            34
+        );
+        assert!(
+            population
+                .cases
+                .iter()
+                .filter(|c| c.denominator == 0)
+                .all(|c| c.numerator == 0)
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn oracle_rows_refuse_missing_labels_and_fabricated_claims() -> Result<(), String> {
+    let dir = oracle_fixture()?;
+    let corpus = super::super::verdict_corpus::load_corpus(&dir)?;
+    let case = corpus.cases.first().ok_or("oracle case missing")?;
+    let row_path = dir
+        .join("expected/rows")
+        .join(format!("{}.json", case.case_id));
+    let original = read_json(&row_path)?;
+    // Setup must be valid before a refusal can establish the discriminator.
+    assert_eq!(
+        population::Records::load(&dir)?
+            .population("abstention_rate")?
+            .cases
+            .len(),
+        4
+    );
+    for (pointer, replacement) in [
+        ("/oracle", Value::Null),
+        ("/oracle/expected/kind", json!("exact_error_variant")),
+        ("/oracle/expected/strength", json!("medium")),
+        ("/oracle/expected/test", json!("another_test")),
+        ("/oracle/expected/spec", json!("RIPR-SPEC-0227#2")),
+        ("/oracle/outcome", json!("overclaim")),
+        ("/oracle/observed_kind", json!("exact_error_variant")),
+        ("/oracle/observed_strength", json!("medium")),
+        ("/oracle/observed_all", json!([])),
+        ("/oracle/observed_all/0/test", json!("another_test")),
+    ] {
+        let mut wrong = original.clone();
+        *wrong
+            .pointer_mut(pointer)
+            .ok_or("oracle fixture pointer missing")? = replacement;
+        fixture_json(&row_path, &wrong)?;
+        assert!(
+            population::Records::load(&dir).is_err_and(|err| err.contains("oracle")),
+            "accepted {pointer}"
+        );
+    }
+    fixture_json(&row_path, &original)?;
+    let case_path = dir.join("cases").join(format!("{}.json", case.case_id));
+    let mut definition = read_json(&case_path)?;
+    definition
+        .as_object_mut()
+        .ok_or("case object missing")?
+        .remove("expected_oracle");
+    fixture_json(&case_path, &definition)?;
+    assert!(population::Records::load(&dir).is_err_and(|err| err.contains("oracle")));
+    fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn oracle_labels_change_only_the_oracle_scoring_identity() -> Result<(), String> {
+    let dir = oracle_fixture()?;
+    let records = population::Records::load(&dir)?;
+    let verdict_before = records.population("abstention_rate")?;
+    let oracle_before = records.population("oracle_accuracy.oracle_accuracy")?;
+    assert_eq!(oracle_before.totals()?, (2, 3));
+    assert_eq!(
+        records
+            .population("oracle_accuracy.oracle_overclaim_rate")?
+            .totals()?,
+        (1, 3)
+    );
+    let corpus = super::super::verdict_corpus::load_corpus(&dir)?;
+    let case = corpus.cases.first().ok_or("oracle case missing")?;
+    let case_path = dir.join("cases").join(format!("{}.json", case.case_id));
+    let row_path = dir
+        .join("expected/rows")
+        .join(format!("{}.json", case.case_id));
+    let original_case = read_json(&case_path)?;
+    let original_row = read_json(&row_path)?;
+    for (field, replacement) in [
+        ("kind", "exact_error_variant"),
+        ("strength", "medium"),
+        ("test", "other_fixture_test"),
+        ("spec", "RIPR-SPEC-0227#2"),
+    ] {
+        let mut definition = original_case.clone();
+        let mut row = original_row.clone();
+        definition["expected_oracle"][field] = json!(replacement);
+        row["oracle"]["expected"][field] = json!(replacement);
+        match field {
+            "kind" => {
+                row["oracle"]["observed_kind"] = json!(replacement);
+                row["oracle"]["observed_all"][0]["kind"] = json!(replacement);
+            }
+            "strength" => {
+                row["oracle"]["observed_strength"] = json!(replacement);
+                row["oracle"]["observed_all"][0]["strength"] = json!(replacement);
+            }
+            "test" => row["oracle"]["observed_all"][0]["test"] = json!(replacement),
+            _ => {}
+        }
+        fixture_json(&case_path, &definition)?;
+        fixture_json(&row_path, &row)?;
+        let records = population::Records::load(&dir)?;
+        assert_eq!(records.population("abstention_rate")?, verdict_before);
+        let current = records.population("oracle_accuracy.oracle_accuracy")?;
+        assert_eq!(current.totals()?, (2, 3));
+        let changes = current
+            .cases
+            .iter()
+            .zip(&oracle_before.cases)
+            .filter(|(a, b)| a.definition_sha256 != b.definition_sha256)
+            .count();
+        assert_eq!(changes, usize::from(field != "spec"));
+    }
+    let mut definition = original_case;
+    let mut row = original_row;
+    definition
+        .as_object_mut()
+        .ok_or("case object missing")?
+        .remove("expected_oracle");
+    row.as_object_mut()
+        .ok_or("row object missing")?
+        .remove("oracle");
+    fixture_json(&case_path, &definition)?;
+    fixture_json(&row_path, &row)?;
+    let records = population::Records::load(&dir)?;
+    assert_eq!(records.population("abstention_rate")?, verdict_before);
+    let current = records.population("oracle_accuracy.oracle_accuracy")?;
+    assert_eq!(current.totals()?, (1, 2));
+    let compared = report_config(config()?, oracle_before, current)?;
+    assert_eq!(
+        compared["metrics"][0]["baseline"]["changed_definitions"],
+        json!([case.case_id])
+    );
+    fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn oracle_additions_cannot_create_or_hide_retained_regression() -> Result<(), String> {
+    let mut config = config()?;
+    config.metric[0].direction = "higher_is_better".to_string();
+    config.metric[0].target = 1.0;
+    config.metric[0].regression_floor = 0.0;
+    let oracle = |mut population: Population| {
+        population.rate = "oracle_accuracy.oracle_accuracy".to_string();
+        population
+    };
+    let unchanged = report_config(config.clone(), oracle(cases(4, 3)), oracle(cases(8, 3)))?;
+    assert_eq!(unchanged["metrics"][0]["value"], json!(0.375));
+    assert_eq!(unchanged["metrics"][0]["status"], "below_target");
+    assert_eq!(unchanged["gate"]["status"], "pass");
+    let mut current = cases(20, 2);
+    for case in &mut current.cases[4..] {
+        case.numerator = 1;
+    }
+    let regressed = report_config(config, oracle(cases(4, 3)), oracle(current))?;
+    assert_eq!(regressed["metrics"][0]["value"], json!(0.9));
+    assert_eq!(
+        regressed["metrics"][0]["baseline"]["common"]["current"]["numerator"],
+        2
+    );
+    assert_eq!(regressed["gate"]["status"], "fail");
+    let dir = oracle_fixture()?;
+    let records = population::Records::load(&dir)?;
+    for rate in [
+        "oracle_accuracy",
+        "oracle_accuracy.unknown",
+        "oracle_accuracy.oracle_accuracy.extra",
+        "by_packet_provenance.producer.oracle_accuracy",
+    ] {
+        assert!(
+            records
+                .population(rate)
+                .is_err_and(|err| err.contains("unsupported case rate"))
+        );
+    }
+    fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
 #[test]
 fn corpus_producer_keeps_nonuniform_eligibility_and_refuses_bad_rows_and_bytes()
 -> Result<(), String> {
