@@ -202,6 +202,55 @@ fn unittest_list_equal_withholds_nested_unittest_registration() -> Result<(), St
     Ok(())
 }
 
+#[test]
+fn unittest_list_equal_keeps_duplicate_method_declarations_distinct() -> Result<(), String> {
+    let source = "def alpha():\n    return [3, 4]\n\ndef beta():\n    return [1, 2]\n";
+    for (first, second) in [("alpha", "beta"), ("beta", "alpha")] {
+        let expected = |name| if name == "alpha" { "[3, 4]" } else { "[1, 2]" };
+        let tests = format!(
+            "import unittest\nfrom src.subject import alpha, beta\nclass A(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual({first}(), {})\nclass B(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual({second}(), {})\n",
+            expected(first),
+            expected(second)
+        );
+        assert_eq!(
+            extract_tests(Path::new("tests/test_subject.py"), &tests).len(),
+            2
+        );
+        let finding = classify_case(source, &tests, 5, "    return [1, 1]", "    return [1, 2]")?;
+        assert_eq!(finding.class, ExposureClass::Exposed, "{tests}");
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Yes);
+    }
+    Ok(())
+}
+
+#[test]
+fn unittest_list_equal_withholds_derived_owner_results() -> Result<(), String> {
+    let source = "class Answer:\n    def __init__(self, flag):\n        self.flag = flag\n    def fixed_list(self):\n        return [1, 2]\n    def __call__(self):\n        return [1, 2]\n    def __getitem__(self, index):\n        return self.fixed_list\n\ndef labels():\n    return Answer(1)\n";
+    for call in ["labels().fixed_list()", "labels()()", "labels()[0]()"] {
+        let tests = format!(
+            "import unittest\nfrom src.subject import labels\nclass Checks(unittest.TestCase):\n    def test_labels(self):\n        self.assertListEqual({call}, [1, 2])\n"
+        );
+        assert_eq!(
+            extract_tests(Path::new("tests/test_subject.py"), &tests).len(),
+            1
+        );
+        let finding = classify_case(
+            source,
+            &tests,
+            12,
+            "    return Answer(0)",
+            "    return Answer(1)",
+        )?;
+        assert_eq!(finding.class, ExposureClass::StaticUnknown, "{call}");
+        assert_eq!(finding.ripr.reveal.discriminate.state, StageState::Unknown);
+        assert_eq!(
+            finding.related_tests[0].oracle_strength,
+            OracleStrength::Unknown
+        );
+    }
+    Ok(())
+}
+
 /// Exercise the existing source-fact producer and final classifier together.
 fn classify_case(
     source: &str,

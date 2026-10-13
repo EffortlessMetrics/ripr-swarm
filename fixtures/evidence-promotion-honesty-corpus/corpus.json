@@ -2180,6 +2180,21 @@
       ]
     },
     {
+      "id": "py_unittest_list_equal_derived_result",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_unittest_list_equal_derived_result",
+      "vector": "unittest_list_derived_result_ignores_changed_owner_value",
+      "probe_family": "return_value",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "static_unknown" },
+        { "type": "expected_oracle", "kind": "unknown", "strength": "unknown" }
+      ]
+    },
+    {
       "id": "py_unittest_list_equal_nested_class",
       "language": "python",
       "tier": "pure",

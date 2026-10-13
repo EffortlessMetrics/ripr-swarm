@@ -979,6 +979,7 @@ fn alignment_units<'a>(
         let test = all_tests.iter().find(|test| {
             test.name == related.name
                 && test.file == related.file
+                && test.line == related.line
                 && super::test_activation::activation_control(test).is_none()
         });
         let before = units.len();

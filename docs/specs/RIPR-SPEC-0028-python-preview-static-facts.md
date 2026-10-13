@@ -207,7 +207,10 @@ mock expectations, and custom `assert_*` helpers.
   custom receivers, inherited wrappers and visible framework rebinding remain
   unknown helpers. Visible owner rebinding cannot supply sink alignment. Credit
   also requires the asserted operand to make a zero-argument call to the
-  same imported free-function owner; matching expected literals in another row
+  same imported free-function owner through a bare or dotted static name.
+  Computed callees such as `owner().method()` or `owner()()` remain unknown
+  helpers. The assertion row binds its declaration line as well as file/name;
+  matching expected literals in another row
   or a nested wrapper cannot supply sink alignment. Skip and parser limitations
   remain governed by their existing admission paths.
 - `self.assertTrue(...)` / `assertFalse(...)` â†’ smoke oracle

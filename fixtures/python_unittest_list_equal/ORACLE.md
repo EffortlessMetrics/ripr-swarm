@@ -59,6 +59,22 @@ module-level class. The two permanent control fixtures and their
 `static_unknown` finding and forbid promotion. They prevent dishonest golden
 reblessing, beyond unit-test source expectations.
 
+Composition review of `6771a8473724b474381f9648d9ea97a2476d65ce`, against
+main `872eb81f28a3f363abe27c3cdb88f223f12d8b82`, found two more discriminating
+controls through the real CLI:
+
+- Two module-level unittest classes with the same `test_labels` method name:
+  the valid second class's `beta()` list assertion was `weakly_exposed` because
+  assertion expansion selected the first class by file/name alone. Native
+  correct/wrong runs each registered two tests; only wrong `B.test_labels`
+  failed. Declaration-line identity keeps the credited assertion on its row.
+- `self.assertListEqual(labels().fixed_list(), [1, 2])`: the owner returns
+  `Answer(0)` versus `Answer(1)`, while `fixed_list()` always returns `[1, 2]`.
+  Both native variants ran one test without failures/errors/skips, but the CLI
+  reported `exposed` / strong / yes. The compared callee must be a static name
+  or attribute chain rooted in a name; calls/subscripts in that chain remain
+  unknown. The derived-result fixture and honesty row pin the non-promotion.
+
 This proves a bounded static evidence correction and native discrimination of
 these source-derived examples. It does not establish general unittest support,
 runtime test adequacy, hosted CI, branch protection, or merge readiness.

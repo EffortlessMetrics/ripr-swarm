@@ -64,9 +64,20 @@ pub(in crate::analysis::language::python) fn literal_call(call: &ast::ExprCall) 
         && call.keywords.is_empty()
         && call.args.len() == 2
         && matches!(call.args.first(), Some(Expr::Call(owner_call))
-            if owner_call.args.is_empty() && owner_call.keywords.is_empty())
+            if owner_call.args.is_empty() && owner_call.keywords.is_empty()
+                && static_callee(&owner_call.func))
         && matches!(call.args.get(1), Some(Expr::List(list))
             if list.elts.iter().all(|element| matches!(element, Expr::Constant(_))))
+}
+
+// A derived call compares another result, even if evaluating its callee calls
+// the owner: `labels().fixed_list()` and `labels()()` do not observe its return.
+fn static_callee(expr: &Expr) -> bool {
+    match expr {
+        Expr::Name(_) => true,
+        Expr::Attribute(attribute) => static_callee(&attribute.value),
+        _ => false,
+    }
 }
 
 pub(in crate::analysis::language::python) fn literal_text(text: &str) -> bool {
