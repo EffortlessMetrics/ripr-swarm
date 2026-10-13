@@ -1631,7 +1631,10 @@ fn first_parameter_destructures_expect(argument: &oxc_ast::ast::Argument<'_>) ->
 /// statement: every declaration at this level, plus the `var` and function
 /// declarations nested blocks hoist out. Block-scoped `let`/`const`/`class`
 /// and catch/loop bindings stay inside their block.
-fn collect_registration_scope_names(statements: &[Statement<'_>], out: &mut Vec<String>) {
+pub(super) fn collect_registration_scope_names(
+    statements: &[Statement<'_>],
+    out: &mut Vec<String>,
+) {
     for statement in statements {
         match statement {
             Statement::BlockStatement(_)

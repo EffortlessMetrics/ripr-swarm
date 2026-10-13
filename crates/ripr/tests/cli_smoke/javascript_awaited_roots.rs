@@ -254,6 +254,30 @@ fn awaited_registration_requires_a_local_callable_runner_import() -> TestResult 
 }
 
 #[test]
+fn awaited_forged_or_mutable_commonjs_bindings_cannot_supply_credit() -> TestResult {
+    for binding in [
+        "const require = () => ({ test: async (_name, _callback) => {} }); const { test } = require('node:test');",
+        "const createRequire = (_url) => () => ({ test: async (_name, _callback) => {} }); const require = createRequire(import.meta.url); const { test } = require('node:test');",
+        "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url); let { test } = require('node:test'); test = async (_name, _callback) => {};",
+        "import { createRequire } from 'node:module'; let require = createRequire(import.meta.url); require = () => ({ test: async (_name, _callback) => {} }); const { test } = require('node:test');",
+    ] {
+        let consumer =
+            Consumer::new("await test('id', () => { assert.strictEqual(nanoid().length, 21); });")?;
+        let file = consumer.root.join("test/nanoid.test.js");
+        let source = fs::read_to_string(&file)?;
+        fs::write(
+            file,
+            source.replace("import { test, describe } from 'node:test';", binding),
+        )?;
+        let report = consumer.check()?;
+        let finding = &report["findings"][0];
+        assert_ne!(finding["classification"], "exposed", "{binding}: {finding}");
+        assert_eq!(finding["related_tests_total"], 0, "{binding}: {finding}");
+    }
+    Ok(())
+}
+
+#[test]
 fn nanoid_upstream_bytes_keep_their_independent_provenance() -> TestResult {
     let fixture = workspace_root().join("fixtures/javascript_awaited_registration");
     let provenance: Value = serde_json::from_slice(&fs::read(fixture.join("provenance.json"))?)?;

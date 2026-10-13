@@ -14261,6 +14261,7 @@ tests = [
   "crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs::awaited_enclosing_roots_cannot_shadow_the_real_runner_binding",
   "crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs::awaited_runner_binding_survives_a_sibling_suite_helper",
   "crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs::awaited_registration_requires_a_local_callable_runner_import",
+  "crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs::awaited_forged_or_mutable_commonjs_bindings_cannot_supply_credit",
   "crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs::nanoid_upstream_bytes_keep_their_independent_provenance",
   "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::chai_throw_string_literal_is_exact_error_variant",
   "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::node_assert_anchored_regex_and_message_object_are_exact_error_variants",

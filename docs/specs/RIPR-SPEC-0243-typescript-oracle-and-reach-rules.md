@@ -157,6 +157,11 @@ callback into test evidence. This fence applies to the newly supported awaited
 form; it does not change bare-root registration semantics. A sibling suite's
 helper is outside this lexical scope. Re-exports do not create local runner
 bindings, and an ESM namespace object is not a callable registration root.
+The awaited CommonJS exemption requires an immutable runner declaration and
+either ambient `require` syntax or an immutable loader created by a locally
+imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
+or runner bindings and same-spelled helper factories remain uncredited.
+Runtime module-mode and loader resolution are outside this static claim.
 
 ### Assertion collection
 

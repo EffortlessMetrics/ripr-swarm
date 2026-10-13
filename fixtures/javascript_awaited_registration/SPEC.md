@@ -33,6 +33,9 @@ A local async `test` helper that discards its callback is a separate adverse
 control: its exact assertion never runs and must not supply exposure credit.
 A helper named `test` inside a sibling suite cannot hide a genuine top-level
 runner registration; the native mutant still fails its exact length assertion.
+Forged CommonJS loaders and reassigned runner bindings likewise discard their
+callbacks. They remain uncredited while the immutable genuine `createRequire`
+consumer retains exact-value credit.
 The retained base report is also registered in the shared evidence-promotion
 honesty corpus, so re-blessing it as exposed cannot pass that invariant.
 
