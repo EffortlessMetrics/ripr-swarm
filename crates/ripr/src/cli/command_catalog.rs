@@ -710,6 +710,14 @@ const CATALOG: &[CommandCatalogEntry] = &[
     public_top("cmd:lsp", "lsp", CommandDispatch::Lsp),
     public_top("cmd:cache", "cache", CommandDispatch::Cache),
     nested(
+        "cmd:cache.export",
+        "cache export",
+        CommandClass::Public,
+        CommandDispatch::Cache,
+        CACHE,
+        DiscoveryPosture::OrdinaryPublic,
+    ),
+    nested(
         "cmd:cache.status",
         "cache status",
         CommandClass::Public,

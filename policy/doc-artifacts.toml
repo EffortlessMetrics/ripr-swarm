@@ -1483,6 +1483,15 @@ path = "docs/specs/RIPR-SPEC-0242-canonical-next-action.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #6304 records the canonical next action: typed producers project one CanonicalNextActionV1 from current state through a single selector authority with a closed action-class vocabulary, a gate-ordered selection law, typed stops, human/JSON projections, and one focused negative per gate; doctor/pilot/inventory renderer migration stays out of scope."
+
+[[artifact]]
+id = "RIPR-SPEC-0257"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0257-current-cache-export.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Records the producer-owned current-input cache snapshot contract (#7517): ordinary key selection, copied-byte validation, source preservation, exclusive independent outputs, explicit failure ownership and restored reuse without retaining historical generations."
+
 [[artifact]]
 id = "RIPR-SPEC-0255"
 kind = "spec"

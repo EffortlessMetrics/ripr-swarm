@@ -10250,6 +10250,14 @@ id = "RIPR-SPEC-0153"
 name = "Rust producer-owned source role"
 spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 tests = [
+  "crates/ripr/tests/cache_clear_safety.rs::classified_cache_cargo_config_edit_revert_rename_delete_matches_cold",
+  "crates/ripr/tests/cache_clear_safety.rs::classified_cache_saved_test_edit_revert_rename_delete_matches_cold",
+  "crates/ripr/tests/cache_clear_safety.rs::compact_classified_cache_cargo_config_change_matches_cold_and_preserves_revert_hit",
+  "crates/ripr/src/analysis/seam_cache.rs::tests::unavailable_cargo_identity_refuses_valid_full_and_compact_cache_payloads",
+  "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::unavailable_cargo_inputs_refuse_current_key_without_claiming_corpus_provenance",
+  "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::cargo_environment_names_preserve_platform_semantics_and_raw_values",
+  "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::cargo_input_identity_covers_ancestor_home_legacy_and_absence",
+  "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::cargo_input_identity_refuses_unreadable_and_oversized_configuration",
   "crates/ripr/tests/rust_discovery_comments.rs::comment_and_string_module_mentions_do_not_register_tests",
   "crates/ripr/tests/rust_discovery_comments.rs::real_cfg_and_renamed_modules_keep_collected_tests",
   "crates/ripr/tests/rust_discovery_comments.rs::an_incomplete_module_walk_cannot_drop_test_credit",
@@ -14959,6 +14967,31 @@ outputs = [
 metrics = [
   "unit_test_pass_rate",
 ]
+
+[[behavior]]
+id = "RIPR-SPEC-0257"
+name = "Current-input cache snapshot export"
+spec = "docs/specs/RIPR-SPEC-0257-current-cache-export.md"
+tests = [
+  "crates/ripr/src/cli/commands/cache.rs::tests::export_current_snapshot_through_command_preserves_source_and_bounds_history",
+  "crates/ripr/src/cli/commands/cache.rs::tests::export_parser_requires_one_destination_and_keeps_its_flags_separate",
+  "crates/ripr/src/cli/commands/cache.rs::tests::run_help_and_subcommand_routing_are_non_destructive",
+  "crates/ripr/src/cli/commands/cache.rs::tests::export_preserves_relative_analysis_root_identity",
+  "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_keeps_current_manifest_references_and_file_facts_without_history",
+  "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_refuses_missing_corrupt_wrong_key_and_escaping_shards",
+  "crates/ripr/src/analysis/seam_cache/export.rs::tests::snapshot_counts_missing_optional_facts_and_refuses_corrupt_present_facts",
+  "crates/ripr/src/analysis/seam_cache/export.rs::tests::normalized_source_layout_preserves_relative_and_parent_component_spellings",
+  "crates/ripr/src/cli/command_metadata.rs::tests::production_table_is_complete_and_consistent",
+  "crates/ripr/src/cli/help_json.rs::tests::production_document_is_valid_and_nonempty",
+]
+code = [
+  "crates/ripr/src/analysis/seam_cache/export.rs",
+  "crates/ripr/src/analysis/seam_inventory.rs",
+  "crates/ripr/src/cli/commands/cache.rs",
+  "crates/ripr/src/cli/command_metadata.rs",
+]
+outputs = ["docs/OUTPUT_SCHEMA.md"]
+metrics = ["unit_test_pass_rate"]
 
 [[behavior]]
 id = "RIPR-SPEC-0253"
