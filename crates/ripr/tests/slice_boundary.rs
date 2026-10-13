@@ -12,6 +12,81 @@ const DIFF: &str =
 const ROWS: &str = "let samples: [&[u64]; 3] = [&[5], &[3, 9], &[10, 20, 30]];";
 
 #[test]
+fn hidden_documentation_inputs_withhold_missing_empty_claims() -> Result<(), String> {
+    let base = candidate();
+    let variants = [
+        base.replace("pub fn mean_latency", "/// ```\n/// assert_eq!(grid_early::mean_latency(&[]), 0);\n/// ```\npub fn mean_latency"),
+        base.replace("pub fn mean_latency", "#[doc = \"```\\nassert_eq!(grid_early::mean_latency(&[]), 0);\\n```\"]\npub fn mean_latency"),
+        format!("#![doc = include_str!(\"../README.md\")]\n{base}"),
+        format!("#![doc =\n include_str!(\"../README.md\")\n]\n{base}"),
+        format!("#![doc = concat!(\"```\\nassert_eq!(grid_early::mean_\", \"latency(&[]), 0);\\n```\")]\n{base}"),
+        format!("#![doc = \"```\\nassert_eq!(grid_early::mean_\\u{{006c}}atency(&[]), 0);\\n```\"]\n{base}"),
+    ];
+    for (case, source) in variants.iter().enumerate() {
+        let subject = Subject::new(source)?;
+        std::fs::write(
+            subject.0.join("README.md"),
+            "```\nassert_eq!(grid_early::mean_latency(&[]), 0);\n```\n",
+        )
+        .map_err(|e| e.to_string())?;
+        let finding = subject.finding()?;
+        assert_eq!(
+            finding.class,
+            ExposureClass::InfectionUnknown,
+            "documentation case {case}"
+        );
+        assert!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .all(|f| f.value != "samples.len() == 0"),
+            "documentation case {case}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn unrelated_documentation_does_not_hide_known_table_inputs() -> Result<(), String> {
+    let source = format!(
+        "// mean_latency_suffix and documentation of average.\n{}",
+        candidate()
+    );
+    let subject = Subject::new(&source)?;
+    let finding = subject.finding()?;
+    assert_eq!(finding.class, ExposureClass::WeaklyExposed);
+    assert!(
+        finding
+            .activation
+            .missing_discriminators
+            .iter()
+            .any(|f| f.value == "samples.len() == 0")
+    );
+    Ok(())
+}
+
+#[test]
+fn workspace_expansion_limits_withhold_partial_slice_evidence() -> Result<(), String> {
+    for prefix in [
+        "macro_rules! unrelated { () => {} } unrelated!();\n",
+        "#[derive(Debug)] struct Unrelated;\n",
+    ] {
+        let subject = Subject::new(&format!("{prefix}{}", candidate()))?;
+        let finding = subject.finding()?;
+        assert_eq!(finding.class, ExposureClass::InfectionUnknown, "{prefix}");
+        assert!(
+            finding
+                .activation
+                .missing_discriminators
+                .iter()
+                .all(|f| f.value != "samples.len() == 0")
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn production_function_pointer_input_cannot_disappear() -> Result<(), String> {
     let source = candidate().replace("#[cfg(test)]", "fn empty_indirect() -> u64 { let f = mean_latency; f(&[]) }\n#[cfg(test)]")
         .replace("    fn check_discount", "    #[test]\n    fn empty_through_pointer() { assert_eq!(empty_indirect(), 0); }\n\n    fn check_discount");

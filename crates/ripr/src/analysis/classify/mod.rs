@@ -62,7 +62,8 @@ pub(in crate::analysis) use propagation_witness::{
     direct_collection_mutation_receiver, retain_returned_ledger, returned_ledger_witness,
 };
 pub(in crate::analysis) use reach::{
-    UnseenReachNames, is_proximity_only, is_trait_impl_method, owner_may_be_reached_unseen,
+    UnseenReachNames, includes_external_docs, invokes_opaque_macro, is_proximity_only,
+    is_trait_impl_method, names_identifier_outside_fn_definition, owner_may_be_reached_unseen,
     reach_evidence, relation_establishes_reach,
 };
 pub(in crate::analysis) use related_tests::{

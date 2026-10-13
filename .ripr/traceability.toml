@@ -9,6 +9,9 @@ id = "RIPR-SPEC-0001"
 name = "static exposure loop"
 spec = "docs/specs/RIPR-SPEC-0001-static-exposure-loop.md"
 tests = [
+  "crates/ripr/tests/slice_boundary.rs::hidden_documentation_inputs_withhold_missing_empty_claims",
+  "crates/ripr/tests/slice_boundary.rs::unrelated_documentation_does_not_hide_known_table_inputs",
+  "crates/ripr/tests/slice_boundary.rs::workspace_expansion_limits_withhold_partial_slice_evidence",
   "crates/ripr/tests/slice_boundary.rs::retained_property_table_names_the_missing_empty_slice",
   "crates/ripr/tests/slice_boundary.rs::slice_elements_are_not_slice_lengths_and_empty_rows_are_observed",
   "crates/ripr/tests/slice_boundary.rs::unreadable_or_skippable_slice_tables_withhold_missing_empty_claims",

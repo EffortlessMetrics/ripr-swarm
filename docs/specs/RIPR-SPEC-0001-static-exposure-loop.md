@@ -321,7 +321,13 @@ helper or alias reach, opaque macros, mutable or shadowed bindings, skipped
 loops, asynchronous owners and custom `.len()` receivers remain outside this
 family. Every source use of the owner's identifier must be accounted for by
 its declaration and the admitted direct calls; recursion, function pointers,
-explicit imports and opaque uses withhold this bounded producer. Unreadable
+explicit imports and opaque uses withhold this bounded producer. Documentation
+references, explicit `doc` attributes, documentation code blocks, workspace
+macro expansion, possible standard-macro rebinding and attributes other than
+ordinary test and `cfg(test)` withhold this producer too. Plain documentation
+comments remain eligible subject to reference accounting. It reuses
+existing unseen-reach, macro operand and binding authorities only as refusals;
+it does not resolve expansion or award evidence from it. Unreadable
 inputs never disappear from an absence claim (#7553). This producer records
 activation, while existing oracle and same-test pairing gates retain their
 limitations; it does not independently qualify strong direct-table exposure.
@@ -435,6 +441,9 @@ Fixture coverage:
 - `equality_keeps_the_matching_table_witness`
 - `recursive_empty_input_cannot_disappear_from_cardinality_evidence`
 - `production_function_pointer_input_cannot_disappear`
+- `hidden_documentation_inputs_withhold_missing_empty_claims`
+- `unrelated_documentation_does_not_hide_known_table_inputs`
+- `workspace_expansion_limits_withhold_partial_slice_evidence`
 - `fixtures/rust_slice_table_boundary`
 - `fixtures/rust_slice_table_zero_elements`
 - `infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes`
