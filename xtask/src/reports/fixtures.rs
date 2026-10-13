@@ -818,6 +818,38 @@ pub(crate) fn ripr_fixture_binary() -> Result<String, String> {
     })
 }
 
+/// Memoized result of the one `cargo build -p ripr --features lang-perl` this
+/// process owes the Perl verdict corpus. See [`ripr_perl_fixture_binary`].
+static RIPR_PERL_BINARY_BUILD: OnceLock<Result<(), String>> = OnceLock::new();
+
+/// The debug binary with the `lang-perl` preview adapter compiled in, for the
+/// Perl verdict corpus (RIPR-SPEC-0245): the default build refuses Perl
+/// packets. Cargo writes both feature sets to the same `target/debug/ripr`, so
+/// the Perl build is copied to its own `ripr-lang-perl` name and the default
+/// build is restored, so a Rust run in this process never gets the Perl
+/// feature set. A default build from another process can still land between
+/// the Perl build and its copy; the corpus run then refuses every packet case
+/// rather than scoring it (see `run_case`). No build lock is taken: the
+/// fixture-cache tests hold Cargo's own lock and need the child to wait there.
+/// Only the `ripr` crate recompiles.
+pub(crate) fn ripr_perl_fixture_binary() -> Result<String, String> {
+    let shared = ripr_debug_binary();
+    let perl = shared.with_file_name(format!("ripr-lang-perl{}", std::env::consts::EXE_SUFFIX));
+    ripr_fixture_binary_built_by(perl.clone(), &RIPR_PERL_BINARY_BUILD, &|| {
+        run("cargo", &["build", "-p", "ripr", "--features", "lang-perl"])?;
+        fs::copy(&shared, &perl).map_err(|err| {
+            format!(
+                "copy {} to {} failed: {err}",
+                shared.display(),
+                perl.display()
+            )
+        })?;
+        // Restore the default binary. Cargo keeps both feature sets'
+        // artifacts, so this only relinks.
+        run("cargo", &["build", "-p", "ripr"]).map(|_status| ())
+    })
+}
+
 /// Resolve `binary` after ensuring `build` has run exactly once for `build_once`.
 ///
 /// The build is unconditional with respect to the binary already existing — that

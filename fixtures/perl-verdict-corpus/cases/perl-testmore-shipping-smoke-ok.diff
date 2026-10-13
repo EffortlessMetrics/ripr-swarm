@@ -1,0 +1,13 @@
+diff --git a/lib/Shop/Pricing.pm b/lib/Shop/Pricing.pm
+index 2bfb0c0..02cf5b6 100644
+--- a/lib/Shop/Pricing.pm
++++ b/lib/Shop/Pricing.pm
+@@ -20,7 +20,7 @@ sub discount {
+ sub shipping_fee {
+     my ($weight) = @_;
+     return 0 if $weight <= 0;
+-    if ($weight > 20) {
++    if (20 < $weight) {
+         return 15;
+     }
+     return 5;

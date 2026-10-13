@@ -1,0 +1,58 @@
+{
+  "case_id": "perl-0235-ex25-dynamic-dispatch",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-0235-ex25-dynamic-dispatch.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "hash_field_value",
+  "test_shape": "test2_is_deep_hash_dynamic_dispatch",
+  "hard_case": "RIPR-SPEC-0235 example 25: a dynamic_dispatch limitation with no confirmed sink.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
+        "mutated_line": "return { count => scalar(@amounts) + 1, total => $total };",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: summary totals and counts",
+        "equivalence_review": "not equivalent: two amounts count as three"
+      },
+      {
+        "replacement": "return { count => scalar @amounts, total => $total * 2 };",
+        "mutated_line": "return { count => scalar @amounts, total => $total * 2 };",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: summary totals and counts",
+        "equivalence_review": "not equivalent: total doubles"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Both mutants fail t/ledger.t. A dynamic_dispatch limitation should give static_unknown with the dynamic_dispatch limit kind, and ripr does: limited, acceptable for a discriminated case.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-0235-ex25-dynamic-dispatch.json",
+    "sha256": "ef2155d2c090bf47403964c1d95d0403ec4bb3e9dd6a2f86d7975f1bde2ab92e",
+    "provenance": "edited_producer",
+    "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": null}; append to limitations: {\"evidence_refs\": [], \"kind\": \"dynamic_dispatch\", \"limitation_id\": \"dynamic-dispatch\", \"message\": \"the owner is reached through dynamic dispatch\"}; the packet fingerprint was recomputed."
+  }
+}
