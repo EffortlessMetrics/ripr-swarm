@@ -243,42 +243,58 @@ fn captured_and_asserted_around(
     if stores.is_empty() {
         return false;
     }
-    // One hop: a binding read from the store after the owner call.
+    // One hop: a binding read from the store after the owner call. A read
+    // through a count or status projection is not the captured text, and a
+    // `let` that rebinds a store's name without reading a store drops it.
     let mut read_from_store = Vec::new();
     for statement in masked[call_at..].split(';') {
         let Some(binding) = let_binding_at(statement, statement.len()) else {
             continue;
         };
         let initializer = statement.split_once('=').map_or("", |(_, rest)| rest);
-        if stores.iter().any(|store| names(initializer, store)) {
+        let reads_store = stores.iter().any(|store| names(initializer, store));
+        stores.retain(|store| *store != binding);
+        read_from_store.retain(|read| *read != binding);
+        if reads_store && !has_count_or_status_projection(initializer) {
             read_from_store.push(binding);
         }
     }
     stores.extend(read_from_store);
     test.assertions.iter().any(|assertion| {
-        let masked_assertion = crate::analysis::extract::mask_comments_and_strings(&assertion.text);
+        let (masked_assertion, string_quotes) =
+            crate::analysis::extract::mask_with_string_delimiter_quotes(&assertion.text);
         assertion.line > call_line
             && matches!(
                 assertion.kind,
                 OracleKind::ExactValue | OracleKind::WholeObjectEquality
             )
-            && assertion.text.contains('"')
-            && !COUNT_OR_STATUS_PROJECTIONS
-                .iter()
-                .any(|projection| masked_assertion.contains(projection))
+            && string_quotes >= 2
+            && !has_count_or_status_projection(&masked_assertion)
             && stores.iter().any(|store| names(&masked_assertion, store))
     })
 }
 
-/// Projections that read a count or a status, not the captured text.
-const COUNT_OR_STATUS_PROJECTIONS: [&str; 6] = [
+/// Projections that read a count, a status or a partial match, not the
+/// captured text.
+const COUNT_OR_STATUS_PROJECTIONS: [&str; 11] = [
     ".len()",
     ".is_empty()",
     ".count()",
+    ".capacity()",
     ".is_ok()",
     ".is_err()",
     ".is_some()",
+    ".is_none()",
+    ".starts_with(",
+    ".ends_with(",
+    ".contains(",
 ];
+
+fn has_count_or_status_projection(masked: &str) -> bool {
+    COUNT_OR_STATUS_PROJECTIONS
+        .iter()
+        .any(|projection| masked.contains(projection))
+}
 
 /// Plain-binding arguments of `log::set_logger(..)` /
 /// `log::set_boxed_logger(..)` calls in masked `code` (`&LOGGER` names
@@ -323,12 +339,18 @@ fn returns_installed_logger(body: &str, logger_types: &[&str]) -> bool {
 }
 
 /// Offsets of `name(` calls in masked `code` that are not method calls,
-/// path calls (`other::name(`) or part of a longer identifier.
+/// calls through another module's path (`other::name(`; `super::`,
+/// `crate::` and `self::` still count) or part of a longer identifier.
 fn free_call_offsets(code: &str, name: &str) -> Vec<usize> {
     let call = format!("{name}(");
     code.match_indices(&call)
         .filter(|(at, _)| {
-            !code[..*at].ends_with("::")
+            let before = &code[..*at];
+            let path_prefix = before.ends_with("::")
+                && !["super::", "crate::", "self::"]
+                    .iter()
+                    .any(|local| before.ends_with(local));
+            !path_prefix
                 && !code[..*at].chars().next_back().is_some_and(|before| {
                     before.is_alphanumeric() || before == '_' || before == '.'
                 })
@@ -766,6 +788,54 @@ mod tests {
     }
 
     #[test]
+    fn audit_counts_through_a_binding() {
+        let logger = capture();
+        audit(6);
+        let n = logger.0.lock().unwrap().len();
+        assert_eq!(n, 1, "one line");
+    }
+
+    #[test]
+    fn audit_checks_prefix() {
+        let logger = capture();
+        audit(6);
+        let lines = logger.0.lock().unwrap().clone();
+        assert_eq!(lines[0].starts_with("audited"), true);
+    }
+
+    #[test]
+    fn audit_shadows_the_store() {
+        let logger = capture();
+        audit(6);
+        let logger = 5;
+        assert_eq!(logger, 5, "unrelated");
+    }
+
+    #[test]
+    fn audit_quote_in_comment() {
+        let logger = capture();
+        audit(6);
+        let lines = logger.0.lock().unwrap().clone();
+        assert_eq!(lines, Vec::<String>::new() /* " */);
+    }
+
+    #[test]
+    fn audit_through_super() {
+        let logger = capture();
+        super::audit(6);
+        let lines = logger.0.lock().unwrap().clone();
+        assert_eq!(lines, vec!["audited 42".to_string()]);
+    }
+
+    #[test]
+    fn audit_not_equal() {
+        let logger = capture();
+        audit(6);
+        let lines = logger.0.lock().unwrap().clone();
+        assert_ne!(lines, vec!["audited 0".to_string()]);
+    }
+
+    #[test]
     fn audit_relational() {
         let logger = capture();
         audit(6);
@@ -809,6 +879,7 @@ mod tests {
             "audit_direct_install",
             "audit_again_after_late_capture",
             "audit_through_once_lock",
+            "audit_through_super",
         ] {
             let mut finding = log_finding(test, AUDIT_LOG);
             assert!(
@@ -859,6 +930,11 @@ mod tests {
             "audit_asserts_before_call",
             "audit_relational",
             "audit_checks_line_width",
+            "audit_counts_through_a_binding",
+            "audit_checks_prefix",
+            "audit_shadows_the_store",
+            "audit_quote_in_comment",
+            "audit_not_equal",
         ] {
             let mut finding = log_finding(test, AUDIT_LOG);
             assert!(
