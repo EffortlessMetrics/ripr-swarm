@@ -371,3 +371,60 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
     };
     require_kind(fact, OracleKind::RelationalCheck, OracleStrength::Weak)
 }
+
+#[test]
+fn a_matches_conjunct_reads_no_stronger_than_its_pattern() -> Result<(), String> {
+    let smoke = (OracleKind::SmokeOnly, OracleStrength::Smoke);
+    let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    let err = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
+    let broad = (OracleKind::BroadError, OracleStrength::Weak);
+    for (text, expected) in [
+        // #7695: a side-only pattern in an `&&` chain keeps its reading; a
+        // bare conjunct beside it reads weak (step 13), never strong.
+        ("assert!(ready && matches!(r, Ok(_)));", &weak),
+        ("assert!(matches!(r, Ok(_)) && ready);", &weak),
+        ("debug_assert!(ready && matches!(r, Some(_)));", &weak),
+        ("assert!(ready && (matches!(r, Ok(_))));", &weak),
+        ("assert!(ready && /* side */ matches!(r, Ok(_)));", &weak),
+        ("assert!(matches!(r, Ok(_)) && matches!(s, Some(_)));", &smoke),
+        ("assert!(total > 1 && matches!(r, Ok(_)));", &weak),
+        ("assert!(ready && matches!(r, Ok(_) | Err(_)));", &weak),
+        ("assert!(ready && matches!(r, Some(1..=5)));", &weak),
+        ("assert!(ready && matches!(r, Err(_)));", &broad),
+        // Controls: a conjunct that pins keeps the chain's reading.
+        ("assert!(ready && matches!(r, Ok(3)));", &exact),
+        ("assert!(matches!(r, Ok(_)) && matches!(r, Ok(3)));", &exact),
+        // A pinning `==` conjunct (rule 1) fixes a value, so the chain keeps
+        // its reading rather than risk an actionable gap.
+        ("assert!(total == 4 && matches!(r, Ok(_)));", &exact),
+        ("assert!(matches!(value, _) && value == 2);", &exact),
+        ("ensure!(total == 4 && matches!(r, Ok(_)));", &exact),
+        ("assert_eq!(ready && matches!(r, Ok(_)), true);", &exact),
+        ("assert!(ready && matches!(r, Err(Error::Denied)));", &err),
+        ("assert!(matches!(r, Ok(_)));", &smoke),
+    ] {
+        let classification = classify_assertion(text);
+        if (&classification.kind, &classification.strength) != (&expected.0, &expected.1) {
+            return Err(format!(
+                "{text}: expected {:?}/{:?}, got {:?}/{:?}",
+                expected.0, expected.1, classification.kind, classification.strength
+            ));
+        }
+    }
+    // A trailing line comment on a conjunct cannot swallow the rewritten
+    // `);` and leave the chain unread.
+    for text in [
+        "assert!(\n    ready // set above\n    && matches!(r, Ok(_))\n);",
+        "assert!(\n    ready &&\n    matches!(r, Ok(_)) // side only\n);",
+    ] {
+        let facts = extract_assertions(text, 7695);
+        let Some(fact) = facts.first() else {
+            return Err(format!("{text}: must produce an oracle fact"));
+        };
+        if fact.strength == OracleStrength::Strong {
+            return Err(format!("{text}: a side-only chain must not read strong"));
+        }
+    }
+    Ok(())
+}
