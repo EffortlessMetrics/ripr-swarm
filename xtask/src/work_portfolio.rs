@@ -29,8 +29,8 @@
 //! Ranking law: candidates order by the eight explicit factors from #1704 in
 //! exactly that order, each factor inspectable on the candidate with its
 //! contribution and source references; the sort is a lexicographic
-//! application of the declared factor sequence and no hidden numeric score
-//! exists anywhere in the DTOs.
+//! application of the declared factor sequence. The emitted ranking key is
+//! that sequence, not a weighted score; ties use the stable candidate id.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -849,6 +849,10 @@ pub(crate) struct WorkCandidateV1 {
     pub readiness: Option<WorkReadinessV1>,
     pub regression_risks: Vec<String>,
     pub ranking_factors: Vec<WorkRankingFactorV1>,
+    /// Exact ascending lexicographic sort key. Legacy rows omit this rather
+    /// than inventing values that cannot be recovered from factor prose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ranking_key: Option<[i64; 8]>,
     pub confidence: WorkConfidenceV1,
     pub confidence_reasons: Vec<String>,
     pub single_agent_preferred: bool,
@@ -1360,8 +1364,8 @@ fn lane_rank(lane_state: WorkLaneStateV1) -> i64 {
 }
 
 /// The lexicographic ranking tuple: one entry per declared factor, in the
-/// #1704 order. Smaller is earlier. Never serialized — the factors on the
-/// candidate are the inspectable record of exactly these entries.
+/// #1704 order. Smaller is earlier. Computed once for sorting and serialization;
+/// the factors retain their human explanation of these entries.
 fn ranking_tuple(
     candidate: &WorkCandidateV1,
     honesty_risk: Option<&str>,
@@ -2459,6 +2463,7 @@ pub(crate) fn compile_work_portfolio(
             readiness: readiness_for(issue),
             regression_risks,
             ranking_factors: Vec::new(),
+            ranking_key: None,
             confidence,
             confidence_reasons: confidence_reasons
                 .iter()
@@ -2494,9 +2499,12 @@ pub(crate) fn compile_work_portfolio(
             .any(|pr| pr.state == "open" && pr.linked_issues.contains(&candidate.issue));
         ranking_tuple(candidate, risk, has_open_pr)
     };
+    for candidate in &mut candidates {
+        candidate.ranking_key = Some(rank_key(candidate));
+    }
     candidates.sort_by(|left, right| {
-        rank_key(left)
-            .cmp(&rank_key(right))
+        left.ranking_key
+            .cmp(&right.ranking_key)
             .then_with(|| left.candidate_id.cmp(&right.candidate_id))
     });
 
@@ -2936,7 +2944,8 @@ pub(crate) fn build_explain_view(
             .map(|candidate| candidate.candidate_id.clone())
             .collect();
         return Err(format!(
-            "unknown candidate `{candidate_id}`; known candidates: {known:?}"
+            "unknown candidate `{candidate_id}`; known candidates: {}",
+            md_backtick_csv(&known)
         ));
     };
     Ok(WorkExplainViewV1 {
@@ -2956,6 +2965,43 @@ fn wire_label(value: &impl Serialize) -> String {
         Ok(other) => other.to_string(),
         Err(_) => "unknown".to_string(),
     }
+}
+
+/// Comma-separated backticked identity tokens (`candidate:issue:9101`, not
+/// Debug quotes or brackets).
+fn md_backtick_csv<T: AsRef<str>>(ids: &[T]) -> String {
+    ids.iter()
+        .map(|id| format!("`{}`", id.as_ref()))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Captured issue numbers as `#1693, #9202` instead of Debug `[1693, 9202]`.
+fn md_issue_csv(issues: &[u64]) -> String {
+    issues
+        .iter()
+        .map(|issue| format!("#{issue}"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Nested Markdown list of identity tokens under a heading, matching the
+/// dependencies list style.
+fn md_nested_backtick_list(heading: &str, ids: &[String]) -> String {
+    let mut body = format!("- {heading}:\n");
+    for id in ids {
+        body.push_str(&format!("  - `{id}`\n"));
+    }
+    body
+}
+
+/// Nested Markdown list of plain prose items under a heading.
+fn md_nested_plain_list(heading: &str, items: &[String]) -> String {
+    let mut body = format!("- {heading}:\n");
+    for item in items {
+        body.push_str(&format!("  - {item}\n"));
+    }
+    body
 }
 
 fn md_table_row(cells: &[String]) -> String {
@@ -3019,7 +3065,7 @@ pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> Str
             campaign.id.clone(),
             campaign.state.clone(),
             campaign.surfaces.join(", "),
-            format!("{:?}", campaign.issues),
+            md_issue_csv(&campaign.issues),
             campaign.candidates.to_string(),
         ]));
         body.push('\n');
@@ -3027,6 +3073,7 @@ pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> Str
     body.push('\n');
 
     body.push_str("## Candidates (ranked, advisory)\n\n");
+    body.push_str("Ranking keys use ascending lexicographic; ties by `candidate_id`.\n\n");
     body.push_str(&md_table_row(&[
         "rank".to_string(),
         "candidate".to_string(),
@@ -3034,8 +3081,9 @@ pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> Str
         "stage".to_string(),
         "lane".to_string(),
         "confidence".to_string(),
+        "ranking key".to_string(),
     ]));
-    body.push_str("\n| --- | --- | --- | --- | --- | --- |\n");
+    body.push_str("\n| --- | --- | --- | --- | --- | --- | --- |\n");
     for (rank, candidate) in snapshot.candidates.iter().enumerate() {
         body.push_str(&md_table_row(&[
             (rank + 1).to_string(),
@@ -3044,6 +3092,10 @@ pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> Str
             wire_label(&candidate.lifecycle_stage),
             candidate.lane.clone(),
             wire_label(&candidate.confidence),
+            candidate
+                .ranking_key
+                .map(|key| format!("`{key:?}`"))
+                .unwrap_or_else(|| "unavailable (legacy artifact)".to_string()),
         ]));
         body.push('\n');
     }
@@ -3126,9 +3178,9 @@ fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
         }
     }
     if !candidate.conflict_edges.is_empty() {
-        body.push_str(&format!(
-            "- conflict edges: {:?}\n",
-            candidate.conflict_edges
+        body.push_str(&md_nested_backtick_list(
+            "conflict edges",
+            &candidate.conflict_edges,
         ));
     }
     if let Some(family) = &candidate.duplicate_family {
@@ -3141,10 +3193,17 @@ fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
         ));
     }
     if !candidate.regression_risks.is_empty() {
-        body.push_str(&format!(
-            "- regression risks: {:?}\n",
-            candidate.regression_risks
+        body.push_str(&md_nested_plain_list(
+            "regression risks",
+            &candidate.regression_risks,
         ));
+    }
+    if let Some(key) = candidate.ranking_key {
+        body.push_str(&format!(
+            "- ranking key: `{key:?}` (ascending lexicographic; ties by `candidate_id`)\n"
+        ));
+    } else {
+        body.push_str("- ranking key: unavailable (legacy artifact)\n");
     }
     body.push_str("- ranking factors (ordered, no hidden score):\n");
     for factor in &candidate.ranking_factors {
@@ -3796,6 +3855,134 @@ mod tests {
                     candidate.candidate_id, kind
                 )
             })
+    }
+
+    #[test]
+    fn work_portfolio_serialized_ranking_key_reproduces_order() -> Result<(), String> {
+        let snapshot = committed()?;
+        let json: Value = serde_json::from_str(&work_portfolio_json(&snapshot)?)
+            .map_err(|error| error.to_string())?;
+        let rows = json["candidates"]
+            .as_array()
+            .ok_or("candidate array missing")?;
+        assert_eq!(rows.len(), 12);
+        let mut ranked = Vec::new();
+        for row in rows {
+            let key: [i64; 8] = serde_json::from_value(row["ranking_key"].clone())
+                .map_err(|error| format!("{} ranking key: {error}", row["candidate_id"]))?;
+            let id = row["candidate_id"].as_str().ok_or("candidate id missing")?;
+            ranked.push((key, id.to_string()));
+        }
+        let expected = ranked.clone();
+        // Start in the opposite order so equal-key rows exercise the id tie-break.
+        ranked.reverse();
+        ranked.sort();
+        assert_eq!(ranked, expected);
+        assert_eq!(expected[0].0, [0, 0, 0, 0, 0, 2, 1, 0]);
+        assert_eq!(expected[11].0, [1, 1, 1, 3, 2, 2, 3, 0]);
+        assert_eq!(expected[6].0, [1, 1, 0, 1, 0, 2, 0, 0]);
+        assert_eq!(expected[3].0, [0, 1, 0, 2, 1, 2, 0, 1]);
+        assert_eq!(expected[6].0, expected[7].0);
+        assert_eq!(expected[6].1, "candidate:issue:9105");
+        assert_eq!(expected[7].1, "candidate:issue:9106");
+        let view = build_candidates_view(&snapshot, None, None, 12, None)?;
+        let view_json: Value = serde_json::from_str(&work_portfolio_json(&view)?)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(view_json["candidates"], json["candidates"]);
+        let explain = build_explain_view(&snapshot, &expected[0].1)?;
+        let explain_json: Value = serde_json::from_str(&work_portfolio_json(&explain)?)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(explain_json["candidate"], rows[0]);
+        let portfolio_md = work_portfolio_markdown(&snapshot);
+        assert!(portfolio_md.contains("| ranking key |"));
+        assert!(portfolio_md.contains("ascending lexicographic; ties by `candidate_id`"));
+        for (key, id) in &expected {
+            let row = portfolio_md
+                .lines()
+                .find(|line| line.contains(id))
+                .ok_or("portfolio Markdown candidate row missing")?;
+            assert!(row.contains(&format!("| `{key:?}` |")));
+        }
+        for markdown in [
+            work_candidates_markdown(&view),
+            work_explain_markdown(&explain),
+        ] {
+            assert!(markdown.contains("ranking key: `[0, 0, 0, 0, 0, 2, 1, 0]`"));
+            assert!(markdown.contains("ascending lexicographic; ties by `candidate_id`"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn work_portfolio_ranking_key_preserves_legacy_and_rejects_malformed_rows() -> Result<(), String>
+    {
+        let snapshot = committed()?;
+        let mut row =
+            serde_json::to_value(candidate(&snapshot, 9101)?).map_err(|error| error.to_string())?;
+        let object = row.as_object_mut().ok_or("candidate object missing")?;
+        object.remove("ranking_key");
+        let legacy: WorkCandidateV1 =
+            serde_json::from_value(row.clone()).map_err(|error| error.to_string())?;
+        assert_eq!(legacy.ranking_key, None);
+        let roundtrip = serde_json::to_value(&legacy).map_err(|error| error.to_string())?;
+        assert_eq!(roundtrip, row);
+        let mut legacy_snapshot = snapshot.clone();
+        legacy_snapshot.candidates[0].ranking_key = None;
+        assert!(
+            work_portfolio_markdown(&legacy_snapshot).contains("| unavailable (legacy artifact) |")
+        );
+        assert!(
+            candidate_markdown(&legacy, "# Legacy")
+                .contains("ranking key: unavailable (legacy artifact)")
+        );
+        for malformed in [
+            serde_json::json!([]),
+            serde_json::json!([0, 0, 0, 0, 0, 0, 0]),
+            serde_json::json!([0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            serde_json::json!([0, 0, 0, 0, 0, 0, 0, "0"]),
+        ] {
+            row["ranking_key"] = malformed;
+            if serde_json::from_value::<WorkCandidateV1>(row.clone()).is_ok() {
+                return Err(format!(
+                    "malformed ranking key accepted: {}",
+                    row["ranking_key"]
+                ));
+            }
+        }
+        let empty =
+            build_candidates_view(&snapshot, Some("campaign-infra-hardening"), None, 10, None)?;
+        assert!(empty.candidates.is_empty());
+        let empty_json: Value = serde_json::from_str(&work_portfolio_json(&empty)?)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(empty_json["candidates"], serde_json::json!([]));
+        Ok(())
+    }
+
+    #[test]
+    fn work_portfolio_ranking_key_preserves_first_issue_risk_lookup() -> Result<(), String> {
+        let mut captured =
+            load_work_captured_dir(&workspace_path("fixtures/work_portfolio/corpus"))?;
+        let issues = &mut captured.issues.as_mut().ok_or("issues missing")?.issues;
+        let mut duplicate = issues
+            .iter()
+            .find(|issue| issue.number == 9105)
+            .ok_or("issue 9105 missing")?
+            .clone();
+        duplicate.honesty_risk = Some("high".to_string());
+        issues.push(duplicate);
+        let snapshot = compile_work_portfolio(&captured, None)?;
+        let rows: Vec<_> = snapshot
+            .candidates
+            .iter()
+            .filter(|candidate| candidate.issue == 9105)
+            .collect();
+        assert_eq!(rows.len(), 2);
+        // The pre-existing sorter resolves risk by the first matching issue,
+        // even when captured input repeats an issue with conflicting metadata.
+        for row in rows {
+            assert_eq!(row.ranking_key, Some([1, 1, 0, 1, 0, 2, 0, 0]));
+        }
+        Ok(())
     }
 
     /// Box 1 + fixture rows 1/2/10/11: multiple campaigns with eligible
@@ -4574,6 +4761,122 @@ mod tests {
             work_candidates_markdown(&build_candidates_view(&snapshot, None, None, 3, None)?);
         if !candidates_md.contains("omitted=9") {
             return Err("candidates markdown must report the omitted count honestly".to_string());
+        }
+        Ok(())
+    }
+
+    /// Human Markdown must render campaign issues, candidate conflict edges,
+    /// regression risks, and the unknown-id error as plain Markdown, not Rust
+    /// Debug (`{:?}`) lists. JSON stays an array DTO; only the renderer
+    /// changes (#7432).
+    #[test]
+    fn work_portfolio_markdown_renders_lists_as_plain_markdown_not_debug() -> Result<(), String> {
+        let snapshot = committed()?;
+        let markdown = work_portfolio_markdown(&snapshot);
+        for campaign in &snapshot.campaigns {
+            let debug = format!("{:?}", campaign.issues);
+            if markdown.contains(&debug) {
+                return Err(format!(
+                    "portfolio markdown leaked Debug campaign issues `{debug}`"
+                ));
+            }
+            if campaign.issues.is_empty() {
+                continue;
+            }
+            let expected = campaign
+                .issues
+                .iter()
+                .map(|issue| format!("#{issue}"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            if !markdown.contains(&expected) {
+                return Err(format!(
+                    "portfolio markdown missing campaign issues `{expected}`"
+                ));
+            }
+        }
+
+        let collision = candidate(&snapshot, 9107)?;
+        let explain =
+            work_explain_markdown(&build_explain_view(&snapshot, &collision.candidate_id)?);
+        let debug_edges = format!("conflict edges: {:?}", collision.conflict_edges);
+        if explain.contains(&debug_edges) {
+            return Err(format!(
+                "explain markdown leaked Debug conflict edges `{debug_edges}`"
+            ));
+        }
+        if collision.conflict_edges.is_empty() {
+            return Err(
+                "issue 9107 must carry conflict-edge membership for this oracle".to_string(),
+            );
+        }
+        if !explain.contains("- conflict edges:\n") {
+            return Err("conflict edges must render as a nested Markdown list".to_string());
+        }
+        for edge in &collision.conflict_edges {
+            let item = format!("  - `{edge}`\n");
+            if !explain.contains(&item) {
+                return Err(format!(
+                    "explain markdown missing conflict-edge item `{item}` in: {explain}"
+                ));
+            }
+        }
+
+        let regression = candidate(&snapshot, 9101)?;
+        let regression_md =
+            work_explain_markdown(&build_explain_view(&snapshot, &regression.candidate_id)?);
+        let debug_risks = format!("regression risks: {:?}", regression.regression_risks);
+        if regression_md.contains(&debug_risks) {
+            return Err(format!(
+                "explain markdown leaked Debug regression risks `{debug_risks}`"
+            ));
+        }
+        if regression.regression_risks.is_empty() {
+            return Err("issue 9101 must carry regression risks for this oracle".to_string());
+        }
+        if !regression_md.contains("- regression risks:\n") {
+            return Err("regression risks must render as a nested Markdown list".to_string());
+        }
+        for risk in &regression.regression_risks {
+            let item = format!("  - {risk}\n");
+            if !regression_md.contains(&item) {
+                return Err(format!(
+                    "explain markdown missing regression-risk item `{item}` in: {regression_md}"
+                ));
+            }
+        }
+
+        let Err(error) = build_explain_view(&snapshot, "candidate:issue:9999") else {
+            return Err("unknown candidate must fail closed".to_string());
+        };
+        let known: Vec<&str> = snapshot
+            .candidates
+            .iter()
+            .map(|row| row.candidate_id.as_str())
+            .collect();
+        let debug_known = format!("{known:?}");
+        if error.contains(&debug_known) {
+            return Err(format!("unknown-id error leaked Debug list: {error}"));
+        }
+        let expected_known = known
+            .iter()
+            .map(|id| format!("`{id}`"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        if !error.contains(&expected_known) {
+            return Err(format!(
+                "unknown-id error must list backticked ids `{expected_known}`, got: {error}"
+            ));
+        }
+        if error.contains("\"candidate:issue:") {
+            return Err(format!("unknown-id error still quotes ids: {error}"));
+        }
+
+        let json = work_portfolio_json(&snapshot)?;
+        if !json.contains("\"conflict_edges\"") || !json.contains("\"regression_risks\"") {
+            return Err(
+                "JSON DTO must still carry conflict_edges and regression_risks arrays".to_string(),
+            );
         }
         Ok(())
     }

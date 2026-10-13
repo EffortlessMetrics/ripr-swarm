@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-approx-abs-diff-loose-epsilon",
+  "subject_id": "authored-lib-float",
+  "diff": "cases/lib-approx-abs-diff-loose-epsilon.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 10
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "approx_assert_abs_diff_eq_loose_epsilon",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "c * 1.8 + 32.2",
+        "mutated_line": "c * 1.8 + 32.2",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: fahrenheit(100.0) = 212.2 (within 0.5); fahrenheit(0.0) = 32.2 instead of 32"
+      },
+      {
+        "replacement": "c * 1.9 + 32.0",
+        "mutated_line": "c * 1.9 + 32.0",
+        "outcome": "tests_failed",
+        "failing_test": "tests::boiling_point",
+        "equivalence_review": "not equivalent: fahrenheit(100.0) = 222"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "epsilon = 0.5 in assert_abs_diff_eq! absorbs the 0.2 offset mutant but not the slope change.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

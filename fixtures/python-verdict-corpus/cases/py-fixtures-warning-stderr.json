@@ -1,0 +1,45 @@
+{
+  "case_id": "py-fixtures-warning-stderr",
+  "subject_id": "authored-py-pytest-fixtures",
+  "diff": "cases/py-fixtures-warning-stderr.diff",
+  "anchor": {
+    "file": "shop/__init__.py",
+    "line": 32
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "output_text",
+  "test_shape": "pytest_capsys_err_exact",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "print(f\"warn: {message}\", file=sys.stderr)",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_shop.py::test_warning_goes_to_stderr",
+        "equivalence_review": "not equivalent: stderr reads \"warn: low stock\" instead of \"warning: low stock\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_warning_goes_to_stderr compares capsys.readouterr().err exactly, so \"warn: low stock\" fails it. ripr reports static_unknown with missing_import_graph (the module imports os and sys), an acceptable limit.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "static_unknown"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

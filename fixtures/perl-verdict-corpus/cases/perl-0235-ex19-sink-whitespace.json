@@ -1,0 +1,58 @@
+{
+  "case_id": "perl-0235-ex19-sink-whitespace",
+  "subject_id": "authored-perl-test2-ledger",
+  "diff": "cases/perl-0235-ex19-sink-whitespace.diff",
+  "anchor": {
+    "file": "lib/Ledger.pm",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "hash_field_value",
+  "test_shape": "test2_is_deep_hash_sink_spacing",
+  "hard_case": "RIPR-SPEC-0235 example 19: the observed sink differs from the changed observable only in whitespace.",
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "prove -l t",
+    "toolchain": "perl 5.38.2 (x86_64-linux-gnu-thread-multi); Test::More 1.302194, Test2::V0 0.000159, Test::Exception 0.43",
+    "mutants": [
+      {
+        "replacement": "return { count => scalar(@amounts) + 1, total => $total };",
+        "mutated_line": "return { count => scalar(@amounts) + 1, total => $total };",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: summary totals and counts",
+        "equivalence_review": "not equivalent: two amounts count as three"
+      },
+      {
+        "replacement": "return { count => scalar @amounts, total => $total * 2 };",
+        "mutated_line": "return { count => scalar @amounts, total => $total * 2 };",
+        "outcome": "tests_failed",
+        "failing_test": "t/ledger.t: summary totals and counts",
+        "equivalence_review": "not equivalent: total doubles"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Both mutants fail t/ledger.t. The spec treats a sink that matches after whitespace normalization as aligned, so ideal is exposed; weakly_exposed is a false actionable.",
+  "labeling_observation": {
+    "ripr_commit": "28e86e6",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "perl_facts": {
+    "packet": "packets/perl-0235-ex19-sink-whitespace.json",
+    "sha256": "bb1dc7edac2f07c34c2942e659cfd38406caad653c49ec5d0bc5d9b618296a0e",
+    "provenance": "edited_producer",
+    "edits": "Started from the producer packet of perl-test2-summary-deep-is-count, then in oracles where {\"target_owner_id\": \"$CHANGE_OWNER\"} set {\"observed_sink\": {\"strip_spaces\": true}}; the packet fingerprint was recomputed."
+  }
+}

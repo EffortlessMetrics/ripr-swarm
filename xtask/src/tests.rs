@@ -7,6 +7,7 @@ mod discarded_matcher_honesty;
 mod fixture_cache;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
+mod rust_corpus_projection;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
@@ -9343,6 +9344,68 @@ fn allow_attribute_detection_ignores_untracked_lints() {
 }
 
 #[test]
+fn allow_attribute_detection_preserves_literal_multiline_byte_lines() {
+    let text = format!(
+        "// 🦀 # noise\n{}\nconst HASH: &str = \"#\";\n{}\n dead_code,\n warnings,\n clippy::module_name_repetitions,\n reason = \"🦀 #\")]\nfn f() {{}}\n{}\n// {}\n",
+        concat!("#", "[cfg(any())]"),
+        concat!("#", "[allow("),
+        concat!("#", "![expect(unused_imports)]"),
+        concat!("#", "[allow(unsafe_code)]"),
+    );
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    // The existing text scanner also recognizes attribute text in comments.
+    assert_eq!(
+        findings,
+        vec![
+            (4, "allow(dead_code)".to_string()),
+            (4, "allow(warnings)".to_string()),
+            (10, "expect(unused_imports)".to_string()),
+            (11, "allow(unsafe_code)".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn allow_attribute_detection_keeps_malformed_and_unguarded_shapes_ignored() {
+    for text in [
+        "#",
+        "#!",
+        "#[]",
+        concat!("#", "[allow]"),
+        concat!("#", "[allow(warnings"),
+        concat!("#", "[allows(warnings)]"),
+        concat!("#", "[expect = (warnings)]"),
+        concat!("#", "[allow(warning)]"),
+        concat!("#", "[allow(reason = \"warnings\")]"),
+        concat!("#", "[allow(clippy::module_name_repetitions)]"),
+    ] {
+        assert!(
+            guarded_allow_attributes_in_text(text, &guarded_allow_attribute_lints()).is_empty(),
+            "unexpected finding in {text:?}",
+        );
+    }
+}
+
+#[test]
+fn allow_attribute_detection_counts_lines_after_many_rejected_hashes() {
+    let mut text = format!("// 🦀 # # # {}\n", concat!("#", "[cfg(any())]")).repeat(128);
+    text.push_str(concat!("#", "[allow(dead_code, warnings, warnings)]"));
+
+    let findings = guarded_allow_attributes_in_text(&text, &guarded_allow_attribute_lints());
+
+    assert_eq!(
+        findings,
+        vec![
+            (129, "allow(dead_code)".to_string()),
+            (129, "allow(warnings)".to_string()),
+            (129, "allow(warnings)".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn allow_attribute_budget_fails_stale_shrunk_and_orphaned_rows() {
     let guarded = guarded_allow_attribute_lints();
     let mut allowlist = BTreeMap::new();
@@ -12905,7 +12968,12 @@ fn goldens_check_failure_message_is_a_repair_card() {
         },
     }];
     let violations = vec!["drift for fixture `python_field_assignment_shape`".to_string()];
-    let message = super::goldens_check_failure_message(&entries, &violations);
+    let provenance = super::GoldenDriftProvenance {
+        binary: "/work/target/debug/ripr".to_string(),
+        ripr_version: "ripr 0.11.0 (abc123)".to_string(),
+        revision: "abc123".to_string(),
+    };
+    let message = super::goldens_check_failure_message(&entries, &violations, &provenance);
     assert!(message.contains("golden-drift.md"), "{message}");
     assert!(
         message.contains("python_field_assignment_shape"),
@@ -12917,6 +12985,9 @@ fn goldens_check_failure_message_is_a_repair_card() {
         message.contains("reproduce: cargo xtask goldens check"),
         "{message}"
     );
+    // #7401: the card names the build that produced the actual side.
+    assert!(message.contains("ripr 0.11.0 (abc123)"), "{message}");
+    assert!(message.contains("/work/target/debug/ripr"), "{message}");
 }
 
 #[test]
@@ -28467,6 +28538,40 @@ upload_debug_artifacts: false
     assert!(!violations.iter().any(|v| v.contains("same-repo guard")));
 }
 
+#[test]
+fn check_droid_common_flags_missing_contents_read() {
+    let mut violations = Vec::new();
+    check_droid_common(
+        &mut violations,
+        "test.yml",
+        "review_model: \"custom:MiniMax-M3-0\"\n",
+        true,
+        true,
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must set contents: read"))
+    );
+}
+
+#[test]
+fn check_droid_common_flags_contents_write() {
+    let mut violations = Vec::new();
+    check_droid_common(
+        &mut violations,
+        "test.yml",
+        "contents: write\nreview_model: \"custom:MiniMax-M3-0\"\n",
+        true,
+        true,
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant contents: write"))
+    );
+}
+
 fn valid_droid_security_scan_yaml() -> &'static str {
     r#"
 on:
@@ -28478,6 +28583,11 @@ concurrency:
   cancel-in-progress: false
 jobs:
   droid-security-scan:
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
     env:
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
     steps:
@@ -28648,6 +28758,40 @@ fn check_droid_security_scan_flags_debug_artifact_upload() {
         violations
             .iter()
             .any(|v| v.contains("debug artifact upload"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_contents_write() {
+    let yaml = valid_droid_security_scan_yaml().replace("contents: read", "contents: write");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant contents: write"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_id_token_write() {
+    let yaml = valid_droid_security_scan_yaml()
+        .replace("contents: read", "contents: read\n      id-token: write");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant id-token: write"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_missing_contents_read() {
+    let yaml = valid_droid_security_scan_yaml().replace("      contents: read\n", "");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must set contents: read"))
     );
 }
 

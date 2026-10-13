@@ -1,0 +1,13 @@
+diff --git a/lib/Ledger.pm b/lib/Ledger.pm
+index 78101d1..c2842f4 100644
+--- a/lib/Ledger.pm
++++ b/lib/Ledger.pm
+@@ -25,7 +25,7 @@ sub is_overdrawn {
+ 
+ sub withdraw {
+     my ($balance, $amount) = @_;
+-    die "insufficient funds\n" if $amount > $balance;
++    die "insufficient" . " funds\n" if $amount > $balance;
+     return $balance - $amount;
+ }
+ 

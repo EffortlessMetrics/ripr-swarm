@@ -5,8 +5,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 pub mod agent_skills;
 pub mod ci_scratch;
+pub mod coverage_diagnostics;
 pub mod executable_files;
 mod identity;
+pub mod python_wheel;
 pub use identity::{enter_workspace_root, preflight, verify_executable_identity, verify_preflight};
 pub const ROUTED_RUST_REQUIRED_RESULT_NAME: &str = "Ripr Rust Small Result";
 
@@ -1628,8 +1630,17 @@ pub fn insert_unique_count_allowlist_row(
 }
 
 pub fn read_workflow_budgets(path: &str) -> Result<BTreeMap<String, WorkflowBudget>, String> {
-    let mut budgets = BTreeMap::new();
     let text = read_text_lossy(Path::new(path))?;
+    // Preserve the validator's existing last-record-wins policy. Applicability
+    // consumes the lossless records below and treats duplicate keys as ambiguous.
+    Ok(parse_workflow_budgets(path, &text)?
+        .into_iter()
+        .map(|budget| (budget.path.clone(), budget))
+        .collect())
+}
+
+pub fn parse_workflow_budgets(path: &str, text: &str) -> Result<Vec<WorkflowBudget>, String> {
+    let mut records = Vec::new();
     for (line_number, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -1659,9 +1670,9 @@ pub fn read_workflow_budgets(path: &str) -> Result<BTreeMap<String, WorkflowBudg
                 line_number + 1
             ));
         }
-        budgets.insert(budget.path.clone(), budget);
+        records.push(budget);
     }
-    Ok(budgets)
+    Ok(records)
 }
 
 pub fn collect_files(root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -1791,7 +1802,7 @@ pub fn workflow_run_value(trimmed_line: &str) -> Option<&str> {
         .or_else(|| trimmed_line.strip_prefix("- run:"))
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct WorkflowBudget {
     pub path: String,
     pub max_non_empty_lines: usize,

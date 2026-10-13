@@ -3,6 +3,85 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-13: Nested Cargo.toml keeps doctor Rust checks in scope (#7506)
+
+`detect_languages` is a shallow root scan. A `package.json` at a polyglot
+git root therefore omitted Rust, and `rust_toolchain_scope` skipped
+`cargo_toml` before the cargo-only locator could name `rust/Cargo.toml`.
+Keep that locator cargo-only; do not fold nested-manifest discovery into
+language detection, rebind `--root`, or change which `ripr.toml` applies.
+When the locator finds a nested or ancestor Cargo.toml and Rust is still
+enabled, the toolchain checks stay required. A TypeScript-only root with no
+such manifest still skips. `enabled = ["typescript"]` still puts Rust out of
+scope even when a nested Cargo.toml exists.
+
+## 2026-10-12: An oversized `ripr_get_gap` must not recover by calling itself (#7462)
+
+The MCP response bound is 128 KiB. One canonical item can exceed it. The
+failure used to say "read narrower evidence (one item through ripr_get_gap)",
+which is the call that just failed. A too-large item now names `ripr check
+--committed --format json` outside MCP — `--committed` because the snapshot
+analyzed the committed default-branch diff, and a plain `ripr check` on a
+dirty tracked worktree silently analyzes a different diff — and discloses
+that the CLI JSON is a bounded summary (related tests cap per finding, a
+large findings array can omit findings). Recovery advice must be reachable:
+`ripr_list_gaps` byte-fits every page and refuses when nothing fits (#6021),
+so its overflow guard says there is no narrower read instead of promising a
+smaller-limit page no caller can need. Other tools name their own next read,
+or say there is no narrower MCP read.
+
+## 2026-10-12: Calibrate joins are identity-blind; disclose like outcome (#7449)
+
+`ripr calibrate cargo-mutants` joins by `seam_id` / span / file+line. It
+cannot tell a same-repo mutant from a foreign record that happens to share
+a path and line. `ripr outcome` already discloses missing or differing heads
+on the same snapshot family. Calibrate must print the same class of caveat
+on stderr and in `--help`. Do not treat a file+line match as proof the
+artifacts share a subject, and do not refuse that join in the provenance
+fix. Do not fold producer-help (#7450), `matched_total` meaning (#7451), or
+the xtask duplicate renderer (#6691) into this disclosure.
+## 2026-10-12: Implicit `check` skips a closer `ripr.toml` after the root move (#7468)
+
+Config discovery walks ancestors of the *selected analysis root*, not of the
+invocation cwd. Implicit `ripr check` rebinds that root to the enclosing
+workspace, so a member `ripr.toml` is never a candidate. `doctor` and `pilot`
+keep `--root` (default cwd) and load that closer file. Do not retarget which
+file `check` loads — that is per-crate config (#2671) — and do not fold
+doctor/pilot into `resolve_project_root` just to make the three commands agree.
+Name the skipped directory entry and the file that governed on stderr.
+Recovery is `--root .` (cwd is still the invocation directory; that spelling
+is shell-neutral). A member symlink to the workspace file is the same
+config, not a skip; a symlink to a *different* file still names the member
+entry, not the canonical target. Human-header `config:` and JSON
+`config_path` remain a follow-up: they churn every golden and need
+`docs/OUTPUT_SCHEMA.md`.
+
+## 2026-10-12: Doctor `cargo_toml` is not `resolve_project_root` (#7466)
+
+`ripr check`'s `resolve_project_root` walks *up* and can return a git top
+level or a JS/Python workspace marker that is not a `Cargo.toml`. Sharing it
+as the doctor `cargo_toml` existence test would leave `rust/Cargo.toml` under
+a polyglot git root failing, and could pass a pnpm/uv root that has no Cargo
+manifest. Doctor keeps the selected-root `exists()` check, then a cargo-only
+ancestor walk bounded by `.git`, then a breadth-first nested walk (depth 8,
+512 directories) that skips `target/`, `.git`, `node_modules`, `.direnv`,
+`.venv`, `vendor`, `fixtures/`, and `.ripr/`, and that skips every symlink
+fail-closed. Do not rebind doctor's `--root` to the nested workspace (that
+is which `ripr.toml` applies). Empty roots and Rust sources with no
+manifest must still fail.
+A TypeScript marker at the git root used to skip `cargo_toml` before the
+locator ran (`detect_languages` is shallow); #7506 keeps the locator
+cargo-only and teaches `rust_toolchain_scope` about its result.
+
+## 2026-10-12: An evidence window pointer is a command of the surface that prints it (#7476)
+
+Check's human evidence window may say `--format json`, because `ripr check`
+accepts that flag. `ripr explain` reuses the same window and does not. A
+footnote on explain must name check's JSON format, not a flag of the command
+the reader is already running. Do not emit a bare `ripr check --format json`
+line from explain: the printed-command paste suite will try to run it, and
+that invocation has no root or diff.
+
 ## 2026-10-11: Digest `Related test (1 of N)` counts matched rows, not tests (#6807)
 
 `Finding::related_tests_total()` is `related_tests_matched_total`: matched

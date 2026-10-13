@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index b384688..0e11e1b 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -41,7 +41,7 @@
+ 
+ pub fn make_record(prefix: &str, seq: u32, items: &[LineItem]) -> Record {
+     Record {
+-        id: format!("{}-{:04}", prefix, seq + 1),
++        id: format!("{}-{:04}", prefix, 1 + seq),
+         total_cents: items.iter().map(line_total).sum(),
+         items: items.len(),
+     }

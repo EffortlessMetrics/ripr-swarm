@@ -158,7 +158,7 @@
       "language_status": "preview",
       "owner_kind": "function",
       "changed_sink": "amount, DISCOUNT_THRESHOLD",
-      "observed_sink": "assert discounted_total(5_000) == 5_000",
+      "observed_sink": "assert discounted_total(20_000) == 18_000",
       "oracle_alignment": "direct",
       "alignment_reason": "strong_oracle_observes_owner_name",
       "source_currentness": "candidate_current"

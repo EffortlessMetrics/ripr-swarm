@@ -1,0 +1,44 @@
+{
+  "case_id": "py-blocks-account-clamp-one-line",
+  "subject_id": "authored-py-pytest-blocks",
+  "diff": "cases/py-blocks-account-clamp-one-line.diff",
+  "anchor": {
+    "file": "ledger/account.py",
+    "line": 10
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "value_return",
+  "test_shape": "pytest_call_then_assert_unchanged_private_operand",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return max(0, self._balance)",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: a negative stored balance reads 0 instead of the debt"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "The one-line control for py-blocks-account-clamp-second-line: the same clamp with the comment untouched, so the return pairs with its old line by coordinate and only `max` is new.",
+  "labeling_observation": {
+    "ripr_commit": "3eef453",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

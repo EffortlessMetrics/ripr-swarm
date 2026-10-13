@@ -106,7 +106,7 @@ fn floating_or_unsafe_then_collects_nothing() {
 
 #[test]
 fn awaited_subtest_on_the_receiver_is_collected() {
-    let source = "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { memberPrice } from \"../src/member\";\ntest(\"member\", async (t) => {\n  await t.test(\"five off\", (t2) => {\n    assert.strictEqual(memberPrice(30), 25);\n    t2.assert.ok(true);\n  });\n});\n";
+    let source = "import test from \"node:test\";\nimport assert from \"node:assert/strict\";\nimport { memberPrice } from \"../src/member\";\ntest(\"member\", async (t) => {\n  await t.test(\"five off\", (t2) => {\n    assert.strictEqual(memberPrice(30), 25);\n    t2.diagnostic(\"checked\");\n  });\n});\n";
     assert_eq!(
         observed("tests/member.test.ts", source),
         vec![some("memberPrice(30)", "25", 6)]

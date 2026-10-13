@@ -39,18 +39,23 @@ it as false and its reasoning names the spec example.
 Each subject carries a `ripr.toml` that enables TypeScript beside Rust, the
 way a user opts a repository in today.
 
-Each case is a one-line edit under `cases/`, labeled with what the package's
-own tests discriminate. A behavior-preserving rewrite lists the StrykerJS 10
-mutants of the edited line (jest, vitest and mocha runners; node:test through
-the command runner) and the outcome of each; a behavior change is its own
-single mutant. Labels were taken with Node 22, jest 30.5, ts-jest 29.4,
+Each case is one edit under `cases/` (one changed line, except the
+`*-throw-second-replaced-line` and `*-throw-uneven-*-block` cases, which
+change a `throw` in the same block as a comment line that is reworded,
+deleted or joined by a second one), labeled with
+what the package's own tests discriminate. A behavior-preserving rewrite
+lists the StrykerJS 10 mutants of the edited line (jest, vitest and mocha
+runners; node:test through the command runner) and the outcome of each;
+a behavior change is its own single mutant. Labels were taken with Node 22, jest 30.5, ts-jest 29.4,
 vitest 5.0.3 (3.2.7 for `authored-ts-vitest-cart`, replayed under 5.0.3), mocha 12.0.3, chai 6.3
 and tsx 4.23. The two subjects handed over from the Python corpus thread
 (`authored-ts-nodetest-pricing`, `authored-ts-vitest-cart`) list hand-applied
 mutants instead of Stryker's, except their five boundary rewrites, which list
 Stryker's mutant set. All 185 mutant outcomes were then replayed by
 applying each mutant by hand and running the case's test command; every one
-agreed.
+agreed. The `*-throw-second-replaced-line` and `*-throw-uneven-*-block`
+cases (#7524) came later and were labeled by running `npx mocha` on the
+stored and the edited package.
 
 ## Layout
 
@@ -99,6 +104,14 @@ Re-run the case's mutants against the stored subject before re-blessing with
 `cargo xtask verdict-corpus bless --language typescript`.
 
 ## Relabel history
+
+The awaited-root repair of 2026-10-13 (RIPR-SPEC-0243 rule 1) moves only
+`nodetest-spec0234-ex23-await-test` from `limited` / `no_static_path` to
+`credited` / `exposed`. The original subject, runtime label and labeling
+observation are unchanged. A fresh Node v24.19.0 / tsx 4.23.15 replay passed
+all 13 baseline tests and failed only `price` after changing `amount - 10`
+to `amount - 20`, with actual 130 versus expected 140. The row records that
+its static verdict changed since labeling.
 
 The boundary relabel of 2026-10-04 (#6686, `a985857`) moved twelve
 boundary cases: their `behavior_preserving_rewrite` edits became operand

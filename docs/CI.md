@@ -4,6 +4,40 @@ CI should protect correctness without making ordinary contribution slow or
 noisy. Default CI is advisory for static exposure findings until calibration and
 configuration are mature enough to support opt-in failure policies.
 
+## Python wheel applicability (#4987)
+
+The Python wheel workflow retains its broad PR paths and ordinary manual
+qualification. Its lightweight `applicability` job independently runs the
+product-free `cargo policy check-workflows` before selecting expensive work.
+Only a diff confined to `policy/workflow_allowlist.txt`, with a unique unchanged
+wheel-owned record and unambiguous parsed records at both endpoints, can skip
+`build-wheel` and its two pip/uv consumers. Record comparison uses
+`merge-base(event base, event head)` to event head, matching three-dot selection.
+The validator keeps its existing duplicate-record policy; applicability retains
+all records and treats duplicate normalized keys as uncertainty.
+
+Wheel record additions, deletions, renames or changes, mixed diffs, other ledgers,
+product/package/xtask changes, workflow/selector edits and unavailable or malformed
+history retain qualification. Failed/skipped applicability or missing outputs
+also retain qualification, while cancellation still stops expensive work.
+Consumers explicitly require a successful wheel build and a non-cancelled run,
+including after an applicability failure; that failure remains visible.
+A source-identical pre-#7411 policy dispatcher is recognized by its Git blob
+identity and conservatively qualifies with a diagnostic. Other dispatcher
+versions execute the selector normally; source inspection, candidate identity,
+command or malformed-output failures stay failures. Selector output is validated
+before publishing the decision. The separate `mcp_evidence_pair` manual dispatch
+has no applicability dependency and remains independently reachable. Distribution
+source checks remain inside qualifying wheel work; Windows and the broader
+#4633/#4493 programme retain their existing contracts.
+
+The expected avoidance for an eligible unrelated-ledger event is one release
+wheel build and two consumers, offset by the lightweight policy/selection job.
+No measured runner-time savings are claimed. Local controls execute the actual
+workflow shell with the production policy binary and real Git histories, and
+exercise the checked-in job predicates and dependency wiring; they do not claim
+hosted Actions or wheel qualification.
+
 ## Verification Economics Policy
 
 CI is a product surface. A contributor should be able to tell what ran, why it
@@ -144,8 +178,8 @@ Every CI-efficiency PR should show evidence appropriate to the edited surface:
 
 ### PR Planning
 
-Every pull request should eventually get a cheap CI forecast before heavier
-lanes run. The planned `target/ci/ci-plan.json` artifact should record:
+A future CI forecast must establish qualification decision value before it
+earns automatic execution. The planned `target/ci/ci-plan.json` artifact should record:
 
 - changed files;
 - detected risk packs;
@@ -166,13 +200,13 @@ PR Plan
 - To run all: add full-ci
 ```
 
-The active PR Plan workflow is structural advisory today: it runs on opened,
-synchronized, reopened, labeled, and unlabeled pull requests, writes the
-changed-file list locally, and writes a placeholder step summary. To avoid
-routine artifact churn, it uploads the changed-file list only on failure or
-when the PR is labeled `full-ci`. Until the numeric planner exists, authors
-should still fill the PR template's CI economics section for CI-affecting
-changes.
+The automatic PR Plan placeholder is retired under #4987. It had no decision
+output or downstream qualification consumer. Its changed-file and ledger-presence
+diagnostic remains an optional [local recipe](ci/pr-plan.md#local-advisory-diagnostic).
+Candidate shaping uses the existing `pr-ready`, `check-fast`, `precommit`, and
+`check-pr` owners; no planner or new Ready advisory lane is installed.
+`cargo xtask ci plan` and the numeric forecast remain planned. Authors should
+still fill the PR template's CI economics section for CI-affecting changes.
 
 ### Risk Packs
 
@@ -226,7 +260,7 @@ artifacts are grouped by family:
 
 | Family | Expected paths |
 | --- | --- |
-| `ci-plan` | `target/ripr/reports/pr-plan-changes.txt`, `target/ci/ci-plan.json`, `target/ci/ci-actuals.json` |
+| `ci-plan` | `target/ci/ci-plan.json`, `target/ci/ci-actuals.json` (planned) |
 | `ripr-evidence` | `target/ripr/reports/index.md`, `target/ripr/reports/repo-exposure.json`, `target/ripr/reports/repo-sarif.json` |
 | `editor-agent-loop` | `target/ripr/reports/operator-cockpit.{json,md}`, `target/ripr/reports/agent-receipt.json`, `target/ripr/workflow/agent-seam-packets.json`, `target/ripr/workflow/workflow.json`, `target/ripr/workflow/commands.md`, `target/ripr/workflow/agent-status.{json,md}`, `target/ripr/workflow/agent-review-summary.{json,md}`, `target/ripr/workflow/agent-packet.json`, `target/ripr/workflow/agent-brief.json`, `target/ripr/workflow/agent-verify.json`, plus compatibility copies under `target/ripr/agent/` |
 | `release-readiness` | package lists, publish dry-run transcript, VSIX package proof, server archive proof |
@@ -252,8 +286,8 @@ Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) when watching a
 specific PR through hosted checks, branch freshness, Droid/advisory status, and
 merge execution.
 
-The `pr-plan-changes.txt` file is the current structural advisory artifact;
-the `target/ci/ci-plan.json` forecast remains planned. The `editor-agent-loop`
+PR Plan has no hosted artifact producer after retirement; the optional local
+diagnostic is not a qualification artifact. The `editor-agent-loop`
 paths reflect the current split between the local bulk packet envelope
 (`agent-seam-packets.json`) and generated CI's focused agent artifacts under
 `target/ripr/agent/`.
@@ -616,12 +650,14 @@ synthetic success replaces it. Runner-minute savings remain unmeasured until a
 natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
 checks parsed event/config contracts, not hosted provider execution.
 
-- Open PRs as Draft (`gh pr create --draft`), then mark them Ready. A PR opened
-  directly as Ready never receives a `ready_for_review` event and never gets
-  the required check.
-- A push after Ready leaves the new head without the required check. Convert
-  to Draft and mark Ready again once the push is final. If the PR had
-  auto-merge armed, check that it is still armed after the toggle.
+- Open PRs as Draft (`gh pr create --draft`), then follow the
+  [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
+  requesting qualification. A PR opened directly as Ready never receives a
+  `ready_for_review` event and never gets the required check.
+- A push after Ready leaves the new head without the required check. Return to
+  Draft and refresh affected proof and review through the same handoff before
+  another Ready transition. Reassess exact-head merge prerequisites before
+  rearming auto-merge.
 - Labels such as `full-ci` take effect at the next Ready transition, not when
   they are added.
 
@@ -953,10 +989,11 @@ dropped delivery from a post-Ready push, but its summary row carries each PR's
 a glance. A head mutated after Ready has revoked its own admission
 and must not be qualified by a lighter branch-head dispatch (which skips the
 `pull_request`-scoped PR-evidence steps). Before re-toggling, check merge
-conflicts first: query the PR's `mergeable_state`; `dirty` means merge `main`
-into the branch first, and only then convert the PR to Draft and mark it Ready
-for review again, which runs the full Ready-triggered qualification on the
-exact head and also recovers a dropped delivery. The required check, not run existence, is the
+conflicts first: query the PR's `mergeable_state`; `dirty` means repair the
+conflict while Draft, then apply the shared
+[Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before requesting
+qualification for the composed head. That handoff also governs recovery from a
+dropped delivery. The required check, not run existence, is the
 discriminator: any `Ripr Rust Small Result` check run on the head SHA is a
 real qualification attempt on that exact head. That check run is created only
 when the `result` job starts, after every implementation job (up to 120
@@ -998,7 +1035,6 @@ EM self-hosted runners.
 | `security.yml` `cargo-deny` | `em-ci-tiny` | `rust-tiny` |
 | `source-of-truth.yml`, `badge-endpoints.yml` | `em-ci-tiny` | `rust-tiny` |
 | `security.yml` `dependency-review` | `em-ci-nano` | `policy-nano` |
-| `pr-plan.yml` | `em-ci-nano` | `workflow-nano` |
 | `droid-review`, `droid`, `droid-security-scan` | `em-ci-review` | `droid-review` |
 
 All self-hosted lanes carry the `trusted-pr` label and keep their existing

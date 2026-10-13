@@ -1,0 +1,48 @@
+{
+  "case_id": "py-pytest-receipt-format",
+  "subject_id": "authored-py-pytest-pricing",
+  "diff": "cases/py-pytest-receipt-format.diff",
+  "anchor": {
+    "file": "pricing/receipts.py",
+    "line": 6
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "output_text",
+  "test_shape": "pytest_capsys_exact_output",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "print(f\"Total: {total_cents / 100:.1f}\")",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "tests/test_pricing.py::test_receipt_prints_dollars",
+        "equivalence_review": "not equivalent: 1250 cents prints \"Total: 12.5\" instead of \"Total: 12.50\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_receipt_prints_dollars compares capsys.readouterr().out exactly, an output oracle under RIPR-SPEC-0028, so printing 12.5 instead of 12.50 fails it. The test reaches the owner as `pricing.print_receipt`, through the package re-export. ripr reports weakly_exposed, a false actionable verdict. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#36"
+  ]
+}

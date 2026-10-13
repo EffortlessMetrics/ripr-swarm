@@ -17,7 +17,11 @@ Start here:
   Changed behavior: storage,
   Analyzer limit: No clear propagation path from changed behavior to an observable sink
   Related test: tests/lower.rs:4 lower_ast_only_checks_name
-  Next step: Escalate to real mutation testing or deep static analysis for this probe.
+  Next step: Trace the changed value to its output or effect, and inspect what the related test
+    actually checks. If it has an assertion, inspect exactly what that assertion observes. Add or
+    strengthen a test only if this inspection finds a gap. Compare the original and changed
+    implementations with a focused run using the project's configured test runner (`cargo test` for
+    ordinary Cargo tests). Static classification may remain unknown.
   Evidence: reach yes · infection yes · propagation unknown · observation yes · discriminator weak
     - reach yes: Related tests appear to reach lower_statement: lower_ast_only_checks_name
     - infection yes: Reachable tests can plausibly activate this changed behavior

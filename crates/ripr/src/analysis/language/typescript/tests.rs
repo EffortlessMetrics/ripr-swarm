@@ -3767,6 +3767,7 @@ fn extract_tests_records_safe_mock_payload_shapes() {
     expect(sink.record).toHaveBeenCalledWith("ready");
     expect(sink.record).toHaveBeenCalledWith({ status: "ok" });
     expect(sink.record).toHaveBeenCalledTimes(1);
+    expect(sink.record).toHaveBeenCalledWith("ready", 2);
 });
 "#,
     );
@@ -3787,6 +3788,7 @@ fn extract_tests_records_safe_mock_payload_shapes() {
             Some("expect(sink.record).toHaveBeenCalledWith(\"ready\")".to_string()),
             Some("expect(sink.record).toHaveBeenCalledWith({ status: \"ok\" })".to_string()),
             Some("expect(sink.record).toHaveBeenCalledTimes(1)".to_string()),
+            Some("expect(sink.record).toHaveBeenCalledWith(\"ready\", 2)".to_string()),
         ]
     );
 }
@@ -3799,7 +3801,7 @@ fn extract_tests_keeps_ambiguous_mock_payload_shapes_unbounded() {
     expect(sink.record).toHaveBeenCalledWith(status);
     expect(sink.record).toHaveBeenCalledWith({ status });
     expect(sink.record).toHaveBeenCalledWith(...args);
-    expect(sink.record).toHaveBeenCalledWith("ready", "extra");
+    expect(sink.record).toHaveBeenCalledWith("ready", status);
     expect(sink[method]).toHaveBeenCalledWith("ready");
     expect(getSink()).toHaveBeenCalledTimes(1);
 });
@@ -15746,8 +15748,13 @@ fn undercredit_4103_owner_extraction_records_default_export_fact() {
 
 mod commonjs_export_tests;
 mod directory_specifier_tests;
+mod dropped_term_tests;
 mod error_payload_tests;
+mod instance_class_tests;
+mod literal_matcher_tests;
+mod lookup_table_tests;
 mod loop_declared_tests;
+mod match_object_tests;
 mod mock_form_tests;
 mod mocked_callee_tests;
 mod module_entry_tests;

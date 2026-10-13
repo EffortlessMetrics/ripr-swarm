@@ -155,6 +155,11 @@ pub(crate) fn write_check_artifact(
 /// unresolvable recorded diff source, or identity mismatch is a typed error;
 /// there is no silent fallback to recompute.
 ///
+/// String compatibility wrapper around [`load_findings_for_reuse_core`];
+/// the typed core owns the refusal family (`check_artifact_unusable`,
+/// #7331) and Display is a pure projection of `detail`, so stderr prose is
+/// unchanged either way.
+///
 /// `asserted_base` is the explicitly passed `--base` value, when any; an
 /// explicitly passed `--diff` is read from `input.diff_file`. Both are
 /// assertions verified against the recorded diff source, not overrides.
@@ -164,46 +169,80 @@ pub(crate) fn load_findings_for_reuse(
     config: &RiprConfig,
     asserted_base: Option<&str>,
 ) -> Result<Vec<Finding>, String> {
+    load_findings_for_reuse_core(path, input, config, asserted_base).map_err(Into::into)
+}
+
+/// Typed core of [`load_findings_for_reuse`]: every fail-closed branch
+/// constructs its refusal family directly (#7331). A named artifact that is
+/// unreadable, malformed, foreign, or identity-mismatched is one family —
+/// `check_artifact_unusable` — with the exact human diagnostic as `detail`,
+/// so a `ripr context --json --from` refusal names the family instead of the
+/// honest fallback. Consumers match [`crate::core_error::CheckFailureKind`]
+/// structurally, never message text.
+pub(crate) fn load_findings_for_reuse_core(
+    path: &Path,
+    input: &CheckInput,
+    config: &RiprConfig,
+    asserted_base: Option<&str>,
+) -> Result<Vec<Finding>, crate::core_error::CoreError> {
     let text = std::fs::read_to_string(path).map_err(|err| {
-        format!(
+        crate::core_error::CoreError::check_artifact_unusable(format!(
             "check artifact at {} not found or unreadable: {err}",
             path.display()
-        )
+        ))
     })?;
     let value: serde_json::Value = serde_json::from_str(&text).map_err(|err| {
-        format!(
+        crate::core_error::CoreError::check_artifact_unusable(format!(
             "check artifact at {} is malformed: invalid JSON: {err}",
             path.display()
-        )
+        ))
     })?;
     match value.get("schema_version").and_then(|v| v.as_str()) {
         Some(CHECK_ARTIFACT_SCHEMA_VERSION) => {}
         Some(other) => {
-            return Err(format!(
-                "check artifact at {} has unsupported schema_version {other:?} (expected {CHECK_ARTIFACT_SCHEMA_VERSION:?}); re-run `ripr check --write-artifact` with this ripr",
-                path.display()
+            return Err(crate::core_error::CoreError::check_artifact_unusable(
+                format!(
+                    "check artifact at {} has unsupported schema_version {other:?} (expected {CHECK_ARTIFACT_SCHEMA_VERSION:?}); re-run `ripr check --write-artifact` with this ripr",
+                    path.display()
+                ),
             ));
         }
         None => {
-            return Err(format!(
-                "check artifact at {} is malformed: missing schema_version",
-                path.display()
+            return Err(crate::core_error::CoreError::check_artifact_unusable(
+                format!(
+                    "check artifact at {} is malformed: missing schema_version",
+                    path.display()
+                ),
             ));
         }
     }
-    let artifact: CheckArtifactV1 = serde_json::from_value(value)
-        .map_err(|err| format!("check artifact at {} is malformed: {err}", path.display()))?;
+    let artifact: CheckArtifactV1 = serde_json::from_value(value).map_err(|err| {
+        crate::core_error::CoreError::check_artifact_unusable(format!(
+            "check artifact at {} is malformed: {err}",
+            path.display()
+        ))
+    })?;
     if artifact.tool != "ripr" {
-        return Err(format!(
-            "check artifact at {} was not written by ripr (tool {:?})",
-            path.display(),
-            artifact.tool
+        return Err(crate::core_error::CoreError::check_artifact_unusable(
+            format!(
+                "check artifact at {} was not written by ripr (tool {:?})",
+                path.display(),
+                artifact.tool
+            ),
         ));
     }
 
-    verify_scope_assertions(&artifact.identity.diff_source, input, asserted_base, path)?;
-    let current = build_identity_at_load(input, config, &artifact.identity, path)?;
-    verify_identity(&artifact, &current, path)?;
+    // The verification stages diagnose with plain strings; `?` would
+    // flatten them into the untyped fallback identity. Map them into the
+    // artifact family so a scope or identity mismatch refuses as
+    // `check_artifact_unusable` like every structural branch above (#7331
+    // review).
+    verify_scope_assertions(&artifact.identity.diff_source, input, asserted_base, path)
+        .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
+    let current = build_identity_at_load(input, config, &artifact.identity, path)
+        .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
+    verify_identity(&artifact, &current, path)
+        .map_err(crate::core_error::CoreError::check_artifact_unusable)?;
     Ok(artifact.findings)
 }
 
@@ -330,6 +369,17 @@ fn verify_identity(
     ))
 }
 
+/// The `--from` + `--diff -` argv conflict, shared verbatim between the
+/// app-layer scope verification (library callers) and the CLI usage gate
+/// that keeps it prose-only: the stdin sentinel can never verify a
+/// recorded diff-file identity (RIPR-SPEC-0140).
+pub(crate) fn from_stdin_sentinel_scope_conflict() -> String {
+    "--from cannot be combined with --diff -: stdin cannot verify a recorded \
+     diff-file identity; save stdin to a named diff file and pass --diff \
+     <path> when creating and reusing the artifact"
+        .to_string()
+}
+
 /// Verify explicitly passed scope flags (`--diff`, `--base`) against the
 /// recorded diff source. They are assertions, never overrides.
 fn verify_scope_assertions(
@@ -343,10 +393,7 @@ fn verify_scope_assertions(
         // The stdin sentinel is not an assertion about a file named '-'.
         // Do not accept that unrelated file as evidence for supplied stdin.
         if asserted_diff == Path::new("-") {
-            return Err(
-                "--from cannot be combined with --diff -: stdin cannot verify a recorded diff-file identity; save stdin to a named diff file and pass --diff <path> when creating and reusing the artifact"
-                    .to_string(),
-            );
+            return Err(from_stdin_sentinel_scope_conflict());
         }
         let asserted = std::fs::canonicalize(asserted_diff).map_err(|err| {
             format!(

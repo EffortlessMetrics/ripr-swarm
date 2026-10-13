@@ -254,6 +254,10 @@ Top-level `status` must be one of:
 
 - `available`;
 - `missing`;
+- `malformed`: a JSON-kind artifact exists but does not parse as a JSON
+  object (or cannot be read), so existence alone never credits it (#7380);
+  it stays visible with its regeneration command and keeps the packet off
+  `pass`. Receipts discovered in the receipts directory use the same state;
 - `pass`;
 - `warn`;
 - `fail`;

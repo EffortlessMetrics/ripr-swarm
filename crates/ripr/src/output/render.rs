@@ -168,7 +168,8 @@ pub(crate) fn render_check_with_config_and_progress(
                         output.mode.as_str().to_string(),
                         output.base.clone(),
                         config,
-                    )?;
+                    )?
+                    .with_rust_corpus_key(report.corpus_key.as_ref());
                 repo_exposure::render_repo_exposure_json_with_context(
                     &report.classified,
                     report.limit_info.as_ref(),
@@ -629,7 +630,7 @@ fn ripr_plus_summary_from_disk(
     let report_path = output.root.join(TEST_EFFICIENCY_REPORT_RELATIVE);
     if !report_path.exists() {
         let warning = format!(
-            "missing {}; provide test-efficiency JSON before requesting a measured ripr+ badge; see docs/BADGE_ADOPTION.md",
+            "missing {}; ripr+ needs test-efficiency JSON and no public ripr command generates it yet (the only shipped producer is this repository's private cargo xtask); hand-author the documented minimum shape from real test measurements in docs/BADGE_ADOPTION.md or wait for the portable producer tracked in issue #7221",
             report_path.display()
         );
         eprintln!(

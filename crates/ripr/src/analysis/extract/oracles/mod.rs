@@ -1,12 +1,13 @@
 mod arguments;
 mod classify;
+mod pattern_admission;
 mod patterns;
 mod scan;
 
 pub(crate) use arguments::{
     assertion_oracle_text, equality_assertion_arguments, outer_assertion_condition,
 };
-pub(crate) use classify::classify_assertion;
+pub(crate) use classify::{classify_assertion, is_inequality_assertion};
 #[cfg(test)]
 pub(crate) use patterns::contains_macro_invocation;
 pub(crate) use patterns::{

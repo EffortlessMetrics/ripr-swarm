@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 5f23af7..950a892 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,7 +9,7 @@
+ }
+ 
+ pub fn line(label: &str, cents: u64) -> Line {
+-    Line { label: label.trim().to_string(), cents }
++    Line { label: label.trim().to_owned(), cents }
+ }
+ 
+ pub fn render(lines: &[Line]) -> String {

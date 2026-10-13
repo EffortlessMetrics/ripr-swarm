@@ -1,0 +1,58 @@
+{
+  "case_id": "namesakes-delay-sibling-file-test",
+  "subject_id": "authored-namesakes",
+  "diff": "cases/namesakes-delay-sibling-file-test.diff",
+  "anchor": {
+    "file": "src/heaters.rs",
+    "line": 9
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "match_arm",
+  "test_shape": "same_named_function_tested_in_sibling_file",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "Mode::Warm => 6,",
+        "mutated_line": "Mode::Warm => 6,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: heaters::delay(Warm) becomes 6"
+      },
+      {
+        "replacement": "Mode::Warm => 0,",
+        "mutated_line": "Mode::Warm => 0,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: heaters::delay(Warm) becomes 0"
+      },
+      {
+        "replacement": "Mode::Warm => 1,",
+        "mutated_line": "Mode::Warm => 1,",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: heaters::delay(Warm) becomes 1"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "heaters.rs tests only Mode::Cold; the Warm assertion lives in coolers.rs and its bare delay(..) binds coolers::delay through use super::*. Issue #6537.",
+  "labeling_observation": {
+    "ripr_commit": "8cdde3b",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "subject_id": "authored-lib-rstest",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against rstest 0.23.0 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "04007daca1401d99f181bc3c507037f9069ef0de98d187f31572ace8097abefa"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "59fa8d1fc781d90a72b0d6c3762aeea960d2064e156fbb1b6fb00cb5e9f81ce5"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "c159b306dd50ce4d548facafca8d6a0fb8ae96f1d41ec47ce821e7a9a3ce7e22"
+    }
+  ]
+}

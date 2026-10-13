@@ -40,17 +40,16 @@ const PILOT_RETRY_TIMEOUT_MS: u64 = 240_000;
 fn write_pilot_repo_exposure_json(
     path: &Path,
     input: &CheckInput,
-    config: &RiprConfig,
     classified: &[analysis::ClassifiedSeam],
     limit_info: Option<RepoExposureLimit<'_>>,
     generated_skip: Option<&output::repo_exposure::GeneratedRustSkip>,
-    population_differs_from_check: bool,
+    context: Option<&crate::agent::artifact::RepoExposureArtifactContext>,
 ) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, classified);
     let python_guidance =
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, classified);
     let write_failed = |err: String| format!("write {} failed: {err}", path.display());
-    if population_differs_from_check {
+    let Some(context) = context else {
         return write_pilot_file(
             path,
             output::repo_exposure::render_repo_exposure_json_with_limit(
@@ -61,17 +60,7 @@ fn write_pilot_repo_exposure_json(
                 generated_skip,
             ),
         );
-    }
-    // Base `None`: pilot's printed after-snapshot command passes no `--base`
-    // or `--diff`, so both snapshots intentionally carry no base under
-    // RIPR-SPEC-0084. Keep this explicit rather than coupling artifact
-    // identity to the `CheckInput` default.
-    let context = crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
-        input.root.clone(),
-        input.mode.as_str().to_string(),
-        None,
-        config,
-    )?;
+    };
     let mut render_error = None;
     output::file_write::write_with(path, |file| {
         let mut writer = std::io::BufWriter::new(file);
@@ -81,7 +70,7 @@ fn write_pilot_repo_exposure_json(
             ts_guidance.as_ref(),
             python_guidance.as_ref(),
             generated_skip,
-            &context,
+            context,
             &mut writer,
         ) {
             render_error = Some(err);
@@ -174,6 +163,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     } else {
         PilotAnalysisResult::Complete(analysis::ClassifiedSeamsReport {
             classified: Vec::new(),
+            corpus_key: None,
             limit_info: None,
             skipped_generated: Vec::new(),
             naming_only_skips: Vec::new(),
@@ -220,6 +210,7 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // manageable size.  `limit_info` carries whichever cap fired (pilot
     // budget wins when both fire; inventory limit is the outer bound).
     let mut classified = report.classified;
+    let corpus_key = report.corpus_key;
     let mut inventory_limit_info = report.limit_info;
     let generated_skip = output::repo_exposure::GeneratedRustSkip::from_paths(
         report.skipped_generated,
@@ -276,7 +267,9 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     // A snapshot holding seams `ripr check` never classifies is not the same
     // population as its after snapshot, so it is written without identity.
     let change_seams_added = folded.added > 0;
-    let current_change = current_change.with_seams_counted(&classified, folded.caveat_limit);
+    let current_change = current_change
+        .with_absent_file_limitations(folded.absent_file_limitations)
+        .with_seams_counted(&classified, folded.caveat_limit);
     let pilot_budget_info = analysis::apply_pilot_seam_budget(&mut classified, |entry| {
         current_change.keeps_past_budget(entry)
     })?;
@@ -336,14 +329,28 @@ pub(in crate::cli) fn pilot(args: &[String]) -> Result<(), String> {
     let ts_guidance = output::render::detect_ts_full_repo_guidance_pub(&input.root, &classified);
     let python_guidance =
         output::render::detect_python_repo_exposure_guidance_pub(&input.root, &classified);
+    // The existing context is available only for the check-comparable full
+    // population. Keep base None, matching pilot's printed after command.
+    let snapshot_context = if pilot_budget_truncated || change_seams_added {
+        None
+    } else {
+        Some(
+            crate::agent::artifact::RepoExposureArtifactContext::for_repo_exposure(
+                input.root.clone(),
+                input.mode.as_str().to_string(),
+                None,
+                &config,
+            )?
+            .with_rust_corpus_key(corpus_key.as_ref()),
+        )
+    };
     write_pilot_repo_exposure_json(
         &artifacts.repo_exposure_json,
         &input,
-        &config,
         &classified,
         repo_exposure_limit,
         generated_skip.as_ref(),
-        pilot_budget_truncated || change_seams_added,
+        snapshot_context.as_ref(),
     )?;
     write_pilot_file(
         &artifacts.repo_exposure_md,
@@ -399,7 +406,7 @@ fn classify_change_past_seam_limit(
     inventory_limited: bool,
     remaining_ms: u64,
     announce: bool,
-) -> Option<Result<Vec<analysis::ClassifiedSeam>, String>> {
+) -> Option<Result<analysis::ClassifiedChangeReport, String>> {
     if !inventory_limited {
         return None;
     }
@@ -915,6 +922,7 @@ mod tests {
                 crate::analysis::cancellation::checkpoint()?;
                 Ok(analysis::ClassifiedSeamsReport {
                     classified: Vec::new(),
+                    corpus_key: None,
                     limit_info: None,
                     skipped_generated: Vec::new(),
                     naming_only_skips: Vec::new(),
@@ -1159,7 +1167,7 @@ mod tests {
         // The inventory spent the deadline: an error, so the caveat stays.
         assert_eq!(
             classify_change_past_seam_limit(root, &config, &change, true, 0, false)
-                .map(|result| result.map(|classified| classified.len())),
+                .map(|result| result.map(|report| report.classified.len())),
             Some(Err("the inventory used pilot's whole deadline".to_string()))
         );
     }

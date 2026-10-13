@@ -42,6 +42,7 @@ pub(crate) fn snapshot_seam(
 /// production validator: the returned bytes always validate.
 pub(crate) fn mint_repo_exposure_snapshot(root: &Path, seams: Value) -> Result<String, String> {
     let context = crate::agent::artifact::RepoExposureArtifactContext {
+        corpus_key: None,
         root: root.to_path_buf(),
         mode: "draft".to_string(),
         base_revision: None,
