@@ -211,6 +211,25 @@ pub(crate) fn render_human_triage(
                     Some(finding) if finding.class == ExposureClass::Exposed => {
                         out.push_str(EXPOSED_PREVIEW_SAFE_ACTION);
                     }
+                    // #7384: TypeScript named limitations deliberately leave
+                    // `static_limit_kind` unset, so the structured branch above
+                    // never fires and this line fell through to generic
+                    // packet-contract jargon while the real reason sat in an
+                    // evidence line no human surface rendered. Name the
+                    // limitation and its real producer rationale, the way
+                    // `python_preview_safe_action` names a Python one.
+                    Some(finding)
+                        if matches!(
+                            finding.language,
+                            Some(LanguageId::TypeScript) | Some(LanguageId::JavaScript)
+                        ) && typescript_named_limitation_why(finding).is_some() =>
+                    {
+                        if let Some(why) = typescript_named_limitation_why(finding) {
+                            out.push_str(&format!(
+                                "  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields: {why}; resolve the limitation and rerun preview evidence before acting.\n"
+                            ));
+                        }
+                    }
                     Some(finding) if let Some(actionability) = not_ready.as_ref() => {
                         out.push_str(&packet_closed_preview_safe_action(
                             finding,
@@ -792,6 +811,20 @@ fn packet_closed_preview_safe_action(finding: &Finding, why_not_actionable: &str
     )
 }
 
+/// #7384: TypeScript named limitations are additive evidence lines of the
+/// form `typescript_limitation_why: <name> — <reason>`; they deliberately
+/// leave `static_limit_kind` unset (the #1496 slice scoped them to additive
+/// evidence). Read the real producer line back so the human safe-action
+/// surface can name the actual blocker instead of generic packet-contract
+/// jargon.
+fn typescript_named_limitation_why(finding: &Finding) -> Option<String> {
+    finding
+        .evidence
+        .iter()
+        .find_map(|line| line.strip_prefix("typescript_limitation_why: "))
+        .map(str::to_string)
+}
+
 /// #4216 row 1: Python has no structured preview packet, so the generic
 /// "complete the missing repair-packet fields" line told the operator to do
 /// something they cannot, and pilot, first-pr and status each routed back to
@@ -1118,7 +1151,49 @@ mod tests {
         Ok(())
     }
 
+    /// #7384: a TypeScript finding carrying a named limitation evidence line
+    /// must name that limitation in "Safe next action" (the surfacing Python
+    /// preview findings get for their static limitations), not fall through
+    /// to generic packet-contract jargon.
     #[test]
+    fn typescript_named_limitation_is_named_in_safe_next_action() -> Result<(), String> {
+        let mut finding = test_finding("finding:ts-helper-gated");
+        finding.language = Some(LanguageId::TypeScript);
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.evidence.push(
+            "typescript_limitation_why: typescript_oracle_helper_gated — the test calls              assertion helper `assertPriceBoundary(...)` around owner `computePrice`; the              adapter cannot inspect the helper body or establish its oracle semantics from              the test call site"
+                .to_string(),
+        );
+        let output = test_output(vec![finding.clone()]);
+        let triage = HumanTriage {
+            state: HumanTriageState::PreviewLimited,
+            selected: Some(&finding),
+            omitted: Vec::new(),
+        };
+        let mut out = String::new();
+        render_human_triage(
+            &mut out,
+            &triage,
+            &output,
+            &crate::config::RiprConfig::default(),
+            None,
+            CheckDiffProvenance::CommittedHistory,
+        );
+        if !out.contains("typescript_oracle_helper_gated") {
+            return Err(format!(
+                "safe next action must name the limitation, got:
+{out}"
+            ));
+        }
+        if out.contains("complete the missing repair-packet fields") {
+            return Err(format!(
+                "generic packet jargon must not shadow the named limitation, got:
+{out}"
+            ));
+        }
+        Ok(())
+    }
+
     fn check_adapter_names_scope_without_navigation() -> Result<(), String> {
         let output = test_output(Vec::new());
         let triage = HumanTriage {

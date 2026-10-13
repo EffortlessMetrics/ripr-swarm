@@ -11,7 +11,7 @@ Analysis outcome: findings below (analysis complete; complete_with_findings).
 
 Start here:
   State: preview language, advisory only (preview_limited)
-  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields; resolve the limitation and rerun preview evidence before acting.
+  Safe next action: preview-language evidence is advisory; the repair packet is blocked by the named static limitation, not by missing fields: typescript_mock_only_observer — the related test file uses jest.mock/vi.mock; the adapter cannot resolve what the mock substitutes so the observed behavior is opaque; resolve the limitation and rerun preview evidence before acting.
   File: src/pricing.ts:2
   Language: typescript
   Language status: preview
