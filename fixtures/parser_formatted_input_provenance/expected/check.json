@@ -1,0 +1,198 @@
+{
+  "schema_version": "0.2",
+  "tool": "ripr",
+  "mode": "fast",
+  "root": "fixtures/parser_formatted_input_provenance/input",
+  "summary": {"changed_rust_files":1,"probes":1,"findings":1,"exposed":0,"weakly_exposed":0,"reachable_unrevealed":0,"no_static_path":0,"infection_unknown":1,"propagation_unknown":0,"static_unknown":0,"changed_files_by_language":[{"language":"rust","files":1}]},
+  "analysis_outcome": {
+    "analysis_complete": true,
+    "outcome": {"schema_version":"0.1","kind":"complete_with_findings","identity":{"repository_identity":null,"root_identity":null,"config_identity":null,"base_revision":null,"input_identity":"sha256:4a332ddb953fba64e1f40b4be88ea3a81532addc1cbcb9284ab0f8f14ff9bfab","snapshot_identity":null,"git_candidate_subject":null},"counts":{"changed_file_count":1,"changed_line_count":2,"candidate_line_count":1,"probe_count":1,"finding_count":1},"limitations":[],"claim_boundary":"Static analysis outcome only; no correctness, test-adequacy, runtime-execution, or merge-readiness claim."}
+  },
+  "findings": [
+    {
+      "id": "probe:src_lib.rs:predicate:7ed3887e",
+      "canonical_gap_id": "gap:rust:src/lib.rs:parse_note:predicate_boundary:predicate:reason==lit727573745f6d6f64756c655f756e7265736f6c7665645f746172676574",
+      "canonical_gap_group_size": 1,
+      "canonical_gap": {
+        "id": "gap:rust:src/lib.rs:parse_note:predicate_boundary:predicate:reason==lit727573745f6d6f64756c655f756e7265736f6c7665645f746172676574",
+        "language": "rust",
+        "file": "src/lib.rs",
+        "owner": "parse_note",
+        "behavior_kind": "predicate_boundary",
+        "probe_kind": "predicate",
+        "normalized_discriminator": "reason==lit727573745f6d6f64756c655f756e7265736f6c7665645f746172676574"
+
+      },
+      "classification": "infection_unknown",
+      "severity": "warning",
+      "confidence": 0.51,
+      "probe": {
+        "id": "probe:src_lib.rs:predicate:7ed3887e",
+        "family": "predicate",
+        "delta": "control",
+        "file": "./src/lib.rs",
+        "line": 44,
+        "expression": "reason == \"rust_module_unresolved_target\""
+       },
+      "ripr": {
+        "reach": {"state":"yes","confidence":"medium","summary":"Related tests appear to reach parse_note: other_parser_condition, unresolved_target_location_is_required_and_positive, unrelated_plan_and_gate_oracles"},
+        "infect": {"state":"unknown","confidence":"low","summary":"Changed boundary input is unresolved: boundary operand `reason` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown"},
+        "propagate": {"state":"yes","confidence":"medium","summary":"Changed behavior appears to influence returned value: None"},
+        "observe": {"state":"no","confidence":"medium","summary":"No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)"},
+        "discriminate": {"state":"no","confidence":"medium","summary":"No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)"}
+       },
+      "evidence_path": ["reach yes: Related tests appear to reach parse_note: other_parser_condition, unresolved_target_location_is_required_and_positive, unrelated_plan_and_gate_oracles", "infection unknown: Changed boundary input is unresolved: boundary operand `reason` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "propagation yes: Changed behavior appears to influence returned value: None", "observation no: No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "discriminator no: No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "local flow reaches returned value: None (line 47)", "related test src/lib.rs:62 unresolved_target_location_is_required_and_positive uses none unknown oracle", "related test src/lib.rs:91 unrelated_plan_and_gate_oracles uses strong exact value oracle: assert_eq!(plan_reason, \"rust_module_unresolved_target\");", "related test src/lib.rs:91 unrelated_plan_and_gate_oracles uses weak relational check oracle: assert!(gate_passed);", "related test src/lib.rs:85 other_parser_condition uses none unknown oracle: assert!(parse_note(\"ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\").is_some());", "source assertion argument value \"rust_module_unresolved_target\" at line 66", "source assertion argument value \"src/a.rs:12\" at line 66", "source function argument value line = \"src/a.rs:12\" at line 67", "source assertion argument value \"{context}\" at line 79", "source function argument value line = \"ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\" at line 86", "source function argument value line = \"ripr: 0 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\" at line 87", "source assertion argument value \"rust_module_unresolved_target\" at line 94"],
+      "flow_sinks": [
+        {"kind":"return_value","text":"None","line":47}
+      ],
+      "evidence": ["Changed behavior appears to influence returned value: None", "Changed boundary input is unresolved: boundary operand `reason` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "No statically established assertion can discriminate the changed behavior; execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "Related tests appear to reach parse_note: other_parser_condition, unresolved_target_location_is_required_and_positive, unrelated_plan_and_gate_oracles", "assertion not credited: `assert_eq!` in unresolved_target_location_is_required_and_positive at src/lib.rs:66: an argument of `assert_eq!` contains a `return`, `?` or nested macro that may leave the test before the comparison"],
+      "missing": ["Changed boundary input is unresolved: boundary operand `reason` is a local or computed value ripr cannot map to the related tests' inputs, so it cannot tell which side of the boundary a test reaches; activation/infection is unknown", "No detected boundary input for the changed predicate", "No statically established oracle: assertion execution or macro binding is unestablished (rust_assertion_context_unestablished)", "No strong discriminator was detected"],
+      "assertion_texts": {
+        "66": "assert_eq!(\n            parse_note(&make(\"src/a.rs:12\")),\n            Some(vec![(\n                \"src/a.rs:12\".into(),\n                \"rust_module_unresolved_target\".into()\n            )])\n        );",
+        "67": "parse_note(&make(\"src/a.rs:12\")),",
+        "79": "assert!(parse_note(&make(context)).is_none(), \"{context}\");",
+        "86": "assert!(parse_note(\"ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\").is_some());",
+        "87": "assert!(parse_note(\"ripr: 0 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\").is_none());",
+        "94": "assert_eq!(plan_reason, \"rust_module_unresolved_target\");"
+      },
+      "activation": {
+        "observed_values": [
+          {
+            "line": 66,
+            "value": "\"rust_module_unresolved_target\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 66,
+            "value": "\"src/a.rs:12\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 67,
+            "value": "line = \"src/a.rs:12\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 79,
+            "value": "\"{context}\"",
+            "context": "assertion_argument"
+          },
+          {
+            "line": 86,
+            "value": "line = \"ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 87,
+            "value": "line = \"ripr: 0 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\"",
+            "context": "function_argument"
+          },
+          {
+            "line": 94,
+            "value": "\"rust_module_unresolved_target\"",
+            "context": "assertion_argument"
+          }
+        ],
+        "missing_discriminators": [
+        ]
+      },
+      "observed_values": [
+        {
+          "line": 66,
+          "value": "\"rust_module_unresolved_target\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 66,
+          "value": "\"src/a.rs:12\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 67,
+          "value": "line = \"src/a.rs:12\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 79,
+          "value": "\"{context}\"",
+          "context": "assertion_argument"
+        },
+        {
+          "line": 86,
+          "value": "line = \"ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 87,
+          "value": "line = \"ripr: 0 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\"",
+          "context": "function_argument"
+        },
+        {
+          "line": 94,
+          "value": "\"rust_module_unresolved_target\"",
+          "context": "assertion_argument"
+        }
+      ],
+      "missing_discriminators": [
+      ],
+      "related_tests_total": 4,
+      "related_tests": [
+        {
+          "name": "unresolved_target_location_is_required_and_positive",
+          "file": "src/lib.rs",
+          "line": 62,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_credited",
+          "why": "assertion not credited: ripr could not establish that it runs as the standard macro"
+        },
+        {
+          "name": "unrelated_plan_and_gate_oracles",
+          "file": "src/lib.rs",
+          "line": 91,
+          "oracle_strength": "strong",
+          "oracle_kind": "exact_value",
+          "oracle": "assert_eq!(plan_reason, \"rust_module_unresolved_target\");",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "unrelated_plan_and_gate_oracles",
+          "file": "src/lib.rs",
+          "line": 91,
+          "oracle_strength": "weak",
+          "oracle_kind": "relational_check",
+          "oracle": "assert!(gate_passed);",
+          "relation_reason": "same_test_file",
+          "relation_confidence": "medium",
+          "miss": "no_call_path",
+          "why": "no call to the changed code found; linked by file location only"
+        },
+        {
+          "name": "other_parser_condition",
+          "file": "src/lib.rs",
+          "line": 85,
+          "oracle_strength": "none",
+          "oracle_kind": "unknown",
+          "oracle": "assert!(parse_note(\"ripr: 1 Rust module composition limitation(s): src/a.rs:rust_module_ambiguous_parent; affected module contexts remain fail-closed.\").is_some());",
+          "relation_reason": "direct_owner_call",
+          "relation_confidence": "high",
+          "miss": "assertion_not_observing",
+          "why": "asserts, but not on the changed value"
+        }
+      ],
+      "stop_reasons": ["infection_evidence_unknown"],
+      "oracle_kind": "exact_value",
+      "oracle_strength": "strong",
+      "recommended_next_step": "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "suggested_next_action": "Trace the related test input through the local or computed operand, including default/empty cases, to check whether the change matters. ripr.toml does not support fixture/builder value mappings. Add or strengthen a test only if this inspection finds a gap. Compare the original and changed implementations with a focused run using the project's configured test runner (`cargo test` for ordinary Cargo tests). Static classification may remain unknown.",
+      "language": "rust",
+      "source_currentness": "candidate_current"
+    }
+  ]
+}
