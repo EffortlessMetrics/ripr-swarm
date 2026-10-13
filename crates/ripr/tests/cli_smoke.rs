@@ -22957,6 +22957,11 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist() 
             ));
         }
         let stderr = String::from_utf8_lossy(&miss.stderr);
+        if !stderr.contains("no finding matched") {
+            return Err(format!(
+                "{command} miss must reach selector matching (the `no finding matched` diagnostic), not fail earlier:\n{stderr}"
+            ));
+        }
         if stderr.contains("Uncommitted tracked edits exist") || stderr.contains(&retry) {
             return Err(format!(
                 "{command} miss on a clean tree must not claim uncommitted edits:\n{stderr}"
@@ -22989,6 +22994,11 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist() 
         args.push("probe:src/lib.rs:error_path:deadbeef");
         let miss = run_ripr(&args);
         let stderr = String::from_utf8_lossy(&miss.stderr);
+        if !stderr.contains("no finding matched") {
+            return Err(format!(
+                "{command} supplied-scope control must reach selector matching (the `no finding matched` diagnostic), not fail earlier:\n{stderr}"
+            ));
+        }
         if stderr.contains("Uncommitted tracked edits exist") {
             return Err(format!(
                 "{command} miss on a supplied scope must not claim the uncommitted edits were excluded:\n{stderr}"
