@@ -72,7 +72,7 @@ use crate::analysis::syntax::{
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
     AstNode, SyntaxNode, TextRange,
-    ast::{self, HasArgList, HasGenericArgs, HasModuleItem, HasName},
+    ast::{self, HasArgList, HasAttrs, HasGenericArgs, HasModuleItem, HasName},
 };
 use rayon::prelude::*;
 use std::cell::{OnceCell, RefCell};
@@ -1867,6 +1867,7 @@ impl OwnerReturnPin {
         if contains_as_whole_word(&mask_comments_and_strings(expected), &self.name)
             || (owner_named_outside(test, &assertion.text, &self.name)
                 && expected_binding_calls_owner(test, expected, &self.name))
+            || expected_reaches_fixture(test, expected)
         {
             return false;
         }
@@ -5841,7 +5842,17 @@ fn test_receiver_type(
     owner: OwnerScope<'_>,
     syntax: &OwnerPinSyntax,
 ) -> Option<ReceiverType> {
-    let bindings = receiver_let_bindings(test, receiver)?;
+    let Some(bindings) = receiver_let_bindings(test, receiver) else {
+        let annotation = parameter_annotation(test, receiver)?;
+        return named_or_slice(
+            &annotation,
+            test,
+            test_source,
+            index,
+            imports_foreign,
+            owner,
+        );
+    };
     if bindings.is_empty() {
         // No `let` binds the receiver, so it is a path expression: a unit
         // struct names its own value (`Unit.advance()`).
@@ -5873,6 +5884,52 @@ fn test_receiver_type(
         }
     }
     bound
+}
+
+/// #6578: the declared type of a test parameter `[mut] receiver: T` that
+/// nothing in the body rebinds. rstest fills an unmarked parameter from the
+/// same-named `#[fixture]`, and its annotation types the receiver the way
+/// `let receiver: T = ..;` does: whatever the fixture builds, the call
+/// dispatches on `T`. Whether the test runs its body at all is the owner-pin
+/// syntax gate's decision, not this one. `None` when the name is not such a
+/// parameter or a `let`, closure, `for` or match pattern binds it again.
+fn parameter_annotation(test: &TestSummary, receiver: &str) -> Option<String> {
+    let masked = mask_comments_and_strings(&test.body);
+    let fns = whole_word_offsets(&masked, "fn");
+    let [fn_at] = fns.as_slice() else {
+        return None;
+    };
+    let open = fn_at + masked[*fn_at..].find('(')?;
+    let close = matching_close(&masked, open, b'(', b')')?;
+    let mut blanked = masked.clone();
+    blanked.replace_range(open + 1..close, &" ".repeat(close - open - 1));
+    if binds_outside_let(&blanked, receiver) || let_patterns_bind(&blanked, receiver) {
+        return None;
+    }
+    let parse = parse_clean_source_file(&test.body)?;
+    let function = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::Fn::cast)?;
+    let list = function.param_list()?;
+    if list.self_param().is_some() {
+        return None;
+    }
+    let mut annotation = None;
+    for param in list.params() {
+        let ast::Pat::IdentPat(pat) = param.pat()? else {
+            continue;
+        };
+        if pat.name()?.text() != receiver {
+            continue;
+        }
+        if pat.ref_token().is_some() || pat.pat().is_some() || annotation.is_some() {
+            return None;
+        }
+        annotation = Some(param.ty()?.syntax().text().to_string());
+    }
+    annotation
 }
 
 /// The text after the name in every `let [mut] receiver [: T] = ..;` of the
@@ -6072,6 +6129,76 @@ fn expected_binding_calls_owner(test: &TestSummary, expected: &str, name: &str) 
         }
     }
     false
+}
+
+/// #6578: whether the expected operand may carry a value an rstest fixture
+/// built. A fixture parameter (one not marked `#[case]`) is filled by a
+/// `#[fixture]` function outside the test body, which may call the owner
+/// (`#[fixture] fn want() -> u32 { weight(4) }` makes
+/// `assert_eq!(weight(4), want)` compare the owner with itself), and the
+/// body-only owner scan cannot see it. In a test with a fixture, the
+/// expected operand must name no fixture and nothing the body binds: a
+/// body binding may hold a fixture value through a `let`, an assignment or
+/// a mutation (`let mut w = 0; w = want;`, `v.push(want)`), so any `let`,
+/// closure, `for` or match binding of an expected word fails closed, a
+/// rebound `#[case]` parameter included. Unrebound `#[case]` parameters
+/// (rows the syntax gate holds to literals) and names bound outside the
+/// test (constants) pass.
+fn expected_reaches_fixture(test: &TestSummary, expected: &str) -> bool {
+    // Most tests take no parameters: skip the parse.
+    let masked = mask_comments_and_strings(&test.body);
+    let parameters = whole_word_offsets(&masked, "fn")
+        .first()
+        .and_then(|offset| {
+            let open = offset + masked[*offset..].find('(')?;
+            let close = matching_close(&masked, open, b'(', b')')?;
+            Some((open, close))
+        });
+    // No readable `fn` signature holds no fixture parameter; the owner-pin
+    // syntax gate admits rstest only on a parsed `fn`.
+    let Some((open, close)) = parameters else {
+        return false;
+    };
+    if masked[open + 1..close].trim().is_empty() {
+        return false;
+    }
+    let Some(parse) = parse_clean_source_file(&test.body) else {
+        return true;
+    };
+    let Some(function) = parse.tree().syntax().descendants().find_map(ast::Fn::cast) else {
+        return true;
+    };
+    let Some(list) = function.param_list() else {
+        return false;
+    };
+    let mut fixtures = BTreeSet::new();
+    for param in list.params() {
+        let Some(ast::Pat::IdentPat(pat)) = param.pat() else {
+            return true;
+        };
+        let Some(name) = pat.name() else {
+            return true;
+        };
+        if !param
+            .attrs()
+            .any(|attr| attr.simple_name().as_deref() == Some("case"))
+        {
+            fixtures.insert(name.text().to_string());
+        }
+    }
+    if fixtures.is_empty() {
+        return false;
+    }
+    let mut body = masked.clone();
+    body.replace_range(open + 1..close, &" ".repeat(close - open - 1));
+    mask_comments_and_strings(expected)
+        .split(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+        .filter(|word| is_plain_identifier(word))
+        .any(|word| {
+            fixtures.contains(word)
+                || binds_outside_let(&body, word)
+                || let_patterns_bind(&body, word)
+        })
 }
 
 /// #6974 review: whether any `let` pattern in `masked` may bind `word`:
