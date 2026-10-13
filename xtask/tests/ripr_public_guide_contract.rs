@@ -275,13 +275,20 @@ fn first_run_guard_does_not_credit_a_later_correct_example() -> Result<(), Strin
 /// exist in this repo. The README already routes problem reports to
 /// EffortlessMetrics/ripr-swarm/issues; QUICKSTART must not send the same
 /// reader to EffortlessMetrics/ripr, which has neither template.
+fn markdown_link(label: &str, url: &str) -> String {
+    format!("[{label}]({url})")
+}
+
 fn assert_quickstart_report_links(doc: &str) -> Result<(), String> {
     let troubleshooting = doc_section(doc, "## Troubleshooting")?;
-    for required in [SWARM_FIRST_RUN_REPORT, SWARM_WRONG_VERDICT] {
+    for (label, url) in [
+        ("first run report", SWARM_FIRST_RUN_REPORT),
+        ("wrong finding report", SWARM_WRONG_VERDICT),
+    ] {
         assert_contains(
             "docs/QUICKSTART.md troubleshooting",
             &troubleshooting,
-            required,
+            &markdown_link(label, url),
         )?;
     }
     for forbidden in [RIPR_FIRST_RUN_REPORT, RIPR_WRONG_VERDICT] {
@@ -335,6 +342,25 @@ fn quickstart_report_links_reject_the_release_repo_and_a_dropped_close() -> Resu
     if assert_quickstart_report_links(&without_close).is_ok() {
         return Err(
             "report-link guard accepted a troubleshooting section with no report URLs".to_string(),
+        );
+    }
+    let unclickable = QUICKSTART_DOC
+        .replace(
+            &markdown_link("first run report", SWARM_FIRST_RUN_REPORT),
+            &format!(
+                "[first run report](https://github.com/EffortlessMetrics/ripr-swarm/issues) {SWARM_FIRST_RUN_REPORT}"
+            ),
+        )
+        .replace(
+            &markdown_link("wrong finding report", SWARM_WRONG_VERDICT),
+            &format!(
+                "[wrong finding report](https://github.com/EffortlessMetrics/ripr-swarm/issues) {SWARM_WRONG_VERDICT}"
+            ),
+        );
+    if assert_quickstart_report_links(&unclickable).is_ok() {
+        return Err(
+            "report-link guard credited a plain-text swarm URL whose markdown link pointed elsewhere"
+                .to_string(),
         );
     }
     Ok(())
