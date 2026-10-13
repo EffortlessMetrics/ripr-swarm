@@ -557,7 +557,7 @@ fn visible_rewrite(old: &str, new: &str) -> bool {
         let number = |text: &str| text.replace('_', "").parse::<f64>().ok();
         number(old)
             .zip(number(new))
-            .is_none_or(|(old, new)| old != new)
+            .is_none_or(|(old, new)| old.partial_cmp(&new) != Some(std::cmp::Ordering::Equal))
     } else if contains_expression(new, old) {
         literal_arithmetic(old, new)
     } else if contains_expression(old, new) {
