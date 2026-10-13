@@ -2213,7 +2213,7 @@ mod tests {
         };
         let on_parameter = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Self::A => 1,\n        _ => 0,\n    }\n}\n";
         // In `impl Router`, `Self::A` is a `Router` constant: it may equal
-        // `Kind::B`, so a `Kind::B` input is not proven to reach `_`.
+        // `Kind::B`, so a `Kind::B` input is not shown to reach `_`.
         assert_eq!(
             judged("Router", on_parameter, "Router::f(Kind::B)")?,
             Some(ArmSelection::Unknown)

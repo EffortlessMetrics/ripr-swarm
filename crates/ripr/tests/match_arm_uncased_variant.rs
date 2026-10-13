@@ -175,7 +175,7 @@ fn a_declared_single_letter_enum_names_the_unselected_variant_arm() -> Result<()
 fn an_imported_single_letter_type_names_no_arm() -> Result<(), String> {
     // The same crate with `Kind` declared in another file: the owner's file
     // does not show `A` is a variant, so `Kind::A` may be a constant and the
-    // wildcard is not proven unselected.
+    // wildcard is not shown unselected.
     let lib = format!(
         "mod kinds;\npub use kinds::Kind;\n\n{}",
         body(WILDCARD_ARMS, "i32")
