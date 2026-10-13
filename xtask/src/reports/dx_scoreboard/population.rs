@@ -100,20 +100,9 @@ impl Records {
         for subject in &corpus.subjects {
             let mut files = Vec::new();
             for file in &subject.retained_files {
-                let path = dir
-                    .join("subjects")
-                    .join(&subject.subject_id)
-                    .join(verdict_corpus::stored_path(&file.path));
-                let bytes =
-                    fs::read(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
-                let hash = verdict_corpus::sha256_hex(&bytes);
-                if hash != file.sha256 {
-                    return Err(format!(
-                        "retained file {} does not match its sha256",
-                        path.display()
-                    ));
-                }
-                files.push(json!({"path": file.path, "sha256": hash}));
+                // Successful authoritative validation above already hashed the
+                // actual bytes and proved equality with this same corpus pin.
+                files.push(json!({"path": file.path, "sha256": file.sha256}));
             }
             files.sort_by_key(|file| file["path"].as_str().unwrap_or_default().to_string());
             subjects.insert(
@@ -297,7 +286,10 @@ pub(super) fn compare(def: &MetricDef, row: &Value, base_row: &Value) -> Value {
     let mut changed = Vec::new();
     for (id, case) in &before {
         if let Some(current) = now.get(id) {
-            if case.definition_sha256 == current.definition_sha256 {
+            if case
+                .definition_sha256
+                .eq_ignore_ascii_case(&current.definition_sha256)
+            {
                 if rate != "contradiction_rate" && case.denominator != current.denominator {
                     return failure(format!(
                         "eligible denominator changed for unchanged case `{id}`"

@@ -87,6 +87,25 @@ fn added_passing_cases_cannot_hide_a_retained_regression() -> Result<(), String>
 }
 
 #[test]
+fn digest_case_cannot_exclude_worsening_common_cases() -> Result<(), String> {
+    let mut baseline = cases(100, 0);
+    for case in &mut baseline.cases[..3] {
+        case.definition_sha256 = case.definition_sha256.to_ascii_uppercase();
+    }
+    let report = report(baseline, cases(100, 3))?;
+    assert_eq!(report["gate"]["status"], "fail");
+    assert_eq!(
+        report["metrics"][0]["baseline"]["common"]["cases_total"],
+        100
+    );
+    assert_eq!(
+        report["metrics"][0]["baseline"]["changed_definitions"],
+        json!([])
+    );
+    Ok(())
+}
+
+#[test]
 fn actual_recorded_retained_58_to_74_still_fails() -> Result<(), String> {
     let baseline: Value = serde_json::from_str(include_str!(
         "../../../../benchmarks/dx_scoreboard/testdata/7552-original-baseline-with-population.json"
