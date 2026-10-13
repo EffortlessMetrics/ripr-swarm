@@ -650,12 +650,14 @@ synthetic success replaces it. Runner-minute savings remain unmeasured until a
 natural lifecycle is observed. `xtask/tests/pr_readiness_workflow_contract.rs`
 checks parsed event/config contracts, not hosted provider execution.
 
-- Open PRs as Draft (`gh pr create --draft`), then mark them Ready. A PR opened
-  directly as Ready never receives a `ready_for_review` event and never gets
-  the required check.
-- A push after Ready leaves the new head without the required check. Convert
-  to Draft and mark Ready again once the push is final. If the PR had
-  auto-merge armed, check that it is still armed after the toggle.
+- Open PRs as Draft (`gh pr create --draft`), then follow the
+  [Draft to Ready handoff](PR_AUTOMATION.md#draft-to-ready-handoff) before
+  requesting qualification. A PR opened directly as Ready never receives a
+  `ready_for_review` event and never gets the required check.
+- A push after Ready leaves the new head without the required check. Return to
+  Draft and refresh affected proof and review through the same handoff before
+  another Ready transition. Reassess exact-head merge prerequisites before
+  rearming auto-merge.
 - Labels such as `full-ci` take effect at the next Ready transition, not when
   they are added.
 
