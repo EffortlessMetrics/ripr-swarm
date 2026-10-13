@@ -12098,6 +12098,9 @@ id = "RIPR-SPEC-0197"
 name = "Owner-return pins through calls that name the owner"
 spec = "docs/specs/RIPR-SPEC-0197-owner-return-pins.md"
 tests = [
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::library_export_import_extraction_is_bounded_to_selected_files",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::library_export_without_module_names_does_not_extract_imports",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::library_export_imports_in_another_file_still_defeat_a_module_name",
   "crates/ripr/tests/owner_pin_execution.rs::fallible_literal_runtime_pair_and_message_escape_execute_the_real_test",
   "crates/ripr/tests/owner_pin_execution.rs::fallible_literal_cli_preserves_unrelated_os_bytes_and_refuses_relevant_inputs",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs",
