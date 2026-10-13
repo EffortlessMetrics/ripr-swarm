@@ -10145,6 +10145,7 @@ tests = [
   "crates/ripr/tests/cache_clear_safety.rs::compact_classified_cache_cargo_config_change_matches_cold_and_preserves_revert_hit",
   "crates/ripr/src/analysis/seam_cache.rs::tests::unavailable_cargo_identity_refuses_valid_full_and_compact_cache_payloads",
   "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::unavailable_cargo_inputs_refuse_current_key_without_claiming_corpus_provenance",
+  "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::cargo_environment_names_preserve_platform_semantics_and_raw_values",
   "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::cargo_input_identity_covers_ancestor_home_legacy_and_absence",
   "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::cargo_input_identity_refuses_unreadable_and_oversized_configuration",
   "crates/ripr/src/analysis/facts/index_tests.rs::file_function_membership_retains_only_handle_capacity",

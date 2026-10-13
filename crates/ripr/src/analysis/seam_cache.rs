@@ -5054,7 +5054,10 @@ mod tests {
         key.workspace_manifests_hash
             .push_str(CARGO_INPUT_IDENTITY_UNAVAILABLE);
         assert!(!key.is_reusable());
-        assert!(key.require_reusable().is_err());
+        match key.require_reusable() {
+            Err(reason) => assert!(reason.contains(CARGO_INPUT_IDENTITY_UNAVAILABLE)),
+            Ok(()) => return Err("unavailable key passed admission".to_string()),
+        }
         for label in ["full-unavailable", "compact-unavailable"] {
             let dir = isolated_dir(label);
             let cache = RepoSeamFactCache::at_dir(dir.clone());
@@ -5072,16 +5075,17 @@ mod tests {
                 cache.load_classified_seams_with_fallback(&key),
                 CacheLoad::Miss
             ));
-            assert!(
-                cache
-                    .store_classified_seams_with_limit(&key, &[sample_classified()], None, 10)
-                    .is_err()
-            );
-            assert!(
-                cache
-                    .store_compact_classified_seams_with_limit(&key, &[sample_classified()], 10)
-                    .is_err()
-            );
+            for result in [
+                cache.store_classified_seams_with_limit(&key, &[sample_classified()], None, 10),
+                cache.store_compact_classified_seams_with_limit(&key, &[sample_classified()], 10),
+            ] {
+                match result {
+                    Err(reason) => assert!(reason.contains(CARGO_INPUT_IDENTITY_UNAVAILABLE)),
+                    Ok(_) => {
+                        return Err("unavailable key published classified evidence".to_string());
+                    }
+                }
+            }
             std::fs::remove_dir_all(dir).map_err(|error| error.to_string())?;
         }
         Ok(())

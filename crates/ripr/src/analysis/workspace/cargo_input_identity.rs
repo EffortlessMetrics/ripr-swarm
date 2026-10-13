@@ -28,23 +28,37 @@ pub(crate) fn cargo_input_identity(root: &Path) -> Option<String> {
         }
     };
     let mut environment = std::env::vars_os()
-        .filter(|(name, _)| {
-            name.as_encoded_bytes().starts_with(b"CARGO_")
-                || ["RUSTUP_HOME", "RUSTUP_TOOLCHAIN", "PATH"]
-                    .iter()
-                    .any(|key| name == key)
+        .filter_map(|(name, value)| {
+            selected_environment_name(name.as_encoded_bytes(), cfg!(windows))
+                .map(|name| (name, value.as_encoded_bytes().to_vec()))
         })
         .collect::<Vec<_>>();
     environment.sort();
     let mut identity = Vec::new();
     append(&mut identity, b"cargo-metadata-configuration-v1");
     for (name, value) in environment {
-        append(&mut identity, name.as_encoded_bytes());
-        append(&mut identity, value.as_encoded_bytes());
+        append(&mut identity, &name);
+        append(&mut identity, &value);
     }
     let paths = configuration_paths(&root, Some(&cargo_home));
     append_configuration_files(&mut identity, paths)?;
     Some(crate::config::bytes_fingerprint(&identity))
+}
+
+/// Windows preserves spelling while resolving environment names without case.
+/// Normalize selected names there; Unix retains its case-sensitive contract.
+fn selected_environment_name(name: &[u8], case_insensitive: bool) -> Option<Vec<u8>> {
+    let name = if case_insensitive {
+        name.to_ascii_uppercase()
+    } else {
+        name.to_vec()
+    };
+    (name.starts_with(b"CARGO_")
+        || matches!(
+            name.as_slice(),
+            b"RUSTUP_HOME" | b"RUSTUP_TOOLCHAIN" | b"PATH"
+        ))
+    .then_some(name)
 }
 
 fn configuration_paths(root: &Path, cargo_home: Option<&Path>) -> BTreeSet<PathBuf> {
@@ -115,6 +129,54 @@ fn append_configuration_files(identity: &mut Vec<u8>, paths: BTreeSet<PathBuf>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cargo_environment_names_preserve_platform_semantics_and_raw_values() {
+        for name in [b"Path".as_slice(), b"path", b"PATH"] {
+            assert_eq!(
+                selected_environment_name(name, true),
+                Some(b"PATH".to_vec())
+            );
+        }
+        assert_eq!(
+            selected_environment_name(b"cargo_build_target", true),
+            Some(b"CARGO_BUILD_TARGET".to_vec())
+        );
+        assert_eq!(
+            selected_environment_name(b"rustup_toolchain", true),
+            Some(b"RUSTUP_TOOLCHAIN".to_vec())
+        );
+        for name in [
+            b"Path".as_slice(),
+            b"path",
+            b"cargo_build_target",
+            b"rustup_toolchain",
+        ] {
+            assert_eq!(selected_environment_name(name, false), None);
+        }
+        assert_eq!(
+            selected_environment_name(b"CARGO_BUILD_TARGET", false),
+            Some(b"CARGO_BUILD_TARGET".to_vec())
+        );
+        assert_eq!(selected_environment_name(b"UNRELATED", true), None);
+        let identity = |name: &[u8], value: &[u8]| {
+            let mut result = Vec::new();
+            if let Some(name) = selected_environment_name(name, true) {
+                append(&mut result, &name);
+                append(&mut result, value);
+            }
+            result
+        };
+        assert_eq!(
+            identity(b"Path", b"tool-bin"),
+            identity(b"PATH", b"tool-bin")
+        );
+        assert_ne!(
+            identity(b"Path", b"tool-bin"),
+            identity(b"Path", b"missing-bin")
+        );
+        assert_ne!(identity(b"Path", b"\xff"), identity(b"Path", b"\xfe"));
+    }
 
     #[test]
     fn cargo_input_identity_covers_ancestor_home_legacy_and_absence() -> Result<(), String> {
@@ -207,10 +269,16 @@ mod tests {
         )
         .map_err(|error| error.to_string())?;
         let config = crate::config::RiprConfig::default();
-        assert!(
-            super::super::super::seam_inventory::workspace_cache_key_at_with_config(&root, &config)
-                .is_err()
-        );
+        match super::super::super::seam_inventory::workspace_cache_key_at_with_config(
+            &root, &config,
+        ) {
+            Err(reason) => assert!(reason.contains("cargo_configuration_identity_unavailable")),
+            Ok(_) => {
+                return Err(
+                    "unavailable configuration returned a comparable current key".to_string(),
+                );
+            }
+        }
         let report =
             super::super::super::seam_inventory::inventory_classified_seams_report_at_with_config(
                 &root, &config,
