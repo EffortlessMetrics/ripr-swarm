@@ -173,7 +173,7 @@ fn human_full_source_unicode_combining() -> TestResult {
     assert_unicode_source(
         "source-unicode-combining",
         &format!("{}e\u{301}Z", "a".repeat(168)),
-        &format!("  after:  \"{}e\u{301}\n          Z\"\n", "a".repeat(168),),
+        &format!("  after:  \"{}e\u{301}\n          Z\"\n", "a".repeat(168)),
     )
 }
 
@@ -182,7 +182,7 @@ fn human_full_source_unicode_emoji() -> TestResult {
     assert_unicode_source(
         "source-unicode-emoji",
         &format!("{}👩‍🔬Z", "a".repeat(167)),
-        &format!("  after:  \"{}👩‍🔬\n          Z\"\n", "a".repeat(167),),
+        &format!("  after:  \"{}👩‍🔬\n          Z\"\n", "a".repeat(167)),
     )
 }
 
