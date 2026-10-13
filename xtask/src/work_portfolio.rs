@@ -3073,6 +3073,7 @@ pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> Str
     body.push('\n');
 
     body.push_str("## Candidates (ranked, advisory)\n\n");
+    body.push_str("Ranking keys use ascending lexicographic; ties by `candidate_id`.\n\n");
     body.push_str(&md_table_row(&[
         "rank".to_string(),
         "candidate".to_string(),
@@ -3080,8 +3081,9 @@ pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> Str
         "stage".to_string(),
         "lane".to_string(),
         "confidence".to_string(),
+        "ranking key".to_string(),
     ]));
-    body.push_str("\n| --- | --- | --- | --- | --- | --- |\n");
+    body.push_str("\n| --- | --- | --- | --- | --- | --- | --- |\n");
     for (rank, candidate) in snapshot.candidates.iter().enumerate() {
         body.push_str(&md_table_row(&[
             (rank + 1).to_string(),
@@ -3090,6 +3092,10 @@ pub(crate) fn work_portfolio_markdown(snapshot: &WorkPortfolioSnapshotV1) -> Str
             wire_label(&candidate.lifecycle_stage),
             candidate.lane.clone(),
             wire_label(&candidate.confidence),
+            candidate
+                .ranking_key
+                .map(|key| format!("`{key:?}`"))
+                .unwrap_or_else(|| "unavailable (legacy artifact)".to_string()),
         ]));
         body.push('\n');
     }
@@ -3887,6 +3893,16 @@ mod tests {
         let explain_json: Value = serde_json::from_str(&work_portfolio_json(&explain)?)
             .map_err(|error| error.to_string())?;
         assert_eq!(explain_json["candidate"], rows[0]);
+        let portfolio_md = work_portfolio_markdown(&snapshot);
+        assert!(portfolio_md.contains("| ranking key |"));
+        assert!(portfolio_md.contains("ascending lexicographic; ties by `candidate_id`"));
+        for (key, id) in &expected {
+            let row = portfolio_md
+                .lines()
+                .find(|line| line.contains(id))
+                .ok_or("portfolio Markdown candidate row missing")?;
+            assert!(row.contains(&format!("| `{key:?}` |")));
+        }
         for markdown in [
             work_candidates_markdown(&view),
             work_explain_markdown(&explain),
@@ -3910,6 +3926,11 @@ mod tests {
         assert_eq!(legacy.ranking_key, None);
         let roundtrip = serde_json::to_value(&legacy).map_err(|error| error.to_string())?;
         assert_eq!(roundtrip, row);
+        let mut legacy_snapshot = snapshot.clone();
+        legacy_snapshot.candidates[0].ranking_key = None;
+        assert!(
+            work_portfolio_markdown(&legacy_snapshot).contains("| unavailable (legacy artifact) |")
+        );
         assert!(
             candidate_markdown(&legacy, "# Legacy")
                 .contains("ranking key: unavailable (legacy artifact)")
