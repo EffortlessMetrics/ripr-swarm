@@ -3,6 +3,7 @@
 //! This checks interpreter/entrypoint selection, not native RIPR qualification.
 
 use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -83,7 +84,17 @@ fn run_fixture(
         args,
         cwd,
         envs,
-        &["BASH_ENV", "ENV"],
+        &[
+            "BASH_ENV",
+            "ENV",
+            "PIP_TARGET",
+            "PIP_PREFIX",
+            "PIP_ROOT",
+            "PIP_USER",
+            "PIP_PYTHON",
+            "PYTHONHOME",
+            "PYTHONPATH",
+        ],
         timeout,
         "local wheelhouse README fixture",
     )?;
@@ -116,7 +127,6 @@ fn exercise_recipe(
         "#!/bin/sh\nprintf 'ambient\\n' > \"$RIPR_DECOY_EXECUTED\"\nprintf 'ambient-unrelated-ripr\\n'\n",
     )
     .map_err(|error| format!("write decoy: {error}"))?;
-    use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&decoy, fs::Permissions::from_mode(0o755))
         .map_err(|error| format!("chmod decoy: {error}"))?;
 
