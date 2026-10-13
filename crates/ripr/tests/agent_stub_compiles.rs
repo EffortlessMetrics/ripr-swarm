@@ -690,6 +690,20 @@ fn kind_refusal_command(root: &Path, at: &str, kind: Option<&str>) -> Command {
     stub
 }
 
+/// Split a `--json` not-found refusal's stderr into its `rust_test_stub`
+/// refused envelope and the human decision prose that follows it (#7390).
+fn refusal_envelope_and_prose(stderr: &str) -> Result<(serde_json::Value, &str), String> {
+    let boundary = stderr
+        .find("\nripr: agent stub:")
+        .ok_or_else(|| format!("the refusal needs its envelope and prose: {stderr}"))?;
+    let document: serde_json::Value =
+        serde_json::from_str(&stderr[..boundary]).map_err(|error| error.to_string())?;
+    assert_eq!(document["kind"], "rust_test_stub");
+    assert_eq!(document["state"], "refused");
+    assert_eq!(document["refusal"]["kind"], "seam_not_found");
+    Ok((document, &stderr[boundary + 1..]))
+}
+
 #[test]
 fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), String> {
     let scratch = kind_refusal_crate(KIND_REFUSAL_SOURCE)?;
@@ -726,11 +740,12 @@ fn kind_not_found_refusal_preserves_the_requested_probe_family() -> Result<(), S
     assert_eq!(refused.status.code(), Some(3));
     assert!(
         refused.stdout.is_empty(),
-        "a not-found decision has no JSON"
+        "a not-found decision has no stdout JSON"
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
+    let (_, prose) = refusal_envelope_and_prose(&stderr)?;
     assert!(
-        stderr.starts_with(
+        prose.starts_with(
             "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
         ),
         "the refusal must echo the requested probe family: {stderr}"
@@ -877,10 +892,11 @@ fn kind_nearest_hint_filters_before_the_cap_and_recovers_the_error_stub() -> Res
     assert_eq!(refused.status.code(), Some(3));
     assert!(
         refused.stdout.is_empty(),
-        "a not-found decision has no JSON"
+        "a not-found decision has no stdout JSON"
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (_, tail) = stderr
+    let (_, prose) = refusal_envelope_and_prose(&stderr)?;
+    let (_, tail) = prose
         .split_once("; nearest: ")
         .ok_or_else(|| format!("the refusal needs a nearest section: {stderr}"))?;
     let (nearest, _) = tail
@@ -973,10 +989,11 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
     assert_eq!(refused.status.code(), Some(3));
     assert!(
         refused.stdout.is_empty(),
-        "a not-found decision has no JSON"
+        "a not-found decision has no stdout JSON"
     );
     let stderr = String::from_utf8_lossy(&refused.stderr);
-    let (_, tail) = stderr
+    let (_, prose) = refusal_envelope_and_prose(&stderr)?;
+    let (_, tail) = prose
         .split_once("; nearest: ")
         .ok_or_else(|| format!("the refusal needs a nearest section: {stderr}"))?;
     let (nearest, _) = tail
@@ -987,7 +1004,7 @@ fn kind_not_found_without_a_matching_family_suggests_no_other_seams() -> Result<
         "a file with only other families must not offer their seams: {stderr}"
     );
     assert!(
-        stderr.starts_with(
+        prose.starts_with(
             "ripr: agent stub: no error_path seam ripr can stub is in the function at src/lib.rs:2; nearest: ",
         ),
         "{stderr}"
