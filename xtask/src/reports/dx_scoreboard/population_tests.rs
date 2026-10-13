@@ -691,10 +691,35 @@ fn oracle_fixture() -> Result<PathBuf, String> {
 #[test]
 fn oracle_committed_rates_keep_labeled_and_unlabeled_cases() -> Result<(), String> {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/rust-verdict-corpus");
+    let expected_ids: BTreeSet<_> = super::super::verdict_corpus::load_corpus(&dir)?
+        .cases
+        .into_iter()
+        .map(|case| case.case_id)
+        .collect();
+    assert!(
+        expected_ids.len() > 34,
+        "control needs unlabeled source cases"
+    );
     let records = population::Records::load(&dir)?;
     for (rate, numerator) in [("oracle_accuracy", 26), ("oracle_overclaim_rate", 5)] {
         let population = records.population(&format!("oracle_accuracy.{rate}"))?;
         assert_eq!(population.totals()?, (numerator, 34));
+        assert_eq!(
+            population
+                .cases
+                .iter()
+                .map(|case| case.case_id.clone())
+                .collect::<BTreeSet<_>>(),
+            expected_ids
+        );
+        assert_eq!(
+            population
+                .cases
+                .iter()
+                .filter(|case| case.denominator == 0)
+                .count(),
+            expected_ids.len() - 34
+        );
         assert_eq!(
             population
                 .cases
@@ -842,6 +867,35 @@ fn oracle_labels_change_only_the_oracle_scoring_identity() -> Result<(), String>
     assert_eq!(
         compared["metrics"][0]["baseline"]["changed_definitions"],
         json!([case.case_id])
+    );
+    for case in &corpus.cases {
+        let case_path = dir.join("cases").join(format!("{}.json", case.case_id));
+        let row_path = dir
+            .join("expected/rows")
+            .join(format!("{}.json", case.case_id));
+        let mut definition = read_json(&case_path)?;
+        let mut row = read_json(&row_path)?;
+        definition
+            .as_object_mut()
+            .ok_or("case object missing")?
+            .remove("expected_oracle");
+        row.as_object_mut()
+            .ok_or("row object missing")?
+            .remove("oracle");
+        fixture_json(&case_path, &definition)?;
+        fixture_json(&row_path, &row)?;
+    }
+    let records = population::Records::load(&dir)?;
+    assert_eq!(records.population("abstention_rate")?, verdict_before);
+    assert!(
+        records
+            .population("oracle_accuracy.oracle_accuracy")
+            .is_err_and(|err| err.contains("missing corpus rate"))
+    );
+    assert!(
+        records
+            .population("oracle_accuracy.oracle_overclaim_rate")
+            .is_err_and(|err| err.contains("missing corpus rate"))
     );
     fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
     Ok(())
