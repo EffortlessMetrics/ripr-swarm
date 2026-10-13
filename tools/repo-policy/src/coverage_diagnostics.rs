@@ -1,4 +1,5 @@
 //! Failure-only, bounded read-only evidence. Producer attribution stays unresolved.
+mod binary_ids;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
@@ -504,7 +505,8 @@ fn candidate_record(
         Ok(json!({"name": name, "artifact": artifact,
             "original_bytes": info.len(), "retained_bytes": data.len(), "complete": data.len() as u64 == info.len(),
             "prefix_sha256": format!("{:x}", Sha256::digest(&data)), "first_256_hex": hex(&data[..data.len().min(256)]),
-            "pid_hint": pid, "module_hint": module, "error_family": error_family}))
+            "pid_hint": pid, "module_hint": module, "error_family": error_family,
+            "binary_ids": binary_ids::profile_ids(&data)}))
     })();
     attempt.unwrap_or_else(
         |error| json!({"name": name, "error": short_error(error), "error_family": error_family}),
@@ -798,6 +800,7 @@ fn capture(
             "No supported malformed-profile diagnostic identified a validated replay input; no profile bytes were retained."
         );
     }
+    report["executable_mapping"] = binary_ids::associate(profiles, &captured);
     report["captured"] = json!(captured);
     report["merge_replay"] = replay.clone();
     report["merge_replay_scope"] =
@@ -826,7 +829,8 @@ fn capture(
         for candidate in report["captured"].as_array_mut().into_iter().flatten() {
             if candidate.get("error").is_none() {
                 candidate["first_256_hex"] = json!("");
-                candidate["prefix_sha256"] = json!("");
+                // Keep the retained profile hash even when optional display
+                // detail must be compacted to protect the original manifest.
             }
         }
         manifest = serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?;
