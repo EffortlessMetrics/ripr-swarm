@@ -38,8 +38,10 @@ The Python preview adapter:
 - finds the pytest `test_send_receipt_notifies_callback` related test,
 - records `assert_called_once_with(...)` as `mock_expectation` / `medium`,
 - emits Python preview metadata,
-- keeps the finding `weakly_exposed` because mock-call evidence is not an
-  exact-value discriminator.
+- classifies the finding `exposed`: the mock is passed for the called
+  parameter `callback`, and the expectation pins the changed literal
+  argument (RIPR-SPEC-0238 rule 17, #7586). A rewrite the pinned call can
+  miss, such as wrapping the argument in `abs(...)`, stays `weakly_exposed`.
 
 ## Must Not
 
