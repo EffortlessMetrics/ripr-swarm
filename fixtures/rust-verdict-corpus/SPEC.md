@@ -82,6 +82,14 @@ examples and the uncovered example numbers per spec; `validate` and `check`
 fail when covered falls below `floor`; in CI the xtask test
 `committed_ledger_is_valid_and_meets_its_floor` enforces it.
 
+A case may also carry `expected_oracle` (`kind`, `strength`, optional
+`test`, `spec`): the related-test oracle kind and strength a spec adopts.
+The report's `oracle_accuracy` section scores ripr's strongest reported
+entry for that test as `match`, `overclaim`, `underclaim`, `kind_mismatch`
+or `unobserved`, apart from the verdict rates; `check` fails when matches
+fall below `[oracle] match_floor` or overclaims rise above
+`[oracle] overclaim_ceiling` in `spec-coverage.toml`.
+
 ## Must Not
 
 - Run mutation testing, `cargo test`, or network access (`check` and
@@ -129,3 +137,8 @@ and `failing_test` must be one exact test name. Upstream cases replay with
 `--checkouts <dir>` holding `<dir>/<subject_id>` at the pinned commit, with
 its dependencies already fetched, because cargo runs offline. Run it
 on every new or relabeled case before opening the PR.
+
+When a spec states the oracle kind and strength for a case's related test,
+add `expected_oracle`, re-bless, and set `[oracle]` `match_floor` and
+`overclaim_ceiling` to the report's counts. When ripr's oracle reading
+improves, `check` prints the tighter numbers to commit.

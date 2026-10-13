@@ -3102,7 +3102,11 @@ tests = [
   "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_is_changed_sink_token_when_oracle_observes_changed_literal",
   "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_is_orthogonal_for_strong_oracle_on_different_sink",
   "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_is_unknown_without_strong_oracle",
-  "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_for_module_owner_preserves_observes_decision",
+  "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_for_module_owner_requires_a_crediting_assertion",
+  "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_do_not_credit_a_discarded_short_function_result",
+  "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_preserve_a_short_function_output_assertion",
+  "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_do_not_credit_module_comparison_text",
+  "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_keep_ordinary_module_imports_conservative",
   "crates/ripr/src/analysis/language/python/python_tests.rs::sink_alignment_changed_sink_join_format",
   "crates/ripr/src/analysis/language/python/python_tests.rs::analyze_diff_suppresses_multiline_docstring_interior_change",
   "crates/ripr/src/analysis/language/python/python_tests.rs::analyze_diff_does_not_hide_code_replaced_by_multiline_docstring",
@@ -5247,6 +5251,7 @@ id = "RIPR-SPEC-0057"
 name = "RIPR swarm repair loop"
 spec = "docs/specs/RIPR-SPEC-0057-ripr-swarm-repair-loop.md"
 tests = [
+  "editors/vscode/test/suite/actionable_queue_provenance.test.ts",
   "xtask/src/tests/rust_corpus_projection.rs::genuine_workspace_projection_regeneration_retains_nonempty_fallback_and_corpus_authority",
   "crates/ripr/src/domain/command_spec.rs::tests::broad_snapshot_recognition_preserves_permitted_command_word_spellings",
   "xtask::tests::ripr_swarm_plan_ranks_ready_packets_and_blocks_missing_context",
@@ -5333,6 +5338,9 @@ code = [
   "xtask/src/command.rs",
   "xtask/src/dispatch.rs",
   "xtask/src/main.rs",
+  "editors/vscode/src/client.ts",
+  "editors/vscode/test/actionableQueueFixture.ts",
+  "editors/vscode/test/runTest.ts",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0057-ripr-swarm-repair-loop.md",
@@ -8868,6 +8876,13 @@ spec = "docs/specs/RIPR-SPEC-0120-rust-macro-wrapped-assertion-limitation.md"
 tests = [
   "crates/ripr/src/analysis/language/rust/oracles.rs::tests::macro_wrapped_assertion_limit_names_reachable_unobserved_assertion_macro",
   "crates/ripr/src/analysis/language/rust/oracles.rs::tests::macro_wrapped_assertion_limit_ignores_known_assertion_macros",
+  "crates/ripr/src/analysis/language/rust/oracles.rs::tests::owner_scoped_assertion_scan_requires_an_owner_call_in_the_arguments",
+  "crates/ripr/src/analysis/language/rust/oracles.rs::tests::weakly_exposed_limit_needs_a_complete_direct_window_and_a_proximity_oracle",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::an_owner_call_inside_an_unread_assertion_macro_names_the_macro_limit",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::an_unread_assertion_macro_without_the_owner_call_keeps_the_gap",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_direct_test_with_a_recognized_oracle_keeps_the_gap",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::an_owner_call_quoted_by_stringify_keeps_the_gap",
+  "crates/ripr/src/analysis/language/rust/proximity_reach_tests.rs::a_trait_default_method_owner_keeps_the_gap",
   "crates/ripr/src/analysis/language/rust/oracles.rs::tests::known_assertion_macros_are_not_unresolved_even_when_path_qualified",
   "crates/ripr/src/analysis/language/rust/oracles.rs::tests::cross_language_guard_does_not_fire_for_exposed_or_no_static_path_even_with_ffi",
   "crates/ripr/src/domain/language.rs::tests::static_limit_kind_wire_strings_are_stable",
@@ -13291,6 +13306,19 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_tampered_retained_lockfile",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_requires_a_lockfile_on_authored_registry_subjects",
   "xtask/src/reports/verdict_corpus_tests.rs::manifest_pins_registry_crate_reads_version_pins_not_path_deps",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::classify_names_each_of_the_five_outcomes",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::strength_ranks_smoke_below_weak_below_medium_below_strong",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::the_claim_is_the_strongest_entry_and_prefers_the_expected_kind_on_a_tie",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::observed_oracles_read_the_labeled_test_across_every_anchored_finding",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::validation_rejects_unknown_kinds_strengths_and_malformed_labels",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::ledger_needs_a_gate_within_the_labeled_count_and_real_spec_examples",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::gate_fails_below_the_floor_or_above_the_ceiling_and_invites_tightening",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::oracle_scores_stay_out_of_the_verdict_rates",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::committed_labels_are_valid_and_the_expected_report_meets_the_gate",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::the_gate_arms_only_for_a_whole_corpus_run_with_an_oracle_table",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::a_corpus_without_a_ledger_refuses_oracle_labels",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::a_label_that_could_be_elided_or_names_two_tests_is_refused",
+  "xtask/src/reports/verdict_corpus_oracle_tests.rs::the_coverage_board_refuses_labels_without_an_oracle_table",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",
@@ -13299,6 +13327,7 @@ code = [
   "xtask/src/reports/verdict_corpus.rs",
   "xtask/src/reports/verdict_corpus_coverage.rs",
   "xtask/src/reports/verdict_corpus_relabel.rs",
+  "xtask/src/reports/verdict_corpus_oracle.rs",
 ]
 outputs = [
   "fixtures/rust-verdict-corpus/expected/rows",
@@ -13308,6 +13337,8 @@ metrics = [
   "verdict_corpus_false_actionable_rate",
   "verdict_corpus_contradiction_rate",
   "verdict_corpus_spec_example_coverage",
+  "verdict_corpus_oracle_accuracy",
+  "verdict_corpus_oracle_overclaim_rate",
 ]
 
 [[behavior]]
@@ -14107,8 +14138,17 @@ metrics = [
 id = "RIPR-SPEC-0238"
 name = "Python oracle and reach rules"
 spec = "docs/specs/RIPR-SPEC-0238-python-oracle-and-reach-rules.md"
-tests = []
-fixtures = []
+tests = [
+  "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_do_not_credit_a_discarded_short_function_result",
+  "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_preserve_a_short_function_output_assertion",
+  "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_do_not_credit_module_comparison_text",
+  "crates/ripr/src/analysis/language/python/tests.rs::empty_sink_tokens_keep_ordinary_module_imports_conservative",
+]
+fixtures = [
+  "fixtures/python_empty_sink_unrelated_short_function",
+  "fixtures/python_empty_sink_observed_short_function",
+  "fixtures/python_empty_sink_module_comparison",
+]
 code = [
   "crates/ripr/src/analysis/language/python/classify.rs",
   "crates/ripr/src/analysis/language/python/oracles.rs",
@@ -14176,6 +14216,28 @@ outputs = [
 ]
 metrics = [
   "typescript_default_import_local_mismatch",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0252"
+name = "TypeScript node:test context assert"
+spec = "docs/specs/RIPR-SPEC-0252-typescript-node-test-context-assert.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::node_test_context_assert_reads_as_legacy_node_assert",
+  "crates/ripr/src/analysis/language/typescript/assertion_library_tests.rs::node_test_context_assert_needs_the_runner_receiver_and_a_known_method",
+  "crates/ripr/src/analysis/language/typescript/admission_tests.rs::assertion_admission_separates_no_assertion_from_unresolved_assertion_like_forms",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/oracle.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0252-typescript-node-test-context-assert.md",
+]
+metrics = [
+  "typescript_node_test_context_assert_mismatch",
 ]
 
 [[behavior]]

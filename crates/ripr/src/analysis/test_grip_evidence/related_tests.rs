@@ -1,7 +1,7 @@
 use super::*;
 use crate::analysis::classify::{
     CallTarget, OwnerCallIdentity, call_text_may_call_free_function, impl_self_type_name,
-    method_call_resolves_to_impl, owner_dispatch_trait, test_calls_free_function,
+    method_call_resolves_to_impl, module_stem, owner_dispatch_trait, test_calls_free_function,
 };
 use crate::analysis::facts::FunctionImplContext;
 use std::sync::Arc;
@@ -67,6 +67,9 @@ pub(super) struct OwnerContext {
     name: String,
     name_lower: String,
     file_stem: String,
+    /// Set only when the owner file has no module stem (a crate root), so
+    /// its inline tests still relate by exact path (#5395).
+    crate_root_file: Option<String>,
     module_path: Option<String>,
     prefix: Option<String>,
     fixture_names: Arc<BTreeSet<String>>,
@@ -85,7 +88,14 @@ impl OwnerContext {
         let name = owner_fn.map(|f| f.name.as_str()).unwrap_or("").to_string();
         let name_lower = name.to_ascii_lowercase();
         let owner_file = owner_fn.map(|f| f.file.as_path());
-        let file_stem = owner_file.map(normalized_file_stem).unwrap_or_default();
+        // Module identity, as in the finding-level relation (#5395):
+        // `serialize/mod.rs` is `serialize`, and a crate root has none.
+        let file_stem = owner_file.and_then(module_stem).unwrap_or_default();
+        let crate_root_file = if file_stem.is_empty() {
+            owner_file.and_then(context::crate_root_file_key)
+        } else {
+            None
+        };
         let module_path = owner_file.and_then(|file| module_path_for_index(context.index, file));
         let prefix = owner_fn.and_then(|f| package_prefix(&f.file));
         let fixture_names = owner_file
@@ -111,6 +121,7 @@ impl OwnerContext {
             name,
             name_lower,
             file_stem,
+            crate_root_file,
             module_path,
             prefix,
             fixture_names,
@@ -435,6 +446,19 @@ pub(super) fn match_same_test_file(
     owner: &OwnerContext,
 ) {
     if owner.file_stem.is_empty() {
+        let indices = owner
+            .crate_root_file
+            .as_ref()
+            .and_then(|path| context.tests_by_crate_root_file.get(path));
+        for test_index in indices.into_iter().flatten() {
+            insert_related_candidate(
+                candidates,
+                context,
+                prefix,
+                *test_index,
+                RelationReason::SameTestFile,
+            );
+        }
         return;
     }
     let stems = [
@@ -716,10 +740,9 @@ pub(super) fn assertion_targets_seam(test: &TestSummary, tokens: &[String]) -> b
 
 #[cfg(test)]
 pub(super) fn same_test_file(test_file: &Path, owner_stem: &str) -> bool {
-    let stem = normalized_file_stem(test_file);
-    if stem.is_empty() {
+    let Some(stem) = module_stem(test_file) else {
         return false;
-    }
+    };
     if stem == owner_stem {
         return true;
     }
@@ -970,6 +993,9 @@ pub(super) fn normalize_path(path: &Path) -> String {
 /// Non-UTF-8 paths fail closed: lossy replacement characters could
 /// collapse distinct file names into one stem and fabricate a
 /// same-test-file relation (the #3545 `cross_host_stem` guard).
+/// Production association keys on [`module_stem`] (#5395); this raw stem
+/// stays for the cross-host and non-UTF-8 regression tests.
+#[cfg(test)]
 pub(super) fn normalized_file_stem(path: &Path) -> String {
     let Some(text) = path.to_str() else {
         return String::new();
