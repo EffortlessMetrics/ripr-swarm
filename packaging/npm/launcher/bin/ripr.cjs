@@ -12,9 +12,14 @@ function recoveryIdentity() {
   // Display context only: the library remains the package-contract validator.
   try {
     const metadata = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "package.json"), "utf8"));
-    if (metadata && metadata.name === "@effortlessmetrics/ripr" &&
-        typeof metadata.version === "string" &&
-        /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(metadata.version)) {
+    const version = metadata && metadata.version;
+    const exact = typeof version === "string" && version.length <= 256
+      ? /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.exec(version)
+      : null;
+    if (metadata && metadata.name === "@effortlessmetrics/ripr" && exact &&
+        exact[0] === version &&
+        exact.slice(1, 4).every((part) => Number.isSafeInteger(Number(part))) &&
+        (!exact[4] || exact[4].split(".").every((part) => !/^0\d+$/.test(part)))) {
       return `@effortlessmetrics/ripr@${metadata.version}`;
     }
   } catch {

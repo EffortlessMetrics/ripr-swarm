@@ -27,9 +27,10 @@ absent. Resolution errors go to stderr and exit with status 1.
 If direct resolution of the packaged `lib/launcher.cjs` raises Node's
 `MODULE_NOT_FOUND`, the command retains that reason and advises restoring the file
 from the matching package tarball or reinstalling the same exact launcher version
-in its owning npm environment. Readable package metadata supplies the version in
-this advice; when this recovery branch is reached without usable metadata, the
-command tells you to use the exact version selected for that installation.
+in its owning npm environment. This advice names the canonical, usable exact
+version from readable package metadata. When this recovery branch is reached
+without usable metadata, the command tells you to use the exact version selected
+for that installation.
 It never guesses a newer version or uses the current directory's package.
 Other resolution errors and errors inside an existing library retain their own
 reason without this restoration hint.

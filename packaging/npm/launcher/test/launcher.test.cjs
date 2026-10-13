@@ -734,6 +734,14 @@ test("public bin library recovery never guesses a version from invalid or unavai
       { name: manifest.name, version: "" },
       { name: manifest.name, version: "^0.11.0" },
       { name: manifest.name, version: "latest" },
+      { name: manifest.name, version: "0.11.0-01" },
+      { name: manifest.name, version: "0.11.0-rc.01" },
+      { name: manifest.name, version: "9007199254740992.0.0" },
+      { name: manifest.name, version: "0.9007199254740992.0" },
+      { name: manifest.name, version: "0.0.9007199254740992" },
+      { name: manifest.name, version: "0.11.0\n" },
+      { name: manifest.name, version: "v0.11.0" },
+      { name: manifest.name, version: `0.11.0-${"a".repeat(250)}` },
       null,
       undefined,
     ]) {
@@ -763,6 +771,21 @@ test("public bin library recovery never guesses a version from invalid or unavai
       assert.match(result.stderr, /^ripr npm launcher: cannot resolve packaged launcher library/);
       assert.match(result.stderr, /reinstall the exact @effortlessmetrics\/ripr version selected for this npm installation in its owning npm environment/);
       assert.doesNotMatch(result.stderr, /foreign-package|@ripr@|\^0\.11\.0|latest|node:internal/);
+    }
+    for (const version of [
+      "0.11.0-0", "0.11.0-rc.1", "0.11.0-01alpha", "0.11.0+01", "0.11.0-rc.1+build.02",
+      "9007199254740991.0.0", `0.11.0-${"a".repeat(249)}`,
+    ]) {
+      writeJson(path.join(fixture.launcherRoot, "package.json"), { name: manifest.name, version });
+      const result = spawnSync(process.execPath, [path.join(fixture.launcherRoot, "bin", "ripr.cjs"), "--version"], {
+        cwd: fixture.root,
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.ok(result.stderr.includes(`reinstall ${manifest.name}@${version} in its owning npm environment`), result.stderr);
+      assert.match(result.stderr, /^ripr npm launcher: cannot resolve packaged launcher library/);
+      assert.doesNotMatch(result.stderr, /node:internal/);
     }
   } finally {
     cleanup(fixture.root);
