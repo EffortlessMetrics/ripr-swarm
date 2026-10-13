@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0257: a committed snapshot entry the assertion compares with
+//! RIPR-SPEC-0258: a committed snapshot entry the assertion compares with
 //! reads `snapshot` / strong; every shape whose entry cannot be named keeps
 //! `snapshot` / medium.
 

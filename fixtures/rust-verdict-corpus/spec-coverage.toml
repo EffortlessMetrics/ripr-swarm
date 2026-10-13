@@ -556,7 +556,7 @@ reason = "non-Rust language or packaging surface"
 
 # TypeScript committed snapshot entry
 [[spec]]
-id = "RIPR-SPEC-0257"
+id = "RIPR-SPEC-0258"
 scope = "out"
 reason = "non-Rust language or packaging surface"
 

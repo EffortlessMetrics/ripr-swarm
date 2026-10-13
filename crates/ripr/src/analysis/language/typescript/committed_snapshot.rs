@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0257: a committed snapshot entry pins the value.
+//! RIPR-SPEC-0258: a committed snapshot entry pins the value.
 //!
 //! `expect(x).toMatchSnapshot()` compares the serialized value with the entry
 //! stored under `<test title> <counter>` in `__snapshots__/<test file>.snap`.

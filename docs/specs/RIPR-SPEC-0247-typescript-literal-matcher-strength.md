@@ -148,7 +148,7 @@ but the inline text sits in the test diff a reviewer reads, while a
 committed file's content is not in the test. `toMatchSnapshot`, an inline
 snapshot with no argument, with an
 interpolation, or with a property-matcher object keeps `snapshot` /
-medium. Amended by RIPR-SPEC-0257: a `toMatchSnapshot()`
+medium. Amended by RIPR-SPEC-0258: a `toMatchSnapshot()`
 whose committed entry the test file names reads `snapshot` / strong.
 
 ### Decisions
@@ -255,7 +255,7 @@ and the rejected alternative. Recorded on #6654.
    no `typescript_snapshot_discriminator_unresolved`.
 9. `toMatchInlineSnapshot()`, an inline snapshot with `${n}`, an inline
    snapshot with a property-matcher object, or `toMatchSnapshot()`:
-   `snapshot` / medium. Amended by RIPR-SPEC-0257: `toMatchSnapshot()`
+   `snapshot` / medium. Amended by RIPR-SPEC-0258: `toMatchSnapshot()`
    whose committed entry the test file names reads `snapshot` / strong.
 
 ## Test Mapping

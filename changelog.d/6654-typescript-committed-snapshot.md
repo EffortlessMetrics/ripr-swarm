@@ -1,5 +1,5 @@
 <!-- section: Fixed -->
-- TypeScript (RIPR-SPEC-0257): `expect(price(150)).toMatchSnapshot()` now
+- TypeScript (RIPR-SPEC-0258): `expect(price(150)).toMatchSnapshot()` now
   reads as a strong oracle when its entry (`price 1`) is committed in
   `__snapshots__/<test file>.snap` beside the test, so a changed return
   value reads `exposed` instead of `weakly_exposed` with

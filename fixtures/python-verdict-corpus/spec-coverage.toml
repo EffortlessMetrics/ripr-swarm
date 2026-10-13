@@ -506,7 +506,7 @@ reason = "TypeScript analyzer rules; a Python case cannot label them"
 
 # TypeScript committed snapshot entry
 [[spec]]
-id = "RIPR-SPEC-0257"
+id = "RIPR-SPEC-0258"
 scope = "out"
 reason = "TypeScript analyzer rules; a Python case cannot label them"
 

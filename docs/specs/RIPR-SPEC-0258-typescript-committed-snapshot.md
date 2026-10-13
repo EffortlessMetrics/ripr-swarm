@@ -1,4 +1,4 @@
-# RIPR-SPEC-0257: TypeScript committed snapshot entry
+# RIPR-SPEC-0258: TypeScript committed snapshot entry
 
 Status: proposed
 

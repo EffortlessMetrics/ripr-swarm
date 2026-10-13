@@ -308,7 +308,7 @@ impl TypeScriptAdapter {
             }
             if is_test_file(relative) {
                 let mut tests = extract_tests(relative, source);
-                // RIPR-SPEC-0257: a committed snapshot entry pins the value.
+                // RIPR-SPEC-0258: a committed snapshot entry pins the value.
                 promote_committed_snapshots(&options.root, relative, source, &mut tests);
                 // A recognized test file that parses but registers test
                 // shapes the extractor drops (template-literal titles,

@@ -14452,9 +14452,9 @@ metrics = [
 ]
 
 [[behavior]]
-id = "RIPR-SPEC-0257"
+id = "RIPR-SPEC-0258"
 name = "TypeScript committed snapshot entry"
-spec = "docs/specs/RIPR-SPEC-0257-typescript-committed-snapshot.md"
+spec = "docs/specs/RIPR-SPEC-0258-typescript-committed-snapshot.md"
 tests = [
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::committed_jest_snapshot_entry_reads_strong",
   "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::committed_snapshot_keys_join_describe_titles_per_runner",
@@ -14469,7 +14469,7 @@ code = [
   "crates/ripr/src/analysis/language/typescript/committed_snapshot.rs",
 ]
 outputs = [
-  "docs/specs/RIPR-SPEC-0257-typescript-committed-snapshot.md",
+  "docs/specs/RIPR-SPEC-0258-typescript-committed-snapshot.md",
 ]
 metrics = [
   "typescript_committed_snapshot_mismatch",
