@@ -5,4 +5,4 @@
   `_`, ranges, `|`, guards, paths and constants still refuse. A changed early
   `return Some(..)` (or `Ok(..)`) beside `None` (or `Err(..)`) exits is now an
   established return path too (RIPR-SPEC-0197, RIPR-SPEC-0231 examples 6 and
-  23).
+  23; #7581).

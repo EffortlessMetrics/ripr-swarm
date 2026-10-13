@@ -1777,15 +1777,25 @@ fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
 fn nested_invocations(
     tokens: &[ra_ap_syntax::SyntaxToken],
 ) -> impl Iterator<Item = (&str, bool)> + '_ {
-    (0..tokens.len().saturating_sub(2)).filter_map(move |at| {
-        (tokens[at].kind() == ra_ap_syntax::SyntaxKind::IDENT
-            && tokens[at + 1].text() == "!"
-            && matches!(tokens[at + 2].text(), "(" | "[" | "{"))
-        .then(|| {
-            let qualified = at > 0 && tokens[at - 1].text() == "::";
-            (tokens[at].text(), !qualified)
+    tokens
+        .windows(3)
+        .enumerate()
+        .filter_map(move |(at, window)| {
+            let [name, bang, open] = window else {
+                return None;
+            };
+            if name.kind() != ra_ap_syntax::SyntaxKind::IDENT
+                || bang.text() != "!"
+                || !matches!(open.text(), "(" | "[" | "{")
+            {
+                return None;
+            }
+            let qualified = at
+                .checked_sub(1)
+                .and_then(|before| tokens.get(before))
+                .is_some_and(|token| token.text() == "::");
+            Some((name.text(), !qualified))
         })
-    })
 }
 
 /// The macros `node` invokes: every macro call's path, plus a `matches!`
