@@ -553,11 +553,16 @@ fn arguments_rewritten_visibly(old: &str, new: &str) -> bool {
 fn visible_rewrite(old: &str, new: &str) -> bool {
     let (old, new) = (old.trim(), new.trim());
     if is_literal(old) && is_literal(new) {
-        // `2` and `2.0` are the same value.
-        let number = |text: &str| text.replace('_', "").parse::<f64>().ok();
-        number(old)
-            .zip(number(new))
-            .is_none_or(|(old, new)| old.partial_cmp(&new) != Some(std::cmp::Ordering::Equal))
+        // Compare values, not spellings: `2` is `2.0` and `'hi'` is `"hi"`.
+        // A literal whose value is not read fails closed.
+        match (literal_value(old), literal_value(new)) {
+            (Some(Literal::Number(old)), Some(Literal::Number(new))) => {
+                old.partial_cmp(&new) != Some(std::cmp::Ordering::Equal)
+            }
+            (Some(Literal::Text(old)), Some(Literal::Text(new))) => old != new,
+            (Some(_), Some(_)) => true,
+            _ => false,
+        }
     } else if contains_expression(new, old) {
         literal_arithmetic(old, new)
     } else if contains_expression(old, new) {
@@ -583,6 +588,45 @@ fn is_literal(text: &str) -> bool {
         })
 }
 
+enum Literal<'a> {
+    Number(f64),
+    Text(&'a str),
+}
+
+/// The value of a plain literal (`is_literal`).
+fn literal_value(text: &str) -> Option<Literal<'_>> {
+    let text = text.trim();
+    match text.chars().next() {
+        Some(quote @ ('\'' | '"')) => text
+            .strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+            .map(Literal::Text),
+        _ => text
+            .replace('_', "")
+            .parse::<f64>()
+            .ok()
+            .map(Literal::Number),
+    }
+}
+
+/// Whether `operator` with `literal` leaves its operand unchanged: `+ 0`,
+/// `- 0`, `* 1`, `/ 1`, `// 1`, `** 1`, or `+ ''`. `literal_first` reads
+/// `literal operator operand`, where only `0 +`, `1 *` and `'' +` are.
+fn is_identity(operator: &str, literal: &str, literal_first: bool) -> bool {
+    let equals = |value: f64| {
+        matches!(literal_value(literal), Some(Literal::Number(number))
+            if number.partial_cmp(&value) == Some(std::cmp::Ordering::Equal))
+    };
+    let empty_text = matches!(literal_value(literal), Some(Literal::Text("")));
+    match operator {
+        "+" => equals(0.0) || empty_text,
+        "-" => !literal_first && equals(0.0),
+        "*" => equals(1.0),
+        "/" | "//" | "**" => !literal_first && equals(1.0),
+        _ => false,
+    }
+}
+
 /// Whether `outer` holds `inner` as an identifier-bounded piece of code.
 fn contains_expression(outer: &str, inner: &str) -> bool {
     !inner.is_empty()
@@ -601,7 +645,8 @@ fn contains_expression(outer: &str, inner: &str) -> bool {
 }
 
 /// Whether `outer` is `base <op> literal` or `literal <op> base` for an
-/// arithmetic operator and a numeric or string literal, with `base` one
+/// arithmetic operator and a numeric or string literal that is not an
+/// identity for it (`+ 0`, `* 1`), with `base` one
 /// operand that binds tighter than any operator: `int(text) + 1`.
 fn literal_arithmetic(base: &str, outer: &str) -> bool {
     const OPERATORS: [&str; 7] = ["**", "//", "+", "-", "*", "/", "%"];
@@ -615,7 +660,9 @@ fn literal_arithmetic(base: &str, outer: &str) -> bool {
         let rest = rest.trim();
         OPERATORS.iter().any(|operator| {
             rest.strip_prefix(operator).is_some_and(|literal| {
-                !literal.trim_start().starts_with(['*', '/']) && is_literal(literal)
+                !literal.trim_start().starts_with(['*', '/'])
+                    && is_literal(literal)
+                    && !is_identity(operator, literal, false)
             })
         })
     };
@@ -623,7 +670,9 @@ fn literal_arithmetic(base: &str, outer: &str) -> bool {
         let rest = rest.trim();
         OPERATORS.iter().any(|operator| {
             rest.strip_suffix(operator).is_some_and(|literal| {
-                !literal.trim_end().ends_with(['*', '/']) && is_literal(literal)
+                !literal.trim_end().ends_with(['*', '/'])
+                    && is_literal(literal)
+                    && !is_identity(operator, literal, true)
             })
         })
     };

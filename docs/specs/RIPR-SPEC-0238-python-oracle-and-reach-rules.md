@@ -567,9 +567,10 @@ mutant calibrates the rule; ripr reports only the static shape.
       Either form credits only when the pinned expectation reads the new
       arguments as a different call. A changed argument count or keyword
       set does. So does a rewritten argument when neither side keeps the
-      other inside it (`'hi'` to `'welcome'`, two different literals), or
-      when one side is the other, a single operand, under literal
-      arithmetic (`n + 1`, `n * 100`). Any other rewrite that keeps the old
+      other inside it (`'hi'` to `'welcome'`, two literals of different
+      value; `'hi'` to `"hi"` is the same value), or when one side is the
+      other, a single operand, under literal arithmetic that is not an
+      identity (`n + 1`, `n * 100`, but not `n + 0`, `n * 1` or `n + ''`). Any other rewrite that keeps the old
       argument inside it (`abs(n)`, `max(n, 0)`, `n or 0`, `(n)`, `n.real`,
       or `int(n)` to `n`) can return it unchanged at the input the test
       passes (`abs(1) == 1`), so the pinned expectation may still hold and
@@ -1133,7 +1134,8 @@ and the test is `tests/test_subject.py`, which imports each owner from
   and the argument-free and last-call-only expectations. A second test
   pins the gate on `p.m(...)`: nested and multi-argument wrappers, `or`,
   parentheses, an attribute read, an equal numeric literal and an old line
-  with a comment or an assignment, and a starred argument do not credit;
+  with a comment or an assignment, a starred argument, identity
+  arithmetic and a requoted string or respelled number do not credit;
   literal arithmetic on either side, an added argument, a changed keyword
   set, different literals and another name do.
 

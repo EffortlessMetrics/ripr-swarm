@@ -1298,6 +1298,16 @@ fn a_wrapped_argument_does_not_credit_a_mocked_collaborator() -> Result<(), Stri
         ("user.real", "user"),
         ("2.0", "2"),
         ("*users", "user"),
+        // An identity operation or a requoted string hands the mock the same
+        // value.
+        ("user + 0", "user"),
+        ("user * 1", "user"),
+        ("user ** 1", "user"),
+        ("0 + user", "user"),
+        ("1 * user", "user"),
+        ("user + ''", "user"),
+        ("\"hi\"", "'hi'"),
+        ("1_000", "1000"),
     ] {
         assert_eq!(
             class(new, old)?,
@@ -1316,6 +1326,9 @@ fn a_wrapped_argument_does_not_credit_a_mocked_collaborator() -> Result<(), Stri
         ("'welcome'", "'hi'"),
         ("other", "user"),
         ("user, tag=1", "user"),
+        ("0 - user", "user"),
+        ("user - 1", "user"),
+        ("'1'", "1"),
         ("user, tag=1", "user, kind=1"),
     ] {
         assert_eq!(class(new, old)?, ExposureClass::Exposed, "{old} -> {new}");
