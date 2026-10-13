@@ -11,21 +11,20 @@ const MAX_CONFIG_BYTES: usize = 1024 * 1024;
 const MAX_TOTAL_CONFIG_BYTES: usize = 16 * MAX_CONFIG_BYTES;
 
 pub(crate) fn cargo_input_identity(root: &Path) -> Option<String> {
+    cargo_input_identity_with_env(root, &home::env::OS_ENV)
+}
+
+fn cargo_input_identity_with_env(root: &Path, env: &dyn home::env::Env) -> Option<String> {
     let root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
-    let cargo_home = match std::env::var_os("CARGO_HOME") {
-        Some(value) if value.is_empty() => return None,
-        Some(value) => PathBuf::from(value),
-        None => std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-            .filter(|value| !value.is_empty())
-            .map(|home| PathBuf::from(home).join(".cargo"))?,
-    };
-    let cargo_home = {
-        let home = cargo_home;
-        if home.is_absolute() {
-            home
-        } else {
-            root.join(home)
-        }
+    // Empty environment values do not mean that Cargo has no home config:
+    // its canonical resolver falls back through OS home discovery.
+    let cargo_home = home::env::cargo_home_with_cwd_env(env, &root).ok()?;
+    let cargo_home = if cargo_home.is_absolute() {
+        cargo_home
+    } else {
+        // A relative HOME/USERPROFILE fallback is interpreted by Cargo at the
+        // metadata command's cwd, which can differ from the RIPR caller's cwd.
+        root.join(cargo_home)
     };
     let mut environment = std::env::vars_os()
         .filter_map(|(name, value)| {
@@ -129,6 +128,106 @@ fn append_configuration_files(identity: &mut Vec<u8>, paths: BTreeSet<PathBuf>) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Clone)]
+    struct HomeEnvironment {
+        cargo_home: Option<std::ffi::OsString>,
+        home: Option<PathBuf>,
+        caller_cwd: PathBuf,
+    }
+
+    impl home::env::Env for HomeEnvironment {
+        fn home_dir(&self) -> Option<PathBuf> {
+            self.home.clone()
+        }
+
+        fn current_dir(&self) -> std::io::Result<PathBuf> {
+            Ok(self.caller_cwd.clone())
+        }
+
+        fn var_os(&self, key: &str) -> Option<std::ffi::OsString> {
+            (key == "CARGO_HOME")
+                .then(|| self.cargo_home.clone())
+                .flatten()
+        }
+    }
+
+    #[test]
+    fn cargo_home_fallback_and_relative_paths_bind_configuration_or_refuse_discovery()
+    -> Result<(), String> {
+        let root = std::env::temp_dir().join(format!(
+            "ripr-cargo-home-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_err(|error| error.to_string())?
+                .as_nanos()
+        ));
+        let fallback = root.join("owned-home");
+        std::fs::create_dir_all(fallback.join(".cargo")).map_err(|error| error.to_string())?;
+        let env = HomeEnvironment {
+            cargo_home: None,
+            home: Some(fallback.clone()),
+            caller_cwd: root.parent().ok_or("fixture parent")?.to_path_buf(),
+        };
+        let snapshot = |env: &HomeEnvironment| {
+            cargo_input_identity_with_env(&root, env).ok_or("discoverable Cargo home identity")
+        };
+        for cargo_home in [None, Some(std::ffi::OsString::new())] {
+            let env = HomeEnvironment {
+                cargo_home,
+                ..env.clone()
+            };
+            let absent = snapshot(&env)?;
+            let path = fallback.join(".cargo/config.toml");
+            std::fs::write(&path, "[build]\njobs=1\n").map_err(|error| error.to_string())?;
+            let valid = snapshot(&env)?;
+            assert_ne!(valid, absent, "OS fallback configuration participates");
+            std::fs::write(&path, "[build\n").map_err(|error| error.to_string())?;
+            assert_ne!(
+                snapshot(&env)?,
+                valid,
+                "fallback malformed bytes participate"
+            );
+            std::fs::write(&path, "[build]\njobs=1\n").map_err(|error| error.to_string())?;
+            assert_eq!(snapshot(&env)?, valid, "fallback revert restores identity");
+            std::fs::remove_file(path).map_err(|error| error.to_string())?;
+        }
+        let relative_home = root.join("owned-relative-home/.cargo");
+        std::fs::create_dir_all(&relative_home).map_err(|error| error.to_string())?;
+        let relative_env = HomeEnvironment {
+            home: Some(PathBuf::from("owned-relative-home")),
+            ..env.clone()
+        };
+        let absent = snapshot(&relative_env)?;
+        std::fs::write(relative_home.join("config.toml"), "[build]\njobs=1\n")
+            .map_err(|error| error.to_string())?;
+        assert_ne!(
+            snapshot(&relative_env)?,
+            absent,
+            "relative fallback configuration must resolve at the analysis root"
+        );
+        let undiscoverable = HomeEnvironment {
+            home: None,
+            ..env.clone()
+        };
+        assert!(
+            cargo_input_identity_with_env(&root, &undiscoverable).is_none(),
+            "undiscoverable home cannot become a reusable no-home marker"
+        );
+        for cargo_home in [PathBuf::from("explicit-home"), root.join("explicit-home")] {
+            let explicit = HomeEnvironment {
+                cargo_home: Some(cargo_home.into_os_string()),
+                ..undiscoverable.clone()
+            };
+            assert_eq!(
+                snapshot(&explicit)?.len(),
+                16,
+                "explicit Cargo home needs no OS home"
+            );
+        }
+        std::fs::remove_dir_all(root).map_err(|error| error.to_string())
+    }
 
     #[test]
     fn cargo_environment_names_preserve_platform_semantics_and_raw_values() {

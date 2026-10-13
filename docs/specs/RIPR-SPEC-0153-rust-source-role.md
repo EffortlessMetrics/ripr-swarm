@@ -213,6 +213,11 @@ metadata premise: both Cargo configuration filenames at the selected root and
 its ancestors, effective Cargo-home configuration, repository toolchain files,
 and the Cargo/toolchain command environment. Creation, edits, renames, deletion,
 and malformed bytes participate independently of HEAD and Rust source bytes.
+Cargo-home discovery follows Cargo's canonical resolver, including OS-home
+fallback for absent or empty environment values. Relative home paths resolve at
+the metadata command's selected root, independently of the RIPR caller's cwd.
+Only genuinely unavailable discovery withholds classified provenance and reuse;
+successful fallback still binds the discovered home's configuration bytes.
 An unreadable, non-regular, or over-budget configuration identity cannot admit or
 publish full or compact classified evidence. Per-file parser facts remain usable;
 prior entries are preserved so reverting the configuration restores warm reuse.

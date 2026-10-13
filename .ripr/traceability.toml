@@ -10280,6 +10280,8 @@ tests = [
   "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::cargo_environment_names_preserve_platform_semantics_and_raw_values",
   "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::cargo_input_identity_covers_ancestor_home_legacy_and_absence",
   "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::cargo_input_identity_refuses_unreadable_and_oversized_configuration",
+  "crates/ripr/src/analysis/workspace/cargo_input_identity.rs::tests::cargo_home_fallback_and_relative_paths_bind_configuration_or_refuse_discovery",
+  "crates/ripr/tests/cache_clear_safety.rs::classified_cache_cargo_home_fallback_and_relative_home_match_cold",
 ]
 fixtures = [
   "fixtures/rust_test_under_false_cfg_not_grip",
