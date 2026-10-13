@@ -110,9 +110,22 @@ rule only for an assertion whose context was admitted.
    attribute or derive macro could emit a module), and imports no glob except
    `super::*` into an enclosing in-file module that meets the same rule. The
    crate name is trusted: a manifest `package = ..` rename that points
-   `serial_test` at another crate is outside what source can show. Every other
-   attribute (`ignore`, async runtime tests, parameterizing macros such as
-   `rstest` or `test_case`) and every inner attribute refuses the pin. The
+   `serial_test` at another crate is outside what source can show. An
+   `async fn` test is admitted only under `#[tokio::test]` (never a bare
+   `test` imported from tokio), which runs the body to completion
+   on a fresh runtime and fails the test when it panics, as libtest does for a
+   plain body. `tokio` must be the crate in the test's module under the same
+   rule as `serial_test` (a module using both crates' attributes must hold
+   for both at once), and its arguments may only pick the runtime:
+   `flavor`, `worker_threads` and `start_paused`, each `= literal`;
+   `crate = ..` swaps the runtime path and `unhandled_panic = ..` changes what
+   a panic does, so they refuse. An `async` owner's return value is then read
+   through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
+   3)`); its bare call is a future and refuses; a sync owner's `.await` awaits a future it returns and stays refused.
+   An assertion inside an `async` block (`tokio::spawn(async { .. })`) keeps
+   the async-context refusal below. Every other attribute (`ignore`, other
+   async runtime tests, parameterizing macros such as `rstest` or
+   `test_case`) and every inner attribute refuses the pin. The
    parser must match the exact indexed function body and the assertion's
    line/text identity uniquely. Identical same-line invocations fail closed.
    The test itself must have item ancestry through modules/item lists to the

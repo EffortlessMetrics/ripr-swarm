@@ -1,0 +1,2 @@
+<!-- section: Fixed -->
+- Owner-return pins now credit an `assert_eq!` in an `async fn` test under `#[tokio::test]`, reading an `async` owner's value through one `.await`. The attribute must name the real `tokio` crate and take only runtime-picking arguments (`flavor`, `worker_threads`, `start_paused`); other async runtimes, `crate = ..`, `unhandled_panic = ..`, a sync owner's `.await` and assertions inside spawned `async` blocks still refuse (#6578).
