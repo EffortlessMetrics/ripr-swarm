@@ -486,10 +486,23 @@ pub(super) fn classify_change_for_owner(
             StageState::Yes,
             StageState::Weak,
             StageState::Weak,
-            vec![format!(
-                "A strong Python oracle reaches `{}`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output.",
-                owner.name
-            )],
+            vec![if related.iter().any(|test| {
+                test.oracle_strength == OracleStrength::Strong
+                    && test
+                        .oracle
+                        .as_deref()
+                        .is_some_and(super::oracles::unittest_list::literal_text)
+            }) {
+                format!(
+                    "A strong Python list oracle reaches `{}`, but static evidence cannot establish that list equality discriminates this change. Review the old and new return values under Python equality; mixed scalar kinds and nonliteral returns remain outside this bounded evidence.",
+                    owner.name
+                )
+            } else {
+                format!(
+                    "A strong Python oracle reaches `{}`, but its assertion does not observe the changed owner's output; static evidence cannot confirm the changed behavior is discriminated. Add an assertion on the changed owner's output.",
+                    owner.name
+                )
+            }],
         )
     } else {
         (
