@@ -2349,8 +2349,11 @@ mod tests {
         git_ok(&fixture.root, &["config", "core.autocrlf", "true"])?;
         // Seed the worktree with binary content while the index still
         // holds the fixture's LF blob, so the flip below is CRLF-only.
-        fs::write(fixture.root.join("src/pricing.rs"), b"pub fn price() {}\n\x00\n")
-            .map_err(|err| format!("seed binary production file: {err}"))?;
+        fs::write(
+            fixture.root.join("src/pricing.rs"),
+            b"pub fn price() {}\n\x00\n",
+        )
+        .map_err(|err| format!("seed binary production file: {err}"))?;
         let policy = policy()?;
         let baseline = capture_attempt_baseline(&fixture.root, &policy)?;
         fs::write(
