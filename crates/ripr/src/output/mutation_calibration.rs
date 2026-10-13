@@ -969,22 +969,38 @@ fn mixed_unobserved_runtime_outcome_note(unknown: usize) -> String {
 }
 
 fn no_observed_runtime_outcome_note(report: &MutationCalibrationReport) -> Option<String> {
-    let unknown = unobserved_runtime_outcome_total(report);
-    if unknown == 0 || report.mutants_total == 0 {
-        None
-    } else if unknown == report.mutants_total {
-        Some(NO_OBSERVED_RUNTIME_OUTCOMES_NOTE.to_string())
-    } else {
-        Some(mixed_unobserved_runtime_outcome_note(unknown))
+    if report.mutants_total == 0 {
+        return None;
     }
+    // All imported records (matched, ambiguous, unmatched) decide whether the
+    // whole import lacks runtime observations. The mixed matched_total note
+    // may only count rows that actually sit in matched_total.
+    if unobserved_imported_runtime_outcome_total(report) == report.mutants_total {
+        return Some(NO_OBSERVED_RUNTIME_OUTCOMES_NOTE.to_string());
+    }
+    let unknown_matched = unobserved_matched_runtime_outcome_total(report);
+    (unknown_matched > 0).then(|| mixed_unobserved_runtime_outcome_note(unknown_matched))
 }
 
-fn unobserved_runtime_outcome_total(report: &MutationCalibrationReport) -> usize {
+fn has_observed_runtime_outcome(outcome: &str) -> bool {
+    let label = normalize_runtime_label(outcome);
+    !label.is_empty() && label != "unknown"
+}
+
+fn unobserved_imported_runtime_outcome_total(report: &MutationCalibrationReport) -> usize {
     runtime_outcome_counts(report)
         .into_iter()
         .filter(|(label, _)| label.is_empty() || label == "unknown")
         .map(|(_, count)| count)
         .sum()
+}
+
+fn unobserved_matched_runtime_outcome_total(report: &MutationCalibrationReport) -> usize {
+    report
+        .matched
+        .iter()
+        .filter(|record| !has_observed_runtime_outcome(&record.mutation.runtime_outcome))
+        .count()
 }
 
 fn static_only_reason(records: &[&MutationCalibrationMatch]) -> String {
@@ -2310,18 +2326,23 @@ mod tests {
 
     /// A mixed import (some observed outcomes, some not) must not use the
     /// all-unknown wording, and must still name how many matched_total rows
-    /// lack a runtime observation.
+    /// lack a runtime observation. Unmatched unknown rows are not in
+    /// matched_total and must not inflate that count.
     #[test]
     fn mixed_import_names_how_many_matched_rows_lack_outcomes() -> Result<(), String> {
         let report = mutation_calibration_report_from_json(
             &repo_json_for("seam-a", "weakly_gripped", "src/pricing.rs", 42),
             r#"[
   {"id":"m-observed","seam_id":"seam-a","outcome":"caught","operator":"replace"},
-  {"id":"m-candidate","file":"src/other.rs","line":9,"operator":"replace"}
+  {"id":"m-candidate","seam_id":"seam-a","operator":"replace"},
+  {"id":"m-unmatched","file":"src/other.rs","line":9,"operator":"replace"}
 ]"#,
         )?;
-        assert_eq!(report.mutants_total, 2);
-        assert_eq!(unobserved_runtime_outcome_total(&report), 1);
+        assert_eq!(report.matched.len(), 2);
+        assert_eq!(report.unmatched_mutants.len(), 1);
+        assert_eq!(report.mutants_total, 3);
+        assert_eq!(unobserved_imported_runtime_outcome_total(&report), 2);
+        assert_eq!(unobserved_matched_runtime_outcome_total(&report), 1);
 
         let markdown = render_mutation_calibration_md(&report);
         let after_summary = markdown
@@ -2330,14 +2351,48 @@ mod tests {
             .and_then(|rest| rest.split("## Static/runtime agreement").next())
             .ok_or("markdown must keep Summary before agreement")?;
         assert!(
+            after_summary.contains("| matched_total | 2 |"),
+            "matched_total counts both joined rows:\n{after_summary}"
+        );
+        assert!(
             after_summary.contains(
                 "`matched_total` includes 1 joined candidate with no observed runtime outcome"
             ),
-            "mixed imports must count the unexecuted rows, not claim the whole import lacks outcomes:\n{after_summary}"
+            "the mixed note must count only unobserved matched rows, not the unmatched unknown:\n{after_summary}"
         );
         assert!(
             !after_summary.contains("this import has no observed runtime outcomes"),
             "a mixed import is not mutants.json-only:\n{after_summary}"
+        );
+        Ok(())
+    }
+
+    /// An unmatched unknown row is not in matched_total. A joined observed
+    /// row plus an unmatched candidate must not claim matched_total includes
+    /// an unexecuted candidate.
+    #[test]
+    fn unmatched_unknown_does_not_claim_matched_total_includes_it() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &repo_json_for("seam-a", "weakly_gripped", "src/pricing.rs", 42),
+            r#"[
+  {"id":"m-observed","seam_id":"seam-a","outcome":"caught","operator":"replace"},
+  {"id":"m-unmatched","file":"src/other.rs","line":9,"operator":"replace"}
+]"#,
+        )?;
+        assert_eq!(report.matched.len(), 1);
+        assert_eq!(unobserved_matched_runtime_outcome_total(&report), 0);
+        assert_eq!(unobserved_imported_runtime_outcome_total(&report), 1);
+
+        let markdown = render_mutation_calibration_md(&report);
+        let after_summary = markdown
+            .split("## Summary")
+            .nth(1)
+            .and_then(|rest| rest.split("## Static/runtime agreement").next())
+            .ok_or("markdown must keep Summary before agreement")?;
+        assert!(
+            !after_summary.contains("`matched_total` includes")
+                && !after_summary.contains("this import has no observed runtime outcomes"),
+            "unmatched unknown rows must not be described as part of matched_total:\n{after_summary}"
         );
         Ok(())
     }

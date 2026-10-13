@@ -361,6 +361,7 @@ Current tests:
 - `crates/ripr/tests/cli_smoke.rs::calibrate_headed_snapshot_names_the_assumed_subject`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mutants_json_only_import_discloses_unexecuted_matched_total`
 - `crates/ripr/src/output/mutation_calibration.rs::tests::mixed_import_names_how_many_matched_rows_lack_outcomes`
+- `crates/ripr/src/output/mutation_calibration.rs::tests::unmatched_unknown_does_not_claim_matched_total_includes_it`
 - `crates/ripr/tests/cli_smoke.rs::calibrate_mutants_json_only_directory_discloses_unexecuted_denominator`
 - `crates/ripr/src/cli/help/reports.rs::tests::calibrate_help_discloses_mutants_json_only_denominator`
 - `crates/ripr/tests/cli_help_hierarchy.rs::calibrate_help_discloses_mutants_json_only_denominator`
