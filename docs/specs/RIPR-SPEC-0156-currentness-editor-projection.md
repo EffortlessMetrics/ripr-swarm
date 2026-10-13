@@ -45,7 +45,10 @@ no end-to-end corpus a downstream consumer could run against.
     and never a candidate edit target. A line deleted in the same
     removed run as its own `def` or `class` records nothing; a removed
     declaration, comment, docstring, import or lone bracket records
-    nothing. Base-side lines are not counted as candidate lines.
+    nothing. A deleted statement that spans lines (an open bracket, a
+    triple-quoted string, a trailing backslash) is one record on the
+    line that starts it; its continuation lines record nothing (#7690).
+    Base-side lines are not counted as candidate lines.
   - **deleted TypeScript statement** (#7689) — the same rule for
     TypeScript and JavaScript: an unpaired removed behavior line is a
     removed-only probe on the narrowest live owner that held it. A line

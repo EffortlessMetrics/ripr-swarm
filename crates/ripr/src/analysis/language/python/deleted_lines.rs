@@ -56,13 +56,25 @@ pub(super) fn deleted_line_findings(
     for finding in findings {
         *ids.entry(finding.probe.id.0.clone()).or_default() += 1;
     }
+    let continuations = continuation_lines(changed, new_source, |removed| {
+        is_removed_behavior_line(removed, old_side)
+    });
     let mut out = Vec::new();
     for removed in &changed.removed_lines {
-        if paired.contains(&removed.line) || !is_removed_behavior_line(removed, old_side) {
+        if paired.contains(&removed.line)
+            || continuations.contains(&removed.line)
+            || !is_removed_behavior_line(removed, old_side)
+        {
             continue;
         }
-        let Some(owner) = deleted_line_owner(changed, removed, &re_headed, new_source, owners)
-        else {
+        let Some(owner) = deleted_line_owner(
+            changed,
+            removed,
+            &re_headed,
+            &continuations,
+            new_source,
+            owners,
+        ) else {
             continue;
         };
         // Evidence names the projected new-side coordinate, as the Rust
@@ -134,11 +146,12 @@ fn deleted_line_owner<'a>(
     changed: &ChangedFile,
     removed: &ChangedLine,
     re_headed: &BTreeSet<usize>,
+    continuations: &BTreeSet<usize>,
     new_source: NewSource<'_>,
     owners: &'a [PythonOwner],
 ) -> Option<&'a PythonOwner> {
     let indent = indent_width(&removed.text);
-    if lost_its_owner(changed, removed, re_headed) {
+    if lost_its_owner(changed, removed, re_headed, continuations) {
         return None;
     }
     let at = removed.new_side_line;
@@ -189,11 +202,13 @@ fn deleted_line_owner<'a>(
 /// follows each shallower code line outward: an enclosing `if` leads on to the
 /// `def` around it. A kept line breaks contiguity, and its owner is live; so
 /// is a removed header an added header pairs with, as when only its
-/// annotations changed.
+/// annotations changed. Continuation lines of a statement say nothing about
+/// nesting and are passed over.
 fn lost_its_owner(
     changed: &ChangedFile,
     removed: &ChangedLine,
     re_headed: &BTreeSet<usize>,
+    continuations: &BTreeSet<usize>,
 ) -> bool {
     let by_old_line: BTreeMap<usize, &ChangedLine> = changed
         .removed_lines
@@ -202,9 +217,6 @@ fn lost_its_owner(
         .collect();
     let mut threshold = indent_width(&removed.text);
     let mut old_line = removed.line;
-    // Walking backward, a line opening with triple quotes closes a string
-    // whose body runs up to the line that opened it; none of it is nesting.
-    let mut in_string: Option<&str> = None;
     while threshold > 0 {
         let Some(previous) = old_line
             .checked_sub(1)
@@ -213,20 +225,10 @@ fn lost_its_owner(
             return false;
         };
         old_line = previous.line;
+        if continuations.contains(&previous.line) {
+            continue;
+        }
         let trimmed = previous.text.trim();
-        if let Some(quotes) = in_string {
-            if trimmed.contains(quotes) {
-                in_string = None;
-            }
-            continue;
-        }
-        if let Some(quotes) = ["\"\"\"", "'''"]
-            .into_iter()
-            .find(|quotes| trimmed.starts_with(quotes) && trimmed.matches(quotes).count() == 1)
-        {
-            in_string = Some(quotes);
-            continue;
-        }
         if trimmed.is_empty() || trimmed.starts_with('#') || continues_a_statement(&previous.text) {
             continue;
         }
@@ -283,4 +285,139 @@ fn last_code_line_before(new_source: NewSource<'_>, at: usize) -> Option<usize> 
 
 fn indent_width(text: &str) -> usize {
     text.len() - text.trim_start().len()
+}
+
+/// Removed lines that continue a statement begun on an earlier removed line:
+/// inside an open bracket, inside a triple-quoted string, or after a
+/// trailing backslash. Only the line that starts a statement is its record;
+/// the others would each attach a fragment (`p,`, `) -> int:`, a string
+/// body at column 0) to whatever owner their own indent suggests (#7690).
+/// The state runs across each contiguous old-side run and restarts at a gap
+/// from the state the candidate file's kept lines leave there. When that
+/// state continues, the run deletes from inside a statement that a kept line
+/// starts (an argument of a kept call, a line of a kept string): its first
+/// behavior line is the deletion's record and only the rest of that
+/// statement are fragments.
+fn continuation_lines(
+    changed: &ChangedFile,
+    new_source: NewSource<'_>,
+    is_behavior: impl Fn(&ChangedLine) -> bool,
+) -> BTreeSet<usize> {
+    let mut by_old_line: Vec<&ChangedLine> = changed.removed_lines.iter().collect();
+    by_old_line.sort_by_key(|line| line.line);
+    let kept_states = states_before_each_line(new_source);
+    let mut continuations = BTreeSet::new();
+    let mut state = StatementState::default();
+    let mut previous_line: Option<usize> = None;
+    // The run sits inside a statement a kept line starts and has not yet
+    // recorded a line of it.
+    let mut inside_kept_statement = false;
+    for line in by_old_line {
+        if previous_line.is_none_or(|previous| previous + 1 != line.line) {
+            // A run opens where the candidate file's kept lines stop, so the
+            // state they leave (a string the run closes) is the run's start.
+            state = kept_states
+                .get(line.new_side_line.saturating_sub(1))
+                .copied()
+                .unwrap_or_default();
+            inside_kept_statement = state.continues();
+        }
+        if !state.continues() {
+            inside_kept_statement = false;
+        }
+        if inside_kept_statement && is_behavior(line) {
+            inside_kept_statement = false;
+        } else if state.continues() {
+            continuations.insert(line.line);
+        }
+        state = state.after(&line.text);
+        previous_line = Some(line.line);
+    }
+    continuations
+}
+
+/// The statement state at the start of each candidate line, by 0-based
+/// index: entry `i` is the state after lines `1..=i`.
+fn states_before_each_line(new_source: NewSource<'_>) -> Vec<StatementState> {
+    let Some(source) = new_source else {
+        return Vec::new();
+    };
+    let mut states = vec![StatementState::default()];
+    let mut state = StatementState::default();
+    for text in source.lines() {
+        state = state.after(text);
+        states.push(state);
+    }
+    states
+}
+
+/// Where a statement stands at the end of a line.
+#[derive(Clone, Copy, Default)]
+struct StatementState {
+    /// Open `(`, `[` and `{` outside strings and comments.
+    depth: usize,
+    /// The quote character of an open triple-quoted string.
+    triple: Option<char>,
+    /// The line ended with a backslash outside any string.
+    backslash: bool,
+}
+
+impl StatementState {
+    fn continues(self) -> bool {
+        self.depth > 0 || self.triple.is_some() || self.backslash
+    }
+
+    fn after(mut self, text: &str) -> Self {
+        let chars: Vec<char> = text.chars().collect();
+        let tripled = |at: usize, quote: char| {
+            chars.get(at + 1) == Some(&quote) && chars.get(at + 2) == Some(&quote)
+        };
+        let mut quote: Option<char> = None;
+        let mut commented = false;
+        let mut at = 0;
+        while let Some(&ch) = chars.get(at) {
+            if let Some(open) = self.triple {
+                if ch == '\\' {
+                    at += 2;
+                    continue;
+                }
+                if ch == open && tripled(at, open) {
+                    self.triple = None;
+                    at += 3;
+                    continue;
+                }
+            } else if let Some(open) = quote {
+                if ch == '\\' {
+                    at += 2;
+                    continue;
+                }
+                if ch == open {
+                    quote = None;
+                }
+            } else {
+                match ch {
+                    '#' => {
+                        commented = true;
+                        break;
+                    }
+                    '"' | '\'' if tripled(at, ch) => {
+                        self.triple = Some(ch);
+                        at += 3;
+                        continue;
+                    }
+                    '"' | '\'' => quote = Some(ch),
+                    '(' | '[' | '{' => self.depth += 1,
+                    ')' | ']' | '}' => self.depth = self.depth.saturating_sub(1),
+                    _ => {}
+                }
+            }
+            at += 1;
+        }
+        // A backslash ending a comment is part of the comment, not a join.
+        self.backslash = self.triple.is_none()
+            && quote.is_none()
+            && !commented
+            && text.trim_end().ends_with('\\');
+        self
+    }
 }
