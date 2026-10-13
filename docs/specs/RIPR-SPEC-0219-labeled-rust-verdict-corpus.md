@@ -388,7 +388,11 @@ Observed: every distinct (test, `oracle_kind`, `oracle_strength`) entry in
 verdict reads) for the labeled test. The scored claim is the entry with the
 strongest strength; among entries of that strength the expected kind wins
 when present, otherwise the first in sorted order. The row lists every
-entry as `observed_all`.
+entry as `observed_all`. Scoring refuses, rather than scores, a label
+that matches more than one reported test (by name, file and line), and a
+label missing from findings whose `related_tests` the JSON capped below
+`related_tests_total`: the first would score another test's reading and
+the second a false `unobserved`.
 
 Strength ranks `smoke` < `weak` < `medium` < `strong`; ripr's observed
 `unknown` and `none` rank below `smoke`. Outcomes:
@@ -681,6 +685,8 @@ Oracle-accuracy tests live in
 - `committed_labels_are_valid_and_the_expected_report_meets_the_gate`
 - `the_gate_arms_only_for_a_whole_corpus_run_with_an_oracle_table`
 - `a_corpus_without_a_ledger_refuses_oracle_labels`
+- `a_label_that_could_be_elided_or_names_two_tests_is_refused`
+- `the_coverage_board_refuses_labels_without_an_oracle_table`
 
 ## Implementation Mapping
 

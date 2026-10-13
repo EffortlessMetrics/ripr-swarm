@@ -85,7 +85,7 @@ fn the_claim_is_the_strongest_entry_and_prefers_the_expected_kind_on_a_tie() {
 }
 
 #[test]
-fn observed_oracles_read_the_labeled_test_across_every_anchored_finding() {
+fn observed_oracles_read_the_labeled_test_across_every_anchored_finding() -> Result<(), String> {
     let first = finding(&[
         ("score_is_not_zero", "exact_value", "strong"),
         ("score_is_not_zero", "relational_check", "weak"),
@@ -107,15 +107,66 @@ fn observed_oracles_read_the_labeled_test_across_every_anchored_finding() {
     assert!(observed_oracles(&findings, Some("missing")).is_empty());
 
     let row = oracle_row(
+        "case",
         &expected("relational_check", "weak", Some("score_is_not_zero")),
         &findings,
-    );
+    )?;
     assert_eq!(row.outcome, OracleOutcome::Overclaim);
     assert_eq!(row.observed_kind.as_deref(), Some("exact_value"));
     assert_eq!(row.observed_all.len(), 2);
-    let none = oracle_row(&expected("exact_value", "strong", None), &[]);
+    let none = oracle_row("case", &expected("exact_value", "strong", None), &[])?;
     assert_eq!(none.outcome, OracleOutcome::Unobserved);
     assert!(none.observed_kind.is_none());
+    Ok(())
+}
+
+#[test]
+fn a_label_that_could_be_elided_or_names_two_tests_is_refused() -> Result<(), String> {
+    let label = expected("exact_value", "strong", Some("works"));
+    // Ten related tests, eight rendered: a missing label may be one of the
+    // two the JSON dropped, so `unobserved` would be a guess.
+    let mut capped = finding(&[("other_test", "exact_value", "strong")]);
+    capped["related_tests_total"] = json!(10);
+    let refused = oracle_row("case", &label, &[&capped])
+        .err()
+        .ok_or("an elided list scored a missing label as unobserved")?;
+    assert!(refused.contains("elided"), "{refused}");
+    // The same miss with the whole list rendered is a real `unobserved`.
+    capped["related_tests_total"] = json!(1);
+    assert_eq!(
+        oracle_row("case", &label, &[&capped])?.outcome,
+        OracleOutcome::Unobserved
+    );
+    // A found label is scored even when other entries were elided.
+    let mut found = finding(&[("works", "exact_value", "strong")]);
+    found["related_tests_total"] = json!(10);
+    assert_eq!(
+        oracle_row("case", &label, &[&found])?.outcome,
+        OracleOutcome::Match
+    );
+
+    // Two `works` tests in different files: neither reading belongs to the
+    // label alone.
+    let twins = json!({"related_tests": [
+        {"name": "works", "file": "tests/alpha.rs", "line": 3,
+         "oracle_kind": "relational_check", "oracle_strength": "weak"},
+        {"name": "works", "file": "tests/beta.rs", "line": 3,
+         "oracle_kind": "exact_value", "oracle_strength": "strong"},
+    ]});
+    let refused = oracle_row("case", &label, &[&twins])
+        .err()
+        .ok_or("a label matching two tests was scored")?;
+    assert!(refused.contains("matches 2 reported tests"), "{refused}");
+    // One test reported by two findings is still one test.
+    let once = json!({"related_tests": [
+        {"name": "works", "file": "tests/alpha.rs", "line": 3,
+         "oracle_kind": "exact_value", "oracle_strength": "strong"},
+    ]});
+    assert_eq!(
+        oracle_row("case", &label, &[&once, &once])?.outcome,
+        OracleOutcome::Match
+    );
+    Ok(())
 }
 
 fn labeled_case(edit: impl Fn(&mut Value)) -> Result<Vec<String>, String> {
@@ -443,5 +494,37 @@ fn a_corpus_without_a_ledger_refuses_oracle_labels() -> Result<(), String> {
         case.expected_oracle = None;
     }
     assert!(ungated_label_violations(&corpus, &dir).is_empty());
+    Ok(())
+}
+
+#[test]
+fn the_coverage_board_refuses_labels_without_an_oracle_table() -> Result<(), String> {
+    // The dx-scoreboard coverage producer validates on its own; it must
+    // reject the same ledger `validate` rejects instead of publishing a rate.
+    let root = crate::tests::temp_dir("oracle-ledger-coverage-board");
+    let corpus = root.join("fixtures/rust-verdict-corpus");
+    crate::tests::copy_dir_recursive(&repo_path(CORPUS_DIR), &corpus)?;
+    crate::tests::copy_dir_recursive(&repo_path(SPECS_DIR), &root.join(SPECS_DIR))?;
+    let ledger_path = corpus.join("spec-coverage.toml");
+    let ledger = std::fs::read_to_string(&ledger_path).map_err(|e| e.to_string())?;
+    let stripped: String = ledger
+        .lines()
+        .filter(|line| {
+            !(line.trim() == "[oracle]"
+                || line.starts_with("match_floor")
+                || line.starts_with("overclaim_ceiling"))
+        })
+        .map(|line| format!("{line}\n"))
+        .collect();
+    assert_eq!(
+        ledger.lines().count() - stripped.lines().count(),
+        3,
+        "fixture: the committed ledger has an [oracle] table"
+    );
+    crate::tests::write(&ledger_path, &stripped);
+    let err = crate::reports::verdict_corpus::coverage::spec_example_coverage_for_corpus(&corpus)
+        .err()
+        .ok_or("the coverage board scored a corpus whose labels have no [oracle] table")?;
+    assert!(err.contains("no [oracle] table"), "{err}");
     Ok(())
 }

@@ -834,7 +834,7 @@ pub(crate) fn case_row(
     origin: SubjectOrigin,
     check: &Value,
     anchor_line: Option<&str>,
-) -> CaseRow {
+) -> Result<CaseRow, String> {
     let packet_driven = case.perl_facts.is_some();
     let anchored = anchored_findings(check, &case.anchor, anchor_line, packet_driven);
     let followed_retarget = anchored
@@ -873,7 +873,12 @@ pub(crate) fn case_row(
         *code_counts.entry(code.clone()).or_insert(0) += 1;
         contradictions.insert(code);
     }
-    CaseRow {
+    let oracle = case
+        .expected_oracle
+        .as_ref()
+        .map(|expected| oracle::oracle_row(&case.case_id, expected, &anchored))
+        .transpose()?;
+    Ok(CaseRow {
         case_id: case.case_id.clone(),
         subject_id: case.subject_id.clone(),
         origin,
@@ -894,11 +899,8 @@ pub(crate) fn case_row(
         findings_contradicted: contradicted,
         contradiction_counts: code_counts,
         packet_provenance: case.perl_facts.as_ref().map(|facts| facts.provenance),
-        oracle: case
-            .expected_oracle
-            .as_ref()
-            .map(|expected| oracle::oracle_row(expected, &anchored)),
-    }
+        oracle,
+    })
 }
 
 /// `anchor_lines` maps a case id to its anchor line's text, read from the
@@ -933,7 +935,7 @@ pub(crate) fn build_report(
             origin,
             check,
             anchor_lines.get(&case.case_id).map(String::as_str),
-        ));
+        )?);
     }
     Ok(summarize(
         corpus.spec.clone(),

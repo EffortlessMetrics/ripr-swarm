@@ -199,16 +199,81 @@ pub(crate) fn classify(expected: &ExpectedOracle, claim: Option<&ObservedOracle>
     }
 }
 
-pub(crate) fn oracle_row(expected: &ExpectedOracle, findings: &[&Value]) -> OracleRow {
+/// Scores one labeled case. A named test the JSON may have elided, or a
+/// name that matches more than one reported test, is refused rather than
+/// scored: either would be a false `unobserved` or another test's reading.
+pub(crate) fn oracle_row(
+    case_id: &str,
+    expected: &ExpectedOracle,
+    findings: &[&Value],
+) -> Result<OracleRow, String> {
+    if let Some(label) = expected.test.as_deref() {
+        label_is_scorable(case_id, label, findings)?;
+    }
     let observed_all = observed_oracles(findings, expected.test.as_deref());
     let claim = claimed(&observed_all, &expected.kind);
-    OracleRow {
+    Ok(OracleRow {
         expected: expected.clone(),
         observed_kind: claim.map(|c| c.kind.clone()),
         observed_strength: claim.map(|c| c.strength.clone()),
         outcome: classify(expected, claim),
         observed_all,
+    })
+}
+
+/// The labeled test must name exactly one reported test (by name, file and
+/// line), and a miss only counts when every finding rendered all of its
+/// related tests: `ripr check` JSON caps the list and discloses the
+/// pre-cap count in `related_tests_total`.
+fn label_is_scorable(case_id: &str, label: &str, findings: &[&Value]) -> Result<(), String> {
+    let mut identities = BTreeSet::new();
+    let mut elided = false;
+    for finding in findings {
+        let entries = finding
+            .get("related_tests")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        let total = finding
+            .get("related_tests_total")
+            .and_then(Value::as_u64)
+            .unwrap_or(entries.len() as u64);
+        elided |= total > entries.len() as u64;
+        for entry in entries {
+            let name = entry
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if names_test(name, label) {
+                identities.insert((
+                    name.to_string(),
+                    entry
+                        .get("file")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    entry.get("line").and_then(Value::as_u64),
+                ));
+            }
+        }
     }
+    if identities.len() > 1 {
+        let found: Vec<String> = identities
+            .iter()
+            .map(|(name, file, line)| format!("{name} ({file}:{})", line.unwrap_or_default()))
+            .collect();
+        return Err(format!(
+            "case `{case_id}` expected_oracle test `{label}` matches {} reported tests ({}); name one test",
+            identities.len(),
+            found.join(", ")
+        ));
+    }
+    if identities.is_empty() && elided {
+        return Err(format!(
+            "case `{case_id}` expected_oracle test `{label}` is not among the rendered related_tests and the JSON elided some; the score would be a false `unobserved`"
+        ));
+    }
+    Ok(())
 }
 
 /// Label law for one case's `expected_oracle`; whether its spec example
