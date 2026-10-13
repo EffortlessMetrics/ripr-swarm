@@ -310,7 +310,9 @@ Two pattern terms are used below.
    that strength; otherwise it takes the first such conjunct's reading.
    So a `matches!` keeps its pattern's reading inside the chain (#7695).
    A pinning `==` keeps the chain's reading, because the test does fix
-   that value.
+   that value; a self-comparison (`value == value`) pins nothing and
+   neither exempts the chain nor earns rule 1's exact credit.
+   `prop_assert!` reads a whole `matches!` condition as `assert!` does.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
    `Option::is_some(`), not as a substring of another identifier such as

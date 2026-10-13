@@ -418,6 +418,13 @@ fn a_matches_conjunct_reads_no_stronger_than_its_pattern() -> Result<(), String>
         ("ensure!(total == 4 && matches!(r, Ok(_)));", &exact),
         ("assert!(ready && matches!(r, Err(Error::Denied)));", &err),
         ("assert!(matches!(r, Ok(_)));", &smoke),
+        // `prop_assert!` reads its pattern like `assert!` does.
+        ("prop_assert!(matches!(r, Ok(_)));", &smoke),
+        ("prop_assert!(ready && matches!(r, Ok(_)));", &weak),
+        ("prop_assert!(ready && matches!(r, Ok(3)));", &exact),
+        // A self-comparison pins nothing, so it does not exempt the chain.
+        ("assert!(value == value && matches!(r, Ok(_)));", &weak),
+        ("ensure!(value == value && ready);", &weak),
     ] {
         require_classification(text, expected)?;
     }
@@ -451,10 +458,7 @@ fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), St
     let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
     let exact = (OracleKind::ExactValue, OracleStrength::Strong);
     for (text, expected) in [
-        // #7715: `prop_assert!` reads its pattern like `assert!` does.
-        ("prop_assert!(matches!(r, Ok(_)));", &smoke),
-        ("prop_assert!(ready && matches!(r, Ok(_)));", &weak),
-        // A `matches!` nested in a closure earns nothing from its text alone.
+        // #7715: a `matches!` nested in a closure earns nothing from its text alone.
         (
             "assert!(ready && matches!(r, Ok(_)) && xs.iter().any(|x| matches!(x, Some(_))));",
             &weak,
@@ -470,8 +474,6 @@ fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), St
         ("assert!(matches!(r, Ok(_)) == true);", &weak),
         ("ensure!(matches!(r, Ok(_)) == true);", &weak),
         // Controls: a pattern that pins keeps exact credit in every form.
-        ("prop_assert!(matches!(r, Ok(3)));", &exact),
-        ("prop_assert!(ready && matches!(r, Ok(3)));", &exact),
         ("assert!(xs.iter().any(|x| matches!(x, Some(3))));", &exact),
         // Rule 1 already reads a compared pattern nested in a chain as not
         // positive, whatever its pattern.
