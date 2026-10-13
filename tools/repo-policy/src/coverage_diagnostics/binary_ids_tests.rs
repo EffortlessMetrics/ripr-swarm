@@ -42,6 +42,21 @@ fn raw(id: &[u8]) -> Vec<u8> {
     bytes[136..136 + id.len()].copy_from_slice(id);
     bytes
 }
+fn raw_ids(ids: &[Vec<u8>]) -> Vec<u8> {
+    let block_len = ids.iter().map(|id| (8 + id.len() + 7) & !7).sum::<usize>();
+    let mut bytes = vec![0; HEADER_BYTES + block_len];
+    bytes[..8].copy_from_slice(&[0x81, 0x72, 0x66, 0x6f, 0x72, 0x70, 0x6c, 0xff]);
+    put64(&mut bytes, 8, 10);
+    put64(&mut bytes, 16, block_len as u64);
+    let mut at = HEADER_BYTES;
+    for id in ids {
+        put64(&mut bytes, at, id.len() as u64);
+        at += 8;
+        bytes[at..at + id.len()].copy_from_slice(id);
+        at += (id.len() + 7) & !7;
+    }
+    bytes
+}
 fn elf_bytes(id: &[u8], instrumented: bool) -> Vec<u8> {
     let mut bytes = vec![0; 896];
     bytes[..7].copy_from_slice(&[0x7f, b'E', b'L', b'F', 2, 1, 1]);
@@ -154,6 +169,51 @@ fn raw_binary_ids_are_exact_and_unknown_layouts_are_explicit() {
     }
 }
 #[test]
+fn profile_id_count_limit_keeps_the_valid_prefix_and_marks_mapping_partial() -> Result<()> {
+    let f = fixture()?;
+    let valid_ids = (1..=33).map(|n| vec![n; 20]).collect::<Vec<_>>();
+    let parsed = profile_ids(&raw_ids(&valid_ids));
+    assert_eq!(parsed["status"], "partial");
+    assert_eq!(parsed["reason"], "id_count_limit");
+    assert_eq!(parsed["truncated"], true);
+    assert_eq!(parsed["ids"].as_array().map(Vec::len), Some(32));
+    write_executable(
+        &f.0.join("debug/deps/first"),
+        &elf_bytes(&valid_ids[0], true),
+    )?;
+    let report = associate(&f.0, &[json!({"binary_ids": parsed})]);
+    assert_eq!(report["candidates"].as_array().map(Vec::len), Some(1));
+    assert_eq!(report["ids"][0]["status"], "matched");
+    assert_eq!(
+        report["ids"][1]["status"],
+        "unavailable_within_partial_scope"
+    );
+    assert_eq!(report["profile_ids_incomplete"], true);
+    assert_eq!(report["profile_ids_truncated"], false);
+    assert_eq!(report["status"], "partial");
+    Ok(())
+}
+#[test]
+fn unavailable_profile_id_input_prevents_a_definitive_negative_mapping() -> Result<()> {
+    let f = fixture()?;
+    let known = profile_ids(&raw(&[0x42; 20]));
+    let unsupported = profile_ids(&[0; HEADER_BYTES]);
+    let report = associate(
+        &f.0,
+        &[
+            json!({"binary_ids": known}),
+            json!({"binary_ids": unsupported}),
+        ],
+    );
+    assert_eq!(report["profile_ids_incomplete"], true);
+    assert_eq!(report["status"], "partial");
+    assert_eq!(
+        report["ids"][0]["status"],
+        "unavailable_within_partial_scope"
+    );
+    Ok(())
+}
+#[test]
 fn exact_instrumented_matches_preserve_duplicate_ambiguity() -> Result<()> {
     let f = fixture()?;
     let id = [0x42; 20];
@@ -182,12 +242,14 @@ fn wrong_id_and_same_id_without_instrumentation_do_not_match() -> Result<()> {
     )?;
     let partial = associate_with_limits(&f.0, &ids(&id), LIMITS);
     assert_eq!(partial["candidates"], json!([]));
-    assert_eq!(partial["status"], "partial");
-    assert!(
-        partial["error_samples"]
-            .as_array()
-            .is_some_and(|a| a.contains(&json!("not_profile_instrumented")))
+    assert_eq!(partial["status"], "inspected_scope");
+    assert_eq!(
+        partial["ids"][0]["status"],
+        "not_found_within_inspected_scope"
     );
+    assert_eq!(partial["non_candidates"], 1);
+    assert_eq!(partial["candidates_unavailable"], 0);
+    assert_eq!(partial["error_samples"], json!([]));
     Ok(())
 }
 #[test]
@@ -239,6 +301,11 @@ fn malformed_and_platform_elf_headers_and_notes_are_bounded() -> Result<()> {
         let report = associate_with_limits(&f.0, &ids(&id), LIMITS);
         assert_eq!(report["candidates"], json!([]));
         assert_eq!(report["candidates_unavailable"], 1);
+        assert_eq!(report["status"], "partial");
+        assert_eq!(
+            report["ids"][0]["status"],
+            "unavailable_within_partial_scope"
+        );
         assert!(report["read_bytes"].as_u64().unwrap_or(u64::MAX) <= 65536);
     }
     Ok(())

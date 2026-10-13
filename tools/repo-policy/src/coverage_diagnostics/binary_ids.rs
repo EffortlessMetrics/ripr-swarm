@@ -19,49 +19,63 @@ const ROOTS: [&str; 4] = ["debug", "debug/deps", "release", "release/deps"];
 // binary IDs padded to eight bytes. Unknown layouts stay explicitly unavailable.
 // compiler-rt's Linux writer emits GNU NT_GNU_BUILD_ID descriptors from PT_NOTE.
 pub(super) fn profile_ids(prefix: &[u8]) -> Value {
-    let parse = || -> Result<Vec<String>> {
+    let mut ids = Vec::new();
+    let parse = || -> std::result::Result<(), &'static str> {
         if prefix.len() < HEADER_BYTES {
-            return Err("truncated_header".into());
+            return Err("truncated_header");
         }
         if prefix[..8] != [0x81, 0x72, 0x66, 0x6f, 0x72, 0x70, 0x6c, 0xff] {
-            return Err("unsupported_magic".into());
+            return Err("unsupported_magic");
         }
         // Keep the full version visible; only the known layout is admitted.
-        if u64le(prefix, 8)? != 10 {
-            return Err("unsupported_raw_version".into());
+        if u64le(prefix, 8).map_err(|_| "truncated_field")? != 10 {
+            return Err("unsupported_raw_version");
         }
-        let size = usize::try_from(u64le(prefix, 16)?).map_err(|_error| "id_block_limit")?;
+        let size = usize::try_from(u64le(prefix, 16).map_err(|_| "truncated_field")?)
+            .map_err(|_error| "id_block_limit")?;
         if size > ID_BLOCK_BYTES {
-            return Err("id_block_limit".into());
+            return Err("id_block_limit");
         }
         let block = prefix
-            .get(HEADER_BYTES..HEADER_BYTES + size)
+            .get(HEADER_BYTES..HEADER_BYTES.checked_add(size).ok_or("id_block_limit")?)
             .ok_or("truncated_id_block")?;
-        let mut ids = Vec::new();
         let mut at = 0;
         while at < block.len() {
             if ids.len() == IDS {
-                return Err("id_count_limit".into());
+                return Err("id_count_limit");
             }
-            let size = usize::try_from(u64le(block, at)?).map_err(|_error| "invalid_id_length")?;
+            let size = usize::try_from(u64le(block, at).map_err(|_| "invalid_id_length")?)
+                .map_err(|_error| "invalid_id_length")?;
             if size == 0 || size > ID_BYTES {
-                return Err("invalid_id_length".into());
+                return Err("invalid_id_length");
             }
             at = at.checked_add(8).ok_or("invalid_id_length")?;
             let end = at.checked_add(size).ok_or("invalid_id_length")?;
             ids.push(hex(block.get(at..end).ok_or("truncated_id")?));
             at = end.checked_add(7).ok_or("invalid_id_length")? & !7;
             if at > block.len() {
-                return Err("truncated_id_padding".into());
+                return Err("truncated_id_padding");
             }
         }
-        Ok(ids)
+        Ok(())
     };
     match parse() {
-        Ok(ids) => json!({"status": "available", "ids": ids, "layout": "llvm_raw64_le_v10"}),
-        Err(reason) => {
-            json!({"status": "unavailable", "truncated": reason.contains("limit") || reason.contains("truncated"), "reason": reason, "ids": []})
+        Ok(()) => {
+            json!({"status": "available", "ids": ids, "layout": "llvm_raw64_le_v10"})
         }
+        Err(reason) if ids.is_empty() => json!({
+            "status": "unavailable",
+            "truncated": reason.contains("limit") || reason.contains("truncated"),
+            "reason": reason,
+            "ids": ids
+        }),
+        Err(reason) => json!({
+            "status": "partial",
+            "truncated": reason.contains("limit") || reason.contains("truncated"),
+            "reason": reason,
+            "ids": ids,
+            "layout": "llvm_raw64_le_v10"
+        }),
     }
 }
 
@@ -112,7 +126,8 @@ fn base_report(ids: &[String]) -> Value {
     json!({"status": "unavailable", "scope": ROOTS,
         "association": "exact GNU build ID plus LLVM profile sections; no test or cause attribution",
         "ids": ids.iter().map(|id| json!({"id": id, "status": "unavailable", "matches": []})).collect::<Vec<_>>(),
-        "candidates": [], "truncated": false, "profile_ids_truncated": false,
+        "candidates": [], "non_candidates": 0, "truncated": false,
+        "profile_ids_truncated": false, "profile_ids_incomplete": false,
         "limits": {"entries": LIMITS.entries, "files": LIMITS.files, "read_bytes": LIMITS.bytes,
             "bytes_per_file": 65536, "matches": LIMITS.matches, "json_bytes": JSON_BYTES,
             "elapsed_ms": LIMITS.elapsed.as_millis()}})
@@ -121,6 +136,7 @@ fn base_report(ids: &[String]) -> Value {
 pub(super) fn associate(build: &Path, captured: &[Value]) -> Value {
     let mut ids = Vec::new();
     let mut ids_truncated = false;
+    let mut profile_incomplete = false;
     for profile in captured {
         for id in profile["binary_ids"]["ids"]
             .as_array()
@@ -136,9 +152,19 @@ pub(super) fn associate(build: &Path, captured: &[Value]) -> Value {
                 }
             }
         }
+        profile_incomplete |= profile["binary_ids"]["status"] != "available";
     }
     let mut report = associate_with_limits(build, &ids, LIMITS);
     report["profile_ids_truncated"] = json!(ids_truncated);
+    report["profile_ids_incomplete"] = json!(profile_incomplete);
+    if ids_truncated || profile_incomplete {
+        report["status"] = json!("partial");
+        for row in report["ids"].as_array_mut().into_iter().flatten() {
+            if row["status"] == "not_found_within_inspected_scope" {
+                row["status"] = json!("unavailable_within_partial_scope");
+            }
+        }
+    }
     report
 }
 
@@ -443,6 +469,7 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
     let mut entries = 0;
     let mut inspected = 0;
     let mut unavailable = 0;
+    let mut non_candidates = 0;
     let mut root_errors = Vec::new();
     let mut errors = Vec::new();
     let mut matches = Vec::new();
@@ -534,6 +561,10 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
                 }
                 Ok(_) => (),
                 Err(reason) => {
+                    if reason == "not_profile_instrumented" {
+                        non_candidates += 1;
+                        continue;
+                    }
                     unavailable += 1;
                     if errors.len() < 8 {
                         errors.push(reason.clone());
@@ -561,6 +592,7 @@ fn scan(build: &Path, ids: &[String], limits: Limits, deadline: Instant) -> Valu
     report["files_inspected"] = json!(inspected);
     report["read_bytes"] = json!(budget.bytes);
     report["candidates_unavailable"] = json!(unavailable);
+    report["non_candidates"] = json!(non_candidates);
     report["error_samples"] = json!(errors);
     report["ids"] = json!(ids.iter().map(|id| {
         let matched = matches.iter().enumerate().filter_map(|(index, row)|

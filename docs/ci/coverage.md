@@ -64,8 +64,15 @@ profile sections are required; multiple candidate paths remain ambiguous.
 Unavailable, unmatched within the inspected scope, and truncated results remain
 explicit. Inspection is limited to 1,024 directory entries, 256 files, 2 MiB of
 reads (64 KiB per file), 16 matches, 32 KiB of mapping JSON, and two seconds.
-Malformed/unsupported layouts and mapping failures do not discard profiles or
-change the original failed coverage result. A build-ID association does not
+The profile parser retains the valid prefix when a later ID exceeds the 32-ID
+limit, reports that profile as partial, and marks the aggregate mapping partial
+so unmatched retained IDs are not treated as definitive misses. An unavailable
+profile-ID input also keeps unmatched IDs inconclusive. A readable,
+structurally parsed executable without LLVM profile sections is counted as a
+noncandidate; malformed, unsupported, or unreadable inputs remain unavailable
+and can make the scope partial. Malformed/unsupported layouts and mapping
+failures do not discard profiles or change the original failed coverage
+result. A build-ID association does not
 identify an owning test, process termination, or the cause of a short profile.
 
 Codecov upload requires the `CODECOV_TOKEN` secret and runs only for trusted
