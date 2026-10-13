@@ -179,7 +179,7 @@ pub(crate) fn attribute_test_build_availability(attr_text: &str) -> Option<bool>
     availability_attribute(body, 0).ok().flatten()
 }
 
-/// A flat `cfg_attr` introducing only bare prelude flags inactive in a test build.
+/// A flat inactive `cfg_attr` with bare prelude flags and supported lint metadata.
 /// Unknown, malformed and nested introductions retain the existing boundary.
 pub(crate) fn attribute_is_known_inactive_prelude_flags(attr_text: &str) -> bool {
     let Some(positioned) = positioned_tokens(attr_text) else {
@@ -220,11 +220,97 @@ pub(crate) fn attribute_is_known_inactive_prelude_flags(attr_text: &str) -> bool
     let Some((condition, introduced)) = parts.split_first() else {
         return false;
     };
-    !introduced.is_empty()
-        && introduced.iter().all(|part| {
-            matches!(part, [Token::Word(name)] if matches!(name.as_str(), "no_std" | "no_implicit_prelude"))
-        })
-        && matches!(availability_predicate(condition, 0), Ok(Some(false)))
+    let bare_flag = |part: &[Token]| matches!(part, [Token::Word(name)] if matches!(name.as_str(), "no_std" | "no_implicit_prelude"));
+    if !introduced.iter().any(|part| bare_flag(part))
+        || !matches!(availability_predicate(condition, 0), Ok(Some(false)))
+    {
+        return false;
+    }
+    use ra_ap_syntax::{AstNode, ast};
+    let source = format!("{attr_text}\nfn __ripr_prelude_metadata() {{}}");
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return false;
+    };
+    let Some(attribute) = parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::CfgAttrMeta::cast)
+    else {
+        return false;
+    };
+    let metas: Vec<_> = attribute.metas().collect();
+    metas.len() == introduced.len()
+        && metas
+            .iter()
+            .zip(introduced)
+            .all(|(meta, tokens)| bare_flag(tokens) || inactive_prelude_lint_sibling(meta))
+}
+
+/// Lint lists are inert built-ins, but their token trees need metadata parsing.
+fn inactive_prelude_lint_sibling(meta: &ra_ap_syntax::ast::Meta) -> bool {
+    use ra_ap_syntax::{AstNode, ast};
+    let ast::Meta::TokenTreeMeta(meta) = meta else {
+        return false;
+    };
+    let Some(path) = meta.path() else {
+        return false;
+    };
+    if !matches!(
+        path.syntax().text().to_string().as_str(),
+        "allow" | "warn" | "deny" | "forbid" | "expect"
+    ) {
+        return false;
+    }
+    let Some(tree) = meta.token_tree() else {
+        return false;
+    };
+    let text = tree.syntax().text().to_string();
+    let Some(inner) = text
+        .strip_prefix('(')
+        .and_then(|text| text.strip_suffix(')'))
+    else {
+        return false;
+    };
+    // cfg_attr's existing metadata grammar checks lint paths and value syntax.
+    let source = format!("#[cfg_attr(test, {inner})] fn __ripr_lint_metadata() {{}}");
+    let Some(parsed) = crate::analysis::syntax::parse_clean_source_file(&source) else {
+        return false;
+    };
+    let Some(list) = parsed
+        .tree()
+        .syntax()
+        .descendants()
+        .find_map(ast::CfgAttrMeta::cast)
+    else {
+        return false;
+    };
+    let members: Vec<_> = list.metas().collect();
+    let mut lint_count = 0;
+    for (index, member) in members.iter().enumerate() {
+        match member {
+            ast::Meta::PathMeta(_) => lint_count += 1,
+            ast::Meta::KeyValueMeta(value) if index + 1 == members.len() && lint_count > 0 => {
+                if !value
+                    .path()
+                    .is_some_and(|path| path.syntax().text() == "reason")
+                {
+                    return false;
+                }
+                let Some(ast::Expr::Literal(literal)) = value.expr() else {
+                    return false;
+                };
+                let ast::LiteralKind::String(string) = literal.kind() else {
+                    return false;
+                };
+                if string.value().is_err() {
+                    return false;
+                }
+            }
+            _ => return false,
+        }
+    }
+    lint_count > 0
 }
 
 /// Whether an attribute can only preserve the source items it annotates.

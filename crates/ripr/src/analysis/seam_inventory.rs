@@ -9904,6 +9904,36 @@ fn selected() {
         }
         for (label, attribute, admitted) in [
             (
+                "mixed-inactive-no-prelude",
+                "#![cfg_attr(not(test), no_implicit_prelude, allow(dead_code))]",
+                true,
+            ),
+            (
+                "mixed-active-no-std",
+                "#![cfg_attr(test, no_std, allow(dead_code))]",
+                false,
+            ),
+            (
+                "mixed-unknown-no-std",
+                "#![cfg_attr(feature=\"maybe\", no_std, allow(dead_code))]",
+                false,
+            ),
+            (
+                "mixed-malformed-lint",
+                "#![cfg_attr(not(test), no_std, allow(dead_code +))]",
+                false,
+            ),
+            (
+                "mixed-computed-reason",
+                "#![cfg_attr(not(test), no_std, allow(dead_code, reason=concat!(\"why\")))]",
+                false,
+            ),
+            (
+                "mixed-opaque",
+                "#![cfg_attr(not(test), no_std, opaque_attr)]",
+                false,
+            ),
+            (
                 "unsupported-no-std-value",
                 "#![cfg_attr(not(test), no_std=\"opaque\")]",
                 false,
@@ -9921,7 +9951,7 @@ fn selected() {
             (
                 "mixed-no-std",
                 "#![cfg_attr(not(test), no_std, allow(dead_code))]",
-                false,
+                true,
             ),
             ("inactive-no-std", "#![cfg_attr(not(test), no_std)]", true),
             ("active-cfg-no-std", "#![cfg_attr(test, no_std)]", false),
