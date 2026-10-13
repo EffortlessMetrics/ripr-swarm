@@ -10696,6 +10696,7 @@ fixtures = [
   "fixtures/propagate_stdout_macro",
   "fixtures/propagate_swallowed_ok",
   "fixtures/python_adversarial_changed_sink_non_delta_operand",
+  "fixtures/python_adversarial_replaced_block_non_delta_operand",
   "fixtures/python_decorator_indirection_limit",
   "fixtures/python_dynamic_dispatch_limit",
   "fixtures/python_dynamic_import_limit",
