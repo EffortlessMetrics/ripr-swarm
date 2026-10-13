@@ -58,8 +58,9 @@ pub(super) fn pattern_assertion_classification(line: &str) -> Option<OracleClass
 }
 
 /// The pattern operand of an `assert_matches!` / `debug_assert_matches!`, or
-/// of a `matches!` that is the whole condition of `assert!`, `debug_assert!`
-/// or `ensure!`. A compound condition is not a pattern assertion.
+/// of a `matches!` that is the whole condition of `assert!`, `debug_assert!`,
+/// `prop_assert!` or `ensure!`. A compound condition is not a pattern
+/// assertion.
 fn asserted_pattern(line: &str) -> Option<(String, String)> {
     let pair = |arguments: Vec<String>| match arguments.as_slice() {
         [scrutinee, pattern] => Some((scrutinee.clone(), pattern.clone())),
@@ -71,7 +72,7 @@ fn asserted_pattern(line: &str) -> Option<(String, String)> {
     {
         return pair(arguments);
     }
-    let condition = ["assert!", "debug_assert!", "ensure!"]
+    let condition = ["assert!", "debug_assert!", "prop_assert!", "ensure!"]
         .into_iter()
         .find_map(|name| complete_macro_arguments(line, name)?.into_iter().next())?;
     let mut expression = condition.trim();

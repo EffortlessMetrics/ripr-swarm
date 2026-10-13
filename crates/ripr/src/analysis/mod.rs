@@ -975,12 +975,14 @@ pub(crate) fn run_analysis_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_diff_pipeline_with_oracle_policy_and_rust_config(
         options,
         oracle_policy,
         languages,
         rust_config,
+        language_config,
     )
 }
 
@@ -989,6 +991,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
     oracle_policy: &OraclePolicy,
     languages: &[language::LanguageId],
     rust_config: &crate::config::RustLanguageConfig,
+    language_config: &crate::config::LanguagesConfig,
     disclosure_probes: DisclosureProbes,
 ) -> Result<AnalysisResult, CoreError> {
     pipeline::run_worktree_pipeline_with_oracle_policy_and_rust_config(
@@ -996,6 +999,7 @@ pub(crate) fn run_worktree_analysis_with_oracle_policy_and_rust_config(
         oracle_policy,
         languages,
         rust_config,
+        language_config,
         disclosure_probes,
     )
 }

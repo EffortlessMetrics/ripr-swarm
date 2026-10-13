@@ -227,6 +227,44 @@ impl TypeScriptAdapter {
         file_read_limit: u64,
         workspace_read_budget: u64,
     ) -> Result<LanguageDiffResult, String> {
+        Self::analyze_diff_with_read_limits_and_handwritten(
+            options,
+            changed_files,
+            file_read_limit,
+            workspace_read_budget,
+            &[],
+        )
+    }
+
+    /// [`analyze_diff_with_read_limits_and_handwritten`] with the
+    /// environment-resolved read caps, for callers outside the TypeScript
+    /// module (the pipeline).
+    pub(crate) fn analyze_diff_with_handwritten_env(
+        options: &AnalysisOptions,
+        changed_files: &[ChangedFile],
+        handwritten: &[String],
+    ) -> Result<LanguageDiffResult, String> {
+        Self::analyze_diff_with_read_limits_and_handwritten(
+            options,
+            changed_files,
+            ts_file_read_limit(),
+            ts_workspace_read_budget(),
+            handwritten,
+        )
+    }
+
+    /// [`analyze_diff_with_read_limits`] plus the `[languages.typescript]
+    /// handwritten_files` declarations (#7386): exact repository-relative
+    /// paths admitted past the built-in excluded-directory conventions, so a
+    /// hand-written source under a `dist/`, `build/` or `out/` directory is
+    /// walked, read and counted instead of silently dropped.
+    pub(in crate::analysis::language::typescript) fn analyze_diff_with_read_limits_and_handwritten(
+        options: &AnalysisOptions,
+        changed_files: &[ChangedFile],
+        file_read_limit: u64,
+        workspace_read_budget: u64,
+        handwritten: &[String],
+    ) -> Result<LanguageDiffResult, String> {
         // Directory-module resolution (#4546) and the tsconfig outDir
         // mapping (#4551) are memoized for this run only (#4638 and #4800
         // reviews); the scope drops the cache when the run returns.
@@ -234,7 +272,8 @@ impl TypeScriptAdapter {
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.
-        let workspace_scan = collect_workspace_typescript_files(&options.root);
+        let workspace_scan =
+            collect_workspace_typescript_files_with_handwritten(&options.root, handwritten);
         let workspace_files = workspace_scan.files;
         let changed_paths = changed_files
             .iter()
@@ -397,7 +436,11 @@ impl TypeScriptAdapter {
             // would put an uninspected file in the report denominator.
             if !TypeScriptAdapter.accepts_path(&changed.path)
                 || is_detectable_generated_typescript_path(&changed.path)
-                || is_detectable_excluded_typescript_path(&changed.path)
+                || (is_detectable_excluded_typescript_path(&changed.path)
+                    && !crate::config::is_declared_handwritten_typescript_path(
+                        handwritten,
+                        &changed.path,
+                    ))
             {
                 continue;
             }
