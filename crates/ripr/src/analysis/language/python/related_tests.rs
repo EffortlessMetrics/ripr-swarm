@@ -248,9 +248,12 @@ pub(super) fn python_repair_placement(
     if !matches!(class, ExposureClass::WeaklyExposed) {
         return None;
     }
-    let candidate = related_candidates
+    let (candidate, verify_command) = related_candidates
         .iter()
-        .find(|candidate| candidate.relation.uses_oracle())?;
+        .filter(|candidate| candidate.relation.uses_oracle())
+        .find_map(|candidate| {
+            verify_command_for_test(candidate.test).map(|command| (candidate, command))
+        })?;
     let path = normalized_path(&candidate.test.file);
     match candidate.test.framework {
         "pytest" => {
@@ -261,7 +264,7 @@ pub(super) fn python_repair_placement(
                 suggested_test_file: path,
                 suggested_test_name: candidate.test.name.clone(),
                 suggested_test_node_id: Some(node_id),
-                verify_command: verify_command_for_test(candidate.test)?,
+                verify_command,
                 verify_command_confidence: "high",
                 location_reason: "strengthen existing weak pytest relation",
             })
@@ -271,7 +274,7 @@ pub(super) fn python_repair_placement(
             suggested_test_file: path,
             suggested_test_name: candidate.test.name.clone(),
             suggested_test_node_id: None,
-            verify_command: verify_command_for_test(candidate.test)?,
+            verify_command,
             verify_command_confidence: "high",
             location_reason: "strengthen existing weak unittest relation",
         }),

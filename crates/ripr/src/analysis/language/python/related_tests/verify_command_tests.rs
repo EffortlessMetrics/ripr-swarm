@@ -73,7 +73,7 @@ fn unittest_dot_free_paths_preserve_qualified_and_quoted_selectors() {
 }
 
 #[test]
-fn repair_placement_uses_first_runnable_oracle_relation() {
+fn repair_placement_uses_first_runnable_oracle_relation() -> Result<(), String> {
     let dotted = extract_tests(Path::new("tests/test_checkout.v2.py"), UNITTEST);
     let plain = extract_tests(Path::new("tests/test_plain.py"), UNITTEST);
     let later = extract_tests(Path::new("tests/test_later.py"), UNITTEST);
@@ -96,7 +96,7 @@ fn repair_placement_uses_first_runnable_oracle_relation() {
         },
     ];
     let placement = python_repair_placement(&ExposureClass::WeaklyExposed, &candidates)
-        .expect("later runnable oracle relation retains a repair route");
+        .ok_or("later runnable oracle relation must retain a repair route")?;
     assert_eq!(placement.suggested_test_file, "tests/test_plain.py");
     assert_eq!(placement.suggested_test_name, "test_same");
     assert_eq!(
@@ -108,6 +108,7 @@ fn repair_placement_uses_first_runnable_oracle_relation() {
         None,
         "an advisory relation cannot replace a refused oracle relation"
     );
+    Ok(())
 }
 
 #[test]

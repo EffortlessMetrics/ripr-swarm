@@ -118,7 +118,7 @@ fn python_unittest_selectors_preserve_literal_file_identity() -> TestResult {
 fn python_repair_route_and_card_use_the_same_runnable_test() -> TestResult {
     let scratch = unique_temp_workspace("unittest-runnable-fallback");
     let result = (|| -> TestResult {
-        for (name, tests, selected_file, selected_strength) in [
+        for (name, tests, selected_file, selected_strength, command) in [
             (
                 "fallback-weaker",
                 vec![
@@ -130,6 +130,7 @@ fn python_repair_route_and_card_use_the_same_runnable_test() -> TestResult {
                 ],
                 "tests/test_plain.py",
                 "unknown",
+                "python -m unittest tests.test_plain.CheckoutTests.test_same",
             ),
             (
                 "ranked-runnable",
@@ -146,6 +147,7 @@ fn python_repair_route_and_card_use_the_same_runnable_test() -> TestResult {
                 ],
                 "tests/test_zplain.py",
                 "smoke",
+                "python -m unittest tests.test_zplain.CheckoutTests.test_same",
             ),
             (
                 "duplicate-ordinary",
@@ -161,6 +163,7 @@ fn python_repair_route_and_card_use_the_same_runnable_test() -> TestResult {
                 ],
                 "tests/test_afirst.py",
                 "smoke",
+                "python -m unittest tests.test_afirst.CheckoutTests.test_same",
             ),
         ] {
             let root = scratch.join(name);
@@ -215,18 +218,6 @@ fn python_repair_route_and_card_use_the_same_runnable_test() -> TestResult {
                     .len(),
                 tests.len()
             );
-            let command = match selected_file {
-                "tests/test_plain.py" => {
-                    "python -m unittest tests.test_plain.CheckoutTests.test_same"
-                }
-                "tests/test_zplain.py" => {
-                    "python -m unittest tests.test_zplain.CheckoutTests.test_same"
-                }
-                "tests/test_afirst.py" => {
-                    "python -m unittest tests.test_afirst.CheckoutTests.test_same"
-                }
-                _ => unreachable!("literal fixture selector"),
-            };
             assert_eq!(
                 finding["repair_placement"]["suggested_test_file"], selected_file,
                 "{name}: {finding}"

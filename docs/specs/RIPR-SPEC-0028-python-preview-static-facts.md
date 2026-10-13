@@ -153,8 +153,11 @@ Test discovery:
   is known: `python -m pytest path::node` for pytest and
   `python -m unittest module.Class.test_method` for unittest. A literal dot
   in a unittest path component, after removing the `.py` extension, leaves
-  module identity unresolved: omit the verify command and repair placement
-  while retaining related-test evidence. Shell quoting cannot preserve such
+  module identity unresolved: omit that test's verify command while retaining
+  related-test evidence. Repair placement uses the first oracle-eligible test
+  in candidate order with a known verify command, or stays absent when none
+  exists; repair-card evidence describes that same selected file and test.
+  Shell quoting cannot preserve such
   a dot against unittest's module splitting. Ordinary quoted paths and pytest
   file selectors retain their existing behavior. The pytest form
   runs through `python -m` so the working directory is on `sys.path` and a
