@@ -408,7 +408,9 @@ pub(super) fn admission_query(
 /// The witness search for this finding's owner would need more files than
 /// the narrowing threshold allows. Today's full selection refused the whole run in
 /// this case; this keeps the run and names the unsearched reach instead of
-/// letting `no_static_path` read as a searched-and-empty result.
+/// letting `no_static_path` read as a searched-and-empty result. The same
+/// disclosure also withholds an unsupported mixed weak-direct gap when its
+/// dependent macro-witness search could not run (#7542).
 pub(super) fn apply_reach_search_over_limit(
     finding: &mut crate::domain::Finding,
     probe: &crate::domain::Probe,

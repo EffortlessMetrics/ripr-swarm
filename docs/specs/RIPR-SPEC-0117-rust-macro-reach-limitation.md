@@ -182,6 +182,16 @@ transitive-first proximity rule to ordinary lexical helper paths. Diff-scope
 index narrowing widens for the same predicate, so a withheld dependent test
 can supply the candidate macro witness. Repo analysis uses the shared rule.
 
+If the dependent caller closure exceeds the search threshold and the main index
+supplies no macro witness, use the existing `rust_transitive_reach_unresolved`
+unsearched-route disclosure. Keep direct reach, all stages, classification and
+related rows; withhold canonical gap/repair advice and missing discriminators.
+The next step names the unsearched dependent files and how to raise the bounded
+search limit. It names no test or macro witness from files that were skipped.
+A concrete macro witness in the main index keeps its named macro limitation;
+the generic unsearched detail must not overwrite it. Existing no-path and
+proximity precedence remains unchanged.
+
 If the witness exists, retain every RIPR stage, classification and related-test
 row. Name the existing macro limit and concrete witness; add no reach or oracle
 credit. Use the existing limitation next step, clear unsupported missing gap
@@ -192,7 +202,8 @@ the unresolved path to inspect.
 
 A confirmed discriminator remains outside this rule even if weak infection or
 propagation leaves the overall class `weakly_exposed`. Weak direct tests without
-a valid macro witness keep their previous result. Unrelated, absent, ambiguous
+a valid macro witness keep their previous result when the search completed.
+Unrelated, absent, ambiguous
 or uninvoked macros supply no witness.
 
 ### Fail-closed boundaries

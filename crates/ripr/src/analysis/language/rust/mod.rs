@@ -1416,9 +1416,24 @@ fn apply_rust_macro_reach_limit(
 /// RIPR-SPEC-0240 does for a withheld gap, so repair placement and agent
 /// packets never read a gap this limit withheld.
 fn unresolved_reach_next_step(finding: &mut Finding, test: &str, entry: &str, owner: &str) {
-    finding.recommended_next_step = Some(format!(
-        "Check whether `{test}`, which may reach `{owner}` through `{entry}`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test."
-    ));
+    replace_unresolved_reach_advice(
+        finding,
+        format!(
+            "Check whether `{test}`, which may reach `{owner}` through `{entry}`, asserts on the changed behavior; ripr does not trace that path, so this limitation does not establish a missing test."
+        ),
+    );
+}
+
+/// No witness was searched in the withheld files. Keep the guidance about
+/// that missing search rather than inventing a test or macro edge.
+fn unsearched_reach_next_step(finding: &mut Finding) {
+    replace_unresolved_reach_advice(finding,
+        "Inspect tests in dependent packages before judging this change; ripr did not search those files, so this limitation does not establish a missing test. Raise RIPR_DIFF_NARROW_INDEX_FILES to search them (it is capped at RIPR_MAX_DIFF_INDEX_FILES).".to_string(),
+    );
+}
+
+fn replace_unresolved_reach_advice(finding: &mut Finding, next_step: String) {
+    finding.recommended_next_step = Some(next_step);
     if let Some(limit) = finding.static_limit_kind {
         finding.missing = vec![limit.describe().to_string()];
     }
@@ -2222,13 +2237,17 @@ impl RustAdapter {
                             &property_macro_mentions,
                             &transitive_reach,
                         );
-                        if needs_no_static_path_limit(&finding) {
+                        let mixed = needs_mixed_macro_reach_limit(&finding);
+                        if needs_no_static_path_limit(&finding) || mixed {
                             dependent_scope::apply_reach_search_over_limit(
                                 &mut finding,
                                 &probe,
                                 files,
                                 limit,
                             );
+                            if mixed {
+                                unsearched_reach_next_step(&mut finding);
+                            }
                         }
                     }
                 }
@@ -3703,6 +3722,93 @@ mod tests {
         let (core, _, _) = run(DependentScopeMode::CoreOnly)?;
         assert_eq!(core.ripr.reach.state, StageState::Yes);
         assert_eq!(core.static_limit_kind, None);
+
+        // A budget refusal is not an empty macro search. No withheld file
+        // was parsed, so name only the existing unsearched-route limit.
+        let (over, _, _) =
+            dependent_scope::with_forced_reach_limit(1, || run(DependentScopeMode::NameAdmitted))?;
+        assert_eq!(dependent_scope::observed_reach_parses(), 0);
+        assert_eq!(over.class, ExposureClass::WeaklyExposed);
+        assert_eq!(format!("{:?}", over.ripr), format!("{:?}", core.ripr));
+        assert_eq!(
+            format!("{:?}", over.related_tests),
+            format!("{:?}", core.related_tests)
+        );
+        assert!(!over.related_tests.is_empty());
+        assert_eq!(
+            over.static_limit_kind,
+            Some(StaticLimitKind::RustTransitiveReachUnresolved)
+        );
+        assert!(
+            over.stop_reasons
+                .contains(&crate::domain::StopReason::TransitiveReachUnresolved)
+        );
+        assert!(
+            over.evidence
+                .iter()
+                .any(|line| line.contains("did not search dependent packages"))
+        );
+        assert_eq!(
+            over.missing,
+            vec![
+                StaticLimitKind::RustTransitiveReachUnresolved
+                    .describe()
+                    .to_string()
+            ]
+        );
+        assert!(over.activation.missing_discriminators.is_empty());
+        assert!(over.canonical_gap.is_none());
+        let next = over.recommended_next_step.as_deref().unwrap_or("");
+        assert!(
+            next.contains("did not search") && next.contains("does not establish a missing test"),
+            "{next}"
+        );
+        assert!(
+            !next.contains("relay_triples") && !next.contains("Replace broad assertions"),
+            "{next}"
+        );
+
+        // A concrete witness already in the main index keeps its macro
+        // detail even when the dependent closure cannot be searched.
+        let local = "pub fn inner(x: i64) -> i64 {\n    3 * x\n}\nmacro_rules! call_local { ($x:expr) => { inner($x) }; }\npub fn local_outer(x: i64) -> i64 { call_local!(x) }\n#[cfg(test)] mod tests { use super::*; #[test] fn inner_is_positive() { assert!(inner(2) > 0); } #[test] fn local_triples() { assert_eq!(local_outer(4), 12); } }\n";
+        write(&root.join("a/src/lib.rs"), local)?;
+        let (witnessed, _, _) =
+            dependent_scope::with_forced_reach_limit(1, || run(DependentScopeMode::NameAdmitted))?;
+        assert_eq!(dependent_scope::observed_reach_parses(), 0);
+        assert_eq!(witnessed.class, ExposureClass::WeaklyExposed);
+        assert_eq!(
+            witnessed.static_limit_kind,
+            Some(StaticLimitKind::RustMacroReachUnresolved)
+        );
+        assert!(
+            witnessed
+                .evidence
+                .iter()
+                .any(|line| line.contains("local_triples"))
+        );
+        assert!(
+            !witnessed
+                .evidence
+                .iter()
+                .any(|line| line.contains("did not search dependent packages"))
+        );
+        assert!(
+            !witnessed
+                .stop_reasons
+                .contains(&crate::domain::StopReason::TransitiveReachUnresolved)
+        );
+        assert!(witnessed.canonical_gap.is_none());
+
+        // A confirmed direct oracle never requests this missing search.
+        write(
+            &root.join("a/src/lib.rs"),
+            &local.replace("assert!(inner(2) > 0)", "assert_eq!(inner(4), 12)"),
+        )?;
+        let (confirmed, _, _) =
+            dependent_scope::with_forced_reach_limit(1, || run(DependentScopeMode::NameAdmitted))?;
+        assert_eq!(confirmed.class, ExposureClass::Exposed);
+        assert_eq!(confirmed.ripr.reveal.discriminate.state, StageState::Yes);
+        assert_eq!(confirmed.static_limit_kind, None);
         fs::remove_dir_all(root).map_err(|e| e.to_string())?;
         Ok(())
     }
