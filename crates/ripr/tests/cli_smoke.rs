@@ -22853,15 +22853,7 @@ fn explain_context_miss_names_the_worktree_route_when_uncommitted_edits_exist() 
     // analyzed input, so the clause must stay silent for a supplied scope
     // even though the same selector would trigger it on a `--base` run
     // (#7328 review).
-    let diff_text = String::from_utf8_lossy(
-        &std::process::Command::new("git")
-            .args(["diff", "HEAD~1", "HEAD"])
-            .current_dir(&root)
-            .output()
-            .map_err(|err| format!("git diff: {err}"))?
-            .stdout,
-    )
-    .into_owned();
+    let diff_text = common::fixture_git::fixture_git_output(&root, &["diff", "HEAD~1", "HEAD"])?;
     let diff_path = root.join("supplied-scope.diff");
     std::fs::write(&diff_path, diff_text).map_err(|err| format!("write supplied diff: {err}"))?;
     let diff_str = diff_path.to_string_lossy().into_owned();
