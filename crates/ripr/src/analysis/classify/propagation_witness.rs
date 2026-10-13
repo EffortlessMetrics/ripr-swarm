@@ -614,10 +614,15 @@ pub(in crate::analysis) struct FieldCollectionRead {
 /// sides: its primary subject (`assert_eq!(subject, ..)`, `assert!(subject)`)
 /// and, for `assert_eq!`, the second operand too, since either side may hold
 /// the actual value. A side that is not rooted at a local binding read of
-/// that field or of one argument-free method reads nothing.
+/// that field or of one argument-free method reads nothing. Neither does a
+/// side compared with an operand that names the same binding
+/// (`assert_eq!(o.entries(), o.entries())` cannot fail), nor, unless
+/// `count_reads`, a side that reads only how many elements there are
+/// (`.len()`, `.is_empty()`): a changed argument leaves that count alone.
 pub(in crate::analysis) fn assertion_field_collection_reads(
     assertion_text: &str,
     path: &str,
+    count_reads: bool,
 ) -> Vec<FieldCollectionRead> {
     let mut subjects: Vec<String> = assertion_primary_subject(assertion_text)
         .into_iter()
@@ -635,8 +640,37 @@ pub(in crate::analysis) fn assertion_field_collection_reads(
     }
     subjects
         .iter()
-        .filter_map(|subject| subject_field_collection_read(subject, path))
+        .enumerate()
+        .filter(|(_, subject)| count_reads || !reads_only_count(subject))
+        .filter_map(|(index, subject)| {
+            let read = subject_field_collection_read(subject, path)?;
+            let other = subjects
+                .get(1 - index.min(1))
+                .filter(|_| subjects.len() == 2);
+            (!other.is_some_and(|other| names_ident(other, &read.binding))).then_some(read)
+        })
         .collect()
+}
+
+/// Whether `subject` ends in a count of a collection (`.len()`,
+/// `.is_empty()`) rather than a read of its elements.
+fn reads_only_count(subject: &str) -> bool {
+    let compact: String = subject.chars().filter(|ch| !ch.is_whitespace()).collect();
+    compact.ends_with(".len()") || compact.ends_with(".is_empty()")
+}
+
+/// Whether `text` names `ident` as a whole identifier outside comments and
+/// strings.
+fn names_ident(text: &str, ident: &str) -> bool {
+    let masked = crate::analysis::extract::mask_comments_and_strings(text);
+    let is_ident = |ch: char| ch.is_alphanumeric() || ch == '_';
+    masked.match_indices(ident).any(|(at, name)| {
+        !masked[..at].chars().next_back().is_some_and(is_ident)
+            && !masked[at + name.len()..]
+                .chars()
+                .next()
+                .is_some_and(is_ident)
+    })
 }
 
 fn subject_field_collection_read(subject: &str, path: &str) -> Option<FieldCollectionRead> {
@@ -1785,7 +1819,7 @@ mod tests {
                 getter: Some(getter.to_string()),
             }]
         };
-        let reads = |text: &str| assertion_field_collection_reads(text, "log");
+        let reads = |text: &str| assertion_field_collection_reads(text, "log", false);
         assert_eq!(reads("assert_eq!(inv.log, vec![1]);"), direct("inv"));
         assert_eq!(reads("assert_eq!(&inv.log[0], &1);"), direct("inv"));
         assert_eq!(
@@ -1804,9 +1838,20 @@ mod tests {
             "assert_eq!(make().log, vec![1]);",
             "assert_eq!(inv.history().first().copied().unwrap() + 1, 2);",
             "assert_ne!(vec![1], inv.log);",
+            // Compared with itself, or with a value read from the same binding.
+            "assert_eq!(inv.history(), inv.history());",
+            "assert_eq!(inv.log, expected_for(&inv));",
+            // A count does not read a changed element.
+            "assert_eq!(inv.log.len(), 1);",
+            "assert!(inv.history().is_empty());",
         ] {
             assert!(reads(other).is_empty(), "{other}");
         }
+        // A deleted write changes the count, so a count reads it.
+        assert_eq!(
+            assertion_field_collection_reads("assert_eq!(inv.log.len(), 1);", "log", true),
+            direct("inv")
+        );
     }
 
     #[test]

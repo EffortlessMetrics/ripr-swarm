@@ -275,8 +275,13 @@ changes `self.count += 2` to `self.count += 1`.
   `reveal.rs`, `getter_plainly_reads` in `builder_override.rs`. One side of
   the assertion (either operand of `assert_eq!`) must read the field from
   the binding the test called the owner on, on a later line, with no
-  `let` rebinding that name in between; comments and strings never count as
-  the call. A getter confirms only when it is an inherent method whose body
+  `let` shadow or plain `binding = ..` assignment of that name after the
+  call (on the call's own line too); comments and strings never count as
+  the call, and neither does a call inside a nested block, branch, loop or
+  closure of the test. The other operand of the `assert_eq!` must not name
+  that binding (`assert_eq!(o.entries(), o.entries())` cannot fail). A count
+  (`.len()`, `.is_empty()`) confirms only a deleted write
+  (`call_deletion`), since a changed argument leaves the count alone. A getter confirms only when it is an inherent method whose body
   is `self.f`, `&self.f`, `&self.f[..]`, `self.f.clone()` or
   `self.f.as_slice()`.
 - Not yet implemented for these writes, all failing closed: rule 3 (no

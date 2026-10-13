@@ -358,6 +358,7 @@ fn collection_observer_confirms(expression: &str, assertion: &OracleFact) -> boo
 /// read: `inv.log()` returning another field does not confirm.
 fn field_collection_observer_confirms(
     path: &str,
+    count_reads: bool,
     owner: Option<OwnerCall<'_>>,
     test: &TestSummary,
     assertion: &OracleFact,
@@ -366,7 +367,7 @@ fn field_collection_observer_confirms(
     let Some(owner) = owner else {
         return false;
     };
-    assertion_field_collection_reads(&assertion.text, path)
+    assertion_field_collection_reads(&assertion.text, path, count_reads)
         .into_iter()
         .any(|read| {
             owner_call_precedes_read(
@@ -387,7 +388,7 @@ fn field_collection_observer_confirms(
 /// `binding.method(..)` on a line before `read_line` without rebinding
 /// `binding` (`let binding = ..`) between that call and the read. Comments
 /// and string contents never count as a call.
-fn owner_call_precedes_read(
+pub(in crate::analysis) fn owner_call_precedes_read(
     body: &str,
     start_line: usize,
     binding: &str,
@@ -395,37 +396,59 @@ fn owner_call_precedes_read(
     read_line: usize,
 ) -> bool {
     let masked = mask_comments_and_strings(body);
+    let ident = |ch: char| ch.is_alphanumeric() || ch == '_';
     let line_at = |at: usize| start_line + masked[..at].matches('\n').count();
     let bound_at = |at: usize| {
-        masked[..at].chars().next_back().is_none_or(|before| {
-            !(before.is_ascii_alphanumeric() || before == '_' || before == '.')
-        })
+        masked[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|before| !(ident(before) || before == '.'))
     };
-    let rebinding_lines: Vec<usize> = masked
+    let name_ends = |at: usize| masked[at..].chars().next().is_none_or(|next| !ident(next));
+    // Offsets where `binding` stops naming the value the call wrote to: a
+    // `let [mut] binding` shadow or a plain `binding = ..` assignment. Offsets,
+    // not lines, so a rebinding on the call's own line still counts.
+    let mut rebindings: Vec<usize> = masked
         .match_indices("let ")
         .filter(|(at, _)| bound_at(*at))
         .filter_map(|(at, keyword)| {
             let rest = masked[at + keyword.len()..].trim_start();
             let rest = rest.strip_prefix("mut ").map_or(rest, str::trim_start);
             let after = rest.strip_prefix(binding)?;
-            after
-                .chars()
-                .next()
-                .is_none_or(|next| !(next.is_ascii_alphanumeric() || next == '_'))
-                .then(|| line_at(at))
+            let end = masked.len() - after.len();
+            name_ends(end).then_some(at)
         })
         .collect();
+    rebindings.extend(
+        masked
+            .match_indices(binding)
+            .filter(|(at, name)| bound_at(*at) && name_ends(at + name.len()))
+            .filter(|(at, name)| {
+                let rest = masked[at + name.len()..].trim_start();
+                rest.starts_with('=') && !rest.starts_with("==") && !rest.starts_with("=>")
+            })
+            .map(|(at, _)| at),
+    );
     let call = format!("{binding}.{method}(");
     masked
         .match_indices(&call)
-        .filter(|(at, _)| bound_at(*at))
-        .map(|(at, _)| line_at(at))
-        .any(|call_line| {
-            call_line < read_line
-                && !rebinding_lines
+        .filter(|(at, _)| bound_at(*at) && runs_unconditionally(&masked, *at))
+        .any(|(at, _)| {
+            line_at(at) < read_line
+                && !rebindings
                     .iter()
-                    .any(|line| *line > call_line && *line <= read_line)
+                    .any(|rebound| *rebound > at && line_at(*rebound) <= read_line)
         })
+}
+
+/// Whether the call at `at` in a test body (masked, starting at its `fn`)
+/// is a top-level statement of that body: not inside a nested block, branch,
+/// loop or closure, any of which may never run it. Fails closed.
+fn runs_unconditionally(masked: &str, at: usize) -> bool {
+    let before = &masked[..at];
+    let depth = before.matches('{').count() as isize - before.matches('}').count() as isize;
+    let statement_start = before.rfind([';', '{', '}']).map_or(0, |index| index + 1);
+    depth == 1 && !before[statement_start..].contains('|')
 }
 
 /// For a `MatchArm` probe expression, extract only the "variant" tokens —
@@ -861,6 +884,9 @@ fn analyze_related_assertions(
             let field_collection_read = field_write.is_some_and(|path| {
                 field_collection_observer_confirms(
                     path,
+                    // Only a deleted write changes how many elements the
+                    // collection holds; a changed argument does not.
+                    matches!(probe.family, ProbeFamily::CallDeletion),
                     override_owner,
                     test,
                     assertion,
@@ -3381,9 +3407,20 @@ mod tests {
             "    let mut order = Order::new();\n    // order.add(4);\n    assert_eq!(order.entries(), &[] as &[u32]);",
             "    let mut order = Order::new();\n    let s = \"order.add(4)\";\n    assert_eq!(order.entries(), &[] as &[u32]);",
             "    let mut order = Order::new();\n    my_order.add(4);\n    assert_eq!(order.entries(), &[] as &[u32]);",
+            // Rebound by a plain assignment, or by a shadow on the call's line.
+            "    order.add(4);\n    order = Order::new();\n    assert!(order.entries().is_empty());",
+            "    order.add(4); let order = Order::new();\n\n    assert!(order.entries().is_empty());",
+            // A call that may never run: in a closure, a branch or a loop.
+            "    let later = || order.add(4);\n\n    assert!(order.entries().is_empty());",
+            "    if false { order.add(4); }\n\n    assert!(order.entries().is_empty());",
+            "    for _ in 0..0 {\n        order.add(4);\n    assert!(order.entries().is_empty());",
         ] {
             assert!(!precedes(refused), "{refused}");
         }
+        // A comparison of the binding is not an assignment.
+        assert!(precedes(
+            "    order.add(4);\n    let same = order == Order::new();\n    assert_eq!(order.entries(), &[4]);"
+        ));
         // Rebinding another name between the call and the read is fine.
         assert!(precedes(
             "    order.add(4);\n    let orders = Order::new();\n    assert_eq!(order.entries(), &[4]);"
