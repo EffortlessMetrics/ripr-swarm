@@ -47,7 +47,9 @@ Each case that labels a numbered acceptance example cites it in
 In scope are RIPR-SPEC-0243, its amendments RIPR-SPEC-0246 to
 RIPR-SPEC-0252, and RIPR-SPEC-0254. A case cites an example only when its diff and test have
 that example's shape; uncovered examples stay visible in `check`'s coverage
-table rather than waived.
+table rather than waived. An example that lists several alternative forms or
+outcomes counts as covered when a case labels one of them; the other forms
+remain open for later cases without moving the count.
 
 Each subject carries a `ripr.toml` that enables TypeScript beside Rust, the
 way a user opts a repository in today.
