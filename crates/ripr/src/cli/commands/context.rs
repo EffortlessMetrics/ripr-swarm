@@ -240,6 +240,10 @@ pub(in crate::cli) fn context(args: &[String]) -> Result<(), String> {
             .map_err(&refuse)?
         }
     };
+    // #7352 review: commit the held `completed` terminal before the sink
+    // drops, or the drop projects `ripr progress: failed` on success; the
+    // artifact path wired no sink and has nothing to commit.
+    progress.commit_success();
     println!("{rendered}");
     Ok(())
 }

@@ -3229,6 +3229,11 @@ pub(super) fn explain(args: &[String]) -> Result<(), String> {
             )?
         }
     };
+    // #7352 review: producer `completed` is held until `commit_success`;
+    // without this call the dropped sink projects `ripr progress: failed`
+    // despite the successful render, exactly the `ripr check` contract the
+    // stage lines borrow.
+    progress.commit_success();
     println!("{rendered}");
     Ok(())
 }
