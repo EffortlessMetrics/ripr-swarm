@@ -3938,6 +3938,7 @@ fixtures = [
 ]
 code = [
   "crates/ripr/src/cli/commands.rs",
+  "crates/ripr/src/cli/commands/init_workflow.rs",
   "crates/ripr/tests/cli_smoke.rs",
   "xtask/src/main.rs",
 ]
@@ -5864,6 +5865,12 @@ tests = [
   "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_disposition_authority_flip",
   "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_input_inventory_drift",
   "xtask/src/main.rs::tests::perl_packet_contract_migration_fixture_guard_reports_input_digest_drift",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_timeout_discards_partial_preserves_published_packet_and_restarts",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_timeout_without_a_partial_packet_is_a_cleanup_noop",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_nonzero_exit_rejects_partial_and_preserves_published_packet",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_timeout_retains_directory_evidence_and_reports_cleanup_failure",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_timeout_preserves_overlapping_live_sibling_packet",
+  "crates/ripr/tests/chaos_interrupted_runs.rs::managed_producer::managed_exporter_success_consumes_published_packet_when_sidecar_blocks_staging_cleanup",
 ]
 fixtures = [
   "fixtures/benches_harness_evidence",
@@ -5881,6 +5888,7 @@ code = [
   "crates/ripr/src/output/gap_decision_ledger.rs",
   "xtask/src/fixture_contracts/mod.rs",
   "xtask/src/reports/perl_migration.rs",
+  "crates/ripr/src/app/check.rs",
 ]
 outputs = [
   "docs/specs/RIPR-SPEC-0064-perl-fact-packet-contract.md",
@@ -9066,6 +9074,22 @@ tests = [
   "crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_names_complete_but_advisory_packet",
   "crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_names_limitation_block_when_no_fields_missing",
   "crates/ripr/src/output/human.rs::tests::preview_limited_safe_action_uses_closed_packet_line_without_static_limit_kind",
+  "crates/ripr/tests/cli_smoke/human_full_shared.rs::human_full_shared_real_git_diff_keeps_every_finding_and_replays_commands",
+  "crates/ripr/tests/cli_smoke/human_full_shared.rs::human_full_shared_preserves_complete_public_library_bytes",
+  "crates/ripr/tests/cli_smoke/human_full_shared.rs::human_full_library_normalization_preserves_line_terminators",
+  "crates/ripr/tests/cli_smoke/human_full_shared.rs::human_full_library_normalization_keeps_header_looking_source_literals",
+  "crates/ripr/src/output/human/shared/tests.rs::multiline_literals_use_complete_unshared_layout_without_spacing_loss",
+  "crates/ripr/src/output/human/shared/tests.rs::literal_backslash_escapes_and_windows_paths_remain_sharing_eligible",
+  "crates/ripr/src/output/human/shared/tests.rs::identical_value_and_flow_captions_keep_distinct_raw_provenance_local",
+  "crates/ripr/src/output/human/shared/tests.rs::exact_facts_share_across_nonadjacent_findings_with_complete_private_fragments",
+  "crates/ripr/src/output/human/shared/tests.rs::same_stage_caption_with_different_confidence_is_not_shared",
+  "crates/ripr/src/output/human/shared/tests.rs::raw_test_and_context_metadata_cannot_borrow_display_identical_facts",
+  "crates/ripr/src/output/human/shared/tests.rs::all_currentness_states_have_separate_catalogue_membership",
+  "crates/ripr/src/output/human/shared/tests.rs::raw_contextual_miss_provenance_is_not_replaced_by_normalized_caption",
+  "crates/ripr/src/output/human/shared/tests.rs::different_guidance_and_window_disclosures_stay_local",
+  "crates/ripr/src/output/human/shared/tests.rs::duplicate_fact_multiplicity_is_preserved_and_single_finding_is_not_a_donor",
+  "crates/ripr/src/output/human/shared/tests.rs::suppressed_findings_cannot_donate_and_all_suppressed_route_remains_usable",
+  "crates/ripr/src/output/human/shared/tests.rs::literal_reference_looking_text_stays_literal_and_legacy_route_is_exhaustive",
   "crates/ripr/src/output/human.rs::tests::human_full_preserves_legacy_all_findings_output",
   "crates/ripr/src/output/format.rs::tests::parses_human_full_aliases",
   "crates/ripr/src/output/format.rs::tests::human_full_is_not_repo_scope",
@@ -9110,7 +9134,7 @@ tests = [
   "crates/ripr/src/analysis/probes/diff.rs::tests::return_value_before_is_cut_to_the_parser_shape_span",
   "crates/ripr/src/analysis/probes/diff.rs::tests::call_deletion_before_is_cut_to_the_parser_shape_span",
 ]
-fixtures = []
+fixtures = ["fixtures/human_full_shared_parse_port"]
 code = [
   "crates/ripr/src/analysis/probes/diff.rs",
   "crates/ripr/src/cli/commands.rs",
@@ -9118,8 +9142,10 @@ code = [
   "crates/ripr/src/output/first_pr.rs",
   "crates/ripr/src/output/first_pr/options.rs",
   "crates/ripr/src/output/format.rs",
-  "crates/ripr/src/output/human.rs",
+  "crates/ripr/src/output/human/shared.rs",
+  "crates/ripr/src/output/human/evidence_lines.rs",
   "crates/ripr/src/output/human/sections.rs",
+  "crates/ripr/src/output/human.rs",
   "crates/ripr/src/output/human/triage.rs",
   "crates/ripr/src/output/render.rs",
   "crates/ripr/src/analysis/test_stub.rs",
@@ -12133,6 +12159,9 @@ tests = [
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::an_imported_owner_among_same_named_rivals_is_pinned_only_through_its_import",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_bare_call_no_import_settles_pins_neither_rival",
   "crates/ripr/src/analysis/classify/owner_pin/tests.rs::a_mixed_owner_and_rival_test_pins_only_through_the_asserted_call",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::library_export_import_extraction_is_bounded_to_selected_files",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::library_export_without_module_names_does_not_extract_imports",
+  "crates/ripr/src/analysis/classify/owner_pin/tests.rs::library_export_imports_in_another_file_still_defeat_a_module_name",
   "crates/ripr/tests/owner_pin_execution.rs::fallible_literal_runtime_pair_and_message_escape_execute_the_real_test",
   "crates/ripr/tests/owner_pin_execution.rs::fallible_literal_cli_preserves_unrelated_os_bytes_and_refuses_relevant_inputs",
   "crates/ripr/src/analysis/seam_inventory.rs::tests::fallible_literal_full_and_compact_warm_caches_invalidate_changed_inputs",
@@ -13359,6 +13388,7 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::packet_findings_count_while_their_subject_is_unresolved_and_others_do_not",
   "xtask/src/reports/verdict_corpus_tests.rs::report_keeps_edited_packet_rates_apart_from_producer_rates",
   "xtask/src/reports/verdict_corpus_tests.rs::a_packet_case_refuses_a_binary_without_the_perl_adapter",
+  "xtask/src/reports/verdict_corpus_tests.rs::case_output_refuses_an_unavailable_perl_run_only_for_packet_cases",
   "xtask/src/reports/verdict_corpus_tests.rs::committed_python_corpus_is_valid_and_covers_each_test_library",
   "xtask/src/reports/verdict_corpus_tests.rs::python_expected_rows_agree_with_corpus_labels",
 ]
@@ -14116,12 +14146,29 @@ name = "Rust oracle kind and strength admission"
 spec = "docs/specs/RIPR-SPEC-0231-rust-oracle-kind-admission.md"
 tests = [
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/classify/reveal.rs::tests::probe_relative_oracle_strength_never_promotes_an_inequality",
   "crates/ripr/src/analysis/extract/oracles/classify.rs",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_helper_precedes_exact_kinds",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_is_never_exact",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_negated_pattern_must_be_the_whole_condition",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_negated_matches_operand_in_equality_is_weak",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_negated_conjunct_respects_or_precedence",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_spellings_are_weak",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_inequality_helper_keeps_observer_readings",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_matches_comparison_polarity_is_structural",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_negation_spellings_follow_the_polarity_rule",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs::tests::spec_0231_rule_1_observer_exemption_reads_receiver_and_name_only",
   "crates/ripr/src/analysis/extract/oracles/pattern_admission.rs",
+  "crates/ripr/src/analysis/rust_index.rs::tests::parser_oracles_follow_spec_0231_rule_1_for_helpers_and_compound_negations",
+  "crates/ripr/tests/cli_smoke.rs::repo_exposure_does_not_count_an_inequality_assertion_as_a_strong_grip",
 ]
-fixtures = []
+fixtures = [
+  "fixtures/inequality_assertion_not_exact",
+  "fixtures/inequality_struct_assertion_not_exact",
+]
 code = [
   "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/extract/oracles/arguments.rs",
   "crates/ripr/src/analysis/extract/oracles/classify.rs",
   "crates/ripr/src/analysis/extract/oracles/pattern_admission.rs",
   "crates/ripr/src/analysis/extract/oracles/patterns.rs",
@@ -14400,8 +14447,12 @@ metrics = [
 id = "RIPR-SPEC-0235"
 name = "Perl fact-packet classification"
 spec = "docs/specs/RIPR-SPEC-0235-perl-fact-packet-classification.md"
-tests = []
-fixtures = []
+tests = [
+  "crates/ripr/src/analysis/language/perl/tests.rs::h2_aligned_sink_on_another_tests_oracle_does_not_promote",
+]
+fixtures = [
+  "fixtures/perl-verdict-corpus/cases/perl-0235-ex28-cross-test-oracle.json",
+]
 code = [
   "crates/ripr/src/analysis/language/perl/mod.rs",
   "crates/ripr/src/analysis/language/perl/static_limit.rs",

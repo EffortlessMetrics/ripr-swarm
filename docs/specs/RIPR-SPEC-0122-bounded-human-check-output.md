@@ -315,9 +315,28 @@ completeness, with the shared repair-packet validator as the only authority:
 
 ### Exhaustive human output
 
-`ripr check --format human-full` and the `text-full` alias render the previous
-full per-finding evidence report. This format is diff-scoped like `human` and
-is not a repo-scoped format.
+`ripr check --format human-full` and the `text-full` alias render an exhaustive
+per-finding evidence report. This format is diff-scoped like `human` and
+is not a repo-scoped format. The navigation-aware CLI may define identical
+evidence and guidance once in a `Shared evidence and guidance` catalogue,
+labelled with every using finding ordinal. Each finding retains its complete
+changed fragments, identity, classification, confidence, currentness,
+discriminator and private evidence, with explicit ordered references for shared
+content. Shared CLI blocks use compact section spacing; only empty separators
+are removed, never a content line. Consecutive references preserve evidence
+order and repeated entries.
+No finding or evidence fact is removed to shorten the report (#7394).
+
+Sharing requires established identical full source ownership, source file,
+language/status/owner kind, currentness and raw test context/counts. An evidence
+entry additionally retains exact producer facts, including stage confidence,
+raw oracle and context-dependent miss provenance; equal display captions alone
+are insufficient. Distinct reconciled guidance stays local. Suppressed findings
+cannot donate shared content. Existing evidence-window disclosures stay local.
+When a visible finding contains multiline literal content, the CLI keeps the
+complete unshared layout so source text and whitespace cannot collide with
+catalogue/reference structure. Without CLI navigation, the public library preserves the previous complete
+per-finding report bytes, including repeated evidence and guidance.
 
 When `ripr check` renders `human-full` itself, each rendered finding ends with
 a `Drill in:` block holding the same `ripr explain` / `ripr context --at`

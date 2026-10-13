@@ -7,101 +7,84 @@ Summary: 2 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 2 no_s
 Analysis outcome: findings below (analysis complete; complete_with_findings).
   Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 2 probe(s), 2 finding(s).
 
-WARNING ./src/eval.rs:3
-  id: probe:src_eval.rs:predicate:f66d616d
+Shared evidence and guidance
+  E1 [findings 1, 2]: reach no: No static test path found for the changed owner
+  E2 [findings 1, 2]: observation no: No reachable test oracle found
+  E3 [findings 1, 2]: discriminator no: No assertion can discriminate the changed behavior without a reachable test
+  E4 [findings 1, 2]: local flow reaches returned value: value > limit (line 3)
+  N1 [findings 1, 2]: ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.
 
+Finding 1: WARNING ./src/eval.rs:3
+  id: probe:src_eval.rs:predicate:f66d616d
 Changed
   before: return value > limit;
   after:  return value >= limit;
-
 Probe
   family: predicate
   delta:  control
   owner:  src/eval.rs::matches_greater
-
 Static exposure
   no_static_path (warning, confidence 0.48)
-
 Evidence
-  - reach no: No static test path found for the changed owner
+  shared evidence: E1
   - infection unknown: No statically reachable test path was found, so activation/infection cannot be estimated
   - propagation yes: Changed behavior appears to influence returned value: value > limit
-  - observation no: No reachable test oracle found
-  - discriminator no: No assertion can discriminate the changed behavior without a reachable test
-  - local flow reaches returned value: value > limit (line 3)
-
+  shared evidence: E2, E3, E4
 Weakness
   - No detected boundary input for the changed predicate
   - No relevant oracle was detected
   - No static test path reaches the changed owner
   - No strong discriminator was detected
-
 Stop reasons:
   - transitive_reach_unresolved — a candidate test path exists but passes through calls ripr only matched by name
-
 Static limitation
   rust_integration_public_api_path_unresolved — An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
-
 Where to look
   For example, the test `greater_than_patch_examples` (tests/version_req.rs:18) calls `assert_public_api_accepts`, an entry point that may lead here. Inspect it to judge whether this change is observed.
-
 Limitation detail
   last established edge: test `greater_than_patch_examples` (tests/version_req.rs:18) -> entry `assert_public_api_accepts`
   first unresolved edge: entry `assert_public_api_accepts` -> owner `matches_greater` through a transitive Rust helper path
   analyzer route: analysis/rust-public-api-transitive-reach
   non-claim: named limitation only; ripr cannot confirm or deny that this path observes the change
-
 Next step
-  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.
+  shared guidance: N1
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast probe:src_eval.rs:predicate:f66d616d
   ripr context --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast --at probe:src_eval.rs:predicate:f66d616d
 
-WARNING ./src/eval.rs:3
+Finding 2: WARNING ./src/eval.rs:3
   id: probe:src_eval.rs:return_value:7334f366
-
 Changed
   before: return value > limit;
   after:  return value >= limit;
-
 Probe
   family: return_value
   delta:  value
   owner:  src/eval.rs::matches_greater
-
 Static exposure
   no_static_path (warning, confidence 0.40)
-
 Evidence
-  - reach no: No static test path found for the changed owner
+  shared evidence: E1
   - infection unknown: No reachable tests were found, so infection cannot be established
   - propagation weak: Propagation witness is incomplete for returned value: value > limit
-  - observation no: No reachable test oracle found
-  - discriminator no: No assertion can discriminate the changed behavior without a reachable test
-  - local flow reaches returned value: value > limit (line 3)
-
+  shared evidence: E2, E3, E4
 Weakness
   - No relevant oracle was detected
   - No static test path reaches the changed owner
   - No strong discriminator was detected
-
 Stop reasons:
   - transitive_reach_unresolved — a candidate test path exists but passes through calls ripr only matched by name
-
 Static limitation
   rust_integration_public_api_path_unresolved — An integration test may reach this change through a crate public API or test-helper path ripr cannot fully trace. This is a named limitation, not a coverage claim.
-
 Where to look
   For example, the test `greater_than_patch_examples` (tests/version_req.rs:18) calls `assert_public_api_accepts`, an entry point that may lead here. Inspect it to judge whether this change is observed.
-
 Limitation detail
   last established edge: test `greater_than_patch_examples` (tests/version_req.rs:18) -> entry `assert_public_api_accepts`
   first unresolved edge: entry `assert_public_api_accepts` -> owner `matches_greater` through a transitive Rust helper path
   analyzer route: analysis/rust-public-api-transitive-reach
   non-claim: named limitation only; ripr cannot confirm or deny that this path observes the change
-
 Next step
-  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.
+  shared guidance: N1
 Drill in:
   ripr explain --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast probe:src_eval.rs:return_value:7334f366
   ripr context --root <cwd>/fixtures/rust_transitive_reach_test_helper_chain/input --diff <cwd>/fixtures/rust_transitive_reach_test_helper_chain/diff.patch --mode fast --at probe:src_eval.rs:return_value:7334f366
