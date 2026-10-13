@@ -9780,7 +9780,7 @@ fn selected() {
                     assert!(
                         !syntax.targeted_macro_binding_is_unambiguous(
                             test,
-                            test.line,
+                            test.start_line,
                             "assert_eq",
                             &index
                         ),
