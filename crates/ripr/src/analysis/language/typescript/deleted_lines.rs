@@ -135,7 +135,7 @@ fn close_header_group(group: &[&ChangedLine], headers: &mut BTreeMap<usize, usiz
     };
     let joined = group
         .iter()
-        .map(|line| line.text.trim())
+        .map(|line| code_only(&line.text).trim().to_string())
         .collect::<Vec<_>>()
         .join(" ");
     if opens_an_owner(&joined) {
@@ -333,7 +333,7 @@ pub(super) fn opens_an_owner(text: &str) -> bool {
     if function_keyword || rest.starts_with("class ") {
         return true;
     }
-    if rest.contains("=>") && binds_an_arrow(rest) {
+    if binds_a_function(rest) {
         return true;
     }
     // A method header: a name, its parameters (which may hold a function
@@ -347,28 +347,12 @@ pub(super) fn opens_an_owner(text: &str) -> bool {
         && (after_name.starts_with('(') || after_name.starts_with('<'))
         && rest.trim_end().ends_with('{')
         && paren_delta(rest) == 0
-        && body_brace_follows_parameters(after_name)
 }
 
-/// Whether the closing `{` of a method header comes after its parameter
-/// list closes, not inside a call's arguments (`post(url, {`).
-fn body_brace_follows_parameters(after_name: &str) -> bool {
-    let mut depth: isize = 0;
-    for ch in after_name.trim_end().chars() {
-        match ch {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            '{' if depth > 0 => return false,
-            _ => {}
-        }
-    }
-    true
-}
-
-/// `name = (…) =>`, `const name = async x =>`, `name: (…) => {` or
-/// `const name: Type = (…) =>`: a binding whose value is itself an arrow
-/// function, not one whose value only contains one.
-fn binds_an_arrow(rest: &str) -> bool {
+/// `name = (…) =>`, `const name = async x =>`, `name: (…) => {`,
+/// `const name: Type = (…) =>` or `name: function (…) {`: a binding whose
+/// value is itself a function, not one whose value only contains one.
+fn binds_a_function(rest: &str) -> bool {
     let binding = ["const ", "let ", "var "]
         .iter()
         .find_map(|keyword| rest.strip_prefix(keyword))
@@ -383,7 +367,7 @@ fn binds_an_arrow(rest: &str) -> bool {
         .unwrap_or(after_name)
         .trim_start();
     if let Some(value) = after_name.strip_prefix('=') {
-        return !value.starts_with(['=', '>']) && starts_an_arrow(value);
+        return !value.starts_with(['=', '>']) && starts_a_function(value);
     }
     let Some(value) = after_name.strip_prefix(':') else {
         return false;
@@ -391,16 +375,38 @@ fn binds_an_arrow(rest: &str) -> bool {
     // A typed binding's value follows its first plain `=`; with none, the
     // text after `:` is a property's value.
     match plain_assignment(value) {
-        Some(at) => starts_an_arrow(&value[at + 1..]),
-        None => starts_an_arrow(value),
+        Some(at) => starts_a_function(&value[at + 1..]),
+        None => starts_a_function(value),
     }
 }
 
-/// The first `=` that is not part of `=>`, `==`, `<=`, `>=` or `!=`.
+/// An arrow function or a `function` expression.
+fn starts_a_function(text: &str) -> bool {
+    let text = text.trim_start();
+    let text = text
+        .strip_prefix("async ")
+        .map(str::trim_start)
+        .unwrap_or(text);
+    let function_keyword = text
+        .strip_prefix("function")
+        .is_some_and(|after| after.starts_with([' ', '*', '(']));
+    function_keyword || starts_an_arrow(text)
+}
+
+/// The first `=` outside brackets that is not part of `=>`, `==`, `<=`,
+/// `>=` or `!=`: a parameter default (`(opts = {}) =>`) is not the binding's
+/// value.
 fn plain_assignment(text: &str) -> Option<usize> {
     let bytes = text.as_bytes();
+    let mut depth: usize = 0;
     (0..bytes.len()).find(|&at| {
-        bytes[at] == b'='
+        match bytes[at] {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+        depth == 0
+            && bytes[at] == b'='
             && !matches!(bytes.get(at + 1), Some(b'=' | b'>'))
             && !(at > 0 && matches!(bytes[at - 1], b'=' | b'!' | b'<' | b'>'))
     })
@@ -417,7 +423,7 @@ fn starts_an_arrow(text: &str) -> bool {
         .unwrap_or(text)
         .trim_start();
     let text = match text.strip_prefix('<') {
-        Some(after) => match after.find('>') {
+        Some(after) => match closing_angle(after) {
             Some(close) => after[close + 1..].trim_start(),
             None => return false,
         },
@@ -443,4 +449,25 @@ fn starts_an_arrow(text: &str) -> bool {
     }
     let name_end = identifier_len(text);
     name_end > 0 && text[name_end..].trim_start().starts_with("=>")
+}
+
+/// The index of the `>` that closes a type parameter list whose `<` came
+/// just before `text`, counting nested `<…>` and passing over `=>`.
+fn closing_angle(text: &str) -> Option<usize> {
+    let bytes = text.as_bytes();
+    let mut depth: usize = 1;
+    for (at, &byte) in bytes.iter().enumerate() {
+        match byte {
+            b'<' => depth += 1,
+            b'>' if at > 0 && bytes[at - 1] == b'=' => {}
+            b'>' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(at);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }

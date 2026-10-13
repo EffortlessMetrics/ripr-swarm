@@ -552,6 +552,12 @@ fn owner_headers_are_told_from_lines_that_only_hold_a_callback() {
         "  onClick: (event) => {",
         "const parse: Parser = (text) => {",
         "export class Cart {",
+        "  save({ id }: { id: string }) {",
+        "  configure(opts = {}) {",
+        "  onSave: (opts = {}) => {",
+        "export const pick = <T extends Record<string, unknown>>(obj: T) => {",
+        "const handler = function (request) {",
+        "  save: function (id) {",
     ] {
         assert!(super::deleted_lines::opens_an_owner(header), "{header}");
     }
@@ -569,4 +575,50 @@ fn owner_headers_are_told_from_lines_that_only_hold_a_callback() {
     ] {
         assert!(!super::deleted_lines::opens_an_owner(line), "{line}");
     }
+}
+
+/// A method whose parameters hold a brace (a destructured parameter, an
+/// object default, an inline object type) is still a header: deleted, its
+/// body is not given to the object that held it.
+#[test]
+fn deleted_method_with_a_brace_in_its_parameters_records_nothing() -> Result<(), String> {
+    let findings = analyze(
+        "brace-parameters",
+        &[
+            " export const api = {",
+            "   size: 100,",
+            "-  save({ id }: { id: string }) {",
+            "-    persist(id);",
+            "-  },",
+            " };",
+            " export function cappedTotal(items: number[]): number {",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// A comment inside a wrapped signature does not hide the header.
+#[test]
+fn deleted_wrapped_signature_with_a_comment_records_nothing() -> Result<(), String> {
+    let findings = analyze(
+        "wrapped-signature-comment",
+        &[
+            " export const api = {",
+            "   size: 100,",
+            "-  save(",
+            "-    id: string, // record id",
+            "-  ) {",
+            "-    persist(id);",
+            "-  },",
+            " };",
+            " export function cappedTotal(items: number[]): number {",
+            "   return items.length;",
+            " }",
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
 }
