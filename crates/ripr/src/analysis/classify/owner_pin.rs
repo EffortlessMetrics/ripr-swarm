@@ -3933,6 +3933,17 @@ fn is_workspace_root(root: &str, index: &RustIndex) -> bool {
             .any(|name| name.replace('-', "_") == root)
 }
 
+#[cfg(test)]
+thread_local! {
+    static LIBRARY_IMPORT_EXTRACTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+fn library_import_statements(source: &str) -> Vec<String> {
+    #[cfg(test)]
+    LIBRARY_IMPORT_EXTRACTIONS.with(|count| count.set(count.get() + 1));
+    file_use_statements(source)
+}
+
 /// Whether the library whose crate root is `owner_root` may export some other
 /// item named `name` than the owner, so that another crate's
 /// `use library::name;` could bind it. Fails closed (true) when:
@@ -3979,12 +3990,16 @@ pub(super) fn library_may_export_other(index: &RustIndex, owner_root: &Path, nam
     // A module name some `use` or `extern crate` also binds may name that
     // import instead (`pub use fastscore as fs;` beside an unrelated
     // `mod fs`), so it does not count as a library module.
+    // Imports depend only on the captured file, not the module being checked.
+    // Keep extraction lazy for files the short-circuiting walk never visits.
+    let library_uses: Vec<OnceCell<Vec<String>>> =
+        (0..library.len()).map(|_| OnceCell::new()).collect();
     let modules: BTreeSet<&str> = library
         .iter()
         .flat_map(|masked| declared_module_names(masked))
         .filter(|module| {
-            !library.iter().any(|masked| {
-                file_use_statements(masked)
+            !library.iter().zip(&library_uses).any(|(masked, uses)| {
+                uses.get_or_init(|| library_import_statements(masked))
                     .iter()
                     .any(|statement| use_statement_binds_name(statement, module))
                     || binds_extern_crate(masked, module)
