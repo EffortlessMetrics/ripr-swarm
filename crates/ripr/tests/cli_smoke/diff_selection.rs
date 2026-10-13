@@ -86,13 +86,24 @@ fn git_named_control_paths_select_the_live_predicate_from_root_and_subdirectory(
             let findings = report["findings"]
                 .as_array()
                 .ok_or("missing findings array")?;
-            assert_eq!(findings.len(), 1, "{escape}: {report}");
-            let finding = &findings[0];
-            assert_eq!(finding["probe"]["file"], format!("./{path}"));
-            assert_eq!(finding["probe"]["line"], 2);
-            assert_eq!(finding["probe"]["family"], "predicate");
-            assert_eq!(finding["probe"]["expression"], "amount > threshold");
-            assert_eq!(finding["canonical_gap"]["owner"], "changed");
+            // A changed returned comparison seeds both families on ordinary
+            // filenames too. Pin that contract without accepting duplicate probes.
+            let mut families = findings
+                .iter()
+                .map(|finding| finding["probe"]["family"].as_str())
+                .collect::<Vec<_>>();
+            families.sort_unstable();
+            assert_eq!(
+                families,
+                vec![Some("predicate"), Some("return_value")],
+                "{escape}: {report}"
+            );
+            for finding in findings {
+                assert_eq!(finding["probe"]["file"], format!("./{path}"));
+                assert_eq!(finding["probe"]["line"], 2);
+                assert_eq!(finding["probe"]["expression"], "amount > threshold");
+                assert_eq!(finding["canonical_gap"]["owner"], "changed");
+            }
             assert_eq!(report["head"]["source"], "working_tree");
             assert_eq!(report["summary"]["changed_rust_files"], 1);
             assert_eq!(
