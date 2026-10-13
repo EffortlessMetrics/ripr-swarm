@@ -324,7 +324,7 @@ pending_reason = "coverage is derived from fixtures/rust-verdict-corpus cases, s
 # Python verdict corpus (RIPR-SPEC-0245). Every Python case is authored to
 # cover a test-library oracle or reach rule (RIPR-SPEC-0028, RIPR-SPEC-0238),
 # so these describe those cells, not real-world code. One more wrong case
-# out of 32 discriminated (0.031) or 29 not fully discriminated (0.034)
+# out of 32 discriminated (0.031) or 31 not fully discriminated (0.032)
 # exceeds the floor and regresses.
 
 [[metric]]

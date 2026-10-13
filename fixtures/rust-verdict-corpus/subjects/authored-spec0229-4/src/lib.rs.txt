@@ -1,0 +1,14 @@
+//! RIPR-SPEC-0229 acceptance example 4.
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Kind {
+    A,
+    B,
+}
+
+pub fn f(k: Kind) -> i32 {
+    match k {
+        Kind::A => 1,
+        _ => 0,
+    }
+}

@@ -401,7 +401,19 @@ pub(crate) fn spec_example_coverage_for_corpus(
             violations.join("\n- ")
         ));
     }
-    Ok(spec_example_coverage(&corpus, &ledger, &specs))
+    let mut coverage = spec_example_coverage(&corpus, &ledger, &specs);
+    coverage.ledger = ledger_label(corpus_dir);
+    Ok(coverage)
+}
+
+/// The ledger path messages name: `fixtures/<corpus>/spec-coverage.toml`
+/// for the corpus actually read, so a Python floor failure does not point
+/// at the Rust ledger.
+pub(crate) fn ledger_label(corpus_dir: &Path) -> String {
+    match corpus_dir.file_name().and_then(|name| name.to_str()) {
+        Some(name) => format!("fixtures/{name}/{LEDGER_FILE}"),
+        None => normalize_path(&corpus_dir.join(LEDGER_FILE)),
+    }
 }
 
 fn specs_dir_for_corpus(corpus_dir: &Path) -> Result<PathBuf, String> {

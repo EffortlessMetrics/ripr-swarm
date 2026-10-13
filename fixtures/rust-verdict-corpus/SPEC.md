@@ -15,9 +15,11 @@ crates written to fill cells the real crates leave empty (`authored-pricing`,
 `authored-old-shell` and `authored-old-deps` for test shapes other RIPR specs
 define, each case naming its specs in its reasoning; one
 `authored-specNNNN-<k>` crate per acceptance
-example of RIPR-SPEC-0225 to 0228 and of the reach, macro and miss-evidence
-specs 0114, 0115, 0117, 0118, 0119, 0120, 0125 and 0224 (examples that describe
-the same fixture share one crate), isolated so no other example's test relates
+example of RIPR-SPEC-0225 to 0229 and of the reach, macro and miss-evidence
+specs 0114, 0115, 0117, 0118, 0119, 0120, 0125 and 0224 (examples that
+describe the same fixture share one crate, and an example with two tests on
+different inputs splits into `<k>a` and `<k>b`), isolated so no other
+example's test relates
 to its owner; eleven `authored-grid-*` crates crossing cargo-mutants operator
 classes with five test styles: exact pin, table-driven loop, property-style
 invariant, helper-wrapped assert and no assertion; `authored-trap-kit` and

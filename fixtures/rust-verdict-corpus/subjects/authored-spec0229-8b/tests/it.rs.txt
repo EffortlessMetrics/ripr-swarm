@@ -1,0 +1,6 @@
+use spec0229_8b::f;
+
+#[test]
+fn nine_is_many() {
+    assert_eq!(f(9), "many");
+}

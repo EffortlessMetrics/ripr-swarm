@@ -1,0 +1,48 @@
+{
+  "case_id": "semver-greater-patch-guard-ge",
+  "subject_id": "semver",
+  "diff": "cases/semver-greater-patch-guard-ge.diff",
+  "anchor": {
+    "file": "src/eval.rs",
+    "line": 81
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "predicate_boundary",
+  "test_shape": "integration_test_custom_assert_helper",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "ver.patch >= patch",
+        "mutated_line": null,
+        "outcome": "tests_failed",
+        "failing_test": "test_greater_than",
+        "equivalence_review": "the edit itself: with equal patches matches_greater returns false instead of comparing pre-release, and with a lower patch it falls through to the pre-release comparison; test_greater_than, test_less_than and test_multiple fail"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "The launch patch fixtures/evidence-promotion-honesty-corpus/patches/semver-matches-greater.diff was made at semver 2c18cc48; matches_greater in src/eval.rs is byte-identical at 2c18cc48 and at the corpus pin 69efd3cc, so the same edit (if ver.patch != patch to if ver.patch >= patch) is applied here at line 81. Equal patches now return false instead of comparing pre-release, and lower patches fall through to the pre-release comparison; test_greater_than, test_less_than and test_multiple fail. ripr reports no_static_path with static_limit_kind rust_integration_public_api_path_unresolved, non-actionable, matching rust_semver_matches_greater_external_limitation. Spec cells: RIPR-SPEC-0118 example 3.",
+  "labeling_observation": {
+    "ripr_commit": "dd5a66b",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0118#3"
+  ]
+}
