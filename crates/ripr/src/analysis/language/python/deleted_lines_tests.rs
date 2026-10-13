@@ -920,3 +920,47 @@ fn argument_deleted_after_a_replaced_one_in_a_kept_call_is_recorded() -> Result<
     assert_eq!(base_side_texts(&findings), vec!["b,"], "{findings:?}");
     Ok(())
 }
+
+/// A deleted call wrapped in a lone opening bracket is still one record,
+/// on its first behavior line: the bracket line carries no behavior of its
+/// own (#7690).
+#[test]
+fn deleted_statement_opening_with_a_lone_bracket_is_recorded() -> Result<(), String> {
+    let findings = analyze(
+        "lone-bracket-start",
+        KEEP,
+        &[],
+        vec![
+            line(6, 6, "    ("),
+            line(7, 6, "        send_event()"),
+            line(8, 6, "    )"),
+        ],
+    )?;
+    assert_eq!(
+        base_side_texts(&findings),
+        vec!["send_event()"],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// A bracket only the candidate opens does not swallow later deletions: the
+/// run's start comes from the old file's kept lines, so each deleted call is
+/// a record of its own (#7690).
+#[test]
+fn candidate_only_bracket_does_not_merge_later_deletions() -> Result<(), String> {
+    let findings = analyze(
+        "candidate-only-bracket",
+        "def keep(items):\n    value = (\n    # note\n    # more\n        1\n    )\n    return value\n",
+        &[2, 5, 6],
+        vec![
+            line(2, 2, "    value = 1"),
+            line(4, 4, "    log_a()"),
+            line(5, 4, "    log_b()"),
+        ],
+    )?;
+    let texts = base_side_texts(&findings);
+    assert!(texts.contains(&"log_a()".to_string()), "{findings:?}");
+    assert!(texts.contains(&"log_b()".to_string()), "{findings:?}");
+    Ok(())
+}

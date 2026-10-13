@@ -47,9 +47,10 @@ no end-to-end corpus a downstream consumer could run against.
     declaration, comment, docstring, import or lone bracket records
     nothing. A deleted statement that spans lines (an open bracket, a
     triple-quoted string, a trailing backslash) is one record on the
-    line that starts it, when that line is a behavior line; its
-    continuation lines record nothing and do not decide which owner
-    held it (#7690). Lines deleted from inside a statement the
+    line that starts it, or on its first behavior line when it starts
+    with a lone opening bracket; its continuation lines record nothing
+    and do not decide which owner held it (#7690). Where a statement
+    starts and ends is read from the old file. Lines deleted from inside a statement the
     candidate keeps (an argument of a kept call, a line of a kept
     string) are one record on the first unpaired behavior line among
     them.

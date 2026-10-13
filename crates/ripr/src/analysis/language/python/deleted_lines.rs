@@ -59,13 +59,16 @@ pub(super) fn deleted_line_findings(
     // A paired line is the candidate side's record, not this deletion's, so
     // it does not use up the one record a run inside a kept statement gets.
     let continuations = continuation_lines(changed, new_source, |removed| {
-        !paired.contains(&removed.line) && is_removed_behavior_line(removed, old_side)
+        !paired.contains(&removed.line)
+            && is_removed_behavior_line(removed, old_side)
+            && !opens_only_brackets(&removed.text)
     });
     let mut out = Vec::new();
     for removed in &changed.removed_lines {
         if paired.contains(&removed.line)
             || continuations.contains(&removed.line)
             || !is_removed_behavior_line(removed, old_side)
+            || opens_only_brackets(&removed.text)
         {
             continue;
         }
@@ -295,11 +298,12 @@ fn indent_width(text: &str) -> usize {
 /// it; the others would each attach a fragment (`p,`, `) -> int:`, a string
 /// body at column 0) to whatever owner their own indent suggests (#7690).
 /// The state runs across each contiguous old-side run and restarts at a gap
-/// from the state the candidate file's lines above it leave there. When that
-/// state continues, the run deletes from inside a statement the candidate
-/// still starts (an argument of a kept call, a line of a kept string): its
-/// first unpaired behavior line is the deletion's record and the rest of
-/// that statement are fragments.
+/// from the state the old file's kept lines above it leave there. When that
+/// state continues, the run deletes from inside a statement a kept line
+/// starts (an argument of a kept call, a line of a kept string), and a
+/// deleted statement whose first line is a lone opening bracket has no
+/// behavior on that line: either way its first unpaired behavior line is
+/// the deletion's record and the rest of that statement are fragments.
 fn continuation_lines(
     changed: &ChangedFile,
     new_source: NewSource<'_>,
@@ -310,50 +314,91 @@ fn continuation_lines(
     }
     let mut by_old_line: Vec<&ChangedLine> = changed.removed_lines.iter().collect();
     by_old_line.sort_by_key(|line| line.line);
-    let kept_states = states_before_each_line(new_source);
+    let old_states = old_states_before_each_line(changed, new_source);
     let mut continuations = BTreeSet::new();
     let mut state = StatementState::default();
     let mut previous_line: Option<usize> = None;
-    // The run sits inside a statement a kept line starts and has not yet
-    // recorded a line of it.
-    let mut inside_kept_statement = false;
+    // The current statement has no record yet: it began on a kept line, or
+    // on a removed line holding only an opening bracket.
+    let mut record_pending = false;
     for line in by_old_line {
         if previous_line.is_none_or(|previous| previous + 1 != line.line) {
-            // A run opens where the candidate file's kept lines stop, so the
-            // state they leave (a string the run closes) is the run's start.
-            state = kept_states
-                .get(line.new_side_line.saturating_sub(1))
+            // The kept old lines above the run decide its start: a string
+            // they open is one the run closes.
+            state = old_states
+                .get(line.line.saturating_sub(1))
                 .copied()
                 .unwrap_or_default();
-            inside_kept_statement = state.continues();
+            record_pending = state.continues();
         }
         if !state.continues() {
-            inside_kept_statement = false;
+            record_pending = false;
         }
-        if inside_kept_statement && is_behavior(line) {
-            inside_kept_statement = false;
+        let starts_a_statement = !state.continues();
+        if record_pending && is_behavior(line) {
+            record_pending = false;
         } else if state.continues() {
             continuations.insert(line.line);
         }
         state = state.after(&line.text);
+        // A statement that opens with a lone bracket (`(` on its own line)
+        // has no behavior on its first line, so its first behavior line
+        // carries the record instead.
+        if starts_a_statement && state.continues() && opens_only_brackets(&line.text) {
+            record_pending = true;
+        }
         previous_line = Some(line.line);
     }
     continuations
 }
 
-/// The statement state at the start of each candidate line, by 0-based
-/// index: entry `i` is the state after lines `1..=i`.
-fn states_before_each_line(new_source: NewSource<'_>) -> Vec<StatementState> {
+/// The statement state at the start of each old-file line, by 0-based
+/// index: entry `i` is the state after old lines `1..=i`. The old file is
+/// rebuilt from the candidate: its kept lines (every candidate line the diff
+/// did not add) fill the old positions the removed lines leave, in order. So
+/// a bracket or string that only the candidate opens never reaches a run.
+fn old_states_before_each_line(
+    changed: &ChangedFile,
+    new_source: NewSource<'_>,
+) -> Vec<StatementState> {
     let Some(source) = new_source else {
         return Vec::new();
     };
+    let added: BTreeSet<usize> = changed.added_lines.iter().map(|line| line.line).collect();
+    let removed: BTreeMap<usize, &str> = changed
+        .removed_lines
+        .iter()
+        .map(|line| (line.line, line.text.as_str()))
+        .collect();
+    let mut kept = source
+        .lines()
+        .enumerate()
+        .filter(|(index, _)| !added.contains(&(index + 1)))
+        .map(|(_, text)| text);
     let mut states = vec![StatementState::default()];
     let mut state = StatementState::default();
-    for text in source.lines() {
+    let last_removed = removed.keys().next_back().copied().unwrap_or(0);
+    let mut old_line = 1;
+    loop {
+        let text = match removed.get(&old_line) {
+            Some(text) => *text,
+            None => match kept.next() {
+                Some(text) => text,
+                None if old_line <= last_removed => "",
+                None => break,
+            },
+        };
         state = state.after(text);
         states.push(state);
+        old_line += 1;
     }
     states
+}
+
+/// A line holding nothing but opening brackets.
+fn opens_only_brackets(text: &str) -> bool {
+    let trimmed = text.trim();
+    !trimmed.is_empty() && trimmed.chars().all(|ch| matches!(ch, '(' | '[' | '{'))
 }
 
 /// Where a statement stands at the end of a line.
