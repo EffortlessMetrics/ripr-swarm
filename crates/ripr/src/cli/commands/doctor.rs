@@ -943,8 +943,8 @@ fn preview_language_enable_suggestions(enablement: Option<&PreviewEnablement>) -
         .map(|gap| gap.label.as_str())
         .collect::<Vec<_>>()
         .join(" and ");
-    let names: Vec<&str> = suggestion.iter().map(LanguageId::as_str).collect();
-    let enabled_line = crate::domain::format_languages_enabled_toml(&names);
+    let enabled_names: Vec<&str> = suggestion.iter().map(LanguageId::as_str).collect();
+    let enabled_line = crate::domain::format_languages_enabled_toml(&enabled_names);
     let javascript_note = if gaps.iter().any(|gap| gap.label == "javascript") {
         " (the `typescript` entry also analyzes JavaScript)"
     } else {
