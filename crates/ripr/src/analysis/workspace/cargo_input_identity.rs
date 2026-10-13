@@ -359,7 +359,12 @@ mod tests {
     #[test]
     fn cargo_home_unix_literal_backslashes_remain_distinct() -> Result<(), String> {
         check_home_directory_authority(|root| {
-            let literal = root.join(r"\\?\home");
+            let literal_name = Path::new(r"\\?\home");
+            assert!(
+                literal_name.is_relative(),
+                "Unix backslashes are not path separators"
+            );
+            let literal = root.join(literal_name);
             std::fs::create_dir_all(&literal).map_err(|error| error.to_string())?;
             let config = literal.join("config.toml");
             std::fs::write(&config, "[build]\njobs=1\n").map_err(|error| error.to_string())?;
