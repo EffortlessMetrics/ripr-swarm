@@ -188,6 +188,54 @@ struct ReachGraph<'a> {
     /// Per test file: the derive names its attributes apply, filled on first
     /// use.
     file_derives: Mutex<HashMap<&'a Path, std::sync::Arc<Vec<String>>>>,
+    /// `by_name`'s call edges over interned names, built on first use. See
+    /// [`NameGraph`].
+    name_graph: OnceLock<NameGraph<'a>>,
+}
+
+/// The forward walk's edges with each production function name interned.
+/// Trait-dispatch reach walks from hundreds of trait methods, and each walk
+/// visits most of a large workspace; hashing every call name of every
+/// function on each visit made that walk most of bevy's cold pilot wait.
+struct NameGraph<'a> {
+    /// Every name in `by_name`, sorted, so ids order as their names do.
+    names: Vec<&'a str>,
+    ids: HashMap<&'a str, u32>,
+    /// Per name id: the distinct non-macro callees, over every function with
+    /// that name, that have a production function themselves.
+    callees: Vec<Vec<u32>>,
+}
+
+impl<'a> NameGraph<'a> {
+    fn build(by_name: &HashMap<&'a str, Vec<&'a FunctionSummary>>) -> Self {
+        let mut names: Vec<&'a str> = by_name.keys().copied().collect();
+        names.sort_unstable();
+        let ids: HashMap<&'a str, u32> = names
+            .iter()
+            .zip(0u32..)
+            .map(|(&name, id)| (name, id))
+            .collect();
+        let callees = names
+            .iter()
+            .map(|name| {
+                let mut seen = HashSet::new();
+                by_name
+                    .get(name)
+                    .into_iter()
+                    .flatten()
+                    .flat_map(|function| calls_of(function))
+                    .filter(|call| !is_macro_call(&call.name))
+                    .filter_map(|call| ids.get(call.name.as_str()).copied())
+                    .filter(|&id| seen.insert(id))
+                    .collect()
+            })
+            .collect();
+        Self {
+            names,
+            ids,
+            callees,
+        }
+    }
 }
 
 /// One invocation of a test-generating `macro_rules!` in its own file.
@@ -351,6 +399,7 @@ impl<'a> ReachGraph<'a> {
             macro_bodies,
             unique_macro_identifiers,
             tests_by_call: OnceLock::new(),
+            name_graph: OnceLock::new(),
             macro_invocations: OnceLock::new(),
             macro_definitions,
             generated_tests,
@@ -913,6 +962,59 @@ impl<'a> TransitiveReachIndex<'a> {
     /// name, sorted by name. Macro invocations and names with no in-crate
     /// function stop their branch, as in the transitive walk.
     pub(in crate::analysis) fn functions_reached_from<'c>(
+        &self,
+        calls: impl IntoIterator<Item = &'c CallFact>,
+        depth: usize,
+    ) -> Vec<&'a FunctionSummary> {
+        let graph = self.graph();
+        let names = graph
+            .name_graph
+            .get_or_init(|| NameGraph::build(&graph.by_name));
+        let mut seen = vec![false; names.names.len()];
+        let mut frontier: Vec<u32> = Vec::new();
+        for call in calls {
+            if is_macro_call(&call.name) {
+                continue;
+            }
+            if let Some(&id) = names.ids.get(call.name.as_str())
+                && let Some(slot) = seen.get_mut(id as usize)
+                && !*slot
+            {
+                *slot = true;
+                frontier.push(id);
+            }
+        }
+        let mut reached: Vec<u32> = frontier.clone();
+        for _ in 1..depth {
+            let mut next = Vec::new();
+            for id in frontier {
+                for &callee in names.callees.get(id as usize).into_iter().flatten() {
+                    if let Some(slot) = seen.get_mut(callee as usize)
+                        && !*slot
+                    {
+                        *slot = true;
+                        next.push(callee);
+                    }
+                }
+            }
+            if next.is_empty() {
+                break;
+            }
+            reached.extend(next.iter().copied());
+            frontier = next;
+        }
+        reached.sort_unstable();
+        reached
+            .into_iter()
+            .filter_map(|id| names.names.get(id as usize))
+            .flat_map(|name| graph.by_name.get(name).into_iter().flatten().copied())
+            .collect()
+    }
+
+    /// The walk [`Self::functions_reached_from`] replaced, over names
+    /// instead of interned ids; tests pin the two together.
+    #[cfg(test)]
+    fn functions_reached_from_by_name<'c>(
         &self,
         calls: impl IntoIterator<Item = &'c CallFact>,
         depth: usize,
@@ -3245,6 +3347,79 @@ mod tests {
             }
         }
         assert_eq!(reached, ["f3", "f4", "f5", "f6", "f7"]);
+    }
+
+    #[test]
+    fn interned_walk_agrees_with_the_walk_over_names() {
+        let mut decode_a = make_fn("decode", vec!["left"]);
+        decode_a.id = SymbolId("src/lib.rs::A::decode".to_string());
+        let mut decode_b = make_fn("decode", vec!["right", "expand!"]);
+        decode_b.id = SymbolId("src/lib.rs::B::decode".to_string());
+        let fns = vec![
+            make_fn("a1", vec!["a2", "missing"]),
+            make_fn("a2", vec!["a3", "a1"]),
+            make_fn("a3", vec!["a4"]),
+            make_fn("a4", vec!["a5", "decode"]),
+            make_fn("a5", vec!["a6"]),
+            make_fn("a6", vec![]),
+            decode_a,
+            decode_b,
+            make_fn("left", vec!["decode"]),
+            make_fn("right", vec![]),
+            make_fn("expand", vec!["a6"]),
+        ];
+        let index = index_with(fns, Vec::new());
+        let reach = TransitiveReachIndex::new(&index);
+        let ids = |functions: Vec<&FunctionSummary>| -> Vec<String> {
+            functions.iter().map(|f| f.id.0.clone()).collect()
+        };
+        let mut starts: Vec<&str> = reach.graph().by_name.keys().copied().collect();
+        starts.extend(["missing", "expand!"]);
+        starts.sort_unstable();
+        for start in starts {
+            let calls = vec![CallFact {
+                line: 1,
+                name: start.to_string(),
+                text: format!("{start}()"),
+            }];
+            for depth in 0..=7 {
+                assert_eq!(
+                    ids(reach.functions_reached_from(&calls, depth)),
+                    ids(reach.functions_reached_from_by_name(&calls, depth)),
+                    "{start} at depth {depth}"
+                );
+            }
+        }
+        // A start named twice is walked once.
+        let call = |name: &str| CallFact {
+            line: 1,
+            name: name.to_string(),
+            text: format!("{name}()"),
+        };
+        let repeated = vec![call("a1"), call("a1"), call("decode")];
+        assert_eq!(
+            ids(reach.functions_reached_from(&repeated, 2)),
+            ids(reach.functions_reached_from_by_name(&repeated, 2)),
+        );
+        // Both `decode`s are followed, the macro call `expand!` names no
+        // function, and the walk stops at the depth bound before `a6`.
+        let a1 = vec![CallFact {
+            line: 1,
+            name: "a1".to_string(),
+            text: "a1()".to_string(),
+        }];
+        assert_eq!(
+            ids(reach.functions_reached_from(&a1, 5)),
+            [
+                "src/lib.rs::a1",
+                "src/lib.rs::a2",
+                "src/lib.rs::a3",
+                "src/lib.rs::a4",
+                "src/lib.rs::a5",
+                "src/lib.rs::A::decode",
+                "src/lib.rs::B::decode",
+            ]
+        );
     }
 
     #[test]
