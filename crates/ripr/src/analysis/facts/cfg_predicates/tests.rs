@@ -464,3 +464,79 @@ fn rust_ident_name_strips_one_raw_identifier_prefix() {
     assert_eq!(super::rust_ident_name("rpath"), "rpath");
     assert_eq!(super::rust_ident_name(""), "");
 }
+
+#[test]
+fn source_preservation_closes_stable_crate_metadata_without_cfg_credit() {
+    for spelling in [
+        "#![crate_name = \"metadata\"]",
+        "#![crate_name = r#\"metadata\"#]",
+        "#![crate_name = \"metad\\u{61}ta\"]",
+        "#![crate_type = \"lib\"]",
+        "#![windows_subsystem = \"windows\"]",
+        "#![windows_subsystem = r#\"console\"#]",
+        "#![no_builtins]",
+        "#![no_implicit_prelude]",
+        "#![debugger_visualizer(natvis_file = \"visualizer.natvis\")]",
+        "#[debugger_visualizer(natvis_file = \"visualizer.natvis\")]",
+        "#![debugger_visualizer(gdb_script_file = \"visualizer.py\",)]",
+        "#![cfg_attr(test, no_builtins)]",
+        "#![cfg_attr(feature = \"test\", windows_subsystem = \"windows\")]",
+    ] {
+        assert!(attribute_preserves_source_items(spelling), "{spelling}");
+        assert!(
+            !attribute_requires_test(spelling),
+            "literal metadata acquired cfg credit: {spelling}"
+        );
+        assert_eq!(
+            attribute_test_build_availability(spelling),
+            Some(true),
+            "{spelling}"
+        );
+    }
+    for spelling in [
+        "#![crate_name = 1]",
+        "#![crate_name = b\"metadata\"]",
+        "#![crate_name = concat!(\"metadata\")]",
+        "#![crate_name = \"\"]",
+        "#![crate_name = \"bad-name\"]",
+        "#![crate_type = \"unknown\"]",
+        "#![windows_subsystem = \"unknown\"]",
+        "#![windows_subsystem = 1]",
+        "#![no_builtins()]",
+        "#![foreign::crate_type = \"lib\"]",
+        "#![r#crate_type = \"lib\"]",
+        "#[crate_type = \"lib\"]",
+        "#![debugger_visualizer(natvis_file = 1)]",
+        "#![debugger_visualizer(natvis_file = b\"visualizer.natvis\")]",
+        "#![debugger_visualizer(natvis_file = concat!(\"visualizer.natvis\"))]",
+        "#![debugger_visualizer(natvis_file = \"\")]",
+        "#![debugger_visualizer(other = \"visualizer.natvis\")]",
+        "#![debugger_visualizer(natvis_file = \"visualizer.natvis\", gdb_script_file = \"visualizer.py\")]",
+        "#![cfg(any())]",
+        "#![cfg_attr(test, opaque_attr)]",
+        "#![cfg_attr(feature = \"test\", opaque_attr)]",
+        "#![unsafe(no_mangle)]",
+        "#![proc_macro]",
+    ] {
+        assert!(!attribute_preserves_source_items(spelling), "{spelling}");
+    }
+    for spelling in [
+        "#![cfg_attr(test, crate_name = \"metadata\")]",
+        "#![cfg_attr(not(test), crate_name = \"metadata\")]",
+        "#![cfg_attr(test, crate_type = \"lib\")]",
+        "#![cfg_attr(not(test), crate_type = \"lib\")]",
+        "#![cfg_attr(not(test), cfg_attr(not(test), crate_type = \"lib\"))]",
+    ] {
+        assert!(
+            !attribute_preserves_source_items(spelling),
+            "forbidden introduction: {spelling}"
+        );
+        // Availability is a different authority; the preservation repair
+        // must not teach its shared CFG lexer to read literal contents.
+        assert_eq!(
+            attribute_test_build_availability(spelling),
+            Some(true),
+            "{spelling}"
+        );
+    }
+}

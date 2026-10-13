@@ -9066,6 +9066,31 @@ fn selected() {
     fn changed_test_inventory_exact_occurrence_module_provenance() -> Result<(), String> {
         for (label, declaration, admitted) in [
             ("plain", "mod selected;", true),
+            (
+                "module-natvis",
+                "#[debugger_visualizer(natvis_file=\"visualizer.natvis\")] mod selected;",
+                true,
+            ),
+            (
+                "module-gdb",
+                "#[debugger_visualizer(gdb_script_file=\"visualizer.py\")] mod selected;",
+                true,
+            ),
+            (
+                "module-debug-active",
+                "#[cfg_attr(test,debugger_visualizer(natvis_file=\"visualizer.natvis\"))] mod selected;",
+                true,
+            ),
+            (
+                "module-debug-computed",
+                "#[debugger_visualizer(natvis_file=concat!(\"visualizer.natvis\"))] mod selected;",
+                false,
+            ),
+            (
+                "module-debug-disabled",
+                "#[debugger_visualizer(natvis_file=\"visualizer.natvis\")] #[cfg(any())] mod selected;",
+                false,
+            ),
             ("test-cfg", "#[cfg(test)] mod selected;", true),
             ("false-cfg", "#[cfg(any())] mod selected;", false),
             ("lint", "#[allow(dead_code)] mod selected;", true),
@@ -9140,6 +9165,13 @@ fn selected() {
                             &root.join("Cargo.toml"),
                             "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dev-dependencies]\nrstest = { version = \"=0.27.0\", default-features = false }\n",
                         )?;
+                    }
+                    if declaration.contains("debugger_visualizer") {
+                        write_file(
+                            &root.join("src/visualizer.natvis"),
+                            "<AutoVisualizer xmlns=\"http://schemas.microsoft.com/vstudio/debugger/natvis/2010\"/>\n",
+                        )?;
+                        write_file(&root.join("src/visualizer.py"), "# Metadata only.\n")?;
                     }
                     let file = root.join("src/selected.rs");
                     let source = match shape {
@@ -9231,6 +9263,130 @@ fn selected() {
     fn changed_test_inventory_exact_occurrence_crate_attributes() -> Result<(), String> {
         for (label, attributes, admitted) in [
             ("plain", "", true),
+            ("crate-name", "#![crate_name=\"occurrence\"]", true),
+            ("crate-name-raw", "#![crate_name=r#\"occurrence\"#]", true),
+            (
+                "crate-name-escaped",
+                "#![crate_name=\"occurr\\u{65}nce\"]",
+                true,
+            ),
+            ("crate-type-lib", "#![crate_type=\"lib\"]", true),
+            ("crate-type-rlib", "#![crate_type=\"rlib\"]", true),
+            ("crate-type-dylib", "#![crate_type=\"dylib\"]", true),
+            ("crate-type-cdylib", "#![crate_type=\"cdylib\"]", true),
+            ("crate-type-staticlib", "#![crate_type=\"staticlib\"]", true),
+            ("crate-type-bin", "#![crate_type=\"bin\"]", true),
+            (
+                "crate-type-proc-macro",
+                "#![crate_type=\"proc-macro\"]",
+                true,
+            ),
+            ("no-builtins", "#![no_builtins]", true),
+            ("active-no-builtins", "#![cfg_attr(test,no_builtins)]", true),
+            (
+                "unknown-no-builtins",
+                "#![cfg_attr(docsrs,no_builtins)]",
+                true,
+            ),
+            ("windows", "#![windows_subsystem=\"windows\"]", true),
+            ("console-raw", "#![windows_subsystem=r#\"console\"#]", true),
+            (
+                "active-windows",
+                "#![cfg_attr(test,windows_subsystem=\"windows\")]",
+                true,
+            ),
+            (
+                "natvis",
+                "#![debugger_visualizer(natvis_file=\"visualizer.natvis\")]",
+                true,
+            ),
+            (
+                "gdb",
+                "#![debugger_visualizer(gdb_script_file=\"visualizer.py\")]",
+                true,
+            ),
+            ("numeric-name", "#![crate_name=1]", false),
+            ("byte-name", "#![crate_name=b\"occurrence\"]", false),
+            (
+                "computed-name",
+                "#![crate_name=concat!(\"occurrence\")]",
+                false,
+            ),
+            ("empty-name", "#![crate_name=\"\"]", false),
+            ("invalid-name", "#![crate_name=\"not-a-crate\"]", false),
+            ("invalid-type", "#![crate_type=\"unknown\"]", false),
+            (
+                "invalid-windows",
+                "#![windows_subsystem=\"unknown\"]",
+                false,
+            ),
+            (
+                "qualified-metadata",
+                "#![foreign::crate_type=\"lib\"]",
+                false,
+            ),
+            ("raw-head-metadata", "#![r#crate_type=\"lib\"]", false),
+            (
+                "natvis-numeric",
+                "#![debugger_visualizer(natvis_file=1)]",
+                false,
+            ),
+            (
+                "natvis-computed",
+                "#![debugger_visualizer(natvis_file=concat!(\"visualizer.natvis\"))]",
+                false,
+            ),
+            (
+                "natvis-unknown-key",
+                "#![debugger_visualizer(other=\"visualizer.natvis\")]",
+                false,
+            ),
+            (
+                "natvis-mixed",
+                "#![debugger_visualizer(natvis_file=\"visualizer.natvis\",gdb_script_file=\"visualizer.py\")]",
+                false,
+            ),
+            ("unsafe-symbol", "#![unsafe(no_mangle)]", false),
+            (
+                "metadata-disabled",
+                "#![crate_name=\"occurrence\"]\n#![cfg(any())]",
+                false,
+            ),
+            (
+                "metadata-opaque",
+                "#![crate_type=\"lib\"]\n#![opaque_attr]",
+                false,
+            ),
+            (
+                "crate_name-active",
+                "#![cfg_attr(test,crate_name=\"occurrence\")]",
+                false,
+            ),
+            (
+                "crate_name-inactive",
+                "#![cfg_attr(not(test),crate_name=\"occurrence\")]",
+                false,
+            ),
+            (
+                "crate_name-nested-inactive",
+                "#![cfg_attr(not(test),cfg_attr(not(test),crate_name=\"occurrence\"))]",
+                false,
+            ),
+            (
+                "crate_type-active",
+                "#![cfg_attr(test,crate_type=\"lib\")]",
+                false,
+            ),
+            (
+                "crate_type-inactive",
+                "#![cfg_attr(not(test),crate_type=\"lib\")]",
+                false,
+            ),
+            (
+                "crate_type-nested-inactive",
+                "#![cfg_attr(not(test),cfg_attr(not(test),crate_type=\"lib\"))]",
+                false,
+            ),
             ("recursion-limit", "#![recursion_limit = \"256\"]", true),
             ("type-length-limit", "#![type_length_limit = \"256\"]", true),
             ("no-std", "#![no_std]", true),
@@ -9303,7 +9459,18 @@ fn selected() {
             for layout in ["root", "file-backed", "included"] {
                 // Includes stay a separate source-composition refusal, both
                 // with and without the newly supported root metadata.
-                if layout == "included" && !matches!(label, "plain" | "recursion-limit") {
+                if layout == "included"
+                    && !matches!(
+                        label,
+                        "plain"
+                            | "recursion-limit"
+                            | "crate-name"
+                            | "crate-type-lib"
+                            | "no-builtins"
+                            | "windows"
+                            | "natvis"
+                    )
+                {
                     continue;
                 }
                 for shape in ["assertion", "body", "parameter"] {
@@ -9313,6 +9480,16 @@ fn selected() {
                         &root.join("Cargo.toml"),
                         "[package]\nname = \"occurrence\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dev-dependencies]\nrstest = { version = \"=0.27.0\", default-features = false }\n",
                     )?;
+                    if attributes.contains("debugger_visualizer") {
+                        write_file(
+                            &root.join("src/visualizer.natvis"),
+                            "<AutoVisualizer xmlns=\"http://schemas.microsoft.com/vstudio/debugger/natvis/2010\"/>\n",
+                        )?;
+                        write_file(
+                            &root.join("src/visualizer.py"),
+                            "# Metadata only; no debugger invocation.\n",
+                        )?;
+                    }
                     let call = "crate::\nowner(1)";
                     let selected = match shape {
                         "body" => format!(
@@ -9407,6 +9584,138 @@ fn selected() {
                                 })
                             ),
                             "{case}: {result:?}"
+                        );
+                    }
+                    std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn changed_test_inventory_exact_occurrence_no_implicit_prelude_binding() -> Result<(), String> {
+        for layout in ["root", "file-backed"] {
+            for rebound in [false, true] {
+                for shape in ["assertion", "body"] {
+                    let case = format!("{layout}/{rebound}/{shape}");
+                    let root =
+                        make_tempdir(&format!("targeted-prelude-{layout}-{rebound}-{shape}"))?;
+                    write_file(
+                        &root.join("Cargo.toml"),
+                        "[package]\nname=\"occurrence\"\nversion=\"0.1.0\"\nedition=\"2024\"\n",
+                    )?;
+                    let imports = if rebound {
+                        "extern crate std as real_std;\nmod std { pub use crate::real_std::assert_eq; }\n"
+                    } else {
+                        "extern crate std;\n"
+                    };
+                    let call = "crate::\nowner(1)";
+                    let selected = if shape == "body" {
+                        format!(
+                            "#[test] fn selected() {{ let value={call}; std::assert_eq!(value,1); }}\n"
+                        )
+                    } else {
+                        format!("#[test] fn selected() {{ std::assert_eq!({call},1); }}\n")
+                    };
+                    let file = root.join(if layout == "root" {
+                        "src/lib.rs"
+                    } else {
+                        "src/selected.rs"
+                    });
+                    let declaration = if layout == "root" {
+                        selected.as_str()
+                    } else {
+                        "mod selected;\n"
+                    };
+                    write_file(
+                        &root.join("src/lib.rs"),
+                        &format!(
+                            "#![no_implicit_prelude]\n{imports}pub fn owner(x:i32)->i32 {{ if x>0 {{x}} else {{0}} }}\n{declaration}"
+                        ),
+                    )?;
+                    if layout != "root" {
+                        write_file(&file, &format!("use crate::std;\n{selected}"))?;
+                    }
+                    let files = if layout == "root" {
+                        vec![root.join("src/lib.rs")]
+                    } else {
+                        vec![root.join("src/lib.rs"), file.clone()]
+                    };
+                    let index = crate::analysis::facts::build_index(&root, &files)?;
+                    assert_eq!(index.tests().len(), 1, "{case}: missing indexed test");
+                    let test = &index.tests()[0];
+                    assert_eq!(test.file, file, "{case}: wrong source");
+                    assert!(
+                        test.calls.iter().any(|call| call.name == "owner"),
+                        "{case}: missing captured owner"
+                    );
+                    assert!(
+                        !index
+                            .files()
+                            .get(&file)
+                            .ok_or("missing indexed file")?
+                            .used_lexical_fallback,
+                        "{case}: lexical fallback"
+                    );
+                    assert!(
+                        index
+                            .functions()
+                            .iter()
+                            .any(|owner| owner.name == "owner"
+                                && !owner.source_role.is_evidence_role()),
+                        "{case}: missing production owner"
+                    );
+                    let syntax = super::super::classify::OwnerPinSyntax::default();
+                    assert!(
+                        syntax.targeted_source_provenance_is_admitted(test, &index),
+                        "{case}: preserving source refused"
+                    );
+                    assert!(
+                        !syntax.targeted_macro_binding_is_unambiguous(
+                            test,
+                            test.line,
+                            "assert_eq",
+                            &index
+                        ),
+                        "{case}: no-implicit-prelude binding refusal disappeared"
+                    );
+                    let relative = if layout == "root" {
+                        "src/lib.rs"
+                    } else {
+                        "src/selected.rs"
+                    };
+                    let result = inventory_changed_test_classified_seams_at_with_config_node(
+                        &root,
+                        &RiprConfig::default(),
+                        Path::new(relative),
+                        Some("selected"),
+                    );
+                    if shape == "body" {
+                        let inventory = result.map_err(|error| format!("{case}: {error:?}"))?;
+                        assert_eq!(inventory.selected_test_count, 1, "{case}: selected count");
+                        assert!(
+                            !inventory.classified.is_empty(),
+                            "{case}: empty direct owner"
+                        );
+                        assert!(
+                            inventory
+                                .classified
+                                .iter()
+                                .all(|entry| entry.seam.owner() == "src/lib.rs::owner"),
+                            "{case}: wrong owner"
+                        );
+                    } else {
+                        assert!(
+                            matches!(
+                                result,
+                                Err(TargetedTestInventoryError::Selector {
+                                    kind: CHANGED_TEST_OWNER_UNRESOLVED,
+                                    selected_test_count: 1,
+                                    ..
+                                })
+                            ),
+                            "{case}: unproven prelude operand acquired authority: {result:?}"
                         );
                     }
                     std::fs::remove_dir_all(root).map_err(|error| error.to_string())?;
