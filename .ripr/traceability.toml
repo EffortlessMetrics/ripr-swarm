@@ -13250,6 +13250,7 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_ids_that_are_not_one_safe_path_segment",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_rejects_a_diff_that_patches_an_unretained_path",
   "xtask/src/reports/verdict_corpus_tests.rs::validator_requires_both_truth_directions",
+  "xtask/src/reports/verdict_corpus_tests.rs::checkout_module_path_oracle_is_described_as_same_file",
   "xtask/src/reports/verdict_corpus_tests.rs::expected_report_rows_agree_with_corpus_labels",
   "xtask/src/reports/verdict_corpus_tests.rs::build_report_counts_rates_over_the_right_denominators",
   "xtask/src/reports/verdict_corpus_tests.rs::contradiction_counts_use_one_per_finding_unit",
