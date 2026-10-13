@@ -57,6 +57,11 @@ pub(in crate::analysis) struct ArmSelector {
     /// type for `self`), when the signature or impl names one. A qualified
     /// input must be qualified by it.
     scrutinee_type: Option<String>,
+    /// The scrutinee type when it is written as a bare name (`k: Kind`, not
+    /// `k: other::Kind`), so an enum the owner's file declares under that
+    /// name is the scrutinee's type. `in_workspace` reads that enum's
+    /// variants for uncased names (#7543).
+    bare_scrutinee_type: Option<String>,
     binding: ScrutineeBinding,
     owner: String,
     method: bool,
@@ -85,6 +90,10 @@ pub(in crate::analysis) struct ArmSelector {
     /// names the scrutinee's variant only when no import in the test's
     /// file binds that name from another enum.
     test_imports: Option<std::collections::BTreeMap<std::path::PathBuf, Vec<UsePath>>>,
+    /// The variants of the scrutinee's enum, once `in_workspace` finds its
+    /// declaration in the owner's file (`declared_enum_variants`). `None`
+    /// leaves every uncased name unreadable.
+    declared_variants: Option<std::collections::BTreeSet<String>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,6 +127,17 @@ enum PatternHead {
     /// every input, unless the name resolves to a constant, which
     /// `in_workspace` checks against the owner's file.
     Binding(String),
+    /// A qualified name with no lowercase letter (`Kind::A`, `Method::GET`),
+    /// optionally with a payload. Rust allows such a variant, but the same
+    /// path can name an associated constant, which a pattern compares by
+    /// value. It reads as a `Variant` only once the owner's file declares
+    /// it as a variant of the scrutinee's enum, and as `Opaque` otherwise
+    /// (#7543).
+    UncasedVariant {
+        qualifier: String,
+        name: String,
+        irrefutable: bool,
+    },
     Opaque,
 }
 
@@ -199,29 +219,35 @@ impl ArmSelector {
             .iter()
             .map(|pattern| earlier_arm(pattern))
             .collect::<Vec<_>>();
-        let (binding, scrutinee_type) = if method && matches!(scrutinee.as_str(), "self" | "*self")
-        {
-            if receiver_may_change(owner) {
-                return None;
-            }
-            let self_type = match &owner.impl_context {
-                crate::analysis::facts::FunctionImplContext::Impl { self_type } => {
-                    Some(self_type.clone())
+        let (binding, scrutinee_type, bare_scrutinee_type) =
+            if method && matches!(scrutinee.as_str(), "self" | "*self") {
+                if receiver_may_change(owner) {
+                    return None;
                 }
-                _ => None,
+                let self_type = match &owner.impl_context {
+                    crate::analysis::facts::FunctionImplContext::Impl { self_type } => {
+                        Some(self_type.clone())
+                    }
+                    _ => None,
+                };
+                let bare = self_type
+                    .as_deref()
+                    .map(|self_type| self_type.split('<').next().unwrap_or(self_type).trim())
+                    .filter(|name| is_identifier(name))
+                    .map(str::to_string);
+                (ScrutineeBinding::Receiver, self_type, bare)
+            } else {
+                let parameters = function_parameters(owner);
+                let index = parameters
+                    .iter()
+                    .position(|parameter| parameter_name(parameter) == scrutinee)?;
+                let declared = parameter_declaration(owner, &scrutinee)?;
+                if parameter_may_change(owner, &scrutinee, declared.mutable) {
+                    return None;
+                }
+                let bare = declared.type_name.clone().filter(|_| !declared.qualified);
+                (ScrutineeBinding::Parameter(index), declared.type_name, bare)
             };
-            (ScrutineeBinding::Receiver, self_type)
-        } else {
-            let parameters = function_parameters(owner);
-            let index = parameters
-                .iter()
-                .position(|parameter| parameter_name(parameter) == scrutinee)?;
-            let declared = parameter_declaration(owner, &scrutinee)?;
-            if parameter_may_change(owner, &scrutinee, declared.mutable) {
-                return None;
-            }
-            (ScrutineeBinding::Parameter(index), declared.type_name)
-        };
         if let crate::analysis::facts::FunctionImplContext::Impl { self_type } = &owner.impl_context
             && let Some(type_name) = self_type
                 .split('<')
@@ -238,6 +264,8 @@ impl ArmSelector {
             pattern_text,
             scrutinee,
             scrutinee_type,
+            bare_scrutinee_type,
+            declared_variants: None,
             binding,
             owner: owner.name.clone(),
             method,
@@ -268,6 +296,10 @@ impl ArmSelector {
             .get(&self.owner_file)
             .map(|facts| facts.source.clone());
         self.demote_constant_bindings(owner_source.as_deref());
+        self.declared_variants = owner_source.as_deref().and_then(|source| {
+            declared_enum_variants(source, self.bare_scrutinee_type.as_deref()?)
+        });
+        self.resolve_uncased_variants();
         let mut imports = std::collections::BTreeMap::new();
         for file in test_files {
             if let Some(facts) = index.files().get(file) {
@@ -310,6 +342,54 @@ impl ArmSelector {
         }
     }
 
+    /// Each uncased pattern name becomes a `Variant` when the scrutinee's
+    /// declared enum lists it under its own name or `Self`, and `Opaque`
+    /// otherwise.
+    fn resolve_uncased_variants(&mut self) {
+        let resolve = |heads: &mut Vec<PatternHead>, selector: &Self| {
+            for head in heads.iter_mut() {
+                *head = selector.resolve_head(std::mem::replace(head, PatternHead::Opaque));
+            }
+        };
+        let mut alternatives = std::mem::take(&mut self.alternatives);
+        resolve(&mut alternatives, self);
+        self.alternatives = alternatives;
+        let mut earlier = std::mem::take(&mut self.earlier);
+        earlier
+            .iter_mut()
+            .flatten()
+            .for_each(|arm| resolve(arm, self));
+        self.earlier = earlier;
+        let mut changed_from = self.changed_from.take();
+        if let Some(Some(original)) = &mut changed_from {
+            resolve(original, self);
+        }
+        self.changed_from = changed_from;
+    }
+
+    fn resolve_head(&self, head: PatternHead) -> PatternHead {
+        let PatternHead::UncasedVariant {
+            qualifier,
+            name,
+            irrefutable,
+        } = head
+        else {
+            return head;
+        };
+        let names_scrutinee_type =
+            qualifier == "Self" || self.bare_scrutinee_type.as_deref() == Some(qualifier.as_str());
+        if names_scrutinee_type
+            && self
+                .declared_variants
+                .as_ref()
+                .is_some_and(|variants| variants.contains(&name))
+        {
+            PatternHead::Variant { name, irrefutable }
+        } else {
+            PatternHead::Opaque
+        }
+    }
+
     /// Whether an input's leading name may resolve outside the scrutinee's
     /// type in this test's file. For a bare variant (`LowerCase`) or a
     /// type-qualified one (`RenameRule::LowerCase`), an import that binds
@@ -322,7 +402,9 @@ impl ArmSelector {
         let Some(test_imports) = &self.test_imports else {
             return false;
         };
-        let PatternHead::Variant { name, .. } = input_head(input) else {
+        let (PatternHead::Variant { name, .. } | PatternHead::UncasedVariant { name, .. }) =
+            input_head(input)
+        else {
             return false;
         };
         let lead = match input_qualifier(input) {
@@ -501,7 +583,7 @@ impl ArmSelector {
         {
             return ArmSelection::Unknown;
         }
-        let input = input_head(input);
+        let input = self.resolve_head(input_head(input));
         if input == PatternHead::Opaque {
             return ArmSelection::Unknown;
         }
@@ -728,11 +810,28 @@ fn pattern_head(alternative: &str) -> PatternHead {
         };
     }
     match variant_parts(alternative) {
-        Some((name, payload)) => PatternHead::Variant {
-            name: name.to_string(),
-            irrefutable: payload.is_none_or(payload_is_irrefutable),
-        },
+        Some(VariantParts {
+            qualifier,
+            name,
+            payload,
+        }) => variant_head(qualifier, name, payload.is_none_or(payload_is_irrefutable)),
         None => PatternHead::Opaque,
+    }
+}
+
+/// A CamelCase name is a variant by its case alone; an uncased one waits
+/// for `ArmSelector::resolve_head`.
+fn variant_head(qualifier: Option<&str>, name: &str, irrefutable: bool) -> PatternHead {
+    match qualifier {
+        Some(qualifier) if !is_variant_name(name) => PatternHead::UncasedVariant {
+            qualifier: qualifier.to_string(),
+            name: name.to_string(),
+            irrefutable,
+        },
+        _ => PatternHead::Variant {
+            name: name.to_string(),
+            irrefutable,
+        },
     }
 }
 
@@ -776,6 +875,55 @@ fn may_name_constant(source: &str, name: &str) -> bool {
         })
 }
 
+/// The variant names of the one enum named `type_name` that `source`
+/// declares (#7543). `None` when the file declares no such enum or more
+/// than one, declares another item of that name, or imports the name (an
+/// import may bind a different type), so an uncased `Kind::A` stays
+/// unreadable unless the file itself shows `A` is a variant of `Kind`.
+fn declared_enum_variants(
+    source: &str,
+    type_name: &str,
+) -> Option<std::collections::BTreeSet<String>> {
+    use ra_ap_syntax::{AstNode, ast, ast::HasName};
+    let imported = flattened_use_paths(source).iter().any(|import| {
+        let last = import.path.rsplit("::").next().unwrap_or("");
+        import
+            .alias
+            .as_deref()
+            .map_or(last == type_name, |alias| alias == type_name)
+    });
+    if imported {
+        return None;
+    }
+    let parse = crate::analysis::syntax::parse_clean_source_file(source)?;
+    let named = |item: &dyn HasName| item.name().is_some_and(|name| name.text() == type_name);
+    let mut found = None;
+    for node in parse.tree().syntax().descendants() {
+        if let Some(item) = ast::Enum::cast(node.clone()) {
+            if !named(&item) {
+                continue;
+            }
+            if found.is_some() {
+                return None;
+            }
+            found = Some(
+                item.variant_list()
+                    .into_iter()
+                    .flat_map(|list| list.variants())
+                    .filter_map(|variant| variant.name().map(|name| name.text().to_string()))
+                    .collect(),
+            );
+        } else if ast::Struct::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::Union::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
+            || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
+        {
+            return None;
+        }
+    }
+    found
+}
+
 /// The same reading applied to a call's input expression. A variant input
 /// selects by name whatever its payload is.
 fn input_head(input: &str) -> PatternHead {
@@ -784,18 +932,26 @@ fn input_head(input: &str) -> PatternHead {
         return PatternHead::Literal(literal);
     }
     match variant_parts(input) {
-        Some((name, _)) => PatternHead::Variant {
-            name: name.to_string(),
-            irrefutable: true,
-        },
+        Some(VariantParts {
+            qualifier, name, ..
+        }) => variant_head(qualifier, name, true),
         None => PatternHead::Opaque,
     }
 }
 
+struct VariantParts<'a> {
+    /// The segment before the name (`Kind` in `a::Kind::A`), if any.
+    qualifier: Option<&'a str>,
+    name: &'a str,
+    /// The payload text without its delimiters.
+    payload: Option<&'a str>,
+}
+
 /// A path whose last segment reads as a variant (`Some`, `LowerCase`,
 /// `Mode::Frozen`), optionally followed by one `(..)` or `{..}` payload.
-/// The payload text is returned without its delimiters.
-fn variant_parts(text: &str) -> Option<(&str, Option<&str>)> {
+/// A qualified uncased name (`Kind::A`) is returned too; `variant_head`
+/// keeps it apart until the owner's file shows it is a variant.
+fn variant_parts(text: &str) -> Option<VariantParts<'_>> {
     let text = text.trim();
     let path_end = text
         .find(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_' || ch == ':'))
@@ -806,12 +962,23 @@ fn variant_parts(text: &str) -> Option<(&str, Option<&str>)> {
     if segments.iter().any(|segment| !is_identifier(segment)) {
         return None;
     }
-    let name = segments.last()?;
-    if !is_variant_name(name) {
+    let (name, qualifier) = match segments.as_slice() {
+        [.., qualifier, name] => (*name, Some(*qualifier)),
+        [name] => (*name, None),
+        [] => return None,
+    };
+    let uncased = qualifier.is_some()
+        && name.starts_with(|ch: char| ch.is_ascii_uppercase())
+        && !name.chars().any(|ch| ch.is_ascii_lowercase());
+    if !is_variant_name(name) && !uncased {
         return None;
     }
     if rest.is_empty() {
-        return Some((name, None));
+        return Some(VariantParts {
+            qualifier,
+            name,
+            payload: None,
+        });
     }
     let (open, close) = match rest.as_bytes().first() {
         Some(b'(') => ('(', ')'),
@@ -833,7 +1000,11 @@ fn variant_parts(text: &str) -> Option<(&str, Option<&str>)> {
             return None;
         }
     }
-    (depth == 0).then_some((name, Some(inner)))
+    (depth == 0).then_some(VariantParts {
+        qualifier,
+        name,
+        payload: Some(inner),
+    })
 }
 
 /// `_`, `..`, plain bindings (`v`, `ref v`, `mut v`) and struct shorthand
@@ -873,9 +1044,10 @@ fn is_identifier(text: &str) -> bool {
 }
 
 /// CamelCase only: an uppercase first letter and at least one lowercase
-/// letter. `SCREAMING` names are constants (which a pattern compares by
-/// value, not by name), single letters are ambiguous, and lowercase names
-/// are bindings or functions.
+/// letter. `SCREAMING` names and single letters may be constants (which a
+/// pattern compares by value, not by name), so a qualified one is a
+/// variant only when the owner's file declares it (`UncasedVariant`), and
+/// lowercase names are bindings or functions.
 fn is_variant_name(name: &str) -> bool {
     name.starts_with(|ch: char| ch.is_ascii_uppercase())
         && name.chars().any(|ch| ch.is_ascii_lowercase())
@@ -1178,6 +1350,8 @@ fn input_path_root(input: &str) -> Option<&str> {
 struct ParameterDeclaration {
     mutable: bool,
     type_name: Option<String>,
+    /// Whether the type is written as a path (`other::Kind`).
+    qualified: bool,
 }
 
 /// How `name` is declared in the owner's one-line signature: whether it is
@@ -1210,7 +1384,11 @@ fn parameter_declaration(owner: &FunctionSummary, name: &str) -> Option<Paramete
         .next()
         .filter(|name| is_identifier(name))
         .map(str::to_string);
-    Some(ParameterDeclaration { mutable, type_name })
+    Some(ParameterDeclaration {
+        mutable,
+        type_name,
+        qualified: base.contains("::"),
+    })
 }
 
 /// The owner's body after its signature line, masked.
@@ -1705,6 +1883,95 @@ mod tests {
         );
         // An owner file that was not read may declare anything.
         assert_eq!(judged(None), Some(ArmSelection::Unknown));
+        Ok(())
+    }
+
+    /// #7543: what `in_workspace` does with the owner's file for uncased
+    /// variant names.
+    fn resolve_with(selector: &ArmSelector, source: Option<&str>) -> ArmSelector {
+        let mut selector = selector.clone();
+        selector.declared_variants = source.and_then(|source| {
+            declared_enum_variants(source, selector.bare_scrutinee_type.as_deref()?)
+        });
+        selector.resolve_uncased_variants();
+        selector
+    }
+
+    const KIND: &str = "pub fn f(k: Kind) -> i32 {\n    match k {\n        Kind::A => 1,\n        _ => 0,\n    }\n}\n";
+
+    #[test]
+    fn uncased_variants_read_only_when_the_owner_file_declares_the_enum() -> Result<(), String> {
+        let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(KIND, "f"))
+            .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())?;
+        let judged = |source: Option<&str>, input: &str| {
+            resolve_with(&selector, source)
+                .observed_inputs(&test_with(&format!(
+                    "fn t() {{\n    assert_eq!(f({input}), 0);\n}}\n"
+                )))
+                .map(|observed| observed.selection)
+        };
+        let declared = format!("pub enum Kind {{\n    A,\n    B,\n}}\n{KIND}");
+        assert_eq!(
+            judged(Some(&declared), "Kind::A"),
+            Some(ArmSelection::SelectsOther)
+        );
+        assert_eq!(
+            judged(Some(&declared), "Kind::B"),
+            Some(ArmSelection::Selects)
+        );
+        // An unread owner file, or one that does not show `A` is a variant
+        // of this `Kind`, leaves `Kind::A` unreadable: it may be a constant.
+        for source in [
+            None,
+            Some(KIND.to_string()),
+            Some(format!(
+                "pub struct Kind(u8);\nimpl Kind {{\n    pub const A: Kind = Kind(0);\n}}\n{KIND}"
+            )),
+            Some(format!("use other::Kind;\nenum Kind {{ A, B }}\n{KIND}")),
+            Some(format!("use other::Thing as Kind;\n{KIND}")),
+            Some(format!(
+                "mod a {{\n    enum Kind {{ A }}\n}}\nmod b {{\n    enum Kind {{ B }}\n}}\n{KIND}"
+            )),
+            Some(format!("enum Kind {{ Alpha, B }}\n{KIND}")),
+            Some(format!("enum Kind {{ A, B }}\ntype Kind = u8;\n{KIND}")),
+        ] {
+            assert_eq!(
+                judged(source.as_deref(), "Kind::A"),
+                Some(ArmSelection::Unknown),
+                "{source:?}"
+            );
+        }
+        // Another type's uncased name is never this enum's variant.
+        assert_eq!(
+            judged(Some(&declared), "Other::A"),
+            Some(ArmSelection::Unknown)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn uncased_variants_need_an_unqualified_scrutinee_type() -> Result<(), String> {
+        let body = KIND.replace("k: Kind", "k: crate::Kind");
+        let selector = ArmSelector::establish(&arm_probe("_ => 0,", 4), &owner(&body, "f"))
+            .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())?;
+        let source = format!("pub enum Kind {{ A, B }}\n{body}");
+        let observed = resolve_with(&selector, Some(&source))
+            .observed_inputs(&test_with("fn t() {\n    assert_eq!(f(Kind::A), 1);\n}\n"))
+            .map(|observed| observed.selection);
+        assert_eq!(observed, Some(ArmSelection::Unknown));
+        Ok(())
+    }
+
+    #[test]
+    fn a_changed_uncased_variant_arm_reads_through_the_declared_enum() -> Result<(), String> {
+        let body = "pub fn f(k: Kind) -> Kind {\n    match k {\n        Kind::A => Kind::B,\n        Kind::B => Kind::A,\n    }\n}\n";
+        let selector =
+            ArmSelector::establish(&arm_probe("Kind::B => Kind::A,", 4), &owner(body, "f"))
+                .ok_or_else(|| "premise: the arm reads its scrutinee from k".to_string())?;
+        let source = format!("pub enum Kind {{ A, B }}\n{body}");
+        let selector = resolve_with(&selector, Some(&source));
+        assert!(selector.assertion_selects("assert_eq!(f(Kind::B), Kind::A);"));
+        assert!(!selector.assertion_selects("assert_eq!(f(Kind::A), Kind::B);"));
         Ok(())
     }
 
