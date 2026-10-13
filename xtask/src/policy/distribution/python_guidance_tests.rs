@@ -97,8 +97,8 @@ print("Python:", sys.version)
 fn local_wheelhouse_recipe_selects_its_installed_executable() -> Result<(), String> {
     std::fs::create_dir_all(std::env::temp_dir())
         .map_err(|error| format!("create test temp root: {error}"))?;
-    let readme = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packaging/python/README.md");
+    let readme =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../packaging/python/README.md");
     let output = crate::run::capture_output_with_timeout(
         "python3",
         &[
