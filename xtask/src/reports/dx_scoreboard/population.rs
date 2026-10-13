@@ -3,6 +3,7 @@
 
 use super::super::verdict_corpus::{self, CaseRow};
 use super::{MetricDef, allowed_worsening, round};
+use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -351,9 +352,8 @@ pub(super) fn compare(def: &MetricDef, row: &Value, base_row: &Value) -> Value {
     result["delta"] = json!(round(fraction(&new) - fraction(&old)));
     result["current"] = json!(current);
     result["allowed_worsening"] = json!(round(allowed));
-    // Cross-multiply integer contributions before applying the existing
-    // margins. Subtracting floating fractions falsely regresses an exactly
-    // allowed change such as 3/50 -> 4/50 with a 0.02 floor.
+    // Cross-multiply contributions and normalized decimal margins exactly.
+    // Floating subtraction or scaling can falsely reject equality at a margin.
     let sum = |cases: &[&Contribution]| -> (u128, u128) {
         (
             cases.iter().map(|case| u128::from(case.numerator)).sum(),
@@ -368,13 +368,51 @@ pub(super) fn compare(def: &MetricDef, row: &Value, base_row: &Value) -> Value {
     } else {
         after.saturating_sub(before)
     };
-    let floor = def.regression_floor * (bd * cd) as f64;
-    let percentage = def.regression_pct * before as f64 / 100.0;
-    let scaled_allowed = if def.regression_additive {
+    match exceeds_margin(def, worsening, before, bd * cd) {
+        Ok(regressed) => result["regressed"] = json!(regressed),
+        Err(reason) => {
+            result["comparable"] = json!(false);
+            result["comparison_failed"] = json!(true);
+            result["reason"] = json!(reason);
+        }
+    }
+    result
+}
+
+/// Interpret each parsed margin's shortest round-tripping decimal exactly.
+/// This preserves the configured margin rather than inventing an epsilon.
+fn decimal_fraction(value: f64) -> Result<(BigUint, BigUint), String> {
+    if !value.is_finite() || value < 0.0 {
+        return Err("case comparison requires finite nonnegative margins".to_string());
+    }
+    if value == 0.0 {
+        return Ok((BigUint::from(0_u8), BigUint::from(1_u8)));
+    }
+    let text = value.to_string();
+    let (whole, fraction) = text.split_once('.').unwrap_or((&text, ""));
+    let numerator = format!("{whole}{fraction}")
+        .parse::<BigUint>()
+        .map_err(|err| format!("cannot represent case comparison margin `{text}`: {err}"))?;
+    let places = u32::try_from(fraction.len()).map_err(|err| err.to_string())?;
+    Ok((numerator, BigUint::from(10_u8).pow(places)))
+}
+
+fn exceeds_margin(
+    def: &MetricDef,
+    worsening: u128,
+    before: u128,
+    scale: u128,
+) -> Result<bool, String> {
+    let (floor_n, floor_d) = decimal_fraction(def.regression_floor)?;
+    let (pct_n, pct_d) = decimal_fraction(def.regression_pct)?;
+    let percent_scale = pct_d * BigUint::from(100_u8);
+    let worsening = BigUint::from(worsening) * &floor_d * &percent_scale;
+    let floor = floor_n * BigUint::from(scale) * &percent_scale;
+    let percentage = pct_n * BigUint::from(before) * floor_d;
+    let allowed = if def.regression_additive {
         floor + percentage
     } else {
         floor.max(percentage)
     };
-    result["regressed"] = json!(worsening as f64 > scaled_allowed);
-    result
+    Ok(worsening > allowed)
 }

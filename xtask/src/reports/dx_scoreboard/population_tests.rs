@@ -36,7 +36,14 @@ fn cases(count: usize, abstentions: usize) -> Population {
 }
 
 fn report(base: Population, current: Population) -> Result<Value, String> {
-    let mut config = config()?;
+    report_config(config()?, base, current)
+}
+
+fn report_config(
+    mut config: Config,
+    base: Population,
+    current: Population,
+) -> Result<Value, String> {
     config.metric[0].source = format!("verdict-corpus:fixture#{}", current.rate);
     let boards = vec!["trust".to_string()];
     let sample = |population| Sample {
@@ -521,6 +528,69 @@ fn exact_margin_passes_and_one_more_retained_case_fails() -> Result<(), String> 
         report(cases(50, 0), cases(50, 2))?["gate"]["status"],
         "fail"
     );
+    Ok(())
+}
+
+#[test]
+fn custom_margin_boundary_passes_and_next_case_fails() -> Result<(), String> {
+    let mut config = config()?;
+    config.metric[0].regression_floor = 0.072;
+    assert_eq!(
+        report_config(config.clone(), cases(625, 0), cases(625, 45))?["gate"]["status"],
+        "pass"
+    );
+    assert_eq!(
+        report_config(config, cases(625, 0), cases(625, 46))?["gate"]["status"],
+        "fail"
+    );
+    Ok(())
+}
+
+#[test]
+fn relative_and_additive_margin_boundaries_pass_and_next_case_fails() -> Result<(), String> {
+    for (direction, count, before, boundary, adverse, pct, floor, additive) in [
+        ("lower_is_better", 105, 100, 101, 102, 1.0, 0.0, false),
+        ("lower_is_better", 10, 6, 7, 8, 15.0, 0.01, true),
+        ("higher_is_better", 105, 100, 99, 98, 1.0, 0.0, false),
+        ("higher_is_better", 10, 6, 5, 4, 15.0, 0.01, true),
+        ("higher_is_better", 625, 46, 1, 0, 0.0, 0.072, false),
+    ] {
+        let mut config = config()?;
+        config.metric[0].direction = direction.to_string();
+        config.metric[0].regression_pct = pct;
+        config.metric[0].regression_floor = floor;
+        config.metric[0].regression_additive = additive;
+        assert_eq!(
+            report_config(config.clone(), cases(count, before), cases(count, boundary))?["gate"]["status"],
+            "pass"
+        );
+        assert_eq!(
+            report_config(config, cases(count, before), cases(count, adverse))?["gate"]["status"],
+            "fail"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn finite_margin_extremes_work_and_nonfinite_margin_fails_clearly() -> Result<(), String> {
+    for (floor, current, status) in [
+        (-0.0, 0, "pass"),
+        (f64::MAX, 1, "pass"),
+        (f64::MIN_POSITIVE, 1, "fail"),
+    ] {
+        let mut config = config()?;
+        config.metric[0].regression_floor = floor;
+        assert_eq!(
+            report_config(config, cases(1, 0), cases(1, current))?["gate"]["status"],
+            status
+        );
+    }
+    let mut config = config()?;
+    config.metric[0].regression_floor = f64::INFINITY;
+    let report = report_config(config, cases(1, 0), cases(1, 0))?;
+    assert_eq!(report["gate"]["status"], "fail");
+    assert!(gate_failure_message(&report).contains("finite nonnegative margins"));
     Ok(())
 }
 

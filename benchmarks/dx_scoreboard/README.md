@@ -266,7 +266,8 @@ agreement. It loads and hashes each corpus once for all selected rates.
 
 The whole-corpus value still determines the absolute target status. Regression
 compares fractions over cases with the same ID and scoring-definition hash in
-both observations, using the existing margins and integer cross-products before scaling the margin,
+both observations, using the existing margins with exact integer cross-products
+and the parsed margins' shortest round-tripping decimal values,
 so floating subtraction does not turn an exactly allowed change into regression. JSON
 `baseline.common` records both fractions and case count; `new_cases`,
 `removed_cases`, `changed_definitions`, `added` and `removed` report composition
