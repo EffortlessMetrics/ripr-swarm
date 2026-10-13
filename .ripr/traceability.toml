@@ -2839,6 +2839,7 @@ name = "TypeScript preview static facts"
 spec = "docs/specs/RIPR-SPEC-0027-typescript-preview-static-facts.md"
 tests = [
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::empty_parameter_tables_register_no_test_evidence",
+  "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::empty_tables_preserve_partial_disclosure_for_evaluated_title_expressions",
   "crates/ripr/src/analysis/language/typescript/tests/table_case_tests.rs::nonempty_zero_parameter_cases_and_ordinary_siblings_retain_exact_credit",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::node_expected_failure_options_cannot_supply_ordinary_test_evidence",
   "crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs::shadowed_undefined_cannot_disable_test_qualification_options",

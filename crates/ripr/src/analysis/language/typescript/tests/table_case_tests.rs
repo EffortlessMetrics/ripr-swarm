@@ -206,3 +206,52 @@ fn nonempty_zero_parameter_cases_and_ordinary_siblings_retain_exact_credit() -> 
     }
     Ok(())
 }
+
+#[test]
+fn empty_tables_preserve_partial_disclosure_for_evaluated_title_expressions() -> Result<(), String>
+{
+    let file = Path::new("tests/tier.test.ts");
+    let source = r#"import { loyaltyTier } from "../src/tier";
+describe.each([])(class EvaluatedTitle {
+    static { test("evaluated live test", () => { expect(loyaltyTier(1000)).toBe("gold"); }); }
+}, () => { test("dead child", () => { expect(loyaltyTier(1000)).toBe("gold"); }); });
+"#;
+    let tests = extract_tests(file, source);
+    assert_eq!(tests.len(), 0);
+    let gap = detect_partial_test_extraction(file, source, &tests);
+    assert!(
+        gap.is_some(),
+        "evaluated title expressions can register a live test"
+    );
+    if let Some(gap) = gap {
+        assert_eq!(gap.sample_line, 3);
+        assert_eq!(gap.shape, "test/it call in loop/callback/nested body");
+        assert!(gap.snippet.contains("evaluated live test"));
+        assert!(!gap.snippet.contains("dead child"));
+    }
+    let root = ts_unique_tempdir("empty-table-evaluated-title")?;
+    ts_write_file(&root.join("src/tier.ts"), TIER)?;
+    ts_write_file(&root.join("tests/tier.test.ts"), source)?;
+    let result = TypeScriptAdapter.analyze_diff(
+        &ts_analysis_options(root.clone()),
+        &OraclePolicy::default(),
+        &[changed_with_lines("src/tier.ts", &[TIER_LINE])],
+    );
+    let _ = std::fs::remove_dir_all(&root);
+    let result = result?;
+    assert!(result.limitations.iter().any(|limitation| {
+        limitation
+            .bounded_detail
+            .as_deref()
+            .is_some_and(|detail| detail.contains("typescript_test_extraction_partial"))
+    }));
+    let finding = result
+        .findings
+        .into_iter()
+        .find(|finding| finding.probe.location.line == TIER_LINE.0)
+        .ok_or_else(|| "missing evaluated-title finding".to_string())?;
+    assert_eq!(finding.class, ExposureClass::NoStaticPath);
+    assert_eq!(finding.ripr.reach.state, StageState::No);
+    assert_eq!(finding.related_tests.len(), 0);
+    Ok(())
+}
