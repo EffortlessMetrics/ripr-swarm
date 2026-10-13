@@ -2891,6 +2891,19 @@ fn h2_aligned_sink_on_another_tests_oracle_does_not_promote() -> Result<(), Stri
             .any(|e| e.starts_with("perl_already_discriminated:")),
         "a cross-test oracle must not emit already-discriminated evidence"
     );
+    let related = finding
+        .related_tests
+        .first()
+        .ok_or_else(|| "expected the relation's related test".to_string())?;
+    assert_eq!(
+        related.oracle, None,
+        "another test's assertion is not displayed as this test's oracle"
+    );
+    assert_eq!(
+        related.oracle_strength,
+        crate::domain::OracleStrength::Unknown,
+        "another test's oracle strength is not credited to this test"
+    );
     Ok(())
 }
 

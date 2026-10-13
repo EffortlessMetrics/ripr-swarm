@@ -1625,10 +1625,13 @@ impl PerlFactPacket {
             .iter()
             .find(|test| test.test_id == relation.test_id)?;
         let test_file = self.file(&test.file_id)?;
+        // RIPR-SPEC-0235 rule 5: another test's oracle is absent for this
+        // relation, so it is neither classified nor displayed as its oracle.
         let oracle = relation
             .oracle_id
             .as_deref()
-            .and_then(|oracle_id| self.oracle(oracle_id));
+            .and_then(|oracle_id| self.oracle(oracle_id))
+            .filter(|oracle| oracle.test_id == relation.test_id);
         let verify_fact = self.verify_command_for_test(&test.test_id);
         let verify_command = verify_fact.map(|command| command.argv.clone());
         let owner = self.owner(&relation.owner_id);
