@@ -412,3 +412,93 @@ fn deleted_predicate_can_carry_a_repair_card_shape() -> Result<(), String> {
     );
     Ok(())
 }
+
+/// Re-review of #7587: a blank line kept between the body and the deleted
+/// `return` sits between them; the owner is still the function above.
+#[test]
+fn tail_deleted_after_a_kept_blank_line_is_the_functions() -> Result<(), String> {
+    let source = "CAP = 100\n\n\ndef capped_total(items):\n    total = sum(items)\n\n\n\ndef other():\n    return 1\n";
+    let findings = analyze(
+        "blank-before-tail",
+        source,
+        &[],
+        vec![line(7, 7, "    return min(total, CAP)")],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![(
+            7,
+            "capped_total".to_string(),
+            SourceCurrentness::BaseDeleted
+        )],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// Re-review of #7587: a method tail deleted after a kept comment line,
+/// while the class goes on, is the method's.
+#[test]
+fn method_tail_deleted_after_a_kept_comment_is_the_methods() -> Result<(), String> {
+    let source = "class Cart:\n    def capped(self, total):\n        total = total + 1\n        # cap it\n\n    def size(self):\n        return 0\n";
+    let findings = analyze(
+        "comment-before-tail",
+        source,
+        &[],
+        vec![line(5, 5, "        return min(total, 100)")],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![(5, "Cart.capped".to_string(), SourceCurrentness::BaseDeleted)],
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// Review of #7680: an added line interrupting a deleted function's body
+/// gives the body lines after it another new-side coordinate. They still
+/// lost their `def`, so they are not given to a neighbour.
+#[test]
+fn interrupted_deleted_function_body_is_not_given_to_a_neighbour() -> Result<(), String> {
+    let source = "CAP = 100\n\n\ndef capped_total(items):\n    total = sum(items)\n    LIMIT = 3\n    return total\n";
+    let findings = analyze(
+        "interrupted-deleted-function",
+        source,
+        &[6],
+        vec![
+            line(6, 6, "def clamp(total):"),
+            line(7, 6, "    total = min(total, CAP)"),
+            line(8, 7, "    return total * 2"),
+        ],
+    )?;
+    assert_eq!(base_side(&findings), Vec::new(), "{findings:?}");
+    Ok(())
+}
+
+/// A kept line between a deleted `def` and a deleted body line means the
+/// body line's owner is live, so it keeps its record.
+#[test]
+fn kept_owner_between_a_deleted_def_and_a_body_line_keeps_the_record() -> Result<(), String> {
+    let source =
+        "CAP = 100\n\n\ndef capped_total(items):\n    total = sum(items)\n    return total\n";
+    let findings = analyze(
+        "kept-owner-between",
+        source,
+        &[],
+        vec![
+            line(4, 4, "def clamp(total):"),
+            line(5, 4, "    return min(total, CAP)"),
+            line(8, 6, "    total = min(total, CAP)"),
+        ],
+    )?;
+    assert_eq!(
+        base_side(&findings),
+        vec![(
+            6,
+            "capped_total".to_string(),
+            SourceCurrentness::BaseDeleted
+        )],
+        "{findings:?}"
+    );
+    Ok(())
+}

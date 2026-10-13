@@ -122,13 +122,7 @@ fn deleted_line_owner_line(
     owners: &[PythonOwner],
 ) -> Option<usize> {
     let indent = indent_width(&removed.text);
-    let lost_its_owner = changed.removed_lines.iter().any(|other| {
-        other.new_side_line == removed.new_side_line
-            && other.line < removed.line
-            && is_python_declaration_line(&other.text)
-            && indent_width(&other.text) < indent
-    });
-    if lost_its_owner {
+    if lost_its_owner(changed, removed) {
         return None;
     }
     let at = removed.new_side_line;
@@ -142,10 +136,14 @@ fn deleted_line_owner_line(
     let around_body = scope_owner(changed, at, owners)
         .filter(|owner| owner.start_line < at && holds_it(owner))
         .map(|owner| (owner, at));
-    let after_tail = before.and_then(|before| {
-        scope_owner(changed, before, owners)
-            .filter(|owner| owner.end_line == before && holds_it(owner))
-            .map(|owner| (owner, before))
+    // The owner's last line is the last code line above the deletion: blank
+    // and comment lines kept between the body and the deleted tail are not
+    // part of any owner's span.
+    let tail_line = last_code_line_before(new_source, at);
+    let after_tail = tail_line.and_then(|tail| {
+        scope_owner(changed, tail, owners)
+            .filter(|owner| owner.end_line >= tail && owner.end_line < at && holds_it(owner))
+            .map(|owner| (owner, tail))
     });
     if let Some((_, line)) = around_body
         .into_iter()
@@ -155,7 +153,11 @@ fn deleted_line_owner_line(
         return Some(line);
     }
     let inside_a_scope = |line: usize| scope_owner(changed, line, owners).is_some();
-    if indent > 0 && (inside_a_scope(at) || before.is_some_and(inside_a_scope)) {
+    if indent > 0
+        && (inside_a_scope(at)
+            || before.is_some_and(inside_a_scope)
+            || tail_line.is_some_and(inside_a_scope))
+    {
         return None;
     }
     // `classify_change_with_context` resolves the narrowest owner itself, so
@@ -164,6 +166,43 @@ fn deleted_line_owner_line(
         owner_for_changed_line(&changed.path, line, owners)
             .is_some_and(|owner| owner.name == MODULE_OWNER)
     })
+}
+
+/// Whether the `def` or `class` that enclosed `removed` was deleted with it.
+/// The walk goes back through the removed lines in old-file order while they
+/// stay contiguous there (an added line interrupting the block takes no old
+/// line, and the diff parser gives the lines after it a new coordinate), and
+/// follows each shallower code line outward: an enclosing `if` leads on to the
+/// `def` around it. A kept line breaks contiguity, and its owner is live.
+fn lost_its_owner(changed: &ChangedFile, removed: &ChangedLine) -> bool {
+    let by_old_line: BTreeMap<usize, &ChangedLine> = changed
+        .removed_lines
+        .iter()
+        .map(|line| (line.line, line))
+        .collect();
+    let mut threshold = indent_width(&removed.text);
+    let mut old_line = removed.line;
+    while threshold > 0 {
+        let Some(previous) = old_line
+            .checked_sub(1)
+            .and_then(|line| by_old_line.get(&line))
+        else {
+            return false;
+        };
+        old_line = previous.line;
+        let trimmed = previous.text.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let previous_indent = indent_width(&previous.text);
+        if previous_indent < threshold {
+            if is_python_declaration_line(&previous.text) {
+                return true;
+            }
+            threshold = previous_indent;
+        }
+    }
+    false
 }
 
 const MODULE_OWNER: &str = "<module>";
@@ -182,6 +221,21 @@ fn scope_owner<'a>(
         .filter(|owner| normalized_path(&owner.file) == file)
         .filter(|owner| line >= owner.start_line && line <= owner.end_line)
         .min_by_key(|owner| (owner.span_width(), owner.specificity_rank()))
+}
+
+/// The nearest line above `at` that holds code, skipping blank and
+/// comment-only lines. Without the candidate source it is the line above.
+fn last_code_line_before(new_source: NewSource<'_>, at: usize) -> Option<usize> {
+    let Some(source) = new_source else {
+        return at.checked_sub(1).filter(|&line| line > 0);
+    };
+    let lines: Vec<&str> = source.lines().collect();
+    (1..at).rev().find(|&line| {
+        lines.get(line - 1).is_some_and(|text| {
+            let trimmed = text.trim();
+            !trimmed.is_empty() && !trimmed.starts_with('#')
+        })
+    })
 }
 
 fn indent_width(text: &str) -> usize {
