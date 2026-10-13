@@ -463,7 +463,7 @@ references refuse success. There is no success JSON for incomplete export. Requi
 exit zero before consuming the directory. Failures after output creation name the
 retained owned partial output; preflight refusals, including unavailable Cargo
 input identity, occur before the output directory exists and create no output.
-The live cache is unchanged. See [RIPR-SPEC-0256](specs/RIPR-SPEC-0256-current-cache-export.md).
+The live cache is unchanged. See [RIPR-SPEC-0257](specs/RIPR-SPEC-0257-current-cache-export.md).
 
 ## Matched intervention-study preregistration
 

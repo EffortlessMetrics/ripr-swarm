@@ -15756,6 +15756,7 @@ mod lookup_table_tests;
 mod loop_declared_tests;
 mod match_object_tests;
 mod mock_form_tests;
+mod mock_object_argument_tests;
 mod mocked_callee_tests;
 mod module_entry_tests;
 mod nested_callback_tests;
