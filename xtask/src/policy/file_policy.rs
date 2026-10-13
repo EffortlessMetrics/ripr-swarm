@@ -279,7 +279,8 @@ fn preparation_args_identity(args: &[String]) -> Vec<String> {
         "--verbose",
         "--keep-going",
     ];
-    if args.first().map(String::as_str) != Some("test") {
+    if args.first().map(String::as_str) != Some("test") || args.iter().any(|arg| arg.contains('\0'))
+    {
         return args.to_vec();
     }
     let mut filter = None;
@@ -514,6 +515,7 @@ mod tests {
             "test alpha beta --no-run",
             "test --features= alpha --no-run",
             "test --doc alpha --no-run",
+            "test alpha\0beta --no-run",
             "test a\u{1f}b --unknown --no-run",
             "test a b --unknown --no-run",
         ] {
@@ -523,6 +525,43 @@ mod tests {
         let one = super::preparation_key(&argv("test a\u{1f}b --unknown --no-run"));
         let two = super::preparation_key(&argv("test a b --unknown --no-run"));
         assert!(one != two, "argument boundaries must not alias");
+    }
+
+    #[test]
+    fn covered_by_launch_invalid_filter_keeps_its_preparation_refusal() -> Result<(), String> {
+        let commands = [
+            common(1, "cargo test -p xtask alpha"),
+            common(2, "cargo test -p xtask beta\0"),
+        ];
+        let mut rows = Vec::new();
+        let result = super::validate_test_covered_by_recorded_with(
+            "policy.toml",
+            &commands,
+            FilePolicyHost::Unix,
+            &mut rows,
+            |spawn| {
+                if spawn.args.iter().any(|arg| arg.contains('\0')) {
+                    return Err(format!(
+                        "refused NUL {}",
+                        if spawn.args.iter().any(|arg| arg == "--no-run") {
+                            "preparation"
+                        } else {
+                            "listing"
+                        }
+                    ));
+                }
+                Ok(timed_output(Some(status(0)), "alpha: test\n", "", false))
+            },
+        );
+        assert!(result.is_err_and(|error| error.ends_with("refused NUL preparation")));
+        assert_eq!(
+            rows.len(),
+            3,
+            "healthy preparation/list and refused sibling preparation"
+        );
+        assert!(rows[2].argv.iter().any(|arg| arg == "--no-run"));
+        assert_eq!(rows[2].outcome, "capture_unavailable");
+        Ok(())
     }
 
     #[test]
