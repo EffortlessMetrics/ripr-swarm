@@ -3921,7 +3921,12 @@ mod tests {
             serde_json::json!([0, 0, 0, 0, 0, 0, 0, "0"]),
         ] {
             row["ranking_key"] = malformed;
-            assert!(serde_json::from_value::<WorkCandidateV1>(row.clone()).is_err());
+            if serde_json::from_value::<WorkCandidateV1>(row.clone()).is_ok() {
+                return Err(format!(
+                    "malformed ranking key accepted: {}",
+                    row["ranking_key"]
+                ));
+            }
         }
         let empty =
             build_candidates_view(&snapshot, Some("campaign-infra-hardening"), None, 10, None)?;
