@@ -498,6 +498,12 @@ id = "RIPR-SPEC-0254"
 scope = "out"
 reason = "TypeScript analyzer rules; a Python case cannot label them"
 
+# TypeScript mock passed in an object argument
+[[spec]]
+id = "RIPR-SPEC-0256"
+scope = "out"
+reason = "TypeScript analyzer rules; a Python case cannot label them"
+
 # Test Efficiency and Vacuity Signals
 [[unmeasured]]
 id = "RIPR-SPEC-0004"

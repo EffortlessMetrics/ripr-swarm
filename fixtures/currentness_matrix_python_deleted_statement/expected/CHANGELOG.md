@@ -27,7 +27,7 @@ Updated:
 ## Pending — currentness_matrix_python_deleted_statement (3)
 
 Reason:
-RIPR-SPEC-0255: check output names the loaded ripr.toml; this fixture (#7680) was blessed before #7577 landed on the same main
+RIPR-SPEC-0255: #7577 names the loaded ripr.toml in the human header and JSON config_path; re-bless the fixture #7680 added before #7577 merged
 
 Command:
 `cargo xtask goldens bless currentness_matrix_python_deleted_statement --reason "..."`

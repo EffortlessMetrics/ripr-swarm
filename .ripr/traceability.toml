@@ -14432,6 +14432,28 @@ metrics = [
 ]
 
 [[behavior]]
+id = "RIPR-SPEC-0256"
+name = "TypeScript mock passed in an object argument"
+spec = "docs/specs/RIPR-SPEC-0256-typescript-mock-object-argument.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/mock_object_argument_tests.rs::mock_in_an_inline_object_is_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_object_argument_tests.rs::changed_call_a_nested_function_may_run_is_not_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_object_argument_tests.rs::mock_the_object_may_not_carry_is_not_credited",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0256-typescript-mock-object-argument.md",
+]
+metrics = [
+  "typescript_mock_object_argument_mismatch",
+]
+
+[[behavior]]
 id = "RIPR-SPEC-0254"
 name = "TypeScript lookup-table entry"
 spec = "docs/specs/RIPR-SPEC-0254-typescript-lookup-table-entry.md"
