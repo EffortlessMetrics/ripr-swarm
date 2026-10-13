@@ -324,6 +324,9 @@ pub(super) fn validate_launcher_sources(
 }
 
 const REQUIRED_EXECUTED_TESTS: &[&str] = &[
+    "distinguishes native resolution failures from missing optional packages",
+    "rejects non-object native manifests with a contextual typed error",
+    "public bin identifies corrupt package metadata and recovers after restoration",
     "rejects lifecycle scripts, version ranges, and dependency drift",
     "rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads",
     "forwards direct SIGTERM to native child exactly once and re-emits signal",

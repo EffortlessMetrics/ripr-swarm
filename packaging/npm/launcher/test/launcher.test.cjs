@@ -251,6 +251,88 @@ test("resolves an exact native package and confines its executable", () => {
   }
 });
 
+test("distinguishes native resolution failures from missing optional packages", () => {
+  const fixture = nativeFixture({ createExecutable: false });
+  try {
+    for (const code of ["ERR_INVALID_PACKAGE_CONFIG", "ERR_PACKAGE_PATH_NOT_EXPORTED", "EACCES"]) {
+      const cause = Object.assign(new Error(`resolution refused: ${code}`), { code });
+      assert.throws(
+        () => launcher.resolveNativeExecutable({
+          launcherRoot: fixture.launcherRoot,
+          selectedPlatform: fixture.selected,
+          resolver: { resolve() { throw cause; } },
+        }),
+        (error) => {
+          assert.ok(error instanceof launcher.LauncherError);
+          assert.equal(error.code, "native_package_resolution_failed");
+          assert.equal(error.cause, cause);
+          assert.ok(error.message.includes(`${fixture.selected.package}@${manifest.version}`));
+          assert.ok(error.message.includes(cause.message));
+          assert.ok(error.message.includes(`reinstall ${manifest.name}@${manifest.version}`));
+          return true;
+        },
+      );
+    }
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
+test("rejects non-object native manifests with a contextual typed error", () => {
+  const fixture = nativeFixture({ createExecutable: false });
+  const nativeManifestPath = path.join(fixture.packageRoot, "package.json");
+  try {
+    for (const value of [null, [], true, 5, "invalid"]) {
+      writeJson(nativeManifestPath, value);
+      assert.throws(
+        () => launcher.resolveNativeExecutable({
+          launcherRoot: fixture.launcherRoot,
+          selectedPlatform: fixture.selected,
+          resolver: { resolve() { return nativeManifestPath; } },
+        }),
+        (error) => {
+          assert.ok(error instanceof launcher.LauncherError);
+          assert.equal(error.code, "manifest_invalid");
+          assert.equal(error.message, `native package ${fixture.selected.package} manifest must be an object`);
+          return true;
+        },
+      );
+    }
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
+test("public bin identifies corrupt package metadata and recovers after restoration", (t) => {
+  const selected = hostPlatformOrSkip(t);
+  if (!selected) {
+    return;
+  }
+  const fixture = nativeFixture({ selected, createExecutable: false });
+  const nativeManifestPath = path.join(fixture.packageRoot, "package.json");
+  const originalManifest = fs.readFileSync(nativeManifestPath);
+  const bin = path.join(fixture.launcherRoot, "bin", "ripr.cjs");
+  try {
+    fs.writeFileSync(nativeManifestPath, "{broken\n");
+    const corrupt = spawnSync(process.execPath, [bin, "--version"], { cwd: fixture.root, encoding: "utf8" });
+    assert.equal(corrupt.status, 1);
+    assert.equal(corrupt.stdout, "");
+    assert.ok(corrupt.stderr.includes(`cannot resolve required native package ${selected.package}@${manifest.version}`));
+    assert.match(corrupt.stderr, /Invalid package|Error parsing/);
+    assert.ok(corrupt.stderr.includes(`reinstall ${manifest.name}@${manifest.version}`));
+    assert.doesNotMatch(corrupt.stderr, /is missing;|Cannot read properties/);
+
+    fs.writeFileSync(nativeManifestPath, originalManifest);
+    const restored = spawnSync(process.execPath, [bin, "--version"], { cwd: fixture.root, encoding: "utf8" });
+    assert.equal(restored.status, 1);
+    assert.equal(restored.stdout, "");
+    assert.ok(restored.stderr.includes(`does not contain ${selected.executable}`));
+    assert.doesNotMatch(restored.stderr, /cannot resolve|is missing;|Cannot read properties/);
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
 test("rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads", () => {
   const missing = nativeFixture({ createExecutable: false });
   try {

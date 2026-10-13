@@ -195,6 +195,14 @@ function resolveNativeExecutable(options) {
   try {
     nativeManifestPath = resolver.resolve(`${selected.package}/package.json`);
   } catch (error) {
+    if (!error || error.code !== "MODULE_NOT_FOUND") {
+      const reason = error && typeof error.message === "string" ? error.message : String(error);
+      throw new LauncherError(
+        "native_package_resolution_failed",
+        `cannot resolve required native package ${selected.package}@${contract.version}: ${reason}; reinstall ${LAUNCHER_NAME}@${contract.version} with optional dependencies enabled`,
+        error,
+      );
+    }
     throw new LauncherError(
       "native_package_missing",
       `required native package ${selected.package}@${contract.version} is missing; reinstall ${LAUNCHER_NAME}@${contract.version} with optional dependencies enabled`,
@@ -202,7 +210,10 @@ function resolveNativeExecutable(options) {
     );
   }
   const nativeRoot = fs.realpathSync(path.dirname(nativeManifestPath));
-  const nativeManifest = readJsonFile(nativeManifestPath, `native package ${selected.package}`);
+  const nativeManifest = assertPlainObject(
+    readJsonFile(nativeManifestPath, `native package ${selected.package}`),
+    `native package ${selected.package} manifest`,
+  );
   if (nativeManifest.name !== selected.package) {
     throw new LauncherError(
       "native_package_name_mismatch",

@@ -18,6 +18,12 @@ native executable. It does not run lifecycle installation scripts, download a
 binary from GitHub, compile Rust, invoke a shell, or fall back to an unrelated
 `ripr` on `PATH`.
 
+If the selected native package is absent, the launcher names its exact version
+and advises reinstalling with optional dependencies enabled. If package metadata
+is corrupt or resolution is refused, the diagnostic also retains the underlying
+reason so it can be distinguished from an omitted optional dependency. Errors
+go to stderr and exit with status 1.
+
 Supported platform packages are currently planned for Linux glibc x64/ARM64,
 macOS x64/ARM64, and Windows x64 MSVC. Public support begins only after the
 corresponding native payload and installed-product qualification is accepted.

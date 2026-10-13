@@ -74,6 +74,9 @@ The package `@effortlessmetrics/ripr`:
   surviving child;
 - a planted `ripr` on `PATH` is never selected when the required package is
   absent;
+- corrupt native package metadata and resolver refusals retain their reason
+  and exact package/version in a typed error, instead of claiming the package
+  is absent; resolved non-object manifests fail with a contextual typed error;
 - the packed launcher inventory contains only the declared runtime files and
   notices;
 - the guarded test runner observes the required test names as non-skipped TAP
@@ -104,11 +107,18 @@ The package `@effortlessmetrics/ripr`:
 5. Removing the matching native package produces an actionable error on stderr,
    writes nothing to protocol stdout, and never executes a planted `ripr` from
    `PATH`.
+6. A malformed installed native `package.json` produces a resolution error
+   naming the exact native package/version, original reason, and reinstall
+   advice. Restoring valid metadata reaches payload validation again; absent
+   executables still fail rather than running an ambient `ripr`.
 
 ## Test Mapping
 
 - `packaging/npm/launcher/test/run-tests.test.cjs`
 - `packaging/npm/launcher/test/launcher.test.cjs::rejects lifecycle scripts, version ranges, and dependency drift`
+- `packaging/npm/launcher/test/launcher.test.cjs::distinguishes native resolution failures from missing optional packages`
+- `packaging/npm/launcher/test/launcher.test.cjs::rejects non-object native manifests with a contextual typed error`
+- `packaging/npm/launcher/test/launcher.test.cjs::public bin identifies corrupt package metadata and recovers after restoration`
 - `packaging/npm/launcher/test/launcher.test.cjs::rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads`
 - `packaging/npm/launcher/test/launcher.test.cjs::forwards direct SIGTERM to native child exactly once and re-emits signal`
 - `packaging/npm/launcher/test/launcher.test.cjs::retains the first observed signal when a supervisor escalates SIGINT to SIGTERM`
