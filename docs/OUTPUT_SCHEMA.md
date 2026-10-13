@@ -455,7 +455,7 @@ not describe allocated bytes, directory overhead or peak disk use. Missing
 optional file facts are counted; corrupt present entries and incomplete required
 references refuse success. There is no success JSON for incomplete export. Require
 exit zero before consuming the directory; failure names retained owned partial
-output. The live cache is unchanged. See [RIPR-SPEC-0252](specs/RIPR-SPEC-0252-current-cache-export.md).
+output. The live cache is unchanged. See [RIPR-SPEC-0254](specs/RIPR-SPEC-0254-current-cache-export.md).
 
 ## Matched intervention-study preregistration
 
@@ -1352,7 +1352,8 @@ The evidence-first fields are additive in schema `0.2`:
   not credit `exposed`. They are emitted only on `language == "python"` findings
   and are absent on Rust and TypeScript findings; they do **not** bump
   `schema_version` (still `0.2`). `changed_sink` is the comma-joined significant
-  tokens of the changed line; `observed_sink` is the strongest related oracle's
+  tokens of the changed line; `observed_sink` is the crediting assertion when a
+  branch observes the change, otherwise the strongest related oracle's available
   assertion text; `alignment_reason` is a stable snake_case token. The
   `oracle_alignment` value is a controlled enum (`ORACLE_ALIGNMENT_VALUES`):
   - `direct` — a strong oracle observes the changed owner by name.
@@ -1362,8 +1363,12 @@ The evidence-first fields are additive in schema `0.2`:
   - `orthogonal` — a strong oracle exists but observes a different sink than the
     change (the fail-closed `weakly_exposed` branch); `alignment_reason` is
     `strong_oracle_observes_different_sink`.
-  - `unknown` — no strong oracle observed the changed sink (or a `<module>`
-    owner with no usable token).
+  - `unknown` — no admitted strong oracle observed the changed sink.
+
+  An empty token set never supplies observation credit on its own (#7526).
+  Existing assertion-level call and effect branches can still establish a
+  genuine observation; otherwise a strong unrelated oracle remains `orthogonal`
+  and cannot promote the finding to `exposed`.
 
   On a `weakly_exposed` finding, two `alignment_reason` values mark rows the
   family-relevant assertion selection changed (RIPR-SPEC-0224, #5572), and the
