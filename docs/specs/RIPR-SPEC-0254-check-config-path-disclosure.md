@@ -42,8 +42,11 @@ cannot tell which file governed (#7536).
   Additive in check schema `0.2`; no `schema_version` bump.
 - Both surfaces read the one producer fact — the loaded config's
   `source_path` — through the render-time config the CLI already passes.
-  A bound `--candidate-tree` subject, which must ignore the worktree config,
-  therefore discloses nothing, matching its `config_identity: null`.
+  A bound `--candidate-tree` subject discloses no path: its governing file
+  lives in the immutable tree, its `source_path` is cleared by design
+  (#3279), and its config provenance stays the `identity.config_identity`
+  fingerprint of the tree text. Claiming a worktree path for it would name
+  a file that did not govern.
 - No change to which file `check` loads, to config discovery, or to the
   `doctor`/`pilot` surfaces.
 
@@ -65,8 +68,10 @@ cannot tell which file governed (#7536).
   `"config_path": "<root>/ripr.toml"` after `"root"`.
 - Given a workspace with no `ripr.toml`, when the developer runs either
   form, then no `config:` line and no `config_path` member appear.
-- Given a bound `--candidate-tree` subject, when the developer runs either
-  form, then no config path is disclosed, matching `config_identity: null`.
+- Given a bound `--candidate-tree` subject whose tree carries a
+  `ripr.toml`, when the developer runs either form, then no config path is
+  disclosed (the file is not in the worktree), and the tree config's
+  fingerprint appears as `identity.config_identity`.
 
 ## Test Mapping
 

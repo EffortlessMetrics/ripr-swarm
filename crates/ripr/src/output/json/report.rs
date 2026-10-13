@@ -207,7 +207,7 @@ pub(crate) fn render_with_config(
             &mut out,
             1,
             "config_path",
-            &crate::output::path::human_path(path),
+            &crate::output::path::display_path(path),
             true,
         );
     }
@@ -1866,6 +1866,17 @@ mod harness_projection_tests {
         assert_eq!(
             rendered.get("config_path").and_then(|value| value.as_str()),
             Some("repo/ripr.toml")
+        );
+
+        // The machine field keeps the lossless envelope encoding (like
+        // `root`): a literal percent in the directory name is escaped, so
+        // distinct files stay distinct.
+        let mut percent = RiprConfig::default();
+        percent.source_path = Some(std::path::PathBuf::from("repo/100%/ripr.toml"));
+        let rendered = parse(&render_with_config(&output, &percent, None))?;
+        assert_eq!(
+            rendered.get("config_path").and_then(|value| value.as_str()),
+            Some("repo/100%25/ripr.toml")
         );
         Ok(())
     }

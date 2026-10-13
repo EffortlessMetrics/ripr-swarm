@@ -550,11 +550,14 @@ Unknown top-level fields are rejected by the verification contract. Nested
 finding and seam details may grow additively within the pinned version.
 
 Top-level `config_path` (RIPR-SPEC-0254, #7536) names the `ripr.toml` that
-governed the run, in the human path spelling `ripr doctor` uses. It
-is present exactly when a config file was actually loaded; a defaults-only
-run (no config file, or a bound `--candidate-tree` subject that ignores the
-worktree config) omits the member — absence is the explicit built-in-defaults
-signal, never a placeholder path. The human header prints the same fact as
+governed the run, in the lossless stable path spelling used for `root`. It
+is present exactly when a worktree config file was actually loaded; a
+defaults-only run omits the member — absence is the explicit
+built-in-defaults signal, never a placeholder path. A bound
+`--candidate-tree` subject also omits it: the governing file lives in the
+immutable tree, not the worktree, so no worktree path may be claimed for it
+(#3279); that run's config provenance is the `identity.config_identity`
+fingerprint. The human header prints the same worktree fact as
 `config: <path>` after `root:` under the same condition.
 
 Top-level `base` records the base ref the diff loader actually used (#3940):
