@@ -706,15 +706,9 @@ fn deleted_wrapped_block_header_keeps_only_statement_starts() -> Result<(), Stri
             line(9, 6, "        total = handle.read()"),
         ],
     )?;
-    let texts = base_side_texts(&findings);
-    assert!(
-        !texts
-            .iter()
-            .any(|text| text == "path," || text == ") as handle:"),
-        "{findings:?}"
-    );
-    assert!(
-        texts.iter().any(|text| text == "total = handle.read()"),
+    assert_eq!(
+        base_side_texts(&findings),
+        vec!["with open(", "total = handle.read()"],
         "{findings:?}"
     );
     assert!(
