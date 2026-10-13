@@ -173,14 +173,14 @@ tree; and a repair `--phase after` whose edit cage recorded a violation.
 any check fails (including missing language runtimes that are enabled in
 the effective configuration).
 
-The `Cargo.toml`, `cargo`, and `rustc` checks apply only when Rust is in
-scope for the root: Rust is enabled and either a Cargo.toml is found at the
-selected root, an ancestor Cargo project bounded by git, or nested in this
-tree; Rust markers (`.rs` files) are detected at the selected root; or no
-other language is detected or enabled. A Python-only or TypeScript-only root
-with no nested or ancestor Cargo.toml reports `cargo_toml` as `skipped` with
-the reason. The analysis profile also skips `cargo` and `rustc`; `--profile
-source-build` still probes those tools and can exit `2` if they are missing.
+The `Cargo.toml` check applies only when Rust is in scope for the root:
+Rust is enabled and either a Cargo.toml is found at the selected root, an
+ancestor Cargo project bounded by git, or nested in this tree; Rust markers
+(`.rs` files) are detected at the selected root; or no other language is
+detected or enabled. A Python-only or TypeScript-only root with no nested
+or ancestor Cargo.toml reports `cargo_toml` as `skipped` with the reason.
+The analysis profile also skips `cargo` and `rustc`; `--profile source-build`
+still probes those tools and can exit `2` if they are missing.
 A Cargo.toml at the selected root, an
 ancestor Cargo project bounded by git, or a nested Cargo.toml in this tree
 (for example `rust/Cargo.toml` at a polyglot git root that also has
