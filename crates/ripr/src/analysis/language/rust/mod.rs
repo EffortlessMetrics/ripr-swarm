@@ -281,7 +281,7 @@ fn selection_with_open_files(selected: &[PathBuf], open: &BTreeSet<PathBuf>) -> 
 ///
 /// The module-tree walk parses every module of a package, so it runs only
 /// for suspects: test files whose module name no loaded file of their
-/// package declares outside a line comment, and no loaded file spells as a
+/// package declares outside comments/strings, and no loaded file spells as a
 /// path, and target roots in a package that turns Cargo's
 /// target discovery off. Anything else keeps its tests without a walk.
 ///
@@ -421,20 +421,17 @@ fn mentioned_module_names(
     let mut mentioned = MentionedModules::default();
     for (path, bytes) in loaded_files {
         let package = owning_manifest_dir(root, path, manifests);
-        for (at, _) in bytes.windows(3).enumerate().filter(|(_, w)| *w == b"mod") {
-            if at > 0 && is_ident(bytes[at - 1]) {
+        // Text inside comments and literals cannot declare a module. Keep
+        // path hints on the original bytes below so real #[path]/include!
+        // literals still spare their targets the suspect walk.
+        let code =
+            crate::analysis::extract::mask_comments_and_strings(&String::from_utf8_lossy(bytes));
+        let code = code.as_bytes();
+        for (at, _) in code.windows(3).enumerate().filter(|(_, w)| *w == b"mod") {
+            if at > 0 && is_ident(code[at - 1]) {
                 continue;
             }
-            // A commented-out declaration (`// mod used_tests;`) is how a
-            // file often becomes an orphan; it must not spare the walk.
-            let line_start = bytes[..at]
-                .iter()
-                .rposition(|byte| *byte == b'\n')
-                .map_or(0, |position| position + 1);
-            if contains_bytes(&bytes[line_start..at], b"//") {
-                continue;
-            }
-            let rest = &bytes[at + 3..];
+            let rest = &code[at + 3..];
             let skipped = rest
                 .iter()
                 .take_while(|byte| byte.is_ascii_whitespace())
