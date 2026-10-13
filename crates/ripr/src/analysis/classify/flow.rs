@@ -491,14 +491,15 @@ fn tail_if_branch_value(
     };
     let masked = crate::analysis::language::mask_rust_comments_and_strings(&function.body);
     let signature = masked.lines().next()?;
-    if !signature.contains("->") || signature.contains("-> ()") {
+    if !signature_returns_value(signature) {
         return None;
     }
     let offset = probe.location.line.checked_sub(function.start_line)?;
     if offset == 0 {
         return None;
     }
-    let changed = masked.lines().nth(offset)?.trim();
+    let changed_line = masked.lines().nth(offset)?;
+    let changed = changed_line.trim();
     if !changed.starts_with("if ") || !changed.contains(&code(&probe.expression)) {
         return None;
     }
@@ -511,35 +512,114 @@ fn tail_if_branch_value(
     if rest != ["}"] {
         return None;
     }
-    let (then_branch, after_then) = braced_block(changed)?;
-    let after_else = after_then.trim().strip_prefix("else")?.trim();
-    if after_else.starts_with("if ") {
+    // Branch spans come from the masked line (strings/comments cannot hide a
+    // brace there); branch text comes from the raw line at the same offsets,
+    // because masking blanks string and char literals that are valid values.
+    let raw_line = function.body.lines().nth(offset).unwrap_or(changed_line);
+    let (then_range, after_then) = braced_block_range(changed_line)?;
+    let rest_after_then = &changed_line[after_then..];
+    let trimmed = rest_after_then.trim_start();
+    if !trimmed.starts_with("else") || trimmed[4..].trim_start().starts_with("if ") {
         return None;
     }
-    let (else_branch, after_else_block) = braced_block(after_else)?;
-    if !after_else_block.trim().is_empty() {
+    let else_start = after_then + (rest_after_then.len() - trimmed.len()) + 4;
+    let (else_rel, after_else) = braced_block_range(&changed_line[else_start..])?;
+    let else_range = else_start + else_rel.start..else_start + else_rel.end;
+    if !changed_line[else_start + after_else..].trim().is_empty() {
         return None;
     }
-    for branch in [then_branch, else_branch] {
-        let branch = branch.trim();
-        if branch.is_empty()
-            || branch.contains(';')
-            || branch.contains('{')
-            || branch.contains('}')
-            || !(looks_like_branch_tail_expression(branch) || is_plain_identifier(branch))
+    let branch_text = |range: std::ops::Range<usize>| {
+        raw_line
+            .get(range.clone())
+            .unwrap_or(&changed_line[range])
+            .trim()
+            .to_string()
+    };
+    let then_text = branch_text(then_range.clone());
+    let else_text = branch_text(else_range.clone());
+    for (masked_branch, raw_branch) in [
+        (&changed_line[then_range], &then_text),
+        (&changed_line[else_range], &else_text),
+    ] {
+        if masked_branch.contains(';') || masked_branch.contains('{') || masked_branch.contains('}')
+        {
+            return None;
+        }
+        if branch_is_diverging(raw_branch) {
+            continue;
+        }
+        if raw_branch.is_empty()
+            || !(looks_like_branch_tail_expression(raw_branch)
+                || is_plain_identifier(raw_branch)
+                || is_quoted_literal(raw_branch))
         {
             return None;
         }
     }
+    // A diverging branch never produces the returned value; the other branch
+    // is the sink when exactly one diverges, and neither is when both do.
+    let sink_text = match (
+        branch_is_diverging(&then_text),
+        branch_is_diverging(&else_text),
+    ) {
+        (true, true) => return None,
+        (true, false) => else_text,
+        _ => then_text,
+    };
     Some(LocalTextFact {
         line: probe.location.line,
-        text: then_branch.trim().to_string(),
+        text: sink_text,
     })
 }
 
-/// The contents of the first balanced `{ ... }` block in `text` and the text
-/// after it; `None` when there is no balanced block.
-fn braced_block(text: &str) -> Option<(&str, &str)> {
+/// Whether the signature's top-level return type (the arrow after the
+/// parameter list) names a non-unit value. Arrows inside parameter types
+/// (`fn() -> i32`) do not count.
+fn signature_returns_value(signature: &str) -> bool {
+    let Some(open) = signature.find('(') else {
+        return false;
+    };
+    let mut depth = 0usize;
+    let mut close = None;
+    for (relative, ch) in signature[open..].char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    close = Some(open + relative);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(close) = close else {
+        return false;
+    };
+    let after = &signature[close + 1..];
+    let Some(arrow) = after.find("->") else {
+        return false;
+    };
+    let returned = after[arrow + 2..].trim().trim_end_matches('{').trim();
+    !returned.is_empty() && returned != "()"
+}
+
+fn branch_is_diverging(branch: &str) -> bool {
+    ["panic!", "todo!", "unreachable!", "unimplemented!"]
+        .iter()
+        .any(|macro_name| branch.starts_with(macro_name))
+}
+
+fn is_quoted_literal(branch: &str) -> bool {
+    (branch.starts_with('"') && branch.ends_with('"') && branch.len() >= 2)
+        || (branch.starts_with('\'') && branch.ends_with('\'') && branch.len() >= 3)
+}
+
+/// The byte range inside the first balanced `{ ... }` block in `text` and
+/// the index just after its closing brace; `None` when there is no balanced
+/// block.
+fn braced_block_range(text: &str) -> Option<(std::ops::Range<usize>, usize)> {
     let open = text.find('{')?;
     let mut depth = 0usize;
     for (relative, ch) in text[open + 1..].char_indices() {
@@ -547,7 +627,7 @@ fn braced_block(text: &str) -> Option<(&str, &str)> {
         match ch {
             '{' => depth += 1,
             '}' if depth == 0 => {
-                return Some((&text[open + 1..index], &text[index + 1..]));
+                return Some((open + 1..index, index + 1));
             }
             '}' => depth -= 1,
             _ => {}
@@ -1354,6 +1434,33 @@ mod tests {
     }
 
     #[test]
+    fn tail_if_with_string_branches_flows_to_the_returned_value() {
+        let owner = tail_owner(
+            "pub fn label(x: i32) -> &'static str {\n    if x > 1 { \"high\" } else { \"low\" }\n}",
+        );
+        let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(sinks[0].text, "\"high\"");
+    }
+
+    #[test]
+    fn tail_if_with_a_diverging_branch_uses_the_returning_branch_as_sink() {
+        let owner =
+            tail_owner("pub fn price(x: i32) -> i32 {\n    if x > 1 { panic!() } else { 0 }\n}");
+        let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
+
+        let sinks = local_flow_sinks(&probe, Some(&owner));
+
+        assert_eq!(sinks.len(), 1);
+        assert_eq!(sinks[0].kind, FlowSinkKind::ReturnValue);
+        assert_eq!(sinks[0].text, "0");
+    }
+
+    #[test]
     fn tail_if_sink_fails_closed_when_the_if_is_not_the_tail_or_branches_are_not_values() {
         for body in [
             // The `if` is a statement, not the tail expression.
@@ -1362,6 +1469,10 @@ mod tests {
             "pub fn check(x: i32) {\n    if x > 1 { foo(); } else { bar(); }\n}",
             // A nested block branch is not a plain branch value.
             "pub fn f(x: i32) -> i32 {\n    if x > 1 { { 20 } } else { 0 }\n}",
+            // An arrow inside a parameter type is not an owner return type.
+            "pub fn dispatch(x: i32, callback: fn() -> i32) {\n    if x > 1 { notify() } else { log() }\n}",
+            // Both branches diverging produces no returned value.
+            "pub fn f(x: i32) -> i32 {\n    if x > 1 { panic!() } else { todo!() }\n}",
         ] {
             let owner = tail_owner(body);
             let probe = probe(ProbeFamily::Predicate, "x > 1", 2);
