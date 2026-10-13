@@ -163,6 +163,32 @@ document should branch on `exit`, not on free-text `stop_states`.
   (RIPR-SPEC-0202). Operational failures of the command (an unreadable
   config, a failed git probe, a detail-source serialization failure) still
   exit `2`.
+- **Task-first repair façade refusal**: `ripr repair` refused a start
+  without writing a success document. The named causes are: an explicit
+  item that names no seam, a `ripr check` finding ID, or a gap ID that
+  names several seams; no repair-eligible seam under the selected root
+  (honest setup or limitation prose, including when no seams are
+  visible); several eligible seams, or a start the selector will not
+  bind, so no item is selected (the canonical next-action block and a
+  retry command); and a card render that fails after the before phase
+  already published an attempt (#7032). In every case stdout stays
+  empty and stderr names the cause. The post-publication card path is a
+  deliberate asymmetry with `ripr agent card`: even an operational card
+  failure is remapped to exit `3` because the attempt exists, and
+  recovery inspects or continues that same attempt
+  (`ripr status --attempt` / `ripr continue --attempt`) rather than
+  implying no start happened. A truncated seam inventory still exits
+  `2`, because the command could not select from a complete list.
+- **Task-first continue façade refusal**: `ripr continue` refused to
+  claim completion. The named causes are: an attempt that ended without
+  a receipt (`stale`, `failed`, or `incomparable`); an attempt whose
+  finished state a compliant receipt does not confirm (unissued,
+  unavailable, or compatibility-only); no current attempt under the
+  selected root; and several current attempts, so none is selected (a
+  bounded list and a retry command). Stdout stays empty; stderr carries
+  the cause and, for an ended attempt, the status facts. A continue that
+  has selected a current attempt then follows the same
+  `ripr agent repair --phase after` refusals above.
 
 These are findings- and policy-driven exits, not operational failures; a
 monitoring system should page on `2`, not on `3`.
