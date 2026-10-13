@@ -75,9 +75,12 @@ document should branch on `exit`, not on free-text `stop_states`.
   For `check`, the machine-readable formats also carry their own refusal
   document on stdout (#7332): SARIF renders a schema-valid run whose only
   signal is a tool-configuration notification, GitHub renders one workflow
-  error annotation, and `badge-json`, `repo-exposure-json`, and
-  `agent-seam-packets-json` render their format's degraded/refused envelope
-  (zeroed counts, `run_status: "refused"`). Machine formats without an
+  error annotation, `badge-json` renders the badge family's degraded-state
+  convention (`status: "warn"`, `color: "lightgrey"`, zeroed counts,
+  `message: "refused: <identity>"`, repair route in the first warning,
+  `analysis_outcome: null`; no `run_status` field), and
+  `repo-exposure-json` and `agent-seam-packets-json` render their format's
+  refused envelope (zeroed counts, `run_status: "refused"`). Machine formats without an
   honest refusal shape yet — `repo-sarif`, `badge-plus`, `repo-badge-*`,
   `shields`, `repo-seams-*`, and `repo-exposure-summary-json` — write
   nothing to stdout and put the prose diagnostic on stderr for now; that
