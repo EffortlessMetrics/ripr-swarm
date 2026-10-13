@@ -12192,6 +12192,18 @@ fn given_non_utf8_stems_when_grip_associates_then_lossy_collision_fails_closed()
     let second = Path::new(OsStr::from_bytes(b"tests/pricing_\xfe.rs"));
     assert_eq!(normalized_file_stem(first), "");
     assert_eq!(normalized_file_stem(second), "");
+    assert_eq!(crate::analysis::classify::module_stem(first), None);
+    assert_eq!(crate::analysis::classify::module_stem(second), None);
+    // A file with no module stem falls back to an exact-path key, which
+    // must fail closed the same way.
+    assert_eq!(
+        super::related_tests::context::crate_root_file_key(first),
+        None
+    );
+    assert_eq!(
+        super::related_tests::context::crate_root_file_key(second),
+        None
+    );
 }
 
 // -- helper coverage ---------------------------------------------
@@ -12358,6 +12370,18 @@ fn same_test_file_accepts_stem_match_and_test_suffixes() {
     assert!(same_test_file(Path::new("tests/foo_tests.rs"), "foo"));
     assert!(!same_test_file(Path::new("tests/bar.rs"), "foo"));
     assert!(!same_test_file(Path::new(""), "foo"));
+    // Module identity (#5395): `mod.rs` is its directory's module and a crate
+    // root names none, so a bare `mod`/`lib` stem never pairs.
+    assert!(same_test_file(
+        Path::new("src/serialize/mod.rs"),
+        "serialize"
+    ));
+    assert!(!same_test_file(Path::new("src/tokenizer/mod.rs"), "mod"));
+    assert!(!same_test_file(
+        Path::new("src/tokenizer/mod.rs"),
+        "serialize"
+    ));
+    assert!(!same_test_file(Path::new("crates/b/src/lib.rs"), "lib"));
 }
 
 #[test]
@@ -18348,6 +18372,45 @@ mod tests {
     Ok(())
 }
 
+#[test]
+fn given_crate_root_owner_when_grip_associates_then_only_its_own_inline_tests_relate()
+-> Result<(), String> {
+    // #5395: a crate root has no module stem, so `lib.rs` must not pair
+    // with another crate's `lib.rs` by name, yet its own inline tests
+    // still relate by exact path. Test bodies stay free of owner
+    // identifiers so SameTestFile is the only reason that can fire.
+    let own_src = "pub fn apply_discount(amount: i32, threshold: i32) -> i32 \
+                       { if amount >= threshold { amount - 10 } else { amount } }\n\
+                   #[cfg(test)] mod tests { #[test] fn own_smoke() { assert_eq!(1, 1); } }\n";
+    let other_src = "#[cfg(test)] mod tests { #[test] fn other_smoke() { assert_eq!(2, 2); } }\n";
+    // The owner is the workspace-root crate, so no package prefix scopes
+    // the candidates: only module identity keeps the member crate's
+    // `lib.rs` tests out.
+    let files: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("src/lib.rs"), own_src),
+        (PathBuf::from("crates/b/src/lib.rs"), other_src),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/lib.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+    let same_file: Vec<&str> = evidence
+        .related_tests
+        .iter()
+        .filter(|grip| grip.relation_reason == RelationReason::SameTestFile)
+        .map(|grip| grip.test_name.as_str())
+        .collect();
+    if same_file != ["own_smoke"] {
+        return Err(format!(
+            "expected only own_smoke by SameTestFile; got {same_file:?}"
+        ));
+    }
+    Ok(())
+}
+
 /// #5335: grade one seam from `files` with both the full and the compact
 /// evidence builders, and return the full evidence, its class, and the
 /// compact reach state (badges and reports must agree on reach).
@@ -18434,6 +18497,43 @@ fn called_sibling_stays_strongly_gripped_beside_an_uncalled_one() -> Result<(), 
         "{}",
         evidence.reach.summary
     );
+    Ok(())
+}
+
+#[test]
+fn given_mod_rs_owner_when_grip_associates_then_module_identity_decides_same_test_file()
+-> Result<(), String> {
+    // #5395: `serialize/mod.rs` is module `serialize`. Its companion
+    // `tests/serialize.rs` relates; another module's `tokenizer/mod.rs`
+    // inline tests do not, although both files are named `mod.rs`.
+    let owner_src = "pub fn apply_discount(amount: i32, threshold: i32) -> i32 \
+                         { if amount >= threshold { amount - 10 } else { amount } }\n";
+    let tokenizer_src =
+        "#[cfg(test)] mod tests { #[test] fn tokenizer_smoke() { assert_eq!(2, 2); } }\n";
+    let companion_src = "#[test] fn companion_smoke() { assert_eq!(3, 3); }\n";
+    let files: Vec<(PathBuf, &str)> = vec![
+        (PathBuf::from("src/serialize/mod.rs"), owner_src),
+        (PathBuf::from("src/tokenizer/mod.rs"), tokenizer_src),
+        (PathBuf::from("tests/serialize.rs"), companion_src),
+    ];
+    let index = index_from_files(&files)?;
+    let seams = inventory_seams_from_index(&[PathBuf::from("src/serialize/mod.rs")], &index);
+    let predicate = seams
+        .iter()
+        .find(|s| s.kind() == SeamKind::PredicateBoundary)
+        .ok_or_else(|| "predicate seam present".to_string())?;
+    let evidence = evidence_for_seam(predicate, &index);
+    let same_file: Vec<&str> = evidence
+        .related_tests
+        .iter()
+        .filter(|grip| grip.relation_reason == RelationReason::SameTestFile)
+        .map(|grip| grip.test_name.as_str())
+        .collect();
+    if same_file != ["companion_smoke"] {
+        return Err(format!(
+            "expected only companion_smoke by SameTestFile; got {same_file:?}"
+        ));
+    }
     Ok(())
 }
 
