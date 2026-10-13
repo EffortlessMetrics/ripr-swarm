@@ -1,4 +1,6 @@
-use super::{classify_assertion, extract_assertions, extract_line_scanned_oracles};
+use super::{
+    classify_assertion, extract_assertions, extract_line_scanned_oracles, is_inequality_assertion,
+};
 use crate::analysis::facts::OracleFact;
 use crate::domain::{OracleKind, OracleStrength};
 
@@ -352,6 +354,16 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
             return Err(format!("{text}: must produce an oracle fact"));
         };
         require_kind(fact, expected.0, expected.1)?;
+    }
+    // The inequality predicate reveal reads agrees with the cap order.
+    let dropped = "assert!(matches!(r, Ok(3)) && (!matches!(r, Err(E::X)) || y));";
+    if is_inequality_assertion(dropped) {
+        return Err(format!(
+            "{dropped}: a dropped group must not make it an inequality"
+        ));
+    }
+    if !is_inequality_assertion("assert!(ready || !matches!(r, Err(E::X)));") {
+        return Err("a negated pattern in an `||` arm stays an inequality".to_string());
     }
     let facts = extract_assertions("ensure!(a != b || c == d);", 7558);
     let Some(fact) = facts.first() else {

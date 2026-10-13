@@ -251,7 +251,8 @@ Two pattern terms are used below.
    assertion takes rule 1 before rules 2 and 3. A negated pattern is an
    inequality only when it is the whole condition; in a top-level `&&` chain
    with no top-level `||` the other conjuncts decide the reading, and
-   anywhere else (`||` at any level, a nested group) the reading is capped
+   anywhere else (`||` at any level, a nested group, except inside a
+   deciding `||` group that drops out as above) the reading is capped
    at weak. An inequality-named helper is recognized before any exact-kind
    step, so a `matches!(.., Err(E::X))` argument cannot lend it a kind, and
    the cap keeps a reading already below weak. A call-count or
