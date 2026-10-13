@@ -257,6 +257,11 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
             &weak,
         ),
         ("assert!(a != b || c == d);", &weak),
+        // An observer in an `||` arm is optional, so it earns no observer
+        // credit; joined by `&&` it keeps its medium reading.
+        ("assert!(ready || events_sent.contains(&id));", &weak),
+        ("assert!(ready || !events.is_empty());", &weak),
+        ("assert!(ready && (done || mock.was_called()));", &weak),
         ("assert!(xs.iter().position(|x| *x == 1) != None);", &weak),
         // A deciding `||`, top-level or in a parenthesized conjunct, gates
         // the `matches!` and error-variant readings too.
@@ -277,6 +282,10 @@ fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), Str
         ("assert!(matches!(r, Ok(3)) || fallback);", &weak),
         ("assert!(ready && (matches!(r, Ok(3)) || fallback));", &weak),
         ("ensure!(a == b);", &exact),
+        (
+            "assert!(ready && events_sent.contains(&id));",
+            &(OracleKind::MockExpectation, OracleStrength::Medium),
+        ),
         ("ensure!(a == b, \"total must match\");", &exact),
         ("ensure!(a != b && c == d);", &exact),
         ("ensure!((total(&cart) == 42) && ready);", &exact),

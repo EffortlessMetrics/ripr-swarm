@@ -233,7 +233,10 @@ Two pattern terms are used below.
    is the whole condition (the group read again by the same rule), caps the
    reading at `relational_check` / weak, including a literal `|| false`
    arm, which is not read through, and an arm such as `r.is_err()` that
-   would otherwise earn `broad_error`. A parenthesized `&&` conjunct that
+   would otherwise earn `broad_error` or an observer such as
+   `events_sent.contains(&id)` that would otherwise earn step 9's
+   `mock_expectation` (`assert!(ready || events_sent.contains(&id))` passes
+   without observing the event). A parenthesized `&&` conjunct that
    such a `||` decides pins nothing, so, as beside a negated pattern, the
    other conjuncts decide with their own reading, or `relational_check` /
    weak when no other conjunct remains (`ensure!(c == d && (a || b))` reads
