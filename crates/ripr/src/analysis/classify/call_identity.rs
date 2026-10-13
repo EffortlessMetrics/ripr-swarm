@@ -161,7 +161,7 @@ impl OwnerCallIdentity {
                 rivals.push(function);
             }
         }
-        if rivals.is_empty() {
+        if rivals.is_empty() || package_remaps_module_paths(index, owner_package.as_deref()) {
             return None;
         }
         let layout = CrateLayout::new(index, owner_package.as_deref());
@@ -173,7 +173,11 @@ impl OwnerCallIdentity {
             match function.item.container {
                 FunctionContainer::Free if function.item.has_body => {
                     match layout.classify(&function.file) {
-                        CrateClass::Ambiguous => return None,
+                        // Only a library-shaped `src/` module is ambiguous,
+                        // and it may compose into either root's crate.
+                        CrateClass::Ambiguous if owner_crate == "lib" || owner_crate == "main" => {
+                            return None;
+                        }
                         CrateClass::Crate(class) if class == owner_crate => {
                             definitions.push(definition_module_path(function));
                         }
@@ -184,7 +188,7 @@ impl OwnerCallIdentity {
                 _ => {}
             }
         }
-        if definitions.len() < 2 || package_remaps_module_paths(index, owner_package.as_deref()) {
+        if definitions.len() < 2 {
             return None;
         }
         Some(Self {
@@ -372,7 +376,12 @@ impl OwnerCallIdentity {
         if same_package && !under_tests_dir(&test.file) {
             return names;
         }
-        if same_package && self.owner_package.is_none() {
+        // An integration test imports only the package's library, never a
+        // binary's crate.
+        if same_package
+            && self.owner_package.is_none()
+            && self.owner_crate.as_deref() == Some("lib")
+        {
             names.extend(index.package_names.iter().cloned());
         }
         if let Some(owner_root) =
@@ -851,10 +860,13 @@ impl CrateLayout {
 
 /// The first module segment of every module a crate root declares: `mod a;`
 /// gives `a`, and so does `mod a { mod b; }`. `None` when the scan is
-/// incomplete or the root `include!`s another file, which may declare more.
+/// incomplete outside function bodies (an item-position macro, a parse
+/// error) or the root `include!`s another file, which may declare more. A
+/// body macro (`log::info!` in `fn main`) can only declare a module local
+/// to its function, never a crate-level one, so it does not count.
 fn declared_first_segments(source: &str) -> Option<BTreeSet<String>> {
     let scan = rust_module_tree_scan(source);
-    if !scan.complete {
+    if !scan.items_complete {
         return None;
     }
     let mut names = BTreeSet::new();
@@ -2074,6 +2086,7 @@ mod tests {
             return;
         };
         assert_eq!(identity.resolve_test(root_test, &index), CallTarget::Owner);
+        assert!(test("binary_cli_render").is_some());
         let Some(cli_test) = test("binary_cli_render") else {
             return;
         };
@@ -2085,20 +2098,33 @@ mod tests {
     #[test]
     fn a_module_both_roots_declare_switches_the_rule_off() {
         let shared_lib = format!("pub mod cli;\n{BIN_LIB}");
-        let index = index(&[
+        let shared = index(&[
             ("src/lib.rs", shared_lib.as_str()),
             ("src/util.rs", BIN_UTIL),
             ("src/main.rs", BIN_MAIN),
             ("src/cli.rs", BIN_CLI),
         ]);
-        let owner = index.functions().iter().find(|function| {
-            function.file == Path::new("src/main.rs") && function.name == "render"
-        });
-        assert!(owner.is_some());
-        let Some(owner) = owner else {
-            return;
-        };
-        assert!(OwnerCallIdentity::new(owner, index.functions().iter(), &index).is_none());
+        // The library's render has util's rival; cli's render may be either
+        // crate's, so the rule switches off.
+        assert!(identity_for(&shared, "src/lib.rs").is_none());
+        // Neither root declares `cli`: an orphan has no settled crate either.
+        let orphan = index(&[
+            ("src/lib.rs", BIN_LIB),
+            ("src/util.rs", BIN_UTIL),
+            ("src/main.rs", "fn main() {}\n"),
+            ("src/cli.rs", BIN_CLI),
+        ]);
+        assert!(identity_for(&orphan, "src/lib.rs").is_none());
+        // An item-position macro in a root may declare any module.
+        let macro_main =
+            format!("cfg_if::cfg_if! {{ if #[cfg(unix)] {{ mod cli; }} }}\n{BIN_MAIN}");
+        let macro_root = index(&[
+            ("src/lib.rs", BIN_LIB),
+            ("src/util.rs", BIN_UTIL),
+            ("src/main.rs", macro_main.as_str()),
+            ("src/cli.rs", BIN_CLI),
+        ]);
+        assert!(identity_for(&macro_root, "src/lib.rs").is_none());
         assert_eq!(
             declared_first_segments("mod a;\nmod b { mod c; }\n"),
             Some(["a", "b"].iter().map(|name| name.to_string()).collect())
@@ -2107,6 +2133,70 @@ mod tests {
             declared_first_segments("include!(\"mods.rs\");\nmod a;\n"),
             None
         );
+    }
+
+    /// The first `render` in `file`'s identity, `None` when the rule is off.
+    fn identity_for(index: &RustIndex, file: &str) -> Option<OwnerCallIdentity> {
+        let owner = index
+            .functions()
+            .iter()
+            .find(|function| function.file == Path::new(file) && function.name == "render");
+        assert!(owner.is_some(), "a render in `{file}` must be indexed");
+        OwnerCallIdentity::new(owner?, index.functions().iter(), index)
+    }
+
+    /// A body macro in `fn main` (`log::info!`) cannot declare a crate-level
+    /// module, so the roots still settle which crate `cli` is in; an
+    /// integration test never names the binary's crate, so its
+    /// `modules::render` stays unsettled for the binary root's render.
+    #[test]
+    fn a_body_macro_in_main_keeps_the_split_and_tests_never_name_the_binary() {
+        let logged_main = "mod cli;\n\nfn render(x: i32) -> i32 {\n    x - 1\n}\n\nfn main() {\n    log::info!(\"start\");\n}\n";
+        let api = "#[test]\nfn api_render() {\n    assert_eq!(modules::render(2), 1);\n}\n";
+        let index = index(&[
+            ("src/lib.rs", BIN_LIB),
+            ("src/util.rs", BIN_UTIL),
+            ("src/main.rs", logged_main),
+            ("src/cli.rs", BIN_CLI),
+            ("tests/api.rs", api),
+        ]);
+        let identity = identity_for(&index, "src/main.rs");
+        assert!(
+            identity.is_some(),
+            "cli's render is the binary root's rival"
+        );
+        let Some(identity) = identity else {
+            return;
+        };
+        let test = index.tests().iter().find(|test| test.name == "api_render");
+        assert!(test.is_some());
+        let Some(test) = test else {
+            return;
+        };
+        assert_eq!(identity.resolve_test(test, &index), CallTarget::Unsettled);
+        let lib = identity_for(&index, "src/lib.rs");
+        assert!(lib.is_some(), "the library's render has util's rival");
+        if let Some(lib) = lib {
+            assert_eq!(lib.resolve_test(test, &index), CallTarget::Owner);
+        }
+    }
+
+    /// A `src/bin` owner never shares a crate with a library-shaped module,
+    /// so an orphan `src/` namesake leaves its identity on.
+    #[test]
+    fn an_ambiguous_module_leaves_a_bin_owner_alone() {
+        let index = index(&[
+            ("src/lib.rs", BIN_LIB),
+            ("src/main.rs", "fn main() {}\n"),
+            ("src/old.rs", BIN_UTIL),
+            (
+                "src/bin/tool.rs",
+                "mod fmt;\n\nfn render(x: i32) -> i32 {\n    x - 1\n}\n\nfn main() {}\n",
+            ),
+            ("src/bin/tool/fmt.rs", BIN_UTIL),
+        ]);
+        assert!(identity_for(&index, "src/bin/tool.rs").is_some());
+        assert!(identity_for(&index, "src/lib.rs").is_none());
     }
 
     /// A `src/bin/<name>/main.rs` root is the crate root: its `crate::render`
