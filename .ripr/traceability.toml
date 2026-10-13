@@ -9446,6 +9446,7 @@ tests = [
   "crates/ripr/src/lsp/tests.rs::hover_response_keeps_current_guidance_text",
   "crates/ripr/src/lsp/tests.rs::hover_for_position_uses_latest_matching_diagnostic",
   "crates/ripr/src/lsp/tests.rs::hover_for_position_shows_snapshot_age_and_refresh_duration",
+  "crates/ripr/src/lsp/tests.rs::retained_hover_discloses_analysis_health_without_changing_evidence",
   "crates/ripr/src/lsp/tests.rs::hover_for_position_adds_snapshot_status_to_seam_hover",
   "crates/ripr/src/lsp/tests.rs::hover_for_position_reaches_a_coarse_zero_width_finding_diagnostic",
   "crates/ripr/src/lsp/tests.rs::hover_for_position_prefers_a_precise_diagnostic_over_a_coarse_one_on_its_line",
