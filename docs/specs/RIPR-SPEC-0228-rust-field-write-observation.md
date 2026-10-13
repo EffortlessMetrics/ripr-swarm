@@ -234,14 +234,25 @@ changes `self.count += 2` to `self.count += 1`.
     `o.hold(3); assert_eq!(o.held(), &[] as &[u32])` with
     `fn held(&self) -> &[u32] { &self.lines }`: not `exposed`. A method named
     after the field is not a read of it.
+14. `self.lines.push(Line { sku: sku.to_uppercase(), qty })` with the `sku`
+    initializer changed, test `o.add("bolt", 2); assert_eq!(o.lines(),
+    &[Line { sku: "BOLT".to_string(), qty: 2 }])` with
+    `fn lines(&self) -> &[Line] { &self.lines }`: `exposed`. The pushed
+    literal is the whole `push` argument and the assertion compares the whole
+    collection, so it compares every field of the pushed element.
+15. `self.tags.push(Tag { label: label.to_uppercase(), weight })` with the
+    `label` initializer changed, test `o.tag("rush", 1);
+    assert_eq!(o.tags().len(), 1)`: not `exposed`. A projection of the
+    collection does not read the pushed field.
 
 ## Test Mapping
 
 - Existing: `fixtures/python_field_assignment_shape` (parity reference),
   `fixtures/observation_verified_side_effect`,
   `fixtures/observation_unverified_side_effect`.
-- Verdict corpus: 10 cases `spec0228-*` in
-  `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-9,
+- Verdict corpus: 14 cases `spec0228-*` in
+  `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-9 and
+  12-15,
   each naming its example in its reasoning and labeled with runtime mutant
   truth. Examples 10 and 11 are dead writes: every mutant of the write is
   equivalent, so they have no runtime-labeled case.
@@ -293,9 +304,19 @@ changes `self.count += 2` to `self.count += 1`.
   `items`, `assert!(!c.items.is_empty())`, `c.items.iter().any(..)`), an
   owner called as `Basket::add(&mut c, 4)` or through a helper, and
   `prop_assert_eq!`/`debug_assert_eq!`. A whole-value comparison of the
-  receiver keeps the effect-observer path (RIPR-SPEC-0094 Part D). A field
-  of a struct literal pushed onto the collection is not yet credited
-  (#7131).
+  receiver keeps the effect-observer path (RIPR-SPEC-0094 Part D).
+- A field of a struct or enum literal pushed onto a field collection is
+  credited (#7131): `pushed_literal_collection_path` and
+  `assertion_whole_collection_equality` in `propagation_witness.rs`,
+  `pushed_collection_compared_whole` in `activation.rs`. The literal must be
+  the whole argument of `self.<path>.push(..)`, and nothing later in the
+  owner body may touch `self.<path>` except another `push`. The assertion
+  must be an `assert_eq!` whose one operand is the whole collection
+  (`inv.log`, `inv.history()`, optionally borrowed) read after the owner
+  call as above, and whose other operand does not name that binding.
+  Projections (`.len()`, `[0].qty`, `.iter().map(..)`), `assert_ne!`,
+  literals built in a local and pushed later, `insert` and callee writes are
+  not credited and keep the missing field-value fact.
 - Field assignments (`self.f = ..`, `self.f op= ..`) are not implemented:
   their corpus cases read `static_unknown`.
 
