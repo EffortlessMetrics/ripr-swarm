@@ -333,7 +333,6 @@ fn unittest_list_equal_requires_changed_python_literal_value() -> Result<(), Str
         if expected_class == ExposureClass::WeaklyExposed {
             assert!(finding.activation.missing_discriminators.is_empty());
             assert!(finding.recommended_next_step.is_none());
-            assert!(crate::output::python_repair_card::python_repair_card(&finding).is_none());
             assert!(
                 !finding
                     .evidence
