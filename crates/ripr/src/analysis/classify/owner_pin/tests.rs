@@ -1493,10 +1493,10 @@ fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
         // Another crate's runtime path, and arguments that change what runs.
         "#[test]",
         "#[async_std::test]",
-        "#[tokio::main]",
         "#[tokio::test(crate = \"other\")]",
-        "#[tokio::test(flavor = \"multi_thread\", unhandled_panic = \"ignore\")]",
+        "#[tokio::test(flavor = \"current_thread\", unhandled_panic = \"shutdown_runtime\")]",
         "#[tokio::test(flavor = some_flavor())]",
+        "#[tokio::test(flavor = \"current_thread\", start_paused = true, unhandled_panic = \"shutdown_runtime\")]",
         // A local `tokio` shadows the crate.
         "mod tokio { pub use other::test; }\n#[tokio::test]",
         "use other as tokio;\n#[tokio::test]",
@@ -1508,29 +1508,24 @@ fn a_tokio_test_runtime_runs_an_async_test_body_and_other_async_tests_refuse() {
         let tests = format!(
             "use demo::weight;\n{attributes}\nasync fn weighs() {{\n    assert_eq!(weight(4), 12);\n}}\n"
         );
-        assert!(async_weight_admitted(&tests).is_empty(), "{tests}");
+        assert!(weight_admitted(&tests).is_empty(), "{tests}");
     }
-}
-
-/// [`weight_admitted`] for fixtures the indexer may not read as a test at
-/// all: an unindexed test admits nothing.
-fn async_weight_admitted(tests: &str) -> Vec<String> {
+    // A sync `fn` under `#[tokio::test]` does not compile.
+    let tests =
+        "use demo::weight;\n#[tokio::test]\nfn weighs() {\n    assert_eq!(weight(4), 12);\n}\n";
     let index = index(&[(LIB, WEIGHT_LIB), (TESTS, tests)]);
-    if index.tests().is_empty() {
-        return Vec::new();
-    }
-    let pin = establish(&index, "weight", "x * 3");
-    assert!(pin.is_some(), "the free owner must establish a pin");
-    let Some(pin) = pin else {
-        return Vec::new();
-    };
-    admitted_texts(&index, &pin)
+    assert_eq!(
+        index.tests().len(),
+        1,
+        "the sync tokio test must be indexed"
+    );
+    assert!(weight_admitted(tests).is_empty(), "{tests}");
 }
 
 #[test]
 fn an_async_owner_is_read_through_one_await_and_a_sync_owner_is_not() {
     let lib = "pub async fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
-    let tests = "use demo::weight;\n#[tokio::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n    assert_eq!(weight(4), 12);\n    assert_eq!(weight(4).await.await, 12);\n    assert_eq!(async { weight(4).await }.await, 12);\n}\n";
+    let tests = "use demo::weight;\n#[tokio::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n    assert_eq!(weight(4), 12);\n    assert_eq!(weight(4).await.await, 12);\n    assert_eq!(async { weight(4).await }.await, 12);\n    let heavy = weight(4).await;\n    assert_eq!(heavy, 12);\n    let pending = weight(5);\n    assert_eq!(pending, 15);\n}\n";
     let index = index(&[(LIB, lib), (TESTS, tests)]);
     let pin = establish(&index, "weight", "x * 3");
     assert!(pin.is_some(), "the async owner must establish a pin");
@@ -1539,8 +1534,20 @@ fn an_async_owner_is_read_through_one_await_and_a_sync_owner_is_not() {
     };
     assert_eq!(
         admitted_texts(&index, &pin),
-        vec!["assert_eq!(weight(4).await, 12);".to_string()]
+        vec![
+            "assert_eq!(weight(4).await, 12);".to_string(),
+            "assert_eq!(heavy, 12);".to_string()
+        ]
     );
+    // `async` in a comment does not make the owner async.
+    let lib = "/* async */ pub fn weight(x: u32) -> u32 {\n    x * 3\n}\n";
+    let tests = "use demo::weight;\n#[tokio::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n}\n";
+    let index = self::index(&[(LIB, lib), (TESTS, tests)]);
+    let pin = establish(&index, "weight", "x * 3");
+    assert!(pin.is_some(), "the sync owner must establish a pin");
+    if let Some(pin) = pin {
+        assert!(admitted_texts(&index, &pin).is_empty());
+    }
     // A sync owner's `.await` is a different value (an `IntoFuture` impl).
     let tests = "use demo::weight;\n#[tokio::test]\nasync fn weighs() {\n    assert_eq!(weight(4).await, 12);\n}\n";
     assert!(weight_admitted(tests).is_empty(), "{tests}");

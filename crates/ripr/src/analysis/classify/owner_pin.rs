@@ -2621,23 +2621,48 @@ enum CallShape<'a> {
     Path(&'a str),
 }
 
-/// Whether `owner` is declared `async fn`. Its indexed body starts at
-/// `fn`, so the qualifiers are read from its source line: an `async` word
-/// before `fn <name>` there.
+/// Whether `owner` is declared `async fn`, read from the parsed `async`
+/// token of the one `fn <name>` item whose span holds the owner's start
+/// line. No parse, or no single match, reads as sync: an async owner then
+/// gets no `.await` credit, and its bare call (a future) does not compile.
 fn declares_async(owner: &FunctionSummary, index: &RustIndex) -> bool {
     let Some(facts) = index.files().get(&owner.file) else {
         return false;
     };
-    let Some(line) = owner
-        .start_line
-        .checked_sub(1)
-        .and_then(|at| facts.source.lines().nth(at))
-    else {
+    let source: &str = &facts.source;
+    let Some(parse) = parse_clean_source_file(source) else {
         return false;
     };
-    let declaration = format!("fn {}", owner.name);
-    line.find(&declaration)
-        .is_some_and(|at| line[..at].split_whitespace().any(|word| word == "async"))
+    let line_of = |offset: ra_ap_syntax::TextSize| {
+        let at = (u32::from(offset) as usize).min(source.len());
+        source.as_bytes()[..at]
+            .iter()
+            .filter(|byte| **byte == b'\n')
+            .count()
+            + 1
+    };
+    let mut matches = parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Fn::cast)
+        .filter(|function| {
+            function
+                .name()
+                .is_some_and(|name| name.text() == owner.name.as_str())
+        })
+        .filter(|function| {
+            let Some(fn_token) = function.fn_token() else {
+                return false;
+            };
+            (line_of(function.syntax().text_range().start())
+                ..=line_of(fn_token.text_range().start()))
+                .contains(&owner.start_line)
+        });
+    match (matches.next(), matches.next()) {
+        (Some(function), None) => function.async_token().is_some(),
+        _ => false,
+    }
 }
 
 /// The operand as a complete call of `name`: `name(..)` or `recv.name(..)`

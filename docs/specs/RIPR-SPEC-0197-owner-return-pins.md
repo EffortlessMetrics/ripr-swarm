@@ -111,7 +111,7 @@ rule only for an assertion whose context was admitted.
    `super::*` into an enclosing in-file module that meets the same rule. The
    crate name is trusted: a manifest `package = ..` rename that points
    `serial_test` at another crate is outside what source can show. An
-   `async fn` test is admitted only under `#[tokio::test]` (never a bare
+   `async fn` test is admitted only under `#[tokio::test]` (#5040) (never a bare
    `test` imported from tokio), which runs the body to completion
    on a fresh runtime and fails the test when it panics, as libtest does for a
    plain body. `tokio` must be the crate in the test's module under the same
@@ -121,7 +121,9 @@ rule only for an assertion whose context was admitted.
    `crate = ..` swaps the runtime path and `unhandled_panic = ..` changes what
    a panic does, so they refuse. An `async` owner's return value is then read
    through one trailing `.await` on its call (`assert_eq!(total(&[1, 2]).await,
-   3)`); its bare call is a future and refuses; a sync owner's `.await` awaits a future it returns and stays refused.
+   3)`). Its bare call is a future and refuses; a sync owner's `.await` awaits
+   a future it returns and stays refused. A sync `fn` under `#[tokio::test]`
+   does not compile and refuses.
    An assertion inside an `async` block (`tokio::spawn(async { .. })`) keeps
    the async-context refusal below. Every other attribute (`ignore`, other
    async runtime tests, parameterizing macros such as `rstest` or

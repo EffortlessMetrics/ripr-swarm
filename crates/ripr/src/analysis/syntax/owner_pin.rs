@@ -1764,9 +1764,12 @@ fn is_tokio_test_path(path: &str) -> bool {
 /// admitted only as `flavor`, `worker_threads` and `start_paused`, which
 /// pick the runtime and its clock: `crate = ..` swaps the macro's runtime
 /// path and `unhandled_panic = ..` changes what a panic does, so any other
-/// argument refuses.
+/// argument refuses. A sync `fn` under it does not compile, so it refuses.
 fn tokio_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     if attr.excl_token().is_some() {
+        return false;
+    }
+    if ast::Fn::cast(test.clone()).is_none_or(|function| function.async_token().is_none()) {
         return false;
     }
     let Some(path) = attr.path() else {
