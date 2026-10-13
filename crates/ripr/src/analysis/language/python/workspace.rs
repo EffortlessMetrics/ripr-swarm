@@ -19,10 +19,6 @@ pub(super) fn owner_for_changed_line<'a>(
         .min_by_key(|owner| (owner.span_width(), owner.specificity_rank()))
 }
 
-pub(super) fn collect_workspace_python_files(root: &Path) -> Vec<PathBuf> {
-    collect_workspace_python_files_with_handwritten(root, &[])
-}
-
 /// The workspace walk with the `[languages.python] handwritten_files`
 /// declarations (#7386): directories are still pruned at the excluded-name
 /// boundary, except an ancestor of a declared hand-written file, which stays
@@ -35,10 +31,6 @@ pub(super) fn collect_workspace_python_files_with_handwritten(
     visit_workspace_with_handwritten(root, root, handwritten, &mut out);
     out.sort();
     out
-}
-
-pub(super) fn visit_workspace(root: &Path, dir: &Path, out: &mut Vec<PathBuf>) {
-    visit_workspace_with_handwritten(root, dir, &[], out);
 }
 
 pub(super) fn visit_workspace_with_handwritten(

@@ -149,10 +149,6 @@ pub(crate) struct WorkspaceScan {
     pub(crate) skipped_links: usize,
 }
 
-pub(crate) fn collect_workspace_typescript_files(root: &Path) -> WorkspaceScan {
-    collect_workspace_typescript_files_with_handwritten(root, &[])
-}
-
 /// The workspace scan with the `[languages.typescript] handwritten_files`
 /// declarations (#7386): directories are still pruned at the excluded-name
 /// boundary, except an ancestor of a declared hand-written file, which stays
@@ -173,10 +169,6 @@ pub(crate) fn collect_workspace_typescript_files_with_handwritten(
 /// against `max_entries`; exceeding the cap stops the walk and reports
 /// `truncated: true` so the adapter can disclose the bound instead of
 /// silently analyzing a partial workspace.
-pub(crate) fn visit_workspace(root: &Path, max_entries: usize) -> WorkspaceScan {
-    visit_workspace_with_handwritten(root, max_entries, &[])
-}
-
 pub(crate) fn visit_workspace_with_handwritten(
     root: &Path,
     max_entries: usize,
@@ -210,7 +202,7 @@ pub(crate) fn visit_workspace_with_handwritten(
             if is_typescript_dir_pruned_from_discovery(name)
                 && !crate::config::declared_typescript_handwritten_under(
                     handwritten,
-                    &path.strip_prefix(root).unwrap_or(&path),
+                    path.strip_prefix(root).unwrap_or(&path),
                 )
             {
                 continue;
@@ -476,7 +468,7 @@ mod tests {
         workspace.write("src/main.ts", "export const a = 1;\n");
         workspace.write("packages/core/src/index.tsx", "export const b = 2;\n");
         workspace.write("packages/core/README.md", "not source\n");
-        let scan = visit_workspace(&workspace.0, 10_000);
+        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &[]);
         assert!(!scan.truncated, "scan must not trip the cap");
         assert_eq!(
             scan.files,
@@ -504,7 +496,7 @@ mod tests {
         ] {
             workspace.write(generated, "export const generated = 1;\n");
         }
-        let scan = visit_workspace(&workspace.0, 10_000);
+        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &[]);
         assert!(!scan.truncated, "scan must not trip the cap");
         assert_eq!(
             scan.files,
@@ -546,7 +538,7 @@ mod tests {
         workspace.write("c/three.ts", "export const c = 3;\n");
         // Cap below the number of visited entries: each of the three
         // subdirectory entries plus the three files exceeds a limit of 4.
-        let scan = visit_workspace(&workspace.0, 4);
+        let scan = visit_workspace_with_handwritten(&workspace.0, 4, &[]);
         assert!(scan.truncated, "cap must trip the truncated flag");
         assert!(
             scan.files.len() < 3,
@@ -554,7 +546,7 @@ mod tests {
             scan.files
         );
         // Without a cap the same workspace scans clean.
-        let full = visit_workspace(&workspace.0, 10_000);
+        let full = visit_workspace_with_handwritten(&workspace.0, 10_000, &[]);
         assert!(!full.truncated);
         assert_eq!(full.files.len(), 3);
     }
@@ -626,7 +618,7 @@ mod tests {
             _ => return,
         };
 
-        let scan = visit_workspace(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES);
+        let scan = visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(scan.skipped_links, 1, "the one link must be counted");
         assert!(
             !scan
@@ -665,7 +657,7 @@ mod tests {
             Err(_) => return, // platform refused; nothing to assert here
         };
 
-        let scan = visit_workspace(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES);
+        let scan = visit_workspace_with_handwritten(&workspace.0, DEFAULT_TS_MAX_WORKSPACE_FILES, &[]);
         assert_eq!(
             scan.skipped_links, 0,
             "a socket is not a link and must not disclose a link limitation"
@@ -700,7 +692,7 @@ mod tests {
         ] {
             workspace.write(rel, "export const value = 1;\n");
         }
-        let scan = visit_workspace(&workspace.0, 10_000);
+        let scan = visit_workspace_with_handwritten(&workspace.0, 10_000, &[]);
         assert!(!scan.truncated, "scan must not trip the cap");
         for expected in [
             "src/ok.ts",

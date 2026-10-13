@@ -2228,7 +2228,7 @@ fn collect_workspace_python_files_skips_excluded_directories() -> Result<(), Str
         write_file(&root.join(rel), "x = 1\n")?;
     }
 
-    let files = collect_workspace_python_files(&root);
+    let files = collect_workspace_python_files_with_handwritten(&root, &[]);
     let cleanup = std::fs::remove_dir_all(&root);
 
     for expected in included.iter() {
@@ -2265,7 +2265,7 @@ fn collect_workspace_python_files_returns_empty_for_missing_root() {
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
-    assert!(collect_workspace_python_files(&missing).is_empty());
+    assert!(collect_workspace_python_files_with_handwritten(&missing, &[]).is_empty());
 }
 
 #[test]
@@ -2325,7 +2325,7 @@ fn vendor_only_tree_neither_enables_python_nor_enters_diff_inputs() -> Result<()
     write_file(&root.join("vendor/dep.py"), "VALUE = 1\n")?;
     write_file(&root.join("src/vendor/dep.py"), "VALUE = 2\n")?;
 
-    let files = collect_workspace_python_files(&root);
+    let files = collect_workspace_python_files_with_handwritten(&root, &[]);
     let detection_enabled = crate::config::detect_python_project(&root);
     let cleanup = std::fs::remove_dir_all(&root);
 
@@ -3534,12 +3534,13 @@ fn assertion_from_expr_returns_none_for_non_call_expressions() -> Result<(), Str
 
 #[test]
 fn visit_workspace_returns_silently_when_directory_is_unreadable() {
-    // Pointing visit_workspace at a non-existent directory must hit
+    // Pointing the workspace walk at a non-existent directory must hit
     // the `Err(_) => return;` early exit without panicking.
     let mut out = Vec::new();
-    visit_workspace(
+    super::workspace::visit_workspace_with_handwritten(
         Path::new("/definitely-not-a-real-dir-ripr"),
         Path::new("/definitely-not-a-real-dir-ripr"),
+        &[],
         &mut out,
     );
     assert!(out.is_empty());

@@ -715,6 +715,10 @@ fn diff_limitation_in_scope(limitation: &AnalysisLimitation, languages: &[Langua
     route(std::path::Path::new(path)).is_some_and(|language| languages.contains(&language))
 }
 
+/// Test-only convenience: the ~40 in-module behavioral call sites predate
+/// #7386 and run without a parsed `[languages]` config, so they keep this
+/// default-config wrapper instead of threading one at every site.
+#[cfg(test)]
 fn run_pipeline_for_diff_text(
     options: &AnalysisOptions,
     oracle_policy: &OraclePolicy,

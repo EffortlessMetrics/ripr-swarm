@@ -32,9 +32,8 @@ pub use model::{
     LspDiagnosticProfile, OraclePolicy, PerlConfig, RiprConfig, SeverityConfig, TestHarnessAdapter,
     TestHarnessKind, TestHarnessRegistration, TypescriptConfig,
 };
-pub(crate) use model::{
-    PERL_EXECUTABLE_OPT_IN_ENV, PythonLanguageConfig, RustLanguageConfig, TypescriptLanguageConfig,
-};
+pub(crate) use model::{PERL_EXECUTABLE_OPT_IN_ENV, RustLanguageConfig};
+
 #[cfg(test)]
 pub(crate) use python::{PYTHON_EXCLUDED_DIRS, PYTHON_VENDOR_DIR};
 pub(crate) use python::{
@@ -618,25 +617,25 @@ impl RiprConfig {
                     )?;
                 }
             }
-            if let Some(python) = languages.python {
-                if let Some(paths) = python.handwritten_files {
-                    config.languages.python.handwritten_files = parse_handwritten_files(
-                        &paths,
-                        "languages.python.handwritten_files",
-                        "a Python `.py` file",
-                        |extension| extension == "py",
-                    )?;
-                }
+            if let Some(python) = languages.python
+                && let Some(paths) = python.handwritten_files
+            {
+                config.languages.python.handwritten_files = parse_handwritten_files(
+                    &paths,
+                    "languages.python.handwritten_files",
+                    "a Python `.py` file",
+                    |extension| extension == "py",
+                )?;
             }
-            if let Some(typescript) = languages.typescript {
-                if let Some(paths) = typescript.handwritten_files {
-                    config.languages.typescript.handwritten_files = parse_handwritten_files(
-                        &paths,
-                        "languages.typescript.handwritten_files",
-                        "a TypeScript/JavaScript source file (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs` or `.cjs`)",
-                        |extension| crate::analysis::is_ts_js_source_extension(extension),
-                    )?;
-                }
+            if let Some(typescript) = languages.typescript
+                && let Some(paths) = typescript.handwritten_files
+            {
+                config.languages.typescript.handwritten_files = parse_handwritten_files(
+                    &paths,
+                    "languages.typescript.handwritten_files",
+                    "a TypeScript/JavaScript source file (`.ts`, `.tsx`, `.js`, `.jsx`, `.mts`, `.cts`, `.mjs` or `.cjs`)",
+                    crate::analysis::is_ts_js_source_extension,
+                )?;
             }
         }
         if let Some(profiles) = raw.profiles {
