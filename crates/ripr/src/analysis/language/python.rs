@@ -814,12 +814,10 @@ impl PythonAdapter {
             let counterparts = changed.aligned_counterparts();
             let is_added_import = |added: &crate::analysis::diff::ChangedLine| {
                 line_is_in_ranges(added.line, import_ranges)
-                    && counterparts
-                        .get(&added.line)
-                        .is_none_or(|removed| {
-                            !line_is_in_ranges(removed.line, &old_import_ranges)
-                                && !is_python_import_line(&removed.text)
-                        })
+                    && counterparts.get(&added.line).is_none_or(|removed| {
+                        !line_is_in_ranges(removed.line, &old_import_ranges)
+                            && !is_python_import_line(&removed.text)
+                    })
             };
             let covered = python_quiet_lines_covered_by_run(&changed.added_lines, |added| {
                 line_is_in_ranges(added.line, new_docstring_ranges)

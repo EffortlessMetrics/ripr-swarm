@@ -32,7 +32,7 @@ this repository's license, one per test library or library feature:
   behavior change is the second line of a block that also rewrites the
   comment above it (#7556).
 
-Each case is a one-line edit under `cases/` (the `authored-py-pytest-blocks`
+Each case is a one-line edit under `cases/` (the two `py-blocks-*-second-line`
 cases replace a comment and the line under it), labeled with what the project's
 own tests discriminate: the edit (and, for a rewrite, each listed mutant on
 top) was applied to a scratch copy and the case's test command run under

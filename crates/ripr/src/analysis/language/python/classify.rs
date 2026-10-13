@@ -82,6 +82,19 @@ pub(super) struct PythonNoBehaviorContext {
     pub(super) multi_line_def_header_line: bool,
 }
 
+/// Content pairing matches old and new lines on their trimmed text, but in
+/// Python a change of indentation moves the line into or out of a block, which
+/// is behavior of its own. The annotation-only guards suppress a probe, so they
+/// fail closed when the paired lines sit at different depths (#7556).
+fn same_indentation(old: &str, new: &str) -> bool {
+    let leading = |text: &str| {
+        text.chars()
+            .take_while(|c| c.is_whitespace())
+            .collect::<String>()
+    };
+    leading(old) == leading(new)
+}
+
 /// Classify a change from producer-owned owner, relation, and oracle facts.
 /// Discriminator narration follows the final class, not oracle strength alone.
 pub(super) fn classify_change_with_context(
@@ -122,6 +135,7 @@ pub(super) fn classify_change_with_context(
     // reaches the owner. Requires the paired old line; fails closed when anything
     // beyond an annotation differs (e.g. a default-value change, which IS behavioral).
     if let Some(old) = old_line_text
+        && same_indentation(old, line_text)
         && is_annotation_only_def_change(old, line_text)
     {
         return None;
@@ -153,6 +167,7 @@ pub(super) fn classify_change_with_context(
     // line is not a parseable annotated assignment.
     if owner.is_module_owner()
         && let Some(old) = old_line_text
+        && same_indentation(old, line_text)
         && is_annotation_only_var_change(old, line_text)
     {
         return None;

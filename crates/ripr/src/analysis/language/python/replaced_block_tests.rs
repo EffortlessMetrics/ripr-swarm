@@ -178,5 +178,49 @@ fn new_def_paired_with_an_unlike_line_is_not_probed() -> Result<(), String> {
         Vec::<ExposureClass>::new(),
         "{findings:?}"
     );
+    assert_eq!(
+        classes_on(&findings, 12).len(),
+        1,
+        "the new body line stays the probe: {findings:?}"
+    );
+    Ok(())
+}
+
+/// A renamed method whose header pairs by position with the old header that
+/// looks like it is a changed signature, not a new declaration: it keeps its
+/// probe even though the old header names a different owner.
+#[test]
+fn renamed_def_paired_with_a_look_alike_header_keeps_its_probe() -> Result<(), String> {
+    let source = ACCOUNT_PY.replacen("def balance(self)", "def current_balance(self)", 1);
+    let findings = analyze(
+        "renamed-def",
+        &source,
+        &[5, 6, 7],
+        vec![
+            line(5, 5, "    def balance(self):"),
+            line(6, 5, "        # the amount on record"),
+            line(7, 5, "        return self._balance"),
+        ],
+    )?;
+    assert_eq!(classes_on(&findings, 5).len(), 1, "{findings:?}");
+    Ok(())
+}
+
+/// Content pairing compares trimmed text, so a module-scope annotation that
+/// leaves an `if` block pairs with its indented old self. Moving out of the
+/// block is behavior, so the annotation-only guard must not suppress it.
+#[test]
+fn dedented_annotation_change_keeps_its_probe() -> Result<(), String> {
+    let source = format!("{ACCOUNT_PY}\n\nLIMIT: str = 5\n");
+    let findings = analyze(
+        "dedented-annotation",
+        &source,
+        &[10],
+        vec![
+            line(10, 10, "if DEBUG:"),
+            line(11, 10, "    LIMIT: int = 5"),
+        ],
+    )?;
+    assert_eq!(classes_on(&findings, 10).len(), 1, "{findings:?}");
     Ok(())
 }
