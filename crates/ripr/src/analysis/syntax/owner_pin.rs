@@ -1222,13 +1222,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                     .push(guard.syntax().clone());
             }
         }
-        let macros = function
-            .syntax()
-            .descendants()
-            .filter_map(ast::MacroCall::cast)
-            .filter_map(|call| call.path())
-            .map(|path| path.syntax().text().to_string())
-            .collect();
+        let macros = invoked_macro_names(function.syntax());
         // Compute the conservative prefix boundary once per function, rather
         // than rescanning its body for every candidate assertion/invocation.
         // A nested helper or async block has its own return context.
@@ -1429,13 +1423,7 @@ fn local_helper_assertions(
         let Some(token) = helper.fn_token() else {
             continue;
         };
-        let macros: BTreeSet<String> = helper
-            .syntax()
-            .descendants()
-            .filter_map(ast::MacroCall::cast)
-            .filter_map(|call| call.path())
-            .map(|path| path.syntax().text().to_string())
-            .collect();
+        let macros = invoked_macro_names(helper.syntax());
         let text = slice_text(
             source,
             token.text_range().start(),
@@ -1640,6 +1628,13 @@ fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
                 })
             })
     })
+}
+
+/// [`file_binds_value_name`] over a whole source file. A file that does not
+/// parse cleanly may bind anything, so it answers yes.
+pub(crate) fn source_binds_value_name(source: &str, name: &str) -> bool {
+    parse_clean_source_file(source)
+        .is_none_or(|parse| file_binds_value_name(parse.tree().syntax(), name))
 }
 
 /// Whether a glob import can only carry names this file's own scan covers:
@@ -2256,22 +2251,74 @@ fn has_escape(
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
-    let tokens: Vec<_> = tree
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .filter(|token| !token.kind().is_trivia())
-        .collect();
+    let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
         matches!(
             token.text(),
             "return" | "break" | "continue" | "yield" | "?"
         )
-    }) || tokens.windows(3).any(|tokens| {
-        tokens[0].kind() == ra_ap_syntax::SyntaxKind::IDENT
-            && tokens[1].text() == "!"
-            && matches!(tokens[2].text(), "(" | "[" | "{")
-    })
+    }) || nested_invocations(&tokens).any(|(name, plain)| !(plain && name == NESTED_MATCHES))
+}
+
+/// A bare `matches!` in a macro operand expands to one `match` over its own
+/// operands (RIPR-SPEC-0197 literal `matches!` pins), which the token scan above already
+/// reads for exits; its binding is checked with the invoking macros'.
+const NESTED_MATCHES: &str = "matches";
+
+fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
+    tree.syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect()
+}
+
+/// Each `name!(`, `name![` or `name!{` inside an operand, with whether the
+/// name is unqualified (no `::` before it).
+fn nested_invocations(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+) -> impl Iterator<Item = (&str, bool)> + '_ {
+    tokens
+        .windows(3)
+        .enumerate()
+        .filter_map(move |(at, window)| {
+            let [name, bang, open] = window else {
+                return None;
+            };
+            if name.kind() != ra_ap_syntax::SyntaxKind::IDENT
+                || bang.text() != "!"
+                || !matches!(open.text(), "(" | "[" | "{")
+            {
+                return None;
+            }
+            let qualified = at
+                .checked_sub(1)
+                .and_then(|before| tokens.get(before))
+                .is_some_and(|token| token.text() == "::");
+            Some((name.text(), !qualified))
+        })
+}
+
+/// The macros `node` invokes: every macro call's path, plus a `matches!`
+/// nested in a macro operand, so the binding check covers it too.
+fn invoked_macro_names(node: &SyntaxNode) -> BTreeSet<String> {
+    node.descendants()
+        .filter_map(ast::MacroCall::cast)
+        .flat_map(|call| {
+            let nested: Vec<String> = call
+                .token_tree()
+                .map(|tree| {
+                    nested_invocations(&operand_tokens(&tree))
+                        .map(|(name, _)| name.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            call.path()
+                .map(|path| path.syntax().text().to_string())
+                .into_iter()
+                .chain(nested)
+        })
+        .collect()
 }
 
 fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {

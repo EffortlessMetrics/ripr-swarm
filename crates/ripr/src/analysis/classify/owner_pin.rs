@@ -67,7 +67,7 @@ use crate::analysis::syntax::{
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
     owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    trusted_macro_binding_sites,
+    source_binds_value_name, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -1405,6 +1405,11 @@ enum ReturnPathGate {
     Any,
     /// The pinned value must start with this constructor.
     Head(&'static str),
+    /// #7581: a changed early `return Some(..)` / `return Ok(..)` beside
+    /// exits that build only `None` / `Err(..)`. Admits like `Head`; the
+    /// owner's file must not bind `None`, `Some`, `Ok` or `Err`, since a
+    /// rebound opposite name could build a second `Some` / `Ok` exit.
+    EarlyHead(&'static str),
     /// The pinned value must be exactly this unit variant (`None`).
     Exact(&'static str),
     /// #6692: a field of a hand-written `Clone::clone`'s returned struct
@@ -1482,6 +1487,18 @@ impl OwnerReturnPin {
         let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
         let path = return_path_gate(&owner.body, &probe.expression, changed_line)?;
+        // The early `Some`/`Ok` gate reads the other exits' `None` and
+        // `Err(..)` as the prelude variants; a `const None` or `fn Err` in
+        // the owner's file can build a second `Some`/`Ok` under that
+        // spelling (#7581 review).
+        if path.prelude_names().iter().any(|name| {
+            index
+                .files()
+                .get(&owner.file)
+                .is_none_or(|facts| source_binds_value_name(&facts.source, name))
+        }) {
+            return None;
+        }
         let call = pin_call(owner, index)?;
         let method = matches!(call, PinCall::Method { .. });
         // #6544: a bare call's same-package module-level rivals are settled
@@ -1718,6 +1735,7 @@ impl OwnerReturnPin {
             return false;
         }
         let condition;
+        let matches_operands: [String; 2];
         // RIPR-SPEC-0197: `assert!(owner(..) == v)` and its guard twin
         // `if owner(..) != v { return Err(..) }` read like `assert_eq!`. A
         // guard reads only its condition, never a macro inside its body,
@@ -1781,6 +1799,32 @@ impl OwnerReturnPin {
                 (None, Some(call)) => (call, left.as_str()),
                 _ => return false,
             }
+        } else if !is_guard
+            && is_plain_assert_of_matches(&assertion.text)
+            && let Some(operands) = outer_assertion_condition(&assertion.text)
+                .as_deref()
+                .and_then(literal_matches_operands)
+        {
+            // RIPR-SPEC-0197 literal `matches!` pins: `assert!(matches!(owner(..), Ok(5)))`
+            // with a literal-only pattern pins the value as
+            // `assert_eq!(owner(..), Ok(5))` does.
+            matches_operands = operands;
+            let Some(call) = owner_call_shape(&matches_operands[0], &self.name) else {
+                return false;
+            };
+            // A pattern resolves `None` or `Some(..)` in the test's scope, so
+            // a `const None` there matches some other value (#7581 review).
+            let pattern = &matches_operands[1];
+            if ["Some", "None", "Ok", "Err"].iter().any(|name| {
+                contains_as_whole_word(pattern, name)
+                    && index
+                        .files()
+                        .get(&test.file)
+                        .is_none_or(|facts| source_binds_value_name(&facts.source, name))
+            }) {
+                return false;
+            }
+            (call, matches_operands[1].as_str())
         } else if !is_guard && self.returns_bool && is_plain_macro(&assertion.text, "assert") {
             // `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
             // `assert!(!owner(..))` is `assert_eq!(owner(..), false)`. The
@@ -2590,10 +2634,21 @@ fn pin_call(owner: &FunctionSummary, index: &RustIndex) -> Option<PinCall> {
 }
 
 impl ReturnPathGate {
+    /// The prelude variant names this gate's exit reasoning relies on.
+    fn prelude_names(&self) -> &'static [&'static str] {
+        match self {
+            Self::EarlyHead("Some") => &["Some", "None"],
+            Self::EarlyHead(_) => &["Ok", "Err"],
+            _ => &[],
+        }
+    }
+
     fn admits(&self, expected: &str) -> bool {
         match self {
             Self::Any => true,
-            Self::Head(head) => constructor_call_span(expected.trim(), head).is_some(),
+            Self::Head(head) | Self::EarlyHead(head) => {
+                constructor_call_span(expected.trim(), head).is_some()
+            }
             Self::Exact(value) => expected.trim() == *value,
             Self::CloneReceiver => false,
             Self::WholeValueField(gate) => gate.admits(expected),
@@ -3189,6 +3244,11 @@ fn return_path_gate(body: &str, expression: &str, changed_line: usize) -> Option
 /// produce a second `None` / `Err`. A pin expecting that value then observes
 /// the changed return. A second return of the same value, a `?`, or any
 /// other exit shape leaves the source ambiguous.
+///
+/// RIPR-SPEC-0231 example 23: the mirror holds for an early
+/// `return Some(..);` / `return Ok(..);` when every other `return` and the
+/// tail are exactly `None` / one `Err(..)` call. A `?` there builds only the
+/// opposite constructor, so it does not compete.
 fn early_return_gate(
     body: &str,
     inner: &str,
@@ -3196,16 +3256,28 @@ fn early_return_gate(
     changed: &str,
     spans_changed_line: &dyn Fn(usize, usize) -> bool,
 ) -> Option<ReturnPathGate> {
-    let (gate, other, head) = if changed == "None" {
-        (ReturnPathGate::Exact("None"), "None", "Some")
-    } else if constructor_call_span(changed, "Err").is_some() {
-        (ReturnPathGate::Head("Err"), "Err", "Ok")
-    } else {
-        return None;
-    };
+    let some_call = |value: &str| constructor_call_span(value, "Some").is_some();
+    let ok_call = |value: &str| constructor_call_span(value, "Ok").is_some();
+    let err_call = |value: &str| constructor_call_span(value, "Err").is_some();
+    let is_none = |value: &str| value == "None";
+    // `other` names the changed value's constructor; `opposite` is the only
+    // shape every other exit may build. A `?` builds `None` / `Err`, so it
+    // is a second source of those but never of `Some(..)` / `Ok(..)`.
+    let (gate, other, opposite, question_mark_agrees): (_, _, &dyn Fn(&str) -> bool, _) =
+        if changed == "None" {
+            (ReturnPathGate::Exact("None"), "None", &some_call, false)
+        } else if err_call(changed) {
+            (ReturnPathGate::Head("Err"), "Err", &ok_call, false)
+        } else if some_call(changed) {
+            (ReturnPathGate::EarlyHead("Some"), "Some", &is_none, true)
+        } else if ok_call(changed) {
+            (ReturnPathGate::EarlyHead("Ok"), "Ok", &err_call, true)
+        } else {
+            return None;
+        };
     // `return Err(if .. { A } else { B })`: a pin on `A` never evaluates a
     // changed `B`, as on the tail path.
-    if inner.contains('?')
+    if (inner.contains('?') && !question_mark_agrees)
         || !returns_leave_the_function(body)
         || evaluates_conditionally(&mask_comments_and_strings(changed))
     {
@@ -3222,7 +3294,7 @@ fn early_return_gate(
                 return None;
             }
             changed_returns += 1;
-        } else if constructor_call_span(value, head).is_none() {
+        } else if !opposite(value) {
             return None;
         }
     }
@@ -3231,8 +3303,7 @@ fn early_return_gate(
     let tail = tail.trim();
     // The tail must itself build the opposite constructor: an empty tail
     // after a trailing `if .. { .. } else { None }` hides a second source.
-    let tail_builds_head = constructor_call_span(tail, head).is_some();
-    (changed_returns == 1 && tail_builds_head).then_some(gate)
+    (changed_returns == 1 && opposite(tail)).then_some(gate)
 }
 
 /// Whether `text` starts with the whole word `word`.
@@ -7364,6 +7435,175 @@ fn top_level_semicolon(masked: &str) -> Option<usize> {
         }
     }
     None
+}
+
+/// Whether `text` is one unqualified `assert!` whose only nested macro is a
+/// `matches!`, as [`is_plain_macro`] reads a lone `assert!`.
+fn is_plain_assert_of_matches(text: &str) -> bool {
+    let masked = mask_comments_and_strings(text);
+    let invocations = macro_invocations(&masked);
+    let [("assert", _), ("matches", _)] = invocations.as_slice() else {
+        return false;
+    };
+    masked
+        .find("assert")
+        .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
+        && masked
+            .find("matches")
+            .is_some_and(|offset| !masked[..offset].trim_end().ends_with(':'))
+}
+
+/// RIPR-SPEC-0197 literal `matches!` pins: the scrutinee and the pinned value of a
+/// `matches!(scrutinee, pattern)` condition whose pattern is literal-only, so
+/// that matching it is equality with one value. Anything else refuses: a
+/// guard, an or-pattern, a wildcard, a rest or range, a reference or slice
+/// pattern, a binding without a literal subpattern, and every path or
+/// constant, since the line cannot tell a constant from a binding or check
+/// that a path names the std `Option`/`Result` variants.
+fn literal_matches_operands(condition: &str) -> Option<[String; 2]> {
+    let rest = condition.trim().strip_prefix("matches!")?.trim_start();
+    let masked = mask_comments_and_strings(rest);
+    let close = matching_close(&masked, 0, b'(', b')')?;
+    if close + 1 != rest.len() {
+        return None;
+    }
+    let inner = masked.get(1..close)?;
+    let mut depth = 0usize;
+    let mut commas = Vec::new();
+    for (offset, byte) in inner.bytes().enumerate() {
+        match byte {
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => depth = depth.checked_sub(1)?,
+            b',' if depth == 0 => commas.push(offset),
+            _ => {}
+        }
+    }
+    // `matches!` accepts one trailing comma after the pattern.
+    let (comma, end) = match commas.as_slice() {
+        [comma] => (*comma, inner.len()),
+        [comma, trailing] if inner.get(trailing + 1..)?.trim().is_empty() => (*comma, *trailing),
+        _ => return None,
+    };
+    let scrutinee = rest.get(1..comma + 1)?.trim();
+    let pattern = literal_value_pattern(rest.get(comma + 2..end + 1)?)?;
+    (!scrutinee.is_empty()).then(|| [scrutinee.to_string(), pattern])
+}
+
+/// A literal-only pattern rewritten as the value it matches: `Some(x @ 3)`
+/// becomes `Some(3)`. Only `Some`, `Ok` and `Err` around a payload, `None`,
+/// `true`, `false`, a numeric literal (optionally negated) and a plain string
+/// literal are admitted.
+fn literal_value_pattern(pattern: &str) -> Option<String> {
+    let chars: Vec<char> = pattern.trim().chars().collect();
+    let mut value = String::new();
+    let mut at = 0;
+    let mut depth = 0usize;
+    // Whether the next token starts a subpattern (after `(`, `,` or `@`).
+    let mut expects_pattern = true;
+    while let Some(&ch) = chars.get(at) {
+        if ch.is_whitespace() {
+            at += 1;
+            continue;
+        }
+        if ch == '"' {
+            if !expects_pattern {
+                return None;
+            }
+            let start = at;
+            at += 1;
+            loop {
+                match chars.get(at)? {
+                    '\\' => at += 2,
+                    '"' => break,
+                    _ => at += 1,
+                }
+            }
+            at += 1;
+            value.extend(&chars[start..at]);
+            expects_pattern = false;
+            continue;
+        }
+        if ch.is_ascii_digit() || (ch == '-' && expects_pattern) {
+            if !expects_pattern {
+                return None;
+            }
+            let start = at;
+            at += 1;
+            while chars
+                .get(at)
+                .is_some_and(|next| next.is_ascii_alphanumeric() || matches!(next, '_' | '.'))
+            {
+                at += 1;
+            }
+            let literal: String = chars[start..at].iter().collect();
+            let digits = literal.strip_prefix('-').unwrap_or(&literal);
+            if !digits.starts_with(|first: char| first.is_ascii_digit()) || literal.contains("..") {
+                return None;
+            }
+            value.push_str(&literal);
+            expects_pattern = false;
+            continue;
+        }
+        if ch.is_alphabetic() || ch == '_' {
+            let start = at;
+            while chars
+                .get(at)
+                .is_some_and(|next| next.is_alphanumeric() || *next == '_')
+            {
+                at += 1;
+            }
+            let word: String = chars[start..at].iter().collect();
+            let mut next = at;
+            while chars.get(next).is_some_and(|next| next.is_whitespace()) {
+                next += 1;
+            }
+            if !expects_pattern {
+                return None;
+            }
+            match (word.as_str(), chars.get(next)) {
+                ("Some" | "Ok" | "Err", Some('(')) => {
+                    value.push_str(&word);
+                    value.push('(');
+                    depth += 1;
+                    at = next + 1;
+                }
+                ("None" | "true" | "false", _) => {
+                    value.push_str(&word);
+                    expects_pattern = false;
+                }
+                // `name @ literal`: the binding names the value it matched.
+                (_, Some('@'))
+                    if word != "_"
+                        && word.starts_with(|first: char| first.is_lowercase() || first == '_')
+                        && !matches!(word.as_str(), "ref" | "mut") =>
+                {
+                    at = next + 1;
+                }
+                _ => return None,
+            }
+            continue;
+        }
+        match ch {
+            ')' if depth > 0 && !expects_pattern => {
+                depth -= 1;
+                value.push(')');
+            }
+            // `Some(3,)`: one trailing comma before the constructor closes.
+            ')' if depth > 0 && expects_pattern && value.ends_with(", ") => {
+                depth -= 1;
+                value.truncate(value.len() - ", ".len());
+                value.push(')');
+                expects_pattern = false;
+            }
+            ',' if depth > 0 && !expects_pattern => {
+                value.push_str(", ");
+                expects_pattern = true;
+            }
+            _ => return None,
+        }
+        at += 1;
+    }
+    (depth == 0 && !expects_pattern).then_some(value)
 }
 
 /// The offset of the bracket closing the one at `opening`, in masked text.
