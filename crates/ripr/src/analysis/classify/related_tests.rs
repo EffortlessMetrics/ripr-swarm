@@ -150,8 +150,6 @@ impl RelatedTestCandidateIndex {
         &self.owner_pin_syntax
     }
 
-    /// Fold in the macro bindings of files a narrowed diff index withheld
-    /// (#5320), so the owner-pin ambiguity unions match the full selection.
     /// Record the root that probe paths are joined onto, so same-file
     /// matching strips it exactly instead of inferring the changed file from
     /// indexed path tails (#6791).
@@ -160,6 +158,8 @@ impl RelatedTestCandidateIndex {
         self
     }
 
+    /// Fold in the macro bindings of files a narrowed diff index withheld
+    /// (#5320), so the owner-pin ambiguity unions match the full selection.
     pub(in crate::analysis) fn with_withheld_macro_bindings(
         mut self,
         withheld: super::WithheldMacroBindings,
@@ -8004,15 +8004,21 @@ fn crate_c_score_test() {
                 .as_deref(),
             Some("app/src/lib.rs")
         );
-        // A relative root, including `.`, strips the same way.
+        // A relative root strips the same way: under `--root app` the root
+        // package's `app/src/lib.rs` is `src/lib.rs`, although the whole
+        // probe path is itself an indexed member path.
         assert_eq!(
             super::probe_index_path(
-                Path::new("./app/src/lib.rs"),
-                Some(Path::new(".")),
+                Path::new("app/src/lib.rs"),
+                Some(Path::new("app")),
                 None,
                 &index
             )
             .as_deref(),
+            Some("src/lib.rs")
+        );
+        assert_eq!(
+            super::probe_index_path(Path::new("app/src/lib.rs"), None, None, &index).as_deref(),
             Some("app/src/lib.rs")
         );
 
