@@ -29533,6 +29533,20 @@ fn gh_pr_status_behind_does_not_hide_a_conflict_or_grant_merge() {
 }
 
 #[test]
+fn gh_pr_status_behind_waits_for_a_running_advisory_check() {
+    let mut pr = gh_pr_status_pr(vec![
+        gh_pr_status_check("rust", "COMPLETED", "SUCCESS"),
+        gh_pr_status_check("droid/review", "IN_PROGRESS", ""),
+    ]);
+    pr.merge_state_status = "BEHIND".to_string();
+    let readiness = gh_pr_status_readiness(&pr, &["rust".to_string()], true, Vec::new());
+    assert!(readiness.behind_main);
+    assert!(readiness.required_checks_outstanding.is_empty());
+    assert_eq!(readiness.pending_checks.len(), 1);
+    assert_eq!(readiness.safe_next_action, "wait");
+}
+
+#[test]
 fn gh_pr_status_behind_packet_reports_integration_judgment() -> Result<(), String> {
     let pr = parse_gh_pr_status_pull_request(
         r#"{
