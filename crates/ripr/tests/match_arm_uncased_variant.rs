@@ -583,3 +583,76 @@ fn a_root_named_module_generated_by_a_macro_names_no_arm() -> Result<(), String>
     );
     Ok(())
 }
+
+#[test]
+fn a_root_named_module_from_a_macro_given_the_mod_keyword_names_no_arm() -> Result<(), String> {
+    // #7686 review: the macro receives `mod` as a token, so no `mod $name`
+    // or `mod lib` text appears, yet `m!(mod, lib)` declares `pub mod lib;`
+    // under the moved library root.
+    let owner = format!(
+        "use crate::kinds::Kind;\nmod kinds;\n\n{}",
+        body(WILDCARD_ARMS, "i32")
+    );
+    let manifest = "[package]\nname = \"uncased-variant\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\npath = \"src/real.rs\"\n\n[workspace]\n";
+    let root = "macro_rules! m {\n    ($k:tt, $n:ident) => {\n        pub $k $n;\n    };\n}\n\npub mod constants;\npub use constants as kinds;\nm!(mod, lib);\n";
+    let files = [
+        ("Cargo.toml", manifest),
+        ("src/real.rs", root),
+        ("src/constants.rs", CONSTANTS),
+        ("src/kinds.rs", ENUM),
+        ("src/lib/kinds.rs", ENUM),
+    ];
+    let test = "use uncased_variant::{kinds::Kind, lib::f};\n\n#[test]\nfn kind_a_is_one() {\n    assert_eq!(f(Kind::A), 1);\n}\n";
+    assert_eq!(
+        changed_wildcard(&owner, &files, test, "src/lib.rs")?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_root_named_module_from_an_included_file_names_no_arm() -> Result<(), String> {
+    // #7686 review: `include!` splices `src/decl.in`, which the index never
+    // reads, and it declares `pub mod lib;` under the moved library root.
+    let owner = format!(
+        "use crate::kinds::Kind;\nmod kinds;\n\n{}",
+        body(WILDCARD_ARMS, "i32")
+    );
+    let manifest = "[package]\nname = \"uncased-variant\"\nversion = \"0.0.0\"\nedition = \"2024\"\n\n[lib]\npath = \"src/real.rs\"\n\n[workspace]\n";
+    let root = "pub mod constants;\npub use constants as kinds;\ninclude!(\"decl.in\");\n";
+    let files = [
+        ("Cargo.toml", manifest),
+        ("src/real.rs", root),
+        ("src/decl.in", "pub mod lib;\n"),
+        ("src/constants.rs", CONSTANTS),
+        ("src/kinds.rs", ENUM),
+        ("src/lib/kinds.rs", ENUM),
+    ];
+    let test = "use uncased_variant::{kinds::Kind, lib::f};\n\n#[test]\nfn kind_a_is_one() {\n    assert_eq!(f(Kind::A), 1);\n}\n";
+    assert_eq!(
+        changed_wildcard(&owner, &files, test, "src/lib.rs")?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_module_file_compiled_out_by_an_inner_cfg_names_no_arm() -> Result<(), String> {
+    // #7686 review: `#![cfg(any())]` drops `src/kinds.rs`, so `kinds` comes
+    // from the glob and `Kind` is the constants struct.
+    let owner = format!(
+        "mod constants;\npub use constants::*;\nmod kinds;\npub use kinds::Kind;\n\n{}",
+        body(WILDCARD_ARMS, "i32")
+    );
+    let constants = format!("pub mod kinds {{\n{CONSTANTS}}}\n");
+    let kinds = format!("#![cfg(any())]\n\n{ENUM}");
+    let files = [
+        ("src/constants.rs", constants.as_str()),
+        ("src/kinds.rs", kinds.as_str()),
+    ];
+    assert_eq!(
+        changed_wildcard(&owner, &files, WILDCARD_TEST, "src/lib.rs")?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}

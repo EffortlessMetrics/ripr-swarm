@@ -1492,12 +1492,14 @@ fn imported_enum_variants(
     // shared by several crates (`tests/common/mod.rs`) never does. A module
     // file can carry such a path below inline modules (`mod outer { mod src
     // { mod main; } }` places `src/outer/src/main.rs`), so the root must be
-    // the workspace's `src/` or a `crates/<name>/src/` root. Default module
+    // the workspace's `src/` or a `crates/<name>/src/` root, and the
+    // package manifest must not move a target root (`[lib] path =
+    // "src/real.rs"` makes `src/lib.rs` a module). Default module
     // resolution reaches those paths from another crate only through a
     // `mod` of the root's stem (a `lib.rs` at the package root with `mod src
-    // { mod lib; }`, or a macro's `mod $name;`) from a crate root outside
-    // Cargo's standard directories, and `#[path]` reaches anywhere, so none
-    // of these may appear (#7686 review).
+    // { mod lib; }`, a macro's `mod $name;`, or `m!(mod, lib)`) from another
+    // root, and `#[path]` or `include!` reaches anywhere, so none of these
+    // may appear (#7686 review).
     let root = owner_chain
         .first()
         .map_or(owner_file, |edge| edge.parent.as_path());
@@ -1515,38 +1517,49 @@ fn imported_enum_variants(
         .last()
         .map(|file| file.trim_end_matches(".rs"))
         .unwrap_or_default();
+    // The root's sibling target root (`src/main.rs` beside `src/lib.rs`)
+    // reaches it with a plain `mod lib;`, which an external macro can
+    // spell from an argument; any mention of the stem there refuses.
+    let sibling = root.with_file_name(if stem == "lib" { "main.rs" } else { "lib.rs" });
     let crate_root = matches!(
         components.as_slice(),
         ["src", "lib.rs" | "main.rs"] | ["crates", _, "src", "lib.rs" | "main.rs"]
-    ) && !files.iter().any(|(path, facts)| {
-        // A package file outside Cargo's standard target directories may be
-        // a declared crate root (`[lib] path = "lib.rs"`) whose modules
-        // reach `src/lib.rs`; another member's files are its own package.
-        let parts = path
-            .components()
-            .map(|component| component.as_os_str().to_str().unwrap_or_default())
-            .collect::<Vec<_>>();
-        let nonstandard = package.is_some_and(|package| {
-            parts.starts_with(package)
-                && !(package.is_empty() && parts.first() == Some(&"crates"))
-                && !matches!(
-                    parts.get(package.len()).copied(),
-                    Some("src" | "tests" | "benches" | "examples" | "build.rs")
-                )
-        });
-        let masked = mask_comments_and_strings(&facts.source);
-        nonstandard
+    ) && index.member_crates.is_default_target_root(root)
+        && !files.iter().any(|(path, facts)| {
+            // A package file outside Cargo's standard target directories may be
+            // a declared crate root (`[lib] path = "lib.rs"`) whose modules
+            // reach `src/lib.rs`; another member's files are its own package.
+            let parts = path
+                .components()
+                .map(|component| component.as_os_str().to_str().unwrap_or_default())
+                .collect::<Vec<_>>();
+            let nonstandard = package.is_some_and(|package| {
+                parts.starts_with(package)
+                    && !(package.is_empty() && parts.first() == Some(&"crates"))
+                    && !matches!(
+                        parts.get(package.len()).copied(),
+                        Some("src" | "tests" | "benches" | "examples" | "build.rs")
+                    )
+            });
+            let masked = mask_comments_and_strings(&facts.source);
+            nonstandard
             || super::call_identity::has_path_attribute(&facts.source)
-            // A workspace macro may generate `mod $name;` for any name.
+            // `include!` splices unindexed text, which may declare modules.
+            || !whole_word_offsets(&masked, "include").is_empty()
+            // A `mod` keyword that does not start a plain `mod name;` or
+            // `mod name {` is macro input (`mod $name;`, `m!(mod, lib)`) and
+            // may declare a module of any name.
             || whole_word_offsets(&masked, "mod")
                 .into_iter()
-                .any(|offset| masked[offset + 3..].trim_start().starts_with('$'))
+                .any(|offset| !declares_named_module(&masked[offset + 3..]))
+            || (path.as_path() == sibling.as_path()
+                && !whole_word_offsets(&facts.source, stem).is_empty())
             || whole_word_offsets(&masked, stem).into_iter().any(|offset| {
                 let before = masked[..offset].trim_end();
                 let before = before.strip_suffix("r#").unwrap_or(before).trim_end();
                 before.ends_with("mod")
             })
-    });
+        });
     if !crate_root {
         return None;
     }
@@ -1603,12 +1616,29 @@ fn imported_enum_variants(
         if children.next().is_some() {
             return None;
         }
+        // An inner `#![cfg]` compiles the module file out as surely as one
+        // on its `mod` item (#7686 review).
+        let tree = crate::analysis::syntax::parse_clean_source_file(&files.get(&child)?.source)?;
+        if cfg_gated(&tree.tree()) {
+            return None;
+        }
         file = child;
     }
     if file == owner_file {
         return None;
     }
     declared_enum_variants(&files.get(&file)?.source, type_name, owner_name)
+}
+
+/// Whether `rest`, the text after a `mod` keyword, starts a plain module
+/// declaration: a (raw) identifier followed by `;` or `{`.
+fn declares_named_module(rest: &str) -> bool {
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix("r#").unwrap_or(rest);
+    let end = rest
+        .find(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+        .unwrap_or(rest.len());
+    end > 0 && rest[end..].trim_start().starts_with([';', '{'])
 }
 
 /// Whether a related test file outside the owner's file may bind

@@ -352,13 +352,19 @@ implies but does not spell out:
   that name and call no such macro, glob-import no module inside an
   inline module (except `super::*`), and its recorded module chain must
   start at the workspace's `src/lib.rs` or `src/main.rs` or a
-  `crates/<name>/src/` one, with no workspace file declaring a `mod` of
-  that file's stem (a package-root `lib.rs` with `mod src { mod lib; }`)
-  or a macro-generated `mod $name;`, no package file outside `src/`,
-  `tests/`, `benches/`, `examples/` and `build.rs` (a possible declared
-  crate root), and no `#[path]`, which reaches anywhere. Each path step
-  must be a top-level `mod` of its parent file. Each path step must be the one
-  `mod` of that name in its parent file, declared out of line. An inline or
+  `crates/<name>/src/` one. That root must be its package manifest's
+  default target root (`autolib` and `autobins` on, no target moved by a
+  `path` other than a `[[bin]]` naming `src/main.rs`). No workspace file
+  may declare a `mod` of that file's stem (a package-root `lib.rs` with
+  `mod src { mod lib; }`), use the `mod` keyword other than to start a
+  plain `mod name;` or `mod name {` (macro input such as `mod $name;` or
+  `m!(mod, lib)`), call or name `include!`, or carry a `#[path]`, which
+  reaches anywhere; the sibling root (`src/main.rs` beside `src/lib.rs`)
+  may not mention the stem at all; and no package file may sit outside
+  `src/`, `tests/`, `benches/`, `examples/` and `build.rs`. Each path step
+  must be the one `mod` of that name in its parent file, declared out of
+  line at the file's top level, and its file may carry no inner
+  `#![cfg]` or `#![cfg_attr]`. An inline or
   `cfg`-duplicated module on the path, a `cfg` or `cfg_attr` on the import
   or a module step, a chain below an inline module, a
   re-export, a rename, an `include!` or an unresolved module edge reads
@@ -472,9 +478,12 @@ the diff changes `None => 1` to `None => 0`.
   re-export in its place; and an owner item shadowing the import, a
   `cfg`-alternative inline module, a `cfg`-gated import beside a glob, a
   `crate::` path from below an inline module or from a module file named
-  `src/main.rs` below inline modules or a package-root library, and a
-  statement macro in the owner, including one shadowing `assert!`, that
-  may declare a local `Kind`.
+  `src/main.rs` below inline modules or a package-root library, a
+  nested module step beside a renamed import, a moved library root that
+  declares `mod lib` through a macro (`mod $name;` or a passed `mod`
+  token) or an included file, a module file compiled out by an inner
+  `#![cfg]`, and a statement macro in the owner, including one shadowing
+  `assert!`, that may declare a local `Kind`.
 - `crates/ripr/tests/match_arm_unselected_identity.rs`: owner identity
   (foreign imports, a foreign call path, a shadowing closure, a two-level
   helper).
