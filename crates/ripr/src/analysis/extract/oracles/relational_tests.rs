@@ -482,6 +482,13 @@ fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), St
         ("assert!(matches!(r, Ok(_)) == true);", &weak),
         ("ensure!(matches!(r, Ok(_)) == true);", &weak),
         ("assert!(matches!(r, _) == true);", &weak),
+        ("assert!((matches!(r, Ok(_))) == true);", &weak),
+        ("assert!(matches!(r, Ok(_)) == (true));", &weak),
+        ("assert!(false == matches!(r, Ok(_)));", &weak),
+        (
+            "assert!(xs.iter().any(|x| ::core::matches!(x, Some(_))));",
+            &weak,
+        ),
         // Controls: a pattern that pins keeps exact credit in every form.
         ("assert!(xs.iter().any(|x| matches!(x, Some(3))));", &exact),
         // Rule 1 already reads a compared pattern nested in a chain as not
@@ -498,9 +505,16 @@ fn compound_matches_forms_read_no_stronger_than_their_pattern() -> Result<(), St
             "assert!(xs.iter().any(|x| custom::matches!(x, Some(_))));",
             &exact,
         ),
+        (
+            "assert!(xs.iter().any(|x| helpers::std::matches!(x, Some(_))));",
+            &exact,
+        ),
+        ("assert!((matches!(r, Ok(3))) == true);", &exact),
     ] {
         require_classification(text, expected)?;
     }
+    // A non-ASCII token before the macro path is read on a char boundary.
+    let _ = classify_assertion("assert!(ok→std::matches!(r, Ok(_)));");
     Ok(())
 }
 

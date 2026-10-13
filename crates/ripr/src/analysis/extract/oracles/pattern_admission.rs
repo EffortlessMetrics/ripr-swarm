@@ -63,18 +63,12 @@ pub(super) fn some_matches_pins_a_value(text: &str) -> bool {
             // is not the std pattern test, so it keeps today's reading.
             return true;
         }
-        // A user macro (`custom::matches!`) is not the std pattern test, so
-        // it keeps today's reading. A spaced or commented std path
-        // (`std :: matches!`) is still std.
-        if let Some(path) = before.trim_end().strip_suffix("::") {
-            let segment = path
-                .trim_end()
-                .rsplit(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
-                .next()
-                .unwrap_or_default();
-            if !matches!(segment, "std" | "core") {
-                return true;
-            }
+        // A user macro (`custom::matches!`, `helpers::std::matches!`) is not
+        // the std pattern test, so it keeps today's reading. A spaced or
+        // commented std path (`std :: matches!`, `::core::matches!`) is
+        // still std.
+        if before.trim_end().ends_with("::") && !is_std_macro_path(before) {
+            return true;
         }
         let after = index + name.len();
         let Some((offset, '(' | '[' | '{')) = masked[after..]
@@ -92,6 +86,30 @@ pub(super) fn some_matches_pins_a_value(text: &str) -> bool {
             }
         })
     })
+}
+
+/// Whether the macro path ending `before` (masked text up to `matches!`,
+/// ending in `::`) is exactly `std::` or `core::`, with an optional leading
+/// `::` and whitespace around each `::`.
+fn is_std_macro_path(before: &str) -> bool {
+    let mut rest = before.trim_end();
+    let mut segments = Vec::new();
+    while let Some(prefix) = rest.strip_suffix("::") {
+        let prefix = prefix.trim_end();
+        let start = prefix
+            .char_indices()
+            .rev()
+            .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_'))
+            .map_or(0, |(index, ch)| index + ch.len_utf8());
+        let segment = prefix.get(start..).unwrap_or_default();
+        if segment.is_empty() {
+            // A leading `::` ends the path.
+            break;
+        }
+        segments.push(segment);
+        rest = prefix.get(..start).unwrap_or_default().trim_end();
+    }
+    matches!(segments.as_slice(), ["std" | "core"])
 }
 
 /// Whether `text` is one complete `matches!` invocation whose pattern pins

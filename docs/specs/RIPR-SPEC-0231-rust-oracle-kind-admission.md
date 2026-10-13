@@ -313,13 +313,17 @@ Two pattern terms are used below.
    that value; a self-comparison (`value == value`) pins nothing and
    neither exempts the chain nor earns rule 1's exact credit.
    `prop_assert!` reads a whole `matches!` condition as `assert!` does.
-   Outside those whole forms, a `matches!` earns no exact credit from its
-   text alone: one nested in a call or closure
-   (`xs.iter().any(|x| matches!(x, Some(_)))`), one compared with a bool
-   (`matches!(r, Ok(_)) == true`, which is no pinning `==` either) or one
-   named only in a comment or string is credited only when its own pattern
+   Outside those whole forms, a `matches!` invocation earns no exact credit
+   from its text alone. One nested in a call or closure
+   (`xs.iter().any(|x| matches!(x, Some(_)))`) or compared with a bool
+   (`matches!(r, Ok(_)) == true`, with or without redundant parentheses,
+   which is no pinning `==` either) is credited only when its own pattern
    pins a value or a pinning `==` conjunct keeps the chain (#7715). A
-   user macro path (`custom::matches!`) keeps today's reading.
+   `matches!` named only in a comment or string is no invocation and earns
+   nothing. A user macro, by path (`custom::matches!`,
+   `helpers::std::matches!`) or by name (`expect_matches!`), keeps today's
+   reading; only `matches!`, `std::matches!` and `core::matches!` (with an
+   optional leading `::`) are the std pattern test.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
    `Option::is_some(`), not as a substring of another identifier such as

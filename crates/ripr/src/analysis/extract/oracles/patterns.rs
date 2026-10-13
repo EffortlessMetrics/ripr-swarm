@@ -1136,8 +1136,11 @@ fn compares_unpinned_pattern_with_bool(conjunct: &str, at: usize) -> bool {
     let (Some(left), Some(right)) = (conjunct.get(..at), conjunct.get(at + 2..)) else {
         return false;
     };
-    let is_bool = |side: &str| matches!(mask_comments_and_strings(side).trim(), "true" | "false");
-    (is_bool(left) && is_unpinned_pattern(right)) || (is_bool(right) && is_unpinned_pattern(left))
+    // Redundant parentheses (`(true)`, `(matches!(r, Ok(_)))`) change nothing.
+    let is_bool =
+        |side: &str| boolean_literal_value(mask_comments_and_strings(side).trim()).is_some();
+    let is_pattern = |side: &str| is_unpinned_pattern(unwrap_parentheses(side.trim()));
+    (is_bool(left) && is_pattern(right)) || (is_bool(right) && is_pattern(left))
 }
 
 /// Which of `==` and `!=` appear outside string literals and comments.
