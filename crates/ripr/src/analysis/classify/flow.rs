@@ -502,13 +502,10 @@ fn tail_if_branch_value(
     let changed = changed_line.trim();
     // The probe must be the `if` condition itself, not text that merely
     // appears inside a branch value on the same line.
-    let Some(condition) = changed
+    let condition = changed
         .strip_prefix("if ")
         .and_then(|rest| rest.split_once('{'))
-        .map(|(condition, _)| condition.trim())
-    else {
-        return None;
-    };
+        .map(|(condition, _)| condition.trim())?;
     if condition != code(&probe.expression) {
         return None;
     }
