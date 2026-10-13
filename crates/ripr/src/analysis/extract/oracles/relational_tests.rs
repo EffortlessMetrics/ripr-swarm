@@ -415,25 +415,42 @@ fn a_matches_conjunct_reads_no_stronger_than_its_pattern() -> Result<(), String>
         ("assert!(ready && matches!(r, Err(Error::Denied)));", &err),
         ("assert!(matches!(r, Ok(_)));", &smoke),
     ] {
-        let classification = classify_assertion(text);
-        if (&classification.kind, &classification.strength) != (&expected.0, &expected.1) {
-            return Err(format!(
-                "{text}: expected {:?}/{:?}, got {:?}/{:?}",
-                expected.0, expected.1, classification.kind, classification.strength
-            ));
-        }
+        require_classification(text, expected)?;
     }
-    // A trailing line comment on a conjunct cannot swallow the rewritten
-    // `);` and leave the chain unread.
-    for text in [
-        "assert!(\n    ready // set above\n    && matches!(r, Ok(_))\n);",
-        "assert!(\n    ready &&\n    matches!(r, Ok(_)) // side only\n);",
+    // The extracted fact agrees, including when a trailing line comment on a
+    // conjunct could swallow the rewritten `);` and leave the chain unread.
+    for (text, expected) in [
+        ("assert!(ready && matches!(r, Ok(_)));", &weak),
+        ("assert!(ready && matches!(r, Ok(3)));", &exact),
+        ("assert!(total == 4 && matches!(r, Ok(_)));", &exact),
+        (
+            "assert!(\n    ready // set above\n    && matches!(r, Ok(_))\n);",
+            &weak,
+        ),
+        (
+            "assert!(\n    ready &&\n    matches!(r, Ok(_)) // side only\n);",
+            &weak,
+        ),
     ] {
         let facts = extract_assertions(text, 7695);
         let Some(fact) = facts.first() else {
             return Err(format!("{text}: must produce an oracle fact"));
         };
-        require_kind(fact, OracleKind::RelationalCheck, OracleStrength::Weak)?;
+        require_kind(fact, expected.0.clone(), expected.1.clone())?;
+    }
+    Ok(())
+}
+
+fn require_classification(
+    text: &str,
+    expected: &(OracleKind, OracleStrength),
+) -> Result<(), String> {
+    let classification = classify_assertion(text);
+    if (&classification.kind, &classification.strength) != (&expected.0, &expected.1) {
+        return Err(format!(
+            "{text}: expected {:?}/{:?}, got {:?}/{:?}",
+            expected.0, expected.1, classification.kind, classification.strength
+        ));
     }
     Ok(())
 }
