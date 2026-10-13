@@ -460,8 +460,10 @@ and `logical_file_bytes` (sum of copied encoded file lengths). These lengths do
 not describe allocated bytes, directory overhead or peak disk use. Missing
 optional file facts are counted; corrupt present entries and incomplete required
 references refuse success. There is no success JSON for incomplete export. Require
-exit zero before consuming the directory; failure names retained owned partial
-output. The live cache is unchanged. See [RIPR-SPEC-0255](specs/RIPR-SPEC-0255-current-cache-export.md).
+exit zero before consuming the directory. Failures after output creation name the
+retained owned partial output; preflight refusals, including unavailable Cargo
+input identity, occur before the output directory exists and create no output.
+The live cache is unchanged. See [RIPR-SPEC-0255](specs/RIPR-SPEC-0255-current-cache-export.md).
 
 ## Matched intervention-study preregistration
 

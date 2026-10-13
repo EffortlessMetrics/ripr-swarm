@@ -62,8 +62,10 @@ they do not protect against hostile concurrent directory replacement. An
 ordinary publisher removing a referenced file can make export fail safely.
 
 The destination is an exclusive task-owned directory. Require native exit zero
-before restoring or publishing it. Failure retains and names incomplete output;
-there is no successful partial-export result or automatic deletion. Output is
+before restoring or publishing it. Failures after output creation retain and
+name the incomplete output; preflight refusals, including unavailable Cargo
+input identity, occur before the output directory exists and create no output.
+There is no successful partial-export result or automatic deletion. Output is
 not an atomically published shared cache. Restore a completed directory through
 `RIPR_CACHE_DIR` under the same workspace path, analyzer build and applicable
 input identity. Omitted fingerprint mappings cost a source hash pass, not loss
