@@ -722,8 +722,12 @@ fn a_sibling_root_that_may_expand_unread_items_names_no_arm() -> Result<(), Stri
 fn narrowed_arm_class(test: &str) -> Result<ExposureClass, String> {
     let enum_abc =
         "#[derive(Debug, Clone, Copy, PartialEq)]\npub enum Kind {\n    A,\n    B,\n    C,\n}\n";
-    let arms = "        Kind::A => 1,\n        Kind::B => 2,\n        _ => 0,\n";
-    let lib = format!("{enum_abc}\n{}", body(arms, "i32"));
+    narrowed_arm_class_in(enum_abc, "        Kind::B => 2,\n", test)
+}
+
+fn narrowed_arm_class_in(kind: &str, later: &str, test: &str) -> Result<ExposureClass, String> {
+    let arms = format!("        Kind::A => 1,\n{later}        _ => 0,\n");
+    let lib = format!("{kind}\n{}", body(&arms, "i32"));
     let (diff, line) = diff_at(
         "src/lib.rs",
         &lib,
@@ -752,5 +756,30 @@ fn an_input_moved_onto_a_later_uncased_arm_exposes_the_narrowed_arm() -> Result<
     let stayed_class = narrowed_arm_class(stayed)?;
     assert_eq!(moved_class, ExposureClass::Exposed);
     assert_ne!(stayed_class, ExposureClass::Exposed);
+    Ok(())
+}
+
+#[test]
+fn a_later_arm_naming_an_associated_constant_earns_no_moved_input_credit() -> Result<(), String> {
+    // #7670: `Kind::B` is an associated constant here, not a variant, so
+    // the later arm's pattern is unknown and the narrowing earns no credit.
+    let kind = "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub enum Kind {\n    A,\n    C,\n}\n\nimpl Kind {\n    pub const B: Kind = Kind::C;\n}\n";
+    let test = "use uncased_variant::{Kind, f};\n\n#[test]\nfn b_is_two() {\n    assert_eq!(f(Kind::B), 2);\n}\n";
+    assert_ne!(
+        narrowed_arm_class_in(kind, "        Kind::B => 2,\n", test)?,
+        ExposureClass::Exposed
+    );
+    Ok(())
+}
+
+#[test]
+fn a_later_struct_constant_arm_earns_no_moved_input_credit() -> Result<(), String> {
+    // #7670: a struct's uppercase constants are never variants.
+    let kind = "#[derive(Debug, Clone, Copy, PartialEq, Eq)]\npub struct Kind(u8);\n\nimpl Kind {\n    pub const A: Kind = Kind(0);\n    pub const B: Kind = Kind(1);\n}\n";
+    let test = "use uncased_variant::{Kind, f};\n\n#[test]\nfn b_is_two() {\n    assert_eq!(f(Kind::B), 2);\n}\n";
+    assert_ne!(
+        narrowed_arm_class_in(kind, "        Kind::B => 2,\n", test)?,
+        ExposureClass::Exposed
+    );
     Ok(())
 }
