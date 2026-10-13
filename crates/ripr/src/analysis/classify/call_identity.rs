@@ -818,7 +818,9 @@ fn value_mentions(body: &str, name: &str) -> Vec<Option<Vec<String>>> {
             continue;
         }
         let tail = masked[end..].trim_start();
-        if tail.starts_with('(') || tail.starts_with(':') || tail.starts_with('!') {
+        // `name!` is a macro, but `name != x` compares the name as a value.
+        let is_macro = tail.starts_with('!') && !tail.starts_with("!=");
+        if tail.starts_with('(') || tail.starts_with(':') || is_macro {
             continue;
         }
         let head = masked[..start].trim_end();
@@ -877,11 +879,15 @@ fn mentions_word(body: &str, word: &str) -> bool {
     })
 }
 
+/// The identifier ending `head`. Identifiers may be non-ASCII
+/// (`módulo`), so the start is a char boundary, never `index + 1`.
 fn head_word(head: &str) -> &str {
     let start = head
-        .rfind(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
-        .map_or(0, |index| index + 1);
-    &head[start..]
+        .char_indices()
+        .rev()
+        .find(|(_, ch)| !(ch.is_alphanumeric() || *ch == '_'))
+        .map_or(0, |(index, ch)| index + ch.len_utf8());
+    head.get(start..).unwrap_or_default()
 }
 
 /// The `a::b::` path segments ending `head`, outermost first.
@@ -899,7 +905,10 @@ fn qualifier_before(head: &str) -> Option<Vec<String>> {
             return None;
         }
         segments.push(word.to_string());
-        rest = before[..before.len() - word.len()].trim_end();
+        rest = before
+            .get(..before.len() - word.len())
+            .unwrap_or_default()
+            .trim_end();
     }
     segments.reverse();
     Some(segments)
@@ -909,6 +918,15 @@ fn qualifier_before(head: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
     use crate::analysis::rust_index::summarize_file;
+
+    #[test]
+    fn a_non_ascii_qualifier_is_read_whole_without_slicing_inside_a_char() {
+        assert_eq!(head_word("assert_eq!(crate::módulo"), "módulo");
+        assert_eq!(
+            qualifier_before("assert_eq!(crate::módulo::"),
+            Some(strings(&["crate", "módulo"]))
+        );
+    }
 
     fn strings(segments: &[&str]) -> Vec<String> {
         segments.iter().map(|s| s.to_string()).collect()
@@ -1675,6 +1693,14 @@ mod tests {
         assert_eq!(
             value_mentions(body, "render"),
             vec![Some(strings(&["crate", "b"])), Some(Vec::new())]
+        );
+        assert_eq!(
+            value_mentions("fn t() { assert!(f != a::render); }", "render"),
+            vec![Some(strings(&["a"]))]
+        );
+        assert_eq!(
+            value_mentions("fn t() { assert!(a::render != f); }", "render"),
+            vec![Some(strings(&["a"]))]
         );
         assert!(mentions_word("let x = fast(1);", "fast"));
         assert!(!mentions_word("let x = faster(1); // fast", "fast"));
