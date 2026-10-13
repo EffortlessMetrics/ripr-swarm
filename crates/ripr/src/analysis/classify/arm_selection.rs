@@ -98,7 +98,13 @@ pub(in crate::analysis) struct ArmSelector {
     /// declaration in the owner's file (`declared_enum_variants`). `None`
     /// leaves every uncased name unreadable.
     declared_variants: Option<std::collections::BTreeSet<String>>,
+    /// RIPR-SPEC-0229 (#6616): the value operand of each related test's admitted
+    /// exact pattern pin, keyed by test file, test start line, test name,
+    /// assertion line and assertion text.
+    pattern_pins: std::collections::BTreeMap<PatternPinKey, String>,
 }
+
+type PatternPinKey = (std::path::PathBuf, usize, String, usize, String);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::analysis) enum ArmSelection {
@@ -286,6 +292,7 @@ impl ArmSelector {
             local_roots,
             owner_file: owner.file.clone(),
             test_imports: None,
+            pattern_pins: std::collections::BTreeMap::new(),
         })
     }
 
@@ -501,17 +508,71 @@ impl ArmSelector {
         }) {
             return false;
         }
-        operands.iter().any(|operand| {
-            let operand = operand.trim();
-            owner_calls_in(operand, &self.owner, self.method, &self.local_roots)
-                .into_iter()
-                .any(|call| {
-                    call.span == (0, operand.len())
-                        && self
-                            .call_input(&call)
-                            .is_some_and(|input| self.judge(input) == ArmSelection::Selects)
-                })
-        })
+        operands.iter().any(|operand| self.operand_selects(operand))
+    }
+
+    /// Whether `operand` is exactly a direct owner call whose scrutinee
+    /// input selects this arm.
+    fn operand_selects(&self, operand: &str) -> bool {
+        let operand = operand.trim();
+        owner_calls_in(operand, &self.owner, self.method, &self.local_roots)
+            .into_iter()
+            .any(|call| {
+                call.span == (0, operand.len())
+                    && self
+                        .call_input(&call)
+                        .is_some_and(|input| self.judge(input) == ArmSelection::Selects)
+            })
+    }
+
+    /// RIPR-SPEC-0229 (#6616): keeps each related test's admitted exact pattern
+    /// pins (`assert_matches!(owner("q"), Err(E::Unknown))` through a
+    /// verified local macro), as `admitted` reads them.
+    pub(in crate::analysis) fn with_pattern_pins<'a>(
+        mut self,
+        tests: impl IntoIterator<Item = &'a TestSummary>,
+        admitted: impl Fn(&TestSummary, &crate::analysis::facts::OracleFact) -> Option<String>,
+    ) -> Self {
+        for test in tests {
+            for assertion in &test.assertions {
+                if let Some(value) = admitted(test, assertion) {
+                    self.pattern_pins.insert(
+                        (
+                            test.file.clone(),
+                            test.start_line,
+                            test.name.clone(),
+                            assertion.line,
+                            assertion.text.clone(),
+                        ),
+                        value,
+                    );
+                }
+            }
+        }
+        self
+    }
+
+    /// Whether `assertion` is an admitted exact pattern pin whose value
+    /// operand is exactly a direct owner call selecting this arm. A pattern
+    /// names no call, so its expected side cannot move with the arm.
+    pub(in crate::analysis) fn pattern_pin_selects(
+        &self,
+        test: &TestSummary,
+        assertion: &crate::analysis::facts::OracleFact,
+    ) -> bool {
+        // Most selectors carry no pins; skip building the owned key.
+        if self.pattern_pins.is_empty() {
+            return false;
+        }
+        self.pattern_pins
+            .get(&(
+                test.file.clone(),
+                test.start_line,
+                test.name.clone(),
+                assertion.line,
+                assertion.text.clone(),
+            ))
+            .is_some_and(|value| self.operand_selects(value))
     }
 
     /// Whether the test names the owner at all. A test that reaches the
@@ -1686,6 +1747,63 @@ mod tests {
     fn reason_selector() -> Result<ArmSelector, String> {
         ArmSelector::establish(&arm_probe("None => 0,", 4), &owner(REASON, "reason"))
             .ok_or_else(|| "premise: the None arm reads its scrutinee from x".to_string())
+    }
+
+    fn oracle(line: usize, text: &str) -> crate::analysis::facts::OracleFact {
+        crate::analysis::facts::OracleFact {
+            line,
+            text: text.to_string(),
+            kind: crate::domain::OracleKind::ExactErrorVariant,
+            strength: crate::domain::OracleStrength::Strong,
+            observed_tokens: Vec::new(),
+            ok_value_observed: None,
+        }
+    }
+
+    /// #6616: an admitted exact pattern pin selects the trailing `_` arm
+    /// only through an input that misses every sibling literal; a pin the
+    /// admission refused selects nothing.
+    #[test]
+    fn an_admitted_pattern_pin_selects_the_wildcard_arm_by_its_input() -> Result<(), String> {
+        let units = "pub fn parse_unit(raw: &str) -> Result<u32, UnitError> {\n    match raw {\n        \"\" => Err(UnitError::Blank),\n        \"k\" => Ok(1_000),\n        _ => Err(UnitError::Unknown),\n    }\n}\n";
+        let mut probe = arm_probe("_ => Err(UnitError::Blank),", 5);
+        probe.before = Some("_ => Err(UnitError::Unknown),".to_string());
+        let mut test = test_with(
+            "fn t() {\n    assert_matches!(parse_unit(\"q\"), Err(UnitError::Unknown));\n    assert_matches!(parse_unit(\"k\"), Ok(1_000));\n    assert_matches!(parse_unit(\"\"), Err(UnitError::Blank));\n    assert_matches!(parse_unit(\"z\"), Err(UnitError::Unknown));\n}\n",
+        );
+        test.assertions = vec![
+            oracle(
+                2,
+                "assert_matches!(parse_unit(\"q\"), Err(UnitError::Unknown));",
+            ),
+            oracle(3, "assert_matches!(parse_unit(\"k\"), Ok(1_000));"),
+            oracle(
+                4,
+                "assert_matches!(parse_unit(\"\"), Err(UnitError::Blank));",
+            ),
+            oracle(
+                5,
+                "assert_matches!(parse_unit(\"z\"), Err(UnitError::Unknown));",
+            ),
+        ];
+        let selector = ArmSelector::establish(&probe, &owner(units, "parse_unit"))
+            .ok_or_else(|| "premise: the `_` arm reads its scrutinee from raw".to_string())?
+            .with_pattern_pins([&test], |_, assertion| {
+                // The admission refused line 5 (say, after a `return;`).
+                (assertion.line != 5).then(|| {
+                    let open = assertion.text.find('(').unwrap_or(0) + 1;
+                    let close = assertion.text.find(", ").unwrap_or(open);
+                    assertion.text[open..close].to_string()
+                })
+            });
+        let selects = |index: usize| selector.pattern_pin_selects(&test, &test.assertions[index]);
+        assert!(selects(0), "\"q\" misses every sibling literal");
+        assert!(!selects(1), "\"k\" selects a sibling arm");
+        assert!(!selects(2), "\"\" selects a sibling arm");
+        assert!(!selects(3), "a refused pin selects nothing");
+        // The text-only reader never reads a pattern pin as a comparison.
+        assert!(!selector.assertion_selects(&test.assertions[0].text));
+        Ok(())
     }
 
     #[test]

@@ -11,7 +11,7 @@ use super::ra::module_attributes_require_test;
 use crate::analysis::facts::cfg_predicates::attribute_test_build_availability;
 use ra_ap_syntax::{
     AstNode, SyntaxKind, TextSize,
-    ast::{self, HasGenericParams, HasName},
+    ast::{self, HasArgList, HasGenericParams, HasName},
 };
 
 /// How the owner takes `self`, when it is a method.
@@ -705,6 +705,64 @@ pub(crate) fn single_comparison(expression: &str) -> Option<ComparisonFact> {
     })
 }
 
+/// One argument of a call's argument list, as the parser split it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct CallArgumentFact {
+    pub(crate) text: String,
+    /// The argument's value is produced by a function or method call
+    /// (`big_order()`, `build::<Order>()`, `fixtures::order()`,
+    /// `order.amount()`), possibly behind parentheses, a reference, `?`,
+    /// or a field read (`big_order().amount`). Macros, literals, paths,
+    /// operators, closures and blocks are not.
+    pub(crate) built_by_call: bool,
+}
+
+/// Parse `contents`, the text between a call's parentheses, as one
+/// argument list and classify each argument from the syntax tree. `None`
+/// when the text is not exactly one clean argument list.
+pub(crate) fn call_argument_facts(contents: &str) -> Option<Vec<CallArgumentFact>> {
+    let wrapped = format!("fn ripr_probe() {{ ripr_call({contents}); }}");
+    let parse = parse_clean_source_file(&wrapped)?;
+    let function = parse.tree().syntax().children().find_map(ast::Fn::cast)?;
+    let body = function.body()?.stmt_list()?;
+    let mut statements = body.statements();
+    let ast::Stmt::ExprStmt(statement) = statements.next()? else {
+        return None;
+    };
+    if statements.next().is_some() || body.tail_expr().is_some() {
+        return None;
+    }
+    let ast::Expr::CallExpr(call) = statement.expr()? else {
+        return None;
+    };
+    let ast::Expr::PathExpr(callee) = call.expr()? else {
+        return None;
+    };
+    if callee.syntax().text() != "ripr_call" {
+        return None;
+    }
+    Some(
+        call.arg_list()?
+            .args()
+            .map(|argument| CallArgumentFact {
+                text: argument.syntax().text().to_string(),
+                built_by_call: expression_built_by_call(&argument),
+            })
+            .collect(),
+    )
+}
+
+fn expression_built_by_call(expression: &ast::Expr) -> bool {
+    match expression {
+        ast::Expr::CallExpr(_) | ast::Expr::MethodCallExpr(_) => true,
+        ast::Expr::ParenExpr(inner) => inner.expr().is_some_and(|e| expression_built_by_call(&e)),
+        ast::Expr::RefExpr(inner) => inner.expr().is_some_and(|e| expression_built_by_call(&e)),
+        ast::Expr::TryExpr(inner) => inner.expr().is_some_and(|e| expression_built_by_call(&e)),
+        ast::Expr::FieldExpr(inner) => inner.expr().is_some_and(|e| expression_built_by_call(&e)),
+        _ => false,
+    }
+}
+
 /// Start offsets of identifier tokens spelled `name`, read from the clean
 /// parse so comments and string literals never count. Empty when the file
 /// does not parse cleanly.
@@ -866,6 +924,55 @@ mod tests {
         assert_eq!(owner_fn_line_span(source, 6), Some((5, 7)));
         assert_eq!(owner_fn_line_span(source, 2), Some((1, 3)));
         assert_eq!(owner_fn_line_span(source, 4), None);
+    }
+
+    #[test]
+    fn call_argument_facts_classifies_call_built_arguments_from_the_tree() {
+        let built = |contents: &str| {
+            call_argument_facts(contents).map(|facts| {
+                facts
+                    .into_iter()
+                    .map(|fact| (fact.text, fact.built_by_call))
+                    .collect::<Vec<_>>()
+            })
+        };
+        // Free, path, turbofish (with a comma inside its generics), method,
+        // wrapped and field-of-call arguments are built by a call.
+        assert_eq!(
+            built("big_order(), fixtures::order(), build::<Order, u8>(), order.amount()"),
+            Some(vec![
+                ("big_order()".to_string(), true),
+                ("fixtures::order()".to_string(), true),
+                ("build::<Order, u8>()".to_string(), true),
+                ("order.amount()".to_string(), true),
+            ])
+        );
+        assert_eq!(
+            built("&big(), (big()), parse(s)?, big_order().amount"),
+            Some(vec![
+                ("&big()".to_string(), true),
+                ("(big())".to_string(), true),
+                ("parse(s)?".to_string(), true),
+                ("big_order().amount".to_string(), true),
+            ])
+        );
+        // Literals, identifiers, macros, operators over a call, closures,
+        // blocks, and call-shaped text inside a string are not.
+        assert_eq!(
+            built(r#"5000, amount, amount!(), base() + 1, || big(), { big() }, "big()""#),
+            Some(vec![
+                ("5000".to_string(), false),
+                ("amount".to_string(), false),
+                ("amount!()".to_string(), false),
+                ("base() + 1".to_string(), false),
+                ("|| big()".to_string(), false),
+                ("{ big() }".to_string(), false),
+                (r#""big()""#.to_string(), false),
+            ])
+        );
+        // Text that is not exactly one argument list fails closed.
+        assert_eq!(built("a); evil("), None);
+        assert_eq!(built("big("), None);
     }
 
     #[test]

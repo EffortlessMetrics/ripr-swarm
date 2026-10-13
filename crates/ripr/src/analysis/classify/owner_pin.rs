@@ -62,10 +62,10 @@ use crate::analysis::facts::{
 use crate::analysis::syntax::fn_signature::{LocalTypeEquality, local_type_equality};
 use crate::analysis::syntax::{
     AssertionContextRefusal, GeneratedTestPins, HelperLoan, MacroBindingCandidates,
-    MacroBindingKind, MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES,
+    MacroBindingKind, MacroBindingSite, OwnerPinAssertions, PatternPins, TRUSTED_MACRO_NAMES,
     attribute_settles_test_outcome, empty_macro_binding_ambiguities, err_return_guard_key,
     generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
-    parse_clean_source_file, returns_leave_the_function, trusted_macro_binding_sites,
+    parse_clean_source_file, pattern_pins, returns_leave_the_function, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -121,6 +121,9 @@ pub(in crate::analysis) struct OwnerPinSyntax {
     /// run for an hour.
     test_file_macro_sites: RefCell<TestFileMacroSites>,
     by_file: RefCell<BTreeMap<PathBuf, OwnerPinAssertions>>,
+    /// Per file: the exact pattern pins of its tests through a verified
+    /// local `assert_matches!` (#6616), parsed once per run.
+    pattern_pins: RefCell<BTreeMap<PathBuf, PatternPins>>,
     empty_macro_ambiguities: RefCell<BTreeMap<PathBuf, BTreeSet<String>>>,
     /// Per file: the expansion-coordinate admission facts of the tests a
     /// same-file `macro_rules!` generated (#5334).
@@ -553,12 +556,16 @@ impl OwnerPinSyntax {
             .cloned()
     }
 
-    fn refusal(
+    /// The gates every assertion of `test` shares, whatever its macro: a
+    /// parser-backed file, resolved module composition, and each module
+    /// declaration on the chain admitted. `Ok` holds the macro names some
+    /// visible binding may rebind for an assertion on `line`.
+    fn context_ambiguities(
         &self,
         test: &TestSummary,
-        assertion: &OracleFact,
+        line: usize,
         index: &RustIndex,
-    ) -> Option<AssertionRefusal> {
+    ) -> Result<BTreeSet<String>, Box<AssertionRefusal>> {
         let resolved_modules = self.resolved_module_declarations(index);
         let module_resolved = |file: &Path, line: usize, declaration: &str| {
             resolved_modules.contains(&(file.to_path_buf(), line, declaration.to_string()))
@@ -586,10 +593,10 @@ impl OwnerPinSyntax {
             .get(&test.file)
             .filter(|facts| !facts.used_lexical_fallback)
         else {
-            return Some(AssertionRefusal::LexicalFallback);
+            return Err(Box::new(AssertionRefusal::LexicalFallback));
         };
         if let Some(reason) = &facts.role_provenance.earliest_unresolved_reason {
-            return Some(AssertionRefusal::UnresolvedModule(reason.clone()));
+            return Err(Box::new(AssertionRefusal::UnresolvedModule(reason.clone())));
         }
         let mut empty_by_file = self.empty_macro_ambiguities.borrow_mut();
         let empty_ambiguities = empty_by_file.entry(test.file.clone()).or_insert_with(|| {
@@ -618,37 +625,87 @@ impl OwnerPinSyntax {
                 .collect()
         });
         let mut ambiguous: BTreeSet<_> = ambiguous.union(empty_ambiguities).cloned().collect();
-        ambiguous.extend(self.scoped_names_for(test, assertion.line));
+        ambiguous.extend(self.scoped_names_for(test, line));
         ambiguous.extend(self.crate_names_for(test, index));
         let mut by_file = self.by_file.borrow_mut();
         for edge in &facts.role_provenance.edges {
             // Module composition already owns resolution. Include expansions
             // lack an exact declaration coordinate here, so remain unknown.
             if edge.kind != SourceRoleProvenanceEdgeKind::Module {
-                return Some(AssertionRefusal::IncludedFile {
+                return Err(Box::new(AssertionRefusal::IncludedFile {
                     parent: edge.parent.clone(),
                     line: edge.line,
-                });
+                }));
             }
             let Some(parent) = index
                 .files()
                 .get(&edge.parent)
                 .filter(|facts| !facts.used_lexical_fallback)
             else {
-                return Some(AssertionRefusal::LexicalFallback);
+                return Err(Box::new(AssertionRefusal::LexicalFallback));
             };
             if !by_file
                 .entry(edge.parent.clone())
                 .or_insert_with(|| owner_pin_assertions(&parent.source, NON_RETURNING_MACROS))
                 .admits_module_declaration(edge.line, &edge.declaration)
             {
-                return Some(AssertionRefusal::ModuleDeclaration {
+                return Err(Box::new(AssertionRefusal::ModuleDeclaration {
                     parent: edge.parent.clone(),
                     line: edge.line,
                     declaration: edge.declaration.clone(),
-                });
+                }));
             }
         }
+        Ok(ambiguous)
+    }
+
+    /// RIPR-SPEC-0229 (#6616): the value operand of `assertion` when it is
+    /// an exact pattern pin through the test file's verified local
+    /// `assert_matches!` (see `syntax::pattern_pins`), under the gates every
+    /// assertion of the test shares and with no visible rebinding of a
+    /// standard macro the pin relies on. `None` refuses.
+    pub(in crate::analysis) fn exact_pattern_pin_value(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<String> {
+        if !assertion.text.starts_with("assert_matches") {
+            return None;
+        }
+        let facts = index.files().get(&test.file)?;
+        // Look the cached pin up first; the ambiguity scan only matters when
+        // a pin exists. The memo borrow ends before that scan runs.
+        let pin = {
+            let mut memo = self.pattern_pins.borrow_mut();
+            let pins = memo
+                .entry(test.file.clone())
+                .or_insert_with(|| pattern_pins(&facts.source));
+            pins.pin(
+                (test.start_line, test.end_line, &test.name),
+                &test.body,
+                (assertion.line, &assertion.text),
+            )?
+            .clone()
+        };
+        let ambiguous = self.context_ambiguities(test, assertion.line, index).ok()?;
+        pin.macros.is_disjoint(&ambiguous).then_some(pin.value)
+    }
+
+    fn refusal(
+        &self,
+        test: &TestSummary,
+        assertion: &OracleFact,
+        index: &RustIndex,
+    ) -> Option<AssertionRefusal> {
+        let ambiguous = match self.context_ambiguities(test, assertion.line, index) {
+            Ok(ambiguous) => ambiguous,
+            Err(refusal) => return Some(*refusal),
+        };
+        let Some(facts) = index.files().get(&test.file) else {
+            return Some(AssertionRefusal::LexicalFallback);
+        };
+        let mut by_file = self.by_file.borrow_mut();
         // A terminal Err-return guard is keyed by its condition; the oracle
         // text may join continuation lines or elide the Err payload.
         let guard_key = err_return_guard_twin(&assertion.text)

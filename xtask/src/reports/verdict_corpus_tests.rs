@@ -1629,18 +1629,18 @@ fn committed_python_corpus_is_valid_and_covers_each_test_library() -> Result<(),
     // Every RIPR-SPEC-0238 acceptance example but 10 keeps a case citing
     // it; the ledger leaves 10 visible as uncovered rather than waived.
     // Examples 1 to 34 have `py-spec0233-exNN-` cases (the prefix of the
-    // spec's draft number, RIPR-SPEC-0233); 35 to 39 were written from the
+    // spec's draft number, RIPR-SPEC-0233); 35 to 40 were written from the
     // library cases that cite them.
     let spec = coverage
         .by_spec
         .iter()
         .find(|row| row.spec == "RIPR-SPEC-0238")
         .ok_or("RIPR-SPEC-0238 is not in scope in the python ledger")?;
-    assert_eq!(spec.in_scope_examples, 39);
+    assert_eq!(spec.in_scope_examples, 40);
     assert_eq!(spec.uncovered, vec![10]);
     assert_eq!(spec.waived, 0);
     assert!(
-        coverage.floor >= 38 && coverage.floor <= coverage.covered_examples,
+        coverage.floor >= 39 && coverage.floor <= coverage.covered_examples,
         "python ledger floor {} against {} covered",
         coverage.floor,
         coverage.covered_examples
@@ -1824,6 +1824,25 @@ fn ledgerless_corpus_validates_without_the_coverage_gate() -> Result<(), String>
     crate::tests::copy_dir_recursive(&repo_corpus_dir(), &dir)?;
     fs::remove_file(dir.join(coverage::LEDGER_FILE)).map_err(|err| err.to_string())?;
     assert_eq!(corpus_coverage_mode(&dir), CorpusCoverage::Ungated);
+    // Without the ledger nothing gates an `expected_oracle` label, so the
+    // copied Rust labels are refused until they are removed.
+    let refused = validated_corpus_without_coverage(&dir)
+        .err()
+        .ok_or("a ledgerless corpus accepted oracle labels")?;
+    assert!(refused.contains("carries expected_oracle"), "{refused}");
+    for entry in fs::read_dir(dir.join("cases")).map_err(|err| err.to_string())? {
+        let path = entry.map_err(|err| err.to_string())?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let mut case = parse_json(&path)?;
+        if let Some(fields) = case.as_object_mut()
+            && fields.remove("expected_oracle").is_some()
+        {
+            let text = serde_json::to_string_pretty(&case).map_err(|err| err.to_string())?;
+            fs::write(&path, format!("{text}\n")).map_err(|err| err.to_string())?;
+        }
+    }
     let corpus = validated_corpus_without_coverage(&dir)?;
     assert!(!corpus.cases.is_empty());
     Ok(())

@@ -261,6 +261,18 @@ an assertion inside that helper is refused like any untrusted macro.
    next step naming the witnessing test.
 6. **A test also calls the owner**: same shape plus a test calling `inner()`
    directly. Reach is established, so the finding keeps its gap and no limit.
+7. **Owner handed to a local macro as an argument** (#6614): `doubled()`
+   holds `twice!(inner)` and never calls `inner`; the only same-repo
+   `macro_rules! twice` is unique and every source mentioning `macro_rules`
+   parses. The chain records a macro-argument hop that forwards no result,
+   binds no activation and pairs no boundary. A related test calling
+   `doubled()` that holds an exact oracle in any operand shape
+   (`assert_eq!(doubled(), 14)`, `let d = doubled(); assert_eq!(d, 14)`)
+   reads `propagation_unknown` (`helper_result_not_forwarded`), neither
+   credit nor gap. A test whose oracles are all weak on their own terms
+   (`assert!(doubled() > 0)`) keeps the prior evidence, and no edge forms
+   for an owner named only in a string literal, a caller that binds a local
+   or parameter of the owner's name, or a second invocation site.
 
 ## Required Evidence
 
@@ -296,6 +308,11 @@ an assertion inside that helper is refused like any untrusted macro.
 - `crates/ripr/tests/macro_generated_tests.rs::a_macro_generated_test_reads_like_the_hand_written_test`
 - `crates/ripr/tests/macro_generated_tests.rs::refused_shapes_and_uninvoked_generators_add_no_test`
 - `crates/ripr/tests/macro_generated_tests.rs::a_deferred_assertion_in_a_generated_test_is_refused_like_a_hand_written_one`
+- `crates/ripr/tests/helper_wrapper_reach.rs::exact_pin_through_a_local_macro_argument_abstains_as_not_forwarded`
+- `crates/ripr/tests/helper_wrapper_reach.rs::any_exact_oracle_on_a_macro_argument_caller_abstains`
+- `crates/ripr/tests/helper_wrapper_reach.rs::macro_argument_without_the_owner_or_an_exact_pin_keeps_the_gap`
+- `crates/ripr/tests/helper_wrapper_reach.rs::owner_named_only_in_a_wrapper_string_literal_does_not_abstain`
+- Verdict corpus case `old-rate-macro-arg-no-mention`.
 - `fixtures/rust_macro_reach_limitation/expected/check.json`
 - `cargo xtask check-evidence-promotion-honesty`
 
