@@ -998,6 +998,16 @@ fn an_early_return_pin_admits_only_the_value_that_return_produces() {
         vec!["assert_eq!(whole(3, 2), None);".to_string()]
     );
 
+    // The gate reads `None` as the prelude variant: a `const None` in the
+    // owner's file can be a second `Some` exit (#7581 review).
+    let lib = "pub fn lookup(k: u32) -> Option<u32> {\n    if k == 1 { return Some(k + 2); }\n    None\n}\n";
+    let some_index = index(&[(LIB, lib)]);
+    assert!(establish(&some_index, "lookup", "return Some(k + 2);").is_some());
+    let shadowed =
+        format!("{lib}\n#[allow(non_upper_case_globals)]\nconst None: Option<u32> = Some(3);\n");
+    let shadowed_index = index(&[(LIB, &shadowed)]);
+    assert!(establish(&shadowed_index, "lookup", "return Some(k + 2);").is_none());
+
     let lib = "pub enum E { Negative }\n\npub fn checked(x: i32) -> Result<i32, E> {\n    if x < 0 { return Err(E::Negative); }\n    Ok(x * 2)\n}\n";
     let tests = "use demo::{checked, E};\n\n#[test]\nfn checks() {\n    assert_eq!(checked(-1), Err(E::Negative));\n    assert_eq!(checked(2), Ok(4));\n}\n";
     let err_index = index(&[(LIB, lib), (TESTS, tests)]);
@@ -1019,7 +1029,7 @@ fn an_early_some_or_ok_return_is_pinned_beside_opposite_exits() {
             "fn lookup(k: u32) -> Option<u32> {\n    if k == 1 {\n        return Some(1 + 2);\n    }\n    None\n}",
             "return Some(1 + 2);"
         ),
-        Some(ReturnPathGate::Head("Some"))
+        Some(ReturnPathGate::EarlyHead("Some"))
     ));
     // A second `return None;` and a `?` build only `None`, so neither
     // competes with an early `Some`.
@@ -1028,7 +1038,7 @@ fn an_early_some_or_ok_return_is_pinned_beside_opposite_exits() {
             "fn f(k: u32) -> Option<u32> {\n    let j = k.checked_sub(1)?;\n    if j == 7 {\n        return None;\n    }\n    if j == 0 {\n        return Some(3);\n    }\n    None\n}",
             "return Some(3);"
         ),
-        Some(ReturnPathGate::Head("Some"))
+        Some(ReturnPathGate::EarlyHead("Some"))
     ));
     // A `?` builds only `Err`, so it does not compete with an early `Ok`.
     assert!(matches!(
@@ -1036,7 +1046,7 @@ fn an_early_some_or_ok_return_is_pinned_beside_opposite_exits() {
             "fn f(x: i32) -> Result<i32, E> {\n    if x == 0 {\n        return Ok(1);\n    }\n    g(x)?;\n    Err(E::Late)\n}",
             "return Ok(1);"
         ),
-        Some(ReturnPathGate::Head("Ok"))
+        Some(ReturnPathGate::EarlyHead("Ok"))
     ));
     for (body, changed) in [
         // A second `return Some(..)` is another source of `Some`.
@@ -6254,6 +6264,7 @@ fn a_literal_matches_pattern_pins_the_owner_value() {
         "assert!(matches!(check(5), Ok(5)));",
         "assert!(matches!(check(5), Ok(x @ 5)));",
         "assert!(matches!(check(5), Ok(-5)));",
+        "assert!(matches!(check(5), Ok(5,)));",
         "assert!(matches!(check(5), Ok( 5 ),));",
         "assert_eq!(check(5), Ok(5));",
     ];
@@ -6323,6 +6334,30 @@ fn a_literal_matches_pattern_pins_the_owner_value() {
             admitted(&index, &pin),
             vec![(assertion.to_string(), expected)],
             "{assertion}"
+        );
+    }
+    // A pattern resolves `Ok` (or `None`) in the test's scope: a binding of
+    // that name there matches some other value, so the pin refuses (#7581
+    // review).
+    for (prelude, expected) in [
+        ("", true),
+        ("enum Fake { Ok(u32) }\nuse Fake::Ok;\n", false),
+        (
+            "#[allow(non_upper_case_globals)]\nconst Ok: u32 = 5;\n",
+            false,
+        ),
+    ] {
+        let tests = format!(
+            "use demo::check;\n{prelude}\n#[test]\nfn checks() {{\n    assert!(matches!(check(5), Ok(5)));\n}}\n"
+        );
+        let index = index(&[(LIB, lib), (TESTS, &tests)]);
+        let pin = establish(&index, "check", "Ok(x + 0)");
+        assert!(pin.is_some());
+        let Some(pin) = pin else { return };
+        assert_eq!(
+            admitted(&index, &pin),
+            vec![("assert!(matches!(check(5), Ok(5)));".to_string(), expected)],
+            "{prelude}"
         );
     }
     // A workspace `macro_rules! matches` rebinds the nested name.

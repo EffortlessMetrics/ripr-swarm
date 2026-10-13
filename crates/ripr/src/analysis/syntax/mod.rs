@@ -12,7 +12,7 @@ pub(crate) use owner_pin::{
     MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES, attribute_settles_test_outcome,
     constant_table_column, empty_macro_binding_ambiguities, err_return_guard_key,
     local_empty_macro_names, macro_binding_scan, macro_call_is_statement, owner_pin_assertions,
-    returns_leave_the_function, trusted_macro_binding_sites,
+    returns_leave_the_function, source_binds_value_name, trusted_macro_binding_sites,
 };
 pub(crate) use owner_pin::{decimal_u8, literal_check_syntax, literal_owner_syntax};
 pub(crate) mod ra;

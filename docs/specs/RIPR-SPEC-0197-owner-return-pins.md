@@ -409,7 +409,10 @@ rule only for an assertion whose context was admitted.
    early `return Some(..);` (or `return Ok(..);`): every other `return` and
    the tail are exactly `None` (or one `Err(..)` call), and the pinned value
    must be `Some(..)` (or `Ok(..)`). A `?` builds only `None` (or `Err`), so
-   it is not a second source here. The propagation witness of any changed
+   it is not a second source here. Because the other exits are read by
+   their spelling, an owner file that binds `None`, `Some`, `Ok` or `Err`
+   as a value (a `const`, `fn`, pattern binding or import, or a glob it
+   cannot see through) refuses this mirror case. The propagation witness of any changed
    `return X;` completes only when the owner's return sink is that same `X`
    on the changed line, so an identical value returned elsewhere is a
    different exit. An owner
@@ -1020,7 +1023,8 @@ value when:
    through and binds its name like any other invoked macro, so a workspace
    `macro_rules! matches` still refuses.
 2. `matches!` has the scrutinee and one pattern (a trailing comma is
-   allowed). A guard (`if ..`) refuses.
+   allowed, after the pattern and inside a constructor: `Some(3,)`). A
+   guard (`if ..`) or a comment inside the pattern refuses.
 3. The pattern is a literal value: `Some(..)`, `Ok(..)` and `Err(..)`
    around further literal patterns, `None`, `true`, `false`, numeric
    literals (optionally negated), and plain string literals. A lowercase
@@ -1028,7 +1032,10 @@ value when:
    literal. A wildcard, a bare binding, `ref`/`mut`, a range, an
    alternative `|`, a path (`Result::Ok`), a constant, a tuple, a slice or
    a reference refuses: each matches more than one value or names one ripr
-   does not evaluate.
+   does not evaluate. A pattern resolves names in the test's scope, so a
+   test file that binds a constructor name the pattern uses (`Some`,
+   `None`, `Ok`, `Err`) as a value, or holds a glob it cannot see through,
+   refuses.
 4. Every other rule above holds unchanged: the scrutinee is the owner call
    shape, execution and macro admission, `#[should_panic]`, and the
    return-path gate on the normalized pattern.

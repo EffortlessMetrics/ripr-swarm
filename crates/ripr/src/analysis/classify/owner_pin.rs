@@ -65,7 +65,8 @@ use crate::analysis::syntax::{
     MacroBindingKind, MacroBindingSite, OwnerPinAssertions, TRUSTED_MACRO_NAMES,
     attribute_settles_test_outcome, empty_macro_binding_ambiguities, err_return_guard_key,
     generated_test_pins, local_empty_macro_names, macro_binding_scan, owner_pin_assertions,
-    parse_clean_source_file, returns_leave_the_function, trusted_macro_binding_sites,
+    parse_clean_source_file, returns_leave_the_function, source_binds_value_name,
+    trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -1335,6 +1336,11 @@ enum ReturnPathGate {
     Any,
     /// The pinned value must start with this constructor.
     Head(&'static str),
+    /// #7581: a changed early `return Some(..)` / `return Ok(..)` beside
+    /// exits that build only `None` / `Err(..)`. Admits like `Head`; the
+    /// owner's file must not bind `None`, `Some`, `Ok` or `Err`, since a
+    /// rebound opposite name could build a second `Some` / `Ok` exit.
+    EarlyHead(&'static str),
     /// The pinned value must be exactly this unit variant (`None`).
     Exact(&'static str),
     /// #6692: a field of a hand-written `Clone::clone`'s returned struct
@@ -1412,6 +1418,18 @@ impl OwnerReturnPin {
         let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
         let path = return_path_gate(&owner.body, &probe.expression, changed_line)?;
+        // The early `Some`/`Ok` gate reads the other exits' `None` and
+        // `Err(..)` as the prelude variants; a `const None` or `fn Err` in
+        // the owner's file can build a second `Some`/`Ok` under that
+        // spelling (#7581 review).
+        if path.prelude_names().iter().any(|name| {
+            index
+                .files()
+                .get(&owner.file)
+                .is_none_or(|facts| source_binds_value_name(&facts.source, name))
+        }) {
+            return None;
+        }
         let call = pin_call(owner, index)?;
         let method = matches!(call, PinCall::Method { .. });
         if other_definition_competes(owner, index, method) {
@@ -1697,6 +1715,18 @@ impl OwnerReturnPin {
             let Some(call) = owner_call_shape(&matches_operands[0], &self.name) else {
                 return false;
             };
+            // A pattern resolves `None` or `Some(..)` in the test's scope, so
+            // a `const None` there matches some other value (#7581 review).
+            let pattern = &matches_operands[1];
+            if ["Some", "None", "Ok", "Err"].iter().any(|name| {
+                contains_as_whole_word(pattern, name)
+                    && index
+                        .files()
+                        .get(&test.file)
+                        .is_none_or(|facts| source_binds_value_name(&facts.source, name))
+            }) {
+                return false;
+            }
             (call, matches_operands[1].as_str())
         } else if !is_guard && self.returns_bool && is_plain_macro(&assertion.text, "assert") {
             // `assert!(owner(..))` is `assert_eq!(owner(..), true)` and
@@ -2495,10 +2525,21 @@ fn pin_call(owner: &FunctionSummary, index: &RustIndex) -> Option<PinCall> {
 }
 
 impl ReturnPathGate {
+    /// The prelude variant names this gate's exit reasoning relies on.
+    fn prelude_names(&self) -> &'static [&'static str] {
+        match self {
+            Self::EarlyHead("Some") => &["Some", "None"],
+            Self::EarlyHead(_) => &["Ok", "Err"],
+            _ => &[],
+        }
+    }
+
     fn admits(&self, expected: &str) -> bool {
         match self {
             Self::Any => true,
-            Self::Head(head) => constructor_call_span(expected.trim(), head).is_some(),
+            Self::Head(head) | Self::EarlyHead(head) => {
+                constructor_call_span(expected.trim(), head).is_some()
+            }
             Self::Exact(value) => expected.trim() == *value,
             Self::CloneReceiver => false,
             Self::WholeValueField(gate) => gate.admits(expected),
@@ -3066,9 +3107,9 @@ fn early_return_gate(
         } else if err_call(changed) {
             (ReturnPathGate::Head("Err"), "Err", &ok_call, false)
         } else if some_call(changed) {
-            (ReturnPathGate::Head("Some"), "Some", &is_none, true)
+            (ReturnPathGate::EarlyHead("Some"), "Some", &is_none, true)
         } else if ok_call(changed) {
-            (ReturnPathGate::Head("Ok"), "Ok", &err_call, true)
+            (ReturnPathGate::EarlyHead("Ok"), "Ok", &err_call, true)
         } else {
             return None;
         };
@@ -7347,6 +7388,13 @@ fn literal_value_pattern(pattern: &str) -> Option<String> {
             ')' if depth > 0 && !expects_pattern => {
                 depth -= 1;
                 value.push(')');
+            }
+            // `Some(3,)`: one trailing comma before the constructor closes.
+            ')' if depth > 0 && expects_pattern && value.ends_with(", ") => {
+                depth -= 1;
+                value.truncate(value.len() - ", ".len());
+                value.push(')');
+                expects_pattern = false;
             }
             ',' if depth > 0 && !expects_pattern => {
                 value.push_str(", ");
