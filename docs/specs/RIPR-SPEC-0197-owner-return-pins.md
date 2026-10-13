@@ -425,13 +425,14 @@ rule only for an assertion whose context was admitted.
      (RIPR-SPEC-0172). On the test side the call is exactly
      `T::name(..)` with nothing chained after it, in the test's own body
      (no borrowed helper), and the test sits at its file's top level. The
-     file must import `T` at file level as `use <krate>::...::T;` where
+     file must import `T` at file level as `use <krate>::T;` where
      `<krate>` names the owner's library from the test's crate (the
      manifest authority, or a workspace package name in a synthetic index
      without one) and the test's crate does not bind `<krate>` itself.
      Every `use` in the file that names `T` must be such an import: an
-     alias (`as`), a glob, a brace list, another root or a nested module's
-     import refuses, as does a declaration or `type` alias of `T` in the
+     alias (`as`), a glob, a brace list, another root, a longer path
+     (`use <krate>::m::T;`, which may pass through another crate's
+     `pub use`) or a nested module's import refuses, as does a declaration or `type` alias of `T` in the
      test's file, a rename to `T`, a `use` or item of `T` in the test body,
      or a macro in the body that mentions `T`. The owner's library must not
      export another `T` (a foreign `pub use` or glob). A bare `name(..)`

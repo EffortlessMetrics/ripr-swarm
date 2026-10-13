@@ -6872,11 +6872,40 @@ fn associated_function_pin_refuses_other_names_for_the_type() {
         ),
     ] {
         let tests = gauge_test(prelude, body);
-        // A test-local `struct Gauge` is a second workspace declaration, so
-        // that shape refuses already on the owner side.
         let admitted = gauge_admitted(&[(LIB, ASSOC_GAUGE_LIB), (TESTS, &tests)]);
-        assert!(admitted.is_none_or(|texts| texts.is_empty()), "{tests}");
+        // A test-local `struct Gauge` is a second workspace declaration, so
+        // that shape refuses already on the owner side; every other row is
+        // refused by the test-side gate on an established pin.
+        let expected = if body.starts_with("struct Gauge;") {
+            None
+        } else {
+            Some(Vec::new())
+        };
+        assert_eq!(admitted, expected, "{tests}");
     }
+}
+
+#[test]
+fn associated_function_pin_refuses_a_longer_import_path() {
+    // `demo::fs` re-exports another crate, whose own `Gauge` the test could
+    // be importing; the pin admits only `use <krate>::T;`.
+    let reexporting = format!("pub use spare as fs;\n{ASSOC_GAUGE_LIB}");
+    for (lib, prelude) in [
+        (reexporting.as_str(), "use demo::fs::Gauge;"),
+        (ASSOC_GAUGE_LIB, "use demo::self::Gauge;"),
+    ] {
+        let tests = gauge_test(prelude, "assert_eq!(Gauge::reading(), 42);");
+        let admitted = gauge_admitted(&[(LIB, lib), (TESTS, &tests)]);
+        assert_eq!(admitted, Some(Vec::new()), "{lib}\n{tests}");
+    }
+    // Control: the same library admits the direct import.
+    let tests = gauge_test("use demo::Gauge;", "assert_eq!(Gauge::reading(), 42);");
+    let admitted = gauge_admitted(&[(LIB, &reexporting), (TESTS, &tests)]);
+    assert_eq!(
+        admitted.map(|texts| texts.len()),
+        Some(1),
+        "the direct import must still pin"
+    );
 }
 
 #[test]

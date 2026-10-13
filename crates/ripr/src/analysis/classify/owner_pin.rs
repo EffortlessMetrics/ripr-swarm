@@ -2094,7 +2094,7 @@ impl OwnerReturnPin {
     /// names the owner's own `T`. The owner-side gate already made `T` the
     /// one workspace type of that name, with no `mod`, `trait` or `type` of
     /// it and no competing path-callable `fn name`. Here the test's file
-    /// must import `T` directly, `use <krate>::...::T;`, at file level,
+    /// must import `T` directly, `use <krate>::T;`, at file level,
     /// where `<krate>` names the owner's library from the test's crate (the
     /// RIPR-SPEC-0197 manifest authority) and nothing in the test's crate
     /// binds it, and the library must not export another `T`. Every `use`
@@ -2149,8 +2149,11 @@ impl OwnerReturnPin {
             if path.contains(['{', '}', '*']) || !whole_word_offsets(path, "as").is_empty() {
                 return false;
             }
+            // Only `use <krate>::T;`: a middle segment can be a `pub use`
+            // of another crate (`pub use other as fs;`), whose own `T` this
+            // check cannot place.
             let segments: Vec<&str> = path.split("::").map(str::trim).collect();
-            let [root, .., last] = segments[..] else {
+            let [root, last] = segments[..] else {
                 return false;
             };
             last == type_name
