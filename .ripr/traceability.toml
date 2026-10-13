@@ -14254,6 +14254,19 @@ tests = [
   "crates/ripr/src/analysis/test_grip_evidence/reach_limit.rs::tests::identifiers_keep_type_shaped_tokens_outside_comments_and_strings",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::transitive_reach_limit_kind_names_integration_test_path",
   "crates/ripr/src/analysis/classify/transitive_reach.rs::tests::macro_reach_limit_kind_names_direct_test_body_macro_path",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::debug_impl_of_a_type_tests_never_debug_format_stays_ungripped",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::debug_impl_of_a_type_a_test_debug_formats_is_opaque",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::display_impl_names_the_syntax_that_runs_it",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::display_delegation_does_not_reach_an_unused_debug_impl",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_impl_for_a_primitive_is_opaque_when_test_reached_code_names_the_trait",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::trait_impl_for_a_primitive_stays_ungripped_when_nothing_names_the_trait",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::a_test_does_not_call_a_helper_that_shares_its_name",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::serde_impl_no_test_serializes_stays_ungripped",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::debug_impl_of_a_parameters_field_type_is_opaque",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::debug_impl_a_passing_test_formats_only_in_its_panic_stays_ungripped",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::debug_impl_a_should_panic_test_formats_in_its_panic_is_opaque",
+  "crates/ripr/src/analysis/test_grip_evidence/tests.rs::partial_eq_impl_a_test_looks_up_in_a_hash_map_is_opaque",
+  "crates/ripr/src/analysis/classify/transitive_reach.rs::declaration_tests::a_declaration_is_not_a_call_but_a_one_line_self_call_is",
 ]
 fixtures = []
 code = [
@@ -14417,6 +14430,28 @@ outputs = [
 ]
 metrics = [
   "typescript_node_test_context_assert_mismatch",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0256"
+name = "TypeScript mock passed in an object argument"
+spec = "docs/specs/RIPR-SPEC-0256-typescript-mock-object-argument.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/mock_object_argument_tests.rs::mock_in_an_inline_object_is_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_object_argument_tests.rs::changed_call_a_nested_function_may_run_is_not_credited",
+  "crates/ripr/src/analysis/language/typescript/tests/mock_object_argument_tests.rs::mock_the_object_may_not_carry_is_not_credited",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/mock_payload_guard.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0256-typescript-mock-object-argument.md",
+]
+metrics = [
+  "typescript_mock_object_argument_mismatch",
 ]
 
 [[behavior]]
