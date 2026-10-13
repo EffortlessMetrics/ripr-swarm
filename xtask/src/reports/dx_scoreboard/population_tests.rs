@@ -320,6 +320,269 @@ fn fixture_json(path: &Path, value: &Value) -> Result<(), String> {
     .map_err(|err| format!("write {}: {err}", path.display()))
 }
 
+#[test]
+fn perl_projection_keeps_producer_and_edited_contributions_separate() -> Result<(), String> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/perl-verdict-corpus");
+    let records = population::Records::load(&dir)?;
+    // Independently counted committed rows: producer 27 (15 discriminated,
+    // 12 not fully), edited 9. Do not derive these expectations via summarize.
+    for (rate, expected) in [
+        ("false_verdict_rate", (8, 27)),
+        ("false_actionable_rate", (5, 15)),
+        ("false_exposed_rate", (3, 12)),
+        ("false_silent_rate", (0, 12)),
+        ("abstention_rate", (8, 27)),
+    ] {
+        let selected = records.population(&format!("by_packet_provenance.producer.{rate}"))?;
+        assert_eq!(selected.totals()?, expected);
+        assert_eq!(selected.cases.len(), 36);
+        assert_eq!(
+            selected
+                .cases
+                .iter()
+                .filter(|case| case.denominator == 0)
+                .count(),
+            if rate == "false_actionable_rate" {
+                21
+            } else if rate == "false_exposed_rate" || rate == "false_silent_rate" {
+                24
+            } else {
+                9
+            }
+        );
+    }
+    assert_eq!(records.population("abstention_rate")?.totals()?, (11, 36));
+    assert_eq!(
+        records
+            .population("by_packet_provenance.edited_producer.abstention_rate")?
+            .totals()?,
+        (3, 9)
+    );
+    for invalid in [
+        "by_packet_provenance.producer",
+        "by_packet_provenance..abstention_rate",
+        "by_packet_provenance.missing.abstention_rate",
+        "by_packet_provenance.producer.missing_rate",
+        "by_packet_provenance.producer.contradiction_rate",
+        "by_packet_provenance.producer.abstention_rate.extra",
+    ] {
+        assert!(records.population(invalid).is_err(), "{invalid}");
+    }
+    let rust = population::Records::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/rust-verdict-corpus"),
+    )?;
+    assert!(
+        rust.population("by_packet_provenance.producer.abstention_rate")
+            .is_err()
+    );
+    Ok(())
+}
+
+fn perl_fixture() -> Result<PathBuf, String> {
+    // The corpus owner derives the language from this exact directory name.
+    let dir = crate::tests::temp_dir("dx-population-perl").join("perl-verdict-corpus");
+    crate::tests::copy_dir_recursive(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/perl-verdict-corpus"),
+        &dir,
+    )?;
+    population::Records::load(&dir)?;
+    Ok(dir)
+}
+
+#[test]
+fn perl_packet_and_producer_are_scoring_identity() -> Result<(), String> {
+    let dir = perl_fixture()?;
+    let original = population::Records::load(&dir)?.population("abstention_rate")?;
+    let corpus = super::super::verdict_corpus::load_corpus(&dir)?;
+    let case = corpus
+        .cases
+        .iter()
+        .find(|case| {
+            case.perl_facts.as_ref().is_some_and(|facts| {
+                facts.provenance == super::super::verdict_corpus::PacketProvenance::Producer
+            })
+        })
+        .ok_or("producer case missing")?;
+    let facts = case.perl_facts.as_ref().ok_or("packet missing")?;
+    let case_path = dir.join("cases").join(format!("{}.json", case.case_id));
+    let definition = read_json(&case_path)?;
+    let packet_path = dir.join(&facts.packet);
+    let bytes = fs::read(&packet_path).map_err(|err| err.to_string())?;
+    let mut altered = bytes.clone();
+    altered.push(b'\n');
+    fs::write(&packet_path, &altered).map_err(|err| err.to_string())?;
+    assert!(population::Records::load(&dir).is_err_and(|err| err.contains("sha256")));
+    let mut repinned = definition.clone();
+    repinned["perl_facts"]["sha256"] = json!(super::super::verdict_corpus::sha256_hex(&altered));
+    fixture_json(&case_path, &repinned)?;
+    let changed = population::Records::load(&dir)?.population("abstention_rate")?;
+    assert!(
+        original
+            .cases
+            .iter()
+            .zip(&changed.cases)
+            .any(|(a, b)| a.case_id == case.case_id && a.definition_sha256 != b.definition_sha256)
+    );
+    fs::write(&packet_path, &bytes).map_err(|err| err.to_string())?;
+    fixture_json(&case_path, &definition)?;
+    let header_path = dir.join("corpus.json");
+    let header = read_json(&header_path)?;
+    let mut annotation = header.clone();
+    annotation["description"] = json!("annotation only");
+    fixture_json(&header_path, &annotation)?;
+    assert_eq!(
+        population::Records::load(&dir)?.population("abstention_rate")?,
+        original
+    );
+    let mut producer = header.clone();
+    producer["fact_producer"]["commit"] = json!("a".repeat(40));
+    fixture_json(&header_path, &producer)?;
+    let changed = population::Records::load(&dir)?.population("abstention_rate")?;
+    assert!(
+        original
+            .cases
+            .iter()
+            .zip(&changed.cases)
+            .all(|(a, b)| a.definition_sha256 != b.definition_sha256)
+    );
+    producer["fact_producer"]["commit"] = json!("invalid");
+    fixture_json(&header_path, &producer)?;
+    assert!(population::Records::load(&dir).is_err_and(|err| err.contains("fact_producer.commit")));
+    fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn perl_row_provenance_must_match_the_packet_definition() -> Result<(), String> {
+    let dir = perl_fixture()?;
+    let corpus = super::super::verdict_corpus::load_corpus(&dir)?;
+    let case = corpus
+        .cases
+        .iter()
+        .find(|case| {
+            case.perl_facts.as_ref().is_some_and(|facts| {
+                facts.provenance == super::super::verdict_corpus::PacketProvenance::Producer
+            })
+        })
+        .ok_or("producer case missing")?;
+    let row_path = dir
+        .join("expected/rows")
+        .join(format!("{}.json", case.case_id));
+    let original = read_json(&row_path)?;
+    let mut wrong = original.clone();
+    wrong["packet_provenance"] = json!("edited_producer");
+    fixture_json(&row_path, &wrong)?;
+    assert!(
+        population::Records::load(&dir)
+            .is_err_and(|err| err.contains("disagrees with its scoring definition"))
+    );
+    let mut missing = original.clone();
+    missing
+        .as_object_mut()
+        .ok_or("row missing")?
+        .remove("packet_provenance");
+    fixture_json(&row_path, &missing)?;
+    assert!(
+        population::Records::load(&dir)
+            .is_err_and(|err| err.contains("disagrees with its scoring definition"))
+    );
+    fixture_json(&row_path, &original)?;
+    let before = population::Records::load(&dir)?.population("abstention_rate")?;
+    let case_path = dir.join("cases").join(format!("{}.json", case.case_id));
+    let mut changed = read_json(&case_path)?;
+    changed["perl_facts"]["provenance"] = json!("edited_producer");
+    changed["perl_facts"]["edits"] = json!("provenance changed for the identity control");
+    fixture_json(&case_path, &changed)?;
+    fixture_json(&row_path, &wrong)?;
+    let after = population::Records::load(&dir)?.population("abstention_rate")?;
+    assert!(
+        before
+            .cases
+            .iter()
+            .zip(&after.cases)
+            .any(|(a, b)| a.case_id == case.case_id && a.definition_sha256 != b.definition_sha256)
+    );
+    fs::remove_dir_all(&dir).map_err(|err| err.to_string())?;
+    Ok(())
+}
+
+#[test]
+fn perl_scoreboard_measures_without_blessing_an_absent_baseline() -> Result<(), String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut config = parse_config(
+        &fs::read_to_string(root.join("benchmarks/dx_scoreboard/scoreboards.toml"))
+            .map_err(|err| err.to_string())?,
+    )?;
+    config
+        .metric
+        .retain(|metric| metric.id.starts_with("trust.perl_verdict_corpus_"));
+    assert_eq!(config.metric.len(), 5);
+    for metric in &mut config.metric {
+        metric.source = metric.source.replacen(
+            "verdict-corpus:fixtures/",
+            &format!("verdict-corpus:{}/fixtures/", root.display()),
+            1,
+        );
+    }
+    let boards = vec!["trust".to_string()];
+    let samples = file_samples(&config, &boards)?;
+    let current = build_report(
+        &config,
+        &boards,
+        &samples,
+        &RunContext::default(),
+        None,
+        true,
+    );
+    assert_eq!(current["gate"]["status"], "no_baseline");
+    assert_eq!(current["gate"]["failed_instruments"], json!([]));
+    for (metric, n, d, status) in [
+        ("false_verdict", 8, 27, "below_target"),
+        ("false_actionable", 5, 15, "below_target"),
+        ("false_exposed", 3, 12, "below_target"),
+        ("false_silent", 0, 12, "meets_target"),
+        ("abstention", 8, 27, "below_target"),
+    ] {
+        let id = format!("trust.perl_verdict_corpus_{metric}");
+        let row = current["metrics"]
+            .as_array()
+            .ok_or("metrics missing")?
+            .iter()
+            .find(|row| row["id"] == id)
+            .ok_or("Perl metric missing")?;
+        assert_eq!(row["value"], json!(round(f64::from(n) / f64::from(d))));
+        assert_eq!(row["status"], status);
+        let population: Population =
+            serde_json::from_value(row["samples"][0]["population"].clone())
+                .map_err(|err| err.to_string())?;
+        assert_eq!(population.totals()?, (n as u64, d as u64));
+    }
+    let baseline: Value = serde_json::from_str(include_str!(
+        "../../../../benchmarks/dx_scoreboard/testdata/7552-original-baseline-with-population.json"
+    ))
+    .map_err(|err| err.to_string())?;
+    let compared = build_report(
+        &config,
+        &boards,
+        &samples,
+        &RunContext::default(),
+        Some(&baseline),
+        true,
+    );
+    assert_eq!(compared["gate"]["status"], "fail");
+    assert_eq!(compared["gate"]["failed_instruments"], json!([]));
+    assert_eq!(
+        compared["gate"]["failed_comparisons"]
+            .as_array()
+            .map(Vec::len),
+        Some(5)
+    );
+    let failure = gate_failure_message(&compared);
+    assert!(failure.contains("trust.perl_verdict_corpus_abstention"));
+    assert!(failure.contains("metric absent from baseline; case identity evidence is required"));
+    Ok(())
+}
+
 fn scoring_fixture() -> Result<PathBuf, String> {
     use super::super::verdict_corpus::{TruthState, load_corpus, stored_path};
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/rust-verdict-corpus");

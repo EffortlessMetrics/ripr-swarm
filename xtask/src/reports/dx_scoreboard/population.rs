@@ -1,7 +1,7 @@
 //! Case populations for committed verdict rates. These are record comparisons,
 //! not fresh analyzer or runtime mutation measurements.
 
-use super::super::verdict_corpus::{self, CaseRow};
+use super::super::verdict_corpus::{self, CaseRow, PacketProvenance};
 use super::{MetricDef, allowed_worsening, round};
 use num_bigint::BigUint;
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,33 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::{fs, path::Path};
 
 pub(super) const SCHEMA: &str = "ripr-verdict-case-population-v1";
+
+/// Accept only projections whose denominator semantics the corpus owner
+/// exposes. Unknown paths must not become excluded (zero) contributions.
+fn projection(rate: &str) -> Result<(Option<PacketProvenance>, &str), String> {
+    let unsupported = || format!("unsupported case rate `{rate}`");
+    let (provenance, leaf) = if let Some(path) = rate.strip_prefix("by_packet_provenance.") {
+        let (cohort, leaf) = path.split_once('.').ok_or_else(unsupported)?;
+        let provenance = match cohort {
+            "producer" => PacketProvenance::Producer,
+            "edited_producer" => PacketProvenance::EditedProducer,
+            _ => return Err(unsupported()),
+        };
+        (Some(provenance), leaf)
+    } else {
+        (None, rate)
+    };
+    match leaf {
+        "abstention_rate"
+        | "ideal_rate"
+        | "false_verdict_rate"
+        | "false_actionable_rate"
+        | "false_exposed_rate"
+        | "false_silent_rate" => Ok((provenance, leaf)),
+        "contradiction_rate" if provenance.is_none() => Ok((provenance, leaf)),
+        _ => Err(unsupported()),
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -33,11 +60,14 @@ impl Population {
         if self.schema_version != SCHEMA || self.cases.is_empty() {
             return Err("missing or unsupported case population evidence".to_string());
         }
+        let (provenance, leaf) = projection(&self.rate)?;
         let mut ids = BTreeSet::new();
         let (mut numerator, mut denominator) = (0_u64, 0_u64);
         for case in &self.cases {
-            let denominator_valid = match self.rate.as_str() {
-                "abstention_rate" | "ideal_rate" | "false_verdict_rate" => case.denominator == 1,
+            let denominator_valid = match leaf {
+                "abstention_rate" | "ideal_rate" | "false_verdict_rate" => {
+                    case.denominator == 1 || (provenance.is_some() && case.denominator == 0)
+                }
                 "false_actionable_rate" | "false_exposed_rate" | "false_silent_rate" => {
                     case.denominator <= 1
                 }
@@ -134,6 +164,7 @@ impl Records {
                 || row.origin != subject.origin
                 || row.anchor != format!("{}:{}", case.anchor.file, case.anchor.line)
                 || row.ideal_verdict != case.expected.ideal_verdict
+                || row.packet_provenance != case.perl_facts.as_ref().map(|facts| facts.provenance)
                 || row.outcome != verdict_corpus::score(case.truth.state, row.observed_verdict)
             {
                 return Err(format!(
@@ -160,7 +191,7 @@ impl Records {
                 .map(|m| json!({"replacement": m.replacement, "outcome": m.outcome}))
                 .collect();
             mutants.sort_by_key(Value::to_string);
-            let definition = json!({
+            let mut definition = json!({
                 "schema": corpus.schema_version, "projection": corpus.verdict_projection,
                 "case_id": case.case_id, "subject_id": case.subject_id,
                 "anchor": case.anchor, "edit_kind": case.edit_kind,
@@ -168,6 +199,15 @@ impl Records {
                 "acceptable": acceptable, "mutants": mutants,
                 "diff_sha256": verdict_corpus::sha256_hex(&diff), "subject": identity,
             });
+            if let Some(facts) = &case.perl_facts {
+                // Authoritative validation verified these actual packet bytes
+                // against the same pin. Add no null keys to non-Perl identities,
+                // preserving the recorded Rust baseline's definition hashes.
+                definition["perl_facts"] = json!({
+                    "sha256": facts.sha256, "provenance": facts.provenance,
+                    "producer": corpus.fact_producer,
+                });
+            }
             rows.push((
                 row,
                 verdict_corpus::sha256_hex(definition.to_string().as_bytes()),
@@ -180,16 +220,35 @@ impl Records {
     }
 
     pub(super) fn population(&self, rate: &str) -> Result<Population, String> {
+        let (provenance, leaf) = projection(rate)?;
+        let ratio = rate
+            .split('.')
+            .fold(&self.report, |value, part| &value[part]);
+        let expected_n = ratio["numerator"]
+            .as_u64()
+            .ok_or_else(|| format!("missing corpus rate `{rate}`"))?;
+        let expected_d = ratio["denominator"]
+            .as_u64()
+            .ok_or_else(|| format!("missing corpus rate `{rate}`"))?;
         let mut cases = Vec::new();
         for (row, hash) in &self.rows {
             // The corpus owner supplies denominators, including zero-eligible
             // contributions and per-finding contradiction counts.
-            let single = verdict_corpus::summarize(String::new(), Vec::new(), vec![row.clone()]);
+            let selected = provenance.is_none_or(|p| row.packet_provenance == Some(p));
+            let single = verdict_corpus::summarize(
+                String::new(),
+                Vec::new(),
+                if selected {
+                    vec![row.clone()]
+                } else {
+                    Vec::new()
+                },
+            );
             let single = serde_json::to_value(single).map_err(|err| err.to_string())?;
-            let n = single[rate]["numerator"]
+            let n = single[leaf]["numerator"]
                 .as_u64()
                 .ok_or_else(|| format!("unsupported case rate `{rate}`"))?;
-            let d = single[rate]["denominator"]
+            let d = single[leaf]["denominator"]
                 .as_u64()
                 .ok_or_else(|| format!("unsupported case rate `{rate}`"))?;
             cases.push(Contribution {
@@ -205,9 +264,7 @@ impl Records {
             cases,
         };
         let (n, d) = population.totals()?;
-        if self.report[rate]["numerator"].as_u64() != Some(n)
-            || self.report[rate]["denominator"].as_u64() != Some(d)
-        {
+        if (n, d) != (expected_n, expected_d) {
             return Err(format!(
                 "{rate} case contributions disagree with the corpus summary"
             ));

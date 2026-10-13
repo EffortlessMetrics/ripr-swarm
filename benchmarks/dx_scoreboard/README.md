@@ -263,6 +263,9 @@ corpus owner supplies the contributions; findings, rather than cases, supply
 the contradiction-rate denominator. The producer validates corpus definitions,
 actual retained-file pins, complete expected-row coverage and row/definition
 agreement. It loads and hashes each corpus once for all selected rates.
+Perl packet-provenance projections retain every case identity, with `0/0`
+contributions from the other packet cohort. Unsupported or absent projections
+fail explicitly; they do not manufacture zero rates.
 
 The whole-corpus value still determines the absolute target status. Regression
 compares fractions over cases with the same ID and scoring-definition hash in
@@ -279,7 +282,10 @@ Spec-example coverage has its separate existing producer and floor contract.
 Scoring identity includes corpus schema and projection policy, case/subject ID,
 anchor, edit kind, diff bytes, truth state, ideal/acceptable verdicts, mutant
 replacement/outcome semantics, and the subject origin, upstream pin and actual
-retained-file hashes. Ordered sets are normalized. Reasoning, spec citations,
+retained-file hashes. Ordered sets are normalized.
+Perl identities also include verified packet bytes, packet provenance and the
+pinned fact producer. Other languages retain their original definition hashes.
+Reasoning, spec citations,
 labeling observations, replay commands, failing-test annotations, equivalence
 reviews and `mutated_line` replay scaffolding are provenance rather than this
 scoring identity. This hash does not assert full replay equivalence.
