@@ -1,0 +1,12 @@
+diff --git a/src/subject.py b/src/subject.py
+--- a/src/subject.py
++++ b/src/subject.py
+@@ -10,7 +10,7 @@ def parse_not_equal(text):
+ 
+ 
+ def parse_assert_not_equal(text):
+-    return int(text) + 1
++    return int(text) + 2
+ 
+ 
+ def parse_isinstance(text):

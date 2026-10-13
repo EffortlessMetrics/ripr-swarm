@@ -1,0 +1,12 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 2de281e..359ad46 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,6 +9,6 @@ pub enum Kind {
+ pub fn f(k: Kind) -> i32 {
+     match k {
+         Kind::A => 1,
+-        _ => 0,
++        _ => 2,
+     }
+ }

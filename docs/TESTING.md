@@ -17,6 +17,21 @@ spec -> test -> code
 See [Spec-test-code traceability](SPEC_TEST_CODE.md) for the expected mapping.
 See [Test taxonomy](TEST_TAXONOMY.md) for required proof levels by change type.
 
+Prepare the pinned fallible owner-return fixture before offline analyzer tests
+or fixture/golden checks. Its anyhow 1.0.100 dependency is separate from the
+workspace dependency graph; a workspace build does not fetch it. Cargo performs
+this locked fetch explicitly; production analyzer metadata stays offline.
+
+```bash
+cargo fetch --locked --manifest-path fixtures/owner_return_pin_fallible_literal/input/Cargo.toml
+```
+
+Use the same Cargo home for preparation and checks. A new Cargo home or an
+installed analyzer comparison needs its own preparation against the canonical
+fixture manifest. CI's Rust, coverage, analytics and advisory test paths run
+this step before offline checks. Missing preparation fails the positive; it is
+never treated as a skip or a reason to lower exposure assertions.
+
 Run everything:
 
 ```bash

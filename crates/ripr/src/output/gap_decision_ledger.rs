@@ -1,3 +1,9 @@
+// Operational preview markers emitted by this ledger producer. They retain
+// advisory actionability and do not extend the analyzer StaticLimitKind enum.
+pub(crate) const PYTHON_PREVIEW_STATIC_LIMIT_KIND: &str = "python_preview";
+pub(crate) const PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND: &str =
+    "python_repair_card_unavailable";
+
 use crate::agent::command_specs::{command_display_is_nonblank, command_displays_are_complete};
 use crate::agent::loop_commands::shell_arg;
 use crate::domain::{CommandRole, CommandSpec};
@@ -1400,7 +1406,7 @@ fn gap_record_from_python_repair_finding(finding: &Value, index: usize) -> Optio
         policy_state: "new".to_string(),
         repairability: repairability.to_string(),
         repair_route,
-        static_limit_kind: Some("python_preview".to_string()),
+        static_limit_kind: Some(PYTHON_PREVIEW_STATIC_LIMIT_KIND.to_string()),
         static_limit_detail: Some("Python repair cards are preview advisory evidence.".to_string()),
         static_limits: string_array_at(card, &["limits"])
             .into_iter()
@@ -2232,7 +2238,7 @@ fn gap_record_from_python_no_repair_card_finding(
     {
         return None;
     }
-    let static_limit_kind = "python_repair_card_unavailable";
+    let static_limit_kind = PYTHON_REPAIR_CARD_UNAVAILABLE_STATIC_LIMIT_KIND;
     let reason = if first_missing_discriminator_value(finding).is_none() {
         "static evidence names no concrete missing discriminator"
     } else {
@@ -4735,7 +4741,13 @@ mod tests {
         // alignment of its normal-value assertion, which is not relevant to the
         // changed raise, so it moves from eligible `direct` to the
         // never-delegated `no_family_relevant_assertion` (RIPR-SPEC-0224).
-        if (direct, no_strong, orthogonal, family_selection) != (5, 29, 11, 1) {
+        // #7526: `python_empty_sink_unrelated_short_function` contributes one
+        // orthogonal return-value card after unsupported observation credit is
+        // withheld; the per-record check above keeps it packet-ineligible.
+        // The genuine output assertion stays exposed and carries no card. The
+        // module-comparison control is weakly exposed without a module card.
+        // Both are therefore excluded from this repair-card inventory.
+        if (direct, no_strong, orthogonal, family_selection) != (5, 29, 12, 1) {
             return Err(format!(
                 "corpus inventory drift: direct={direct}, unknown={no_strong}, orthogonal={orthogonal}, family_selection={family_selection}"
             ));

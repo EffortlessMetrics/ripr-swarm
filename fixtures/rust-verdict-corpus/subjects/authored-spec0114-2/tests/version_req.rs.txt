@@ -1,0 +1,13 @@
+use spec0114_2::Req;
+
+fn assert_public_api_accepts(req: &str, version: u32, expected: bool) {
+    let parsed = Req::parse(req).expect("a valid requirement");
+    assert_eq!(parsed.matches(version), expected, "{req} against {version}");
+}
+
+#[test]
+fn greater_than_accepts_only_larger_versions() {
+    assert_public_api_accepts(">2", 3, true);
+    assert_public_api_accepts(">2", 2, false);
+    assert_public_api_accepts(">2", 1, false);
+}

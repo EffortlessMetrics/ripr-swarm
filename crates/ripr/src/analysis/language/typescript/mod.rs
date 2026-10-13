@@ -6,6 +6,7 @@
 //! Split from a monolithic 9497-line file for maintainability.
 //! The only public API of this module is `TypeScriptAdapter`.
 
+use super::super::diff::lines_look_alike;
 pub(crate) use super::super::{
     AnalysisOptions, diff::ChangedFile, fingerprint_probe_id, normalize_expression,
 };
@@ -86,6 +87,8 @@ mod parse;
 mod paths;
 mod probe_shape;
 mod related_tests;
+#[cfg(test)]
+mod replaced_block_tests;
 mod static_limit;
 mod table_rows;
 #[cfg(test)]
@@ -466,21 +469,27 @@ impl TypeScriptAdapter {
                 .iter()
                 .map(|removed| removed.text.as_str())
                 .collect();
+            // Every removed line of a replacement block shares the new-side
+            // line where the added run starts, so matching on that coordinate
+            // alone finds an old line only for the run's first added line
+            // (#7524). The three guards below read the old line from one
+            // pairing: by position in an even block, by content in an uneven
+            // one, by coordinate where a removed line interrupts the run.
+            let counterparts = changed.aligned_counterparts();
             for added in &changed.added_lines {
                 if !is_probe_candidate(added.line, &added.text) {
                     continue;
                 }
                 // New-declaration guard: the opening line of a NEW function,
-                // method, or arrow owner (no paired removed line) whose body
-                // carries its own added lines has no behavior of its own —
-                // the body lines are the probes. Probing it would ask for a
-                // discriminator no test can supply. A changed signature
-                // (paired removed line), a default value, or a one-line
-                // body keeps its probe.
-                if !changed
-                    .removed_lines
-                    .iter()
-                    .any(|removed| removed.new_side_line == added.line)
+                // method, or arrow owner whose body carries its own added
+                // lines has no behavior of its own; the body lines are the
+                // probes. Probing it would ask for a discriminator no test
+                // can supply. A changed signature (a counterpart that looks
+                // like it, or a removed line naming the owner), a default
+                // value, or a one-line body keeps its probe.
+                if !counterparts
+                    .get(&added.line)
+                    .is_some_and(|removed| lines_look_alike(&removed.text, &added.text))
                     && is_new_owner_opening_line(
                         &changed.path,
                         added.line,
@@ -497,28 +506,20 @@ impl TypeScriptAdapter {
                     continue;
                 }
                 // Annotation-only guard (#4282): TypeScript erases types, so a
-                // line whose in-place removed counterpart differs only in type
-                // syntax has no behavior for a test to discriminate. Pairing
-                // mirrors the Python adapter (same new-side position).
-                if changed
-                    .removed_lines
-                    .iter()
-                    .find(|removed| removed.new_side_line == added.line)
-                    .is_some_and(|removed| {
-                        is_annotation_only_signature_change(
-                            &changed.path,
-                            &removed.text,
-                            &added.text,
-                            file_has_decorators,
-                        )
-                    })
-                {
+                // line whose removed counterpart differs only in type syntax
+                // has no behavior for a test to discriminate.
+                if counterparts.get(&added.line).is_some_and(|removed| {
+                    is_annotation_only_signature_change(
+                        &changed.path,
+                        &removed.text,
+                        &added.text,
+                        file_has_decorators,
+                    )
+                }) {
                     continue;
                 }
-                let old_line_text = changed
-                    .removed_lines
-                    .iter()
-                    .find(|removed| removed.new_side_line == added.line)
+                let old_line_text = counterparts
+                    .get(&added.line)
                     .map(|removed| removed.text.as_str());
                 if let Some(mut finding) = classify_change_with_alias_state(
                     &changed.path,

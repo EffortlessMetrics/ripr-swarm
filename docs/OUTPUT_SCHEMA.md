@@ -524,7 +524,12 @@ state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
 `missing_scope`), one selected finding digest when available, an omitted-finding
 count, and pointers to `--format human-full` and `--format json`.
 `ripr check --format human-full` (alias `text-full`) preserves the exhaustive
-per-finding human report. These human text formats do not change
+per-finding human report. Navigation-aware CLI reports may define identical
+facts or guidance once with explicit finding-ordinal references; every finding
+retains its complete private record and drill-in commands. Sharing distinguishes
+full owner/test metadata and currentness, including raw contextual facts hidden
+by display normalization. Public library renders without navigation preserve
+legacy full-report bytes. These human text formats do not change
 `schema_version`; the machine-readable contract remains `--format json`.
 Repo-scoped formats such as `repo-exposure-json`, `repo-exposure-md`,
 `repo-sarif`, and `agent-seam-packets-json` warn on stderr when paired with
@@ -1340,7 +1345,8 @@ The evidence-first fields are additive in schema `0.2`:
   not credit `exposed`. They are emitted only on `language == "python"` findings
   and are absent on Rust and TypeScript findings; they do **not** bump
   `schema_version` (still `0.2`). `changed_sink` is the comma-joined significant
-  tokens of the changed line; `observed_sink` is the strongest related oracle's
+  tokens of the changed line; `observed_sink` is the crediting assertion when a
+  branch observes the change, otherwise the strongest related oracle's available
   assertion text; `alignment_reason` is a stable snake_case token. The
   `oracle_alignment` value is a controlled enum (`ORACLE_ALIGNMENT_VALUES`):
   - `direct` — a strong oracle observes the changed owner by name.
@@ -1350,8 +1356,12 @@ The evidence-first fields are additive in schema `0.2`:
   - `orthogonal` — a strong oracle exists but observes a different sink than the
     change (the fail-closed `weakly_exposed` branch); `alignment_reason` is
     `strong_oracle_observes_different_sink`.
-  - `unknown` — no strong oracle observed the changed sink (or a `<module>`
-    owner with no usable token).
+  - `unknown` — no admitted strong oracle observed the changed sink.
+
+  An empty token set never supplies observation credit on its own (#7526).
+  Existing assertion-level call and effect branches can still establish a
+  genuine observation; otherwise a strong unrelated oracle remains `orthogonal`
+  and cannot promote the finding to `exposed`.
 
   On a `weakly_exposed` finding, two `alignment_reason` values mark rows the
   family-relevant assertion selection changed (RIPR-SPEC-0224, #5572), and the
@@ -12971,9 +12981,15 @@ Field contract:
 
 Report packet index field contract:
 
-- `entries[].status` is `available`, `missing`, `pass`, `warn`, `fail`,
+- `entries[].status` is `available`, `missing`, `malformed`, `pass`, `warn`,
+  `fail`,
   `actionable`, `blocked`, `acknowledged`, `suppressed`, `stale`, `incomplete`,
-  `unreadable`, or `not_applicable`.
+  `unreadable`, or `not_applicable`. `malformed` marks a JSON-kind artifact
+  whose bytes do not parse as a JSON object (or cannot be read): existence
+  alone never credits it, the entry keeps its regeneration command, and the
+  packet cannot report `pass` while any entry is `malformed` (#7380). Receipt
+  JSONs discovered in the advertised receipts directory are indexed under
+  `validation_receipts` with the same status vocabulary (#7381).
 - `lane1_readiness.status` is `present`, `warn`, or `fail`.
 - `lane1_readiness.missing_artifacts`,
   `lane1_readiness.warning_artifacts`, and
@@ -17441,6 +17457,16 @@ exposed Python preview finding without a `python_repair_card` becomes one with
 `static_limit_kind = "python_repair_card_unavailable"`; neither carries a repair
 route, verify command, or receipt (RIPR-SPEC-0046).
 
+Passive and command-time LSP admission recognize the producer-owned operational
+`python_preview` and `python_repair_card_unavailable` markers without extending
+the analyzer limitation enum or promoting ineligible records. Producer-issued
+comparison identities remain unchanged: literal `<`/`>` may occur in the
+existing balanced inert single-quoted command form. Safety and root binding
+distinguish that data from the one allowed trailing stdout redirect; other
+operator, substitution, redirect-target and source-subject guards remain in
+force. Unknown scalar kinds remain refused. Admitted Python ledgers retain the
+explicit unavailable preview/mixed corpus scope (RIPR-SPEC-0077).
+
 The command writes JSON to `target/ripr/reports/gap-decision-ledger.json` and
 Markdown to `target/ripr/reports/gap-decision-ledger.md` by default. It does
 not rerun analysis, infer analyzer truth, publish comments, edit source,
@@ -17708,6 +17734,22 @@ absent from the ledger retains the not-found route. Selected stale or invalid
 artifacts still refuse without falling back to another packet. Replacing an
 artifact after a healthy refresh cannot bypass those checks.
 
+Actionable verification provenance is the closed set
+`canonical_item.verify_command` and `related_test_or_observer.name`, shared
+with the existing actionable projector. The latter retains the producer's
+bounded typed-related-test command and its truthful source label. Unknown,
+missing or nonstring labels refuse as `malformed_artifact`. A broad before/after
+repo-exposure snapshot comparison also refuses as `malformed_artifact` even
+when eligibility is asserted; it does not become bounded through a recognized
+source label. Ineligible packets and nonempty projection exclusions still
+refuse. Broad-route recognition uses the existing passive command-word
+interpretation, including equivalent whitespace and quoted word spellings.
+This is shared command metadata policy, not a general shell or cost parser.
+Command-time reads apply these same rules to the entire selected
+artifact, including sibling packets. These predicates do not authenticate a
+producer, grant execution authority or bind a Cargo test display command to a
+foreign working directory.
+
 Known preview or mixed-language artifacts retain their existing named-file
 admission. Rust provenance alone cannot establish their whole corpus
 currentness. `ripr.workspaceStatus` discloses each admitted ledger or
@@ -17763,7 +17805,12 @@ rendered report to a file. Repo-local automation can still write
 `<path>` may point directly at a JSON file or at a cargo-mutants output
 directory. When given a directory, the command reads and combines
 `outcomes.json` and `mutants.json` when both are present, preserving runtime
-outcomes and generated mutant locations for matching.
+outcomes and generated mutant locations for matching. Syntactically valid JSON
+that yields zero mutant records (`[]`, `{}`, a non-mutant array, or an empty
+`outcomes`/`mutants` list) is a fail-closed error, not an empty successful
+calibration. The unmatched-section sentence "All imported runtime mutants
+matched a static seam." is reserved for imports that actually contained
+mutant records.
 
 This is an advisory runtime calibration report, not a static finding surface.
 Runtime outcome labels come from the supplied mutation output and are kept under
@@ -18331,7 +18378,7 @@ targeted-rerun receipt shape:
     "recomputation_reasons": ["selected_test_scope_recomputed"],
     "invalidation_status": "not_available",
     "input_fingerprint": {
-      "schema_version": "1.62",
+      "schema_version": "1.63",
       "analyzer_version": "0.11.0+0123456789abcdef0123456789abcdef01234567",
       "workspace_root_hash": "…",
       "files_content_hash": "…",
@@ -18929,3 +18976,14 @@ always `false`: this historical report verifies a candidate-only disposition but
 construct, mutate, merge, qualify, or publish a candidate tree. Markdown is a
 projection of the same normalized report and cannot strengthen a
 `reconcile_required` result.
+
+
+The SPEC-0197 rule-7a fallible literal check adds a private optional observer
+receipt to the propagation witness. Its semantic digest binds owner/helper/test,
+literal values and canonical dependency identity; its separate validation digest
+binds source hashes, spans, coordinates and effective Cargo configuration.
+Existing witnesses without this receipt retain their semantic digest. Full
+classified cache generation 1.63 and compact/sharded generation 0.69 reject
+prior envelopes; eligible standalone packages also revalidate locked dependency
+and effective configuration identity before classified reuse. Public finding
+and oracle schemas are unchanged.

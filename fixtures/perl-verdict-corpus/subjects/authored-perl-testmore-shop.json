@@ -1,0 +1,37 @@
+{
+  "subject_id": "authored-perl-testmore-shop",
+  "origin": "authored",
+  "version_label": "authored@28e86e6",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "lib/Shop/Cart.pm",
+      "sha256": "fd14c91b94e52368f9f688d68073723a92b5950aeecee789c181448dc4d4800f"
+    },
+    {
+      "path": "lib/Shop/Pricing.pm",
+      "sha256": "b8e69fb8c3f602a0ea94bcce0819f706afc1090393abdfcff8cacd79699bc7d0"
+    },
+    {
+      "path": "t/bulk.t",
+      "sha256": "665e9d78103ecba5087b1a1a1b859f90d4c42f66a54b07fe8c5aef33adc872c3"
+    },
+    {
+      "path": "t/cart.t",
+      "sha256": "8a52dfdbc0abf659a22aabd9101184b5c5a8331ec1a95dc8f0a6ceead1208996"
+    },
+    {
+      "path": "t/load.t",
+      "sha256": "0ad0daaf9a557eb0bf3d0b8fb505d13847c358ae11bf84104f2370c7c3a64940"
+    },
+    {
+      "path": "t/pricing.t",
+      "sha256": "5ac5798b356cd1174f899664081910dd51ce6b29a3bed7de7d503c5112b19c4d"
+    },
+    {
+      "path": "t/qualified.t",
+      "sha256": "9d21fe82fac270e82341af4f72bb7df8838ae641a0dffb63b5ba423798de5813"
+    }
+  ]
+}

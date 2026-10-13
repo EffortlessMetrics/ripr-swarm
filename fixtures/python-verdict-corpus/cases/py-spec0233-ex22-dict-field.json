@@ -1,0 +1,47 @@
+{
+  "case_id": "py-spec0233-ex22-dict-field",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex22-dict-field.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 97
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "collection_element",
+  "test_shape": "pytest_dict_other_key_assert",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return {\"port\": 81, \"timeout\": 8080}",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns port 81 instead of 80"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 22: the test asserts only `build_field()[\"timeout\"] == 8080`, so changing the port passes. The spec says weakly_exposed (orthogonal); ripr's weakly_exposed is the ideal gap.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#22"
+  ]
+}

@@ -500,7 +500,7 @@ fn related_candidates_have_property_based_test_limit(
         .filter(|candidate| candidate.relation.uses_oracle())
         .any(|candidate| {
             test_uses_property_based_inputs(candidate.test)
-                && !selected_assertion_is_strong(candidate.test, focus)
+                && property_inputs_hide_the_discriminator(candidate.test, focus)
         })
 }
 
@@ -512,6 +512,38 @@ fn selected_assertion_is_strong(test: &PythonTest, focus: &PythonAssertionFocus)
     select_relevant_assertion(&test.assertions, Some(focus))
         .assertion()
         .is_some_and(|assertion| assertion.oracle_strength.rank() >= OracleStrength::Strong.rank())
+}
+
+/// Whether a property-based test's generated inputs leave static evidence
+/// unable to tell if the changed discriminator is reached (#6601): it has an
+/// assertion but the selected one is not strong, or a strong one whose inputs
+/// come only from strategies the test body reads, with no literal `@example`
+/// row. A test with no assertion has no oracle to read, so it reads
+/// reach-only like any other test; `@example` rows bind owner inputs like
+/// `parametrize` cases.
+fn property_inputs_hide_the_discriminator(test: &PythonTest, focus: &PythonAssertionFocus) -> bool {
+    if test.assertions.is_empty() {
+        return false;
+    }
+    !selected_assertion_is_strong(test, focus)
+        || (!has_example_rows(test)
+            && test
+                .generated_inputs
+                .iter()
+                .any(|input| body_uses_identifier(&test.body_text, input)))
+}
+
+/// Whether a readable Hypothesis `@example(...)` row binds a generated input.
+/// The decorator alone is not enough: an `@example(*args)` row is not read,
+/// so it binds nothing ripr can see. A `parametrize` mark binds other
+/// parameters, never the generated ones.
+fn has_example_rows(test: &PythonTest) -> bool {
+    test.parametrize.as_ref().is_some_and(|cases| {
+        cases
+            .argnames()
+            .iter()
+            .any(|name| test.generated_inputs.contains(name))
+    })
 }
 
 fn test_uses_property_based_inputs(test: &PythonTest) -> bool {
@@ -701,6 +733,7 @@ mod tests {
             module_constants: Vec::new(),
             same_class_callees: Vec::new(),
             class_path: String::new(),
+            term_facts: Default::default(),
         }
     }
 
