@@ -1,0 +1,11 @@
+diff --git a/src/account.py b/src/account.py
+index 0000000..1111111 100644
+--- a/src/account.py
++++ b/src/account.py
+@@ -4,4 +4,4 @@ class Account:
+ 
+     def balance(self):
+-        # the amount on record
+-        return self._balance
++        # the amount on record, never below zero
++        return max(0, self._balance)

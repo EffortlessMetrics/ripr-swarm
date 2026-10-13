@@ -10,14 +10,30 @@
   "ideal_verdict": "gap",
   "observed_verdict": "gap",
   "followed_retarget": false,
-  "changed_since_labeling": false,
+  "changed_since_labeling": true,
   "observed_classifications": [
-    "exposed",
     "weakly_exposed"
   ],
   "outcome": "ideal",
   "contradictions": [],
   "findings_scored": 2,
   "findings_contradicted": 0,
-  "contradiction_counts": {}
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "whole_object_equality",
+      "strength": "weak",
+      "spec": "RIPR-SPEC-0231#14"
+    },
+    "observed_kind": "whole_object_equality",
+    "observed_strength": "weak",
+    "observed_all": [
+      {
+        "test": "build_is_not_nine_retries",
+        "kind": "whole_object_equality",
+        "strength": "weak"
+      }
+    ],
+    "outcome": "match"
+  }
 }

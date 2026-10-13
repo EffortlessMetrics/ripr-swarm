@@ -15,7 +15,7 @@ target, margin, or corpus pin is a reviewed edit to that file.
 |---|---|---|
 | `speed` | How long until ripr says something useful, and whether the edit-check loop stays interactive | cold `ripr pilot` time and peak memory, warm `ripr check` time and peak memory, per corpus repository |
 | `ci` | What it costs to adopt ripr in CI | lines in the workflow `ripr init --ci github` writes, whether compiling ripr is its only install route, prebuilt install time (ingested from the install harness) |
-| `trust` | Whether ripr is ever confidently wrong | commands that exit 0 on a missing repository, hostile-repository journeys (`crates/ripr/tests/hostile_repos.rs`) that neither find nor refuse cleanly, self-contradicting findings, false-verdict, false-actionable, false-exposed, false-silent and abstention rates (kept separate: fewer abstentions or false gaps are not evidence that credited verdicts are right) on the hand-checked verdict corpus (derived from the committed rows under `fixtures/rust-verdict-corpus/expected/rows/` by the `verdict-corpus:` source), false-actionable, false-exposed and false-silent rates on the authored TypeScript verdict corpus (derived the same way from `fixtures/typescript-verdict-corpus/expected/rows/`), the same three rates on the authored Python verdict corpus (derived from `fixtures/python-verdict-corpus/expected/rows/`), and the share of in-scope numbered spec acceptance examples (minus waived) that a verdict-corpus case cites (target 1.0; coverage, not correctness), mutation spot-check agreement on discriminator and gap claims plus join coverage (ingested), judged-panel false actionable rate |
+| `trust` | Whether ripr is ever confidently wrong | commands that exit 0 on a missing repository, hostile-repository journeys (`crates/ripr/tests/hostile_repos.rs`) that neither find nor refuse cleanly, self-contradicting findings, false-verdict, false-actionable, false-exposed, false-silent and abstention rates (kept separate: fewer abstentions or false gaps are not evidence that credited verdicts are right) on the hand-checked verdict corpus (derived from the committed rows under `fixtures/rust-verdict-corpus/expected/rows/` by the `verdict-corpus:` source), false-actionable, false-exposed and false-silent rates on the authored TypeScript verdict corpus (derived the same way from `fixtures/typescript-verdict-corpus/expected/rows/`), the same three rates on the authored Python verdict corpus (derived from `fixtures/python-verdict-corpus/expected/rows/`), the oracle accuracy and overclaim rate on Rust corpus cases labeled with a spec-adopted related-test oracle kind and strength (targets 1.0 and 0; kept apart from the verdict rates, derived from the same rows), and the share of in-scope numbered spec acceptance examples (minus waived) that a verdict-corpus case cites (target 1.0; coverage, not correctness), mutation spot-check agreement on discriminator and gap claims plus join coverage (ingested), judged-panel false actionable rate |
 | `paste` | Whether a printed command works when pasted | printed commands that break or run injected code under a hostile repository path, printed commands that drop the repository root |
 | `first_run` | The new-developer journey from install to first useful result | install seconds (source build), time to first useful result, walk seconds per crate, failed steps, steps over budget, friction events, `*_unknown` verdicts (all ingested) |
 | `agent` | Whether an agent using only ripr's help closes a real test gap quickly and without being misled | fix success, mutants caught, ripr commands and tool steps to fix, false weak findings left after the fix, stale re-checks, white-box tests written only for ripr, and how many of the stub calls `check` suggested produced a stub (ingested from the agent-as-user harness); share of `ripr agent stub` tests that compile and fail at their own todo, share of gap locations that get a stub, and `observer_required` refusals (ingested from the stub evaluation, source `agent-stub`) |
@@ -253,3 +253,72 @@ baseline file. Install seconds compare only against a same-runner baseline.
 Numbers hold for the recorded revision, binary, runner class, and pinned
 corpus. Targets are proposed bars, not product guarantees. Verdict metrics are
 static and do not claim runtime mutation outcomes.
+
+## Corpus-rate case populations
+
+Verdict and oracle-rate samples carry `population` (`ripr-verdict-case-population-v1`):
+`rate` and one entry per case with `case_id`, `definition_sha256`, `numerator`
+and `denominator`. Zero-eligible contributions remain in the evidence. The
+corpus owner supplies the contributions; findings, rather than cases, supply
+the contradiction-rate denominator. The producer validates corpus definitions,
+actual retained-file pins, complete expected-row coverage and row/definition
+agreement. It loads and hashes each corpus once for all selected rates.
+Perl packet-provenance projections retain every case identity, with `0/0`
+contributions from the other packet cohort. Unsupported or absent projections
+fail explicitly; they do not manufacture zero rates.
+The two `oracle_accuracy` projections use the corpus owner's oracle summary;
+unlabeled cases retain `0/0` contributions. Case and row oracle labels must
+agree, and the stored observations must reproduce the row through the oracle
+owner's scoring rules. This checks committed records, without recovering
+finding file/line identities or original JSON truncation counts.
+
+The whole-corpus value still determines the absolute target status. Regression
+compares fractions over cases with the same ID and scoring-definition hash in
+both observations, using the existing margins with exact integer cross-products
+and the parsed margins' shortest round-tripping decimal values,
+so floating subtraction does not turn an exactly allowed change into regression. JSON
+`baseline.common` records both fractions and case count; `new_cases`,
+`removed_cases`, `changed_definitions`, `added` and `removed` report composition
+separately. Markdown names both the common-case comparison and the additions.
+Missing, duplicate, inconsistent or incomparable population evidence enters
+`gate.failed_comparisons` and fails `--gate`. It is not an unmeasured pass.
+Spec-example coverage has its separate existing producer and floor contract.
+
+Scoring identity includes corpus schema and projection policy, case/subject ID,
+anchor, edit kind, diff bytes, truth state, ideal/acceptable verdicts, mutant
+replacement/outcome semantics, and the subject origin, upstream pin and actual
+retained-file hashes. Ordered sets are normalized.
+Perl identities also include verified packet bytes, packet provenance and the
+pinned fact producer. Other languages retain their original definition hashes.
+Oracle-rate identities additionally bind the expected oracle kind, strength
+and test selector. Oracle labels do not change verdict-rate identities.
+Reasoning, spec citations,
+labeling observations, replay commands, failing-test annotations, equivalence
+reviews and `mutated_line` replay scaffolding are provenance rather than this
+scoring identity. This hash does not assert full replay equivalence.
+
+`testdata/7552-original-baseline-with-population.json` preserves the original
+committed baseline with metadata-only evidence for its five Rust samples, from
+revision
+`10e56371911a4e6ef8020fbcd7e5f2692fc9b7f1`: corpus blob
+`10b9f397e2c39f4f819b1f68659b5ff1dbf28675`, report blob
+`0b038c45bb6b2fa25faf8708c57cf41e58522e6d`. Removing the two added sample fields
+reconstructs the original baseline bytes (SHA256
+`2df8bc3f48d6ec1384464d7baacfe8e31a24553dcfc019c6b4f9dfbacf667ea5`). All original
+values, source details, revision and thresholds are preserved. The same evidence enriches the five original Rust operational samples; removing
+those added fields likewise restores every original byte. The public-proof
+scoreboard copy receives only that metadata. A rate refresh needs its own policy
+decision and attributable observation provenance. #7555 proposed a conflicting
+refresh, then returned to Draft and held further baseline edits pending that
+decision; this repair accepts no refreshed values. The later
+`3961078c56b8c89258af56068fdf989f97b7d776` report has eight differing rows and is
+not a replacement. Historical per-case contradiction denominators are absent
+and were not reconstructed. Legacy TypeScript/Python observations still lack
+attributable population evidence and fail comparison explicitly.
+
+`testdata/7552-rust-abstention.json` freezes committed expected records at
+`6da363f9b630845d82d8a073c42429d90cd03732`, rather than executing the analyzer.
+It pins the actual retained regression, 58/203 to 74/203 (+16/203, above the
+unchanged 0.02 margin), separately from 55/162 added abstentions and the whole
+129/365 value. It is a regression-test witness, not a new baseline. The repair
+does not make that gate green or change analyzer classifications (#7553).

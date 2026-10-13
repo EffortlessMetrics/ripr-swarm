@@ -41,6 +41,110 @@ pub(crate) fn forbids_active_line(lines: &[String], pattern: &str) -> bool {
     lines.iter().any(|line| line.contains(pattern))
 }
 
+const DROID_PERMISSION_DOC_PATHS: &[&str] = &[
+    "docs/agent-context/droid-rollout.md",
+    "docs/how-to/roll-out-droid.md",
+];
+
+fn yaml_mapping_values<'a>(lines: &'a [String], key: &str) -> Vec<&'a str> {
+    lines
+        .iter()
+        .filter_map(|line| {
+            let rest = line.strip_prefix(key)?;
+            let rest = rest.strip_prefix(':')?;
+            let value = rest.trim();
+            (!value.is_empty()).then_some(value)
+        })
+        .collect()
+}
+
+fn normalized_yaml_scalar(value: &str) -> String {
+    value
+        .trim_matches(|c: char| c == '"' || c == '\'')
+        .trim()
+        .to_ascii_lowercase()
+}
+
+fn yaml_assignment_is(line: &str, key: &str, expected: &str) -> bool {
+    let Some(rest) = line.strip_prefix(key) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix(':') else {
+        return false;
+    };
+    normalized_yaml_scalar(rest.trim()) == expected
+}
+
+fn check_droid_job_permissions_on_lines(
+    violations: &mut Vec<String>,
+    path_label: &str,
+    lines: &[String],
+) {
+    let contents = yaml_mapping_values(lines, "contents");
+    if !contents
+        .iter()
+        .any(|value| normalized_yaml_scalar(value) == "read")
+    {
+        violations.push(format!(
+            "{path_label}: job permissions must set contents: read"
+        ));
+    }
+    if contents
+        .iter()
+        .any(|value| normalized_yaml_scalar(value) == "write")
+    {
+        violations.push(format!(
+            "{path_label}: job permissions must not grant contents: write"
+        ));
+    }
+    if yaml_mapping_values(lines, "id-token")
+        .iter()
+        .any(|value| normalized_yaml_scalar(value) == "write")
+    {
+        violations.push(format!(
+            "{path_label}: job permissions must not grant id-token: write"
+        ));
+    }
+}
+
+fn check_droid_job_permissions(violations: &mut Vec<String>, path_label: &str, text: &str) {
+    check_droid_job_permissions_on_lines(violations, path_label, &active_yaml_lines(text));
+}
+
+fn line_lists_contents_write_as_required_permission(line: &str) -> bool {
+    let without_ticks = line.replace('`', "");
+    let stripped = without_ticks.trim();
+    let assignment = stripped
+        .strip_prefix("- ")
+        .or_else(|| stripped.strip_prefix("* "))
+        .unwrap_or(stripped)
+        .trim();
+    if yaml_assignment_is(assignment, "contents", "write") {
+        return true;
+    }
+    let lower = stripped.to_ascii_lowercase();
+    lower.contains("auto-review contents: write")
+        || lower.contains("manual droid contents: write")
+        || lower.contains("security scan contents: write")
+}
+
+fn lists_contents_write_as_required_permission(text: &str) -> bool {
+    text.lines()
+        .any(line_lists_contents_write_as_required_permission)
+}
+
+fn check_droid_docs_required_contents_write(
+    violations: &mut Vec<String>,
+    path_label: &str,
+    text: &str,
+) {
+    if lists_contents_write_as_required_permission(text) {
+        violations.push(format!(
+            "{path_label}: must not list contents: write as a required Droid permission; workflows use contents: read"
+        ));
+    }
+}
+
 const DROID_SAFE_ACTION: &str = "EffortlessMetrics/droid-action-safe";
 const DROID_SAFE_ACTION_SHA: &str = "7c1377ccbacddc95560d1570547a5baa51de01ec";
 const DROID_UNSAFE_UPSTREAM_ACTION: &str = "Factory-AI/droid-action";
@@ -98,6 +202,7 @@ pub(crate) fn check_droid_common(
     require_review_model: bool,
 ) {
     let lines = active_yaml_lines(text);
+    check_droid_job_permissions(violations, path_label, text);
 
     if require_same_repo_guard
         && !has_active_line(&lines, "head.repo.full_name == github.repository")
@@ -363,14 +468,23 @@ pub(crate) fn check_droid_review_config() -> Result<(), String> {
         ));
     }
 
+    for doc_path in DROID_PERMISSION_DOC_PATHS {
+        if let Ok(text) = crate::read_text_lossy(Path::new(doc_path)) {
+            check_droid_docs_required_contents_write(&mut violations, doc_path, &text);
+        } else {
+            violations.push(format!("{doc_path}: file not found or unreadable"));
+        }
+    }
+
     crate::finish_policy_report(
         crate::PolicyReportSpec {
             report_file: "droid-review-config.md",
             check: "check-droid-review-config",
-            why_it_matters: "Droid workflows handle repository secrets and automated review or security output; invariant drift can expose secrets, break BYOK model selection, or degrade review quality.",
+            why_it_matters: "Droid workflows handle repository secrets and automated review or security output; invariant drift can expose secrets, copy stale contents: write permissions, break BYOK model selection, or degrade review quality.",
             fix_kind: crate::FixKind::PolicyExceptionRequired,
             recommended_fixes: &[
                 "Restore the required invariant in the workflow YAML.",
+                "If rollout docs list contents: write as a required permission, match the working contents: read workflows instead of grepping historical drop notes.",
                 "If the invariant is intentionally changed, update docs/agent-context/review-invariants.md and add an xtask exception only after repo review.",
             ],
             rerun_command: "cargo xtask check-droid-review-config",
@@ -378,4 +492,170 @@ pub(crate) fn check_droid_review_config() -> Result<(), String> {
         },
         &violations,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        check_droid_docs_required_contents_write, check_droid_job_permissions,
+        lists_contents_write_as_required_permission,
+    };
+
+    fn permission_violations(yaml: &str) -> Vec<String> {
+        let mut violations = Vec::new();
+        check_droid_job_permissions(&mut violations, "test.yml", yaml);
+        violations
+    }
+
+    fn docs_violations(text: &str) -> Vec<String> {
+        let mut violations = Vec::new();
+        check_droid_docs_required_contents_write(&mut violations, "rollout.md", text);
+        violations
+    }
+
+    #[test]
+    fn job_permissions_accept_contents_read_without_id_token() {
+        let yaml = "\
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  actions: read
+";
+        assert!(permission_violations(yaml).is_empty());
+    }
+
+    #[test]
+    fn job_permissions_flag_missing_contents_read() {
+        let yaml = "\
+permissions:
+  pull-requests: write
+  issues: write
+  actions: read
+";
+        assert!(
+            permission_violations(yaml)
+                .iter()
+                .any(|v| v.contains("contents: read"))
+        );
+    }
+
+    #[test]
+    fn job_permissions_flag_contents_write() {
+        let yaml = "\
+permissions:
+  contents: write
+  pull-requests: write
+";
+        let violations = permission_violations(yaml);
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("must not grant contents: write"))
+        );
+        assert!(
+            violations
+                .iter()
+                .any(|v| v.contains("must set contents: read"))
+        );
+    }
+
+    #[test]
+    fn job_permissions_flag_id_token_write() {
+        let yaml = "\
+permissions:
+  contents: read
+  id-token: write
+";
+        assert!(
+            permission_violations(yaml)
+                .iter()
+                .any(|v| v.contains("must not grant id-token: write"))
+        );
+    }
+
+    #[test]
+    fn job_permissions_allow_id_token_read() {
+        let yaml = "\
+permissions:
+  contents: read
+  id-token: read
+";
+        assert!(permission_violations(yaml).is_empty());
+    }
+
+    #[test]
+    fn job_permissions_ignore_commented_contents_write() {
+        let yaml = "\
+permissions:
+  contents: read
+  # contents: write
+  # id-token: write
+";
+        assert!(permission_violations(yaml).is_empty());
+    }
+
+    #[test]
+    fn docs_flag_auto_review_contents_write_required_listing() {
+        let text = "\
+Required Invariants
+auto-review contents: write
+manual Droid contents: read
+security scan contents: read
+";
+        assert!(!docs_violations(text).is_empty());
+        assert!(lists_contents_write_as_required_permission(text));
+    }
+
+    #[test]
+    fn docs_flag_security_scan_contents_write_required_listing() {
+        let text = "security scan contents: write\n";
+        assert!(!docs_violations(text).is_empty());
+    }
+
+    #[test]
+    fn docs_flag_yaml_contents_write_permission_block() {
+        let text = "\
+```yaml
+contents: write
+pull-requests: write
+issues: write
+actions: read
+```
+";
+        assert!(!docs_violations(text).is_empty());
+    }
+
+    #[test]
+    fn docs_accept_dropped_and_must_not_add_contents_write() {
+        // Current origin/main rollout docs mention contents: write only as a
+        // dropped permission and a must-not-expand warning. A naive
+        // `contents: write` grep would fail this fixture.
+        let text = "\
+auto-review contents: read
+manual Droid contents: read
+security scan contents: read
+
+That shape landed in #2498 after dropping `contents: write` and
+`id-token: write`. Do not expand the baseline rollout to `contents: write` or
+`id-token: write` unless a dedicated permission-test PR proves a write
+requirement.
+";
+        assert!(
+            text.contains("contents: write"),
+            "fixture must still mention contents: write so a naive grep would fail"
+        );
+        assert!(docs_violations(text).is_empty());
+        assert!(!lists_contents_write_as_required_permission(text));
+    }
+
+    #[test]
+    fn docs_accept_auto_review_contents_read_invariants() {
+        let text = "\
+auto-review contents: read
+manual Droid contents: read
+security scan contents: read
+";
+        assert!(docs_violations(text).is_empty());
+    }
 }

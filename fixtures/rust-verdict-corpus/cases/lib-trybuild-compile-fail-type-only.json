@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-trybuild-compile-fail-type-only",
+  "subject_id": "authored-lib-trybuild",
+  "diff": "cases/lib-trybuild-compile-fail-type-only.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 10
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "predicate",
+  "test_shape": "trybuild_compile_fail_stderr",
+  "hard_case": null,
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "\"https\" != scheme",
+        "mutated_line": "if \"https\" != scheme { 443 } else { 80 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: \"https\" gives 80 not 443"
+      },
+      {
+        "replacement": "\"http\" == scheme",
+        "mutated_line": "if \"http\" == scheme { 443 } else { 80 }",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: \"https\" gives 80 not 443"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "tests/ui/fail_port_type.rs references default_port only to provoke a type error (u16 vs &str); the committed .stderr pins the diagnostic, which does not depend on the runtime value.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "limited",
+    "full_checkout_classifications": [
+      "no_static_path"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

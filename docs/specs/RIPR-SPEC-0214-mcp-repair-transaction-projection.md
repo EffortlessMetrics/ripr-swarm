@@ -8,6 +8,7 @@ Created: 2026-10-03
 
 Linked issues:
 
+- #7463 (bounded durable-attempt discovery without leaving MCP)
 - #3090 (this slice: `ripr_prepare_repair`, `ripr_get_repair_attempt`,
   `ripr_get_receipt_status`, and the repair-attempt / receipt resources)
 - #5268 (the discriminator gate names the unpopulated language-producer
@@ -55,6 +56,34 @@ CLI-owned repair attempts and receipts were invisible to the adapter. Slice
 B deliberately pinned readiness as a hard negative and left the
 repair-attempt link an explicit null so this slice could extend the
 documents without a breaking change.
+
+## Durable inventory extension (#7463)
+
+`ripr_list_repair_attempts` discovers the default durable CLI store before or
+after refresh through the shared canonical inventory authority. A missing store
+is empty and remains absent. Session transactions are explicitly excluded.
+Only manifest-bearing directories are inventoried; unpublished reservations are
+excluded. Unrepresentable UTF-8 directory identity refuses the canonical store
+inventory and projects typed `attempt_invalid`, without lossy or partial rows.
+Valid summaries retain ID, state, seam, repository head and the existing shared
+receipt/currentness projection. Invalid rows retain directory identity and a
+bounded `attempt_invalid` refusal without unvalidated fields or local-root paths.
+
+Optional `offset >= 0`, `limit >= 1`, and `inventory_id` are strictly validated;
+null and unknown arguments are Invalid Params. Identity/directory order includes
+invalid rows. Pages fit at most 256 rows and the full structured MCP envelope
+budget, with honest totals, outside-page omitted count, returned count and
+progressing continuation. The root/observed-HEAD/all-summary digest is independent
+of page parameters; a changed observation refuses a named continuation with
+`stale_inventory` and its current identity. Missing roots and store read failures
+remain typed failures. No single row or disclosure is silently truncated.
+
+The inventory is a live observation, not an atomic filesystem capture; output
+bounds do not imply bounded whole-store validation work. Work runs on the
+existing blocking read worker without holding the session lock. Transport and
+cancellation ownership remain unchanged. Reads create no store, source edit,
+verification command or durable attempt. Unknown-ID recovery names the discovered
+MCP route; CLI diagnostics remain available for canonical store refusal detail.
 
 ## Behavior
 

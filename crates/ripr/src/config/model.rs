@@ -577,6 +577,9 @@ impl PerlConfig {
         self.executable.as_deref().filter(|_| opt_in)
     }
 
+    /// The effective producer timeout. Config loading rejects `0` at parse
+    /// time (#7353); the fallback below only covers a `Default`-constructed
+    /// value, where `0` means "no override was applied".
     pub(crate) fn timeout_ms(&self) -> u64 {
         if self.timeout_ms == 0 {
             30_000

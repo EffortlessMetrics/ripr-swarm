@@ -12,7 +12,8 @@ crates written to fill cells the real crates leave empty (`authored-pricing`,
 `authored-ledger` and `authored-config` for verdict and probe-family cells;
 `authored-accounts`, `authored-checkout`, `authored-tokens`, `authored-shop`,
 `authored-roles`, `authored-old-errors`, `authored-old-tool`,
-`authored-old-shell` and `authored-old-deps` for test shapes other RIPR specs
+`authored-old-shell`, `authored-old-deps` and `authored-namesakes`
+(same-named module-level functions) for test shapes other RIPR specs
 define, each case naming its specs in its reasoning; one
 `authored-specNNNN-<k>` crate per acceptance
 example of RIPR-SPEC-0225 to 0229 and of the reach, macro and miss-evidence
@@ -37,7 +38,9 @@ identity traps (0197); `authored-spec-harness` for harness and package-reach
 cells: libtest-mimic trials (RIPR-SPEC-0173), `cargo_bin` subprocess output
 (0166) and xtask edits (0153); four `authored-grid-*` crates for
 control-flow, changed-binding, Result-match and bitwise or input-length
-cells), and
+cells; `authored-lib-*` for how tests written with common test libraries
+read as oracles, each declaring the library as a crates.io dependency with
+the labeled version in its `version_label`, never vendored), and
 one-line edits under `cases/`. Each case is labeled
 with what the crate's own test suite discriminates, established by running
 the listed mutants of the edited expression against the full pinned
@@ -80,6 +83,14 @@ examples as unmeasured, and records `floor`. The report's
 examples and the uncovered example numbers per spec; `validate` and `check`
 fail when covered falls below `floor`; in CI the xtask test
 `committed_ledger_is_valid_and_meets_its_floor` enforces it.
+
+A case may also carry `expected_oracle` (`kind`, `strength`, optional
+`test`, `spec`): the related-test oracle kind and strength a spec adopts.
+The report's `oracle_accuracy` section scores ripr's strongest reported
+entry for that test as `match`, `overclaim`, `underclaim`, `kind_mismatch`
+or `unobserved`, apart from the verdict rates; `check` fails when matches
+fall below `[oracle] match_floor` or overclaims rise above
+`[oracle] overclaim_ceiling` in `spec-coverage.toml`.
 
 ## Must Not
 
@@ -128,3 +139,8 @@ and `failing_test` must be one exact test name. Upstream cases replay with
 `--checkouts <dir>` holding `<dir>/<subject_id>` at the pinned commit, with
 its dependencies already fetched, because cargo runs offline. Run it
 on every new or relabeled case before opening the PR.
+
+When a spec states the oracle kind and strength for a case's related test,
+add `expected_oracle`, re-bless, and set `[oracle]` `match_floor` and
+`overclaim_ceiling` to the report's counts. When ripr's oracle reading
+improves, `check` prints the tighter numbers to commit.

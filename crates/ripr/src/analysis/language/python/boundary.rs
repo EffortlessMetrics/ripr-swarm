@@ -49,6 +49,66 @@ use super::{PythonOwner, PythonTest};
 use crate::domain::{OracleStrength, OwnerKind, ValueContext, ValueFact};
 use std::collections::BTreeMap;
 
+/// One strong related call to the owner with the literal value each bound
+/// parameter takes (an explicit argument or a literal default).
+pub(super) struct PythonOwnerCallValues {
+    pub(super) line: usize,
+    pub(super) text: String,
+    pub(super) values: BTreeMap<String, String>,
+}
+
+/// The owner calls the boundary rule reads, for another activation rule
+/// (`term_activation.rs`): the same strong rows, the same constants.
+///
+/// None when some strong related test calls the owner in a way no row
+/// binds, so the rows do not cover every strong input.
+pub(super) fn strong_owner_call_values(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> Option<Vec<PythonOwnerCallValues>> {
+    let constants = unrebound_constants(owner, related_candidates);
+    let (rows, gaps) =
+        strong_owner_call_rows_with_gaps(owner, &constants, related_candidates, focus);
+    if gaps {
+        return None;
+    }
+    let rows = rows
+        .into_iter()
+        .map(|row| PythonOwnerCallValues {
+            line: row.line,
+            text: row.text,
+            values: row
+                .bindings
+                .into_iter()
+                .map(|(parameter, binding)| (parameter, binding.value))
+                .collect(),
+        })
+        .collect();
+    Some(rows)
+}
+
+/// The owner's module constants no related test file reassigns
+/// (`pricing.DISCOUNT_THRESHOLD = 5` can change one at runtime).
+pub(super) fn unrebound_constants(
+    owner: &PythonOwner,
+    related_candidates: &[PythonRelatedCandidate<'_>],
+) -> Vec<PythonModuleConstant> {
+    owner
+        .module_constants
+        .iter()
+        .filter(|constant| {
+            !related_candidates.iter().any(|candidate| {
+                candidate
+                    .test
+                    .constant_rebinding
+                    .assigns_attribute(&constant.name)
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// Whether static evidence places a strong related call on the boundary.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum BoundaryActivation {
@@ -100,21 +160,7 @@ pub(super) fn python_boundary_evidence(
         .as_ref()
         .map(|(left, right)| format!("{left} == {right}"));
 
-    // A related test file that assigns the constant's attribute
-    // (`pricing.DISCOUNT_THRESHOLD = 5`) can change it at runtime.
-    let constants: Vec<PythonModuleConstant> = owner
-        .module_constants
-        .iter()
-        .filter(|constant| {
-            !related_candidates.iter().any(|candidate| {
-                candidate
-                    .test
-                    .constant_rebinding
-                    .assigns_attribute(&constant.name)
-            })
-        })
-        .cloned()
-        .collect();
+    let constants = unrebound_constants(owner, related_candidates);
     let rows = strong_owner_call_rows(owner, &constants, related_candidates, focus);
     let mut observed_values: Vec<ValueFact> = rows
         .iter()
@@ -270,7 +316,7 @@ fn module_constant<'a>(
 
 /// An operand's value independent of any test call: its own literal, or the
 /// literal of the module constant it names.
-fn static_operand(operand: &str, constants: &[PythonModuleConstant]) -> Option<String> {
+pub(super) fn static_operand(operand: &str, constants: &[PythonModuleConstant]) -> Option<String> {
     if let Some((base, offset)) = integer_offset(operand) {
         return static_operand(base, constants).and_then(|value| shifted_integer(&value, offset));
     }
@@ -578,6 +624,20 @@ fn strong_owner_call_rows(
     related_candidates: &[PythonRelatedCandidate<'_>],
     focus: &PythonAssertionFocus,
 ) -> Vec<CallRow> {
+    strong_owner_call_rows_with_gaps(owner, constants, related_candidates, focus).0
+}
+
+/// The strong owner-call rows, and whether some strong related test has an
+/// owner call that binds no row (a `*args` unpack, a comment inside the
+/// argument list) or no owner call this reader recognizes at all. A rule
+/// that needs every strong input (`term_activation.rs`) treats that as
+/// unresolved; the boundary rule reads the rows it has.
+fn strong_owner_call_rows_with_gaps(
+    owner: &PythonOwner,
+    constants: &[PythonModuleConstant],
+    related_candidates: &[PythonRelatedCandidate<'_>],
+    focus: &PythonAssertionFocus,
+) -> (Vec<CallRow>, bool) {
     let (method_call, skip) = match owner.owner_kind {
         Some(OwnerKind::Method) => (true, 1),
         Some(OwnerKind::ClassMethod) => (
@@ -590,9 +650,10 @@ fn strong_owner_call_rows(
             ),
         ),
         Some(OwnerKind::Function) => (false, 0),
-        _ => return Vec::new(),
+        _ => return (Vec::new(), true),
     };
     let mut rows = Vec::new();
+    let mut gaps = false;
     for candidate in related_candidates {
         if !candidate.relation.uses_oracle() {
             continue;
@@ -607,34 +668,47 @@ fn strong_owner_call_rows(
         if !strong {
             continue;
         }
+        // The test body, plus the call each callable-form exception assertion
+        // makes (RIPR-SPEC-0238 rule 13: `assertRaisesRegex(E, 'm', owner, 20)`
+        // calls `owner(20)`).
+        let mut sources = vec![(candidate.test.line, candidate.test.body_text.as_str())];
+        sources.extend(candidate.test.assertions.iter().filter_map(|assertion| {
+            assertion
+                .callable_call
+                .as_deref()
+                .map(|call| (assertion.line, call))
+        }));
+        let mut candidate_rows = 0usize;
         for name in owner_call_names(owner, candidate.test, method_call) {
-            for (offset, arglist) in
-                call_arglists_with_offsets(&candidate.test.body_text, &name, method_call)
-            {
-                let Some((bindings, case_arguments)) =
-                    bind_call_arguments(owner, constants, candidate.test, skip, arglist)
-                else {
-                    continue;
-                };
-                let line =
-                    candidate.test.line + candidate.test.body_text[..offset].matches('\n').count();
-                let text = call_line_text(&candidate.test.body_text, offset);
-                match (&candidate.test.parametrize, case_arguments.is_empty()) {
-                    (Some(parametrize), false) => {
-                        rows.extend(parametrize.cases.iter().map(|case| {
-                            parametrize_case_row(line, &text, &bindings, &case_arguments, case)
-                        }));
+            for (first_line, text) in &sources {
+                for (offset, arglist) in call_arglists_with_offsets(text, &name, method_call) {
+                    let Some((bindings, case_arguments)) =
+                        bind_call_arguments(owner, constants, candidate.test, skip, arglist)
+                    else {
+                        gaps = true;
+                        continue;
+                    };
+                    candidate_rows += 1;
+                    let line = first_line + text[..offset].matches('\n').count();
+                    let text = call_line_text(text, offset);
+                    match (&candidate.test.parametrize, case_arguments.is_empty()) {
+                        (Some(parametrize), false) => {
+                            rows.extend(parametrize.cases.iter().map(|case| {
+                                parametrize_case_row(line, &text, &bindings, &case_arguments, case)
+                            }));
+                        }
+                        _ => rows.push(CallRow {
+                            line,
+                            text,
+                            bindings,
+                        }),
                     }
-                    _ => rows.push(CallRow {
-                        line,
-                        text,
-                        bindings,
-                    }),
                 }
             }
         }
+        gaps |= candidate_rows == 0;
     }
-    rows
+    (rows, gaps)
 }
 
 /// The owner's own name plus any `from M import owner as alias` alias and

@@ -529,6 +529,86 @@ fn perl_facts_cache_dir(perl_config: &crate::config::PerlConfig, root: &Path) ->
     )
 }
 
+/// An external exporter gets an absent packet path inside an exclusively
+/// created attempt directory. The final cache key remains independent of
+/// attempt identity. Cleanup must not unlink another exporter's live packet.
+struct PerlProducerStaging {
+    directory: PathBuf,
+    packet: PathBuf,
+}
+
+impl PerlProducerStaging {
+    fn create(cache_dir: &Path, packet_hash: &str) -> Result<Self, String> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        static NEXT_ATTEMPT: AtomicU64 = AtomicU64::new(0);
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("failed to name Perl exporter staging: {error}"))?
+            .as_nanos();
+        for _ in 0..16 {
+            let sequence = NEXT_ATTEMPT.fetch_add(1, Ordering::Relaxed);
+            let directory = cache_dir.join(format!(
+                ".ripr-perl-attempt-{}-{nonce}-{sequence}",
+                std::process::id()
+            ));
+            match std::fs::create_dir(&directory) {
+                Ok(()) => {
+                    return Ok(Self {
+                        packet: directory.join(format!("{packet_hash}.json.tmp")),
+                        directory,
+                    });
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+                Err(error) => {
+                    return Err(format!(
+                        "failed to create Perl exporter staging `{}`: {error}",
+                        directory.display()
+                    ));
+                }
+            }
+        }
+        Err("failed to allocate an exclusive Perl exporter staging directory".to_string())
+    }
+
+    /// Only a confirmed settled attempt may discard its unpublished packet.
+    /// Never recurse into a blocker or remove evidence beside the packet.
+    fn settled_failure(&self, reason: String) -> String {
+        let cleanup = match std::fs::remove_file(&self.packet) {
+            Ok(()) => self.remove_empty_directory(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                self.remove_empty_directory()
+            }
+            Err(error) => Err(format!(
+                "partial packet cleanup failed at `{}`: {error}; staging retained at `{}`",
+                self.packet.display(),
+                self.directory.display()
+            )),
+        };
+        match cleanup {
+            Ok(()) => reason,
+            Err(cleanup) => format!("{reason}; {cleanup}"),
+        }
+    }
+
+    fn remove_empty_directory(&self) -> Result<(), String> {
+        std::fs::remove_dir(&self.directory).map_err(|error| {
+            format!(
+                "Perl exporter staging cleanup failed at `{}`: {error}; staging retained",
+                self.directory.display()
+            )
+        })
+    }
+
+    fn retained_failure(&self, reason: impl std::fmt::Display) -> String {
+        format!(
+            "{reason}; unpublished Perl exporter staging retained at `{}`",
+            self.directory.display()
+        )
+    }
+}
+
 /// Invoke a Perl facts exporter to generate a fact packet.
 ///
 /// Managed producer mode (Campaign 31 Phase D #1407; hardened in item 4).
@@ -602,12 +682,11 @@ fn invoke_perl_lsp_producer(
     // analysis to the diff range.
     let diff_arg = input.diff_file.as_ref().map(|p| p.display().to_string());
 
-    // Atomic write: the producer writes a `.tmp`; ripr renames to the final
-    // path only after the producer succeeds AND the file exists.
-    let tmp_path = cache_dir.join(format!("{packet_hash}.json.tmp"));
-
-    // Remove any stale `.tmp` from a prior terminated run before invoking.
-    let _ = std::fs::remove_file(&tmp_path);
+    // Atomic publication still uses the existing final packet key. Each
+    // invocation owns separate staging, including after an interrupted run;
+    // a new attempt neither consumes nor deletes another attempt's partial.
+    let staging = PerlProducerStaging::create(&cache_dir, &packet_hash)?;
+    let tmp_path = &staging.packet;
 
     let mut argv =
         perl_facts_export_argv(&root_str, &tmp_path.display().to_string(), base, Some(head));
@@ -632,11 +711,11 @@ fn invoke_perl_lsp_producer(
     // Windows the exporter is assigned to a Job Object before its user code
     // runs, so the timeout/cancellation kill below terminates the whole tree.
     let mut child = crate::process_owner::OwnedProcess::spawn(command).map_err(|e| {
-        format!(
+        staging.settled_failure(format!(
             "failed to spawn Perl facts exporter at `{}`: {e}. Configure [perl].executable or \
              put `perl-ripr-facts` on PATH.",
             executable.display()
-        )
+        ))
     })?;
 
     // Real timeout enforcement: wait up to `timeout_ms`; on timeout, the
@@ -653,51 +732,60 @@ fn invoke_perl_lsp_producer(
             // packet exists. Only accept the packet if the producer exited
             // successfully AND the file exists.
             if !status.success() {
-                // Clean up any partial tmp from a failing run.
-                let _ = std::fs::remove_file(&tmp_path);
-                return Err(format!(
+                return Err(staging.settled_failure(format!(
                     "Perl facts exporter exited with status {status} (non-zero); \
                      packet rejected even if a partial file exists"
-                ));
+                )));
             }
             if tmp_path.is_file() {
-                std::fs::rename(&tmp_path, &packet_path).map_err(|e| {
-                    format!(
+                std::fs::rename(tmp_path, &packet_path).map_err(|e| {
+                    staging.retained_failure(format!(
                         "failed to finalize Perl facts packet `{}`: {e}",
                         packet_path.display()
-                    )
+                    ))
                 })?;
+                // Publication already committed. A retained sidecar or a
+                // directory-cleanup error cannot turn that successful export
+                // into a producer failure after replacing the previous packet.
+                if let Err(cleanup) = staging.remove_empty_directory() {
+                    eprintln!(
+                        "{}",
+                        terminal_safe(format!(
+                            "warning: Perl facts packet published at `{}`; {cleanup}",
+                            packet_path.display()
+                        ))
+                    );
+                }
                 return Ok(packet_path);
             }
-            Err(format!(
+            Err(staging.settled_failure(format!(
                 "Perl facts exporter exited successfully but wrote no packet at `{}`",
                 tmp_path.display()
-            ))
+            )))
         }
         crate::git::ChildWait::TimedOut(_) => {
             // Timed out: the shared wait already terminated + reaped the child.
-            // The `.tmp` is never renamed.
-            Err(format!(
+            // Discard only this settled attempt's unpublished packet.
+            Err(staging.settled_failure(format!(
                 "Perl facts exporter timed out after {timeout_ms}ms (process terminated); no packet consumed"
-            ))
+            )))
         }
         crate::git::ChildWait::Cancelled(cancelled) => {
             // Cooperative cancellation (#2303): the enclosing analysis was
             // superseded or cancelled; the shared wait already terminated +
             // reaped the child. Propagate the named cancellation error.
-            Err(cancelled.to_string())
+            Err(staging.settled_failure(cancelled.to_string()))
         }
         crate::git::ChildWait::WaitFailed(err) => {
             // The shared wait already terminated + reaped the child.
-            Err(format!("Perl facts exporter failed while waiting: {err}"))
+            Err(staging.settled_failure(format!("Perl facts exporter failed while waiting: {err}")))
         }
         crate::git::ChildWait::CleanupFailed(cleanup) => {
             // The wait ended abnormally and the terminate-and-reap could
             // not be confirmed: the exporter or its tree may still be
-            // running, so the partial packet is discarded and never
-            // renamed.
-            let _ = std::fs::remove_file(&tmp_path);
-            Err(cleanup)
+            // running. Retain its private staging and name it; unconfirmed
+            // settlement cannot authorize deleting the producer's output.
+            Err(staging.retained_failure(cleanup))
         }
     }
 }

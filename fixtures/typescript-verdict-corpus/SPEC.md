@@ -36,6 +36,13 @@ Where the spec says "(today X)", the case keeps today's verdict in its
 labeling observation; where the mutant run contradicts it, the case scores
 it as false and its reasoning names the spec example.
 
+Each case that labels a numbered acceptance example cites it in
+`spec_examples`, and `spec-coverage.toml` gates those citations on a floor.
+In scope are RIPR-SPEC-0243, its amendments RIPR-SPEC-0246 to
+RIPR-SPEC-0252, and RIPR-SPEC-0254. A case cites an example only when its diff and test have
+that example's shape; uncovered examples stay visible in `check`'s coverage
+table rather than waived.
+
 Each subject carries a `ripr.toml` that enables TypeScript beside Rust, the
 way a user opts a repository in today.
 
@@ -104,6 +111,14 @@ Re-run the case's mutants against the stored subject before re-blessing with
 `cargo xtask verdict-corpus bless --language typescript`.
 
 ## Relabel history
+
+The awaited-root repair of 2026-10-13 (RIPR-SPEC-0243 rule 1) moves only
+`nodetest-spec0234-ex23-await-test` from `limited` / `no_static_path` to
+`credited` / `exposed`. The original subject, runtime label and labeling
+observation are unchanged. A fresh Node v24.19.0 / tsx 4.23.15 replay passed
+all 13 baseline tests and failed only `price` after changing `amount - 10`
+to `amount - 20`, with actual 130 versus expected 140. The row records that
+its static verdict changed since labeling.
 
 The boundary relabel of 2026-10-04 (#6686, `a985857`) moved twelve
 boundary cases: their `behavior_preserving_rewrite` edits became operand
