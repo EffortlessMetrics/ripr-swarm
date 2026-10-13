@@ -6,8 +6,8 @@ use super::arguments::{
 };
 use super::pattern_admission::pattern_assertion_classification;
 use super::patterns::{
-    PatternPolarity, contains_exact_comparison, contains_negated_pattern,
-    inequality_has_struct_literal_operand, is_broad_error_assertion,
+    PatternPolarity, contains_negated_pattern, has_top_level_disjunction,
+    has_top_level_exact_equality, inequality_has_struct_literal_operand, is_broad_error_assertion,
     is_clear_exact_custom_assertion_helper, is_comparison_shaped_custom_assertion,
     is_custom_assertion_helper, is_duplicative_comparison, is_duplicative_equality_assertion,
     is_effect_observer_subject_assertion, is_exact_error_variant_assertion,
@@ -312,7 +312,10 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
     {
         return Some(INEQUALITY);
     }
-    if is_exact_error_variant_assertion(&condition) {
+    // A top-level `||` passes whenever one arm does, so neither an error
+    // variant nor an `==` in one arm pins the value (#7558).
+    let disjunction = has_top_level_disjunction(&condition);
+    if is_exact_error_variant_assertion(&condition) && !disjunction {
         Some(OracleClassification {
             kind: OracleKind::ExactErrorVariant,
             strength: OracleStrength::Strong,
@@ -327,7 +330,8 @@ fn classify_fallible_assertion(line: &str) -> Option<OracleClassification> {
             kind: OracleKind::BroadError,
             strength: OracleStrength::Weak,
         })
-    } else if (is_exact_value_assertion(&condition) || contains_exact_comparison(&condition))
+    } else if ((is_exact_value_assertion(&condition) && !disjunction)
+        || has_top_level_exact_equality(&condition))
         && !is_duplicative_comparison(&condition)
     {
         Some(OracleClassification {

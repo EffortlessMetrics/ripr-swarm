@@ -235,3 +235,42 @@ fn scalar_parentheses_do_not_admit_blocks_or_arrays() -> Result<(), String> {
     }
     Ok(())
 }
+
+/// #7558, RIPR-SPEC-0231 rule 1: an `ensure!` condition earns exact credit
+/// only from a top-level `==` outside every `||` arm. A disjunction, an
+/// inequality whose operand holds a closure `==`, or an `==` inside a call
+/// argument pins nothing. `assert!` already reads these weak (control).
+#[test]
+fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), String> {
+    let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    for (text, expected) in [
+        ("ensure!(a != b || c == d);", &weak),
+        ("ensure!(a == b || c == d);", &weak),
+        ("ensure!(xs.iter().position(|x| *x == 1) != None);", &weak),
+        ("ensure!(f(|x| x == 1));", &weak),
+        (
+            "ensure!(r == Err(Error::Denied) || r == Err(Error::Locked));",
+            &weak,
+        ),
+        ("assert!(a != b || c == d);", &weak),
+        ("assert!(xs.iter().position(|x| *x == 1) != None);", &weak),
+        ("ensure!(a == b);", &exact),
+        ("ensure!(a == b, \"total must match\");", &exact),
+        ("ensure!(a != b && c == d);", &exact),
+        ("ensure!((total(&cart) == 42) && ready);", &exact),
+    ] {
+        let classification = classify_assertion(text);
+        if (&classification.kind, &classification.strength) != (&expected.0, &expected.1) {
+            return Err(format!(
+                "{text}: expected {:?}/{:?}, got {:?}/{:?}",
+                expected.0, expected.1, classification.kind, classification.strength
+            ));
+        }
+    }
+    let facts = extract_assertions("ensure!(a != b || c == d);", 7558);
+    let Some(fact) = facts.first() else {
+        return Err("the ensure! line must produce an oracle fact".to_string());
+    };
+    require_kind(fact, OracleKind::RelationalCheck, OracleStrength::Weak)
+}

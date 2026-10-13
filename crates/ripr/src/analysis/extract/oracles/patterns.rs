@@ -589,7 +589,7 @@ fn split_top_level_conjuncts(condition: &str) -> Vec<&str> {
 }
 
 /// Whether `condition` has `||` outside any delimiter, string or comment.
-fn has_top_level_disjunction(condition: &str) -> bool {
+pub(super) fn has_top_level_disjunction(condition: &str) -> bool {
     let masked = mask_comments_and_strings(condition);
     let bytes = masked.as_bytes();
     let mut depth = 0usize;
@@ -996,9 +996,26 @@ pub(super) fn is_exact_value_assertion(line: &str) -> bool {
     line.contains("assert_eq!") || line.contains("assert_matches!") || line.contains("matches!")
 }
 
-pub(super) fn contains_exact_comparison(condition: &str) -> bool {
-    let (equal, not_equal) = comparison_operators(condition);
-    equal || not_equal
+/// RIPR-SPEC-0231 rule 1 (#7558): whether a boolean condition pins a value.
+/// It must have no top-level `||` (a disjunction passes whenever one arm
+/// does), and some top-level `&&` conjunct must itself be an `==`
+/// comparison at its own top level. An `==` inside a closure, a call
+/// argument, a negation or an `||` arm pins nothing; a parenthesized
+/// conjunct is read again by the same rule.
+pub(super) fn has_top_level_exact_equality(condition: &str) -> bool {
+    !has_top_level_disjunction(condition)
+        && split_top_level_conjuncts(condition)
+            .into_iter()
+            .any(|conjunct| {
+                let conjunct = conjunct.trim();
+                if let Some(inner) = super::arguments::parenthesized_contents(conjunct) {
+                    return has_top_level_exact_equality(inner);
+                }
+                let masked = mask_comments_and_strings(conjunct);
+                top_level_comparison_operator(&masked).is_some_and(|(at, _)| {
+                    masked.get(at..).is_some_and(|rest| rest.starts_with("=="))
+                })
+            })
 }
 
 /// Which of `==` and `!=` appear outside string literals and comments.
@@ -1869,15 +1886,26 @@ mod spec_0106_tests {
     }
 
     #[test]
-    fn exact_comparison_ignores_string_contents_and_escapes() -> Result<(), String> {
+    fn exact_equality_ignores_string_contents_and_escapes() -> Result<(), String> {
         for (condition, expected) in [
             ("state == TerminalState::Pass", true),
-            ("state != TerminalState::Pending", true),
+            ("state != TerminalState::Pending", false),
             (r#"label.contains("==")"#, false),
+            (r#"label == "a || b""#, true),
             (r#"label.contains("escaped \"!=\" text")"#, false),
             ("ready = true", false),
+            // #7558: only a top-level `==` outside every `||` arm pins a value.
+            ("a != b || c == d", false),
+            ("a == b || c == d", false),
+            ("xs.iter().position(|x| *x == 1) != None", false),
+            ("f(|x| x == 1)", false),
+            ("!(a == b)", false),
+            ("a != b && c == d", true),
+            ("(a == b) && ready", true),
+            ("(a == b || c) && ready", false),
+            ("total(&cart) == 42 // a || b", true),
         ] {
-            let actual = contains_exact_comparison(condition);
+            let actual = has_top_level_exact_equality(condition);
             if actual != expected {
                 return Err(format!(
                     "comparison classification mismatch for {condition}: {actual}"
