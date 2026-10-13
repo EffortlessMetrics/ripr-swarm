@@ -120,11 +120,11 @@ impl DropInManifests {
                 standard_manifest_shape(manifest)
                     && !patches(manifest, krate)
                     && ["package", "lib"].iter().all(|kind| {
-                        !manifest
+                        manifest
                             .get(*kind)
                             .and_then(|table| table.get("name"))
                             .and_then(toml::Value::as_str)
-                            .is_some_and(|name| normalized(name) == krate)
+                            .is_none_or(|name| normalized(name) != krate)
                     })
                     && dependency_tables(manifest)
                         .iter()
