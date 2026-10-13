@@ -1,118 +1,116 @@
 {
   "schema_version": "ripr_verdict_corpus_report.v1",
   "spec": "RIPR-SPEC-0219",
-  "cases_total": 365,
+  "cases_total": 379,
   "by_truth": {
-    "discriminated": 185,
-    "not_discriminated": 121,
+    "discriminated": 191,
+    "not_discriminated": 129,
     "partially_discriminated": 59
   },
   "by_outcome": {
-    "abstained": 128,
-    "false_actionable": 46,
-    "false_exposed": 5,
-    "ideal": 186
+    "abstained": 137,
+    "false_actionable": 42,
+    "false_exposed": 4,
+    "ideal": 196
   },
   "by_observed_verdict": {
-    "credited": 67,
-    "gap": 170,
-    "limited": 127,
+    "credited": 68,
+    "gap": 174,
+    "limited": 136,
     "silent": 1
   },
   "false_verdict_rate": {
-    "numerator": 51,
-    "denominator": 365,
-    "rate": "0.1397"
+    "numerator": 46,
+    "denominator": 379,
+    "rate": "0.1214"
   },
   "false_actionable_rate": {
-    "numerator": 46,
-    "denominator": 185,
-    "rate": "0.2486"
+    "numerator": 42,
+    "denominator": 191,
+    "rate": "0.2199"
   },
   "false_exposed_rate": {
-    "numerator": 5,
-    "denominator": 180,
-    "rate": "0.0278"
+    "numerator": 4,
+    "denominator": 188,
+    "rate": "0.0213"
   },
   "false_silent_rate": {
     "numerator": 0,
-    "denominator": 180,
+    "denominator": 188,
     "rate": "0.0000"
   },
   "ideal_rate": {
-    "numerator": 186,
-    "denominator": 365,
-    "rate": "0.5096"
+    "numerator": 196,
+    "denominator": 379,
+    "rate": "0.5172"
   },
   "abstention_rate": {
-    "numerator": 128,
-    "denominator": 365,
-    "rate": "0.3507"
+    "numerator": 137,
+    "denominator": 379,
+    "rate": "0.3615"
   },
   "contradiction_rate": {
-    "numerator": 3,
-    "denominator": 466,
-    "rate": "0.0064"
+    "numerator": 0,
+    "denominator": 483,
+    "rate": "0.0000"
   },
-  "contradictions_by_code": {
-    "no_static_path_with_related_tests": 3
-  },
+  "contradictions_by_code": {},
   "by_origin": {
     "authored": {
-      "cases_total": 331,
+      "cases_total": 343,
       "by_observed_verdict": {
-        "credited": 62,
-        "gap": 166,
-        "limited": 102,
+        "credited": 63,
+        "gap": 170,
+        "limited": 109,
         "silent": 1
       },
       "false_verdict_rate": {
-        "numerator": 49,
-        "denominator": 331,
-        "rate": "0.1480"
+        "numerator": 44,
+        "denominator": 343,
+        "rate": "0.1283"
       },
       "false_actionable_rate": {
-        "numerator": 44,
-        "denominator": 165,
-        "rate": "0.2667"
+        "numerator": 40,
+        "denominator": 169,
+        "rate": "0.2367"
       },
       "false_exposed_rate": {
-        "numerator": 5,
-        "denominator": 166,
-        "rate": "0.0301"
+        "numerator": 4,
+        "denominator": 174,
+        "rate": "0.0230"
       },
       "false_silent_rate": {
         "numerator": 0,
-        "denominator": 166,
+        "denominator": 174,
         "rate": "0.0000"
       },
       "ideal_rate": {
-        "numerator": 179,
-        "denominator": 331,
-        "rate": "0.5408"
+        "numerator": 189,
+        "denominator": 343,
+        "rate": "0.5510"
       },
       "abstention_rate": {
-        "numerator": 103,
-        "denominator": 331,
-        "rate": "0.3112"
+        "numerator": 110,
+        "denominator": 343,
+        "rate": "0.3207"
       }
     },
     "upstream": {
-      "cases_total": 34,
+      "cases_total": 36,
       "by_observed_verdict": {
         "credited": 5,
         "gap": 4,
-        "limited": 25
+        "limited": 27
       },
       "false_verdict_rate": {
         "numerator": 2,
-        "denominator": 34,
-        "rate": "0.0588"
+        "denominator": 36,
+        "rate": "0.0556"
       },
       "false_actionable_rate": {
         "numerator": 2,
-        "denominator": 20,
-        "rate": "0.1000"
+        "denominator": 22,
+        "rate": "0.0909"
       },
       "false_exposed_rate": {
         "numerator": 0,
@@ -126,14 +124,35 @@
       },
       "ideal_rate": {
         "numerator": 7,
-        "denominator": 34,
-        "rate": "0.2059"
+        "denominator": 36,
+        "rate": "0.1944"
       },
       "abstention_rate": {
-        "numerator": 25,
-        "denominator": 34,
-        "rate": "0.7353"
+        "numerator": 27,
+        "denominator": 36,
+        "rate": "0.7500"
       }
+    }
+  },
+  "oracle_accuracy": {
+    "ledger": "fixtures/rust-verdict-corpus/spec-coverage.toml",
+    "labeled": 34,
+    "by_outcome": {
+      "kind_mismatch": 0,
+      "match": 31,
+      "overclaim": 0,
+      "underclaim": 3,
+      "unobserved": 0
+    },
+    "oracle_accuracy": {
+      "numerator": 31,
+      "denominator": 34,
+      "rate": "0.9118"
+    },
+    "oracle_overclaim_rate": {
+      "numerator": 0,
+      "denominator": 34,
+      "rate": "0.0000"
     }
   },
   "rows": [
@@ -201,7 +220,25 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "broad_error",
+          "strength": "weak",
+          "test": "too_many_digits_are_refused",
+          "spec": "RIPR-SPEC-0227#11"
+        },
+        "observed_kind": "broad_error",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "too_many_digits_are_refused",
+            "kind": "broad_error",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "accounts-trailer-crc",
@@ -287,14 +324,10 @@
         "no_static_path"
       ],
       "outcome": "abstained",
-      "contradictions": [
-        "no_static_path_with_related_tests"
-      ],
+      "contradictions": [],
       "findings_scored": 1,
-      "findings_contradicted": 1,
-      "contradiction_counts": {
-        "no_static_path_with_related_tests": 1
-      }
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
     },
     {
       "case_id": "bytesize-as-kib-div",
@@ -357,14 +390,10 @@
         "no_static_path"
       ],
       "outcome": "abstained",
-      "contradictions": [
-        "no_static_path_with_related_tests"
-      ],
+      "contradictions": [],
       "findings_scored": 1,
-      "findings_contradicted": 1,
-      "contradiction_counts": {
-        "no_static_path_with_related_tests": 1
-      }
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
     },
     {
       "case_id": "bytesize-format-unit-first-run",
@@ -861,13 +890,13 @@
       "hard_case": false,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "limited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
         "weakly_exposed"
       ],
-      "outcome": "false_actionable",
+      "outcome": "abstained",
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
@@ -3545,13 +3574,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "limited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
         "weakly_exposed"
       ],
-      "outcome": "false_actionable",
+      "outcome": "abstained",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -3831,13 +3860,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "limited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "weakly_exposed"
+        "propagation_unknown"
       ],
-      "outcome": "false_actionable",
+      "outcome": "abstained",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -3875,13 +3904,13 @@
       "hard_case": true,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",
-      "observed_verdict": "credited",
+      "observed_verdict": "gap",
       "followed_retarget": false,
       "changed_since_labeling": true,
       "observed_classifications": [
-        "exposed"
+        "weakly_exposed"
       ],
-      "outcome": "false_exposed",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
@@ -3985,13 +4014,13 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
-      "observed_verdict": "gap",
+      "observed_verdict": "limited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "weakly_exposed"
+        "infection_unknown"
       ],
-      "outcome": "false_actionable",
+      "outcome": "abstained",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
@@ -4117,14 +4146,35 @@
       "hard_case": true,
       "truth": "discriminated",
       "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": true,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 2,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "old-unit-assert-matches-sibling-arm",
+      "subject_id": "authored-old-errors",
+      "origin": "authored",
+      "anchor": "src/errors.rs:96",
+      "behavior_family": "match_arm",
+      "test_shape": "local_assert_matches_macro_other_arm_inputs",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
       "observed_verdict": "gap",
       "followed_retarget": false,
       "changed_since_labeling": false,
       "observed_classifications": [
-        "exposed",
         "weakly_exposed"
       ],
-      "outcome": "false_actionable",
+      "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
@@ -4527,6 +4577,28 @@
       "contradiction_counts": {}
     },
     {
+      "case_id": "semver-greater-patch-guard-ge",
+      "subject_id": "semver",
+      "origin": "upstream",
+      "anchor": "src/eval.rs:81",
+      "behavior_family": "predicate_boundary",
+      "test_shape": "integration_test_custom_assert_helper",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
       "case_id": "semver-greater-patch",
       "subject_id": "semver",
       "origin": "upstream",
@@ -4612,6 +4684,28 @@
       "outcome": "abstained",
       "contradictions": [],
       "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "semver-op-ge-reads-greater",
+      "subject_id": "semver",
+      "origin": "upstream",
+      "anchor": "src/parse.rs:272",
+      "behavior_family": "predicate",
+      "test_shape": "integration_test_public_api",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "static_unknown"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 2,
       "findings_contradicted": 0,
       "contradiction_counts": {}
     },
@@ -5119,14 +5213,10 @@
         "no_static_path"
       ],
       "outcome": "abstained",
-      "contradictions": [
-        "no_static_path_with_related_tests"
-      ],
+      "contradictions": [],
       "findings_scored": 1,
-      "findings_contradicted": 1,
-      "contradiction_counts": {
-        "no_static_path_with_related_tests": 1
-      }
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
     },
     {
       "case_id": "spec0117-external-std-macro",
@@ -5209,6 +5299,50 @@
       "changed_since_labeling": false,
       "observed_classifications": [
         "no_static_path"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "spec0117-proximity-macro-only",
+      "subject_id": "authored-spec0117-5",
+      "origin": "authored",
+      "anchor": "src/lib.rs:14",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "same_file_unit_test_public_api_invokes_macro_naming_owner",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "abstained",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "spec0117-proximity-macro-plus-direct",
+      "subject_id": "authored-spec0117-6",
+      "origin": "authored",
+      "anchor": "src/lib.rs:14",
+      "behavior_family": "return_value_arithmetic",
+      "test_shape": "same_file_unit_tests_macro_route_plus_direct_owner_call",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "limited",
+      "followed_retarget": false,
+      "changed_since_labeling": true,
+      "observed_classifications": [
+        "weakly_exposed"
       ],
       "outcome": "abstained",
       "contradictions": [],
@@ -5875,7 +6009,25 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "broad_error",
+          "strength": "weak",
+          "test": "far_is_refused",
+          "spec": "RIPR-SPEC-0227#3"
+        },
+        "observed_kind": "broad_error",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "far_is_refused",
+            "kind": "broad_error",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0227-check-guard-same-test-flip",
@@ -5919,7 +6071,25 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "broad_error",
+          "strength": "weak",
+          "test": "split_refuses_far",
+          "spec": "RIPR-SPEC-0227#4"
+        },
+        "observed_kind": "broad_error",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "split_refuses_far",
+            "kind": "broad_error",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0227-check-ok-value-is-ok",
@@ -5963,7 +6133,25 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "broad_error",
+          "strength": "weak",
+          "test": "unwrap_err_on_far_input",
+          "spec": "RIPR-SPEC-0227#7"
+        },
+        "observed_kind": "unknown",
+        "observed_strength": "none",
+        "observed_all": [
+          {
+            "test": "unwrap_err_on_far_input",
+            "kind": "unknown",
+            "strength": "none"
+          }
+        ],
+        "outcome": "underclaim"
+      }
     },
     {
       "case_id": "spec0227-check-variant-is-err",
@@ -5985,7 +6173,25 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "broad_error",
+          "strength": "weak",
+          "test": "is_err_on_far_input",
+          "spec": "RIPR-SPEC-0227#5"
+        },
+        "observed_kind": "broad_error",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "is_err_on_far_input",
+            "kind": "broad_error",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0227-check-variant-should-panic",
@@ -6029,7 +6235,25 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "broad_error",
+          "strength": "weak",
+          "test": "letter_is_refused",
+          "spec": "RIPR-SPEC-0227#13"
+        },
+        "observed_kind": "broad_error",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "letter_is_refused",
+            "kind": "broad_error",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0227-total-question-mark-is-err",
@@ -6296,6 +6520,204 @@
       "contradiction_counts": {}
     },
     {
+      "case_id": "spec0229-expected-side-variant",
+      "subject_id": "authored-spec0229-6",
+      "origin": "authored",
+      "anchor": "src/lib.rs:12",
+      "behavior_family": "match_arm",
+      "test_shape": "integration_test_expected_side_names_sibling_variant",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "spec0229-guarded-arm",
+      "subject_id": "authored-spec0229-5",
+      "origin": "authored",
+      "anchor": "src/lib.rs:5",
+      "behavior_family": "match_arm",
+      "test_shape": "integration_test_input_through_guarded_arm",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 2,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "spec0229-let-made-input",
+      "subject_id": "authored-spec0229-3",
+      "origin": "authored",
+      "anchor": "src/lib.rs:6",
+      "behavior_family": "match_arm",
+      "test_shape": "integration_test_input_from_helper_binding",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "spec0229-range-widened-inside-input",
+      "subject_id": "authored-spec0229-8a",
+      "origin": "authored",
+      "anchor": "src/lib.rs:6",
+      "behavior_family": "match_arm",
+      "test_shape": "integration_test_input_inside_both_patterns",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "spec0229-range-widened-moved-input",
+      "subject_id": "authored-spec0229-8b",
+      "origin": "authored",
+      "anchor": "src/lib.rs:6",
+      "behavior_family": "match_arm",
+      "test_shape": "integration_test_input_moves_between_arms",
+      "hard_case": true,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "false_actionable",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "spec0229-selected-none-arm",
+      "subject_id": "authored-spec0229-2",
+      "origin": "authored",
+      "anchor": "src/lib.rs:6",
+      "behavior_family": "match_arm",
+      "test_shape": "integration_test_input_selects_changed_arm",
+      "hard_case": false,
+      "truth": "discriminated",
+      "ideal_verdict": "credited",
+      "observed_verdict": "credited",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "spec0229-unselected-none-arm",
+      "subject_id": "authored-spec0229-1",
+      "origin": "authored",
+      "anchor": "src/lib.rs:6",
+      "behavior_family": "match_arm",
+      "test_shape": "integration_test_input_selects_sibling_arm",
+      "hard_case": false,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "spec0229-unselected-range-arm",
+      "subject_id": "authored-spec0229-7",
+      "origin": "authored",
+      "anchor": "src/lib.rs:6",
+      "behavior_family": "match_arm",
+      "test_shape": "integration_tests_inputs_select_neighbor_arms",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
+      "case_id": "spec0229-unselected-wildcard-arm",
+      "subject_id": "authored-spec0229-4",
+      "origin": "authored",
+      "anchor": "src/lib.rs:12",
+      "behavior_family": "match_arm",
+      "test_shape": "integration_test_input_selects_earlier_arm",
+      "hard_case": true,
+      "truth": "not_discriminated",
+      "ideal_verdict": "gap",
+      "observed_verdict": "gap",
+      "followed_retarget": false,
+      "changed_since_labeling": false,
+      "observed_classifications": [
+        "weakly_exposed"
+      ],
+      "outcome": "ideal",
+      "contradictions": [],
+      "findings_scored": 1,
+      "findings_contradicted": 0,
+      "contradiction_counts": {}
+    },
+    {
       "case_id": "spec0231-oracle-assert-eq-err-bound-value",
       "subject_id": "authored-spec0231-5",
       "origin": "authored",
@@ -6315,7 +6737,24 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "exact_error_variant",
+          "strength": "strong",
+          "spec": "RIPR-SPEC-0231#5"
+        },
+        "observed_kind": "exact_error_variant",
+        "observed_strength": "strong",
+        "observed_all": [
+          {
+            "test": "check_twenty_is_big",
+            "kind": "exact_error_variant",
+            "strength": "strong"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-assert-ne-err-variant",
@@ -6337,7 +6776,24 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "relational_check",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#20"
+        },
+        "observed_kind": "unknown",
+        "observed_strength": "none",
+        "observed_all": [
+          {
+            "test": "check_twenty_is_not_bad",
+            "kind": "unknown",
+            "strength": "none"
+          }
+        ],
+        "outcome": "underclaim"
+      }
     },
     {
       "case_id": "spec0231-oracle-assert-ne-ok-value",
@@ -6359,7 +6815,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "relational_check",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#2"
+        },
+        "observed_kind": "relational_check",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "check_twenty_is_not_ok",
+            "kind": "relational_check",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-assert-ne-scalar",
@@ -6381,7 +6854,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "relational_check",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#1"
+        },
+        "observed_kind": "relational_check",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "score_is_not_zero",
+            "kind": "relational_check",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-assert-ne-struct-literal",
@@ -6395,16 +6885,32 @@
       "ideal_verdict": "gap",
       "observed_verdict": "gap",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "exposed",
         "weakly_exposed"
       ],
       "outcome": "ideal",
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "whole_object_equality",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#14"
+        },
+        "observed_kind": "whole_object_equality",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "build_is_not_nine_retries",
+            "kind": "whole_object_equality",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-ensure-matches-ok-wildcard",
@@ -6426,7 +6932,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "smoke_only",
+          "strength": "smoke",
+          "spec": "RIPR-SPEC-0231#18"
+        },
+        "observed_kind": "smoke_only",
+        "observed_strength": "smoke",
+        "observed_all": [
+          {
+            "test": "check_accepts_five",
+            "kind": "smoke_only",
+            "strength": "smoke"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-ensure-not-equal",
@@ -6448,7 +6971,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "relational_check",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#13"
+        },
+        "observed_kind": "relational_check",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "score_is_not_zero",
+            "kind": "relational_check",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-err-at-variant-binding",
@@ -6470,7 +7010,24 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "exact_error_variant",
+          "strength": "strong",
+          "spec": "RIPR-SPEC-0231#22"
+        },
+        "observed_kind": "exact_error_variant",
+        "observed_strength": "strong",
+        "observed_all": [
+          {
+            "test": "check_twenty_is_bad",
+            "kind": "exact_error_variant",
+            "strength": "strong"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-err-at-wildcard-binding",
@@ -6492,7 +7049,24 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "broad_error",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#21"
+        },
+        "observed_kind": "broad_error",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "check_twenty_errs",
+            "kind": "broad_error",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-err-ref-binding-guard",
@@ -6514,7 +7088,24 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "broad_error",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#21"
+        },
+        "observed_kind": "broad_error",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "check_twenty_has_message",
+            "kind": "broad_error",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-err-underscore-binding",
@@ -6536,7 +7127,24 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "broad_error",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#17"
+        },
+        "observed_kind": "broad_error",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "check_rejects_twenty",
+            "kind": "broad_error",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-events-not-empty",
@@ -6558,7 +7166,24 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "mock_expectation",
+          "strength": "medium",
+          "spec": "RIPR-SPEC-0231#16"
+        },
+        "observed_kind": "mock_expectation",
+        "observed_strength": "medium",
+        "observed_all": [
+          {
+            "test": "emit_records_an_event",
+            "kind": "mock_expectation",
+            "strength": "medium"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-events-sent-contains",
@@ -6580,7 +7205,24 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "mock_expectation",
+          "strength": "medium",
+          "spec": "RIPR-SPEC-0231#10"
+        },
+        "observed_kind": "mock_expectation",
+        "observed_strength": "medium",
+        "observed_all": [
+          {
+            "test": "send_records_the_id",
+            "kind": "mock_expectation",
+            "strength": "medium"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-events-sent-len-eq",
@@ -6602,7 +7244,24 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "exact_value",
+          "strength": "strong",
+          "spec": "RIPR-SPEC-0231#9"
+        },
+        "observed_kind": "exact_value",
+        "observed_strength": "strong",
+        "observed_all": [
+          {
+            "test": "send_records_one_event",
+            "kind": "exact_value",
+            "strength": "strong"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-helper-assert-json-eq",
@@ -6624,7 +7283,29 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "exact_value",
+          "strength": "strong",
+          "spec": "RIPR-SPEC-0231#12"
+        },
+        "observed_kind": "exact_value",
+        "observed_strength": "strong",
+        "observed_all": [
+          {
+            "test": "score_renders_as_json",
+            "kind": "exact_value",
+            "strength": "strong"
+          },
+          {
+            "test": "score_renders_as_json",
+            "kind": "relational_check",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-helper-assert-not-equal",
@@ -6646,7 +7327,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "relational_check",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#11"
+        },
+        "observed_kind": "relational_check",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "score_is_not_zero",
+            "kind": "relational_check",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-is-ok-or-is-err",
@@ -6668,7 +7366,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "relational_check",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#26"
+        },
+        "observed_kind": "relational_check",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "check_five_is_a_result",
+            "kind": "relational_check",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-is-some-and-threshold",
@@ -6690,7 +7405,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "smoke_only",
+          "strength": "smoke",
+          "spec": "RIPR-SPEC-0231#15"
+        },
+        "observed_kind": "smoke_only",
+        "observed_strength": "smoke",
+        "observed_all": [
+          {
+            "test": "lookup_one_exceeds_one",
+            "kind": "smoke_only",
+            "strength": "smoke"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-matches-err-binding-guard",
@@ -6712,7 +7444,24 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "broad_error",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#3"
+        },
+        "observed_kind": "broad_error",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "check_twenty_has_an_error_message",
+            "kind": "broad_error",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-matches-err-wildcard",
@@ -6734,7 +7483,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "broad_error",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#4"
+        },
+        "observed_kind": "broad_error",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "check_twenty_is_an_error",
+            "kind": "broad_error",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-matches-ok-literal",
@@ -6756,7 +7522,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "exact_value",
+          "strength": "strong",
+          "spec": "RIPR-SPEC-0231#6"
+        },
+        "observed_kind": "exact_value",
+        "observed_strength": "strong",
+        "observed_all": [
+          {
+            "test": "check_five_is_ok_five",
+            "kind": "exact_value",
+            "strength": "strong"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-matches-ok-wildcard",
@@ -6778,7 +7561,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "smoke_only",
+          "strength": "smoke",
+          "spec": "RIPR-SPEC-0231#7"
+        },
+        "observed_kind": "smoke_only",
+        "observed_strength": "smoke",
+        "observed_all": [
+          {
+            "test": "check_five_is_ok",
+            "kind": "smoke_only",
+            "strength": "smoke"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-negated-matches-err-variant",
@@ -6800,7 +7600,24 @@
       "contradictions": [],
       "findings_scored": 2,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "relational_check",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#19"
+        },
+        "observed_kind": "unknown",
+        "observed_strength": "none",
+        "observed_all": [
+          {
+            "test": "check_twenty_is_not_bad",
+            "kind": "unknown",
+            "strength": "none"
+          }
+        ],
+        "outcome": "underclaim"
+      }
     },
     {
       "case_id": "spec0231-oracle-observer-substring-present",
@@ -6822,7 +7639,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "relational_check",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#8"
+        },
+        "observed_kind": "relational_check",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "score_prints_one_digit",
+            "kind": "relational_check",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-some-at-literal",
@@ -6844,7 +7678,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "exact_value",
+          "strength": "strong",
+          "spec": "RIPR-SPEC-0231#23"
+        },
+        "observed_kind": "exact_value",
+        "observed_strength": "strong",
+        "observed_all": [
+          {
+            "test": "lookup_one_is_three",
+            "kind": "exact_value",
+            "strength": "strong"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-some-or-none-pattern",
@@ -6866,7 +7717,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "relational_check",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#24"
+        },
+        "observed_kind": "relational_check",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "lookup_one_is_an_option",
+            "kind": "relational_check",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-some-range-pattern",
@@ -6888,7 +7756,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "relational_check",
+          "strength": "weak",
+          "spec": "RIPR-SPEC-0231#25"
+        },
+        "observed_kind": "relational_check",
+        "observed_strength": "weak",
+        "observed_all": [
+          {
+            "test": "lookup_one_in_range",
+            "kind": "relational_check",
+            "strength": "weak"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spec0231-oracle-some-ref-binding",
@@ -6910,7 +7795,24 @@
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
-      "contradiction_counts": {}
+      "contradiction_counts": {},
+      "oracle": {
+        "expected": {
+          "kind": "smoke_only",
+          "strength": "smoke",
+          "spec": "RIPR-SPEC-0231#23"
+        },
+        "observed_kind": "smoke_only",
+        "observed_strength": "smoke",
+        "observed_all": [
+          {
+            "test": "lookup_one_is_some",
+            "kind": "smoke_only",
+            "strength": "smoke"
+          }
+        ],
+        "outcome": "match"
+      }
     },
     {
       "case_id": "spot-cap-generic-via-wrapper",
@@ -7343,13 +8245,13 @@
       "hard_case": true,
       "truth": "not_discriminated",
       "ideal_verdict": "gap",
-      "observed_verdict": "gap",
+      "observed_verdict": "limited",
       "followed_retarget": false,
-      "changed_since_labeling": false,
+      "changed_since_labeling": true,
       "observed_classifications": [
-        "weakly_exposed"
+        "no_static_path"
       ],
-      "outcome": "ideal",
+      "outcome": "abstained",
       "contradictions": [],
       "findings_scored": 1,
       "findings_contradicted": 0,
