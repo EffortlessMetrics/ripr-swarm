@@ -13,23 +13,24 @@ The analyzer reads the fixture's exact production diff.
 
 ## Then
 
-Owner and test discovery are retained. The bounded equality-execution query
-(RIPR-SPEC-0197, #5027) cannot establish the external test macro binding and
-async polling path, so the assertion supplies no static oracle credit.
-Observe/Discriminate are No/No and strength is None. The tail `if`/`else`
-propagation sink is resolved (#6781), so classification is `static_unknown`
-on the unestablished assertion provenance rather than
-`propagation_unknown`; no gap is claimed.
+Owner and test discovery are retained. RIPR-SPEC-0197 admits the
+`#[tokio::test]` body (#5040): `tokio` is the extern crate in the test's module
+under the same shadowing rule as `serial_test`, the attribute takes no
+argument that swaps the runtime path or changes what a panic does, and the
+macro runs the async body to completion and fails the test when it panics. The
+assertion reads the async owner's value through one `.await` (here through
+`let result = fetch_limit(100, 50).await;`), so the exact-value oracle is
+strong and Observe/Discriminate are Yes/Yes.
 
-This is an explicit conservative usefulness regression, not evidence that the
-actual test is ineffective. #5040 owns typed async-harness execution provenance
-and must restore the positive without admitting shadowed/custom/unpolled cases.
-An attribute-name allowlist is not a substitute for that producer fact.
+Classification is `weakly_exposed`, not `exposed`: input 100/50 is not
+equality, so it cannot discriminate `>` from `>=`, and the finding names the
+missing `capacity == threshold` discriminator. A companion with input 50/50
+reads `exposed` on its own.
 
-Two independent limitations remain separate:
-
-- The async assertion's execution provenance is unestablished (above)
-- Input 100/50 is not equality, so it cannot discriminate `>` from `>=`
+`tokio_test_regains_the_exact_oracle_but_not_the_boundary` in
+`crates/ripr/tests/owner_pin_execution.rs` holds the positive, the boundary
+companion, and controls that get no oracle credit: a rebound `tokio` path, a
+custom runtime path (`crate = ..`) and an unpolled async block.
 
 ## Executed runtime and removal controls
 
@@ -45,13 +46,12 @@ offline. All six subjects compiled, listed one test and executed one test.
 
 The assertion really executes and detects the inverted predicate. The surviving
 previous-boundary mutant confirms the separate missing-boundary limitation.
-Runtime observations do not manufacture static execution provenance.
+Runtime observations are the independent witness; the static admission does
+not read them.
 
 ## Must Not
 
 - Report `exposed` while propagation or the exact boundary is unestablished
 - Lose the async owner or the indexed test
-- Describe the real equality as ineffective merely because its static execution
-  provenance is unsupported
 - Restore strong credit by trusting a Tokio-like spelling, custom/rebound
   attribute, disabled/raw-CFG context, or unpolled future

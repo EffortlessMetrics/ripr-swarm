@@ -1151,7 +1151,11 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
             Some(AssertionContextRefusal::TestAttribute(
                 attr.syntax().text().to_string(),
             ))
-        } else if function.async_token().is_some() {
+        } else if function.async_token().is_some()
+            && !function
+                .attrs()
+                .any(|attr| tokio_test_runs_body(&attr, function.syntax()))
+        {
             Some(AssertionContextRefusal::AsyncTest)
         } else if let Some(refusal) = has_escape(body.syntax(), trusted, &empty_macros) {
             Some(refusal)
@@ -1236,13 +1240,7 @@ pub(crate) fn owner_pin_assertions(source: &str, trusted: &[&str]) -> OwnerPinAs
                     .push(guard.syntax().clone());
             }
         }
-        let macros = function
-            .syntax()
-            .descendants()
-            .filter_map(ast::MacroCall::cast)
-            .filter_map(|call| call.path())
-            .map(|path| path.syntax().text().to_string())
-            .collect();
+        let macros = invoked_macro_names(function.syntax());
         // Compute the conservative prefix boundary once per function, rather
         // than rescanning its body for every candidate assertion/invocation.
         // A nested helper or async block has its own return context.
@@ -1443,13 +1441,7 @@ fn local_helper_assertions(
         let Some(token) = helper.fn_token() else {
             continue;
         };
-        let macros: BTreeSet<String> = helper
-            .syntax()
-            .descendants()
-            .filter_map(ast::MacroCall::cast)
-            .filter_map(|call| call.path())
-            .map(|path| path.syntax().text().to_string())
-            .collect();
+        let macros = invoked_macro_names(helper.syntax());
         let text = slice_text(
             source,
             token.text_range().start(),
@@ -1656,6 +1648,13 @@ fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
     })
 }
 
+/// [`file_binds_value_name`] over a whole source file. A file that does not
+/// parse cleanly may bind anything, so it answers yes.
+pub(crate) fn source_binds_value_name(source: &str, name: &str) -> bool {
+    parse_clean_source_file(source)
+        .is_none_or(|parse| file_binds_value_name(parse.tree().syntax(), name))
+}
+
 /// Whether a glob import can only carry names this file's own scan covers:
 /// its path must be exactly `self` (a module of this file) or exactly
 /// `super` while the import sits inside at least one inline module, so
@@ -1768,12 +1767,87 @@ fn runs_body_unchanged(attr: &ast::Attr, test: &SyntaxNode) -> bool {
     let Some(module) = test.parent() else {
         return false;
     };
+    if is_tokio_test_path(&path) {
+        return tokio_test_runs_body(attr, test);
+    }
     let admitted = if path.contains("::") {
         serial_test_lock_leaf(&path).is_some() && serial_test_path_is_the_crate(&module)
     } else {
         bare_lock_bound_in_module(&path, &module) && serial_test_path_is_the_crate(&module)
     };
     admitted && lock_arguments_are_bare_keys(attr)
+}
+
+/// `tokio::test`, rooted or not. Only the crate-qualified path: a bare
+/// `#[test]` on an `async fn` binds whatever `test` the module imports.
+fn is_tokio_test_path(path: &str) -> bool {
+    path.strip_prefix("::").unwrap_or(path) == "tokio::test"
+}
+
+/// Whether `attr` is `#[tokio::test]` on `test` and runs the async body to
+/// completion on a fresh runtime, failing the test when the body panics,
+/// as libtest does for a plain `#[test]` body. `tokio` must be the crate in
+/// the test's module (the serial_test check, for `tokio`). Arguments are
+/// admitted only as `flavor`, `worker_threads` and `start_paused`, which
+/// pick the runtime and its clock: `crate = ..` swaps the macro's runtime
+/// path and `unhandled_panic = ..` changes what a panic does, so any other
+/// argument refuses. A sync `fn` under it does not compile, so it refuses.
+fn tokio_test_runs_body(attr: &ast::Attr, test: &SyntaxNode) -> bool {
+    if attr.excl_token().is_some() {
+        return false;
+    }
+    if ast::Fn::cast(test.clone()).is_none_or(|function| function.async_token().is_none()) {
+        return false;
+    }
+    let Some(path) = attr.path() else {
+        return false;
+    };
+    if !is_tokio_test_path(&path.syntax().text().to_string().replace(' ', "")) {
+        return false;
+    }
+    let Some(module) = test.parent() else {
+        return false;
+    };
+    extern_crate_path_holds(&module, "tokio") && tokio_test_arguments_pick_runtime(attr)
+}
+
+/// No argument list, or `key = literal` pairs whose keys only pick the
+/// runtime flavor, its worker count or a paused clock.
+fn tokio_test_arguments_pick_runtime(attr: &ast::Attr) -> bool {
+    let tree = match attr.meta() {
+        Some(ast::Meta::PathMeta(_)) => return true,
+        Some(ast::Meta::TokenTreeMeta(meta)) => match meta.token_tree() {
+            Some(tree) => tree,
+            None => return false,
+        },
+        _ => return false,
+    };
+    let tokens: Vec<_> = tree
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect();
+    let Some((first, rest)) = tokens.split_first() else {
+        return false;
+    };
+    let Some((last, inner)) = rest.split_last() else {
+        return false;
+    };
+    if first.text() != "(" || last.text() != ")" {
+        return false;
+    }
+    inner
+        .split(|token| token.text() == ",")
+        .all(|pair| match pair {
+            [] => true,
+            [key, eq, value] => {
+                matches!(key.text(), "flavor" | "worker_threads" | "start_paused")
+                    && eq.text() == "="
+                    && (value.kind().is_literal() || matches!(value.text(), "true" | "false"))
+            }
+            _ => false,
+        })
 }
 
 const SERIAL_TEST_LOCKS: &[&str] = &["serial", "parallel", "file_serial", "file_parallel"];
@@ -1826,35 +1900,78 @@ fn bare_lock_bound_in_module(name: &str, module: &SyntaxNode) -> bool {
 /// that satisfies the same rule. Any other glob may bring a `serial_test`
 /// that shadows the extern prelude, so it refuses.
 fn serial_test_path_is_the_crate(module: &SyntaxNode) -> bool {
+    extern_crate_path_holds(module, "serial_test")
+}
+
+/// [`serial_test_path_is_the_crate`] for any extern crate name `krate`.
+///
+/// A `#[serial]` lock and `#[tokio::test]` in one module each name the other
+/// crate's attribute, so the check runs jointly: every trusted crate whose
+/// attribute appears there must hold under the same rule. Neither can then
+/// be shadowed, and neither real crate's attribute emits an item.
+fn extern_crate_path_holds(module: &SyntaxNode, krate: &str) -> bool {
+    let mut crates = vec![krate];
+    for other in TRUSTED_ATTRIBUTE_CRATES {
+        if *other != krate && crate_attribute_appears(module, other) {
+            crates.push(other);
+        }
+    }
+    crates
+        .iter()
+        .all(|checked| extern_crate_holds_trusting(module, checked, &crates))
+}
+
+/// Crates whose own attributes a module check may trust (see
+/// [`extern_crate_path_holds`]).
+const TRUSTED_ATTRIBUTE_CRATES: &[&str] = &["serial_test", "tokio"];
+
+/// Whether a direct item of `module` carries an attribute of `krate`: a
+/// `krate::..` path, or for `serial_test` a bare name bound to a lock.
+fn crate_attribute_appears(module: &SyntaxNode, krate: &str) -> bool {
+    module
+        .children()
+        .filter_map(ast::Item::cast)
+        .flat_map(|item| item.attrs().collect::<Vec<_>>())
+        .any(|attr| {
+            let Some(path) = attr.path() else {
+                return false;
+            };
+            let path = path.syntax().text().to_string().replace(' ', "");
+            let unrooted = path.strip_prefix("::").unwrap_or(&path);
+            unrooted.starts_with(&format!("{krate}::"))
+                || (krate == "serial_test"
+                    && !path.contains("::")
+                    && bare_lock_bound_in_module(&path, module))
+        })
+}
+
+fn extern_crate_holds_trusting(module: &SyntaxNode, krate: &str, trusted: &[&str]) -> bool {
     for item in module.children().filter_map(ast::Item::cast) {
         if item
             .attrs()
-            .any(|attr| !attribute_emits_no_items(&attr, module))
+            .any(|attr| !attribute_emits_no_items(&attr, module, trusted))
         {
             return false;
         }
         match &item {
             ast::Item::MacroCall(_) => return false,
             ast::Item::Module(inner)
-                if inner
-                    .name()
-                    .is_some_and(|name| unraw(name.text()) == "serial_test") =>
+                if inner.name().is_some_and(|name| unraw(name.text()) == krate) =>
             {
                 return false;
             }
-            ast::Item::ExternCrate(krate) => {
-                let binding = match krate.rename() {
+            ast::Item::ExternCrate(extern_crate) => {
+                let binding = match extern_crate.rename() {
                     Some(rename) => rename.name().map(|name| name.text().to_string()),
-                    None => krate.name_ref().map(|name| name.text().to_string()),
+                    None => extern_crate.name_ref().map(|name| name.text().to_string()),
                 };
                 let Some(binding) = binding else {
                     return false;
                 };
-                let real = krate
+                let real = extern_crate
                     .name_ref()
-                    .is_some_and(|name| unraw(name.text()) == "serial_test");
-                if (unraw(&binding) == "serial_test" && !real)
-                    || PRELUDE_MACROS.contains(&unraw(&binding))
+                    .is_some_and(|name| unraw(name.text()) == krate);
+                if (unraw(&binding) == krate && !real) || PRELUDE_MACROS.contains(&unraw(&binding))
                 {
                     return false;
                 }
@@ -1865,8 +1982,8 @@ fn serial_test_path_is_the_crate(module: &SyntaxNode) -> bool {
     for leaf in module_use_leaves(module) {
         match &leaf.binding {
             UseBinding::Name(binding) => {
-                let real = leaf.path.len() == 1 && leaf.path[0] == "serial_test";
-                if unraw(binding) == "serial_test" && !real {
+                let real = leaf.path.len() == 1 && leaf.path[0] == krate;
+                if unraw(binding) == krate && !real {
                     return false;
                 }
                 // `derive`, the std derives and `test` are prelude macros an
@@ -1883,7 +2000,7 @@ fn serial_test_path_is_the_crate(module: &SyntaxNode) -> bool {
                     .and_then(|owner| owner.parent());
                 match parent {
                     Some(parent) if into_parent => {
-                        if !serial_test_path_is_the_crate(&parent) {
+                        if !extern_crate_path_holds(&parent, krate) {
                             return false;
                         }
                     }
@@ -1901,7 +2018,7 @@ fn serial_test_path_is_the_crate(module: &SyntaxNode) -> bool {
 /// surrounding check passes; a bare name must be bound to a lock (renames
 /// included).
 /// Anything else (`cfg_attr` included) may emit a `serial_test` module.
-fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode) -> bool {
+fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode, trusted: &[&str]) -> bool {
     const BUILTIN: &[&str] = &[
         "test",
         "cfg",
@@ -1930,8 +2047,13 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode) -> bool {
     };
     let path = path.syntax().text().to_string().replace(' ', "");
     let unrooted = path.strip_prefix("::").unwrap_or(&path);
+    // A crate's own attribute is trusted only while that crate is under
+    // check too; in any other module check it could emit the item.
     if unrooted.starts_with("serial_test::") {
-        return serial_test_lock_leaf(&path).is_some();
+        return trusted.contains(&"serial_test") && serial_test_lock_leaf(&path).is_some();
+    }
+    if unrooted.starts_with("tokio::") {
+        return trusted.contains(&"tokio") && is_tokio_test_path(&path);
     }
     if path == "derive" {
         let Some(ast::Meta::TokenTreeMeta(meta)) = attr.meta() else {
@@ -1948,7 +2070,9 @@ fn attribute_emits_no_items(attr: &ast::Attr, module: &SyntaxNode) -> bool {
         });
     }
     BUILTIN.contains(&path.as_str())
-        || (!path.contains("::") && bare_lock_bound_in_module(&path, module))
+        || (trusted.contains(&"serial_test")
+            && !path.contains("::")
+            && bare_lock_bound_in_module(&path, module))
 }
 
 const STD_DERIVES: &[&str] = &[
@@ -2159,22 +2283,74 @@ fn has_escape(
 }
 
 fn opaque_macro_operand(tree: &ast::TokenTree) -> bool {
-    let tokens: Vec<_> = tree
-        .syntax()
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .filter(|token| !token.kind().is_trivia())
-        .collect();
+    let tokens = operand_tokens(tree);
     tokens.iter().any(|token| {
         matches!(
             token.text(),
             "return" | "break" | "continue" | "yield" | "?"
         )
-    }) || tokens.windows(3).any(|tokens| {
-        tokens[0].kind() == ra_ap_syntax::SyntaxKind::IDENT
-            && tokens[1].text() == "!"
-            && matches!(tokens[2].text(), "(" | "[" | "{")
-    })
+    }) || nested_invocations(&tokens).any(|(name, plain)| !(plain && name == NESTED_MATCHES))
+}
+
+/// A bare `matches!` in a macro operand expands to one `match` over its own
+/// operands (RIPR-SPEC-0197 literal `matches!` pins), which the token scan above already
+/// reads for exits; its binding is checked with the invoking macros'.
+const NESTED_MATCHES: &str = "matches";
+
+fn operand_tokens(tree: &ast::TokenTree) -> Vec<ra_ap_syntax::SyntaxToken> {
+    tree.syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !token.kind().is_trivia())
+        .collect()
+}
+
+/// Each `name!(`, `name![` or `name!{` inside an operand, with whether the
+/// name is unqualified (no `::` before it).
+fn nested_invocations(
+    tokens: &[ra_ap_syntax::SyntaxToken],
+) -> impl Iterator<Item = (&str, bool)> + '_ {
+    tokens
+        .windows(3)
+        .enumerate()
+        .filter_map(move |(at, window)| {
+            let [name, bang, open] = window else {
+                return None;
+            };
+            if name.kind() != ra_ap_syntax::SyntaxKind::IDENT
+                || bang.text() != "!"
+                || !matches!(open.text(), "(" | "[" | "{")
+            {
+                return None;
+            }
+            let qualified = at
+                .checked_sub(1)
+                .and_then(|before| tokens.get(before))
+                .is_some_and(|token| token.text() == "::");
+            Some((name.text(), !qualified))
+        })
+}
+
+/// The macros `node` invokes: every macro call's path, plus a `matches!`
+/// nested in a macro operand, so the binding check covers it too.
+fn invoked_macro_names(node: &SyntaxNode) -> BTreeSet<String> {
+    node.descendants()
+        .filter_map(ast::MacroCall::cast)
+        .flat_map(|call| {
+            let nested: Vec<String> = call
+                .token_tree()
+                .map(|tree| {
+                    nested_invocations(&operand_tokens(&tree))
+                        .map(|(name, _)| name.to_string())
+                        .collect()
+                })
+                .unwrap_or_default();
+            call.path()
+                .map(|path| path.syntax().text().to_string())
+                .into_iter()
+                .chain(nested)
+        })
+        .collect()
 }
 
 fn is_trusted_macro(path: &str, trusted: &[&str]) -> bool {

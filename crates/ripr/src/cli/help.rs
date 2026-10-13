@@ -22,8 +22,8 @@ use crate::app::pr_evidence::PR_EVIDENCE_HELP;
 use crate::app::pr_summary::PR_SUMMARY_HELP;
 use crate::app::ripr_plus::PLUS_HELP;
 use crate::cli::commands::{
-    CACHE_CLEAR_HELP, CACHE_STATUS_HELP, CONTINUE_HELP, FEEDBACK_EXPORT_HELP, FEEDBACK_RECORD_HELP,
-    RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP, REPAIR_HELP, STATUS_HELP,
+    CACHE_CLEAR_HELP, CACHE_EXPORT_HELP, CACHE_STATUS_HELP, CONTINUE_HELP, FEEDBACK_EXPORT_HELP,
+    FEEDBACK_RECORD_HELP, RECEIPT_CHECK_HELP, RECEIPT_WRITE_HELP, REPAIR_HELP, STATUS_HELP,
 };
 use crate::output::first_pr::FIRST_PR_HELP;
 
@@ -56,6 +56,7 @@ const REGISTERED_COMMAND_PATHS: &[&str] = &[
     "baseline diff",
     "baseline update",
     "cache clear",
+    "cache export",
     "cache status",
     "calibrate cargo-mutants",
     "check",
@@ -133,6 +134,7 @@ pub(super) fn help_text_for(command: &str) -> Option<&'static str> {
         "assistant-loop health" | "assistant-loop proof" => ASSISTANT_LOOP_HELP,
         "baseline create" | "baseline diff" | "baseline update" => BASELINE_HELP,
         "cache clear" => CACHE_CLEAR_HELP,
+        "cache export" => CACHE_EXPORT_HELP,
         "cache status" => CACHE_STATUS_HELP,
         "calibrate cargo-mutants" => CALIBRATE_HELP,
         "check" => CHECK_HELP,
@@ -1179,6 +1181,7 @@ mod tests {
             &["parse_baseline_update_options"],
         ),
         ("cache clear", CACHE_PARSER_RS, &["parse_clear_args"]),
+        ("cache export", CACHE_PARSER_RS, &["parse_export_args"]),
         ("cache status", CACHE_PARSER_RS, &["parse_status_args"]),
         (
             "calibrate cargo-mutants",

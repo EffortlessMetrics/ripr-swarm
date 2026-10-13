@@ -269,7 +269,7 @@ mod tests {
         assert_eq!(
             execute(CliCommand::Cache(Vec::new())),
             Err(CommandError::Failure(
-                "cache requires subcommand `status` or `clear`".to_string()
+                "cache requires subcommand `status`, `export` or `clear`".to_string()
             ))
         );
         assert_eq!(execute(CliCommand::Feedback(Vec::new())), Ok(()));

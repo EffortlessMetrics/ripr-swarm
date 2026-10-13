@@ -2348,6 +2348,37 @@ fn workspace_key_inputs(root: &Path, config: &RiprConfig) -> WorkspaceKeyInputs 
     }
 }
 
+/// Read-only selection for current-input export. Use the ordinary corpus and
+/// key authorities, but never update the live fingerprint cache during export.
+pub(crate) fn current_cache_keys_at(
+    root: &Path,
+    config: &RiprConfig,
+) -> Result<
+    (
+        RepoSeamCacheKey,
+        Vec<super::seam_cache::RepoFileFactCacheKey>,
+    ),
+    String,
+> {
+    repo_exposure_seam_limit()?;
+    let mut files = discover_analyzable_rust_corpus(root, config)?.analyzable;
+    files.sort();
+    let inputs = workspace_key_inputs(root, config);
+    let mut builder = FilesContentHashBuilder::new();
+    let mut keys = Vec::with_capacity(files.len());
+    for path in files {
+        cancellation::checkpoint()?;
+        let bytes = std::fs::read(root.join(&path))
+            .map_err(|error| format!("read {} for cache export: {error}", path.display()))?;
+        let key = super::seam_cache::RepoFileFactCacheKey::new(&path, &bytes);
+        builder.push_digest(&path, key.content_hash());
+        keys.push(key);
+    }
+    let key = inputs.cache_key(root, builder.finish());
+    key.require_reusable()?;
+    Ok((key, keys))
+}
+
 impl WorkspaceKeyInputs {
     fn cache_key(&self, root: &Path, files_content_hash: String) -> RepoSeamCacheKey {
         WorkspaceKeyContext {
