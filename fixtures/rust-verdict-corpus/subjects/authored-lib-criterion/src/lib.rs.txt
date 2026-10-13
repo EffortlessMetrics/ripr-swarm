@@ -1,0 +1,33 @@
+//! Small kernels measured by a criterion bench. Only `mix` has a unit test;
+//! `checksum` and `window_sum` are exercised by the bench alone, and the
+//! bench's sanity assertion never runs under `cargo test`.
+
+pub fn checksum(data: &[u8]) -> u32 {
+    let mut acc: u32 = 17;
+    for byte in data {
+        acc = acc.wrapping_mul(31).wrapping_add(u32::from(*byte));
+    }
+    acc
+}
+
+pub fn window_sum(values: &[u64], width: usize) -> u64 {
+    if width == 0 || width > values.len() {
+        return 0;
+    }
+    values[..width].iter().sum()
+}
+
+pub fn mix(a: u32, b: u32) -> u32 {
+    (a << 3) ^ b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mix_shifts_then_xors() {
+        assert_eq!(mix(1, 0), 8);
+        assert_eq!(mix(2, 5), 21);
+    }
+}

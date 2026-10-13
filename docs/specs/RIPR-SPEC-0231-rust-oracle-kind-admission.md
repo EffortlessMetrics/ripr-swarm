@@ -107,6 +107,25 @@ argument, for the macros `assertion_oracle_text` recognizes; a custom helper
 is read from its whole line. The RIPR-SPEC-0106 upgrade never applies to an
 assertion that an admission rule below weakened.
 
+### Assertion macro paths
+
+The parser's assertion recognizer (`is_assertion_macro`) reads a macro called
+through one path segment into a drop-in assertion crate as its leaf:
+`std::`, `core::` (each optionally `::`-rooted), `pretty_assertions::` and
+`similar_asserts::` change only the failure output, and `assert_matches::`
+exports the std-shaped `assert_matches!`. So `pretty_assertions::assert_eq!`
+classifies exactly as `assert_eq!`. Any other crate path
+(`other::assert_eq!`), a deeper path (`pretty_assertions::nested::assert_eq!`)
+or a leaf outside the std set stays unrecognized. A recognized qualified
+`assert_eq!` faces the same RIPR-SPEC-0197 execution admission as the bare
+spelling, so the qualified path never gains credit the bare one is refused.
+The parser refuses a qualified path whose crate root may be rebound
+(example 30): a same-file module, import of another item, `extern crate`
+rename or item-position macro, or a function read without its file.
+The token-level `is_known_rust_assertion_macro` in
+`analysis/language/rust/oracles.rs` reads any path's last segment; aligning
+the two crate rules is outside this spec.
+
 ### Precedence
 
 The chain runs in this order; the first match wins. Before it, the
@@ -409,7 +428,7 @@ rejected alternative. Any can be reversed later without touching the rest.
   `static_unknown` back to a named gap.
 - Under #5416, a test whose only assertion is `assert_ne!` no longer
   withholds a gap as `static_unknown`.
-- Rule 7: every acceptance example 27 onward reads the kind and strength
+- Rule 7: acceptance examples 27 to 29 read the kind and strength
   stated there, in JSON `related_tests[]`.
 - Rule 7 moves no verdict-corpus row: the full corpus before/after delta
   is empty (283 cases), with zero new `false_exposed` rows, and
@@ -534,6 +553,20 @@ rejected alternative. Any can be reversed later without touching the rest.
     `assert!(xs.iter().any(|x| { x == 1 }))`,
     `assert!(x == ".any(|l| l == 1")`: `relational_check` / weak
     (unchanged).
+30. `pretty_assertions::assert_eq!(score(2), 4)` and
+    `std::assert_eq!(score(2), 4)`: recognized as `assert_eq!`; under
+    `if false { .. }` or in any context RIPR-SPEC-0197 refuses, no oracle
+    (`assertion_not_credited`). `other::assert_eq!(score(2), 4)`: not an
+    assertion. Nor is `pretty_assertions::assert_eq!(score(2), 4)` when the
+    name `pretty_assertions` may mean something other than the crate: the
+    file declares a module or an `extern crate` rename with that name,
+    imports another item under it (`use pretty_assertions;` and
+    `use pretty_assertions::{self};` bind the crate and still count), or
+    has an item-position macro call that could emit such a binding; or the
+    call sits in a promoted function (a `#[test_case]` test, a borrowed
+    check helper, a harness trial) whose oracles are read from the function
+    text alone. A binding in another file reached through a glob import, and
+    a Cargo package rename, are not detected.
 
 ## Test Mapping
 
@@ -552,6 +585,11 @@ rejected alternative. Any can be reversed later without touching the rest.
   (a family override never raises a weakened strength).
 - Existing: `reveal.rs::tests::pin_strength_gate_keeps_exact_pins_strong_and_defers_bool_pins_to_owner_pin`
   (decision 4's owner-pin gate and its RIPR-SPEC-0197 bool-owner exception).
+- Existing (example 30): `crates/ripr/src/analysis/syntax/ra/property_macros.rs`
+  `drop_in_assertion_crate_paths_keep_assertion_authority`,
+  `qualified_drop_in_assertions_classify_unless_their_root_is_bound_locally` and
+  `crates/ripr/src/analysis/classify/owner_pin/tests.rs`
+  `shared_return_admission_uses_the_outer_invocation_identity`.
 - Verdict corpus: 28 cases `spec0231-*` in
   `fixtures/rust-verdict-corpus/cases/` for acceptance examples 1-26
   (two forms each for 21 and 23), each naming its example in its reasoning

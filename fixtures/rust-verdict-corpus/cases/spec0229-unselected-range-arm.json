@@ -9,7 +9,7 @@
   "edit_kind": "behavior_change",
   "behavior_family": "match_arm",
   "test_shape": "integration_tests_inputs_select_neighbor_arms",
-  "hard_case": "Measured gap against RIPR-SPEC-0229 example 7: the class matches (weakly_exposed) but ripr names no missing discriminator 1..=9; integer range patterns are listed as not yet implemented in the spec's Implementation Status.",
+  "hard_case": "RIPR-SPEC-0229 example 7: the class matches (weakly_exposed). At labeling ripr named no missing discriminator 1..=9 because integer range patterns were not read; since #5992 it names 1..=9 with observed values 0 and 42.",
   "truth": {
     "state": "not_discriminated",
     "method": "runtime_mutant_kill",
@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "tests/it.rs pins f(0) to \"zero\" and f(42) to \"many\"; neither input falls in 1..=9, so no test selects the changed range arm and the edit passes. Spec cells: RIPR-SPEC-0229 example 7. ripr reads weakly_exposed, the example's class, but names no missing discriminator 1..=9.",
+  "reasoning": "tests/it.rs pins f(0) to \"zero\" and f(42) to \"many\"; neither input falls in 1..=9, so no test selects the changed range arm and the edit passes. Spec cells: RIPR-SPEC-0229 example 7. ripr reads weakly_exposed, the example's class; since #5992 it also names the missing discriminator 1..=9 (observed n values 0 and 42), which the corpus row does not score.",
   "labeling_observation": {
     "ripr_commit": "dd5a66b5",
     "full_checkout_verdict": "gap",

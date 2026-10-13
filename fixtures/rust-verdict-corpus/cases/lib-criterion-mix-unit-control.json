@@ -1,0 +1,52 @@
+{
+  "case_id": "lib-criterion-mix-unit-control",
+  "subject_id": "authored-lib-criterion",
+  "diff": "cases/lib-criterion-mix-unit-control.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 21
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value_arithmetic",
+  "test_shape": "unit_test_assert_eq_beside_bench",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "(a * 4) ^ b",
+        "mutated_line": "(a * 4) ^ b",
+        "outcome": "tests_failed",
+        "failing_test": "tests::mix_shifts_then_xors",
+        "equivalence_review": "not equivalent: mix(1, 0) is 4, not 8"
+      },
+      {
+        "replacement": "(a * 8) & b",
+        "mutated_line": "(a * 8) & b",
+        "outcome": "tests_failed",
+        "failing_test": "tests::mix_shifts_then_xors",
+        "equivalence_review": "not equivalent: mix(1, 0) is 0, not 8"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "Control beside the bench-only cases: mix_shifts_then_xors pins mix(1, 0) == 8 and mix(2, 5) == 21, so changing the shift or the xor fails it.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

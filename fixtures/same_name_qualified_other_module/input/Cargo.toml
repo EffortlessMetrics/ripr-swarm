@@ -1,0 +1,4 @@
+[package]
+name = "same_name_qualified_other_module_fixture"
+version = "0.0.0"
+edition = "2024"
