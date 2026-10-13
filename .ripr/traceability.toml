@@ -14212,6 +14212,10 @@ tests = [
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_bare_variant_imported_from_another_enum_is_not_read",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_lowercase_name_the_owner_file_may_resolve_to_a_constant_is_not_a_binding",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::uncased_variants_read_only_when_the_owner_file_declares_the_enum",
+  "crates/ripr/src/analysis/classify/arm_selection.rs::tests::a_later_uncased_arm_resolves_for_moved_input_credit",
+  "crates/ripr/tests/match_arm_uncased_variant.rs::an_input_moved_onto_a_later_uncased_arm_exposes_the_narrowed_arm",
+  "crates/ripr/tests/match_arm_uncased_variant.rs::a_later_arm_naming_an_associated_constant_earns_no_moved_input_credit",
+  "crates/ripr/tests/match_arm_uncased_variant.rs::a_later_struct_constant_arm_earns_no_moved_input_credit",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::an_uncased_pattern_reads_only_through_the_bare_scrutinee_type",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::self_names_the_scrutinee_enum_only_in_its_own_impl",
   "crates/ripr/src/analysis/classify/arm_selection.rs::tests::uncased_variants_need_an_unqualified_scrutinee_type",
@@ -14497,6 +14501,35 @@ outputs = [
 ]
 metrics = [
   "typescript_mock_object_argument_mismatch",
+]
+
+[[behavior]]
+id = "RIPR-SPEC-0258"
+name = "TypeScript committed snapshot entry"
+spec = "docs/specs/RIPR-SPEC-0258-typescript-committed-snapshot.md"
+tests = [
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::committed_jest_snapshot_entry_reads_strong",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::committed_snapshot_keys_join_describe_titles_per_runner",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_without_its_committed_entry_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_whose_counter_cannot_be_named_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_location_or_update_override_stays_medium",
+  "crates/ripr/src/analysis/language/typescript/tests/committed_snapshot_tests.rs::snapshot_input_differing_from_head_stays_medium",
+  "crates/ripr/src/analysis/committed_source/tests.rs::porcelain_parser_records_unrouted_snapshot_inputs",
+  "crates/ripr/src/analysis/committed_source/tests.rs::snapshot_inputs_differ_only_in_their_own_directory",
+]
+fixtures = [
+  "fixtures/typescript-verdict-corpus",
+]
+code = [
+  "crates/ripr/src/analysis/language/typescript/committed_snapshot.rs",
+  "crates/ripr/src/analysis/committed_source.rs",
+  "crates/ripr/src/analysis/language/router.rs",
+]
+outputs = [
+  "docs/specs/RIPR-SPEC-0258-typescript-committed-snapshot.md",
+]
+metrics = [
+  "typescript_committed_snapshot_mismatch",
 ]
 
 [[behavior]]

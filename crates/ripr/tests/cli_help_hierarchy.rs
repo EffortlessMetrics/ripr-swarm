@@ -323,6 +323,27 @@ fn calibrate_help_names_how_to_produce_the_imported_artifacts() -> Result<(), St
     Err("calibrate help producer recipe must keep the existing non-runner bound".to_string())
 }
 
+/// #7451: `--help` must say that a mutants.json-only import counts
+/// unexecuted candidates in matched_total. Naming mutants.json as a valid
+/// path is not the denominator caveat.
+#[test]
+fn calibrate_help_discloses_mutants_json_only_denominator() -> Result<(), String> {
+    let help = normalized(&rendered_help(&["calibrate", "cargo-mutants", "--help"])?);
+    for needle in [
+        "mutants.json-only import counts unexecuted candidates in matched_total",
+        "no runtime observation",
+        "no_runtime_data",
+        "Pass outcomes.json",
+    ] {
+        assert_contains(
+            "calibrate help (`ripr calibrate cargo-mutants --help`)",
+            &help,
+            needle,
+        )?;
+    }
+    Ok(())
+}
+
 /// #7202 drift guard. `ripr outcome --help` must describe the canonical-gap
 /// refusal as it is enforced: Rust `ripr check --json` findings carry
 /// `canonical_gap_id` and are compared by it, and the refusal keys on
