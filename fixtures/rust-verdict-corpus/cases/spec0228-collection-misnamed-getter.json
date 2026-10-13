@@ -1,0 +1,54 @@
+{
+  "case_id": "spec0228-collection-misnamed-getter",
+  "subject_id": "authored-spec0228-collection-getter",
+  "diff": "cases/spec0228-collection-misnamed-getter.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 21
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "side_effect_push",
+  "test_shape": "owner_call_then_assert_eq_misnamed_getter",
+  "hard_case": "the getter `held()` is named after the written field `held` but returns &self.lines; a name match read it as exposed",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.99.0 (b940084d7 2026-09-28), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "self.held.push(qty + 1);",
+        "mutated_line": "self.held.push(qty + 1);",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: held records 4 instead of 3, but held() returns &self.lines"
+      },
+      {
+        "replacement": "",
+        "mutated_line": "",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: nothing is held, but no test reads self.held"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "hold_leaves_the_order_lines_alone calls hold(3) and asserts order.held() is empty; held() returns &self.lines, so the test never sees the changed field. Spec cells: RIPR-SPEC-0228 example 13.",
+  "labeling_observation": {
+    "ripr_commit": "017fda1f",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0228#13"
+  ]
+}

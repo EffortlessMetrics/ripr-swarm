@@ -43,7 +43,7 @@ impl MockCallFacts {
     /// an owner body with either credits nothing. A nested function (arrow,
     /// `function`, method shorthand or class member) refuses too, unless
     /// the changed line is a whole top-level statement of the body
-    /// (RIPR-SPEC-0255 rule 1), where no nested function can run it.
+    /// (RIPR-SPEC-0256 rule 1), where no nested function can run it.
     pub(crate) fn read(
         line_text: &str,
         owner_body: Option<&str>,
@@ -130,7 +130,7 @@ impl MockCallFacts {
 }
 
 impl MockCallFacts {
-    /// RIPR-SPEC-0255 rule 2: the asserted `local` is a test-local mock the
+    /// RIPR-SPEC-0256 rule 2: the asserted `local` is a test-local mock the
     /// test passes as the method of an inline object literal at the
     /// parameter's position (`checkout("ann", lines, { send })` for a
     /// changed `notifier.send(...)`), and mentions nowhere else but
@@ -664,7 +664,7 @@ pub(super) fn masked_owner_body(owner_source: &str) -> Option<String> {
 /// `true` when the changed line runs at most once per owner call: the
 /// owner's body has no loop and no call back into the owner, and either it
 /// has no nested function at all (no arrow, `function`, method shorthand or
-/// class member), or (RIPR-SPEC-0255 rule 1) the changed
+/// class member), or (RIPR-SPEC-0256 rule 1) the changed
 /// line is a whole top-level statement of the body with no function on it,
 /// so a nested function elsewhere (`lines.reduce((sum, l) => ...)`) cannot
 /// run it.
@@ -832,7 +832,7 @@ fn trailing_identifier(text: &str) -> &str {
     &text[start..]
 }
 
-/// RIPR-SPEC-0255 rule 1: the masked changed line occurs once in the masked
+/// RIPR-SPEC-0256 rule 1: the masked changed line occurs once in the masked
 /// owner `body`, outside every brace, parenthesis and bracket, right after
 /// the start of the body, a `;` or a `}`, and holds no `=>`, `function` or
 /// method-like block (see [`has_method_like_block`]).

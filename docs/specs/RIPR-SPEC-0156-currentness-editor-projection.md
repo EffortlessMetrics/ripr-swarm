@@ -37,6 +37,15 @@ no end-to-end corpus a downstream consumer could run against.
     no probe, finding, or repair target (disclose-not-probe, disclosed
     as a named non-claim) while the changed production owner in the
     same diff stays `candidate_current` and actionable.
+  - **deleted Python statement** (#7587) — a removed Python behavior
+    line that no added line pairs with (a pure deletion, or a code
+    line whose comment pairs by content with a re-added comment) is a
+    removed-only probe on the owner that held it, `base_deleted`
+    (`moved_or_renamed` when the same text is re-added), never nothing
+    and never a candidate edit target. A line deleted in the same
+    removed run as its own `def` or `class` records nothing; a removed
+    declaration, comment, docstring, import or lone bracket records
+    nothing. Base-side lines are not counted as candidate lines.
 
 ## Required Evidence
 
@@ -63,12 +72,16 @@ no end-to-end corpus a downstream consumer could run against.
   human-full.
 - Accept: a replacement at one line — one `candidate_current` probe
   with the added expression's identity.
+- Accept: a deleted Python statement in a live owner — one
+  `base_deleted` record on that owner; an even replacement block — no
+  base-side record, since every removed line pairs with an added one.
 - Reject: a resolved-move claim without same-text evidence.
 
 ## Test Mapping
 
-`lsp/lens.rs` `currentness_lens_tests`; fixtures
-`currentness_matrix_{tail,reuse,move,whole_delete}`.
+`lsp/lens.rs` `currentness_lens_tests`;
+`analysis/language/python/deleted_lines_tests.rs`; fixtures
+`currentness_matrix_{tail,reuse,move,whole_delete,python_deleted_statement}`.
 
 ## Non-Goals
 
@@ -80,6 +93,8 @@ no end-to-end corpus a downstream consumer could run against.
 ## Implementation Mapping
 
 - `lsp/lens.rs` — the eligibility filter.
+- `analysis/language/python/deleted_lines.rs` — Python removed-only
+  probes.
 - `fixtures/currentness_matrix_*` — the corpus.
 
 ## Metrics

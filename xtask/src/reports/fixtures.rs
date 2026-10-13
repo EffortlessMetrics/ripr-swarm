@@ -1084,6 +1084,25 @@ fn normalize_check_json_golden_document(value: &str) -> String {
     split_compact_root_object_closer(&strip_canonical_next_action_member(value))
 }
 
+/// Project the checkout's absolute path prefix to the machine-independent
+/// `<cwd>/` placeholder in the JSON surface, like
+/// [`project_renderer_cwd`] does for human text. The check JSON names the
+/// loaded config by its absolute stable spelling (RIPR-SPEC-0255
+/// `config_path`), so checked-in goldens must hold the placeholder instead
+/// of a machine path (#7536). Windows canonicalization adds the verbatim
+/// `//?/` prefix that the lossless stable encoder preserves; that spelling
+/// is matched and projected first, then the plain prefix.
+fn project_json_cwd_prefix(text: &str) -> String {
+    let Ok(cwd) = std::env::current_dir() else {
+        // An unreadable working directory leaves the text unprojected, so a
+        // comparison fails loudly instead of passing on machine paths.
+        return text.to_string();
+    };
+    let prefix = format!("{}/", normalize_path(&cwd));
+    text.replace(&format!("//?/{prefix}"), "<cwd>/")
+        .replace(&prefix, "<cwd>/")
+}
+
 pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
     let value = normalize_check_json_golden_document(value);
     // #2337: match the human normalizer's approach — replace ALL backslashes
@@ -1126,7 +1145,7 @@ pub(crate) fn normalize_fixture_json_output(value: &str) -> String {
         result.push(chars[i]);
         i += 1;
     }
-    result
+    project_json_cwd_prefix(&result)
 }
 
 pub(crate) fn normalize_fixture_human_output(value: &str) -> String {
@@ -2375,6 +2394,30 @@ mod tests {
         let input = r#"{"path":"src/lib.rs","count":42}"#;
         let out = normalize_fixture_json_output(input);
         assert_eq!(out, input);
+    }
+
+    #[test]
+    fn normalize_json_projects_checkout_cwd_prefix_in_config_path() -> Result<(), String> {
+        // RIPR-SPEC-0255 (#7536): the check JSON names the loaded config by
+        // its absolute stable spelling, so checked-in goldens must hold the
+        // machine-independent `<cwd>/` placeholder, including the Windows
+        // verbatim `//?/` form the lossless encoder preserves.
+        let cwd = std::env::current_dir()
+            .map_err(|error| format!("readable working directory: {error}"))?;
+        let prefix = format!("{}/", normalize_path(&cwd));
+        let plain = format!(
+            "{{\"root\":\"fixtures/x/input\",\"config_path\":\"{prefix}fixtures/x/input/ripr.toml\"}}"
+        );
+        assert_eq!(
+            normalize_fixture_json_output(&plain),
+            "{\"root\":\"fixtures/x/input\",\"config_path\":\"<cwd>/fixtures/x/input/ripr.toml\"}"
+        );
+        let verbatim = format!("{{\"config_path\":\"//?/{prefix}fixtures/x/input/ripr.toml\"}}");
+        assert_eq!(
+            normalize_fixture_json_output(&verbatim),
+            "{\"config_path\":\"<cwd>/fixtures/x/input/ripr.toml\"}"
+        );
+        Ok(())
     }
 
     #[test]

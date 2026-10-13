@@ -1,4 +1,4 @@
-//! RIPR-SPEC-0255: a literal mock-call payload credits a changed
+//! RIPR-SPEC-0256: a literal mock-call payload credits a changed
 //! `p.m(...)` call when the test passes its mock as the `m` entry of an
 //! inline object literal, and when the owner's nested functions sit away
 //! from the changed line.

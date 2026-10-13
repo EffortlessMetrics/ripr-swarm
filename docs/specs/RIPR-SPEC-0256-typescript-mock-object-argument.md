@@ -1,4 +1,4 @@
-# RIPR-SPEC-0255: TypeScript mock passed in an object argument
+# RIPR-SPEC-0256: TypeScript mock passed in an object argument
 
 Status: proposed
 
