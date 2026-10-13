@@ -397,7 +397,7 @@ fn unknown_attempt(attempt_id: &str, root_present: bool) -> AttemptFailure {
             format!(
                 "no repair attempt or receipt `{attempt_id}` exists in this session or in the durable store of this workspace root"
             ),
-            "prepare the item with ripr_prepare_repair, or list durable attempts with `ripr agent status` in the repository",
+            "prepare the item with ripr_prepare_repair, or discover durable attempts with ripr_list_repair_attempts",
         )
     } else {
         (
@@ -435,7 +435,7 @@ fn load_durable_attempt(
                 return Err(AttemptFailure::new(
                     CODE_ATTEMPT_INVALID,
                     format!("repair attempt `{attempt_id}` failed canonical validation"),
-                    "run `ripr agent status` in the repository for the refusal detail",
+                    "read ripr_list_repair_attempts for the invalid directory identity; inspect `ripr agent status` for the full canonical validation diagnostic",
                 ));
             }
             _other => {}
@@ -446,7 +446,7 @@ fn load_durable_attempt(
         format!(
             "no repair attempt `{attempt_id}` exists in the durable store of this workspace root"
         ),
-        "list durable attempts with `ripr agent status` in the repository",
+        "discover durable attempt ids with ripr_list_repair_attempts, then retry the selected id",
     ))
 }
 
@@ -479,7 +479,7 @@ fn session_receipt_document(transaction: &RepairTransaction) -> Value {
     })
 }
 
-fn durable_receipt_document(
+pub(super) fn durable_receipt_document(
     manifest: &crate::app::repair_attempt::RepairAttemptManifest,
     root: &Path,
     root_identity: Option<&str>,

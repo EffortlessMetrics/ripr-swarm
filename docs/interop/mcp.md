@@ -50,10 +50,40 @@ ripr_prepare_repair     → readiness-gated in-memory repair transaction
 ripr_get_repair_attempt → one session or durable attempt, read-only
 ripr_get_receipt_status → one attempt's receipt state, read-only
 ripr_get_repair_card    → one item's bounded repair card, read-only
+ripr_list_repair_attempts → durable attempt discovery, before or after refresh
 ```
 
 Status and list calls never return the full evidence graph; read one item at
 a time through the tool or the resource.
+
+## Durable attempt discovery
+
+`ripr_list_repair_attempts` reads the default durable CLI attempt store through
+its canonical inventory/validation authority; it works before `ripr_refresh`.
+It never creates a missing store. MCP in-memory transactions are excluded:
+their IDs come from `ripr_prepare_repair`.
+
+The structured `ripr-mcp-repair-attempt-list-v1` document returns `inventory_id`,
+root identity, observed repository HEAD, `total`, `valid`, `invalid`, `omitted`,
+`items`, `page`, and continuation routes. Valid rows carry `attempt_id`, state,
+seam, repository HEAD, shared live currentness and receipt status, and links to
+the existing detail reads. Invalid rows carry only directory identity and a
+bounded `attempt_invalid` refusal; unvalidated manifest fields are never facts.
+`omitted` counts all rows outside this page, including earlier pages.
+
+Rows sort by identity/directory name, never modification time. `offset` defaults
+to zero; optional positive `limit` is capped at 256 rows and the full structured
+MCP envelope byte budget. Follow `continuation.next_page.arguments`, which pins
+`inventory_id` and advances by the number actually returned. The identity binds
+root, observed HEAD and all summary rows. Changed observations return typed
+`stale_inventory` with `current_inventory_id`; restart at offset zero without
+the old identity. A missing store is an empty inventory, an unavailable root is
+`workspace_unavailable`, and a store-level read refusal is `attempt_invalid`.
+
+This is a live observation, not an atomic filesystem snapshot. Output is bounded;
+canonical validation still reads the whole store. Receipt status retains the
+same currentness and completeness rules as `ripr_get_receipt_status`. Discovery
+runs no tests or verification and grants no execution or edit authority.
 
 ## What it exposes
 
@@ -67,6 +97,7 @@ a time through the tool or the resource.
 | Tool (`attempt_id`) | `ripr_get_repair_attempt` |
 | Tool (`receipt_id`) | `ripr_get_receipt_status` |
 | Tool (`canonical_id`, `snapshot_id?`) | `ripr_get_repair_card` |
+| Tool (`inventory_id?`, `offset?`, `limit?`) | `ripr_list_repair_attempts` |
 | Resource (`application/json`) | `ripr://workspace/status` |
 | Resource template | `ripr://snapshot/{snapshot_id}` |
 | Resource template | `ripr://gap/{canonical_id}` |
