@@ -336,11 +336,13 @@ fn preserving_attribute(
     }
 }
 
+type PreservationArgument<'a, 's> = (&'a [Token], &'a [Option<&'s str>]);
+
 // Align the preservation-only string projection with existing comma slices.
 fn preservation_arguments<'a, 's>(
     tokens: &'a [Token],
     strings: &'a [Option<&'s str>],
-) -> Result<Vec<(&'a [Token], &'a [Option<&'s str>])>, ()> {
+) -> Result<Vec<PreservationArgument<'a, 's>>, ()> {
     let mut offset = 0;
     availability_arguments(tokens)?
         .into_iter()
