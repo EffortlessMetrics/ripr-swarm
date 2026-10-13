@@ -1,0 +1,55 @@
+{
+  "case_id": "py-unittest-deposit-add",
+  "subject_id": "authored-py-unittest-accounts",
+  "diff": "cases/py-unittest-deposit-add.diff",
+  "anchor": {
+    "file": "accounts/ledger.py",
+    "line": 19
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "state_update",
+  "test_shape": "unittest_assert_equal_field",
+  "hard_case": null,
+  "truth": {
+    "state": "discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python3 -m unittest",
+    "toolchain": "Python 3.11.15, unittest, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "self.balance_cents = amount_cents",
+        "mutated_line": "self.balance_cents = amount_cents",
+        "outcome": "tests_failed",
+        "failing_test": "tests.test_ledger.TestDeposits.test_deposit_adds_to_balance",
+        "equivalence_review": "not equivalent: the balance becomes the deposit (50) instead of 150"
+      },
+      {
+        "replacement": "self.balance_cents = self.balance_cents - amount_cents",
+        "mutated_line": "self.balance_cents = self.balance_cents - amount_cents",
+        "outcome": "tests_failed",
+        "failing_test": "tests.test_ledger.TestDeposits.test_deposit_adds_to_balance",
+        "equivalence_review": "not equivalent: the deposit is subtracted, leaving 50 instead of 150"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "credited",
+    "acceptable_verdicts": [
+      "credited",
+      "limited",
+      "silent"
+    ]
+  },
+  "reasoning": "test_deposit_adds_to_balance deposits 50 on 100 and checks balance_cents with self.assertEqual, an exact-value oracle, so overwriting or subtracting fails it. ripr reports weakly_exposed, a false actionable verdict. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#37"
+  ]
+}

@@ -226,13 +226,33 @@ pub(crate) fn render_full_with_config_and_navigation(
                 .map(|entry| entry.finding_id.as_str())
         })
         .collect();
-    let mut findings_rendered = 0usize;
-    for finding in &output.findings {
-        if suppressed_ids.contains(finding.id.as_str()) {
-            continue;
+    let visible: Vec<_> = output
+        .findings
+        .iter()
+        .filter(|finding| !suppressed_ids.contains(finding.id.as_str()))
+        .collect();
+    // Navigation is the established CLI/library compatibility boundary. Build
+    // sharing only from visible donors; public library legacy bytes stay exact.
+    // Decide once to avoid rescanning the catalogue for each finding.
+    let shared = drill_in
+        .map(|_| shared::SharedReport::build(&visible))
+        .filter(shared::SharedReport::is_shared);
+    if let Some(shared) = &shared {
+        shared.render_catalogue(&mut out);
+    }
+    let findings_rendered = visible.len();
+    for (ordinal, finding) in visible.iter().enumerate() {
+        let shared_sections = shared.as_ref().map(|shared| &shared.findings[ordinal]);
+        if shared_sections.is_some() {
+            out.push_str(&format!("Finding {}: ", ordinal + 1));
         }
-        findings_rendered += 1;
-        out.push_str(&render_finding_with_config(finding, config, &output.root));
+        out.push_str(&sections::render_finding_with_shared_sections(
+            finding,
+            config,
+            &output.root,
+            JsonPointerWording::CheckFlag,
+            shared_sections,
+        ));
         if let Some(FindingDrillIn::Commands(navigation)) = drill_in {
             out.push_str("Drill in:\n");
             for command in [
@@ -617,12 +637,12 @@ fn render_all_no_path_disclosure(out: &mut String, output: &CheckOutput) {
         })
         .collect::<BTreeSet<_>>()
         .len();
-    // Each finding's "Related test (1 of N)" line counts matched related-test
-    // rows before bounded packing (#5146), and one test can contribute many
-    // rows. When packing hid rows, the retained distinct tests are a floor
-    // and the row total is reported as rows, not as tests. Across findings
-    // the packed-away rows cannot be deduplicated, so the largest
-    // per-finding total is itself a floor.
+    // Each finding's "Related test (1 of N matched rows)" line counts matched
+    // related-test rows before bounded packing (#5146, #6807), and one test
+    // can contribute many rows. When packing hid rows, the retained distinct
+    // tests are a floor and the row total is reported as rows, not as tests.
+    // Across findings the packed-away rows cannot be deduplicated, so the
+    // largest per-finding total is itself a floor.
     let packed_related_tests = output
         .findings
         .iter()
@@ -884,6 +904,7 @@ pub fn render_finding(finding: &Finding) -> String {
         finding,
         &RiprConfig::default(),
         Path::new("."),
+        JsonPointerWording::CheckFlag,
     ))
 }
 
@@ -895,7 +916,13 @@ pub(crate) fn render_finding_with_context_command(
     context_command: &str,
     root: &Path,
 ) -> String {
-    let mut out = render_finding_with_config(finding, config, root);
+    // #7476: explain reuses check's evidence window, but rejects the
+    // `--format` flag that window names. The pointer wording is selected while
+    // the evidence lines are built (`ExplainNamesCheck`), so it names check as
+    // prose without rewriting anything else in the rendered finding — quoted
+    // source fragments keep their exact bytes.
+    let mut out =
+        render_finding_with_config(finding, config, root, JsonPointerWording::ExplainNamesCheck);
     out.push_str(&explain::render_verdict_explanation(finding));
     out.push_str(&format!("\nNext: {context_command}\n"));
     push_powershell_variant(&mut out, "", context_command);
@@ -915,8 +942,10 @@ fn push_powershell_variant(out: &mut String, indent: &str, command: &str) {
 mod evidence_lines;
 mod explain;
 mod sections;
+mod shared;
 mod triage;
 
+pub(crate) use evidence_lines::JsonPointerWording;
 pub(crate) use sections::render_finding_with_config;
 
 #[cfg(test)]
@@ -4070,6 +4099,155 @@ mod tests {
         );
     }
 
+    /// #7476: `ripr explain` prints the same evidence window as check, but it
+    /// does not accept `--format`. The explain footnote must name check's JSON
+    /// format instead of a flag that `ripr explain --format json` rejects.
+    /// Check's own renderer keeps the flag, because that command accepts it.
+    #[test]
+    fn explain_evidence_window_names_check_json_not_an_explain_flag() {
+        let mut finding = sample_finding();
+        for index in 1..9 {
+            finding.related_tests.push(RelatedTest {
+                name: format!("test_extra_{index}"),
+                file: PathBuf::from("tests/sample.rs"),
+                line: 100 + index,
+                oracle: None,
+                oracle_kind: OracleKind::SmokeOnly,
+                oracle_strength: OracleStrength::Weak,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+            });
+        }
+        for index in 0..13 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 200 + index,
+                text: format!("sample({index})"),
+                value: format!("arg{index} = {index}"),
+                context: ValueContext::FunctionArgument,
+            });
+        }
+
+        let explained = super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            explained.contains(
+                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+            ),
+            "{explained}"
+        );
+        assert!(
+            explained.contains(
+                "related tests (showing 5 of 9; more via ripr check, using its JSON format)"
+            ),
+            "{explained}"
+        );
+        assert!(
+            !explained.contains("--format json"),
+            "explain must not print a format flag it rejects:\n{explained}"
+        );
+
+        let checked = super::render_finding(&finding);
+        assert!(
+            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            "{checked}"
+        );
+        assert!(
+            checked.contains("related tests (showing 5 of 9; more in --format json)"),
+            "{checked}"
+        );
+
+        for index in 0..28 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 400 + index,
+                text: format!("extra({index})"),
+                value: format!("extra{index} = {index}"),
+                context: ValueContext::AssertionArgument,
+            });
+        }
+        let over_cap = super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            over_cap.contains(
+                "source values (showing 8 of 42; ripr check, using its JSON format, keeps a ranked 32)"
+            ),
+            "{over_cap}"
+        );
+        assert!(!over_cap.contains("--format"), "{over_cap}");
+    }
+
+    /// #7476 review: the explain pointer rewrite used to run over the whole
+    /// rendered finding, so quoted source or a judged assertion that itself
+    /// contained a pointer phrase was silently changed and explain no longer
+    /// showed the analyzed code. The wording is now selected while the
+    /// evidence lines are built, so explain preserves those bytes verbatim
+    /// and only the window pointers carry the check-prose form.
+    #[test]
+    fn explain_preserves_source_and_oracle_containing_pointer_phrases() {
+        let mut finding = sample_finding();
+        finding.probe.before =
+            Some("assert_eq!(list(), \"full list in --format json\")".to_string());
+        finding.probe.after =
+            Some("assert_eq!(list(), \"--format json keeps a ranked 32\")".to_string());
+        if let Some(test) = finding.related_tests.first_mut() {
+            test.oracle = Some("assert_eq!(line, \"; more in --format json\")".to_string());
+        }
+        for index in 0..13 {
+            finding.activation.observed_values.push(ValueFact {
+                line: 200 + index,
+                text: format!("sample({index})"),
+                value: format!("arg{index} = {index}"),
+                context: ValueContext::FunctionArgument,
+            });
+        }
+
+        let explained = super::render_finding_with_context_command(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            "ripr context --at probe:x",
+            Path::new("."),
+        );
+        assert!(
+            explained.contains("before: assert_eq!(list(), \"full list in --format json\")"),
+            "explain changed the quoted source:\n{explained}"
+        );
+        assert!(
+            explained.contains("after:  assert_eq!(list(), \"--format json keeps a ranked 32\")"),
+            "explain changed the quoted source:\n{explained}"
+        );
+        assert!(
+            explained.contains("assert_eq!(line, \"; more in --format json\")"),
+            "explain changed the judged assertion:\n{explained}"
+        );
+        // Only the window pointer carries the explain wording.
+        assert!(
+            explained.contains(
+                "source values (showing 8 of 14; full list via ripr check, using its JSON format)"
+            ),
+            "{explained}"
+        );
+
+        // Check's own renderer keeps both the flag pointer and the verbatim
+        // source, pinning the distinction between the two surfaces.
+        let checked = super::render_finding(&finding);
+        assert!(
+            checked.contains("before: assert_eq!(list(), \"full list in --format json\")"),
+            "{checked}"
+        );
+        assert!(
+            checked.contains("source values (showing 8 of 14; full list in --format json)"),
+            "{checked}"
+        );
+    }
+
     /// #4320: the digest shows only the first related test; the line must
     /// carry the total so the reader knows how much reaching-test evidence
     /// exists. A single related test keeps the unmarked form.
@@ -4095,7 +4273,9 @@ mod tests {
         );
 
         assert!(
-            digest.contains("  Related test (1 of 2): tests/sample.rs:22 test_handles_disabled\n"),
+            digest.contains(
+                "  Related test (1 of 2 matched rows): tests/sample.rs:22 test_handles_disabled\n",
+            ),
             "expected the digest related-test total; got:\n{digest}"
         );
 
@@ -4110,6 +4290,43 @@ mod tests {
             "a single related test keeps the unmarked form; got:\n{digest}"
         );
         assert!(!digest.contains("Related test (1 of"), "{digest}");
+    }
+
+    /// #6807: `related_tests_total()` is matched related-test rows (one
+    /// assertion, plus examined-miss rows), not distinct tests. A packed
+    /// finding with 81 rows and 8 listed tests must not read as 81 tests.
+    #[test]
+    fn digest_related_test_line_names_matched_rows_not_tests() {
+        let mut finding = sample_finding();
+        finding.related_tests = (0..8)
+            .map(|index| RelatedTest {
+                name: format!("test_{index}"),
+                file: PathBuf::from("tests/sample.rs"),
+                line: 10 + index,
+                oracle: Some("assert_eq!(actual, expected)".to_string()),
+                oracle_kind: OracleKind::ExactValue,
+                oracle_strength: OracleStrength::Strong,
+                relation_reason: None,
+                relation_confidence: None,
+                miss: None,
+            })
+            .collect();
+        finding.related_tests_matched_total = Some(81);
+
+        let digest = super::sections::render_finding_digest_with_config(
+            &finding,
+            &crate::config::RiprConfig::default(),
+            Path::new("."),
+        );
+
+        assert!(
+            digest.contains("  Related test (1 of 81 matched rows): tests/sample.rs:10 test_0\n"),
+            "the digest must name matched rows, not tests; got:\n{digest}"
+        );
+        assert!(
+            !digest.contains("Related test (1 of 81):"),
+            "bare '1 of 81' still reads as 81 tests; got:\n{digest}"
+        );
     }
 
     /// #4320: the digest missing-discriminator line discloses its window into
@@ -4940,7 +5157,7 @@ mod tests {
         );
     }
 
-    fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
+    pub(super) fn bounded_output_with_findings(findings: Vec<Finding>) -> CheckOutput {
         let count = findings.len();
         CheckOutput {
             harness_projections: Vec::new(),
@@ -4969,7 +5186,7 @@ mod tests {
         }
     }
 
-    fn sample_finding() -> Finding {
+    pub(super) fn sample_finding() -> Finding {
         Finding {
             id: "probe:sample.rs:7:predicate".to_string(),
             canonical_gap: None,
@@ -5939,9 +6156,10 @@ mod tests {
 
     #[test]
     fn all_no_path_disclosure_counts_related_tests_before_packing() {
-        // The finding line reads "Related test (1 of 81)" from the matched
-        // row total; the scope note must neither report only the 8 retained
-        // rows nor call 81 related-test rows 81 tests (one test can own many).
+        // The finding line reads "Related test (1 of 81 matched rows)" from
+        // the matched row total; the scope note must neither report only the
+        // 8 retained rows nor call 81 related-test rows 81 tests (one test
+        // can own many).
         let related = |line: usize| RelatedTest {
             name: format!("test_{line}"),
             file: PathBuf::from("tests/sample.rs"),

@@ -14,8 +14,11 @@
 //! incomplete, but a trust scan that needs omitted findings cannot appear
 //! clean.
 //!
-//! Root identity is compared after unifying `\\` to `/` and decoding the
-//! producer `%25` escape. That is a local compare, not a copy of ripr's
+//! Root identity is compared in producer encoding: the expected checkout
+//! unifies `\\` to `/` and encodes each `%` as `%25`, then matches the
+//! producer root after the same separator unification. Decoding `%25` on
+//! both sides would reject a checkout whose name contains literal `%25`
+//! (producer `%2525`). That is a local compare, not a copy of ripr's
 //! private `stable_path_text`. Head is checked only when the producer
 //! emits `head.commit`; a missing head is unknown, not a mismatch.
 
@@ -269,8 +272,8 @@ pub(crate) fn admit_check_document(value: &Value, subject: &CheckSubject) -> Che
 }
 
 /// Scan contradictions only over a fully inspectable findings population.
-/// A missing array or a declared rendering prefix cannot contribute a
-/// clean zero through an empty loop.
+/// A missing array, a declared rendering prefix, or a row missing the
+/// producer fields R2/R3 read cannot contribute a clean zero (#7277).
 pub(crate) fn scan_check_contradictions(check: &Value) -> Result<(usize, Vec<String>), String> {
     if findings_rendering_truncated(check) {
         return Err(
@@ -284,21 +287,17 @@ pub(crate) fn scan_check_contradictions(check: &Value) -> Result<(usize, Vec<Str
     let mut count = 0;
     let mut examples = Vec::new();
     for finding in findings {
-        let related = finding["related_tests_total"].as_u64().unwrap_or(0);
-        let id = finding["id"].as_str().unwrap_or("?");
-        let rule = if finding["classification"].as_str() == Some("no_static_path") && related > 0 {
+        let row = typed_finding_row(finding)?;
+        let rule = if row.classification == "no_static_path" && row.related > 0 {
             Some(format!(
-                "R2 {id} no_static_path with {related} related tests"
+                "R2 {} no_static_path with {} related tests",
+                row.id, row.related
             ))
-        } else if related == 0
-            && finding["evidence"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .any(|line| line.starts_with("Related tests were found"))
-        {
-            Some(format!("R3 {id} says related tests were found but lists 0"))
+        } else if row.related == 0 && row.related_tests_were_found {
+            Some(format!(
+                "R3 {} says related tests were found but lists 0",
+                row.id
+            ))
         } else {
             None
         };
@@ -310,6 +309,48 @@ pub(crate) fn scan_check_contradictions(check: &Value) -> Result<(usize, Vec<Str
         }
     }
     Ok((count, examples))
+}
+
+/// Producer fields R2/R3 actually read. Missing `id` / `classification` /
+/// `related_tests_total` defaults used to score a clean zero; `evidence`
+/// is required only when R3 can apply (`related_tests_total == 0`).
+fn typed_finding_row(finding: &Value) -> Result<TypedFindingRow<'_>, String> {
+    let Some(object) = finding.as_object() else {
+        return Err("findings row is not an object".to_string());
+    };
+    let Some(id) = object.get("id").and_then(Value::as_str) else {
+        return Err("findings row is missing a string id".to_string());
+    };
+    let Some(classification) = object.get("classification").and_then(Value::as_str) else {
+        return Err("findings row is missing a string classification".to_string());
+    };
+    let Some(related) = object.get("related_tests_total").and_then(Value::as_u64) else {
+        return Err("findings row is missing a numeric related_tests_total".to_string());
+    };
+    let related_tests_were_found = if related == 0 {
+        let Some(Value::Array(items)) = object.get("evidence") else {
+            return Err("findings row is missing an evidence array required for R3".to_string());
+        };
+        items
+            .iter()
+            .filter_map(Value::as_str)
+            .any(|line| line.starts_with("Related tests were found"))
+    } else {
+        false
+    };
+    Ok(TypedFindingRow {
+        id,
+        classification,
+        related,
+        related_tests_were_found,
+    })
+}
+
+struct TypedFindingRow<'a> {
+    id: &'a str,
+    classification: &'a str,
+    related: u64,
+    related_tests_were_found: bool,
 }
 
 pub(crate) fn findings_rendering_truncated(check: &Value) -> bool {
@@ -325,16 +366,21 @@ pub(crate) fn findings_rendering_truncated(check: &Value) -> bool {
 
 fn field_matches(field: &str, actual: &str, expected: &str) -> bool {
     if field == "root" {
-        portable_root(actual) == portable_root(expected)
+        encode_expected_root(expected) == unify_root_separators(actual)
     } else {
         actual == expected
     }
 }
 
-/// Unify Windows separators and the producer `%` escape so the same
-/// checkout is not rejected as the wrong root.
-fn portable_root(value: &str) -> String {
-    value.replace('\\', "/").replace("%25", "%")
+fn unify_root_separators(value: &str) -> String {
+    value.replace('\\', "/")
+}
+
+/// Encode a checkout root the way the producer writes it: `/` separators
+/// and `%` → `%25`. Applied only to the expected harness root. Not a copy
+/// of private `stable_path_text` (no invalid-byte codec).
+fn encode_expected_root(value: &str) -> String {
+    unify_root_separators(value).replace('%', "%25")
 }
 
 /// Complete kinds may disclose only `eol_only_churn`. A missing, non-array,
@@ -902,6 +948,20 @@ mod tests {
             admit_check_document(&doc, &percent_subject).is_complete(),
             "producer %25 escape must match a literal % checkout"
         );
+        let mut percent25_subject = subject.clone();
+        percent25_subject.root = "/tmp/corpus%25a".to_string();
+        let mut doc = complete_document("complete_with_findings", vec![one_finding()]);
+        doc["root"] = json!("/tmp/corpus%2525a");
+        assert!(
+            admit_check_document(&doc, &percent25_subject).is_complete(),
+            "producer %2525 encoding must match a checkout whose name contains literal %25"
+        );
+        let mut percent25_wrong_root = percent25_subject.clone();
+        percent25_wrong_root.root = "/tmp/corpus%25b".to_string();
+        assert!(
+            !admit_check_document(&doc, &percent25_wrong_root).is_complete(),
+            "a genuinely different %25-bearing root must still reject"
+        );
     }
 
     #[test]
@@ -978,6 +1038,202 @@ mod tests {
             scan_check_contradictions(&ok).map(|(count, _)| count),
             Ok(1)
         );
+    }
+
+    /// Pre-#7277 flatten: missing `id` → `"?"`, missing
+    /// `related_tests_total` → `0`, missing/non-array `evidence` → empty.
+    /// A count-consistent `{}` row therefore scored a clean zero.
+    fn permissive_finding_row_defaults_to_clean_zero(finding: &Value) -> bool {
+        let related = finding["related_tests_total"].as_u64().unwrap_or(0);
+        let is_r2 = finding["classification"].as_str() == Some("no_static_path") && related > 0;
+        let is_r3 = related == 0
+            && finding["evidence"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .any(|line| line.starts_with("Related tests were found"));
+        !is_r2 && !is_r3
+    }
+
+    fn well_typed_finding(
+        id: &str,
+        classification: &str,
+        related: u64,
+        evidence: &[&str],
+    ) -> Value {
+        json!({
+            "id": id,
+            "classification": classification,
+            "related_tests_total": related,
+            "evidence": evidence,
+        })
+    }
+
+    fn scan_count(check: &Value) -> Result<usize, String> {
+        scan_check_contradictions(check).map(|(count, _)| count)
+    }
+
+    fn scan_err(check: &Value) -> Result<String, String> {
+        match scan_check_contradictions(check) {
+            Err(reason) => Ok(reason),
+            Ok(found) => Err(format!("expected scan Err, got Ok({found:?})")),
+        }
+    }
+
+    #[test]
+    fn malformed_finding_rows_cannot_yield_a_clean_zero() -> Result<(), String> {
+        let subject = subject();
+        assert_eq!(scan_count(&json!({"findings": []}))?, 0);
+
+        let clean = json!({"findings": [
+            well_typed_finding("p1", "weakly_exposed", 1, &[])
+        ]});
+        assert_eq!(scan_count(&clean)?, 0);
+
+        let zero_related = json!({"findings": [
+            well_typed_finding("p1", "weakly_exposed", 0, &[])
+        ]});
+        assert_eq!(scan_count(&zero_related)?, 0);
+
+        let r2_without_evidence = json!({"findings": [{
+            "id": "p1",
+            "classification": "no_static_path",
+            "related_tests_total": 2
+        }]});
+        assert_eq!(
+            scan_count(&r2_without_evidence)?,
+            1,
+            "R3 cannot apply when related_tests_total > 0; evidence stays optional"
+        );
+
+        let r2 = json!({"findings": [
+            well_typed_finding("p1", "no_static_path", 2, &[])
+        ]});
+        let (count, examples) = scan_check_contradictions(&r2)?;
+        assert_eq!(count, 1);
+        assert!(
+            examples.iter().any(|line| line.starts_with("R2 p1")),
+            "{examples:?}"
+        );
+
+        let r3 = json!({"findings": [well_typed_finding(
+            "p2",
+            "static_unknown",
+            0,
+            &["Related tests were found, but no assertion appears to observe the changed value"],
+        )]});
+        let (count, examples) = scan_check_contradictions(&r3)?;
+        assert_eq!(count, 1);
+        assert!(
+            examples.iter().any(|line| line.starts_with("R3 p2")),
+            "{examples:?}"
+        );
+
+        let empty_row = json!({"findings": [{}]});
+        assert!(
+            permissive_finding_row_defaults_to_clean_zero(&empty_row["findings"][0]),
+            "old flatten treated {{}} as a clean zero"
+        );
+        assert!(
+            scan_err(&empty_row)?.contains("string id"),
+            "empty row fails first on the missing string id"
+        );
+        assert!(
+            admit_check_document(
+                &complete_document("complete_with_findings", vec![json!({})]),
+                &subject
+            )
+            .is_complete(),
+            "admission of a count-consistent complete document stays separate from trust scan"
+        );
+
+        let missing_id = json!({"findings": [{
+            "classification": "weakly_exposed",
+            "related_tests_total": 0,
+            "evidence": []
+        }]});
+        assert!(permissive_finding_row_defaults_to_clean_zero(
+            &missing_id["findings"][0]
+        ));
+        assert!(scan_err(&missing_id)?.contains("string id"));
+
+        let numeric_id = json!({"findings": [{
+            "id": 1,
+            "classification": "weakly_exposed",
+            "related_tests_total": 0,
+            "evidence": []
+        }]});
+        assert!(scan_err(&numeric_id)?.contains("string id"));
+
+        let missing_classification = json!({"findings": [{
+            "id": "p1",
+            "related_tests_total": 0,
+            "evidence": []
+        }]});
+        assert!(permissive_finding_row_defaults_to_clean_zero(
+            &missing_classification["findings"][0]
+        ));
+        assert!(scan_err(&missing_classification)?.contains("string classification"));
+
+        let mistyped_related = json!({"findings": [{
+            "id": "p1",
+            "classification": "weakly_exposed",
+            "related_tests_total": "0",
+            "evidence": []
+        }]});
+        assert!(permissive_finding_row_defaults_to_clean_zero(
+            &mistyped_related["findings"][0]
+        ));
+        assert!(scan_err(&mistyped_related)?.contains("numeric related_tests_total"));
+
+        let missing_evidence = json!({"findings": [{
+            "id": "p1",
+            "classification": "weakly_exposed",
+            "related_tests_total": 0
+        }]});
+        assert!(permissive_finding_row_defaults_to_clean_zero(
+            &missing_evidence["findings"][0]
+        ));
+        assert!(scan_err(&missing_evidence)?.contains("evidence array"));
+
+        let object_evidence = json!({"findings": [{
+            "id": "p1",
+            "classification": "weakly_exposed",
+            "related_tests_total": 0,
+            "evidence": {"reach": "no"}
+        }]});
+        assert!(permissive_finding_row_defaults_to_clean_zero(
+            &object_evidence["findings"][0]
+        ));
+        assert!(scan_err(&object_evidence)?.contains("evidence array"));
+
+        let mixed = json!({"findings": [
+            well_typed_finding("p1", "weakly_exposed", 1, &[]),
+            json!({})
+        ]});
+        assert!(
+            scan_err(&mixed)?.contains("string id"),
+            "one malformed row fails the whole scan"
+        );
+
+        let not_object = json!({"findings": ["not-a-row"]});
+        assert!(scan_err(&not_object)?.contains("not an object"));
+
+        assert!(
+            scan_check_contradictions(&json!({}))
+                .is_err_and(|err| err.contains("missing a findings array"))
+        );
+        let mut truncated = complete_document("complete_with_findings", vec![one_finding()]);
+        truncated["run_limitations"] = json!([{
+            "category": FINDINGS_BOUND_STATUS,
+            "run_status": FINDINGS_BOUND_STATUS
+        }]);
+        assert!(
+            scan_check_contradictions(&truncated)
+                .is_err_and(|err| err.contains("rendering prefix"))
+        );
+        Ok(())
     }
 
     #[test]

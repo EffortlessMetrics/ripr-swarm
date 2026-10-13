@@ -61,11 +61,32 @@ document should branch on `exit`, not on free-text `stop_states`.
   above, an unreadable config or suppression policy, a git timeout, or any
   other failure the command can produce — also writes a machine-readable
   refusal document to stdout naming the failure; the exit stays `2` and the
-  human prose stays on stderr. Only argv usage errors stay prose-only with
-  empty stdout. [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the
-  refusal shape and its `schema_version`.
+  human prose stays on stderr. The same envelope covers the other `--json`
+  commands (#7331): `diff --json`, `rerun --json`, `context` (which emits
+  JSON only), `agent brief --json`, and `agent packet --json` each write the
+  shared refusal shape keyed with their own `schema_version` (rerun
+  `ripr-targeted-rerun-v1`, context `1.0`, diff and agent brief `0.1`, agent
+  packet `0.5`), and `mode` appears only on commands that accept `--mode`.
+  For `check`, the machine-readable formats also carry their own refusal
+  document on stdout (#7332): SARIF renders a schema-valid run whose only
+  signal is a tool-configuration notification, GitHub renders one workflow
+  error annotation, and `badge-json`, `repo-exposure-json`, and
+  `agent-seam-packets-json` render their format's degraded/refused envelope
+  (zeroed counts, `run_status: "refused"`). Machine formats without an
+  honest refusal shape yet — `repo-sarif`, `badge-plus`, `repo-badge-*`,
+  `shields`, `repo-seams-*`, and `repo-exposure-summary-json` — write
+  nothing to stdout and put the prose diagnostic on stderr for now; that
+  gap is a named limitation, not a clean result. Exactly two cases stay
+  prose-only with empty stdout on every command: argv usage errors and
+  these not-yet-refusing machine formats. [docs/OUTPUT_SCHEMA.md](OUTPUT_SCHEMA.md) documents the refusal
+  shape and its `schema_version`.
 - **User error**: unknown command, missing required argument, or invalid
   config.
+- **Gate `--root` refusal**: `ripr gate evaluate --root <path>` that is
+  missing or not a directory is an argv-level usage refusal: it exits `2`,
+  names the root, and does not write `gate-decision.{json,md}`. Evaluation
+  does not start. This is distinct from a completed `config_error` decision
+  (also exit `2`), which still writes the report before returning.
 - **Internal error**: a panic occurred (with a `ripr: internal error` message).
 - **Closed output pipe**: the reader of stdout went away early (for example
   `ripr doctor | head`). ripr stops quietly with `2`, not `0`, because its
@@ -152,21 +173,31 @@ tree; and a repair `--phase after` whose edit cage recorded a violation.
 any check fails (including missing language runtimes that are enabled in
 the effective configuration).
 
-The `Cargo.toml`, `cargo`, and `rustc` checks apply only when Rust is in
-scope for the root: Rust is enabled and either Rust markers (`Cargo.toml` or
-`.rs` files) are detected or no other language is detected or enabled. A
-Python-only or TypeScript-only root reports those checks as `skipped` with
-the reason and does not fail on them. A Rust root, a root with Rust sources but no
-`Cargo.toml`, and an empty root under the Rust-only default still fail on a
-missing manifest.
+The `Cargo.toml` check applies only when Rust is in scope for the root:
+Rust is enabled and either a Cargo.toml is found at the selected root, an
+ancestor Cargo project bounded by git, or nested in this tree; Rust markers
+(`.rs` files) are detected at the selected root; or no other language is
+detected or enabled. A Python-only or TypeScript-only root with no nested
+or ancestor Cargo.toml reports `cargo_toml` as `skipped` with the reason.
+The analysis profile also skips `cargo` and `rustc`; `--profile source-build`
+still probes those tools and can exit `2` if they are missing.
+A Cargo.toml at the selected root, an
+ancestor Cargo project bounded by git, or a nested Cargo.toml in this tree
+(for example `rust/Cargo.toml` at a polyglot git root that also has
+`package.json`) passes `cargo_toml`.
+A root with Rust sources but no Cargo.toml anywhere in that bounded search,
+and an empty root under the Rust-only default, still fail on a missing
+manifest.
 
 The toolchain checks depend on the profile. Under the default `analysis`
 profile, a missing `cargo` or `rustc`, or a workspace `rustc` older than
 RIPR's build MSRV, is reported as `advisory` and does not change the exit
 code: the installed binary can still analyze the workspace. A missing `cargo`
 still withholds evidence that reads `cargo metadata`. Under
-`--profile source-build`, the same conditions are failures and exit `2`, while
-enabled language runtimes stay visible but do not decide that profile's exit.
+`--profile source-build`, the same conditions are failures and exit `2`. A
+missing cargo or rustc names an install route on the failing check; an older
+rustc still names `rustup update stable`. Enabled language runtimes stay
+visible but do not decide that profile's exit.
 
 ## CI integration
 
@@ -197,6 +228,9 @@ empty (the default, advisory) or `visible-only` never fails the job;
 a nonzero step exit. `ripr check` is advisory here as everywhere: it exits
 `0` whether or not it found gaps. When `RIPR_GATE_MODE` is set, the packet
 evaluates the gate, and `ripr gate evaluate` exits `3` when it blocks and
-`2` on a `config_error`; it treats an incomplete, partial, or unsupported
+`2` on a `config_error`; those completed decisions still write
+`gate-decision.{json,md}`. A `--root` that is missing or not a directory is
+argv-level exit `2`, names the root, and writes no report. `ripr gate evaluate`
+treats an incomplete, partial, or unsupported
 analysis outcome as a `config_error` in every mode, so a gate never passes
 on a partial denominator.

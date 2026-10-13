@@ -21,6 +21,24 @@ pub(crate) const SOURCE_SUBJECT_DIGEST_ALGORITHM: &str = "sha256";
 pub(crate) struct GapSourceSubject {
     pub(crate) digest_algorithm: String,
     pub(crate) files: Vec<GapSourceSubjectFile>,
+    /// Optional captured corpus authority. Keep raw metadata here so the
+    /// existing file-only validator used by historical rerun selectors
+    /// remains independent of passive corpus validation and its versions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) corpus: Option<Value>,
+}
+
+/// Existing canonical-directory equality, shared with CLI/editor root
+/// admission and whole-corpus derivation. An aggregate cannot be rebased to
+/// a different root; aliases of the same physical directory are equivalent.
+pub(crate) fn same_root(root: &Path, artifact_root: &Path) -> bool {
+    match (
+        std::fs::canonicalize(root),
+        std::fs::canonicalize(artifact_root),
+    ) {
+        (Ok(root), Ok(artifact_root)) => root == artifact_root,
+        _ => false,
+    }
 }
 
 /// One stamped workspace file. `digest` is `sha256:<hex>` of the file bytes
@@ -211,10 +229,20 @@ pub(crate) fn derive_source_subject(
     output_root: &Path,
     required: &BTreeSet<String>,
 ) -> Result<GapSourceSubject, &'static str> {
+    let corpus = input_stamp
+        .and_then(|stamp| stamp.get("corpus"))
+        .map(|corpus| {
+            if same_root(input_root, output_root) {
+                corpus.clone()
+            } else {
+                serde_json::json!({"unavailable": "input_source_subject_corpus_root_mismatch"})
+            }
+        });
     if required.is_empty() {
         return Ok(GapSourceSubject {
             digest_algorithm: SOURCE_SUBJECT_DIGEST_ALGORITHM.to_string(),
             files: Vec::new(),
+            corpus,
         });
     }
     let stamp = input_stamp.ok_or("input_source_subject_missing")?;
@@ -250,5 +278,6 @@ pub(crate) fn derive_source_subject(
     Ok(GapSourceSubject {
         digest_algorithm: SOURCE_SUBJECT_DIGEST_ALGORITHM.to_string(),
         files,
+        corpus,
     })
 }

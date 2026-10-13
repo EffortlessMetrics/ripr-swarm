@@ -1,0 +1,11 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 04b8e10..8718b31 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -15,5 +15,5 @@ fn route(x: u32) -> u32 {
+ }
+ 
+ fn inner(x: u32) -> u32 {
+-    x * 5
++    5 * x
+ }

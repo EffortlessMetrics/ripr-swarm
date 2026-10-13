@@ -419,7 +419,9 @@ pub(crate) struct CachedSeamLimitInfo {
 /// `1.61`: a `tests/*.rs` Production helper without `assert_eq!` cannot
 /// keep copied `assert!` / `.contains()` credit from a warm `1.60` hit
 /// (#7125).
-pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.61";
+/// `1.62`: returned mutable-ledger partial witness and precise observer limit (#3215).
+/// `1.63`: exact fallible literal-check receipt and dependency/config validity (#4478).
+pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.63";
 /// `0.2` → `0.3`: same semantic transition as the outer cache (#3273 /
 /// #3286) — sharded entries derive from the same facts and cannot bypass
 /// the outer generation bump.
@@ -524,7 +526,8 @@ pub(crate) const CACHE_SCHEMA_VERSION: &str = "1.61";
 /// `0.66`: same `test = false` refusal as full `1.60` (#7125).
 /// `0.67`: same `assert_eq!`-only Production helper gate as full `1.61`
 /// (#7125).
-const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.67";
+/// `0.68`: same partial returned-ledger evidence as full `1.62`.
+const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.69";
 
 /// Compact-classified seam cache schema. This cache stores the same
 /// `ClassifiedSeam` envelope shape as the full repo exposure cache, but
@@ -631,7 +634,8 @@ const SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.67";
 /// `0.66`: same `test = false` refusal as full `1.60` (#7125).
 /// `0.67`: same `assert_eq!`-only Production helper gate as full `1.61`
 /// (#7125).
-pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.67";
+/// `0.68`: same partial returned-ledger evidence as full `1.62`.
+pub(crate) const COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION: &str = "0.69";
 
 /// Compact class-count cache used by repo badge rendering. It keys off
 /// the same workspace state as the full fact cache, but stores only
@@ -1296,6 +1300,22 @@ impl WorkspaceKeyContext<'_> {
         };
 
         let workspace_manifests_hash = hash_workspace_manifests(self.workspace_root);
+        // Rule 7a is initially limited to a standalone owning package. A fresh
+        // locked dependency/config receipt participates before every classified
+        // cache lookup, so stale favorable results cannot survive replacement,
+        // unavailable resolution or an ambient configuration change.
+        let workspace_manifests_hash = if super::workspace::eligible_manifest(self.workspace_root) {
+            let dependency = super::workspace::verified_anyhow_identity(self.workspace_root)
+                .map_or_else(
+                    || "unverified".to_string(),
+                    |receipt| receipt.validation_digest,
+                );
+            hash_str(&format!(
+                "{workspace_manifests_hash}:fallible-check:{dependency}"
+            ))
+        } else {
+            workspace_manifests_hash
+        };
         let lockfile_hash = hash_named_workspace_files(self.workspace_root, "Cargo.lock");
         let toolchain_hash = hash_str(
             std::env::var("RUSTUP_TOOLCHAIN")
@@ -4268,7 +4288,8 @@ mod tests {
         // (#7125).
         // 1.60 -> 1.61: Production integration helpers without assert_eq!
         // stay uncredited (#7125).
-        assert_eq!(CACHE_SCHEMA_VERSION, "1.61");
+        // 1.61 -> 1.62: returned-ledger witness and observer limitation.
+        assert_eq!(CACHE_SCHEMA_VERSION, "1.63");
         // 0.12 -> 0.13 through 0.14 / 0.15 / 0.16 / 0.17 / 0.18: same
         // #3731 semantic transition as the outer classified-seam cache,
         // for the sharded and compact envelopes.
@@ -4323,8 +4344,9 @@ mod tests {
         // 0.65 -> 0.66: same test=false refusal as full 1.60.
         // 0.66 -> 0.67: same assert_eq!-only Production helper gate as
         // full 1.61.
-        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.67");
-        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.67");
+        // 0.67 -> 0.68: same partial returned-ledger evidence as full 1.62.
+        assert_eq!(SHARDED_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.69");
+        assert_eq!(COMPACT_CLASSIFIED_SEAM_CACHE_SCHEMA_VERSION, "0.69");
     }
 
     #[test]

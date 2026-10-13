@@ -28,6 +28,14 @@
 //! alone never establishes propagation or discrimination — the oracle
 //! still has to observe the sink through the ordinary evidence stages.
 
+mod macro_argument;
+mod returned_ledger;
+pub(crate) use returned_ledger::{ReturnedLedger, returned_ledger};
+mod selected_inherent_call;
+pub(in crate::analysis) use selected_inherent_call::{
+    SelectedInherentCall, selected_inherent_calls,
+};
+
 use super::value_transfer::ExactInputs;
 use crate::analysis::facts::{CallFact, FunctionImplContext, FunctionSummary, RustIndex};
 
@@ -128,6 +136,12 @@ pub(crate) struct HelperHop {
     pub(crate) caller: FunctionSummary,
     pub(crate) call_text: String,
     pub(crate) arguments: Vec<String>,
+    /// The caller hands the callee to a local `macro_rules!` macro as an
+    /// identifier token (`twice!(base_rate)`, #6614) instead of calling it.
+    /// ripr does not expand macros: such a hop carries reach only. It never
+    /// forwards the callee's result, binds no argument rows, and has no
+    /// `arguments`.
+    pub(crate) through_macro: bool,
 }
 
 /// The resolved chain for one helper. `stop_above` names the first
@@ -707,7 +721,19 @@ pub(crate) fn resolve_chain(
     }
     let callers = direct_callers(callee_name, index);
     if callers.is_empty() {
-        return stopped(format!("no static caller found for helper `{callee_name}`"));
+        // #6614: a unique local-macro identifier argument is the only
+        // caller edge; it carries reach, never a forwarded result.
+        let Some((caller, call_text)) = macro_argument::macro_argument_caller(callee_name, index)
+        else {
+            return stopped(format!("no static caller found for helper `{callee_name}`"));
+        };
+        let hop = HelperHop {
+            caller: caller.clone(),
+            call_text,
+            arguments: Vec::new(),
+            through_macro: true,
+        };
+        return extend_chain(hop, callee_name, index, workspace_complete, visited);
     }
     if callers.len() > 1 {
         return stopped(format!(
@@ -734,7 +760,20 @@ pub(crate) fn resolve_chain(
         caller: caller.clone(),
         call_text,
         arguments,
+        through_macro: false,
     };
+    extend_chain(hop, callee_name, index, workspace_complete, visited)
+}
+
+/// Resolve the chain above `hop`'s caller and put `hop` beneath it.
+fn extend_chain(
+    hop: HelperHop,
+    callee_name: &str,
+    index: &RustIndex,
+    workspace_complete: bool,
+    visited: &[String],
+) -> HelperChain {
+    let caller = &hop.caller;
     let mut next_visited = visited.to_vec();
     next_visited.push(callee_name.to_string());
     let HelperChain {
@@ -995,6 +1034,26 @@ pub(crate) fn chain_forwards_owner_result(owner_name: &str, chain: &HelperChain)
     hops_forward_owner_result(owner_name, &chain.hops)
 }
 
+/// Whether the observed hops of `chain` include a local-macro argument hop
+/// (#6614) and no related caller-calling test holds an exact oracle. Such
+/// reach is the macro-argument edge alone; when every oracle is weak on its
+/// own terms the weakness is established without expanding the macro, so
+/// the not-forwarded abstention does not apply and the existing evidence
+/// (a weak oracle's gap) stands.
+pub(crate) fn macro_hop_reach_without_exact_pin(
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> bool {
+    let hops = observed_hops(chain, related_tests);
+    if !hops.iter().any(|hop| hop.through_macro) {
+        return false;
+    }
+    !macro_argument::exactly_pins_a_caller(related_tests)
+}
+
 /// [`chain_forwards_owner_result`] over only the hops the related tests
 /// observe (#6780 review): a test calling an intermediate hop caller
 /// (`middle(10)`) observes that caller's result, so hops above the highest
@@ -1010,6 +1069,32 @@ pub(crate) fn chain_forwards_to_observed_hops(
     )],
 ) -> bool {
     hops_forward_owner_result(owner_name, observed_hops(chain, related_tests))
+}
+
+/// The returned-ledger proof covers only the first caller. It may replace that
+/// hop's ordinary dropped-result explanation only when no higher hop is observed.
+/// Keep higher forwarding failures visible until their identity is established.
+pub(crate) fn returned_ledger_caller_is_observed(
+    ledger: &ReturnedLedger,
+    chain: &HelperChain,
+    related_tests: &[(
+        &crate::analysis::facts::TestSummary,
+        crate::domain::RelationReason,
+    )],
+) -> bool {
+    let hops = observed_hops(chain, related_tests);
+    hops.len() == 1
+        && hops[0].caller.id == ledger.caller
+        && related_tests
+            .iter()
+            .any(|(_, reason)| *reason == crate::domain::RelationReason::HelperOwnerCall)
+        && related_tests.iter().all(|(test, reason)| {
+            *reason != crate::domain::RelationReason::HelperOwnerCall
+                || test.calls.iter().any(|call| {
+                    call.name == hops[0].caller.name
+                        && is_direct_call_site(&call.text, &hops[0].caller.name)
+                })
+        })
 }
 
 /// The hops a related test observes: up to the highest hop any
@@ -1076,7 +1161,8 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
         })
         .map(|(index, _)| index)
         .collect();
-    if tracked.is_empty() || hops.is_empty() {
+    // #6614: a macro-argument hop passes no state the analyzer can follow.
+    if tracked.is_empty() || hops.is_empty() || hops.iter().any(|hop| hop.through_macro) {
         return false;
     }
     for hop in hops {
@@ -1105,6 +1191,11 @@ pub(crate) fn chain_passes_effect_target_to_observed_hops(
 fn hops_forward_owner_result(owner_name: &str, hops: &[HelperHop]) -> bool {
     !hops.is_empty()
         && hops.iter().enumerate().all(|(step, hop)| {
+            // #6614: a macro-argument hop is not expanded; whether the
+            // macro hands the callee's result on is unknown.
+            if hop.through_macro {
+                return false;
+            }
             let callee = match step.checked_sub(1) {
                 None => owner_name,
                 Some(below) => match hops.get(below) {
@@ -2165,6 +2256,7 @@ mod tests {
                 caller,
                 call_text: String::new(),
                 arguments: Vec::new(),
+                through_macro: false,
             }],
             stop_above: None,
         }
@@ -2382,6 +2474,7 @@ mod tests {
             caller,
             call_text: String::new(),
             arguments: Vec::new(),
+            through_macro: false,
         };
         let chain = HelperChain {
             hops: vec![hop(lower.clone()), hop(upper)],

@@ -1,0 +1,13 @@
+diff --git a/lib/Ledger.pm b/lib/Ledger.pm
+index 78101d1..4c57c9b 100644
+--- a/lib/Ledger.pm
++++ b/lib/Ledger.pm
+@@ -10,7 +10,7 @@ sub summary {
+     my (@amounts) = @_;
+     my $total = 0;
+     $total += $_ for @amounts;
+-    return { total => $total, count => scalar @amounts };
++    return { count => scalar @amounts, total => $total };
+ }
+ 
+ sub format_entry {

@@ -68,7 +68,7 @@ pub(super) const GATE_HELP: &str = r#"Evaluate the optional pass/fail gate again
 Usage: ripr gate evaluate [--pr-guidance PATH | --gap-ledger PATH] [--mode MODE] [--out PATH] [--out-md PATH]
 
 Options:
-  --root PATH                         Workspace root. Defaults to current directory.
+  --root PATH                         Workspace root. Must be an existing directory. Defaults to current directory.
   --repo-exposure PATH                Optional repo-exposure JSON input.
   --pr-guidance PATH                  Optional PR guidance JSON from `ripr review-comments`.
   --gap-ledger PATH                   Optional gap decision ledger JSON; when supplied, gate candidates come from repairable GapRecord projection targets.
@@ -95,16 +95,19 @@ Options:
 
 The gate evaluator is read-only policy over existing RIPR evidence. It writes
 JSON and Markdown before returning a non-zero exit for `blocked` or
-`config_error` decisions. It does not post comments, edit source, generate
-tests, run mutation testing, upload SARIF, mutate GitHub state, or change
-generated workflow defaults.
+`config_error` decisions. A `--root` that does not exist or is not a directory
+fails closed with exit 2 and a message naming the root; evaluation does not
+start and no decision report is written. It does not post comments, edit source,
+generate tests, run mutation testing, upload SARIF, mutate GitHub state, or
+change generated workflow defaults.
 
 Output discipline: JSON and Markdown are written to `--out` and `--out-md`
 (with the documented defaults); stdout contains human `Wrote ...` status lines,
 not the JSON report. Capture the report files for machine consumers. When
 `--mode` is omitted and stderr is non-interactive, ripr prints a warning that
-the visible-only default records evidence without blocking. An explicit
-`--mode visible-only` is quiet; blocking modes remain opt-in.
+the visible-only default records evidence without blocking, after a completed
+evaluation. Missing-input usage errors and `config_error` reports stay quiet.
+An explicit `--mode visible-only` is quiet; blocking modes remain opt-in.
 "#;
 pub(super) const BASELINE_HELP: &str = r#"Create, diff, and shrink a reviewed baseline of acknowledged test gaps.
 

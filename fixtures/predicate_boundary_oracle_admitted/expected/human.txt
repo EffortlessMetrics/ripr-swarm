@@ -14,7 +14,7 @@ Start here:
   Static exposure: exposed (info, confidence 1.00)
   Canonical gap: gap:rust:src/lib.rs:discounted_total:predicate_boundary:predicate:amount==discount_threshold
   Changed behavior: amount >= discount_threshold
-  Related test (1 of 2): src/lib.rs:13 boundary
+  Related test (1 of 2 matched rows): src/lib.rs:13 boundary
   Evidence: reach yes · infection yes · propagation yes · observation yes · discriminator yes
     - reach yes: Related tests appear to reach discounted_total: boundary, far
     - infection yes: Detected related test input at the changed boundary

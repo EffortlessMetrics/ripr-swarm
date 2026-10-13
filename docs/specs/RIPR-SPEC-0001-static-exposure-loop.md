@@ -72,6 +72,12 @@ Each finding should carry:
 - recommended next step
 - stop reason for unknowns
 
+Exhaustive human Changed source fragments preserve the complete source and wrap
+printable Unicode by display cells between extended grapheme clusters. The
+fixed payload budget, oversized-cluster exception, ASCII/multiline compatibility
+and literal consumer controls are specified by
+`fixtures/rust_long_expression_display_bound/SPEC.md` (#7595).
+
 ## Inputs
 
 - Rust/Cargo workspace root
@@ -103,6 +109,13 @@ Static findings may use only these exposure classes:
 captured call, a helper chain, or assertion affinity. A test linked only by
 sharing the changed file, module, or a name token stays listed as the likely
 place to add a test, but reach is `weak` and the finding cannot be `exposed`.
+When a `weakly_exposed` finding has weak reach and every related row is a
+canonical proximity relation, its next step asks the reader to inspect existing
+tests, doctests and examples before changing assertions. Proximity does not
+establish that an assertion is broad or that a test is missing. Exact-sink
+advice suppression, assertion-shaped owner guidance and specific wrapper-error
+limitations retain their existing precedence. This guidance does not index or
+credit documentation examples, change classifications, or admit a repair.
 For a predicate probe, `exposed` also requires one test that both feeds a
 boundary input to the owner and holds a discriminating oracle on that call's
 result; otherwise the finding is at most `weakly_exposed` and names
@@ -357,6 +370,10 @@ owner's own source file through the shared named-constant lookup in
 
 Fixture coverage:
 
+- `unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim`
+- `weak_direct_owner_assertion_keeps_exact_value_advice`
+- `wrapper_error_retains_specific_guidance_for_proximity_reach`
+- `assertion_helper_retains_oracle_inspection_guidance`
 - `fixtures/boundary_gap` (baseline)
 - `fixtures/weak_error_oracle` (baseline)
 - `fixtures/smoke_assertion_only`

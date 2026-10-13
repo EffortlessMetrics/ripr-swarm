@@ -255,3 +255,15 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — error_variant_wrapper_foreign_pin (20)
+
+Reason:
+RIPR-SPEC-0005: the shared reach-bearing relation rule (#5335 review) no longer credits the test-name anchor as reach; nothing invokes the wrapper so both findings disclose the missing static path (was reachable_unrevealed + weakly_exposed)
+
+Command:
+`cargo xtask goldens bless error_variant_wrapper_foreign_pin --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`

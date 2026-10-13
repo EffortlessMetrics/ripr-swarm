@@ -49,11 +49,12 @@ pub use diff::records::{
     PathRecordError, StatusRecord, parse_git_path_records, parse_git_status_records,
 };
 pub(crate) use diff::{
-    AnalyzedRevisions, load_diff, load_diff_range_with_deadline_core,
+    AnalyzedRevisions, load_diff, load_diff_core, load_diff_range_with_deadline_core,
     load_diff_with_effective_base_core, load_worktree_diff,
     load_worktree_diff_with_effective_base_core, no_merge_base_diagnosis, parse_unified_diff,
     probe_working_tree_tracked_changes_within, resolve_base_commit, resolve_effective_base,
-    working_tree_has_tracked_changes, working_tree_has_uncommitted_changes,
+    resolve_effective_base_core, working_tree_has_tracked_changes,
+    working_tree_has_uncommitted_changes,
 };
 /// Shared RIPR-SPEC-0084 default-base authority and pinned analysis-range
 /// diff assembly (#4003): the one named owner for badge input base/diff,
@@ -87,10 +88,10 @@ pub(crate) use seam_classification::classify_seam;
 #[cfg(test)]
 pub(crate) use seam_inventory::apply_pilot_seam_budget_inner;
 pub(crate) use seam_inventory::{
-    ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT, ScopedClassifiedSeamInventory,
-    ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource, TargetedTestInventoryError,
-    apply_pilot_seam_budget, classify_seams_in_files_at_with_config, diff_only_rust_files,
-    file_seams_without_evidence_at_with_config,
+    ClassifiedChangeReport, ClassifiedSeamsReport, DEFAULT_REPO_EXPOSURE_SEAM_LIMIT,
+    ScopedClassifiedSeamInventory, ScopedEvidenceConsumer, SeamLimitInfo, SeamLimitSource,
+    TargetedTestInventoryError, apply_pilot_seam_budget, classify_seams_in_files_at_with_config,
+    diff_only_rust_files, file_seams_without_evidence_at_with_config,
     inventory_changed_test_classified_seams_at_with_config_node,
     inventory_classified_seams_at_with_config, inventory_classified_seams_report_at_with_config,
     inventory_compact_classified_seams_at_with_config,

@@ -31,8 +31,17 @@ impl Drop for Scratch {
 }
 
 fn run(program: &Path, arguments: &[&std::ffi::OsStr]) -> Result<Output, String> {
+    run_with_env(program, arguments, &[])
+}
+
+fn run_with_env(
+    program: &Path,
+    arguments: &[&std::ffi::OsStr],
+    environment: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> Result<Output, String> {
     Command::new(program)
         .args(arguments)
+        .envs(environment.iter().cloned())
         .output()
         .map_err(|error| format!("{}: {error}", program.display()))
 }
@@ -2950,6 +2959,344 @@ fn constant_row_table_pairs_each_row_with_its_boundary_input() -> Result<(), Str
                 wrong && exposed,
             )?;
         }
+    }
+    Ok(())
+}
+
+/// #7175/#7117: identical assertion tokens can name a test-local trait or
+/// the production trait. Keep literal runtime truth outside the analyzed root,
+/// and graduate all three compiled shapes into the independent honesty gate.
+#[test]
+fn trait_shadow_corpus_matches_compiled_owner_dispatch() -> Result<(), String> {
+    let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures");
+    let corpus: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(fixtures.join("evidence-promotion-honesty-corpus/corpus.json"))
+            .map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| error.to_string())?;
+    let cases = corpus["cases"].as_array().ok_or("missing honesty cases")?;
+
+    for (shape, shadow, test_file, line, name) in [
+        ("impl", true, "src/lib.rs", 28, "render_is_empty"),
+        ("impl", false, "src/lib.rs", 18, "render_is_empty"),
+        (
+            "parent",
+            true,
+            "src/helpers/render_tests.rs",
+            4,
+            "render_is_empty",
+        ),
+        (
+            "parent",
+            false,
+            "src/helpers/render_tests.rs",
+            4,
+            "render_is_empty",
+        ),
+        ("default", true, "src/lib.rs", 35, "advances"),
+        ("default", false, "src/lib.rs", 22, "advances"),
+    ] {
+        let fixture_name = format!(
+            "rust_trait_{shape}_{}",
+            if shadow { "shadow" } else { "import" }
+        );
+        let registered = cases
+            .iter()
+            .filter(|case| case["id"] == fixture_name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            registered.len(),
+            1,
+            "{fixture_name}: retain the charter member"
+        );
+        assert_eq!(
+            registered[0]["source_fixture"],
+            format!("fixtures/{fixture_name}"),
+            "{fixture_name}: the gate must consume this live golden fixture"
+        );
+
+        let fixture = fixtures.join(&fixture_name);
+        let source = std::fs::read_to_string(fixture.join("input/src/lib.rs"))
+            .map_err(|error| error.to_string())?;
+        let mut modules = Vec::new();
+        if shape == "parent" {
+            for relative in ["helpers.rs", "helpers/render_tests.rs"] {
+                let module = std::fs::read_to_string(fixture.join("input/src").join(relative))
+                    .map_err(|error| error.to_string())?;
+                modules.push((relative, module));
+            }
+        }
+        let runtime_modules = modules
+            .iter()
+            .map(|(path, source)| (*path, source.as_str()))
+            .collect::<Vec<_>>();
+        source_runtime_control_with(&source, &runtime_modules, &fixture_name, 1, false)?;
+
+        let (production, tests) = source
+            .split_once("#[cfg(test)]")
+            .ok_or("missing test root")?;
+        let (original, replacement) = if shape == "default" {
+            ("4 * self.step()", "4 + self.step()")
+        } else {
+            ("String::from(\"\")", "String::from(\"wrong\")")
+        };
+        assert_eq!(production.matches(original).count(), 1, "{fixture_name}");
+        let mutant = format!(
+            "{}#[cfg(test)]{tests}",
+            production.replace(original, replacement)
+        );
+        assert_ne!(
+            mutant, source,
+            "{fixture_name}: mutate the production owner"
+        );
+        source_runtime_control_with(
+            &mutant,
+            &runtime_modules,
+            &format!("{fixture_name}-wrong-production"),
+            1,
+            !shadow,
+        )?;
+
+        // Only the authored fixture belongs to this index; the compiled
+        // originals/mutants are separate Scratch roots and already released.
+        let scratch = Scratch::create()?;
+        let root = scratch.0.join("ws");
+        std::fs::create_dir_all(root.join("src")).map_err(|error| error.to_string())?;
+        std::fs::copy(fixture.join("input/Cargo.toml"), root.join("Cargo.toml"))
+            .map_err(|error| error.to_string())?;
+        std::fs::write(root.join("src/lib.rs"), &source).map_err(|error| error.to_string())?;
+        for (relative, module) in &modules {
+            let path = root.join("src").join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            std::fs::write(path, module).map_err(|error| error.to_string())?;
+        }
+        let report = check_workspace(CheckInput {
+            root,
+            diff_file: Some(fixture.join("diff.patch")),
+            mode: Mode::Fast,
+            format: OutputFormat::Json,
+            ..CheckInput::default()
+        })?;
+        let json: serde_json::Value =
+            serde_json::from_str(&render_check(&report, &OutputFormat::Json)?)
+                .map_err(|error| error.to_string())?;
+        let findings = json["findings"].as_array().ok_or("missing findings")?;
+        assert_eq!(
+            findings.len(),
+            1,
+            "{fixture_name}: one changed production tail"
+        );
+        let finding = &findings[0];
+        assert_eq!(finding["probe"]["family"], "return_value", "{fixture_name}");
+        assert_eq!(
+            finding["classification"],
+            if shadow { "weakly_exposed" } else { "exposed" },
+            "{fixture_name}: {finding}"
+        );
+        let related = finding["related_tests"]
+            .as_array()
+            .ok_or("missing related tests")?;
+        assert_eq!(
+            related.len(),
+            1,
+            "{fixture_name}: no borrowed or runtime test"
+        );
+        assert_eq!(related[0]["name"], name, "{fixture_name}");
+        assert_eq!(related[0]["file"], test_file, "{fixture_name}");
+        assert_eq!(related[0]["line"], line, "{fixture_name}");
+        assert_eq!(related[0]["oracle_kind"], "exact_value", "{fixture_name}");
+        assert_eq!(related[0]["oracle_strength"], "strong", "{fixture_name}");
+        assert_eq!(
+            related[0]["relation_reason"],
+            if shadow {
+                "weak_token_substring"
+            } else {
+                "direct_owner_call"
+            },
+            "{fixture_name}: dispatch identity, not assertion token matching"
+        );
+    }
+    Ok(())
+}
+
+fn fallible_fixture_subject(source_fixture: &str) -> Result<Scratch, String> {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures")
+        .join(source_fixture)
+        .join("input");
+    let scratch = Scratch::create()?;
+    std::fs::create_dir(scratch.0.join("src")).map_err(|e| e.to_string())?;
+    for file in [
+        "Cargo.toml",
+        "Cargo.lock",
+        "src/lib.rs",
+        "src/test_support.rs",
+    ] {
+        std::fs::copy(fixture.join(file), scratch.0.join(file)).map_err(|e| e.to_string())?;
+    }
+    Ok(scratch)
+}
+
+#[test]
+fn fallible_literal_runtime_pair_and_message_escape_execute_the_real_test() -> Result<(), String> {
+    for (fixture, wrong, expected_success) in [
+        ("owner_return_pin_fallible_literal", false, true),
+        ("owner_return_pin_fallible_literal", true, false),
+        (
+            "owner_return_pin_fallible_literal_message_escape",
+            true,
+            true,
+        ),
+    ] {
+        let subject = fallible_fixture_subject(fixture)?;
+        let library = subject.0.join("src/lib.rs");
+        let original = std::fs::read_to_string(&library).map_err(|e| e.to_string())?;
+        assert_eq!(original.matches("answer() -> u8 { 7 }").count(), 1);
+        if wrong {
+            let mutant = original.replacen("answer() -> u8 { 7 }", "answer() -> u8 { 8 }", 1);
+            assert_ne!(mutant, original, "only the owner value changes");
+            std::fs::write(&library, mutant).map_err(|e| e.to_string())?;
+        }
+        // Each subject owns a distinct target. One variant cannot reuse another
+        // variant's executable, even though their manifests share a name.
+        let target = subject.0.join("runtime-target");
+        let manifest = subject.0.join("Cargo.toml");
+        let output = run(
+            Path::new("cargo"),
+            &[
+                "test".as_ref(),
+                "--offline".as_ref(),
+                "--locked".as_ref(),
+                "--manifest-path".as_ref(),
+                manifest.as_os_str(),
+                "--target-dir".as_ref(),
+                target.as_os_str(),
+                "--".as_ref(),
+                "--nocapture".as_ref(),
+            ],
+        )?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stdout.contains("running 1 test"),
+            "{fixture}: actual libtest execution; {stderr}"
+        );
+        assert!(
+            stdout.contains("0 ignored"),
+            "{fixture}: no ignored subject"
+        );
+        assert!(
+            stdout.contains("observes_answer"),
+            "{fixture}: intended collected test"
+        );
+        assert_eq!(
+            output.status.success(),
+            expected_success,
+            "{fixture}: {stdout} {stderr}"
+        );
+        if !expected_success {
+            assert!(
+                stderr.contains("Condition failed: `actual == 7`"),
+                "intended equality failure, not compilation: {stderr}"
+            );
+            assert!(stdout.contains("1 failed"));
+        } else {
+            assert!(stdout.contains("1 passed"));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn fallible_literal_cli_preserves_unrelated_os_bytes_and_refuses_relevant_inputs()
+-> Result<(), String> {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+    let subject = fallible_fixture_subject("owner_return_pin_fallible_literal")?;
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../fixtures/owner_return_pin_fallible_literal");
+    let diff = fixture.join("diff.patch");
+    for (name, environment, exposed) in [
+        ("ordinary", Vec::new(), true),
+        (
+            "unrelated_value",
+            vec![(
+                OsString::from("RIPR_UNRELATED_VALUE"),
+                OsString::from_vec(vec![0xff]),
+            )],
+            true,
+        ),
+        (
+            "unrelated_name",
+            vec![(
+                OsString::from_vec(b"RIPR_UNRELATED_\xff".to_vec()),
+                OsString::from("ordinary"),
+            )],
+            true,
+        ),
+        (
+            "relevant_value",
+            vec![(
+                OsString::from("CARGO_UNUSED_TEST_INPUT"),
+                OsString::from_vec(vec![0xff]),
+            )],
+            false,
+        ),
+        (
+            "relevant_named_flags",
+            vec![(OsString::from("RUSTFLAGS"), OsString::from_vec(vec![0xff]))],
+            false,
+        ),
+        (
+            "relevant_name",
+            vec![(
+                OsString::from_vec(b"CARGO_UNUSED_\xff".to_vec()),
+                OsString::from("ordinary"),
+            )],
+            false,
+        ),
+        (
+            "override_prefix",
+            vec![(
+                OsString::from("CARGO_SOURCE_CRATES_IO_REPLACE_WITH"),
+                OsString::from("unresolved-test-source"),
+            )],
+            false,
+        ),
+    ] {
+        let output = run_with_env(
+            Path::new(env!("CARGO_BIN_EXE_ripr")),
+            &[
+                "check".as_ref(),
+                "--root".as_ref(),
+                subject.0.as_os_str(),
+                "--diff".as_ref(),
+                diff.as_os_str(),
+                "--mode".as_ref(),
+                "ready".as_ref(),
+                "--format".as_ref(),
+                "json".as_ref(),
+            ],
+            &environment,
+        )?;
+        assert!(
+            output.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let report: serde_json::Value =
+            serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+        let findings = report["findings"].as_array().ok_or("findings")?;
+        assert_eq!(findings.len(), 1, "{name}: exact nonempty owner subject");
+        assert_eq!(findings[0]["probe"]["expression"], "7");
+        assert_eq!(
+            findings[0]["classification"] == "exposed",
+            exposed,
+            "{name}"
+        );
     }
     Ok(())
 }

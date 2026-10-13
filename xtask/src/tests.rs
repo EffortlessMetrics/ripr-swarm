@@ -4,8 +4,10 @@
 //! unchanged.
 
 mod discarded_matcher_honesty;
+mod fixture_cache;
 #[path = "precommit_source_oracle.rs"]
 mod precommit_source_oracle;
+mod rust_corpus_projection;
 
 /// Best-effort temp-dir teardown for tests. The `io::Result` is matched
 /// with `if let` so a `#[must_use]` cleanup failure is an explicit ignore.
@@ -8327,8 +8329,8 @@ fn fixture_run_writes_its_facts_into_the_cache_the_runner_cleared() -> Result<()
     }
 
     with_repo_cwd(|| {
-        let name = "all_no_path_disclosure";
-        let fixture = PathBuf::from("fixtures").join(name);
+        let owned = fixture_cache::Case::new("binding")?;
+        let fixture = owned.fixture.clone();
         let workspace_cache = fixture
             .join("input")
             .join("target")
@@ -8336,7 +8338,7 @@ fn fixture_run_writes_its_facts_into_the_cache_the_runner_cleared() -> Result<()
             .join("cache");
         ignore_remove_dir_all(fixture.join("input").join("target"));
 
-        let cache_dir = super::fixture_cache_dir(name)?;
+        let cache_dir = &owned.cache;
         let stale = cache_dir
             .join("repo-file-facts")
             .join("0.2")
@@ -8362,7 +8364,7 @@ fn fixture_run_writes_its_facts_into_the_cache_the_runner_cleared() -> Result<()
             cache_dir.display()
         );
         assert!(
-            file_count(&cache_dir)? > 0,
+            file_count(cache_dir)? > 0,
             "the cleared cache must be the cache the child populates, but {} is empty",
             cache_dir.display()
         );
@@ -11489,52 +11491,6 @@ fixtures/other.rs|ExampleMarker|1|owners|different path
 }
 
 #[test]
-fn executable_allowlist_rejects_stale_row() -> Result<(), String> {
-    let allowlist = BTreeSet::from([
-        "deleted/script.sh".to_string(),
-        "demoted/script.sh".to_string(),
-    ]);
-    let stage = "\
-100644 abcdef0123456789abcdef0123456789abcdef01 0\tdemoted/script.sh
-100644 fedcba0123456789abcdef0123456789abcdef01 0\tordinary.rs
-";
-    let violations = super::executable_file_violations(&allowlist, stage);
-    if !violations.iter().any(|row| {
-        row.contains(
-            "deleted/script.sh allowlist entry is stale: path is not in git ls-files --stage; remove the entry",
-        )
-    }) {
-        return Err(format!(
-            "missing executable allowlist path must fail: {violations:?}"
-        ));
-    }
-    if !violations.iter().any(|row| {
-        row.contains(
-            "demoted/script.sh allowlist entry is stale: mode is 100644, expected 100755; remove the entry",
-        )
-    }) {
-        return Err(format!(
-            "demoted executable allowlist path must fail: {violations:?}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
-fn executable_allowlist_accepts_live_100755_row() -> Result<(), String> {
-    let path = "packaging/npm/launcher/bin/ripr.cjs";
-    let allowlist = BTreeSet::from([path.to_string()]);
-    let stage = format!("100755 9cea22d6aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa 0\t{path}\n");
-    let violations = super::executable_file_violations(&allowlist, &stage);
-    if !violations.is_empty() {
-        return Err(format!(
-            "a live 100755 allowlist row must still pass: {violations:?}"
-        ));
-    }
-    Ok(())
-}
-
-#[test]
 fn text_encoding_detects_only_bom_prefix() -> Result<(), String> {
     if !super::has_utf8_bom(&[0xEF, 0xBB, 0xBF, b'#']) {
         return Err("a leading EF BB BF must be detected as a BOM".to_string());
@@ -12950,7 +12906,12 @@ fn goldens_check_failure_message_is_a_repair_card() {
         },
     }];
     let violations = vec!["drift for fixture `python_field_assignment_shape`".to_string()];
-    let message = super::goldens_check_failure_message(&entries, &violations);
+    let provenance = super::GoldenDriftProvenance {
+        binary: "/work/target/debug/ripr".to_string(),
+        ripr_version: "ripr 0.11.0 (abc123)".to_string(),
+        revision: "abc123".to_string(),
+    };
+    let message = super::goldens_check_failure_message(&entries, &violations, &provenance);
     assert!(message.contains("golden-drift.md"), "{message}");
     assert!(
         message.contains("python_field_assignment_shape"),
@@ -12962,6 +12923,9 @@ fn goldens_check_failure_message_is_a_repair_card() {
         message.contains("reproduce: cargo xtask goldens check"),
         "{message}"
     );
+    // #7401: the card names the build that produced the actual side.
+    assert!(message.contains("ripr 0.11.0 (abc123)"), "{message}");
+    assert!(message.contains("/work/target/debug/ripr"), "{message}");
 }
 
 #[test]
@@ -52503,12 +52467,12 @@ fn count_policy_gates_have_no_stale_bounds() -> Result<(), String> {
 #[test]
 fn golden_comparison_runs_consume_the_cache_the_runner_cleared() -> Result<(), String> {
     with_repo_cwd(|| {
-        let name = "all_no_path_disclosure";
-        let fixture = PathBuf::from("fixtures").join(name);
+        let owned = fixture_cache::Case::new("golden")?;
+        let fixture = owned.fixture.clone();
         let leaked = fixture.join("input").join("target");
         ignore_remove_dir_all(&leaked);
 
-        let cache_dir = super::fixture_cache_dir(name)?;
+        let cache_dir = &owned.cache;
         let stale = cache_dir
             .join("repo-file-facts")
             .join("0.2")

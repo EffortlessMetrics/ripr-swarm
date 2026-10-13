@@ -269,11 +269,11 @@ use no_panic::{
     strip_toml_value_comment,
 };
 use policy::{
-    check_allow_attributes, check_ci_lane_whitelist, check_covered_by, check_doc_roles,
-    check_droid_review_config, check_executable_files, check_file_policy, check_local_context,
-    check_network_policy, check_no_panic_family, check_positioning_language, check_process_policy,
-    check_product_copy, check_proof_packs, check_release_targets, check_static_language,
-    check_text_encoding, check_workflows, qualify_python_wheelhouse,
+    check_allow_attributes, check_changelog_fragments, check_ci_lane_whitelist, check_covered_by,
+    check_doc_roles, check_droid_review_config, check_executable_files, check_file_policy,
+    check_local_context, check_network_policy, check_no_panic_family, check_positioning_language,
+    check_process_policy, check_product_copy, check_proof_packs, check_release_targets,
+    check_static_language, check_text_encoding, check_workflows, qualify_python_wheelhouse,
 };
 use public_api_surface::public_api_surface;
 #[cfg(test)]
@@ -320,11 +320,11 @@ pub(crate) use reports::{
 };
 #[cfg(test)]
 pub(crate) use reports::{
-    GoldenDriftEntry, GoldenDriftSemantics, first_line_difference, fixture_cache_dir,
-    fixture_contract_violations, golden_assistant_loop_health_contract_violations_at,
-    golden_drift_semantics, golden_drift_type, goldens_check_failure_message,
-    json_string_values_for_key, next_pending_heading, normalize_golden_text, parse_reason,
-    run_fixture, run_fixture_outputs, validate_bless_reason,
+    GoldenDriftEntry, GoldenDriftProvenance, GoldenDriftSemantics, first_line_difference,
+    fixture_cache_dir, fixture_contract_violations,
+    golden_assistant_loop_health_contract_violations_at, golden_drift_semantics, golden_drift_type,
+    goldens_check_failure_message, json_string_values_for_key, next_pending_heading,
+    normalize_golden_text, parse_reason, run_fixture, run_fixture_outputs, validate_bless_reason,
 };
 #[cfg(test)]
 pub(crate) use reports::{
@@ -579,6 +579,7 @@ const PRECOMMIT_GATE_COMMANDS: &[&str] = &[
     "check-identity-registry",
     "check-doc-artifacts",
     "check-doc-index",
+    "check-changelog-fragments",
     "check-readme-state",
     "markdown-links",
     "check-pr-shape",
@@ -631,6 +632,7 @@ fn precommit() -> Result<(), String> {
     check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
+    check_changelog_fragments()?;
     check_readme_state()?;
     markdown_links()?;
     check_pr_shape()?;
@@ -687,13 +689,64 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
     let mut ran = Vec::new();
     let mut skipped = Vec::new();
 
+    let mut child_diagnostics = Vec::new();
+    if let Err(error) = check_fast_gates(
+        &changed,
+        &categories,
+        &mut ran,
+        &mut skipped,
+        &mut child_diagnostics,
+    ) {
+        return check_fast_failure_report(&error, &child_diagnostics, |body| {
+            write_report("check-fast.md", body)
+        });
+    }
+
+    let body = format!(
+        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n\nRan:\n{}\n\nSkipped:\n{}\n",
+        ran.iter()
+            .map(|g| format!("- {g}"))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        if skipped.is_empty() {
+            "- none".to_string()
+        } else {
+            skipped
+                .iter()
+                .map(|g| format!("- {g}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    );
+    write_report(
+        "check-fast.md",
+        &(body + &check_fast_diagnostics(&child_diagnostics)),
+    )
+}
+
+fn check_fast_gates(
+    changed: &[String],
+    categories: &ChangedFileCategories,
+    ran: &mut Vec<&'static str>,
+    skipped: &mut Vec<&'static str>,
+    child_diagnostics: &mut Vec<run::CommandDiagnostic>,
+) -> Result<(), String> {
     // Always run: these are cheap and catch cross-cutting drift.
-    run("cargo", &["fmt", "--check"])?;
+    run::run_diagnostic("cargo", &["fmt", "--check"], child_diagnostics)?;
     ran.push("fmt --check");
     check_static_language()?;
     ran.push("check-static-language");
     check_command_catalog()?;
     ran.push("check-command-catalog");
+
+    // RIPR-SPEC-0060: validate applicable support declarations before the
+    // compilation-bearing Rust gates, using the unchanged leaf/report owner.
+    if categories.support_tiers {
+        check_support_tiers()?;
+        ran.push("check-support-tiers");
+    } else {
+        skipped.push("check-support-tiers (not applicable)");
+    }
 
     // Conditional gates based on changed file categories.
     if categories.rust_src {
@@ -703,7 +756,7 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
         ran.push("check-allow-attributes");
         check_file_policy()?;
         ran.push("check-file-policy");
-        run(
+        run::run_diagnostic(
             "cargo",
             &[
                 "clippy",
@@ -713,6 +766,7 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
                 "-D",
                 "warnings",
             ],
+            child_diagnostics,
         )?;
         ran.push("clippy");
     } else {
@@ -764,26 +818,40 @@ fn check_fast_in(repository_root: &Path) -> Result<(), String> {
         changed.len()
     );
 
-    let body = format!(
-        "# check-fast report\n\nStatus: pass\n\nSelector: passed\nBase: origin/main\n\nRan:\n{}\n\nSkipped:\n{}\n",
-        ran.iter()
-            .map(|g| format!("- {g}"))
+    Ok(())
+}
+
+fn check_fast_diagnostics(diagnostics: &[run::CommandDiagnostic]) -> String {
+    format!(
+        "\n## Child command diagnostics\n\n{} Capture scope: fmt and workspace Clippy only; streams remain inherited, so Cargo progress is unavailable.\n\n{}\n",
+        run::COMMAND_DIAGNOSTIC_DISCLOSURE,
+        diagnostics
+            .iter()
+            .map(|row| format!("- {}", row.render()))
             .collect::<Vec<_>>()
             .join("\n"),
-        if skipped.is_empty() {
-            "- none".to_string()
-        } else {
-            skipped
-                .iter()
-                .map(|g| format!("- {g}"))
-                .collect::<Vec<_>>()
-                .join("\n")
-        }
+    )
+}
+
+fn check_fast_failure_report(
+    error: &str,
+    diagnostics: &[run::CommandDiagnostic],
+    mut write: impl FnMut(&str) -> Result<(), String>,
+) -> Result<(), String> {
+    let body = format!(
+        "# check-fast report\n\nStatus: failed\n\nOriginal failure:\n```text\n{error}\n```\n{}",
+        check_fast_diagnostics(diagnostics)
     );
-    write_report("check-fast.md", &body)
+    match write(&body) {
+        Ok(()) => Err(error.to_string()),
+        Err(report_error) => Err(format!(
+            "{error}; failed to publish current check-fast report: {report_error}"
+        )),
+    }
 }
 
 struct ChangedFileCategories {
+    support_tiers: bool,
     rust_src: bool,
     workflow: bool,
     policy: bool,
@@ -792,6 +860,17 @@ struct ChangedFileCategories {
 
 fn categorize_changed_files(files: &[String]) -> ChangedFileCategories {
     ChangedFileCategories {
+        // Direct leaf inputs plus proof-command/catalog owners. One bounded
+        // scan per applicable invocation; unrelated changes retain the no-op.
+        support_tiers: files.iter().any(|f| {
+            (f.starts_with("docs/specs/") && f.ends_with(".md"))
+                || f == SUPPORT_TIERS_PATH
+                || f == "README.md"
+                || f == RUST_REPAIR_TRUST_CORPUS_PATH
+                || f.starts_with("xtask/src/")
+                || f.starts_with(".github/workflows/")
+                || f.starts_with("scripts/")
+        }),
         rust_src: files.iter().any(|f| {
             f == "Cargo.lock"
                 || f == "Cargo.toml"
@@ -874,6 +953,37 @@ fn check_fast_selector_failure_report(error: &str) -> String {
 #[cfg(test)]
 mod check_fast_selector_tests {
     use super::*;
+
+    #[test]
+    fn check_fast_children_keep_native_outcomes_and_failure_diagnostics() -> Result<(), String> {
+        let mut rows = Vec::new();
+        run::run_diagnostic("git", &["--version"], &mut rows)?;
+        let original = run::run_diagnostic("git", &["--definitely-not-a-git-option"], &mut rows)
+            .err()
+            .ok_or("invalid git passed")?;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].outcome, "pass");
+        assert_eq!(rows[1].outcome, "failed");
+        assert!(rows.iter().all(|row| row.status.is_some()
+            && row.elapsed_ms.is_some()
+            && row.cargo_progress.is_none()));
+        assert_eq!(rows[1].argv, ["--definitely-not-a-git-option"]);
+        let mut body = String::new();
+        let error = check_fast_failure_report(&original, &rows, |current| {
+            body = current.to_string();
+            Err("injected diagnostic I/O".to_string())
+        })
+        .err()
+        .ok_or("failed gate passed")?;
+        assert!(error.contains(&original) && error.contains("injected diagnostic I/O"));
+        assert!(
+            body.contains("Status: failed")
+                && body.contains("outcome=failed")
+                && !body.contains("Status: pass")
+        );
+        assert_eq!(rows.len(), 2);
+        Ok(())
+    }
 
     fn run_fixture_git(root: &std::path::Path, args: &[&str]) -> Result<(), String> {
         // Route through the centralized runner: process policy allows one
@@ -1358,6 +1468,7 @@ fn run_policy_checks() -> Result<(), String> {
     check_identity_registry()?;
     check_doc_artifacts()?;
     check_doc_index()?;
+    check_changelog_fragments()?;
     check_readme_state()?;
     markdown_links()?;
     check_pr_shape()?;
@@ -4667,7 +4778,7 @@ fn receipts_report_markdown(
 }
 
 fn precommit_report_body() -> String {
-    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
+    "# ripr precommit report\n\nStatus: pass\n\nChecks:\n\n- `cargo fmt --check`\n- `cargo xtask check-static-language`\n- `cargo xtask check-no-panic-family`\n- `cargo xtask check-allow-attributes`\n- `cargo xtask check-local-context`\n- `cargo xtask check-file-policy`\n- `cargo xtask check-covered-by`\n- `cargo xtask check-executable-files`\n- `cargo xtask check-text-encoding`\n- `cargo xtask check-workflows`\n- `cargo xtask check-droid-review-config`\n- `cargo xtask check-spec-format`\n- `cargo xtask check-spec-numbering`\n- `cargo xtask check-fixture-contracts`\n- `cargo xtask check-rust-judged-panel`\n- `cargo xtask check-release-challenge-selection`\n- `cargo xtask check-release-challenge-judgments`\n- `cargo xtask check-python-judged-panel`\n- `cargo xtask check-traceability`\n- `cargo xtask check-capabilities`\n- `cargo xtask check-workspace-shape`\n- `cargo xtask check-architecture`\n- `cargo xtask check-rust-source-role-authority`\n- `cargo xtask check-public-api`\n- `cargo xtask check-output-contracts`\n- `cargo xtask check-identity-registry`\n- `cargo xtask check-doc-artifacts`\n- `cargo xtask check-doc-index`\n- `cargo xtask check-changelog-fragments`\n- `cargo xtask check-readme-state`\n- `cargo xtask markdown-links`\n- `cargo xtask check-pr-shape`\n- `cargo xtask check-command-catalog`\n- `cargo xtask check-generated`\n- `cargo xtask check-badge-diff-policy`\n- `cargo xtask check-generated-clean`\n- `cargo xtask check-proof-packs`\n- `cargo xtask check-release-targets`\n- `cargo xtask check-dependencies`\n- `cargo xtask check-process-policy`\n- `cargo xtask check-network-policy`\n- `cargo xtask check-lint-policy`\n\nNext command:\n\n```bash\ncargo xtask check-pr\n```\n".to_string()
 }
 
 /// Compose the check-pr report for either terminal state (#3036). One
@@ -5277,76 +5388,6 @@ fn rust_conversion_candidates_json(
     });
     serde_json::to_string_pretty(&value)
         .map_err(|err| format!("failed to serialize rust-conversion-candidates report: {err}"))
-}
-
-fn check_executable_files_impl() -> Result<(), String> {
-    let allowlist = read_path_allowlist_optional("policy/executable_allowlist.txt")?;
-    let output = run_output("git", &["ls-files", "--stage"])?;
-    let violations = executable_file_violations(&allowlist, &output);
-
-    finish_policy_report(
-        PolicyReportSpec {
-            report_file: "executable-files.md",
-            check: "check-executable-files",
-            why_it_matters: "Checked-in executable scripts make automation drift away from the Rust-first xtask surface.",
-            fix_kind: FixKind::PolicyExceptionRequired,
-            recommended_fixes: &[
-                "Remove the executable bit from ordinary files.",
-                "Move script behavior into xtask.",
-                "If an executable file is truly required, add a reviewed allowlist entry.",
-                "If an allowlist path is missing or no longer mode 100755, remove the entry.",
-            ],
-            rerun_command: "cargo xtask check-executable-files",
-            exception_template: Some("policy/executable_allowlist.txt entry:\npath/to/file"),
-        },
-        &violations,
-    )
-}
-
-fn executable_file_violations(
-    allowlist: &BTreeSet<String>,
-    git_ls_files_stage: &str,
-) -> Vec<String> {
-    let mut staged_modes = BTreeMap::new();
-    let mut violations = Vec::new();
-
-    for line in git_ls_files_stage.lines() {
-        let Some((mode, path)) = parse_git_stage_line(line) else {
-            continue;
-        };
-        let normalized = normalize_slashes(path);
-        staged_modes.insert(normalized.clone(), mode);
-        if mode == "100755" && !allowlist.contains(&normalized) {
-            violations.push(format!(
-                "checked-in executable file is not allowlisted: {normalized}\n  preferred: use cargo xtask instead of executable scripts"
-            ));
-        }
-    }
-
-    violations.extend(executable_allowlist_stale_row_violations(
-        allowlist,
-        &staged_modes,
-    ));
-    violations
-}
-
-fn executable_allowlist_stale_row_violations(
-    allowlist: &BTreeSet<String>,
-    staged_modes: &BTreeMap<String, &str>,
-) -> Vec<String> {
-    let mut violations = Vec::new();
-    for path in allowlist {
-        match staged_modes.get(path).copied() {
-            Some("100755") => {}
-            Some(mode) => violations.push(format!(
-                "{path} allowlist entry is stale: mode is {mode}, expected 100755; remove the entry"
-            )),
-            None => violations.push(format!(
-                "{path} allowlist entry is stale: path is not in git ls-files --stage; remove the entry"
-            )),
-        }
-    }
-    violations
 }
 
 fn check_text_encoding_impl() -> Result<(), String> {
@@ -12527,7 +12568,7 @@ fn check_rust_source_role_authority() -> Result<(), String> {
     /// authority may be consumed only by this inventoried set; new consumers
     /// extend the inventory here with a reason so role consumers stay
     /// reviewable.
-    const IS_TEST_FILE_CONSUMERS: [&str; 10] = [
+    const IS_TEST_FILE_CONSUMERS: [&str; 11] = [
         "crates/ripr/src/analysis/classify/owner_shape.rs",
         "crates/ripr/src/analysis/test_grip_evidence.rs",
         "crates/ripr/src/analysis/test_grip_evidence/related_tests/context.rs",
@@ -12548,6 +12589,11 @@ fn check_rust_source_role_authority() -> Result<(), String> {
         // admission uses the same authority for proposed tests/*.rs leaves (#4576).
         "crates/ripr/src/analysis/new_test_target.rs",
         "crates/ripr/src/analysis/new_test_target/integration.rs",
+        // #6544: same-name call identity tells an integration-test crate
+        // apart from the owner's library crate, so its `crate::` and local
+        // modules never name the owner's; the layout authority stays
+        // `is_test_file` and the module decides no role of its own.
+        "crates/ripr/src/analysis/classify/call_identity.rs",
     ];
 
     let files = tracked_files()?;
@@ -13251,6 +13297,24 @@ fn check_doc_index() -> Result<(), String> {
         }
     }
 
+    let docs_index = read_text_lossy(Path::new("docs/README.md"))?;
+    for required in [
+        "EXIT_CODES.md",
+        "REPAIR_ATTEMPT.md",
+        "SERVER_PROVISIONING.md",
+        "STATIC_LIMITS.md",
+        "INSTALL_CHANNELS.md",
+        "BLOCKING_READINESS.md",
+    ] {
+        if !docs_index.contains(required) {
+            violations.push(format!("docs/README.md does not reference `{required}`"));
+        } else if !index_links_file(&docs_index, required) {
+            violations.push(format!(
+                "docs/README.md mentions `{required}` without a Markdown link to it"
+            ));
+        }
+    }
+
     finish_policy_report(
         PolicyReportSpec {
             report_file: "doc-index.md",
@@ -13261,6 +13325,7 @@ fn check_doc_index() -> Result<(), String> {
                 "Update docs/adr/README.md when adding or removing ADRs.",
                 "Update docs/specs/README.md when adding or removing specs.",
                 "Keep README.md and docs/DOCUMENTATION.md linked to the active planning, automation, metrics, ADR, and spec docs.",
+                "Keep docs/README.md indexing the user-facing top-level reference pages (exit codes, static limits, repair recovery, blocking readiness, install channels, server provisioning).",
             ],
             rerun_command: "cargo xtask check-doc-index",
             exception_template: None,
@@ -15299,6 +15364,18 @@ fn known_xtask_command(command: &str) -> bool {
         .into_iter()
         .map(known_command_root)
         .any(|known| known == command)
+}
+
+/// Whether `index` links to `file` as a Markdown link destination, accepting
+/// plain relative (`PAGE.md`), `./`-prefixed, anchored (`PAGE.md#sec`), and
+/// titled (`PAGE.md "title"`) destinations, while refusing a longer name that
+/// merely contains `file` as a substring (for example `PAGE.md.backup`).
+fn index_links_file(index: &str, file: &str) -> bool {
+    ["](", "](./"].iter().any(|open| {
+        [")", " ", "#"]
+            .iter()
+            .any(|close| index.contains(&format!("{open}{file}{close}")))
+    })
 }
 
 fn require_index_mentions_files(
@@ -17487,36 +17564,40 @@ fn sort_allowlist_files() -> Result<Vec<String>, String> {
     Ok(changed)
 }
 
+/// Sort allowlist *entries* without dropping or relocating comments.
+///
+/// Consecutive non-comment, non-blank lines form a sortable group.
+/// Comment and blank lines stay in place as group separators, so a later
+/// owner/reason comment is not deleted once an entry has been seen, and
+/// comments are not moved across groups. Files that only have a leading
+/// header still get a global entry sort. Duplicate entry lines are kept
+/// (duplicate policy is owned elsewhere).
 fn sorted_allowlist_content(text: &str) -> String {
-    let mut prefix = Vec::new();
+    let mut output = String::new();
     let mut entries = Vec::new();
-    let mut saw_entry = false;
+
+    fn flush_entries(entries: &mut Vec<String>, output: &mut String) {
+        if entries.is_empty() {
+            return;
+        }
+        entries.sort();
+        for entry in entries.drain(..) {
+            output.push_str(&entry);
+            output.push('\n');
+        }
+    }
 
     for line in text.lines() {
         let trimmed = line.trim();
-        if !saw_entry && (trimmed.is_empty() || trimmed.starts_with('#')) {
-            prefix.push(line.trim_end().to_string());
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            flush_entries(&mut entries, &mut output);
+            output.push_str(line.trim_end());
+            output.push('\n');
             continue;
         }
-        saw_entry = true;
-        if !trimmed.is_empty() && !trimmed.starts_with('#') {
-            entries.push(trimmed.to_string());
-        }
+        entries.push(trimmed.to_string());
     }
-
-    entries.sort();
-    let mut output = String::new();
-    if !prefix.is_empty() {
-        output.push_str(&prefix.join("\n"));
-        output.push('\n');
-    }
-    if !entries.is_empty() {
-        if !output.ends_with("\n\n") {
-            output.push('\n');
-        }
-        output.push_str(&entries.join("\n"));
-        output.push('\n');
-    }
+    flush_entries(&mut entries, &mut output);
     if output.is_empty() {
         output.push('\n');
     }
@@ -19989,19 +20070,6 @@ fn strip_status_suffix(path: &str) -> &str {
     }
 }
 
-fn read_path_allowlist(path: &str) -> Result<BTreeSet<String>, String> {
-    let mut allowed = BTreeSet::new();
-    let text = read_text_lossy(Path::new(path))?;
-    for line in text.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        allowed.insert(normalize_slashes(trimmed));
-    }
-    Ok(allowed)
-}
-
 fn read_count_policy_allowlist(path: &str) -> Result<BTreeMap<(String, String), usize>, String> {
     let text = read_text_lossy(Path::new(path))?;
     parse_count_policy_allowlist(path, &text)
@@ -20413,14 +20481,6 @@ fn validate_file_policy_allow_entry(
         }
     }
     Ok(())
-}
-
-fn read_path_allowlist_optional(path: &str) -> Result<BTreeSet<String>, String> {
-    if Path::new(path).exists() {
-        read_path_allowlist(path)
-    } else {
-        Ok(BTreeSet::new())
-    }
 }
 
 fn spec_id_from_file_name(file_name: &str) -> Option<String> {
@@ -21599,15 +21659,6 @@ fn segment_parts_match(pattern: &[char], value: &[char]) -> bool {
     !value.is_empty() && pattern[0] == value[0] && segment_parts_match(&pattern[1..], &value[1..])
 }
 
-fn parse_git_stage_line(line: &str) -> Option<(&str, &str)> {
-    let mut parts = line.split_whitespace();
-    let mode = parts.next()?;
-    let _object_type = parts.next()?;
-    let _hash = parts.next()?;
-    let stage_and_path = line.split('\t').nth(1)?;
-    Some((mode, stage_and_path))
-}
-
 fn forbidden_static_terms() -> Vec<String> {
     ["killed", "survived", "untested", "proven", "adequate"]
         .iter()
@@ -21686,6 +21737,10 @@ synonym (e.g. {hint}). To intentionally allow this line, append \
     reason = "xtask test code uses unwrap/expect for fail-fast assertion. Production paths are receipted via policy/no-panic-allowlist.toml; the test scope is governed by this single module-level expect."
 )]
 mod tests;
+
+#[cfg(test)]
+#[path = "tests/sorted_allowlist_content.rs"]
+mod sorted_allowlist_content_tests;
 
 #[cfg(test)]
 mod inherited_failure_tests {

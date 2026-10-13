@@ -42,6 +42,27 @@ pub(crate) const CODE_ANALYSIS_IN_FLIGHT: &str = "analysis_in_flight";
 pub(crate) const CODE_STALE_SNAPSHOT: &str = "stale_snapshot";
 pub(crate) const CODE_ITEM_NOT_FOUND: &str = "item_not_found";
 pub(crate) const CODE_RESULT_TOO_LARGE: &str = "result_too_large";
+/// #7462: `ripr_get_gap` is already one item. Retrying it cannot shrink the
+/// document. The recovery names `--committed` because the snapshot analyzed
+/// the committed default-branch diff: a plain `ripr check` on a dirty tracked
+/// worktree would select the working tree and can silently analyze a
+/// different diff (#7462 review). The CLI JSON stays a bounded summary —
+/// related tests cap per finding and a large findings array can omit
+/// findings (#5203) — so the recovery discloses that bound instead of
+/// promising the complete item.
+pub(crate) const RECOVERY_GAP_ITEM_TOO_LARGE: &str = "this item's evidence exceeds the MCP response bound; ripr_get_gap and ripr://gap cannot return it. Outside MCP, ripr check --committed --format json reads the committed diff as a bounded summary: related tests are capped per finding and a large findings array can omit findings";
+/// The list pager byte-fits every page and refuses closed when nothing fits
+/// (#6021), so a page that reaches this final guard was already narrowed as
+/// far as paging can narrow it; no caller action shrinks it further. The
+/// recovery must not promise a smaller-limit page the pager never needs.
+pub(crate) const RECOVERY_GAP_LIST_TOO_LARGE: &str =
+    "this page was already narrowed to fit; there is no narrower MCP read of this list page";
+pub(crate) const RECOVERY_SNAPSHOT_TOO_LARGE: &str =
+    "page identities with ripr_list_gaps; this snapshot document exceeds the MCP response bound";
+pub(crate) const RECOVERY_REFRESH_TOO_LARGE: &str = "the refresh result exceeds the MCP response bound; read session state with ripr_workspace_status";
+pub(crate) const RECOVERY_STATUS_TOO_LARGE: &str =
+    "the status document exceeds the MCP response bound; there is no narrower status read";
+pub(crate) const RECOVERY_REPAIR_TOO_LARGE: &str = "this repair document exceeds the MCP response bound; there is no narrower MCP read of this record";
 /// Reserved typed-failure vocabulary for later slices. This slice fails
 /// closed before any of these states can occur; they are named so the wire
 /// contract stays stable when the owning slice lands.
@@ -150,6 +171,19 @@ impl AttemptFailure {
             "failure": self.value(),
         })
     }
+}
+
+/// Project the root fact already resolved at server startup. This is not a
+/// root discovery or a filesystem recheck: unavailable sessions need a
+/// restart, and refresh and snapshot reads must name the same recovery.
+pub(crate) fn available_root(root: Option<&Path>) -> Result<&Path, AttemptFailure> {
+    root.ok_or_else(|| {
+        AttemptFailure::new(
+            CODE_WORKSPACE_UNAVAILABLE,
+            "the workspace root is not usable, so no analysis can run",
+            "restart the server with `ripr mcp --stdio --root <repository>`",
+        )
+    })
 }
 
 fn bounded_detail(detail: impl Into<String>) -> String {
@@ -386,6 +420,9 @@ fn freshness_state(session: &WorkspaceSession) -> &'static str {
 /// recent terminal failure. A failure never replaces `last_good`.
 #[derive(Default)]
 pub(crate) struct WorkspaceSession {
+    /// The startup root failure, independent of analysis attempt state.
+    /// A healthy root leaves the existing snapshot lifecycle unchanged.
+    pub(crate) workspace_failure: Option<AttemptFailure>,
     pub(crate) in_flight: bool,
     pub(crate) last_good: Option<Arc<Snapshot>>,
     pub(crate) last_failure: Option<AttemptFailure>,
@@ -424,6 +461,9 @@ impl WorkspaceSession {
         &self,
         requested: Option<&str>,
     ) -> Result<&Arc<Snapshot>, AttemptFailure> {
+        if let Some(failure) = &self.workspace_failure {
+            return Err(failure.clone());
+        }
         if self.in_flight {
             return Err(AttemptFailure::new(
                 CODE_ANALYSIS_IN_FLIGHT,
@@ -596,7 +636,7 @@ impl WorkspaceSession {
             )
             .with_data(json!({ "current_snapshot_id": snapshot.snapshot_id })));
         }
-        bounded_document(document)
+        bounded_document(document, RECOVERY_GAP_LIST_TOO_LARGE)
     }
 
     /// Assemble the gap-list document around a page of item summaries.
@@ -703,7 +743,7 @@ impl WorkspaceSession {
             );
             links.remove("repair_attempt_note");
         }
-        bounded_document(document)
+        bounded_document(document, RECOVERY_GAP_ITEM_TOO_LARGE)
     }
 
     /// The `ripr://snapshot/{snapshot_id}` evidence resource: snapshot
@@ -753,7 +793,7 @@ impl WorkspaceSession {
                 "item entries are identities and locations, not evidence; read one item through ripr_get_gap or ripr://gap/{canonical_id}",
             ],
         });
-        bounded_document(document)
+        bounded_document(document, RECOVERY_SNAPSHOT_TOO_LARGE)
     }
 
     /// Session block for `ripr_workspace_status`. Facts only: no evidence
@@ -1134,7 +1174,10 @@ fn omitted_reason_as_str(reason: OmittedDiagnosticReason) -> &'static str {
 
 /// Fail closed when even one bounded document cannot fit the wire cap: an
 /// over-cap response would otherwise terminate the transport.
-pub(crate) fn bounded_document(document: Value) -> Result<Value, AttemptFailure> {
+pub(crate) fn bounded_document(
+    document: Value,
+    recovery: &'static str,
+) -> Result<Value, AttemptFailure> {
     struct LengthWriter(usize);
 
     impl std::io::Write for LengthWriter {
@@ -1164,7 +1207,7 @@ pub(crate) fn bounded_document(document: Value) -> Result<Value, AttemptFailure>
                 writer.0,
                 super::MAX_RESPONSE_BYTES
             ),
-            "read narrower evidence (one item through ripr_get_gap) instead of widening the response",
+            recovery,
         ));
     }
     Ok(document)
@@ -1247,6 +1290,7 @@ mod tests {
             in_flight: false,
             last_good: Some(Arc::new(snapshot)),
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
@@ -1275,6 +1319,7 @@ mod tests {
             in_flight: false,
             last_good: Some(Arc::new(limited_snapshot)),
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
@@ -1450,10 +1495,37 @@ mod tests {
             in_flight: false,
             last_good: Some(Arc::new(snapshot)),
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
         })
+    }
+
+    /// #7462: the single-item read is already the narrow MCP route. An item
+    /// that does not fit must not tell the caller to call `ripr_get_gap` again.
+    /// The routed exercise lives in `server_tests.rs`
+    /// (`oversized_gap_item_leaves_mcp_through_the_real_routes`): this
+    /// constant-level control only pins the shared wording.
+    #[test]
+    fn oversized_gap_item_recovery_leaves_mcp() -> Result<(), String> {
+        let document = json!({
+            "evidence": "x".repeat(crate::mcp::MAX_RESPONSE_BYTES),
+        });
+        let Err(failure) = bounded_document(document, RECOVERY_GAP_ITEM_TOO_LARGE) else {
+            return Err("an oversized gap item was accepted".to_string());
+        };
+        if failure.code != CODE_RESULT_TOO_LARGE {
+            return Err(format!("unexpected code {}", failure.code));
+        }
+        if !failure
+            .recovery
+            .contains("ripr check --committed --format json")
+            || failure.recovery.contains("one item through ripr_get_gap")
+        {
+            return Err(failure.recovery.to_string());
+        }
+        Ok(())
     }
 
     /// #6021: an aggregate listing too large for one wire response degrades
@@ -1977,6 +2049,7 @@ mod tests {
             in_flight: false,
             last_good: Some(Arc::new(snapshot)),
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
@@ -2048,6 +2121,7 @@ mod tests {
             in_flight: false,
             last_good: Some(Arc::new(untracked_snapshot)),
             last_failure: None,
+            workspace_failure: None,
             repairs: std::collections::BTreeMap::new(),
             superseded_attempts: std::collections::BTreeMap::new(),
             superseded_order: std::collections::VecDeque::new(),
@@ -2216,6 +2290,7 @@ mod tests {
                 in_flight: false,
                 last_good: Some(Arc::new(snapshot)),
                 last_failure: None,
+                workspace_failure: None,
                 repairs: std::collections::BTreeMap::new(),
                 superseded_attempts: std::collections::BTreeMap::new(),
                 superseded_order: std::collections::VecDeque::new(),

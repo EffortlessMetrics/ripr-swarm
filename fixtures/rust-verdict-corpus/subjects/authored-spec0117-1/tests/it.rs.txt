@@ -1,0 +1,6 @@
+use spec0117_1::outer;
+
+#[test]
+fn outer_quadruples_then_adds_one() {
+    assert_eq!(outer(3), 13);
+}

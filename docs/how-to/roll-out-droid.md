@@ -31,35 +31,21 @@ Do not roll out `review_depth: deep`, `pull_request_target`, self-hosted
 runners, fork-secret execution, wrapper-comment post-processing, or global
 permission reductions until they have been tested in `ripr`.
 
-Keep the current `ripr` permission shape during baseline rollout:
+Keep the current `ripr` permission shape during baseline rollout. Auto-review,
+manual `@droid`, and scheduled security scan all use the same job permissions:
 
 ```yaml
-# .github/workflows/droid-review.yml
-contents: write
-pull-requests: write
-issues: write
-id-token: write
-actions: read
-
-# .github/workflows/droid.yml
+# droid-review.yml, droid.yml, and droid-security-scan.yml
 contents: read
 pull-requests: write
 issues: write
-id-token: write
-actions: read
-
-# .github/workflows/droid-security-scan.yml
-contents: write
-pull-requests: write
-issues: write
-id-token: write
 actions: read
 ```
 
-Do not trim `droid-review.yml` to `contents: read` unless a dedicated
-permission-test PR proves the Factory Action works with that narrower shape and
-is ready to revert. Factory's automated PR review/fix flow may rely on
-repository write capability.
+That shape landed in #2498 after dropping `contents: write` and
+`id-token: write`. Do not expand the baseline rollout to `contents: write` or
+`id-token: write` unless a dedicated permission-test PR proves a write
+requirement.
 
 ## Per-Repo Prerequisites
 

@@ -1,0 +1,47 @@
+{
+  "case_id": "py-spec0233-ex06-self-compare",
+  "subject_id": "authored-py-pytest-spec0233",
+  "diff": "cases/py-spec0233-ex06-self-compare.diff",
+  "anchor": {
+    "file": "src/subject.py",
+    "line": 25
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "arithmetic_constant",
+  "test_shape": "pytest_owner_compared_with_itself",
+  "hard_case": "the expected value is the changed owner itself",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "python -m pytest -q -p no:cacheprovider",
+    "toolchain": "Python 3.11.15, pytest 9.1.1, x86_64-linux",
+    "mutants": [
+      {
+        "replacement": "return int(text) + 2",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the owner returns 3 instead of 2 for \"1\""
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "RIPR-SPEC-0238 example 6: `parse_self_compare(\"1\") == parse_self_compare(\"1\")` compares the owner with itself, so every edit passes. The spec says relational_check and weakly_exposed; ripr today credits exposed, a false exposed verdict the spec's rule 1 removes. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
+  "labeling_observation": {
+    "ripr_commit": "127309619",
+    "full_checkout_verdict": "credited",
+    "full_checkout_classifications": [
+      "exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0238#6"
+  ]
+}

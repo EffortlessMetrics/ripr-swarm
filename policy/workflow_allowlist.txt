@@ -14,7 +14,7 @@
 .github/actions/ripr-check/action.yml|7|Adoption composite action installs ripr when missing and runs one ripr check command (#2626).
 
 .github/workflows/badge-endpoints.yml|1|Badge endpoint refresh delegates generation to cargo xtask and opens a PR.
-.github/workflows/ci.yml|3|CI run blocks call direct Cargo or npm commands.
+.github/workflows/ci.yml|38|#4987: bounded event-head Rust surface detection; remaining CI blocks call direct Cargo or npm commands.
 .github/workflows/coverage.yml|1|Coverage workflow keeps each run block to one coverage command.
 .github/workflows/droid-review.yml|20|Droid auto-review workflow writes local Factory BYOK settings, then uses reusable actions.
 .github/workflows/droid-security-scan.yml|20|Droid scheduled security scan writes local Factory BYOK settings, then uses reusable actions.
@@ -24,7 +24,6 @@
 .github/workflows/future-clippy.yml|17|#7307: bounded advisory scan captures native Cargo/tee statuses and requires fresh Cargo artifact/completion evidence; the repo-policy harness executes the production blocks.
 .github/workflows/npm-launcher.yml|1|Script-free npm launcher workflow delegates behavior and package-content proof to two single-command npm invocations.
 .github/workflows/pilot-ranking.yml|4|Pilot ranking answer key lane: one-command build, fetch and score steps, then one folded cargo xtask dx-scoreboard gate command.
-.github/workflows/pr-plan.yml|1|Advisory PR Plan workflow keeps each run block to one shell command (mkdir/git, ls, printf).
 .github/workflows/pr-staleness-watchdog.yml|52|Scheduled watchdog finds open PR heads with no Ripr Rust Small Result check run on the head (#4937) and dispatches the workflow within a per-run cap; the sweep is pure gh api orchestration with its audit table, not product logic.
 .github/workflows/printed-command-paste.yml|1|Printed-command paste lane keeps each run block to one shell command; the harness and its verdict live in the printed_command_paste test.
 .github/workflows/public-proof.yml|9|Public proof drift lane: one cargo xtask public-proof --check command, then a failure-only step that copies its output into the job summary.

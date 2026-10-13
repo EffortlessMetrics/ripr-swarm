@@ -1,0 +1,12 @@
+diff --git a/accounts/ledger.py b/accounts/ledger.py
+--- a/accounts/ledger.py
++++ b/accounts/ledger.py
+@@ -29,7 +29,7 @@ class Account:
+ 
+ def monthly_fee(balance_cents):
+     """Accounts holding the waiver balance pay no monthly fee."""
+-    if balance_cents >= FEE_WAIVER_BALANCE_CENTS:
++    if balance_cents > FEE_WAIVER_BALANCE_CENTS - 1:
+         return 0
+     return MONTHLY_FEE_CENTS
+ 

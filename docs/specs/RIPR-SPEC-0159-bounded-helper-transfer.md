@@ -19,6 +19,31 @@ can only hint that a caller "may lead here" without changing anything.
 
 ## Behavior
 
+- Identity-only prerequisite under #3215: the same helper-transfer producer
+  may retain a selected root test declaration, qualified call expression,
+  inherent callee SymbolId, root receiver struct declaration and direct helper
+  call expression as source-bound spans. This separate receipt does not alter
+  singleton-chain resolution, relatedness or exact-input rows. It requires a
+  unique same-file plain inherent receiver, one top-level let initializer call
+  at each selected edge (optionally followed by `?` without payload credit),
+  complete parser-backed inventory and synchronous
+  nongeneric declarations. Imports (including glob imports), aliases,
+  competing names, traits, deferred code, macro calls/declarations, transforming or
+  cfg attributes and multiple selected paths/occurrences refuse. A competing
+  path on another root struct is noncompeting only when its member binds to one
+  plain inherent function declaration. Associated constants, trait items and
+  unresolved or ambiguous member declarations refuse; nominal type identity
+  alone does not establish callable identity. Selected test/caller bodies form
+  a closed direct-call scope: every nonselected direct call and qualified value
+  reference must bind to a plain root function or inherent function declaration,
+  regardless of its name. Unknown constants, trait members, external paths,
+  computed callees and instance-method calls refuse. This deliberately narrows
+  acceptance; checks may live in declared root functions, but their invocation,
+  value flow and oracle ownership are not established here. Receipts may
+  accompany a Partial returned-ledger witness; they add no propagation edge,
+  activation, collection element/index, Config/Result payload or oracle credit.
+  Wrapper-local collection/field propagation remains refused.
+
 - One helper-transfer authority (`analysis/classify/helper_transfer.rs`)
   resolves the chain above the owner once; the relation stage
   (`find_related_tests`), the activation rows, and the call-operand
@@ -112,6 +137,56 @@ can only hint that a caller "may lead here" without changing anything.
   field, a static or an expression — and a probe that names no owner
   parameter make propagation `unknown` (`helper_result_not_forwarded`):
   the caller's test cannot see that state, so the finding abstains.
+- Returned mutable-ledger identity (#3215, ub-review #1363): a constructed
+  field directly inside a record passed to an owner parameter's `push` can
+  retain the first helper hop's mutable argument and returned local binding in
+  `PropagationWitnessV1`. The source field must match uniquely by owner, line
+  and normalized field expression: probe locations do not retain occurrence
+  offsets, so identical same-line fields refuse identity. The call must be the
+  caller's final statement, and its
+  exact `&mut local` argument must match the resolved hop. Mutability comes
+  from parsed `RefType`/`RefExpr` tokens, never a canonicalized text prefix;
+  shared `&mutLedger` types and `&mut_errors` arguments refuse, as do raw
+  pointers. The local must have
+  one mutable binding and no assignment, and the tail must return that local.
+  Caller and owner must share source/type scope and the declared return type
+  must match the parameter's pointee, without generic substitutions. Both
+  declarations must bind uniquely to the indexed source, be synchronous and
+  unattributed direct items in the same lexical source-file/module scope, with
+  unique direct declaration names. Const/static/block-local declarations,
+  associated functions, attributed enclosing modules (which may rewrite their
+  declarations), conditional declarations and different module scopes
+  refuse. Attribute checks reuse `attrs_including_inner`, covering function
+  bodies and module item lists as well as outer attributes. Source-file inner
+  attributes also refuse, except inert lint/doc attributes; no cfg evaluator or
+  expansion is introduced. SymbolId prefixes or a free-function fact alone are insufficient.
+  Fact body fragments alone omit qualifiers and cannot establish execution. Caller
+  imports, callee-named signature/body bindings (including raw names and
+  destructuring patterns), value/item declarations, and opaque item/statement macro
+  expansions refuse the unqualified helper edge. The owner parameter must be
+  its sole matching binding. The same parser-owned opaque-binding boundary
+  refuses imports (direct, glob, alias and grouped) and item/statement macro
+  expansions in both owner and caller bodies. The returned local also requires
+  a sole matching full-function binding. Scoped expression tails introduce no
+  binding visible to a subsequent call/push and remain admissible. Rebound,
+  shadowed, discarded, sibling-field, transformed-return and later-write cases
+  refuse this transfer. This is **partial identity evidence**, not an exception
+  to the complete propagation refusal above. A pushed element remains a
+  candidate, and the first observer boundary is named
+  `returned_mutable_ledger_observer_unresolved`; Config field assignment, index
+  selection, preceding appends, branch activation, and exact field observation
+  remain unestablished. No oracle, score or exposure class is strengthened.
+  This observer limitation replaces the ordinary forwarding refusal only when
+  tests directly observe the proved first-hop caller. Higher observed wrappers
+  retain `helper_result_not_forwarded`; their identity is not established here.
+  The bounded identity endpoints use these authorities consistently:
+
+  | Endpoint | Named-binding authority | Opaque-binding refusal | Other constraints |
+  |---|---|---|---|
+  | Owner push receiver | Exactly one ordinary/raw full-function binding, the parameter | Owner-body imports and statement/item expansions | Exact field/receiver and mutable parameter; no rebind; synchronous source owner |
+  | Caller helper callee | No ordinary/raw full-function binding shadows the resolved owner | Caller-body imports and statement/item expansions | Same file/scope; final direct call matches resolved arguments |
+  | Caller returned local | Exactly one ordinary/raw full-function binding, the mutable local | Same caller-body refusal | Direct local declaration, no assignment, exact mutable argument and tail return |
+
 - Boundary pairing through the entry (RIPR-SPEC-0186) reads only rows
   recomputed from the asserting test, and requires the assertion's
   subject to hold exactly one entry call whose arguments are each a whole

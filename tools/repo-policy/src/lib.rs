@@ -1,11 +1,14 @@
-//! Repository workflow and agent policy, independent of the RIPR product.
+//! Repository workflow, agent and executable-file policy, independent of the RIPR product.
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 pub mod agent_skills;
 pub mod ci_scratch;
+pub mod coverage_diagnostics;
+pub mod executable_files;
 mod identity;
+pub mod python_wheel;
 pub use identity::{enter_workspace_root, preflight, verify_executable_identity, verify_preflight};
 pub const ROUTED_RUST_REQUIRED_RESULT_NAME: &str = "Ripr Rust Small Result";
 
@@ -902,20 +905,55 @@ pub const ROUTED_RUST_IGNORED_LABEL_RESULT_NAME: &str = "Ripr Rust Small Ignored
 pub const ROUTED_RUST_DRAFT_GUARD_SNIPPET: &str = "github.event.pull_request.draft";
 
 pub fn routed_rust_pull_request_types(workflow: &str) -> Option<Vec<String>> {
-    workflow.lines().map(str::trim).find_map(|line| {
-        line.strip_prefix("types:")
-            .map(str::trim)
-            .filter(|rest| rest.starts_with('['))
-            .map(|rest| {
-                rest.trim_start_matches('[')
-                    .trim_end_matches(']')
-                    .split(',')
-                    .map(str::trim)
-                    .filter(|value| !value.is_empty())
-                    .map(ToOwned::to_owned)
-                    .collect()
-            })
-    })
+    // Parse the repository's static inline on.pull_request.types declaration.
+    // A commented declaration, dispatch input, or job's block-scalar text must
+    // not impersonate event admission. Unsupported layouts return None so the
+    // policy caller can reject unauditable declarations.
+    let mut in_events = false;
+    let mut in_pull_request = false;
+    for raw in workflow.lines() {
+        let line = raw.split(" #").next()?.trim_end();
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
+        if line == "on:" {
+            in_events = true;
+            continue;
+        }
+        if !in_events {
+            continue;
+        }
+        if !line.starts_with(' ') {
+            break;
+        }
+        if line.starts_with("  ") && !line.starts_with("   ") {
+            in_pull_request = line == "  pull_request:";
+            continue;
+        }
+        if in_pull_request && let Some(types) = line.strip_prefix("    types:") {
+            let items = types.trim().strip_prefix('[')?.strip_suffix(']')?;
+            if items.trim().is_empty() {
+                return Some(Vec::new());
+            }
+            return items
+                .split(',')
+                .map(|item| {
+                    let value = item.trim();
+                    let value = if let Some(quoted) = value.strip_prefix('\'') {
+                        quoted.strip_suffix('\'')?
+                    } else if let Some(quoted) = value.strip_prefix('"') {
+                        quoted.strip_suffix('"')?
+                    } else {
+                        value
+                    };
+                    (!value.is_empty()
+                        && value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+                    .then(|| value.to_owned())
+                })
+                .collect();
+        }
+    }
+    None
 }
 
 pub fn routed_rust_event_route(
@@ -1592,8 +1630,17 @@ pub fn insert_unique_count_allowlist_row(
 }
 
 pub fn read_workflow_budgets(path: &str) -> Result<BTreeMap<String, WorkflowBudget>, String> {
-    let mut budgets = BTreeMap::new();
     let text = read_text_lossy(Path::new(path))?;
+    // Preserve the validator's existing last-record-wins policy. Applicability
+    // consumes the lossless records below and treats duplicate keys as ambiguous.
+    Ok(parse_workflow_budgets(path, &text)?
+        .into_iter()
+        .map(|budget| (budget.path.clone(), budget))
+        .collect())
+}
+
+pub fn parse_workflow_budgets(path: &str, text: &str) -> Result<Vec<WorkflowBudget>, String> {
+    let mut records = Vec::new();
     for (line_number, line) in text.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with('#') {
@@ -1623,9 +1670,9 @@ pub fn read_workflow_budgets(path: &str) -> Result<BTreeMap<String, WorkflowBudg
                 line_number + 1
             ));
         }
-        budgets.insert(budget.path.clone(), budget);
+        records.push(budget);
     }
-    Ok(budgets)
+    Ok(records)
 }
 
 pub fn collect_files(root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -1755,7 +1802,7 @@ pub fn workflow_run_value(trimmed_line: &str) -> Option<&str> {
         .or_else(|| trimmed_line.strip_prefix("- run:"))
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct WorkflowBudget {
     pub path: String,
     pub max_non_empty_lines: usize,

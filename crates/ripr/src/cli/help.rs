@@ -632,6 +632,9 @@ mod tests {
         assert!(CHECK_HELP.contains("agent-seam-packets-json"));
         assert!(CHECK_HELP.contains("repo-sarif"));
         assert!(CHECK_HELP.contains("walks up to a Cargo.toml containing [workspace]"));
+        assert!(CHECK_HELP.contains("skips a closer ripr.toml"));
+        assert!(CHECK_HELP.contains("which one governed"));
+        assert!(CHECK_HELP.contains("`--root .`"));
         assert!(CHECK_HELP.contains("needs test-efficiency"));
         assert!(CHECK_HELP.contains("docs/BADGE_ADOPTION.md"));
         assert!(CHECK_HELP.contains("--mode ready --json"));
@@ -672,6 +675,10 @@ mod tests {
     #[test]
     fn gate_family_help_states_file_backed_output_discipline() {
         assert!(GATE_HELP.contains("stdout contains human `Wrote ...` status lines"));
+        assert!(GATE_HELP.contains("after a completed"));
+        assert!(GATE_HELP.contains("`config_error` reports stay quiet"));
+        assert!(GATE_HELP.contains("Must be an existing directory"));
+        assert!(GATE_HELP.contains("message naming the root"));
         assert!(BASELINE_HELP.contains("ripr baseline create --from PATH"));
         assert!(BASELINE_HELP.contains("--dry-run"));
         assert!(BASELINE_HELP.contains("it prints the candidate JSON"));
@@ -792,6 +799,8 @@ mod tests {
         assert!(CALIBRATE_HELP.starts_with("Import cargo-mutants outcomes"));
         assert!(CALIBRATE_HELP.contains("Usage: ripr calibrate cargo-mutants"));
         assert!(CALIBRATE_HELP.contains("--mutants-json PATH"));
+        assert!(CALIBRATE_HELP.contains("Limitation: the join matches by seam_id"));
+        assert!(CALIBRATE_HELP.contains("does not carry a head SHA"));
         assert!(AGENT_HELP.starts_with("Create a bounded repair transaction for a coding agent"));
         assert!(AGENT_HELP.contains("Usage: ripr agent"));
         assert!(AGENT_START_HELP.starts_with("Start a source-edit-free workflow packet"));
@@ -837,7 +846,16 @@ mod tests {
         assert!(DOCTOR_HELP.contains("Usage: ripr doctor [--root PATH]"));
         assert!(DOCTOR_HELP.contains("--json"));
         assert!(DOCTOR_HELP.contains("Cargo.toml"));
-        assert!(DOCTOR_HELP.contains("Start-here next step:"));
+        assert!(DOCTOR_HELP.contains("nested Cargo.toml in this tree"));
+        assert!(DOCTOR_HELP.contains("https://rustup.rs"));
+        assert!(DOCTOR_HELP.contains("Printed for every profile."));
+        assert!(
+            DOCTOR_HELP
+                .contains("Recommended first command (analysis profile; not printed for --profile")
+        );
+        assert!(DOCTOR_HELP.contains(
+            "Start-here next step (analysis profile; not printed for --profile source-build):"
+        ));
         // The compose commands take whatever base the caller has; this screen
         // no longer asserts `origin/main`, which does not exist in a repository
         // whose default branch is not `main`.

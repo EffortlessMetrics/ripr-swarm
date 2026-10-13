@@ -1,0 +1,25 @@
+{
+  "subject_id": "authored-lib-expect-test",
+  "origin": "authored",
+  "version_label": "authored 2026-10-04 for test-library shapes; labeled against expect-test 1.5.1 from crates.io (not vendored)",
+  "license": "MIT OR Apache-2.0",
+  "shared_corpus": null,
+  "retained_files": [
+    {
+      "path": "Cargo.lock",
+      "sha256": "6f162f85e8aef2d3333b8eaa1376bf238306ae4f093bead3544ffbbf09088c17"
+    },
+    {
+      "path": "Cargo.toml",
+      "sha256": "ab599e6772df0fe2699837e04bae319523ea26eea010c5b7f187d4dfde45d2de"
+    },
+    {
+      "path": "src/expect/summary.txt",
+      "sha256": "183a6abd935556da3762f55909de61f3928a0921e75f6cb5e9607f427f3e4c91"
+    },
+    {
+      "path": "src/lib.rs",
+      "sha256": "56fa84a0fe69370bacb7ca36d06e259f53cc27528638d9a56b6a10970a002cf6"
+    }
+  ]
+}

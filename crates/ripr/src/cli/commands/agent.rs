@@ -8,7 +8,7 @@
 
 use crate::analysis;
 use crate::app::agent_brief::{
-    AgentBriefPolicy, AgentBriefResolvedWorkingSet, select_agent_brief_seams,
+    AgentBriefPolicy, AgentBriefResolvedWorkingSet, AgentBriefSelection, select_agent_brief_seams,
 };
 use crate::app::{self, OutputFormat};
 use crate::cli::CommandError;
@@ -22,8 +22,11 @@ use crate::cli::commands_agent_support::{
     resolve_agent_brief_working_set, validate_agent_receipt_verify_path,
     validate_agent_verify_snapshot_path,
 };
-use crate::cli::commands_context::{ensure_command_root, load_root_input_and_config};
+use crate::cli::commands_context::{
+    config_load_refusal, ensure_command_root, load_root_input_and_config, refuse_json_envelope,
+};
 use crate::config::{RiprConfig, load_for_root};
+use crate::core_error::CoreError;
 use crate::output;
 use crate::output::human::terminal_safe;
 use std::io::{BufWriter, Write};
@@ -207,7 +210,7 @@ fn write_agent_start_with_report(
     report: &analysis::ClassifiedSeamsReport,
 ) -> Result<AgentStartWritten, String> {
     let working_set = AgentBriefResolvedWorkingSet::seam_id(options.seam_id.clone());
-    let selection = select_agent_brief_seams(
+    let mut selection = select_agent_brief_seams(
         &report.classified,
         &working_set,
         1,
@@ -220,6 +223,7 @@ fn write_agent_start_with_report(
             unknown_seam_id_hint(&options.root, &options.seam_id)
         ));
     }
+    add_agent_brief_provenance_warning(&input.root, &mut selection);
 
     let out_dir = resolve_agent_start_out_dir(&input.root, &options.out_dir);
     std::fs::create_dir_all(&out_dir)
@@ -260,35 +264,117 @@ fn write_agent_start_with_report(
 }
 
 fn run_agent_brief(options: AgentBriefOptions) -> Result<(), String> {
-    ensure_command_root(&options.root, "agent brief")?;
-    let (input, config) = load_root_input_and_config(&options.root)?;
+    let json = options.json;
+    match render_agent_brief(&options) {
+        Ok(rendered) => {
+            println!("{rendered}");
+            Ok(())
+        }
+        // #7331: a `--json` brief that fails after argv parsing writes the
+        // shared refusal envelope (keyed with the agent brief schema
+        // version) before the prose error reaches stderr.
+        Err(error) => Err(refuse_agent_brief(&options, error, json)),
+    }
+}
+
+/// The refusal envelope context for `agent brief --json` (#7331): the
+/// brief's own schema version, repo scope, and the caller-supplied base
+/// echoed when the working set selected one.
+fn refuse_agent_brief(options: &AgentBriefOptions, error: CoreError, json: bool) -> String {
+    if !json {
+        return error.to_string();
+    }
+    let base = match &options.working_set {
+        crate::cli::agent::AgentBriefWorkingSet::Base(base) => Some(base.as_str()),
+        _ => None,
+    };
+    refuse_json_envelope(
+        output::agent_brief::AGENT_BRIEF_SCHEMA_VERSION,
+        "repo",
+        None,
+        &options.root,
+        base,
+        error,
+    )
+}
+
+fn render_agent_brief(options: &AgentBriefOptions) -> Result<String, CoreError> {
+    ensure_command_root(&options.root, "agent brief")
+        .map_err(CoreError::repository_root_unusable)?;
+    let (input, config) = load_root_input_and_config(&options.root)
+        .map_err(|err| config_load_refusal(&options.root, err))?;
 
     let working_set = resolve_agent_brief_working_set(&input.root, &options.working_set)?;
-    let (classified, _) =
-        analysis::inventory_classified_seams_at_with_config(&input.root, &config)?;
-    let selection = select_agent_brief_seams(
+    let (classified, _) = analysis::inventory_classified_seams_at_with_config(&input.root, &config)
+        .map_err(CoreError::from)?;
+    let mut selection = select_agent_brief_seams(
         &classified,
         &working_set,
         options.max_seams,
         AgentBriefPolicy::from_config(&config),
     );
-    let rendered = output::agent_brief::render_agent_brief_json(
+    add_agent_brief_provenance_warning(&input.root, &mut selection);
+    output::agent_brief::render_agent_brief_json(
         &input.root,
         &input.mode,
         &config,
         &working_set,
         &selection,
-    )?;
-    println!("{rendered}");
-    Ok(())
+    )
+    .map_err(CoreError::from)
+}
+
+fn add_agent_brief_provenance_warning(root: &Path, selection: &mut AgentBriefSelection<'_>) {
+    // A supplied diff has no base even in a committed Git checkout. Probe the
+    // same HEAD/worktree adapters used by the artifact producer instead of
+    // inferring verification provenance from either brief route's selector.
+    let provenance = crate::agent::artifact::current_git_head(root)
+        .and_then(|_| crate::agent::artifact::current_git_worktree_status(root));
+    if let Err(error) = provenance {
+        selection.warnings.push(format!(
+            "{} This root's Git/revision provenance is unavailable: {error}. Saved-patch analysis and agent brief remain supported; use an existing Git checkout with a committed HEAD and available worktree status for the snapshot/verify flow.",
+            crate::agent::artifact::VERIFY_GIT_PROVENANCE_REQUIREMENT,
+        ));
+    }
 }
 
 fn run_agent_packet(options: AgentPacketOptions) -> Result<(), String> {
-    ensure_command_root(&options.root, "agent packet")?;
+    let json = options.json;
+    // #7331 review: the root check is below argv parsing, so a `--json`
+    // packet run with an unusable `--root` refuses through the same
+    // envelope instead of exiting 2 with empty stdout.
+    if let Err(err) = ensure_command_root(&options.root, "agent packet") {
+        let error = CoreError::repository_root_unusable(err);
+        return Err(refuse_agent_packet(&options, error, json));
+    }
+    match render_agent_packet(&options) {
+        Ok(rendered) => {
+            print!("{rendered}");
+            Ok(())
+        }
+        // #7331: a `--json` packet that fails after argv parsing writes the
+        // shared refusal envelope (keyed with the packet schema version)
+        // before the prose error reaches stderr. This is the exact step
+        // `agent brief`'s documented `next.inspect_packet` loop drives, so
+        // the machine channel survives the failure.
+        Err(error) => Err(refuse_agent_packet(&options, error, json)),
+    }
+}
 
-    let rendered = render_agent_packet(&options)?;
-    print!("{rendered}");
-    Ok(())
+/// The refusal envelope context for `agent packet --json` (#7331): the
+/// packet schema version and repo scope.
+fn refuse_agent_packet(options: &AgentPacketOptions, error: CoreError, json: bool) -> String {
+    if !json {
+        return error.to_string();
+    }
+    refuse_json_envelope(
+        app::AGENT_SEAM_PACKET_SCHEMA_VERSION,
+        "repo",
+        None,
+        &options.root,
+        None,
+        error,
+    )
 }
 
 /// Recovery for an unknown `--seam-id`. Cold agents most often pass the
@@ -311,7 +397,7 @@ pub(super) fn unknown_seam_id_hint(root: &Path, seam_id: &str) -> String {
     }
 }
 
-fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, String> {
+fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, CoreError> {
     let root = crate::agent::loop_commands::bound_root(&options.root.to_string_lossy());
     render_agent_packet_with_context(
         options,
@@ -322,17 +408,19 @@ fn render_agent_packet(options: &AgentPacketOptions) -> Result<String, String> {
 fn render_agent_packet_with_context(
     options: &AgentPacketOptions,
     context: output::agent_seam_packets::PacketCommandContext<'_>,
-) -> Result<String, String> {
+) -> Result<String, CoreError> {
     if let (Some(gap_ledger), Some(gap_id)) = (&options.gap_ledger, &options.gap_id) {
-        return render_agent_packet_from_gap_ledger(&options.root, gap_ledger, gap_id);
+        return render_agent_packet_from_gap_ledger(&options.root, gap_ledger, gap_id)
+            .map_err(CoreError::from);
     }
 
     let seam_id = options.seam_id.as_deref().ok_or_else(|| {
-        "agent packet requires --seam-id or --gap-ledger with --gap-id".to_string()
+        CoreError::from("agent packet requires --seam-id or --gap-ledger with --gap-id")
     })?;
-    let config = load_for_root(&options.root)?;
-    let report =
-        analysis::inventory_classified_seams_report_at_with_config(&options.root, &config)?;
+    let config =
+        load_for_root(&options.root).map_err(|err| config_load_refusal(&options.root, err))?;
+    let report = analysis::inventory_classified_seams_report_at_with_config(&options.root, &config)
+        .map_err(CoreError::from)?;
     render_agent_packet_for_seam_with_report(&options.root, seam_id, &config, &report, context)
 }
 
@@ -347,26 +435,26 @@ fn render_agent_packet_for_seam_with_report(
     config: &RiprConfig,
     report: &analysis::ClassifiedSeamsReport,
     context: output::agent_seam_packets::PacketCommandContext<'_>,
-) -> Result<String, String> {
+) -> Result<String, CoreError> {
     let entry = report
         .classified
         .iter()
         .find(|entry| entry.seam.id().as_str() == seam_id)
         .ok_or_else(|| {
-            format!(
+            CoreError::seam_id_unknown(format!(
                 "agent packet seam_id {seam_id} was not found. {}",
                 unknown_seam_id_hint(root, seam_id)
-            )
+            ))
         })?;
 
     let policy = AgentBriefPolicy::from_config(config);
     if let Some(reason) = policy.omission_reason_for_class(entry.class) {
         // #4332: a policy-omitted seam is a dead end without the listing
         // route; name it like the not-found refusals do.
-        return Err(format!(
+        return Err(CoreError::from(format!(
             "agent packet seam_id {seam_id} {reason}. {}",
             unknown_seam_id_hint(root, seam_id)
-        ));
+        )));
     }
 
     Ok(output::agent_seam_packets::render_agent_seam_packet_json_with_context(entry, context))
@@ -1125,7 +1213,8 @@ fn run_agent_repair_phase(
                         .as_ref()
                         .map(|_| crate::agent::PYTHON_REPAIR_AUTHORIZATION_SUFFIX),
                 },
-            )?;
+            )
+            .map_err(|error| error.to_string())?;
             let mut policy =
                 crate::app::repair_attempt::edit_cage_policy_from_packet(&packet, &seam_id)
                     .map_err(|error| before_phase_refusal(&seam_id, &error))?;
@@ -1793,7 +1882,8 @@ fn write_agent_repo_exposure_snapshot_with_report(
         "ready".to_string(),
         None,
         config,
-    )?;
+    )?
+    .with_rust_corpus_key(report.corpus_key.as_ref());
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -3327,7 +3417,7 @@ mod tests {
             return Err("expected a confinement error, got Ok".to_string());
         };
         assert!(
-            message.contains("must stay under root"),
+            message.to_string().contains("must stay under root"),
             "unexpected error: {message}"
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
@@ -3349,7 +3439,7 @@ mod tests {
             return Err("expected a confinement error, got Ok".to_string());
         };
         assert!(
-            message.contains("must stay under root"),
+            message.to_string().contains("must stay under root"),
             "unexpected error: {message}"
         );
         std::fs::remove_dir_all(&root).map_err(|err| format!("remove temp root: {err}"))?;
@@ -3404,7 +3494,7 @@ mod tests {
         };
 
         assert!(
-            err.contains("must stay under root"),
+            err.to_string().contains("must stay under root"),
             "unexpected error: {err}"
         );
 

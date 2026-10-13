@@ -200,6 +200,7 @@ fn evaluate_in(
         sibling_tests: &tests,
         alias_map: None,
         workspace_root: Some(root),
+        pin_facts: None,
     };
     let activations: Vec<TypeScriptPredicateActivation> = candidates
         .iter()

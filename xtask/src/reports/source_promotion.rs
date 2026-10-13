@@ -68,6 +68,9 @@ struct VersionSide {
     cargo_lock_package_version: Option<String>,
     npm_lock_root_version: Option<String>,
     changelog_mentions_version: Option<bool>,
+    /// `changelog.d/` fragments the parent still holds; the join must fold
+    /// them into `CHANGELOG.md` (#6341). `None` when the tree was unreadable.
+    unfolded_changelog_fragments: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -307,6 +310,9 @@ fn build_receipt(options: &Options) -> Result<GeometryReceipt, String> {
         .map(|tree| verify_tree_in_repositories(&source_root, &swarm_root, tree))
         .transpose()?
         .is_some();
+    if let Some(tree) = options.resolved_tree.as_deref() {
+        ensure_reviewed_tree_folded(&source_root, &swarm_root, tree)?;
+    }
     let (merge_base, source_range, swarm_range, source_paths, swarm_paths, dry_merge) =
         with_disposable_repo(
             &source_root,
@@ -968,6 +974,31 @@ fn version_side(root: &Path, parent: &str, version: &str) -> VersionSide {
         changelog_mentions_version: changelog.map(|body| {
             body.contains(&format!("[{version}]")) || body.contains(&format!("## {version}"))
         }),
+        unfolded_changelog_fragments: unfolded_changelog_fragments(root, parent).ok(),
+    }
+}
+
+fn unfolded_changelog_fragments(root: &Path, treeish: &str) -> Result<Vec<String>, String> {
+    // NUL-delimited so a quoted non-ASCII name cannot slip past the path
+    // filter (#4006).
+    let listing = git(
+        root,
+        &["ls-tree", "-z", "--name-only", treeish, "changelog.d/"],
+    )?;
+    Ok(crate::policy::unfolded_fragment_paths(listing.split('\0')))
+}
+
+/// A reviewed join tree is the folded tree: a fragment still in it would
+/// never reach the release notes (#6341).
+fn ensure_reviewed_tree_folded(source: &Path, swarm: &Path, tree: &str) -> Result<(), String> {
+    let unfolded = unfolded_changelog_fragments(source, tree)
+        .or_else(|_| unfolded_changelog_fragments(swarm, tree))?;
+    if unfolded.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "reviewed resolved tree {tree} retains unfolded changelog.d fragments {unfolded:?}; fold them into CHANGELOG.md and delete them (changelog.d/README.md)"
+        ))
     }
 }
 
@@ -1087,16 +1118,18 @@ fn render_markdown(receipt: &GeometryReceipt) -> String {
     let source_cargo_lock = &receipt.version_state.source.cargo_lock_package_version;
     let source_npm_lock = &receipt.version_state.source.npm_lock_root_version;
     let source_changelog = &receipt.version_state.source.changelog_mentions_version;
+    let source_fragments = &receipt.version_state.source.unfolded_changelog_fragments;
     let swarm_workspace = &receipt.version_state.swarm.workspace_version;
     let swarm_crate = &receipt.version_state.swarm.crate_version;
     let swarm_extension = &receipt.version_state.swarm.extension_version;
     let swarm_cargo_lock = &receipt.version_state.swarm.cargo_lock_package_version;
     let swarm_npm_lock = &receipt.version_state.swarm.npm_lock_root_version;
     let swarm_changelog = &receipt.version_state.swarm.changelog_mentions_version;
+    let swarm_fragments = &receipt.version_state.swarm.unfolded_changelog_fragments;
     let invalidation_rules = list(&receipt.invalidation_rules);
     let next_commands = list(&receipt.next_commands);
     format!(
-        "# Source-promotion preflight\n\n- Schema: {schema}\n- Mode: {mode}\n- SOURCE_PARENT: {source_parent}\n- SWARM_PARENT: {swarm_parent}\n- SWARM_REF: {swarm_ref}\n- SWARM_REF_SHA: {swarm_ref_sha}\n- MERGE_BASE: {merge_base}\n\n## Repository identity\n\n- source: {source_remote} (expected {source_expected_remote}; common dirs distinct={source_common_dir_verified})\n- swarm: {swarm_remote} (expected {swarm_expected_remote}; common dirs distinct={swarm_common_dir_verified})\n\n## Ancestry\n\n| range | all reachable | first parent | all digest | ordered first-parent digest |\n| --- | ---: | ---: | --- | --- |\n| source | {source_all_count} | {source_first_count} | {source_all_digest} | {source_first_digest} |\n| swarm | {swarm_all_count} | {swarm_first_count} | {swarm_all_digest} | {swarm_first_digest} |\n\nAll-reachable digest recipe: {all_recipe}\nFirst-parent digest recipe: {first_recipe}\n\n## Dry merge\n\nStatus: **{dry_status}**\nPreview tree (automatic, non-final): {preview_tree:?}\nReviewed resolved tree: {reviewed_tree:?}\nReviewed resolved tree verified in supplied repository object store: {reviewed_tree_verified}\n\nConflicts:\n{conflicts}\n\n## Source survivors\n\n{source_survivors}\n## Swarm-only paths\n\n{swarm_only}\n## Swarm authority-resolution candidates (non-dispositive)\n\n{authority_candidates}\n## Version state\n\n- requested: {requested_version}\n- source: workspace={source_workspace:?}, crate={source_crate:?}, extension={source_extension:?}, cargo-lock-ripr={source_cargo_lock:?}, npm-lock-root={source_npm_lock:?}, changelog-mentions={source_changelog:?}\n- swarm: workspace={swarm_workspace:?}, crate={swarm_crate:?}, extension={swarm_extension:?}, cargo-lock-ripr={swarm_cargo_lock:?}, npm-lock-root={swarm_npm_lock:?}, changelog-mentions={swarm_changelog:?}\n\n## Invalidation rules\n\n{invalidation_rules}\n## Next commands\n\n{next_commands}",
+        "# Source-promotion preflight\n\n- Schema: {schema}\n- Mode: {mode}\n- SOURCE_PARENT: {source_parent}\n- SWARM_PARENT: {swarm_parent}\n- SWARM_REF: {swarm_ref}\n- SWARM_REF_SHA: {swarm_ref_sha}\n- MERGE_BASE: {merge_base}\n\n## Repository identity\n\n- source: {source_remote} (expected {source_expected_remote}; common dirs distinct={source_common_dir_verified})\n- swarm: {swarm_remote} (expected {swarm_expected_remote}; common dirs distinct={swarm_common_dir_verified})\n\n## Ancestry\n\n| range | all reachable | first parent | all digest | ordered first-parent digest |\n| --- | ---: | ---: | --- | --- |\n| source | {source_all_count} | {source_first_count} | {source_all_digest} | {source_first_digest} |\n| swarm | {swarm_all_count} | {swarm_first_count} | {swarm_all_digest} | {swarm_first_digest} |\n\nAll-reachable digest recipe: {all_recipe}\nFirst-parent digest recipe: {first_recipe}\n\n## Dry merge\n\nStatus: **{dry_status}**\nPreview tree (automatic, non-final): {preview_tree:?}\nReviewed resolved tree: {reviewed_tree:?}\nReviewed resolved tree verified in supplied repository object store: {reviewed_tree_verified}\n\nConflicts:\n{conflicts}\n\n## Source survivors\n\n{source_survivors}\n## Swarm-only paths\n\n{swarm_only}\n## Swarm authority-resolution candidates (non-dispositive)\n\n{authority_candidates}\n## Version state\n\n- requested: {requested_version}\n- source: workspace={source_workspace:?}, crate={source_crate:?}, extension={source_extension:?}, cargo-lock-ripr={source_cargo_lock:?}, npm-lock-root={source_npm_lock:?}, changelog-mentions={source_changelog:?}, unfolded-fragments={source_fragments:?}\n- swarm: workspace={swarm_workspace:?}, crate={swarm_crate:?}, extension={swarm_extension:?}, cargo-lock-ripr={swarm_cargo_lock:?}, npm-lock-root={swarm_npm_lock:?}, changelog-mentions={swarm_changelog:?}, unfolded-fragments={swarm_fragments:?}\n\n## Invalidation rules\n\n{invalidation_rules}\n## Next commands\n\n{next_commands}",
     )
 }
 
@@ -1916,6 +1949,135 @@ mod tests {
             return Err("preflight moved an authoritative checkout".to_string());
         }
         let _ = fs::remove_dir_all(&root);
+        Ok(())
+    }
+
+    #[test]
+    fn unfolded_changelog_fragments_are_reported_and_refused_in_reviewed_tree() -> Result<(), String>
+    {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|error| format!("system clock before epoch: {error}"))?
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("ripr-preflight-fragments-{nonce}"));
+        struct RemoveOnDrop(PathBuf);
+        impl Drop for RemoveOnDrop {
+            fn drop(&mut self) {
+                let _ = fs::remove_dir_all(&self.0);
+            }
+        }
+        let _cleanup = RemoveOnDrop(root.clone());
+        let source = root.join("source");
+        let swarm = root.join("swarm");
+        fs::create_dir_all(&source).map_err(|error| error.to_string())?;
+        test_git(&source, &["init", "--quiet"])?;
+        test_git(&source, &["config", "user.email", "test@example.invalid"])?;
+        test_git(&source, &["config", "user.name", "test"])?;
+        fs::write(source.join("base.txt"), "base\n").map_err(|error| error.to_string())?;
+        test_git(&source, &["add", "base.txt"])?;
+        test_git(&source, &["commit", "--quiet", "-m", "base"])?;
+        let source_parent = test_git_output(&source, &["rev-parse", "HEAD"])?;
+        test_git(
+            &source,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/EffortlessMetrics/ripr.git",
+            ],
+        )?;
+        test_git(&source, &["clone", ".", swarm.to_string_lossy().as_ref()])?;
+        test_git(&swarm, &["config", "user.email", "test@example.invalid"])?;
+        test_git(&swarm, &["config", "user.name", "test"])?;
+        fs::create_dir_all(swarm.join("changelog.d")).map_err(|error| error.to_string())?;
+        fs::write(swarm.join("changelog.d/README.md"), "# Fragments\n")
+            .map_err(|error| error.to_string())?;
+        fs::write(
+            swarm.join("changelog.d/7000-left-behind.md"),
+            "<!-- section: Fixed -->\n- x (#7000).\n",
+        )
+        .map_err(|error| error.to_string())?;
+        // Git C-quotes this name without `-z`; it must still be listed.
+        fs::write(
+            swarm.join("changelog.d/7002-caf\u{e9}.md"),
+            "<!-- section: Fixed -->\n- z (#7002).\n",
+        )
+        .map_err(|error| error.to_string())?;
+        test_git(&swarm, &["add", "changelog.d"])?;
+        test_git(&swarm, &["commit", "--quiet", "-m", "fragment"])?;
+        let swarm_parent = test_git_output(&swarm, &["rev-parse", "HEAD"])?;
+        test_git(
+            &swarm,
+            &[
+                "remote",
+                "set-url",
+                "origin",
+                "https://github.com/EffortlessMetrics/ripr-swarm.git",
+            ],
+        )?;
+        let swarm_ref = format!("refs/tags/ripr-release-0.11.0-{swarm_parent}");
+        test_git(&swarm, &["update-ref", swarm_ref.as_str(), &swarm_parent])?;
+        let unfolded_tree = test_git_output(&swarm, &["write-tree"])?;
+        test_git(
+            &swarm,
+            &[
+                "rm",
+                "--quiet",
+                "--cached",
+                "changelog.d/7000-left-behind.md",
+                "changelog.d/7002-caf\u{e9}.md",
+            ],
+        )?;
+        let folded_tree = test_git_output(&swarm, &["write-tree"])?;
+        let options = |resolved_tree: Option<String>| Options {
+            handoff: HandoffInput {
+                controller_root: root.clone(),
+                manifest: "unused.json".into(),
+                selection_decision: String::new(),
+                qualification_bundle: "unused.json".into(),
+                qualification_decision: String::new(),
+            },
+            source_parent: source_parent.clone(),
+            swarm_parent: swarm_parent.clone(),
+            swarm_ref: swarm_ref.clone(),
+            source_repo: source.clone(),
+            swarm_repo: swarm.clone(),
+            source_main: "HEAD".to_string(),
+            swarm_main: "HEAD".to_string(),
+            version: "0.11.0".to_string(),
+            resolved_tree,
+            out: root.join("out"),
+            source_remote: "EffortlessMetrics/ripr".to_string(),
+            swarm_remote: "EffortlessMetrics/ripr-swarm".to_string(),
+        };
+        let fragment = vec![
+            "changelog.d/7000-left-behind.md".to_string(),
+            "changelog.d/7002-caf\u{e9}.md".to_string(),
+        ];
+        {
+            let receipt = build_receipt(&options(None))?;
+            let swarm_side = &receipt.version_state.swarm.unfolded_changelog_fragments;
+            let source_side = &receipt.version_state.source.unfolded_changelog_fragments;
+            if swarm_side.as_ref() != Some(&fragment) || source_side.as_ref() != Some(&vec![]) {
+                return Err(format!(
+                    "parent fragments were not observed: swarm={swarm_side:?}, source={source_side:?}"
+                ));
+            }
+            if !render_markdown(&receipt)
+                .contains(&format!("unfolded-fragments=Some({fragment:?})"))
+            {
+                return Err("Markdown omitted the swarm parent's unfolded fragment".to_string());
+            }
+            match build_receipt(&options(Some(unfolded_tree.clone()))) {
+                Ok(_) => return Err("reviewed tree with a fragment was accepted".to_string()),
+                Err(error) if !error.contains("changelog.d/7000-left-behind.md") => {
+                    return Err(format!("refusal did not name the fragment: {error}"));
+                }
+                Err(_) => {}
+            }
+            build_receipt(&options(Some(folded_tree.clone())))
+                .map_err(|error| format!("folded reviewed tree was refused: {error}"))?;
+        }
         Ok(())
     }
 

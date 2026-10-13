@@ -1285,6 +1285,70 @@ owner = "product-analysis"
 standalone_reason = "Makes the Python adapter's assertion table, per-test oracle selection, error-path gate, reach order, static-limit precedence and verdict ladder normative, and closes order-dependent and substring-driven over-credit."
 
 [[artifact]]
+id = "RIPR-SPEC-0246"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0246-typescript-corpus-oracle-amendments.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Amends the TypeScript oracle rules from corpus mutation evidence: copy-for-identity changes need an identity matcher, and three nested callbacks that run before the test settles are collected."
+
+[[artifact]]
+id = "RIPR-SPEC-0251"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0251-typescript-default-import-owner-local.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads a renamed TypeScript default import of the owner as the owner in the observation guard, amending the RIPR-SPEC-0243 non-goal from corpus mutation evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0252"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0252-typescript-node-test-context-assert.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads node:test's t.assert.<method> as legacy node:assert, amending the RIPR-SPEC-0243 receiver table from corpus mutation evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0254"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0254-typescript-lookup-table-entry.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads a changed TypeScript lookup-table entry as a return-value change credited only by a changed-key lookup, from corpus mutation evidence."
+
+[[artifact]]
+id = "RIPR-SPEC-0250"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0250-typescript-match-object-field-pin.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads TypeScript toMatchObject from corpus mutation evidence: a match-object pin discriminates a change to a returned field it lists."
+
+[[artifact]]
+id = "RIPR-SPEC-0249"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0249-typescript-instance-class-pin.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Reads TypeScript toBeInstanceOf from corpus mutation evidence: a class pin discriminates a predicate change whose paths return classes the owner module keeps apart."
+
+[[artifact]]
+id = "RIPR-SPEC-0248"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0248-typescript-dropped-additive-term.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Withdraws TypeScript exposed credit from corpus mutation evidence: a change that only adds or drops one additive term needs a tested input where the term is non-zero."
+
+[[artifact]]
+id = "RIPR-SPEC-0247"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0247-typescript-literal-matcher-strength.md"
+status = "proposed"
+owner = "product-analysis"
+standalone_reason = "Amends the TypeScript matcher strengths from corpus mutation evidence: a literal mock-call payload on a test-local mock, loose equality against a coercion-safe literal, and a literal inline snapshot read exact."
+
+[[artifact]]
 id = "RIPR-SPEC-0243"
 kind = "spec"
 path = "docs/specs/RIPR-SPEC-0243-typescript-oracle-and-reach-rules.md"
@@ -1394,7 +1458,7 @@ kind = "spec"
 path = "docs/specs/RIPR-SPEC-0241-check-json-refusal-envelope.md"
 status = "proposed"
 owner = "product-analysis"
-standalone_reason = "Records the check --json refusal-envelope contract (#6834): a parsed-but-refused invocation emits a parseable envelope whose typed identity is carried in analysis_scope.run_status/basis/limitation and run_limitations[0].category/run_status/basis, with the repair route and the verbatim stderr diagnostic bound by test; caller-supplied root/base are echoed; argv usage errors stay prose-only; file-loaded config redacts only caller-unsupplied values."
+standalone_reason = "Records the check --json refusal-envelope contract (#6834): a parsed-but-refused invocation emits a parseable envelope whose typed identity is carried in analysis_scope.run_status/basis/limitation and run_limitations[0].category/run_status/basis, with the repair route and the verbatim stderr diagnostic bound by test; caller-supplied root/base are echoed; argv usage errors stay prose-only; file-loaded config redacts only caller-unsupplied values. Amended (#7331/#7332): the same envelope covers diff/rerun/context/agent brief/agent packet --json keyed with each command's own schema_version (adding check_artifact_unusable, gap_ledger_unusable, and seam_id_unknown identities), and the machine check formats sarif/github/badge-json/repo-exposure-json/agent-seam-packets-json render per-format refusal documents instead of zero bytes."
 
 [[artifact]]
 id = "RIPR-SPEC-0242"
@@ -1403,3 +1467,10 @@ path = "docs/specs/RIPR-SPEC-0242-canonical-next-action.md"
 status = "proposed"
 owner = "product-swarm"
 standalone_reason = "Issue #6304 records the canonical next action: typed producers project one CanonicalNextActionV1 from current state through a single selector authority with a closed action-class vocabulary, a gate-ordered selection law, typed stops, human/JSON projections, and one focused negative per gate; doctor/pilot/inventory renderer migration stays out of scope."
+[[artifact]]
+id = "RIPR-SPEC-0253"
+kind = "spec"
+path = "docs/specs/RIPR-SPEC-0253-local-collect-all-policy.md"
+status = "accepted"
+owner = "repo-infra"
+standalone_reason = "Issue #5073 defines the bounded local check-policy-all contract over nine existing independent policy scans, with actual-driver tests for collect-all errors, preserved leaf diagnostics, stale-report I/O failures and aggregate write failures; no product policy composition, hosted gate or timing-budget change."
