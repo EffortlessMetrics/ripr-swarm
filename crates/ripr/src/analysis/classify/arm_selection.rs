@@ -3197,6 +3197,11 @@ mod tests {
         assert_eq!(some("Kind::Make(2)"), None);
         assert!(some("Option::Some(1)").is_some());
         assert_eq!(some("{ 1 }"), None);
+        // An uncased name may be an associated constant, and two constants
+        // may hold one value, so `Kind::A` and `Kind::B` are never one value
+        // each (#7543 merged with #5992).
+        assert_eq!(some("Kind::A"), None);
+        assert_eq!(some("Kind::MAX"), None);
         // A `match` the call may skip credits nothing.
         let skipped = "pub fn f(n: u32) -> &'static str {\n    if n == 7 { return \"seven\"; }\n    match n {\n        0 => \"zero\",\n        1..=9 => \"digit\",\n        _ => \"many\",\n    }\n}\n";
         let mut probe = arm_probe("1..=9 => \"digit\",", 5);
