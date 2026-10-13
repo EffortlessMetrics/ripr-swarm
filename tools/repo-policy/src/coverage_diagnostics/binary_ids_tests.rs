@@ -454,3 +454,75 @@ fn real_rust_llvm_binary_id_matches_sparse_instrumented_elf_metadata() -> Result
     );
     Ok(())
 }
+
+#[test]
+fn final_mapping_json_budget_includes_profile_scope_metadata() -> Result<()> {
+    let f = fixture()?;
+    let primary = vec![1; 20];
+    let mut bytes = elf_bytes(&primary, true);
+    bytes.resize(8192, 0);
+    let table = bytes[512..832].to_vec();
+    let names = bytes[192..254].to_vec();
+    bytes[7424..7744].copy_from_slice(&table);
+    bytes[4096..4158].copy_from_slice(&names);
+    put64(&mut bytes, 40, 7424);
+    for (index, offset) in [(1, 4096), (3, 4608), (4, 4616)] {
+        put64(&mut bytes, 7424 + index * 64 + 24, offset);
+    }
+    let mut notes = Vec::new();
+    for id in std::iter::once(primary).chain((0..23).map(|n| vec![64 + n; 128])) {
+        notes.extend_from_slice(&4_u32.to_le_bytes());
+        notes.extend_from_slice(&(id.len() as u32).to_le_bytes());
+        notes.extend_from_slice(&3_u32.to_le_bytes());
+        notes.extend_from_slice(b"GNU\0");
+        notes.extend_from_slice(&id);
+        while !notes.len().is_multiple_of(4) {
+            notes.push(0);
+        }
+    }
+    bytes[128..128 + notes.len()].copy_from_slice(&notes);
+    put64(&mut bytes, 96, notes.len() as u64);
+    put64(&mut bytes, 104, notes.len() as u64);
+    put64(&mut bytes, 7424 + 2 * 64 + 32, notes.len() as u64);
+    let captured =
+        vec![json!({"binary_ids": {"ids": (1..=32).map(|n|hex(&[n;20])).collect::<Vec<_>>()}})];
+    let mut paths = Vec::new();
+    for n in 0..4 {
+        let path = f.0.join(format!("debug/deps/f{n}"));
+        write_executable(&path, &bytes)?;
+        paths.push(path);
+    }
+    let mut near_limit = false;
+    let mut rejected = false;
+    for padding in 0..149 {
+        for (index, path) in paths.iter_mut().enumerate() {
+            let next =
+                f.0.join(format!("debug/deps/f{index}{}", "x".repeat(padding)));
+            if next != *path {
+                fs::rename(&*path, &next).map_err(|e| e.to_string())?;
+                *path = next;
+            }
+        }
+        let report = associate(&f.0, &captured);
+        let encoded = serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?;
+        assert!(
+            encoded.len() <= JSON_BYTES,
+            "final mapping JSON exceeded its declared bound: {}",
+            encoded.len()
+        );
+        if report["status"] == "inspected_scope" && encoded.len() > JSON_BYTES - 200 {
+            near_limit = true;
+        }
+        if report["reason"] == "json_limit" {
+            assert_eq!(report["truncated"], true);
+            assert_eq!(report["ids"][0]["status"], "unavailable");
+            rejected = true;
+            break;
+        }
+    }
+    assert!(
+        near_limit && rejected,
+        "must exercise accepted and rejected sides of final JSON boundary"
+    );
+    Ok(())
+}

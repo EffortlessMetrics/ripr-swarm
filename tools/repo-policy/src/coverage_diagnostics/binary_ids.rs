@@ -112,7 +112,7 @@ fn base_report(ids: &[String]) -> Value {
     json!({"status": "unavailable", "scope": ROOTS,
         "association": "exact GNU build ID plus LLVM profile sections; no test or cause attribution",
         "ids": ids.iter().map(|id| json!({"id": id, "status": "unavailable", "matches": []})).collect::<Vec<_>>(),
-        "candidates": [], "truncated": false,
+        "candidates": [], "truncated": false, "profile_ids_truncated": false,
         "limits": {"entries": LIMITS.entries, "files": LIMITS.files, "read_bytes": LIMITS.bytes,
             "bytes_per_file": 65536, "matches": LIMITS.matches, "json_bytes": JSON_BYTES,
             "elapsed_ms": LIMITS.elapsed.as_millis()}})
