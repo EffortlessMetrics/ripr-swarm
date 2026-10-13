@@ -2,6 +2,7 @@ use super::super::rust_index::{FunctionSummary, RustIndex, TestSummary};
 use crate::domain::{
     CALLEE_ONLY_REACH_PREFIX, Confidence, RelationReason, StageEvidence, StageState,
 };
+use ra_ap_syntax::{AstNode, ast};
 
 pub(in crate::analysis) fn reach_evidence(
     related_tests: &[(&TestSummary, RelationReason)],
@@ -164,13 +165,29 @@ impl UnseenReachNames {
     }
 }
 
-/// `#![doc = include_str!("../README.md")]` turns an unindexed file into
-/// doctests that may call anything, so the name scan cannot rule them out.
-fn includes_external_docs(source: &str) -> bool {
-    source.lines().any(|line| {
-        let line = line.trim_start();
-        (line.starts_with("#![doc") || line.starts_with("#[doc")) && line.contains("include_str!")
-    })
+/// Macro-derived documentation can produce unindexed doctest calls, including
+/// external files and names assembled by `concat!` or supplied by `env!`.
+pub(in crate::analysis) fn includes_external_docs(source: &str) -> bool {
+    if !source.contains("doc") || !source.contains('!') {
+        return false;
+    }
+    let Some(parse) = crate::analysis::syntax::parse_clean_source_file(source) else {
+        return true;
+    };
+    parse
+        .tree()
+        .syntax()
+        .descendants()
+        .filter_map(ast::Attr::cast)
+        .any(|attribute| {
+            attribute.meta().is_some_and(|meta| {
+                meta.skip_cfg_attrs().into_iter().any(|meta| {
+                    meta.simple_name().is_some_and(|name| name == "doc")
+                        && matches!(meta, ast::Meta::KeyValueMeta(value)
+                        if !matches!(value.expr(), Some(ast::Expr::Literal(_))))
+                })
+            })
+        })
 }
 
 /// Parser-backed owner ids carry their impl segment
@@ -187,7 +204,10 @@ pub(in crate::analysis) fn is_trait_impl_method(owner: &FunctionSummary) -> bool
 /// Whether `source` contains `name` as a whole identifier anywhere other than
 /// directly after the `fn` keyword. Comments and strings count: a doctest or
 /// a stringly dispatched call may be what reaches the owner.
-fn names_identifier_outside_fn_definition(source: &str, name: &str) -> bool {
+pub(in crate::analysis) fn names_identifier_outside_fn_definition(
+    source: &str,
+    name: &str,
+) -> bool {
     !name.is_empty() && identifiers_outside_fn_definition(source).any(|ident| ident == name)
 }
 
@@ -261,7 +281,7 @@ const TRANSPARENT_TEST_MACROS: &[&str] = &[
 /// True when `body` invokes a macro (`name!(`, `name![`, `name! {`) outside
 /// [`TRANSPARENT_TEST_MACROS`]. Text inside string literals counts too, which
 /// only keeps reach uncertain.
-pub(super) fn invokes_opaque_macro(body: &str) -> bool {
+pub(in crate::analysis) fn invokes_opaque_macro(body: &str) -> bool {
     let bytes = body.as_bytes();
     bytes.iter().enumerate().any(|(bang, byte)| {
         if *byte != b'!' {
@@ -273,9 +293,13 @@ pub(super) fn invokes_opaque_macro(body: &str) -> bool {
         if !matches!(opener, Some(b'(' | b'[' | b'{')) {
             return false;
         }
+        // Step past the whole separator: `→assert!(` must not slice inside
+        // the arrow.
         let start = body[..bang]
-            .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
-            .map_or(0, |index| index + 1);
+            .char_indices()
+            .rev()
+            .find(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_'))
+            .map_or(0, |(index, c)| index + c.len_utf8());
         let name = &body[start..bang];
         !name.is_empty() && !TRANSPARENT_TEST_MACROS.contains(&name)
     })
@@ -422,13 +446,40 @@ mod tests {
 
     #[test]
     fn included_doc_files_count_as_unseen_callers() {
-        assert!(includes_external_docs(
-            "#![doc = include_str!(\"../README.md\")]\npub fn a() {}"
-        ));
-        assert!(includes_external_docs("  #[doc = include_str!(\"x.md\")]"));
-        assert!(!includes_external_docs(
-            "const T: &str = include_str!(\"t.txt\");\n#[doc = \"x\"]"
-        ));
+        for (source, expected) in [
+            (
+                "#![doc = include_str!(\"../README.md\")]\npub fn a() {}",
+                true,
+            ),
+            ("#[doc = include_str!(\"x.md\")] fn a() {}", true),
+            ("#![doc =\n include_str ! (\"x.md\")\n]\nfn a() {}", true),
+            (
+                "#![doc = concat!(\"mean_\", \"latency(&[])\")] fn a() {}",
+                true,
+            ),
+            ("#![doc = env!(\"DOCS\")] fn a() {}", true),
+            (
+                "const T: &str = include_str!(\"t.txt\");\n#[doc = \"x\"] fn a() {}",
+                false,
+            ),
+            (
+                "#[doc = \"x\"] const T: &str = include_str!(\"t.txt\");",
+                false,
+            ),
+            (
+                "#[doc = \"include_str! is described here\"] fn a() {}",
+                false,
+            ),
+        ] {
+            assert!(
+                crate::analysis::syntax::parse_clean_source_file(source).is_some(),
+                "{source}"
+            );
+            assert_eq!(includes_external_docs(source), expected, "{source}");
+        }
+        let malformed = "const T: &str = include_str!(\"t.txt\");\n#[doc = \"x\"]";
+        assert!(crate::analysis::syntax::parse_clean_source_file(malformed).is_none());
+        assert!(includes_external_docs(malformed));
     }
 
     #[test]
@@ -451,6 +502,9 @@ mod tests {
         assert!(invokes_opaque_macro("assert_eq!(case!(1), 2);"));
         assert!(invokes_opaque_macro("proptest! { }"));
         assert!(invokes_opaque_macro("check_all![1, 2];"));
+        // A multi-byte character before the name must not split a slice.
+        assert!(!invokes_opaque_macro("x→assert!(ok);"));
+        assert!(invokes_opaque_macro("x→case!(1);"));
     }
 
     #[test]

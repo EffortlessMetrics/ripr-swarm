@@ -47,11 +47,11 @@ pub use command_spec::{
     actionable_verify_source_is_supported,
     verify_command_is_unbounded_repo_exposure_snapshot_compare,
 };
-pub(crate) use diagnostic_witness::perl_suggested_related_test;
 pub use diagnostic_witness::{
     DiagnosticConfidence, DiagnosticFixSite, DiagnosticSourceLocation, DiagnosticWitness,
     DiagnosticWitnessLimitation,
 };
+pub(crate) use diagnostic_witness::{perl_suggested_related_test, python_suggested_related_test};
 pub use evidence::{
     Confidence, OracleKind, OracleStrength, RelationConfidence, RelationReason, RevealEvidence,
     RiprEvidence, StageEvidence, StageState,
