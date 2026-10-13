@@ -29,8 +29,8 @@
 //! Ranking law: candidates order by the eight explicit factors from #1704 in
 //! exactly that order, each factor inspectable on the candidate with its
 //! contribution and source references; the sort is a lexicographic
-//! application of the declared factor sequence and no hidden numeric score
-//! exists anywhere in the DTOs.
+//! application of the declared factor sequence. The emitted ranking key is
+//! that sequence, not a weighted score; ties use the stable candidate id.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -849,6 +849,10 @@ pub(crate) struct WorkCandidateV1 {
     pub readiness: Option<WorkReadinessV1>,
     pub regression_risks: Vec<String>,
     pub ranking_factors: Vec<WorkRankingFactorV1>,
+    /// Exact ascending lexicographic sort key. Legacy rows omit this rather
+    /// than inventing values that cannot be recovered from factor prose.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ranking_key: Option<[i64; 8]>,
     pub confidence: WorkConfidenceV1,
     pub confidence_reasons: Vec<String>,
     pub single_agent_preferred: bool,
@@ -1360,8 +1364,8 @@ fn lane_rank(lane_state: WorkLaneStateV1) -> i64 {
 }
 
 /// The lexicographic ranking tuple: one entry per declared factor, in the
-/// #1704 order. Smaller is earlier. Never serialized — the factors on the
-/// candidate are the inspectable record of exactly these entries.
+/// #1704 order. Smaller is earlier. Computed once for sorting and serialization;
+/// the factors retain their human explanation of these entries.
 fn ranking_tuple(
     candidate: &WorkCandidateV1,
     honesty_risk: Option<&str>,
@@ -2459,6 +2463,7 @@ pub(crate) fn compile_work_portfolio(
             readiness: readiness_for(issue),
             regression_risks,
             ranking_factors: Vec::new(),
+            ranking_key: None,
             confidence,
             confidence_reasons: confidence_reasons
                 .iter()
@@ -2482,21 +2487,16 @@ pub(crate) fn compile_work_portfolio(
         };
         candidate.ranking_factors =
             build_ranking_factors(issue, open_prs.first().copied(), &candidate);
+        candidate.ranking_key = Some(ranking_tuple(
+            &candidate,
+            issue.honesty_risk.as_deref(),
+            !open_prs.is_empty(),
+        ));
         candidates.push(candidate);
     }
-    let rank_key = |candidate: &WorkCandidateV1| {
-        let risk = issues
-            .iter()
-            .find(|issue| issue.number == candidate.issue)
-            .and_then(|issue| issue.honesty_risk.as_deref());
-        let has_open_pr = pull_requests
-            .iter()
-            .any(|pr| pr.state == "open" && pr.linked_issues.contains(&candidate.issue));
-        ranking_tuple(candidate, risk, has_open_pr)
-    };
     candidates.sort_by(|left, right| {
-        rank_key(left)
-            .cmp(&rank_key(right))
+        left.ranking_key
+            .cmp(&right.ranking_key)
             .then_with(|| left.candidate_id.cmp(&right.candidate_id))
     });
 
@@ -3184,6 +3184,13 @@ fn candidate_markdown(candidate: &WorkCandidateV1, heading: &str) -> String {
             &candidate.regression_risks,
         ));
     }
+    if let Some(key) = candidate.ranking_key {
+        body.push_str(&format!(
+            "- ranking key: `{key:?}` (ascending lexicographic; ties by `candidate_id`)\n"
+        ));
+    } else {
+        body.push_str("- ranking key: unavailable (legacy artifact)\n");
+    }
     body.push_str("- ranking factors (ordered, no hidden score):\n");
     for factor in &candidate.ranking_factors {
         body.push_str(&format!(
@@ -3834,6 +3841,87 @@ mod tests {
                     candidate.candidate_id, kind
                 )
             })
+    }
+
+    #[test]
+    fn work_portfolio_serialized_ranking_key_reproduces_order() -> Result<(), String> {
+        let snapshot = committed()?;
+        let json: Value = serde_json::from_str(&work_portfolio_json(&snapshot)?)
+            .map_err(|error| error.to_string())?;
+        let rows = json["candidates"]
+            .as_array()
+            .ok_or("candidate array missing")?;
+        assert_eq!(rows.len(), 12);
+        let mut ranked = Vec::new();
+        for row in rows {
+            let key: [i64; 8] = serde_json::from_value(row["ranking_key"].clone())
+                .map_err(|error| format!("{} ranking key: {error}", row["candidate_id"]))?;
+            let id = row["candidate_id"].as_str().ok_or("candidate id missing")?;
+            ranked.push((key, id.to_string()));
+        }
+        let expected = ranked.clone();
+        // Start in the opposite order so equal-key rows exercise the id tie-break.
+        ranked.reverse();
+        ranked.sort();
+        assert_eq!(ranked, expected);
+        assert_eq!(expected[0].0, [0, 0, 0, 0, 0, 2, 1, 0]);
+        assert_eq!(expected[11].0, [1, 1, 1, 3, 2, 2, 3, 0]);
+        assert_eq!(expected[6].0, [1, 1, 0, 1, 0, 2, 0, 0]);
+        assert_eq!(expected[3].0, [0, 1, 0, 2, 1, 2, 0, 1]);
+        assert_eq!(expected[6].0, expected[7].0);
+        assert_eq!(expected[6].1, "candidate:issue:9105");
+        assert_eq!(expected[7].1, "candidate:issue:9106");
+        let view = build_candidates_view(&snapshot, None, None, 12, None)?;
+        let view_json: Value = serde_json::from_str(&work_portfolio_json(&view)?)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(view_json["candidates"], json["candidates"]);
+        let explain = build_explain_view(&snapshot, &expected[0].1)?;
+        let explain_json: Value = serde_json::from_str(&work_portfolio_json(&explain)?)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(explain_json["candidate"], rows[0]);
+        for markdown in [
+            work_candidates_markdown(&view),
+            work_explain_markdown(&explain),
+        ] {
+            assert!(markdown.contains("ranking key: `[0, 0, 0, 0, 0, 2, 1, 0]`"));
+            assert!(markdown.contains("ascending lexicographic; ties by `candidate_id`"));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn work_portfolio_ranking_key_preserves_legacy_and_rejects_malformed_rows() -> Result<(), String>
+    {
+        let snapshot = committed()?;
+        let mut row =
+            serde_json::to_value(candidate(&snapshot, 9101)?).map_err(|error| error.to_string())?;
+        let object = row.as_object_mut().ok_or("candidate object missing")?;
+        object.remove("ranking_key");
+        let legacy: WorkCandidateV1 =
+            serde_json::from_value(row.clone()).map_err(|error| error.to_string())?;
+        assert_eq!(legacy.ranking_key, None);
+        let roundtrip = serde_json::to_value(&legacy).map_err(|error| error.to_string())?;
+        assert_eq!(roundtrip, row);
+        assert!(
+            candidate_markdown(&legacy, "# Legacy")
+                .contains("ranking key: unavailable (legacy artifact)")
+        );
+        for malformed in [
+            serde_json::json!([]),
+            serde_json::json!([0, 0, 0, 0, 0, 0, 0]),
+            serde_json::json!([0, 0, 0, 0, 0, 0, 0, 0, 0]),
+            serde_json::json!([0, 0, 0, 0, 0, 0, 0, "0"]),
+        ] {
+            row["ranking_key"] = malformed;
+            assert!(serde_json::from_value::<WorkCandidateV1>(row.clone()).is_err());
+        }
+        let empty =
+            build_candidates_view(&snapshot, Some("campaign-infra-hardening"), None, 10, None)?;
+        assert!(empty.candidates.is_empty());
+        let empty_json: Value = serde_json::from_str(&work_portfolio_json(&empty)?)
+            .map_err(|error| error.to_string())?;
+        assert_eq!(empty_json["candidates"], serde_json::json!([]));
+        Ok(())
     }
 
     /// Box 1 + fixture rows 1/2/10/11: multiple campaigns with eligible
