@@ -338,11 +338,11 @@ pub enum StaticLimitKind {
     /// `reachable_unrevealed` gap is withheld and the class is
     /// `static_unknown`. See RIPR-SPEC-0240.
     RustAssertionContextUnresolved,
-    /// A changed `log::`/`tracing::` record is checked by a related test that
-    /// installs a capturing logger before calling the owner and asserts on
-    /// the captured store, but ripr does not resolve the logger or the format
-    /// template against the asserted value. The gap is withheld and the
-    /// class is `static_unknown`. See RIPR-SPEC-0096 / #7133.
+    /// A changed `log::` record is checked by a related test that installs a
+    /// capturing logger before calling the owner and asserts on the captured
+    /// store, but ripr does not resolve the logger or the format template
+    /// against the asserted value. The gap is withheld and the class is
+    /// `static_unknown`. See RIPR-SPEC-0231 / #7133.
     RustLogCaptureUnresolved,
 }
 
