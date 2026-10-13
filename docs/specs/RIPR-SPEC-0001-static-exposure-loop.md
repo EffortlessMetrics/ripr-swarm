@@ -366,6 +366,8 @@ Fixture coverage:
 
 - `unindexed_doc_assertion_prompts_inspection_without_credit_or_gap_claim`
 - `weak_direct_owner_assertion_keeps_exact_value_advice`
+- `wrapper_error_retains_specific_guidance_for_proximity_reach`
+- `assertion_helper_retains_oracle_inspection_guidance`
 - `fixtures/boundary_gap` (baseline)
 - `fixtures/weak_error_oracle` (baseline)
 - `fixtures/smoke_assertion_only`
