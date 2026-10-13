@@ -28476,6 +28476,40 @@ upload_debug_artifacts: false
     assert!(!violations.iter().any(|v| v.contains("same-repo guard")));
 }
 
+#[test]
+fn check_droid_common_flags_missing_contents_read() {
+    let mut violations = Vec::new();
+    check_droid_common(
+        &mut violations,
+        "test.yml",
+        "review_model: \"custom:MiniMax-M3-0\"\n",
+        true,
+        true,
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must set contents: read"))
+    );
+}
+
+#[test]
+fn check_droid_common_flags_contents_write() {
+    let mut violations = Vec::new();
+    check_droid_common(
+        &mut violations,
+        "test.yml",
+        "contents: write\nreview_model: \"custom:MiniMax-M3-0\"\n",
+        true,
+        true,
+    );
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant contents: write"))
+    );
+}
+
 fn valid_droid_security_scan_yaml() -> &'static str {
     r#"
 on:
@@ -28487,6 +28521,11 @@ concurrency:
   cancel-in-progress: false
 jobs:
   droid-security-scan:
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      actions: read
     env:
       MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
     steps:
@@ -28657,6 +28696,40 @@ fn check_droid_security_scan_flags_debug_artifact_upload() {
         violations
             .iter()
             .any(|v| v.contains("debug artifact upload"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_contents_write() {
+    let yaml = valid_droid_security_scan_yaml().replace("contents: read", "contents: write");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant contents: write"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_id_token_write() {
+    let yaml = valid_droid_security_scan_yaml()
+        .replace("contents: read", "contents: read\n      id-token: write");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must not grant id-token: write"))
+    );
+}
+
+#[test]
+fn check_droid_security_scan_flags_missing_contents_read() {
+    let yaml = valid_droid_security_scan_yaml().replace("      contents: read\n", "");
+    let violations = droid_security_scan_violations(&yaml);
+    assert!(
+        violations
+            .iter()
+            .any(|v| v.contains("must set contents: read"))
     );
 }
 
