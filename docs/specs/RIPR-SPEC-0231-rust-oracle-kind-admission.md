@@ -299,7 +299,14 @@ Two pattern terms are used below.
    `relational_check` / weak: a slice that only fixes a length (`[_, ..]`,
    `[_]`), or the sole variant of a single-variant enum (`Only::Value`,
    `Only::Value(_)`). A variant whose enum cannot be resolved counts as
-   pinning, which keeps today's reading.
+   pinning, which keeps today's reading. In a top-level `&&` chain with
+   at least one whole `matches!` conjunct and no pinning `==` conjunct
+   (rule 1), the chain reads no stronger than its strongest conjunct read
+   alone, and keeps its kind only when such a conjunct earns that kind at
+   that strength; otherwise it takes the first such conjunct's reading.
+   So a `matches!` keeps its pattern's reading inside the chain (#7695).
+   A pinning `==` keeps the chain's reading, because the test does fix
+   that value.
 4. **Method checks match whole method names.** At steps 0 and 7, `is_ok`,
    `is_some` and `is_none` count only as a method-call segment (`.is_ok(`,
    `Option::is_some(`), not as a substring of another identifier such as
@@ -483,6 +490,10 @@ rejected alternative. Any can be reversed later without touching the rest.
 5. `assert_eq!(check(20), Err(e))`: `exact_error_variant` / strong (unchanged).
 6. `assert!(matches!(check(5), Ok(5)))`: `exact_value` / strong (unchanged).
 7. `assert!(matches!(check(5), Ok(_)))`: `smoke_only` / smoke.
+   `assert!(ready && matches!(check(5), Ok(_)))`: `relational_check` /
+   weak, as `assert!(ready)` reads (today `exact_value` / strong; #7695).
+   `assert!(total == 4 && matches!(check(5), Ok(_)))`: unchanged, because
+   `total == 4` pins a value.
 8. `assert!(is_present())`: not `mock_expectation`.
 9. `assert_eq!(events_sent.len(), 1)`: `exact_value` / strong (unchanged;
    step 5 wins before step 9).
@@ -602,6 +613,9 @@ rejected alternative. Any can be reversed later without touching the rest.
 - Existing: `relational_tests.rs::ensure_disjunctions_and_nested_equalities_are_never_exact`
   and the corpus case `spec0231-ensure-disjunction-not-exact` (the
   disjunction forms of example 13, #7558).
+- Existing: `relational_tests.rs::a_matches_conjunct_reads_no_stronger_than_its_pattern`
+  and the corpus case `spec0231-matches-wildcard-conjunct` (the `&&` chain
+  forms of example 7, #7695).
 - Existing: `pattern_admission.rs::tests::spec_0231_rules_2_and_3_read_the_pattern`
   (the pattern forms of examples 3, 4, 7, 17, 18 and 21 to 26, the pinning
   controls 6, 22 and 23, and decision 7's guards).
