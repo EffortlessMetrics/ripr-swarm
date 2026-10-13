@@ -10144,6 +10144,9 @@ id = "RIPR-SPEC-0153"
 name = "Rust producer-owned source role"
 spec = "docs/specs/RIPR-SPEC-0153-rust-source-role.md"
 tests = [
+  "crates/ripr/tests/rust_discovery_comments.rs::comment_and_string_module_mentions_do_not_register_tests",
+  "crates/ripr/tests/rust_discovery_comments.rs::real_cfg_and_renamed_modules_keep_collected_tests",
+  "crates/ripr/tests/rust_discovery_comments.rs::an_incomplete_module_walk_cannot_drop_test_credit",
   "crates/ripr/src/analysis/facts/index_tests.rs::file_function_membership_retains_only_handle_capacity",
   "crates/ripr/src/analysis/facts/index_tests.rs::compact_membership_preserves_occurrences_replacement_and_finalized_slots",
   "crates/ripr/src/analysis/facts/index_tests.rs::shared_harness_demotion_splits_only_disagreeing_containing_paths",
@@ -10241,6 +10244,7 @@ tests = [
 ]
 fixtures = [
   "fixtures/rust_test_under_false_cfg_not_grip",
+  "fixtures/rust_commented_module_orphan",
   "crates/ripr/tests/data/source-role-corpus",
 ]
 code = [
