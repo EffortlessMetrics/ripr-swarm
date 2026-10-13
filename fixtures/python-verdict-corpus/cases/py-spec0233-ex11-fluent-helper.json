@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "RIPR-SPEC-0238 example 11: `assert_that(parse_fluent(\"1\")).is_equal_to(2)` goes through tests/fluent.py, a helper written for this corpus that raises on inequality, so `+ 2` fails. The spec moves this to static_unknown with opaque_custom_assertion_helper (limited, acceptable); ripr today reports weakly_exposed, a false actionable verdict.",
+  "reasoning": "RIPR-SPEC-0238 example 11: `assert_that(parse_fluent(\"1\")).is_equal_to(2)` goes through tests/fluent.py, a helper written for this corpus that raises on inequality, so `+ 2` fails. The spec moves this to static_unknown with opaque_custom_assertion_helper (limited, acceptable); ripr today reports weakly_exposed, a false actionable verdict. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",

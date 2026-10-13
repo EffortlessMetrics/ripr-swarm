@@ -32,7 +32,7 @@
       "limited"
     ]
   },
-  "reasoning": "RIPR-SPEC-0238 example 31: test_a asserts only `len(fmt(7)) == 4` and test_b calls fmt(7) beside an unrelated assert; \"ID:7\" has the same length, so the edit passes. The spec says weakly_exposed (rule 11); ripr today credits exposed, a false exposed verdict.",
+  "reasoning": "RIPR-SPEC-0238 example 31: test_a asserts only `len(fmt(7)) == 4` and test_b calls fmt(7) beside an unrelated assert; \"ID:7\" has the same length, so the edit passes. The spec says weakly_exposed (rule 11); ripr today credits exposed, a false exposed verdict. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "credited",

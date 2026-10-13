@@ -524,7 +524,12 @@ state (`top_gap`, `no_actionable_gap`, `preview_limited`, `static_limited`, or
 `missing_scope`), one selected finding digest when available, an omitted-finding
 count, and pointers to `--format human-full` and `--format json`.
 `ripr check --format human-full` (alias `text-full`) preserves the exhaustive
-per-finding human report. These human text formats do not change
+per-finding human report. Navigation-aware CLI reports may define identical
+facts or guidance once with explicit finding-ordinal references; every finding
+retains its complete private record and drill-in commands. Sharing distinguishes
+full owner/test metadata and currentness, including raw contextual facts hidden
+by display normalization. Public library renders without navigation preserve
+legacy full-report bytes. These human text formats do not change
 `schema_version`; the machine-readable contract remains `--format json`.
 Repo-scoped formats such as `repo-exposure-json`, `repo-exposure-md`,
 `repo-sarif`, and `agent-seam-packets-json` warn on stderr when paired with
@@ -1340,7 +1345,8 @@ The evidence-first fields are additive in schema `0.2`:
   not credit `exposed`. They are emitted only on `language == "python"` findings
   and are absent on Rust and TypeScript findings; they do **not** bump
   `schema_version` (still `0.2`). `changed_sink` is the comma-joined significant
-  tokens of the changed line; `observed_sink` is the strongest related oracle's
+  tokens of the changed line; `observed_sink` is the crediting assertion when a
+  branch observes the change, otherwise the strongest related oracle's available
   assertion text; `alignment_reason` is a stable snake_case token. The
   `oracle_alignment` value is a controlled enum (`ORACLE_ALIGNMENT_VALUES`):
   - `direct` — a strong oracle observes the changed owner by name.
@@ -1350,8 +1356,12 @@ The evidence-first fields are additive in schema `0.2`:
   - `orthogonal` — a strong oracle exists but observes a different sink than the
     change (the fail-closed `weakly_exposed` branch); `alignment_reason` is
     `strong_oracle_observes_different_sink`.
-  - `unknown` — no strong oracle observed the changed sink (or a `<module>`
-    owner with no usable token).
+  - `unknown` — no admitted strong oracle observed the changed sink.
+
+  An empty token set never supplies observation credit on its own (#7526).
+  Existing assertion-level call and effect branches can still establish a
+  genuine observation; otherwise a strong unrelated oracle remains `orthogonal`
+  and cannot promote the finding to `exposed`.
 
   On a `weakly_exposed` finding, two `alignment_reason` values mark rows the
   family-relevant assertion selection changed (RIPR-SPEC-0224, #5572), and the

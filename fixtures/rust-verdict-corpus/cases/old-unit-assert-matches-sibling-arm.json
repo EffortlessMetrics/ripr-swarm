@@ -1,0 +1,47 @@
+{
+  "case_id": "old-unit-assert-matches-sibling-arm",
+  "subject_id": "authored-old-errors",
+  "diff": "cases/old-unit-assert-matches-sibling-arm.diff",
+  "anchor": {
+    "file": "src/errors.rs",
+    "line": 96
+  },
+  "edit_kind": "behavior_change",
+  "behavior_family": "match_arm",
+  "test_shape": "local_assert_matches_macro_other_arm_inputs",
+  "hard_case": "Exact assert_matches! pins through a local panicking macro sit beside the changed arm, but their inputs (\"q\", \"k\") select other arms, so the pins must not credit it.",
+  "truth": {
+    "state": "not_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "\"m\" => Ok(1_000),",
+        "mutated_line": null,
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: the \"m\" suffix multiplies by 1_000 instead of 1_000_000"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "unknown_unit_is_rejected pins parse_unit(\"q\") and parse_unit(\"k\") through a local assert_matches! that panics on a mismatch, but no test calls parse_unit(\"m\"), so changing the \"m\" arm passes every test. Negative control for #6616. Spec cells: RIPR-SPEC-0229.",
+  "labeling_observation": {
+    "ripr_commit": "29fa4ce",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  },
+  "spec_examples": [
+    "RIPR-SPEC-0229#10"
+  ]
+}

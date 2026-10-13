@@ -18,5 +18,27 @@
   "contradictions": [],
   "findings_scored": 1,
   "findings_contradicted": 0,
-  "contradiction_counts": {}
+  "contradiction_counts": {},
+  "oracle": {
+    "expected": {
+      "kind": "exact_value",
+      "strength": "strong",
+      "spec": "RIPR-SPEC-0231#12"
+    },
+    "observed_kind": "exact_value",
+    "observed_strength": "strong",
+    "observed_all": [
+      {
+        "test": "score_renders_as_json",
+        "kind": "exact_value",
+        "strength": "strong"
+      },
+      {
+        "test": "score_renders_as_json",
+        "kind": "relational_check",
+        "strength": "weak"
+      }
+    ],
+    "outcome": "match"
+  }
 }

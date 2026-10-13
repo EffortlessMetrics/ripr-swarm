@@ -5,6 +5,20 @@
   "description": "Cross-language pinned adversarial corpus: evidence may not promote to exposed/strong unless it structurally matches the seam.",
   "cases": [
     {
+      "id": "rust_commented_module_orphan",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/rust_commented_module_orphan",
+      "vector": "commented_module_mention_cannot_credit_uncompiled_test",
+      "probe_family": "predicate",
+      "assertions": [
+        { "type": "must_not_report_clean" },
+        { "type": "expected_finding_count", "count": 1 },
+        { "type": "must_not_promote" },
+        { "type": "expected_class", "class": "no_static_path" }
+      ]
+    },
+    {
       "id": "rust_where_bound_has_no_runtime_exposure_credit",
       "language": "rust",
       "tier": "pure",
@@ -1851,6 +1865,88 @@
         { "type": "expected_finding_count", "count": 1 },
         { "type": "must_promote" },
         { "type": "expected_class", "class": "exposed" }
+      ]
+    },
+    {
+      "id": "rust_inequality_assertion_not_exact",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/inequality_assertion_not_exact",
+      "vector": "assert_ne_inequality_is_never_an_exact_oracle",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "score_is_not_zero",
+          "file": "src/lib.rs",
+          "line": 10,
+          "kind": "relational_check",
+          "strength": "weak"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "rust_inequality_struct_assertion_not_exact",
+      "language": "rust",
+      "tier": "pure",
+      "source_fixture": "fixtures/inequality_struct_assertion_not_exact",
+      "vector": "assert_ne_struct_literal_is_not_lifted_by_a_probe_family",
+      "probe_family": "field_construction",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "whole_object_equality",
+          "strength": "weak"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "build_is_not_nine_retries",
+          "file": "src/lib.rs",
+          "line": 17,
+          "kind": "whole_object_equality",
+          "strength": "weak"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
       ]
     },
     {
@@ -4995,6 +5091,134 @@
           "expression": "1024.0",
           "grip_class": "strongly_gripped",
           "reach": "yes"
+        }
+      ]
+    },
+    {
+      "id": "py_empty_sink_tokens_discarded_short_function_output",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_empty_sink_unrelated_short_function",
+      "vector": "empty_sink_tokens_discarded_short_function_output",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "test_constants",
+          "file": "tests/test_constants.py",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "py_empty_sink_tokens_module_comparison_text",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_empty_sink_module_comparison",
+      "vector": "empty_sink_tokens_module_comparison_text",
+      "probe_family": "predicate",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_not_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "weakly_exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "test_constants",
+          "file": "tests/test_constants.py",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "maximum_class",
+          "class": "weakly_exposed"
+        }
+      ]
+    },
+    {
+      "id": "py_empty_sink_tokens_genuine_short_function_output",
+      "language": "python",
+      "tier": "pure",
+      "source_fixture": "fixtures/python_empty_sink_observed_short_function",
+      "vector": "empty_sink_tokens_genuine_short_function_output",
+      "probe_family": "return_value",
+      "assertions": [
+        {
+          "type": "must_not_report_clean"
+        },
+        {
+          "type": "must_disclose_scope"
+        },
+        {
+          "type": "expected_finding_count",
+          "count": 1
+        },
+        {
+          "type": "must_promote"
+        },
+        {
+          "type": "expected_class",
+          "class": "exposed"
+        },
+        {
+          "type": "expected_oracle",
+          "kind": "exact_value",
+          "strength": "strong"
+        },
+        {
+          "type": "expected_related_test",
+          "name": "test_constants",
+          "file": "tests/test_constants.py",
+          "line": 4,
+          "kind": "exact_value",
+          "strength": "strong"
         }
       ]
     }

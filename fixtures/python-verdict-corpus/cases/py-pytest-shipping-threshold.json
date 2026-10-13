@@ -40,7 +40,7 @@
       "silent"
     ]
   },
-  "reasoning": "test_free_shipping_starts_at_threshold pins 4999 and 5000 with `assert ==`, an exact-value oracle under RIPR-SPEC-0028, so both shifts of the boundary fail it. ripr reports weakly_exposed on a predicate against a module constant, a false actionable verdict; the literal-boundary case py-pytest-silver-parametrized is credited exposed.",
+  "reasoning": "test_free_shipping_starts_at_threshold pins 4999 and 5000 with `assert ==`, an exact-value oracle under RIPR-SPEC-0028, so both shifts of the boundary fail it. ripr reports weakly_exposed on a predicate against a module constant, a false actionable verdict; the literal-boundary case py-pytest-silver-parametrized is credited exposed. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",

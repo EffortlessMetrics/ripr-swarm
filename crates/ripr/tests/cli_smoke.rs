@@ -23,6 +23,9 @@ mod common;
 mod discarded_matches;
 #[path = "cli_smoke/findings_byte_budget.rs"]
 mod findings_byte_budget;
+#[cfg(feature = "lang-rust")]
+#[path = "cli_smoke/human_full_shared.rs"]
+mod human_full_shared;
 #[cfg(feature = "lang-python")]
 #[path = "cli_smoke/implicit_git_root.rs"]
 mod implicit_git_root;
@@ -14076,6 +14079,14 @@ fn init_ci_github_dry_run_prints_config_and_workflow_without_writing() -> Result
     assert!(stdout.contains("Rerun without --dry-run to apply."));
     assert!(stdout.contains(".github"));
     assert!(stdout.contains("RIPR advisory reports"));
+    assert!(
+        stdout.contains(
+            "# CI guide: https://github.com/EffortlessMetrics/ripr/blob/main/docs/CI.md\n"
+        )
+    );
+    assert!(stdout.contains(
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+    ));
     assert!(stdout.contains("continue-on-error: true"));
     assert!(stdout.contains("RIPR_UPLOAD_SARIF"));
     assert!(stdout.contains("actions/upload-artifact@v7"));
@@ -14136,6 +14147,7 @@ fn init_refuses_existing_config_without_force() -> Result<(), String> {
 #[test]
 fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     let workspace = make_temp_workspace(None)?;
+    assert!(!workspace.join("docs/CI.md").exists());
     let root = workspace.display().to_string();
     let output = run_ripr(&["init", "--root", &root, "--ci", "github"]);
     assert_success(&output);
@@ -14144,6 +14156,16 @@ fn init_ci_github_writes_non_blocking_report_workflow() -> Result<(), String> {
     let workflow = std::fs::read_to_string(&workflow_path)
         .map_err(|e| format!("read generated workflow: {e}"))?;
     assert!(workspace.join("ripr.toml").exists());
+    assert!(
+        workflow.starts_with(
+            "name: RIPR\n\n# CI guide: https://github.com/EffortlessMetrics/ripr/blob/main/docs/CI.md\non:\n"
+        ),
+        "the adopter has no local CI guide; the generated header must give its public URL"
+    );
+    assert!(workflow.contains(
+        "  # Repository variables: Settings > Secrets and variables > Actions > Variables.\n  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.\n  RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}\n"
+    ));
+    assert!(!workspace.join("docs/CI.md").exists());
     assert!(workflow.contains("pull_request:"));
     assert!(workflow.contains("workflow_dispatch:"));
     // #5208: the pin/warning pair must stay consistent in both release
@@ -27918,6 +27940,33 @@ fn review_comments_help_survives_invalid_admission_environment()
             "{stderr}"
         );
     }
+    Ok(())
+}
+
+/// RIPR-SPEC-0231 rule 1: a seam whose only test is `assert_ne!(score(2), 0)`
+/// is weakly gripped in the repo audit. Before the rule, the inequality read
+/// `exact_value` / strong and the seam counted as strongly gripped.
+#[test]
+fn repo_exposure_does_not_count_an_inequality_assertion_as_a_strong_grip()
+-> Result<(), Box<dyn std::error::Error>> {
+    let root = workspace_root().join("fixtures/inequality_assertion_not_exact/input");
+    let root_arg = root.display().to_string();
+    let output = run_ripr(&[
+        "check",
+        "--root",
+        &root_arg,
+        "--format",
+        "repo-exposure-json",
+    ]);
+    assert_success(&output);
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let metrics = &report["metrics"];
+    assert_eq!(
+        metrics["seams_total"], 1,
+        "fixture seam not parsed: {metrics}"
+    );
+    assert_eq!(metrics["strongly_gripped"], 0, "{metrics}");
+    assert_eq!(metrics["weakly_gripped"], 1, "{metrics}");
     Ok(())
 }
 
