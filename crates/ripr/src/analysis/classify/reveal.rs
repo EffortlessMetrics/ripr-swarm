@@ -510,10 +510,20 @@ pub(in crate::analysis) fn binding_untouched_after_owner_call(
             .map_or(read_at - window_at, |semi| semi + 1);
         let statement = &masked[window_at..window_at + statement_len];
         let leading = statement.len() - statement.trim_start().len();
-        // A later owner call on the binding, itself a bare statement.
+        // A later owner call on the binding, itself a bare statement whose
+        // arguments do not name the binding: an argument runs before the
+        // call and may copy what the earlier one left
+        // (`order.add((snap = order.log.clone(), 4).1)`).
         if statement.trim_start().starts_with(&call)
             && bare_call_end(&masked[..read_at], window_at + leading, call.len())
                 == Some(window_at + statement_len)
+            && statement.trim_start()[call.len()..]
+                .match_indices(binding)
+                .all(|(at, name)| {
+                    let arguments = &statement.trim_start()[call.len()..];
+                    arguments[..at].chars().next_back().is_some_and(ident)
+                        || arguments[at + name.len()..].starts_with(ident)
+                })
         {
             window_at += statement_len;
             continue;
@@ -3630,6 +3640,8 @@ mod tests {
             "    order.add(4);\n    let before = if true { order.log.clone() } else { vec![] };\n    order.add(4);\n    assert_eq!(order.log, before);",
             "    order.add(4);\n    before.extend_from_slice(&order.log);\n    order.add(4);\n    assert_eq!(order.log, before);",
             "    order.add(1);\n    order.log.clear();\n    order.add(4);\n    assert_eq!(order.log, vec![4]);",
+            // A later owner call whose arguments copy the binding.
+            "    let mut order = Order::new();\n    order.add(4);\n    order.add((snap = order.log.clone(), 4).1);\n    assert_eq!(order.log, [snap.clone(), snap].concat());",
             // A later owner call that is not a bare statement.
             "    let mut order = Order::new();\n    order.add(1);\n    order.add(4).clear();\n    assert_eq!(order.log, vec![]);",
             "    let mut order = Order::new();\n    order.add(4);\n    order.log = vec![4];\n    assert_eq!(order.log, vec![4]);",
