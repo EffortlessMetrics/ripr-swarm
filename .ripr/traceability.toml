@@ -757,6 +757,15 @@ tests = [
   "crates/ripr/src/output/mutation_calibration.rs::tests::zero_recognized_mutant_records_fail_closed_instead_of_all_matched",
   "crates/ripr/src/output/mutation_calibration.rs::tests::empty_import_markdown_does_not_claim_all_mutants_matched",
   "crates/ripr/src/output/mutation_calibration.rs::tests::matched_import_still_may_say_all_imported_mutants_matched",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::foreign_same_line_mutant_still_joins_by_file_line",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::mutant_on_a_file_absent_from_the_snapshot_stays_unmatched",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_warns_when_neither_artifact_has_a_head",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_names_the_snapshot_head_when_mutants_have_none",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_flags_different_heads",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_reports_matching_heads_as_agreement",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_warns_when_only_mutants_name_a_head",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_treats_a_placeholder_as_no_head",
+  "crates/ripr/src/output/mutation_calibration.rs::tests::calibrate_disclosure_treats_combined_directory_array_as_no_mutants_head",
   "crates/ripr/src/output/mutation_calibration.rs::tests::public_parser_exposes_the_same_cargo_mutants_importer",
   "crates/ripr/src/output/mutation_calibration/outcome_records.rs::tests::parses_cargo_mutants_out_directory_shapes",
   "crates/ripr/src/output/mutation_calibration/outcome_records.rs::tests::maps_cargo_mutants_timeout_and_unviable_summaries",
@@ -766,6 +775,8 @@ tests = [
   "crates/ripr/src/cli/commands.rs::tests::calibrate_zero_recognized_mutant_records_fails_closed",
   "crates/ripr/tests/cli_smoke.rs::calibrate_cargo_mutants_prints_markdown_by_default",
   "crates/ripr/tests/cli_smoke.rs::calibrate_cargo_mutants_writes_json_when_requested",
+  "crates/ripr/tests/cli_smoke.rs::calibrate_foreign_same_line_join_discloses_missing_head",
+  "crates/ripr/tests/cli_smoke.rs::calibrate_headed_snapshot_names_the_assumed_subject",
   "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_matches_checked_reports",
   "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v2_matches_checked_reports",
   "crates/ripr/tests/cli_smoke.rs::calibration_runtime_fixture_v3_matches_checked_reports",
@@ -13269,20 +13280,30 @@ tests = [
   "xtask/src/reports/verdict_corpus_tests.rs::a_report_and_its_rebless_hint_name_the_corpus_language",
   "xtask/src/reports/verdict_corpus_tests.rs::only_a_rust_corpus_holds_labels_to_cargo_commands_and_rust_test_names",
   "xtask/src/reports/verdict_corpus_tests.rs::committed_typescript_corpus_is_valid_and_its_rows_agree_with_its_labels",
+  "xtask/src/reports/verdict_corpus_tests.rs::committed_perl_corpus_is_valid_and_covers_each_test_library",
+  "xtask/src/reports/verdict_corpus_tests.rs::perl_expected_rows_agree_with_corpus_labels",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_holds_perl_packets_to_their_pins_and_provenance",
+  "xtask/src/reports/verdict_corpus_tests.rs::validator_refuses_perl_facts_and_a_producer_outside_the_perl_corpus",
+  "xtask/src/reports/verdict_corpus_tests.rs::packet_findings_count_while_their_subject_is_unresolved_and_others_do_not",
+  "xtask/src/reports/verdict_corpus_tests.rs::report_keeps_edited_packet_rates_apart_from_producer_rates",
+  "xtask/src/reports/verdict_corpus_tests.rs::a_packet_case_refuses_a_binary_without_the_perl_adapter",
   "xtask/src/reports/verdict_corpus_tests.rs::committed_python_corpus_is_valid_and_covers_each_test_library",
   "xtask/src/reports/verdict_corpus_tests.rs::python_expected_rows_agree_with_corpus_labels",
 ]
 fixtures = [
   "fixtures/rust-verdict-corpus",
   "fixtures/typescript-verdict-corpus",
+  "fixtures/perl-verdict-corpus",
   "fixtures/python-verdict-corpus",
 ]
 code = [
   "xtask/src/reports/verdict_corpus.rs",
+  "xtask/src/reports/fixtures.rs",
 ]
 outputs = [
   "fixtures/rust-verdict-corpus/expected/rows",
   "fixtures/typescript-verdict-corpus/expected/rows",
+  "fixtures/perl-verdict-corpus/expected/rows",
   "fixtures/python-verdict-corpus/expected/rows",
 ]
 metrics = [
@@ -14021,10 +14042,16 @@ metrics = [
 id = "RIPR-SPEC-0231"
 name = "Rust oracle kind and strength admission"
 spec = "docs/specs/RIPR-SPEC-0231-rust-oracle-kind-admission.md"
-tests = []
+tests = [
+  "crates/ripr/src/analysis/classify/reveal.rs",
+  "crates/ripr/src/analysis/extract/oracles/classify.rs",
+  "crates/ripr/src/analysis/extract/oracles/pattern_admission.rs",
+]
 fixtures = []
 code = [
+  "crates/ripr/src/analysis/classify/reveal.rs",
   "crates/ripr/src/analysis/extract/oracles/classify.rs",
+  "crates/ripr/src/analysis/extract/oracles/pattern_admission.rs",
   "crates/ripr/src/analysis/extract/oracles/patterns.rs",
   "crates/ripr/src/analysis/extract/oracles/scan.rs",
 ]

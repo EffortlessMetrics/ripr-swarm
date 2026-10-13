@@ -1,0 +1,23 @@
+{
+  "case_id": "perl-test2-summary-deep-is-count",
+  "subject_id": "authored-perl-test2-ledger",
+  "origin": "authored",
+  "anchor": "lib/Ledger.pm:13",
+  "behavior_family": "hash_field_value",
+  "test_shape": "test2_is_deep_hash",
+  "hard_case": false,
+  "truth": "discriminated",
+  "ideal_verdict": "credited",
+  "observed_verdict": "credited",
+  "followed_retarget": false,
+  "changed_since_labeling": false,
+  "observed_classifications": [
+    "exposed"
+  ],
+  "outcome": "ideal",
+  "contradictions": [],
+  "findings_scored": 1,
+  "findings_contradicted": 0,
+  "contradiction_counts": {},
+  "packet_provenance": "producer"
+}

@@ -124,6 +124,7 @@ pub(in crate::analysis) fn build_finding(
         annotate_related_test_misses(
             &mut related_tests,
             &class,
+            context.owner_fn.is_some(),
             &context.probe.family,
             &evidence.activation,
             unconfirmed,
@@ -193,6 +194,7 @@ enum Unconfirmed {
 fn annotate_related_test_misses(
     related_tests: &mut [RelatedTest],
     class: &ExposureClass,
+    owner_is_function: bool,
     family: &ProbeFamily,
     activation: &ActivationEvidence,
     unconfirmed: Unconfirmed,
@@ -206,19 +208,21 @@ fn annotate_related_test_misses(
         .map(|test| strength_rank(&test.oracle_strength))
         .min();
     if matches!(class, ExposureClass::NoStaticPath) {
-        // #6580: reach is `No` only when every owner-anchored row is
-        // proximity-only and seam-callee rows are set aside (`reach_evidence`),
-        // so such a row never calls the owner and that is why it misses. An
+        // #6580: reach is `No` only when no row establishes reach
+        // (`RelationReason::establishes_reach`, the rule `reach_evidence`
+        // reads, #7531), so such a row never calls the owner and that is why
+        // it misses. An
         // assertion-level reason `reveal` recorded first
         // (`assertion_not_credited`) would point the reader at assertion
         // admission instead of the missing call. An `assertion_not_observing`
         // row keeps its miss: that value is what marks it examined-only
         // (`RelatedTest::is_unmatched`), and the no-static-path reach limit
         // and fix-site selection read `oracle_related_tests` through it.
-        for test in related_tests
-            .iter_mut()
-            .filter(|test| test.relation_reason.is_none_or(reaches_nothing) && !test.is_unmatched())
-        {
+        for test in related_tests.iter_mut().filter(|test| {
+            test.relation_reason
+                .is_none_or(|reason| !reason.establishes_reach(owner_is_function))
+                && !test.is_unmatched()
+        }) {
             test.miss = Some(RelatedTestMiss::NoCallPath);
         }
     }
@@ -253,12 +257,6 @@ fn annotate_related_test_misses(
             _ => None,
         };
     }
-}
-
-/// Relations `reach_evidence` does not count as reaching the owner
-/// ([`RelationReason::reaches_owner`]).
-fn reaches_nothing(reason: RelationReason) -> bool {
-    !reason.reaches_owner()
 }
 
 /// Strongest first.
@@ -560,6 +558,7 @@ mod tests {
         annotate_related_test_misses(
             &mut rows,
             &crate::domain::ExposureClass::WeaklyExposed,
+            true,
             &ProbeFamily::CallDeletion,
             &ActivationEvidence::default(),
             Unconfirmed::StrongestRank,
@@ -611,10 +610,17 @@ mod tests {
                 RelationReason::OwnerNamedTest,
                 Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
             ),
+            row(
+                "assertion_target_refused",
+                RelationReason::AssertionTargetAffinity,
+                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+            ),
         ];
+        let mut module_owner_rows = rows.clone();
         annotate_related_test_misses(
             &mut rows,
             &crate::domain::ExposureClass::NoStaticPath,
+            true,
             &ProbeFamily::ReturnValue,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
@@ -627,8 +633,25 @@ mod tests {
                 Some(crate::domain::RelatedTestMiss::AssertionNotObserving),
                 Some(crate::domain::RelatedTestMiss::NoCallPath),
                 Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
-                Some(crate::domain::RelatedTestMiss::AssertionNotCredited),
+                // #7531: a test named after a function owner, or asserting
+                // a token it names, never has to run it (#5335).
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
+                Some(crate::domain::RelatedTestMiss::NoCallPath),
             ]
+        );
+        // For an owner without a function, the assertion-target affinity is
+        // how the owner is observed, so that row keeps reveal's reason.
+        annotate_related_test_misses(
+            &mut module_owner_rows,
+            &crate::domain::ExposureClass::NoStaticPath,
+            false,
+            &ProbeFamily::ReturnValue,
+            &ActivationEvidence::default(),
+            Unconfirmed::Confirmed,
+        );
+        assert_eq!(
+            module_owner_rows.last().and_then(|row| row.miss),
+            Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
         );
 
         let mut gap = vec![row(
@@ -639,6 +662,7 @@ mod tests {
         annotate_related_test_misses(
             &mut gap,
             &crate::domain::ExposureClass::WeaklyExposed,
+            true,
             &ProbeFamily::ReturnValue,
             &ActivationEvidence::default(),
             Unconfirmed::Confirmed,
@@ -659,6 +683,7 @@ mod tests {
         annotate_related_test_misses(
             &mut rows,
             &crate::domain::ExposureClass::WeaklyExposed,
+            true,
             &ProbeFamily::CallDeletion,
             &ActivationEvidence::default(),
             Unconfirmed::AllRows,
