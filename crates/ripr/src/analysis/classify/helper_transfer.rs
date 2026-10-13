@@ -1139,7 +1139,7 @@ fn caller_oracles_are_all_weak(
 /// See [`caller_oracles_are_all_weak`]: the condition of a plain `assert!`.
 fn condition_is_weak(condition: &str) -> bool {
     use ra_ap_syntax::AstNode;
-    use ra_ap_syntax::ast::{self, BinaryOp, CmpOp};
+    use ra_ap_syntax::ast::{self, BinaryOp, CmpOp, HasArgList};
     let source = format!("fn __condition() {{ {} }}", condition.trim());
     let Some(parse) = crate::analysis::syntax::parse_clean_source_file(&source) else {
         return false;
@@ -1165,31 +1165,77 @@ fn condition_is_weak(condition: &str) -> bool {
     }
     match expr {
         Some(ast::Expr::BinExpr(bin)) => {
-            let ordering_or_not_equal = matches!(
+            matches!(
                 bin.op_kind(),
                 Some(BinaryOp::CmpOp(
                     CmpOp::Ord { .. } | CmpOp::Eq { negated: true }
                 ))
-            );
-            let bool_literal = [bin.lhs(), bin.rhs()].into_iter().flatten().any(|side| {
-                matches!(
-                    side,
-                    ast::Expr::Literal(literal)
-                        if matches!(literal.kind(), ast::LiteralKind::Bool(_))
-                )
-            });
-            let cast = bin
-                .syntax()
-                .descendants()
-                .any(|node| ast::CastExpr::can_cast(node.kind()));
-            ordering_or_not_equal && !bool_literal && !cast
+            ) && [bin.lhs(), bin.rhs()]
+                .into_iter()
+                .all(|side| side.is_some_and(|side| plain_operand(&side)))
         }
-        Some(ast::Expr::MethodCallExpr(call)) => call.name_ref().is_some_and(|name| {
-            matches!(
-                name.text(),
-                "is_empty" | "is_some" | "is_none" | "is_ok" | "is_err"
-            )
-        }),
+        Some(ast::Expr::MethodCallExpr(call)) => {
+            call.arg_list()
+                .is_some_and(|args| args.args().next().is_none())
+                && call
+                    .receiver()
+                    .is_some_and(|receiver| plain_call(&receiver))
+                && call.name_ref().is_some_and(|name| {
+                    matches!(
+                        name.text(),
+                        "is_empty" | "is_some" | "is_none" | "is_ok" | "is_err"
+                    )
+                })
+        }
+        _ => false,
+    }
+}
+
+/// An operand of a weak comparison (#7549 Devin review): a non-`bool`
+/// literal, a plain call [`plain_call`], or `<plain call>.len()`. Anything
+/// else, such as `banner().strip_prefix("ripr!").map(..)`, a cast or a
+/// local binding, may already hold an exact decision on the caller's value.
+fn plain_operand(expr: &ra_ap_syntax::ast::Expr) -> bool {
+    use ra_ap_syntax::ast::{self, HasArgList};
+    match expr {
+        ast::Expr::Literal(literal) => !matches!(literal.kind(), ast::LiteralKind::Bool(_)),
+        ast::Expr::ParenExpr(paren) => paren.expr().is_some_and(|inner| plain_operand(&inner)),
+        ast::Expr::MethodCallExpr(call) => {
+            call.name_ref().is_some_and(|name| name.text() == "len")
+                && call
+                    .arg_list()
+                    .is_some_and(|args| args.args().next().is_none())
+                && call
+                    .receiver()
+                    .is_some_and(|receiver| plain_call(&receiver))
+        }
+        _ => plain_call(expr),
+    }
+}
+
+/// A call through a path (`banner()`, `titled("!")`, `a::b(c)`) whose
+/// arguments are non-`bool` literals, paths or references to them: the
+/// value the caller returns, with nothing applied to it.
+fn plain_call(expr: &ra_ap_syntax::ast::Expr) -> bool {
+    use ra_ap_syntax::ast::{self, HasArgList};
+    fn plain_argument(argument: &ast::Expr) -> bool {
+        match argument {
+            ast::Expr::Literal(literal) => !matches!(literal.kind(), ast::LiteralKind::Bool(_)),
+            ast::Expr::PathExpr(_) => true,
+            ast::Expr::RefExpr(reference) => {
+                reference.expr().is_some_and(|inner| plain_argument(&inner))
+            }
+            _ => false,
+        }
+    }
+    match expr {
+        ast::Expr::ParenExpr(paren) => paren.expr().is_some_and(|inner| plain_call(&inner)),
+        ast::Expr::CallExpr(call) => {
+            matches!(call.expr(), Some(ast::Expr::PathExpr(_)))
+                && call
+                    .arg_list()
+                    .is_some_and(|args| args.args().all(|argument| plain_argument(&argument)))
+        }
         _ => false,
     }
 }
@@ -1253,7 +1299,9 @@ fn returns_std_scalar_or_string(body: &str) -> bool {
 /// argument-free methods `to_string`/`to_owned`/`clone`; its only
 /// operator is `+` with a string literal operand; its only macros are
 /// `format!` and `concat!`, whose tokens name only the callee, the caller's
-/// parameters and those methods; and it holds no branch, loop, early exit,
+/// parameters and those methods; its body is one tail expression naming
+/// the callee, so the call is never evaluated and discarded; and it holds
+/// no branch, loop, early exit,
 /// `?`, cast, closure, index or other operator. `format!("[{}]", title())`
 /// and `title().to_string() + "!"` carry data. A decision on the value,
 /// in the caller (`if title() == "ripr" {..}`) or in anything it calls
@@ -1292,6 +1340,21 @@ fn caller_carries_callee_as_data(body: &str, callee: &str) -> bool {
     let Some(block) = function.body() else {
         return false;
     };
+    // #7549 Devin review: the callee's value must reach the return. A body
+    // of one tail expression that names the callee leaves no statement in
+    // which the call could be evaluated and discarded.
+    let Some(statements) = block.stmt_list() else {
+        return false;
+    };
+    let tail_names_callee = statements.tail_expr().is_some_and(|tail| {
+        tail.syntax()
+            .descendants_with_tokens()
+            .filter_map(|element| element.into_token())
+            .any(|token| token.kind() == SyntaxKind::IDENT && token.text() == callee)
+    });
+    if statements.statements().next().is_some() || !tail_names_callee {
+        return false;
+    }
     let string_literal = |expr: Option<ast::Expr>| {
         matches!(
             expr,

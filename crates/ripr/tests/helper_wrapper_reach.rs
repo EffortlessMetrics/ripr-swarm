@@ -1010,6 +1010,24 @@ fn caller_that_branches_on_the_owner_abstains_under_a_loose_check() -> Result<()
             "pub fn mode() -> String {\n    title().into()\n}",
             "assert!(!mode().is_empty());",
         ),
+        // Devin review: a discarded call, and an exact decision under a
+        // loose projection or comparison.
+        (
+            "pub fn banner() -> String {\n    let _ignored = title();\n    String::from(\"fixed\")\n}",
+            "assert!(!banner().is_empty());",
+        ),
+        (
+            "pub fn banner() -> String {\n    title().to_string() + \"!\"\n}",
+            "assert!(banner().strip_prefix(\"ripr!\").is_some());",
+        ),
+        (
+            "pub fn banner() -> String {\n    title().to_string() + \"!\"\n}",
+            "assert!(banner().find(\"ripr\").unwrap_or(9) < 1);",
+        ),
+        (
+            "pub fn banner() -> String {\n    title().to_string() + \"!\"\n}",
+            "let shown = banner();\n        assert!(shown.len() > 0);",
+        ),
     ] {
         assert_abstains_through_hop(&title_item_finding(item, test)?, test);
     }

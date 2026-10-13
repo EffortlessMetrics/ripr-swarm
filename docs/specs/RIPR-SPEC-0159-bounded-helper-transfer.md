@@ -130,7 +130,9 @@ can only hint that a caller "may lead here" without changing anything.
   the callee declares a std string or scalar return type (`&str`,
   `&'static str`, `String`, `char`, an integer or a float), since a user
   type's `Display`, `Clone`, `From` or `Add` impl may decide on the value;
-  the caller parses cleanly and does not return `bool`; it calls only its
+  the caller parses cleanly, does not return `bool`, and its body is one
+  tail expression naming the callee, so no call is evaluated and
+  discarded; it calls only its
   callee, `Some`/`Ok`/`Err`/`String::from`/`Box::new` and the
   argument-free methods `to_string`/`to_owned`/`clone`; its only
   operator is `+` with a string literal operand; its only macros are
@@ -142,9 +144,13 @@ can only hint that a caller "may lead here" without changing anything.
   `unwrap` or `expect`; and those tests hold at least one assertion, each
   a relational, broad-error or smoke oracle written as a plain `assert!`
   whose condition, under any `!` or parentheses, is an ordering or `!=`
-  comparison with no `bool` literal and no cast
-  (`assert!(banner().len() > 0)`) or an
-  `is_empty`/`is_some`/`is_none`/`is_ok`/`is_err` projection. The caller
+  comparison whose operands are each a non-`bool` literal, a plain call or
+  a plain call's `.len()` (`assert!(banner().len() > 0)`), or an
+  argument-free `is_empty`/`is_some`/`is_none`/`is_ok`/`is_err` directly on
+  a plain call (`assert!(!banner().is_empty())`). A plain call is a path
+  call whose arguments are non-`bool` literals, paths or references to
+  them; a local binding, a cast or any other method in between
+  (`banner().strip_prefix("ripr!").is_some()`) may hold an exact decision. The caller
   then hands the owner's value on as data and the oracle cannot
   discriminate that data exactly, so the existing evidence (the weak
   oracle's gap) stands without pairing. A caller that decides on the
