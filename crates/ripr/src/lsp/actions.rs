@@ -273,7 +273,8 @@ fn disable_action_in_place(action: &mut CodeAction, reason: ActionDisabledReason
 
 /// Presentation for the backend's blocked-health/retained-snapshot case.
 /// Reuse the existing constructors and inert conversion; leave refresh
-/// active and preserve existing producer refusals that need another remedy.
+/// active, preserve existing stale-snapshot and route/static refusals, and
+/// update other disabled actions with the current health guidance.
 pub(super) fn disable_retained_analysis_actions(
     actions: &mut CodeActionResponse,
     health: &AnalysisHealth,
@@ -282,11 +283,24 @@ pub(super) fn disable_retained_analysis_actions(
         let CodeActionOrCommand::CodeAction(action) = action else {
             continue;
         };
+        let refusal = action
+            .data
+            .as_ref()
+            .and_then(|data| data.get("disabled_reason"))
+            .and_then(Value::as_str);
         if action
             .diagnostics
             .as_ref()
             .is_none_or(|diagnostics| diagnostics.is_empty())
-            || action.disabled.is_some()
+            || matches!(
+                refusal,
+                Some(
+                    "stale_snapshot"
+                        | "verification_route_unavailable"
+                        | "receipt_route_unavailable"
+                        | "preview_or_static_limitation"
+                )
+            )
         {
             continue;
         }
