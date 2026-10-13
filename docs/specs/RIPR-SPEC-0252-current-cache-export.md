@@ -8,8 +8,10 @@ Created: 2026-10-12
 
 Linked issues: [#7517](https://github.com/EffortlessMetrics/ripr-swarm/issues/7517).
 
-Support-tier impact: none. Selection changes retained cache membership, not
-analysis coverage, evidence classes or support tiers.
+Support-tier impact: None
+
+Selection changes retained cache membership, not analysis coverage, evidence
+classes or support tiers.
 
 Policy impact: no dependency, network, workflow or security-policy changes.
 Implicit root resolution retains the existing bounded Git child probe; export
