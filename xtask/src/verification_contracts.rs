@@ -2198,8 +2198,7 @@ mod tests {
         // computed helper-hop boundary unresolved rather than missing, and
         // `rust_async_fn_owner` no longer names one since #6781 resolved its
         // tail `if`/`else` propagation sink.
-        let golden =
-            read_json(root.join("fixtures/mixed_rust_typescript_preview/expected/check.json"))?;
+        let golden = read_json(root.join("fixtures/ts_no_verify_command/expected/check.json"))?;
         // The first finding that names a missing discriminator.
         let finding = golden["findings"]
             .as_array()
