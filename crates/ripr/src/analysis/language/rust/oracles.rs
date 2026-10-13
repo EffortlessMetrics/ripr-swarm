@@ -312,19 +312,35 @@ pub(super) fn apply_unresolved_property_macro_limit(
     true
 }
 
-pub(super) fn apply_rust_macro_wrapped_assertion_limit(finding: &mut Finding, index: &RustIndex) {
-    if !(finding.class == ExposureClass::ReachableUnrevealed
+pub(super) fn apply_rust_macro_wrapped_assertion_limit(
+    finding: &mut Finding,
+    index: &RustIndex,
+    owner_name: Option<&str>,
+) {
+    if finding.static_limit_kind.is_some() {
+        return;
+    }
+    let witness = if finding.class == ExposureClass::ReachableUnrevealed
         && finding.oracle_related_tests().next().is_some()
-        && finding.static_limit_kind.is_none()
         && finding.ripr.reveal.observe.state == crate::domain::StageState::No
         && finding
             .oracle_related_tests()
-            .all(|related| related.oracle.is_none()))
+            .all(|related| related.oracle.is_none())
     {
+        find_unresolved_assertion_macro_witness(finding, index, None)
+    } else if let Some(owner_name) = owner_name
+        && only_proximity_tests_supply_an_oracle(finding)
+    {
+        // #7089: a weak oracle from a test that only shares the owner's file
+        // made the finding `weakly_exposed`, while every test that calls the
+        // owner has no recognized oracle. When one of those tests calls the
+        // owner inside an assertion-like macro ripr cannot read, that macro
+        // is the likely discriminator, so name the limit instead of a gap.
+        find_unresolved_assertion_macro_witness(finding, index, Some(owner_name))
+    } else {
         return;
-    }
-
-    let Some(witness) = find_unresolved_assertion_macro_witness(finding, index) else {
+    };
+    let Some(witness) = witness else {
         return;
     };
 
@@ -397,9 +413,52 @@ struct RustMacroAssertionWitness {
     macro_line: usize,
 }
 
+/// A relation that rests on the test calling or reaching the owner, not on
+/// file proximity or a name token (`owner_named_test` is name-only too).
+fn is_direct_relation(reason: Option<crate::domain::RelationReason>) -> bool {
+    reason.is_some_and(|reason| {
+        !crate::analysis::classify::is_proximity_only(reason)
+            && reason != crate::domain::RelationReason::OwnerNamedTest
+    })
+}
+
+/// A `weakly_exposed` finding whose recognized oracles all come from tests
+/// related only by proximity or name, while at least one directly related
+/// test exists and none has an oracle. A truncated related-test window may
+/// hide a direct test's oracle, so it never qualifies.
+fn only_proximity_tests_supply_an_oracle(finding: &Finding) -> bool {
+    if finding.class != ExposureClass::WeaklyExposed
+        || finding
+            .related_tests_matched_total
+            .is_some_and(|total| total > finding.related_tests.len())
+    {
+        return false;
+    }
+    let mut direct_seen = false;
+    let mut proximity_oracle_seen = false;
+    for related in finding.oracle_related_tests() {
+        let direct = is_direct_relation(related.relation_reason);
+        if related.relation_reason.is_none() || direct {
+            // A refused assertion is still an assertion ripr judged.
+            if related.oracle.is_some()
+                || related.miss == Some(crate::domain::RelatedTestMiss::AssertionNotCredited)
+            {
+                return false;
+            }
+            direct_seen |= direct;
+        } else if related.oracle.is_some() {
+            proximity_oracle_seen = true;
+        }
+    }
+    direct_seen && proximity_oracle_seen
+}
+
+/// With `owner_in_arguments`, only a test related by a direct relation counts,
+/// and the macro's own arguments must call that owner.
 fn find_unresolved_assertion_macro_witness(
     finding: &Finding,
     index: &RustIndex,
+    owner_in_arguments: Option<&str>,
 ) -> Option<RustMacroAssertionWitness> {
     let mut candidates = Vec::new();
     for test in index
@@ -407,14 +466,15 @@ fn find_unresolved_assertion_macro_witness(
         .iter()
         .chain(index.files().values().flat_map(|file| file.tests.iter()))
     {
-        if !finding
-            .oracle_related_tests()
-            .any(|related| related.name == test.name && related.file == test.file)
-        {
+        if !finding.oracle_related_tests().any(|related| {
+            related.name == test.name
+                && related.file == test.file
+                && (owner_in_arguments.is_none() || is_direct_relation(related.relation_reason))
+        }) {
             continue;
         }
         for (macro_name, macro_line) in
-            unresolved_assertion_macro_invocations(&test.body, test.start_line)
+            unresolved_assertion_macro_invocations(&test.body, test.start_line, owner_in_arguments)
         {
             candidates.push(RustMacroAssertionWitness {
                 test_name: test.name.clone(),
@@ -430,9 +490,20 @@ fn find_unresolved_assertion_macro_witness(
     candidates.into_iter().next()
 }
 
-fn unresolved_assertion_macro_invocations(body: &str, start_line: usize) -> Vec<(String, usize)> {
+fn unresolved_assertion_macro_invocations(
+    body: &str,
+    start_line: usize,
+    owner_in_arguments: Option<&str>,
+) -> Vec<(String, usize)> {
     let mut invocations = Vec::new();
     let masked_body = mask_rust_comments_and_strings(body);
+    let line_starts: Vec<usize> = std::iter::once(0)
+        .chain(
+            masked_body
+                .match_indices('\n')
+                .map(|(offset, _)| offset + 1),
+        )
+        .collect();
     for (offset, line) in masked_body.lines().enumerate() {
         let mut search_start = 0usize;
         while let Some(relative_bang) = line[search_start..].find('!') {
@@ -455,12 +526,86 @@ fn unresolved_assertion_macro_invocations(body: &str, start_line: usize) -> Vec<
             if !is_unresolved_assertion_like_macro(&macro_name) {
                 continue;
             }
+            if let Some(owner_name) = owner_in_arguments {
+                let Some(&line_start) = line_starts.get(offset) else {
+                    continue;
+                };
+                if !macro_arguments_call(&masked_body, line_start + bang + 1, owner_name) {
+                    continue;
+                }
+            }
             invocations.push((macro_name, start_line + offset));
         }
     }
     invocations.sort();
     invocations.dedup();
     invocations
+}
+
+/// Whether the delimited arguments that open after `after_bang` contain a bare
+/// call `owner_name(`, read from masked text. A path- or method-qualified call
+/// (`Bar::new(`, `x.len(`) may name a different item with the same last
+/// segment, so it does not count; neither does an argument list that runs
+/// past a `;` or holds a `'`: char literals are not masked, so `'('` can
+/// unbalance the delimiters. The `'` refusal deliberately covers lifetimes
+/// and labels too (`bulk::<'static>(1)`); the delimiter walk cannot tell
+/// them apart, so narrowing it to char literals would need a real lexer. Arguments holding a nested macro invocation
+/// (`stringify!(owner(1))`) do not count either, since that macro may never
+/// evaluate the call.
+fn macro_arguments_call(masked: &str, after_bang: usize, owner_name: &str) -> bool {
+    let Some(rest) = masked.get(after_bang..) else {
+        return false;
+    };
+    let Some(open) = rest.find(|ch: char| !ch.is_whitespace()) else {
+        return false;
+    };
+    let bytes = rest.as_bytes();
+    if !matches!(bytes.get(open), Some(b'(' | b'[' | b'{')) {
+        return false;
+    }
+    let mut depth = 0usize;
+    let mut close = None;
+    for (index, &byte) in bytes.iter().enumerate().skip(open) {
+        match byte {
+            b';' if depth == 1 && bytes[open] != b'{' => return false,
+            b'(' | b'[' | b'{' => depth += 1,
+            b')' | b']' | b'}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    close = Some(index);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let Some(arguments) = close.and_then(|close| rest.get(open + 1..close)) else {
+        return false;
+    };
+    if arguments.contains('\'') || contains_macro_invocation(arguments) {
+        return false;
+    }
+    arguments.match_indices(owner_name).any(|(start, _)| {
+        let qualified_or_ident = arguments[..start]
+            .trim_end()
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_alphanumeric() || matches!(ch, '_' | ':' | '.'));
+        let after = &arguments[start + owner_name.len()..];
+        !qualified_or_ident && after.trim_start().starts_with('(')
+    })
+}
+
+fn contains_macro_invocation(text: &str) -> bool {
+    text.match_indices('!').any(|(bang, _)| {
+        let before = text[..bang].trim_end();
+        let after = text[bang + 1..].trim_start();
+        before
+            .chars()
+            .next_back()
+            .is_some_and(|ch| ch.is_alphanumeric() || ch == '_')
+            && after.starts_with(['(', '[', '{'])
+    })
 }
 
 fn macro_name_before_bang(line: &str, bang: usize) -> Option<String> {
@@ -840,8 +985,57 @@ mod tests {
         let invocations = unresolved_assertion_macro_invocations(
             "let ok = flag != false;\nlet _ = assert_ok!(value);\nmacro_rules! assert_ok { () => {}; }\n",
             4,
+            None,
         );
         assert_eq!(invocations, vec![("assert_ok".to_string(), 5)]);
+    }
+
+    #[test]
+    fn owner_scoped_assertion_scan_requires_an_owner_call_in_the_arguments() {
+        let body = "{\n    assert_flag!(bulk(100), true);\n    assert_flag!(bulky(1), true);\n    assert_delta!(\n        0.5,\n        score(\"bulk(\")\n    );\n    assert_flag!(bulk, true); // bulk(1)\n    assert_close!(\n        0.0,\n        other.bulk (2)\n    );\n}\n";
+        // Only the first invocation calls the owner bare; a string, a
+        // comment, a longer identifier, a bare path and a method call on
+        // another value do not.
+        assert_eq!(
+            unresolved_assertion_macro_invocations(body, 10, Some("bulk")),
+            vec![("assert_flag".to_string(), 11)]
+        );
+        // Without an owner every assertion-like invocation is listed.
+        assert_eq!(
+            unresolved_assertion_macro_invocations(body, 10, None).len(),
+            5
+        );
+        // A same-named item on another path, and arguments that an unmasked
+        // char literal lets run past the statement, do not count.
+        let tricky = "{\n    assert_custom!(Bar::bulk(2).is_ok());\n    assert_custom!(c == '('); let _ = bulk(1);\n    assert_twice!(c == '(' || c == '(');\n    let _ = bulk(1);\n    let close = (')', ')');\n    assert_quoted!(stringify!(bulk(1)), \"bulk(1)\");\n    assert_multi!(\n        0.5,\n        bulk (3)\n    );\n}\n";
+        assert_eq!(
+            unresolved_assertion_macro_invocations(tricky, 1, Some("bulk")),
+            vec![("assert_multi".to_string(), 8)]
+        );
+        // Empty and whitespace-only argument spans name no call.
+        assert!(!super::macro_arguments_call("assert_empty!();", 13, "bulk"));
+        assert!(!super::macro_arguments_call(
+            "assert_space!(   );",
+            13,
+            "bulk"
+        ));
+        assert!(!super::macro_arguments_call("assert_open!(", 12, "bulk"));
+        assert!(super::macro_arguments_call(
+            "assert_flag!(bulk(1));",
+            12,
+            "bulk"
+        ));
+        // Non-ASCII identifier characters qualify a name or a nested macro.
+        assert!(!super::macro_arguments_call(
+            "assert_flag!(quoté!(bulk(1)));",
+            12,
+            "bulk"
+        ));
+        assert!(!super::macro_arguments_call(
+            "assert_flag!(ébulk(1));",
+            12,
+            "bulk"
+        ));
     }
 
     #[test]
@@ -861,7 +1055,7 @@ mod tests {
             ..Default::default()
         });
 
-        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, None);
 
         assert_eq!(
             finding.static_limit_kind,
@@ -884,6 +1078,83 @@ mod tests {
         }));
     }
 
+    /// #7089: a `weakly_exposed` finding whose direct test calls `inner`
+    /// inside `assert_result!` and whose only oracle sits in a test that
+    /// shares the file.
+    fn weakly_exposed_beside_a_proximity_oracle() -> (Finding, RustIndex) {
+        use crate::domain::RelationReason;
+        let mut finding =
+            reachable_unrevealed_finding_with_related_test("direct_inner", "src/lib.rs", 20);
+        finding.class = ExposureClass::WeaklyExposed;
+        finding.related_tests[0].relation_reason = Some(RelationReason::DirectOwnerCall);
+        let mut proximity = finding.related_tests[0].clone();
+        proximity.name = "other_is_positive".to_string();
+        proximity.line = 30;
+        proximity.relation_reason = Some(RelationReason::SameTestFile);
+        proximity.oracle = Some("assert!(other(1) > 0);".to_string());
+        proximity.oracle_strength = OracleStrength::Weak;
+        finding.related_tests.push(proximity);
+        let index = RustIndex::from_owned(crate::analysis::facts::OwnedRustIndex {
+            tests: vec![test_summary(
+                "direct_inner",
+                "src/lib.rs",
+                20,
+                "assert_result!(inner(10, 3), 7);",
+            )],
+            ..Default::default()
+        });
+        (finding, index)
+    }
+
+    #[test]
+    fn weakly_exposed_limit_needs_a_complete_direct_window_and_a_proximity_oracle() {
+        use crate::domain::RelationReason;
+        let (mut finding, index) = weakly_exposed_beside_a_proximity_oracle();
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, Some("inner"));
+        assert_eq!(
+            finding.static_limit_kind,
+            Some(StaticLimitKind::RustMacroWrappedAssertionUnresolved)
+        );
+
+        // Without the owner name the weakly_exposed path does not run.
+        let (mut finding, index) = weakly_exposed_beside_a_proximity_oracle();
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, None);
+        assert_eq!(finding.static_limit_kind, None);
+
+        // A truncated window may hide a direct test's own oracle.
+        let (mut finding, index) = weakly_exposed_beside_a_proximity_oracle();
+        finding.related_tests_matched_total = Some(finding.related_tests.len() + 1);
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, Some("inner"));
+        assert_eq!(finding.static_limit_kind, None);
+
+        // No proximity oracle: the weakness is not explained by proximity.
+        let (mut finding, index) = weakly_exposed_beside_a_proximity_oracle();
+        finding.related_tests[1].oracle = None;
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, Some("inner"));
+        assert_eq!(finding.static_limit_kind, None);
+
+        // A test with no relation reason that holds an oracle may be direct.
+        let (mut finding, index) = weakly_exposed_beside_a_proximity_oracle();
+        let mut unknown = finding.related_tests[1].clone();
+        unknown.name = "unknown_relation".to_string();
+        unknown.relation_reason = None;
+        finding.related_tests.push(unknown);
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, Some("inner"));
+        assert_eq!(finding.static_limit_kind, None);
+
+        // A direct test whose assertion ripr refused still had one judged.
+        let (mut finding, index) = weakly_exposed_beside_a_proximity_oracle();
+        finding.related_tests[0].miss = Some(crate::domain::RelatedTestMiss::AssertionNotCredited);
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, Some("inner"));
+        assert_eq!(finding.static_limit_kind, None);
+
+        // A name-only relation is not a direct test.
+        let (mut finding, index) = weakly_exposed_beside_a_proximity_oracle();
+        finding.related_tests[0].relation_reason = Some(RelationReason::OwnerNamedTest);
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, Some("inner"));
+        assert_eq!(finding.static_limit_kind, None);
+    }
+
     #[test]
     fn macro_wrapped_assertion_limit_ignores_known_assertion_macros() {
         let mut finding = reachable_unrevealed_finding_with_related_test(
@@ -901,7 +1172,7 @@ mod tests {
             ..Default::default()
         });
 
-        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, None);
 
         assert_eq!(finding.static_limit_kind, None);
         assert!(finding.evidence.is_empty());
@@ -929,7 +1200,7 @@ let _ = (result, note, raw);"##,
             ..Default::default()
         });
 
-        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index);
+        apply_rust_macro_wrapped_assertion_limit(&mut finding, &index, None);
 
         assert_eq!(finding.static_limit_kind, None);
         assert!(finding.evidence.is_empty());
