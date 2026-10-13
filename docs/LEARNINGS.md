@@ -7,10 +7,16 @@ sessions. It is intentionally short and actionable.
 
 The MCP response bound is 128 KiB. One canonical item can exceed it. The
 failure used to say "read narrower evidence (one item through ripr_get_gap)",
-which is the call that just failed. That recovery stays on `ripr_list_gaps`
-only as a page-smaller instruction. A too-large item names `ripr check
---format json` outside MCP and says `ripr_get_gap` cannot return it. Other
-tools name their own next read, or say there is no narrower MCP read.
+which is the call that just failed. A too-large item now names `ripr check
+--committed --format json` outside MCP — `--committed` because the snapshot
+analyzed the committed default-branch diff, and a plain `ripr check` on a
+dirty tracked worktree silently analyzes a different diff — and discloses
+that the CLI JSON is a bounded summary (related tests cap per finding, a
+large findings array can omit findings). Recovery advice must be reachable:
+`ripr_list_gaps` byte-fits every page and refuses when nothing fits (#6021),
+so its overflow guard says there is no narrower read instead of promising a
+smaller-limit page no caller can need. Other tools name their own next read,
+or say there is no narrower MCP read.
 ## 2026-10-12: Calibrate joins are identity-blind; disclose like outcome (#7449)
 
 `ripr calibrate cargo-mutants` joins by `seam_id` / span / file+line. It
