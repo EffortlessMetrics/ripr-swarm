@@ -3,6 +3,15 @@
 This log captures repo knowledge that should survive individual PRs and chat
 sessions. It is intentionally short and actionable.
 
+## 2026-10-13: `HEAD~N` past local history is not a missing remote (#7653)
+
+`missing_ref_repair` used the remote-count arms for every unqualified ref.
+`HEAD~99` and `main^2` are ancestry of a ref that already resolves. Adding
+or fetching a remote cannot create them. When the repository is not shallow
+and the ancestry base resolves, say how many commits that base reaches.
+Keep the shallow `--unshallow` arm and the `origin/main` arms. A suffix on
+a base that does not resolve (`no-such~1`) still uses the remote advice.
+
 ## 2026-10-12: A timed-out pilot packet must not keep the previous run's repo-exposure (#7425)
 
 `ripr pilot` reuses `--out`. The timeout path writes only `pilot-summary.{json,md}`.

@@ -1158,16 +1158,19 @@ fn remote_name_is_plain(name: &str) -> bool {
 
 /// The repair for a revision that does not resolve. `git fetch` never
 /// deepens a shallow clone, so an ancestor such as `HEAD~5` needs the
-/// unshallow repair there. Otherwise the advice follows the repo's own
-/// remote configuration instead of prescribing `origin`: a remote-qualified
-/// ref (`origin/main`) names its own remote when that remote is configured
-/// (fetching it restores the ref even when the branch tracks elsewhere) and
-/// names the add-remote step when it is not; an unqualified ref with no
-/// remote names the add-remote step, with exactly one remote names that
-/// remote, and with several remotes (or a probe that cannot answer) falls
-/// back to plain `git fetch`, which follows the default remote. Per-remote
-/// ref discovery for an unqualified ref (which of several remotes tracks
-/// it) would need network probes and stays out.
+/// unshallow repair there. A local ancestor expression whose base does
+/// resolve (`HEAD~99`, `main^2`) is short history, not a missing remote:
+/// adding or fetching a remote cannot create it. Otherwise the advice
+/// follows the repo's own remote configuration instead of prescribing
+/// `origin`: a remote-qualified ref (`origin/main`) names its own remote
+/// when that remote is configured (fetching it restores the ref even when
+/// the branch tracks elsewhere) and names the add-remote step when it is
+/// not; an unqualified ref with no remote names the add-remote step, with
+/// exactly one remote names that remote, and with several remotes (or a
+/// probe that cannot answer) falls back to plain `git fetch`, which follows
+/// the default remote. Per-remote ref discovery for an unqualified ref
+/// (which of several remotes tracks it) would need network probes and stays
+/// out.
 fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Duration>) -> String {
     if is_shallow_repository(root, git_timeout) {
         return "This is a shallow clone: fetch the missing history with `git fetch \
@@ -1176,6 +1179,9 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
     }
     let remotes = configured_remotes(root, git_timeout);
     if let Some(advice) = qualified_remote_advice(missing_ref, remotes.as_deref()) {
+        return advice;
+    }
+    if let Some(advice) = local_ancestor_history_advice(root, missing_ref, git_timeout) {
         return advice;
     }
     match remotes.as_deref() {
@@ -1193,6 +1199,62 @@ fn missing_ref_repair(root: &Path, missing_ref: &str, git_timeout: Option<Durati
             "Fetch the ref (for example `git fetch`)".to_string()
         }
     }
+}
+
+/// The revision before the first `~` or `^` ancestry operator, when the
+/// rest is only further ancestry (`99`, `2`, `99^2`). `rev^{type}` is a
+/// peel, not a walk past the end of history, so it stays on the remote
+/// arms. A bare `rev~` is not a revision Git accepts.
+fn ancestry_base(missing_ref: &str) -> Option<&str> {
+    let at = missing_ref.find(['~', '^'])?;
+    if at == 0 || missing_ref[at..].starts_with("^{") {
+        return None;
+    }
+    let rest = &missing_ref[at + 1..];
+    if !rest
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || byte == b'~' || byte == b'^')
+    {
+        return None;
+    }
+    if missing_ref.as_bytes()[at] == b'~' && rest.is_empty() {
+        return None;
+    }
+    Some(&missing_ref[..at])
+}
+
+/// #7653: `HEAD~99` in a short repository is not hosted on a remote. Advise
+/// with the reachable commit count when Git can count it. The caller still
+/// appends the generic "pass `--base <ref>`" clause.
+fn local_ancestor_history_advice(
+    root: &Path,
+    missing_ref: &str,
+    git_timeout: Option<Duration>,
+) -> Option<String> {
+    let base = ancestry_base(missing_ref)?;
+    if !git_ref_exists(root, base, git_timeout) {
+        return None;
+    }
+    let count = reachable_commit_count(root, base, git_timeout);
+    Some(match count {
+        Some(count) => {
+            let word = if count == 1 { "commit" } else { "commits" };
+            format!(
+                "Local history from `{base}` reaches only {count} {word} and cannot produce `{missing_ref}`"
+            )
+        }
+        None => format!("Local history from `{base}` cannot produce `{missing_ref}`"),
+    })
+}
+
+fn reachable_commit_count(root: &Path, rev: &str, git_timeout: Option<Duration>) -> Option<u64> {
+    let output =
+        crate::git::run_git_output_with_deadline(root, &["rev-list", "--count", rev], git_timeout)
+            .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&output.stdout).trim().parse().ok()
 }
 
 /// Advice for a remote-qualified missing ref (`origin/main`). The qualifier
@@ -3104,6 +3166,51 @@ mod tests {
         assert!(
             !repair.contains("git fetch --") && !repair.contains("git remote add --"),
             "a hostile qualifier must never reach a suggested command, got: {repair}"
+        );
+
+        ignore_remove_dir_all(&dir);
+        Ok(())
+    }
+
+    /// #7653: `HEAD~99` and `main^2` are local ancestry, not refs a remote
+    /// hosts. The advice must not send the user to `git remote add` or
+    /// `git fetch`, with or without a remote configured.
+    #[test]
+    fn missing_ref_repair_names_local_history_for_an_ancestor_expression() -> std::io::Result<()> {
+        let dir = unique_fixture_root("missing-ref-ancestor")?;
+        ignore_remove_dir_all(&dir);
+        init_git_repo(&dir, "main")?;
+        fs::write(dir.join("README"), "second")?;
+        run_git_checked(&dir, &["commit", "-am", "second"])?;
+
+        for missing in ["HEAD~99", "main~99", "HEAD^2"] {
+            let repair = missing_ref_repair(&dir, missing, None);
+            assert!(
+                repair.contains("Local history from `")
+                    && repair.contains("reaches only 2 commits")
+                    && repair.contains(&format!("`{missing}`")),
+                "an ancestor past local history must name that history, got: {repair}"
+            );
+            assert!(
+                !repair.contains("git fetch") && !repair.contains("git remote"),
+                "an ancestor expression must not prescribe a remote, got: {repair}"
+            );
+        }
+
+        run_git_checked(
+            &dir,
+            &["remote", "add", "origin", "https://example.test/origin.git"],
+        )?;
+        let with_remote = missing_ref_repair(&dir, "HEAD~99", None);
+        assert!(
+            with_remote.contains("reaches only 2 commits") && !with_remote.contains("git fetch"),
+            "a configured remote does not host HEAD~99, got: {with_remote}"
+        );
+
+        let unknown_base = missing_ref_repair(&dir, "no-such~1", None);
+        assert!(
+            unknown_base.contains("git fetch origin"),
+            "an ancestry suffix on a missing base still uses the remote arm, got: {unknown_base}"
         );
 
         ignore_remove_dir_all(&dir);
