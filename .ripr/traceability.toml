@@ -164,10 +164,12 @@ tests = [
   "crates/ripr/src/analysis/classify/activation.rs::tests::deeply_nested_table_line_is_unreadable_not_a_crash",
   "crates/ripr/src/analysis/classify/activation.rs::tests::computed_only_call_with_local_counter_boundary_is_unknown_not_weak",
   "crates/ripr/src/analysis/classify/activation.rs::tests::method_call_builder_argument_is_not_credited_end_to_end",
+  "crates/ripr/tests/file_payload_cardinality.rs::file_payload_cardinality_keeps_unresolved_boundary_and_relation_ownership",
   "crates/ripr/src/analysis/classify/activation.rs::tests::given_counted_local_boundary_then_boundary_is_unresolved_not_missing",
   "crates/ripr/src/output/human/sections.rs::classification_hint_tests::infection_unknown_hint_claims_a_sink_only_when_propagation_is_yes"
 ]
 fixtures = [
+  "fixtures/file_payload_cardinality",
   "fixtures/rust_slice_table_boundary",
   "fixtures/rust_slice_table_zero_elements",
   "fixtures/rust_slice_table_try_exit",
