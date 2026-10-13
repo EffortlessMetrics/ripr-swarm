@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "RIPR-SPEC-0238 example 12: the owner's exact assert comes first and an unrelated `assert other == 3` second; `+ 2` fails the first. The spec credits exposed through rule 4; ripr today reports weakly_exposed, a false actionable verdict.",
+  "reasoning": "RIPR-SPEC-0238 example 12: the owner's exact assert comes first and an unrelated `assert other == 3` second; `+ 2` fails the first. The spec credits exposed through rule 4; ripr today reports weakly_exposed, a false actionable verdict. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",
