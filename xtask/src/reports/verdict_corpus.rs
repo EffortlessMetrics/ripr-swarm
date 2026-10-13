@@ -11,6 +11,7 @@ use super::fixtures::{ripr_fixture_binary, ripr_perl_fixture_binary};
 use crate::normalize_path;
 use crate::run::run_output_owned_with_envs;
 use coverage::{Ledger, SpecExampleCoverage, SpecExamples};
+use oracle::{ExpectedOracle, OracleAccuracy, OracleRow};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -194,6 +195,10 @@ pub(crate) struct Case {
     /// The fact packet ripr reads for a Perl case; absent elsewhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) perl_facts: Option<PerlFacts>,
+    /// The related-test oracle kind and strength a spec adopts for this case
+    /// (see `verdict_corpus_oracle.rs`); scored apart from the verdict.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) expected_oracle: Option<ExpectedOracle>,
 }
 
 /// What ripr said when the case was labeled, on the full pinned checkout and
@@ -736,6 +741,9 @@ pub(crate) struct CaseRow {
     /// reads itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) packet_provenance: Option<PacketProvenance>,
+    /// The oracle score, only for a case with `expected_oracle`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) oracle: Option<OracleRow>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -766,6 +774,9 @@ pub(crate) struct Report {
     /// ledger and the spec files, not from ripr's output.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) spec_example_coverage: Option<SpecExampleCoverage>,
+    /// Related-test oracle kind and strength against `expected_oracle`
+    /// labels. Kept apart from the verdict rates, never folded into them.
+    pub(crate) oracle_accuracy: OracleAccuracy,
     pub(crate) rows: Vec<CaseRow>,
     pub(crate) non_claims: Vec<String>,
 }
@@ -881,6 +892,10 @@ pub(crate) fn case_row(
         findings_contradicted: contradicted,
         contradiction_counts: code_counts,
         packet_provenance: case.perl_facts.as_ref().map(|facts| facts.provenance),
+        oracle: case
+            .expected_oracle
+            .as_ref()
+            .map(|expected| oracle::oracle_row(expected, &anchored)),
     }
 }
 
@@ -992,6 +1007,10 @@ pub(crate) fn summarize(spec: String, non_claims: Vec<String>, rows: Vec<CaseRow
         by_origin,
         by_packet_provenance,
         spec_example_coverage: None,
+        oracle_accuracy: oracle::oracle_accuracy(
+            rows.iter()
+                .filter_map(|r| r.oracle.as_ref().map(|o| o.outcome)),
+        ),
         rows,
         non_claims,
     }
@@ -1153,6 +1172,17 @@ pub(crate) fn render_report_markdown(report: &Report, language: &str) -> String 
     }
     if let Some(coverage) = &report.spec_example_coverage {
         out.push_str(&coverage::render_coverage_markdown(coverage));
+    }
+    let labeled: Vec<(&str, &OracleRow)> = report
+        .rows
+        .iter()
+        .filter_map(|r| r.oracle.as_ref().map(|o| (r.case_id.as_str(), o)))
+        .collect();
+    if !labeled.is_empty() {
+        out.push_str(&oracle::render_oracle_markdown(
+            &report.oracle_accuracy,
+            &labeled,
+        ));
     }
     out.push_str("\nNon-claims:\n\n");
     for claim in &report.non_claims {
@@ -1949,7 +1979,7 @@ fn files_under(root: &Path) -> Result<BTreeSet<String>, String> {
 }
 
 pub(crate) fn case_violations(case: &Case, subject: &Subject, dir: &Path) -> Vec<String> {
-    let mut violations = Vec::new();
+    let mut violations = oracle::expected_violations(case);
     let id = &case.case_id;
     for (field, value) in [
         ("behavior_family", &case.behavior_family),
@@ -2561,6 +2591,7 @@ pub(crate) fn validated_corpus(dir: &Path) -> Result<(Corpus, SpecExampleCoverag
     let specs: SpecExamples = coverage::scan_specs(Path::new(coverage::SPECS_DIR))?;
     let mut violations = validate(&corpus, dir);
     violations.extend(coverage::coverage_violations(&corpus, &ledger, &specs));
+    violations.extend(oracle::oracle_ledger_violations(&corpus, &ledger, &specs));
     if violations.is_empty() {
         let mut coverage = coverage::spec_example_coverage(&corpus, &ledger, &specs);
         coverage.ledger = coverage::ledger_label(dir);
@@ -2982,6 +3013,17 @@ fn score_loaded_corpus(
     refuse_any_expected_out(&out, dir)?;
     let mut report = run_corpus(dir, &corpus, &work_root(dir)?)?;
     report.spec_example_coverage = coverage;
+    // Only a ledgered corpus can carry the `[oracle]` gate; a case subset
+    // reports the oracle rows but is never gated on whole-corpus counts.
+    if dir.join(coverage::LEDGER_FILE).is_file()
+        && let Some(gate) = coverage::load_ledger(dir)?.oracle
+    {
+        report.oracle_accuracy.ledger = coverage::ledger_label(dir);
+        if cases.is_none() {
+            report.oracle_accuracy.match_floor = Some(gate.match_floor);
+            report.oracle_accuracy.overclaim_ceiling = Some(gate.overclaim_ceiling);
+        }
+    }
     write_report(&out, &report, &corpus_language(dir)?)?;
     println!(
         "verdict-corpus: {} cases; false verdicts {} ({}/{}), contradictions {} ({}/{}); wrote {}",
@@ -3006,8 +3048,28 @@ fn score_loaded_corpus(
     if let Some(note) = &floor_note {
         println!("{note}");
     }
+    let accuracy = &report.oracle_accuracy;
+    if accuracy.labeled > 0 {
+        println!(
+            "verdict-corpus: oracle accuracy {} ({}/{}), overclaim {} ({}/{}); underclaim {}, kind_mismatch {}, unobserved {}",
+            accuracy.oracle_accuracy.rate,
+            accuracy.oracle_accuracy.numerator,
+            accuracy.oracle_accuracy.denominator,
+            accuracy.oracle_overclaim_rate.rate,
+            accuracy.oracle_overclaim_rate.numerator,
+            accuracy.oracle_overclaim_rate.denominator,
+            accuracy.count(oracle::OracleOutcome::Underclaim),
+            accuracy.count(oracle::OracleOutcome::KindMismatch),
+            accuracy.count(oracle::OracleOutcome::Unobserved),
+        );
+    }
     if !check {
         return Ok(());
+    }
+    // The oracle gate needs ripr's output, so it runs after the report is
+    // written for the reader to inspect.
+    if let Some(note) = oracle::oracle_gate(accuracy)? {
+        println!("{note}");
     }
     let drift = expected_drift(&expected_dir, &report, cases.is_none())?;
     if drift.is_empty() {
@@ -3230,6 +3292,9 @@ pub(crate) fn verdict_corpus(args: &[String]) -> Result<(), String> {
 
 #[path = "verdict_corpus_coverage.rs"]
 pub(crate) mod coverage;
+
+#[path = "verdict_corpus_oracle.rs"]
+pub(crate) mod oracle;
 
 #[cfg(test)]
 #[path = "verdict_corpus_tests.rs"]

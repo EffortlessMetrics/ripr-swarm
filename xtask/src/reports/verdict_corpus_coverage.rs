@@ -33,6 +33,9 @@ pub(crate) struct Ledger {
     /// listed so the limit stays visible, never counted.
     #[serde(default)]
     pub(crate) unmeasured: Vec<UnmeasuredSpec>,
+    /// The oracle-accuracy gate (`verdict_corpus_oracle.rs`).
+    #[serde(default)]
+    pub(crate) oracle: Option<super::oracle::OracleGate>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

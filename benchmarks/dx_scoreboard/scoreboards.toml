@@ -435,6 +435,40 @@ source = "verdict-corpus:fixtures/perl-verdict-corpus#by_packet_provenance.produ
 pending_reason = "the rates are derived from fixtures/perl-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check --language perl` reports any drift"
 
 [[metric]]
+id = "trust.verdict_corpus_oracle_accuracy"
+board = "trust"
+title = "Verdict-corpus cases with a spec-adopted related-test oracle where ripr reports the same oracle kind and strength"
+unit = "ratio"
+direction = "higher_is_better"
+# Scored apart from the verdict rates: a wrong oracle that leaves the line
+# verdict unchanged still scores ideal there. `verdict-corpus check`
+# separately fails when matches fall below `[oracle] match_floor` in
+# spec-coverage.toml. Labeling a case ripr gets wrong lowers this rate on
+# purpose: the advisory regression shows new known work.
+target = 1.0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/rust-verdict-corpus#oracle_accuracy.oracle_accuracy"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
+
+[[metric]]
+id = "trust.verdict_corpus_oracle_overclaim_rate"
+board = "trust"
+title = "Verdict-corpus cases with a spec-adopted related-test oracle where ripr reports a stronger oracle than the spec adopts"
+unit = "ratio"
+direction = "lower_is_better"
+# An overclaim grants credit the assertion does not earn ("Strong oracle
+# found", #5416 withholding a gap as static_unknown). `verdict-corpus check`
+# fails when overclaims rise above `[oracle] overclaim_ceiling`.
+target = 0
+regression_pct = 0
+regression_floor = 0
+runner_dependent = false
+source = "verdict-corpus:fixtures/rust-verdict-corpus#oracle_accuracy.oracle_overclaim_rate"
+pending_reason = "the rates are derived from fixtures/rust-verdict-corpus/expected/rows; restore the corpus from main; `cargo xtask verdict-corpus check` reports any drift"
+
+[[metric]]
 id = "trust.discriminator_claim_agreement"
 board = "trust"
 title = "When ripr says a test discriminates, real mutants are caught"
