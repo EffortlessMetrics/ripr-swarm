@@ -117,7 +117,9 @@ pub(super) fn parse_old_path_marker(raw: &str) -> bool {
     if path.is_dev_null() {
         return true;
     }
-    path.without_side_prefix("a/").is_plausible()
+    // Quoted Git paths can contain whitespace. Keep the same boundary
+    // admission as the new marker; confinement still owns path acceptance.
+    marker.starts_with('"') || path.without_side_prefix("a/").is_plausible()
 }
 
 /// Extract and confine the old path from a `--- <path>` marker, symmetrically
@@ -326,6 +328,10 @@ where
     };
 
     match ch {
+        'a' => bytes.push(0x07),
+        'b' => bytes.push(0x08),
+        'v' => bytes.push(0x0b),
+        'f' => bytes.push(0x0c),
         'n' => bytes.push(b'\n'),
         'r' => bytes.push(b'\r'),
         't' => bytes.push(b'\t'),
