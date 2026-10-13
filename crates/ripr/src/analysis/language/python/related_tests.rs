@@ -1414,7 +1414,11 @@ fn construct_result_calls_method(text: &str, open_paren_idx: usize, method: &str
 /// `imported == class` form is identity-bearing: a different class aliased *to* the
 /// owner's name (`from m import Other as OwnerClass`) refers to `Other`, not the
 /// owner, so it must not contribute a local.
-fn owner_class_locals(test: &PythonTest, owner: &PythonOwner, class: &str) -> Vec<String> {
+pub(super) fn owner_class_locals(
+    test: &PythonTest,
+    owner: &PythonOwner,
+    class: &str,
+) -> Vec<String> {
     let mut locals = Vec::new();
     for import in &test.imports {
         if import.imported == class
