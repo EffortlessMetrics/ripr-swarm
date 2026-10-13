@@ -1593,6 +1593,31 @@ fn terminal_err_return_guard_condition(guard: &ast::IfExpr) -> Option<ast::Expr>
 /// token coincidence).
 fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
     let spells = |text: &str| text.trim_start_matches("r#") == name;
+    // A bare `None =>` arm or `if let None = ..` parses as an identifier
+    // pattern, but while the prelude variant is in scope it names that
+    // variant (#7712 review). Only `#![no_implicit_prelude]` takes the
+    // variant out of scope. `let` statements and parameters, where a
+    // binding is the usual reading, still count.
+    let prelude_variant = matches!(name, "None" | "Some" | "Ok" | "Err");
+    if prelude_variant && root.text().to_string().contains("no_implicit_prelude") {
+        return true;
+    }
+    let names_the_variant = |pattern: &ast::IdentPat| {
+        prelude_variant
+            && pattern
+                .syntax()
+                .ancestors()
+                .find(|node| {
+                    ast::MatchArm::can_cast(node.kind())
+                        || ast::LetExpr::can_cast(node.kind())
+                        || ast::LetStmt::can_cast(node.kind())
+                        || ast::Param::can_cast(node.kind())
+                        || ast::ClosureExpr::can_cast(node.kind())
+                })
+                .is_some_and(|node| {
+                    ast::MatchArm::can_cast(node.kind()) || ast::LetExpr::can_cast(node.kind())
+                })
+    };
     root.descendants().any(|node| {
         let named = |item_name: Option<ast::Name>| {
             item_name.is_some_and(|item_name| spells(item_name.text()))
@@ -1601,7 +1626,8 @@ fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
             || ast::Const::cast(node.clone()).is_some_and(|item| named(item.name()))
             || ast::Static::cast(node.clone()).is_some_and(|item| named(item.name()))
             || ast::Struct::cast(node.clone()).is_some_and(|item| named(item.name()))
-            || ast::IdentPat::cast(node.clone()).is_some_and(|pattern| named(pattern.name()))
+            || ast::IdentPat::cast(node.clone())
+                .is_some_and(|pattern| named(pattern.name()) && !names_the_variant(&pattern))
             || ast::UseTree::cast(node.clone()).is_some_and(|tree| {
                 if let Some(rename) = tree.rename() {
                     return rename.name().is_some_and(|rename| spells(rename.text()));

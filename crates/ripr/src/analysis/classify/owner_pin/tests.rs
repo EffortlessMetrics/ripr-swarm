@@ -1115,6 +1115,11 @@ fn an_early_return_pin_admits_only_the_value_that_return_produces() {
     );
 }
 
+/// An early `return Err(String::from("big"))` beside an `Ok(x)` tail.
+fn lib_twin() -> &'static str {
+    "pub fn check(x: u32) -> Result<u32, String> {\n    if x > 10 { return Err(String::from(\"big\")); }\n    Ok(x)\n}\n"
+}
+
 #[test]
 fn an_error_path_probe_is_pinned_like_a_changed_err_return() {
     // RIPR-SPEC-0231 example 5: ripr files a changed `return Err(..)` as an
@@ -1140,15 +1145,15 @@ fn an_error_path_probe_is_pinned_like_a_changed_err_return() {
         vec!["assert_eq!(check(20), Err(String::from(\"big\")));".to_string()]
     );
 
-    // A `?` that converts an error is an `Err` source the gate cannot
-    // attribute to one line, so it pins nothing.
-    let lib = "pub fn parse(s: &str) -> Result<u32, String> {\n    let n: u32 = s.parse().map_err(|_| String::from(\"nan\"))?;\n    Ok(n)\n}\n";
+    // A `?` is a second `Err` source, so an early `return Err(..)` beside
+    // one pins nothing for an `error_path` probe either.
+    let lib = "pub fn parse(s: &str) -> Result<u32, String> {\n    if s.is_empty() { return Err(String::from(\"empty\")); }\n    let n: u32 = s.parse().map_err(|_| String::from(\"nan\"))?;\n    Ok(n)\n}\n";
     let question_index = index(&[(LIB, lib)]);
     assert!(
         error_probe(
             &question_index,
             "parse",
-            "let n: u32 = s.parse().map_err(|_| String::from(\"nan\"))?;"
+            "return Err(String::from(\"empty\"));"
         )
         .is_none()
     );
@@ -1157,7 +1162,7 @@ fn an_error_path_probe_is_pinned_like_a_changed_err_return() {
     // `Ok` in the owner's file can be a second `Err` exit.
     let shadowed = format!(
         "{}\n#[allow(non_snake_case)]\nfn Ok(x: u32) -> Result<u32, String> {{\n    Err(x.to_string())\n}}\n",
-        "pub fn check(x: u32) -> Result<u32, String> {\n    if x > 10 { return Err(String::from(\"big\")); }\n    Ok(x)\n}\n"
+        lib_twin()
     );
     let shadowed_index = index(&[(LIB, &shadowed)]);
     assert!(
@@ -1168,10 +1173,21 @@ fn an_error_path_probe_is_pinned_like_a_changed_err_return() {
         )
         .is_none()
     );
-    // The same refusal holds for an early `return None;`.
-    let shadowed = "pub fn whole(x: u64) -> Option<u64> {\n    if x == 0 { return None; }\n    Some(x)\n}\n\n#[allow(non_snake_case)]\nfn Some(_: u64) -> Option<u64> {\n    None\n}\n";
-    let shadowed_index = index(&[(LIB, shadowed)]);
-    assert!(establish(&shadowed_index, "whole", "return None;").is_none());
+    // A `None =>` arm names the variant, not a binding (E0530), so an
+    // ordinary match elsewhere in the file keeps an early `Some` pin.
+    let matched = "pub fn lookup(k: u32) -> Option<u32> {\n    if k == 1 { return Some(k + 2); }\n    None\n}\n\npub fn describe(v: Option<u32>) -> u32 {\n    match v { Some(n) => n, None => 0 }\n}\n";
+    let matched_index = index(&[(LIB, matched)]);
+    assert!(establish(&matched_index, "lookup", "return Some(k + 2);").is_some());
+    // Without the prelude, the same arm binds a fresh `None`.
+    let no_prelude = format!("#![no_implicit_prelude]\n{matched}");
+    let no_prelude_index = index(&[(LIB, &no_prelude)]);
+    assert!(establish(&no_prelude_index, "lookup", "return Some(k + 2);").is_none());
+    // An early `return None;` keeps its long-standing pin beside a glob the
+    // binding scan cannot see through: only the `Err` gate this change
+    // opened reads the other exits by spelling.
+    let glob = "use crate::prelude::*;\n\npub fn whole(x: u64) -> Option<u64> {\n    if x == 0 { return None; }\n    Some(x)\n}\n";
+    let glob_index = index(&[(LIB, glob)]);
+    assert!(establish(&glob_index, "whole", "return None;").is_some());
 }
 
 #[test]

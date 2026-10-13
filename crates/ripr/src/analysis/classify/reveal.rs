@@ -830,8 +830,8 @@ fn analyze_related_assertions(
             // value through a call that names the owner. The owner-side and
             // test-side identity gates live in `owner_pin`; the family and
             // oracle-kind gates are checked first so the closure only runs
-            // for return-value exact pins. #6692: a field of a hand-written
-            // `Clone::clone`'s returned literal is pinned by
+            // for return-value and error-path exact pins. #6692: a field of a
+            // hand-written `Clone::clone`'s returned literal is pinned by
             // `assert_eq!(recv.clone(), recv)` under the same gates
             // (`OwnerReturnPin::establish_clone_field`).
             //

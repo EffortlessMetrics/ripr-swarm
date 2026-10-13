@@ -1400,7 +1400,9 @@ enum ReceiverType {
 enum ReturnPathGate {
     /// The changed expression is the owner's only exit.
     Any,
-    /// The pinned value must start with this constructor.
+    /// The pinned value must start with this constructor. `Head("Err")`
+    /// comes only from an early `return Err(..)`, and like `EarlyHead` it
+    /// refuses an owner file that binds `Ok` or `Err` as a value.
     Head(&'static str),
     /// #7581: a changed early `return Some(..)` / `return Ok(..)` beside
     /// exits that build only `None` / `Err(..)`. Admits like `Head`; the
@@ -1485,10 +1487,10 @@ impl OwnerReturnPin {
         let name = owner.name.as_str();
         let changed_line = probe.location.line.checked_sub(owner.start_line)?;
         let path = return_path_gate(&owner.body, &probe.expression, changed_line)?;
-        // The early `Some`/`Ok` gate reads the other exits' `None` and
-        // `Err(..)` as the prelude variants; a `const None` or `fn Err` in
-        // the owner's file can build a second `Some`/`Ok` under that
-        // spelling (#7581 review).
+        // The early `Some`/`Ok`/`Err` gates read the other exits' `None`,
+        // `Err(..)` and `Ok(..)` as the prelude variants; a `const None` or
+        // `fn Ok` in the owner's file can build a second source of the
+        // changed value under that spelling (#7581 and #7712 reviews).
         if path.prelude_names().iter().any(|name| {
             index
                 .files()
@@ -2618,7 +2620,7 @@ impl ReturnPathGate {
     /// The prelude variant names this gate's exit reasoning relies on.
     fn prelude_names(&self) -> &'static [&'static str] {
         match self {
-            Self::EarlyHead("Some") | Self::Exact("None") => &["Some", "None"],
+            Self::EarlyHead("Some") => &["Some", "None"],
             Self::EarlyHead(_) | Self::Head("Err") => &["Ok", "Err"],
             _ => &[],
         }
