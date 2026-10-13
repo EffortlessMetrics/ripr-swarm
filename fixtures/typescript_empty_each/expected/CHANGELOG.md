@@ -11,3 +11,16 @@ Command:
 Updated:
 - `expected/check.json`
 - `expected/human.txt`
+
+## Pending — typescript_empty_each (2)
+
+Reason:
+RIPR-SPEC-0027 and RIPR-SPEC-0108: include full-human evidence for independent empty-table honesty pins (#7596).
+
+Command:
+`cargo xtask goldens bless typescript_empty_each --reason "..."`
+
+Updated:
+- `expected/check.json`
+- `expected/human.txt`
+- `expected/human-full.txt`
