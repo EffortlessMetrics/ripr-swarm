@@ -42,7 +42,7 @@
   },
   "reasoning": "add_records_the_line calls add(\"bolt\", 2) and compares order.lines(), whose body returns &self.lines, with the whole expected slice, so every field of the pushed Line is compared. Spec cells: RIPR-SPEC-0228 example 14.",
   "labeling_observation": {
-    "ripr_commit": "17430973",
+    "ripr_commit": "3ec109cd",
     "full_checkout_verdict": "credited",
     "full_checkout_classifications": [
       "exposed"

@@ -41,7 +41,7 @@
   },
   "reasoning": "tag_adds_one_tag calls tag(\"rush\", 1) and asserts order.tags().len() is 1; the length projection never reads the pushed label. Spec cells: RIPR-SPEC-0228 example 15.",
   "labeling_observation": {
-    "ripr_commit": "17430973",
+    "ripr_commit": "3ec109cd",
     "full_checkout_verdict": "gap",
     "full_checkout_classifications": [
       "weakly_exposed"
