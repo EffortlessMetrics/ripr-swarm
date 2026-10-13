@@ -554,7 +554,7 @@ pub(in crate::analysis) fn binding_untouched_after_owner_call(
         ["assert!(", "assert_eq!(", "assert_ne!("]
             .iter()
             .any(|plain| trimmed.starts_with(plain))
-            && !statement.contains(['{', '[', '|'])
+            && !statement.contains(['{', '|'])
             && mentions.iter().all(|at| {
                 let before = statement[..*at].trim_end();
                 let mut rest = &statement[at + binding.len()..];
@@ -3557,6 +3557,7 @@ mod tests {
             "    let mut order = Order::new();\n    order.add(4);\n\n    assert_eq!(order.log, vec![4]);",
             // Plain field reads in an assertion between are not writes.
             "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.total, 4);\n    assert_eq!(order.log, vec![4]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.tags, vec![]);\n    assert_eq!(order.log, vec![4]);",
             // Statements that do not name the binding.
             "    let mut order = Order::new();\n    order.add(4);\n    let expected = vec![4];\n    assert_eq!(order.log, expected);",
             // The result consumed by `unwrap`, `expect` or `?`.
@@ -3583,6 +3584,7 @@ mod tests {
             "    let mut order = Order::new();\n    order.add(4);\n\n    order.log.clear(); assert_eq!(order.log, vec![]);",
             // Assertions that write, or are not plain assertions.
             "    let mut order = Order::new();\n    order.add(4);\n    assert!({ order.log[0] = 1; true });\n    assert_eq!(order.log, vec![1]);",
+            "    let mut order = Order::new();\n    order.add(4);\n    assert_eq!(order.log[0], 4);\n    assert_eq!(order.log, vec![4]);",
             "    order.add(4);\n    assert!(match order { Order { ref mut log, .. } => { log.clear(); true } });\n\n    assert_eq!(order.log, vec![]);",
             "    let mut order = Order::new();\n    order.add(4);\n    assert!(reset(&mut (order)));\n    assert_eq!(order.log, vec![]);",
             "    let mut order = Order::new();\n    order.add(4);\n    assert_reset!(order);\n    assert_eq!(order.log, vec![]);",

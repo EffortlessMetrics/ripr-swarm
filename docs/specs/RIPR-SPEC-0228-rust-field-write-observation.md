@@ -313,12 +313,20 @@ changes `self.count += 2` to `self.count += 1`.
   statement of the owner body (not in a branch, loop, block or closure),
   and the changed initializer must occur once on its line. Nothing later in
   the owner body may write the field: a use of `self.<path>` other than
-  another `push`, a bare `self` (`*self = ..`, `reset(self)`), or a call
+  another `push`, a use of a parent field of `<path>` (`self.state` for
+  `state.log`), a bare `self` (`*self = ..`, `reset(self)`), or a call
   `self.m(..)` whose inherent body, followed through further `self` calls,
   may do so; an unresolved method counts as a write. The assertion must be
   an `assert_eq!` whose one operand is the whole collection (`inv.log`,
   `inv.history()`, optionally borrowed) read after the owner call as above,
-  and whose other operand does not name that binding. Projections
+  and whose other operand names neither that binding nor any binding the
+  test also calls the owner on. Either operand may be the read. Between
+  the owner call and the assertion the test may write nothing through the
+  binding (`binding_untouched_after_owner_call` in `reveal.rs`): the call is
+  a bare statement (optionally ending in `.unwrap()`, `.expect(..)` or `?`,
+  never bound or chained), the assertion starts its line, and a statement
+  between may name the binding only as a plain field read that is a whole
+  argument of `assert!`, `assert_eq!` or `assert_ne!`. Projections
   (`.len()`, `[0].qty`, `.iter().map(..)`), `assert_ne!`, literals built in
   a local and pushed later, `insert`, and a push preceded by another
   statement on its line are not credited and keep the missing field-value
