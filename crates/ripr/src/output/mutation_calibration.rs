@@ -331,6 +331,11 @@ pub(crate) fn render_mutation_calibration_md(report: &MutationCalibrationReport)
         "| static_without_runtime_total | {} |\n",
         report.static_without_runtime.len()
     ));
+    if let Some(note) = no_observed_runtime_outcome_note(report) {
+        out.push_str("\nNote: ");
+        out.push_str(&note);
+        out.push_str(".\n");
+    }
 
     out.push_str("\n## Static/runtime agreement\n\n");
     out.push_str("| Agreement bucket | Count |\n| --- | ---: |\n");
@@ -665,7 +670,7 @@ fn build_mutation_calibration_report(
             &unmatched_mutants,
         );
 
-    MutationCalibrationReport {
+    let mut report = MutationCalibrationReport {
         static_seams_total: static_seams.len(),
         mutants_total: matched.len()
             + ambiguous_file_line.len()
@@ -680,7 +685,11 @@ fn build_mutation_calibration_report(
         ambiguous_span_overlap,
         unmatched_mutants,
         static_without_runtime,
+    };
+    if let Some(note) = no_observed_runtime_outcome_note(&report) {
+        report.precision_notes.push(note);
     }
+    report
 }
 
 fn candidate_order_key(seam: &StaticSeamRecord) -> (usize, usize, usize, usize, &str) {
@@ -944,6 +953,38 @@ fn mutation_calibration_precision_notes() -> Vec<String> {
         "runtime records with a complete span join by span_containment to the unique innermost static seam whose span contains the mutated range; with no containing span they fall back to file and line over seams without a span, and records without a complete span join by file and line".to_string(),
         "ambiguous runtime gap signals (ambiguous_file_line: the file/line fallback found several seams on the line; ambiguous_span_overlap: equal or crossing innermost seam spans) are counted as runtime_inconclusive until a seam_id or unambiguous location is available".to_string(),
     ]
+}
+
+const NO_OBSERVED_RUNTIME_OUTCOMES_NOTE: &str = concat!(
+    "this import has no observed runtime outcomes; ",
+    "`matched_total` counts joined candidate mutants, not executed mutants. ",
+    "Those rows render as `unknown` / `no_runtime_data` and do not corroborate static evidence",
+);
+
+fn mixed_unobserved_runtime_outcome_note(unknown: usize) -> String {
+    format!(
+        "`matched_total` includes {unknown} joined candidate{} with no observed runtime outcome. Those rows render as `unknown` / `no_runtime_data` and do not corroborate static evidence",
+        if unknown == 1 { "" } else { "s" }
+    )
+}
+
+fn no_observed_runtime_outcome_note(report: &MutationCalibrationReport) -> Option<String> {
+    let unknown = unobserved_runtime_outcome_total(report);
+    if unknown == 0 || report.mutants_total == 0 {
+        None
+    } else if unknown == report.mutants_total {
+        Some(NO_OBSERVED_RUNTIME_OUTCOMES_NOTE.to_string())
+    } else {
+        Some(mixed_unobserved_runtime_outcome_note(unknown))
+    }
+}
+
+fn unobserved_runtime_outcome_total(report: &MutationCalibrationReport) -> usize {
+    runtime_outcome_counts(report)
+        .into_iter()
+        .filter(|(label, _)| label.is_empty() || label == "unknown")
+        .map(|(_, count)| count)
+        .sum()
 }
 
 fn static_only_reason(records: &[&MutationCalibrationMatch]) -> String {
@@ -2207,6 +2248,97 @@ mod tests {
         let markdown = render_mutation_calibration_md(&report);
         assert!(markdown.contains("Status: advisory"));
         assert!(markdown.contains("Runtime Outcome Counts"));
+        assert!(
+            !markdown.contains("this import has no observed runtime outcomes"),
+            "an outcomes import must not claim the mutants.json-only denominator:\n{markdown}"
+        );
+        Ok(())
+    }
+
+    /// #7451: a mutants.json-only import still joins candidates and counts
+    /// them in matched_total. The Summary must say those rows carry no
+    /// runtime observation. Changing matched_total's meaning is a different
+    /// claim (schema / OUTPUT_SCHEMA).
+    #[test]
+    fn mutants_json_only_import_discloses_unexecuted_matched_total() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &repo_json_for("seam-a", "weakly_gripped", "src/pricing.rs", 42),
+            r#"{"mutants":[{"id":"m1","seam_id":"seam-a","operator":"replace"}]}"#,
+        )?;
+        assert_eq!(report.matched.len(), 1);
+        assert_eq!(report.matched[0].mutation.runtime_outcome, "unknown");
+        assert_eq!(
+            confidence_label_for_match(&report.matched[0]),
+            "no_runtime_data"
+        );
+
+        let markdown = render_mutation_calibration_md(&report);
+        let after_summary = markdown
+            .split("## Summary")
+            .nth(1)
+            .and_then(|rest| rest.split("## Static/runtime agreement").next())
+            .ok_or("markdown must keep Summary before agreement")?;
+        assert!(
+            after_summary.contains("| matched_total | 1 |"),
+            "matched_total still counts the joined candidate:\n{after_summary}"
+        );
+        assert!(
+            after_summary.contains("this import has no observed runtime outcomes")
+                && after_summary.contains("`matched_total` counts joined candidate mutants")
+                && after_summary.contains("`unknown` / `no_runtime_data`"),
+            "the default Markdown Summary must disclose the unexecuted denominator:\n{after_summary}"
+        );
+
+        let json = render_mutation_calibration_json(&report)?;
+        let value: Value = serde_json::from_str(&json)
+            .map_err(|err| format!("mutation calibration JSON should parse: {err}"))?;
+        assert_eq!(value["metrics"]["matched_total"], 1);
+        assert_eq!(value["metrics"]["runtime_outcome_counts"]["unknown"], 1);
+        let notes = value["precision_notes"]
+            .as_array()
+            .ok_or("precision_notes must remain an array")?;
+        assert!(
+            notes.iter().any(|note| {
+                note.as_str().is_some_and(|text| {
+                    text.contains("this import has no observed runtime outcomes")
+                })
+            }),
+            "JSON precision_notes must carry the same denominator caveat: {notes:?}"
+        );
+        Ok(())
+    }
+
+    /// A mixed import (some observed outcomes, some not) must not use the
+    /// all-unknown wording, and must still name how many matched_total rows
+    /// lack a runtime observation.
+    #[test]
+    fn mixed_import_names_how_many_matched_rows_lack_outcomes() -> Result<(), String> {
+        let report = mutation_calibration_report_from_json(
+            &repo_json_for("seam-a", "weakly_gripped", "src/pricing.rs", 42),
+            r#"[
+  {"id":"m-observed","seam_id":"seam-a","outcome":"caught","operator":"replace"},
+  {"id":"m-candidate","file":"src/other.rs","line":9,"operator":"replace"}
+]"#,
+        )?;
+        assert_eq!(report.mutants_total, 2);
+        assert_eq!(unobserved_runtime_outcome_total(&report), 1);
+
+        let markdown = render_mutation_calibration_md(&report);
+        let after_summary = markdown
+            .split("## Summary")
+            .nth(1)
+            .and_then(|rest| rest.split("## Static/runtime agreement").next())
+            .ok_or("markdown must keep Summary before agreement")?;
+        assert!(
+            after_summary.contains(
+                "`matched_total` includes 1 joined candidate with no observed runtime outcome"
+            ),
+            "mixed imports must count the unexecuted rows, not claim the whole import lacks outcomes:\n{after_summary}"
+        );
+        assert!(
+            !after_summary.contains("this import has no observed runtime outcomes"),
+            "a mixed import is not mutants.json-only:\n{after_summary}"
+        );
         Ok(())
     }
 
