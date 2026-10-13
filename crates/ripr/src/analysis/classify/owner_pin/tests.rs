@@ -1158,6 +1158,25 @@ fn an_error_path_probe_is_pinned_like_a_changed_err_return() {
         .is_none()
     );
 
+    // A test-local `fn Err` that returns `Ok` makes the expected value
+    // something else, so the test's own scope refuses the pin; a glob the
+    // scan cannot see through does not (a test module's routine
+    // `use super::sub::*;`).
+    let pinned = |tests: &str| {
+        let test_index = index(&[(LIB, lib_twin()), (TESTS, tests)]);
+        let pin = error_probe(&test_index, "check", "return Err(String::from(\"big\"));");
+        pin.map(|pin| admitted_texts(&test_index, &pin))
+    };
+    let assertion = "    assert_eq!(check(2), Err(String::from(\"big\")));\n";
+    let rebound = format!(
+        "use demo::check;\n\n#[allow(non_snake_case)]\nfn Err(_: String) -> Result<u32, String> {{\n    Ok(2)\n}}\n\n#[test]\nfn checks() {{\n{assertion}}}\n"
+    );
+    assert_eq!(pinned(&rebound), Some(Vec::new()));
+    let globbed = format!(
+        "use demo::check;\nuse demo::retail::*;\n\n#[test]\nfn checks() {{\n{assertion}}}\n"
+    );
+    assert_eq!(pinned(&globbed), Some(vec![assertion.trim().to_string()]));
+
     // The gate reads the tail `Ok(x)` as the prelude variant: a rebound
     // `Ok` in the owner's file can be a second `Err` exit.
     let shadowed = format!(
@@ -1178,6 +1197,10 @@ fn an_error_path_probe_is_pinned_like_a_changed_err_return() {
     let matched = "pub fn lookup(k: u32) -> Option<u32> {\n    if k == 1 { return Some(k + 2); }\n    None\n}\n\npub fn describe(v: Option<u32>) -> u32 {\n    match v { Some(n) => n, None => 0 }\n}\n";
     let matched_index = index(&[(LIB, matched)]);
     assert!(establish(&matched_index, "lookup", "return Some(k + 2);").is_some());
+    // A comment that only mentions the attribute changes nothing.
+    let mentioned = format!("// no_implicit_prelude is not set here\n{matched}");
+    let mentioned_index = index(&[(LIB, &mentioned)]);
+    assert!(establish(&mentioned_index, "lookup", "return Some(k + 2);").is_some());
     // Without the prelude, the same arm binds a fresh `None`.
     let no_prelude = format!("#![no_implicit_prelude]\n{matched}");
     let no_prelude_index = index(&[(LIB, &no_prelude)]);

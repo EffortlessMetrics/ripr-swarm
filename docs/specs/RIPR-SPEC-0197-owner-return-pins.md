@@ -432,7 +432,12 @@ rule only for an assertion whose context was admitted.
    example 5). An `error_path` probe gets an established return path only
    on an early `return Err(..)` or on the owner's tail, under the same
    rules as a `return_value` probe there; on any other line (a `let`, a
-   `map_err(..)?` statement) it gets none. The same holds the other way round for a changed
+   `map_err(..)?` statement) it gets none. The expected `Err(..)`,
+   `Ok(..)`, `Some(..)` or `None` resolves in the test's scope, so a test
+   file that declares, binds or imports that name by name refuses the
+   pin. A test file's glob import does not: `use super::sub::*;` in a test
+   module is routine, and refusing on it withdrew credits the corpus pins
+   (`cell-0197-ok-return-path`). The same holds the other way round for a changed
    early `return Some(..);` (or `return Ok(..);`): every other `return` and
    the tail are exactly `None` (or one `Err(..)` call), and the pinned value
    must be `Some(..)` (or `Ok(..)`). A `?` builds only `None` (or `Err`), so
@@ -445,8 +450,8 @@ rule only for an assertion whose context was admitted.
    withdraw a pin it already earned.
    A bare `None` (or `Ok`, `Err`, `Some`) in a `match` arm or `if let`
    pattern names the variant, since a pattern may not shadow it (E0530), so
-   it is not such a binding unless the file opts out of the prelude
-   (`#![no_implicit_prelude]`). The propagation witness of a changed
+   it is not such a binding unless the file carries a
+   `#![no_implicit_prelude]` attribute (a comment naming it does not count). The propagation witness of a changed
    `return Some(..);` (or `Ok(..)` / `Err(..)`) around a call-free payload
    completes only when the owner's return sink is that same constructor on
    the changed line, so an identical value returned elsewhere is a

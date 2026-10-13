@@ -67,7 +67,7 @@ use crate::analysis::syntax::{
     attribute_settles_test_outcome, drop_in_assertion_leaf, empty_macro_binding_ambiguities,
     err_return_guard_key, generated_test_pins, local_empty_macro_names, macro_binding_scan,
     owner_pin_assertions, parse_clean_source_file, pattern_pins, returns_leave_the_function,
-    source_binds_value_name, trusted_macro_binding_sites,
+    source_binds_value_name, source_declares_value_name, trusted_macro_binding_sites,
 };
 use crate::domain::{Probe, ProbeFamily};
 use ra_ap_syntax::{
@@ -1874,6 +1874,20 @@ impl OwnerReturnPin {
             (ReturnPathGate::CloneReceiver, CallShape::Bare | CallShape::Path(_)) => return false,
             (path, _) => {
                 if !path.admits(expected) {
+                    return false;
+                }
+                // The expected `Err(..)` / `Ok(..)` / `Some(..)` / `None`
+                // resolves in the test's scope: a test-local `fn Err`
+                // returning `Ok` passes the pin without the changed return
+                // (#7712 review). Opaque globs do not count here; see
+                // `source_declares_value_name`.
+                if ["Some", "None", "Ok", "Err"].iter().any(|name| {
+                    starts_with_word(expected.trim(), name)
+                        && index
+                            .files()
+                            .get(&test.file)
+                            .is_none_or(|facts| source_declares_value_name(&facts.source, name))
+                }) {
                     return false;
                 }
             }

@@ -1592,6 +1592,12 @@ fn terminal_err_return_guard_condition(guard: &ast::IfExpr) -> Option<ast::Expr>
 /// name equality keeps the whole-word rule (#7130 review: identity over
 /// token coincidence).
 fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
+    file_binds_value_name_with(root, name, true)
+}
+
+/// [`file_binds_value_name`], with `opaque_globs` deciding whether a glob
+/// the scan cannot see through counts as a binding.
+fn file_binds_value_name_with(root: &SyntaxNode, name: &str, opaque_globs: bool) -> bool {
     let spells = |text: &str| text.trim_start_matches("r#") == name;
     // A bare `None =>` arm or `if let None = ..` parses as an identifier
     // pattern, but while the prelude variant is in scope it names that
@@ -1599,7 +1605,17 @@ fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
     // variant out of scope. `let` statements and parameters, where a
     // binding is the usual reading, still count.
     let prelude_variant = matches!(name, "None" | "Some" | "Ok" | "Err");
-    if prelude_variant && root.text().to_string().contains("no_implicit_prelude") {
+    // The attribute itself, never a comment or string that mentions it.
+    if prelude_variant
+        && root
+            .descendants()
+            .filter_map(ast::Attr::cast)
+            .any(|attribute| {
+                attribute
+                    .path()
+                    .is_some_and(|path| path.syntax().text() == "no_implicit_prelude")
+            })
+    {
         return true;
     }
     let names_the_variant = |pattern: &ast::IdentPat| {
@@ -1633,7 +1649,7 @@ fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
                     return rename.name().is_some_and(|rename| spells(rename.text()));
                 }
                 if tree.star_token().is_some() {
-                    return !glob_stays_within_the_file(&tree);
+                    return opaque_globs && !glob_stays_within_the_file(&tree);
                 }
                 if tree.use_tree_list().is_some() {
                     // The nested trees are their own `UseTree` nodes; a
@@ -1657,6 +1673,16 @@ fn file_binds_value_name(root: &SyntaxNode, name: &str) -> bool {
 pub(crate) fn source_binds_value_name(source: &str, name: &str) -> bool {
     parse_clean_source_file(source)
         .is_none_or(|parse| file_binds_value_name(parse.tree().syntax(), name))
+}
+
+/// Whether a source file binds `name` as a value by a declaration, pattern
+/// or named import of its own. Unlike [`source_binds_value_name`], a glob
+/// whose names the scan cannot see does not count: a test module's
+/// `use super::sub::*;` is routine, and refusing on it withdrew real
+/// credits (#7712 review).
+pub(crate) fn source_declares_value_name(source: &str, name: &str) -> bool {
+    parse_clean_source_file(source)
+        .is_none_or(|parse| file_binds_value_name_with(parse.tree().syntax(), name, false))
 }
 
 /// Whether a glob import can only carry names this file's own scan covers:
