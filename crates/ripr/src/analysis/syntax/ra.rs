@@ -2471,7 +2471,7 @@ pub(crate) fn assertion_root_binding_is_unrebound(
 }
 
 /// Qualified operand capture requires every statement macro in the same
-/// function to retain its independently proven binding.
+/// function to retain its independently established binding.
 pub(crate) fn assertion_root_is_unrebound(
     path: &str,
     node: &ra_ap_syntax::SyntaxNode,
