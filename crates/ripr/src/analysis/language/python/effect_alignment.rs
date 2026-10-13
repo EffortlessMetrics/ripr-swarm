@@ -13,7 +13,7 @@
 use super::no_behavior::{call_arglists_with_offsets, split_top_level_args};
 use super::related_tests::{
     is_python_identifier_char, owner_method_bound_locals, owner_module_callees,
-    python_text_hides_code,
+    owner_result_locals, python_text_hides_code,
 };
 use super::{PythonOwner, PythonTest};
 use crate::domain::OwnerKind;
@@ -27,15 +27,27 @@ pub(super) enum ChangedEffect {
     Stderr,
     /// `param.write_text(...)` / `param.write_bytes(...)` on an owner parameter.
     FileWrite { receiver: String },
-    /// `param.method(...)` on an owner parameter, observable through a mock.
-    CallOnParameter { receiver: String, method: String },
+    /// `param.method(...)`, or `param(...)` with an empty `method`, on an
+    /// owner parameter, observable through a mock. `infects_every_input`
+    /// records whether the changed arguments differ from the old ones
+    /// whatever the inputs, so a pinned expectation fails on any call.
+    CallOnParameter {
+        receiver: String,
+        method: String,
+        infects_every_input: bool,
+    },
     /// `self.attr = ...` (or an augmented assignment) in a method owner.
     SelfField { attr: String },
 }
 
 impl ChangedEffect {
     /// The changed line's effect, when it is one of the observable shapes.
-    pub(super) fn of(line_text: &str, owner: &PythonOwner) -> Option<Self> {
+    /// `old_line_text` is the line it replaced, when there is one.
+    pub(super) fn of(
+        line_text: &str,
+        old_line_text: Option<&str>,
+        owner: &PythonOwner,
+    ) -> Option<Self> {
         let line = line_text.trim();
         if let Some(attr) = self_attribute_write(line)
             && matches!(owner.owner_kind, Some(OwnerKind::Method))
@@ -60,7 +72,9 @@ impl ChangedEffect {
             "sys.stdout.write" => Some(Self::Stdout),
             "sys.stderr.write" => Some(Self::Stderr),
             _ => {
-                let (receiver, method) = callee.split_once('.')?;
+                // `param(...)` calls the parameter itself (RIPR-SPEC-0238
+                // rule 17, #7586): a mock passed for it records the call.
+                let (receiver, method) = callee.split_once('.').unwrap_or((callee, ""));
                 if method.contains('.')
                     || !owner
                         .parameters
@@ -76,6 +90,10 @@ impl ChangedEffect {
                     _ => Self::CallOnParameter {
                         receiver,
                         method: method.to_string(),
+                        infects_every_input: old_line_text
+                            .and_then(|old| statement_call(old.trim()))
+                            .filter(|(old_callee, _)| *old_callee == callee)
+                            .is_none_or(|(_, old_args)| arguments_always_differ(old_args, args)),
                     },
                 })
             }
@@ -83,9 +101,17 @@ impl ChangedEffect {
     }
 
     /// Whether a mock assertion can be the observer: only a call made on a
-    /// parameter the test may substitute.
+    /// parameter the test may substitute, whose arguments the change alters
+    /// for every input. A rewrite such as `abs(n)` may hand the mock the old
+    /// value at the test's input, so the pinned expectation still passes.
     pub(super) fn admits_mock_assertion(&self) -> bool {
-        matches!(self, Self::CallOnParameter { .. })
+        matches!(
+            self,
+            Self::CallOnParameter {
+                infects_every_input: true,
+                ..
+            }
+        )
     }
 }
 
@@ -119,12 +145,29 @@ impl EffectReads {
                     reads.operands.push(format!("{local}.read_bytes()"));
                 }
             }
-            ChangedEffect::CallOnParameter { receiver, method } => {
-                reads.mocked_calls = owner_call_argument_locals(test, owner, receiver)
+            ChangedEffect::CallOnParameter {
+                receiver,
+                method,
+                infects_every_input: true,
+            } => {
+                let mut mocks = owner_call_argument_locals(test, owner, receiver);
+                // An owner that hands the parameter back makes its result the
+                // very object the test passed: `m = on_parse('1', Mock())`.
+                if owner.term_facts.returned_parameter() == Some(receiver.as_str()) {
+                    mocks.extend(owner_result_locals(test, &owner_call_names(test, owner)));
+                }
+                reads.mocked_calls = mocks
                     .into_iter()
-                    .map(|local| format!("{local}.{method}"))
+                    .map(|local| {
+                        if method.is_empty() {
+                            local
+                        } else {
+                            format!("{local}.{method}")
+                        }
+                    })
                     .collect();
             }
+            ChangedEffect::CallOnParameter { .. } => {}
             ChangedEffect::SelfField { attr } => {
                 if let Some((class, _)) = owner.qualified_name.rsplit_once('.') {
                     reads.operands = owner_method_bound_locals(test, owner, class, &owner.name)
@@ -212,6 +255,19 @@ fn statement_call(line: &str) -> Option<(&str, &str)> {
 /// called only on a local bound to its class (rule 9), so a same-named method
 /// of another class does not count.
 fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a str)> {
+    let names = owner_call_names(test, owner);
+    let mut calls: Vec<(usize, &str)> = names
+        .iter()
+        .flat_map(|name| call_arglists_with_offsets(&test.body_text, name, false))
+        .collect();
+    calls.sort_unstable();
+    calls
+}
+
+/// The spellings a test calls the owner by: its own name, an import alias, or
+/// a module-qualified name for a function; a local bound to its class for a
+/// method (rule 9).
+fn owner_call_names(test: &PythonTest, owner: &PythonOwner) -> Vec<String> {
     let mut names = Vec::new();
     if is_method_owner(owner) {
         if let Some((class, _)) = owner.qualified_name.rsplit_once('.') {
@@ -233,12 +289,7 @@ fn owner_calls<'a>(test: &'a PythonTest, owner: &PythonOwner) -> Vec<(usize, &'a
     }
     names.sort();
     names.dedup();
-    let mut calls: Vec<(usize, &str)> = names
-        .iter()
-        .flat_map(|name| call_arglists_with_offsets(&test.body_text, name, false))
-        .collect();
-    calls.sort_unstable();
-    calls
+    names
 }
 
 /// Whether the test calls a free-function owner through a module-identified
@@ -423,6 +474,82 @@ fn split_top_level<'a>(text: &'a str, separator: &str) -> Vec<&'a str> {
     }
     parts.push(&text[start..]);
     parts
+}
+
+/// Whether a call's new argument list differs from its old one at the test's
+/// input, so an expectation pinning the call's arguments fails (#7586). A
+/// changed argument count or keyword set always does, and so does a
+/// rewritten argument, except one that wraps the old value in a call or
+/// unwraps it: `abs(n)`, `int(n)` or `round(n)` can return `n` unchanged at
+/// the input the test passes, so the pinned expectation still holds.
+fn arguments_always_differ(old: &str, new: &str) -> bool {
+    let (old, new) = (split_top_level_args(old), split_top_level_args(new));
+    if old
+        .iter()
+        .chain(new.iter())
+        .any(|argument| argument.trim().starts_with('*'))
+    {
+        return false;
+    }
+    let keyword = |argument: &str| {
+        argument
+            .split_once('=')
+            .filter(|(name, value)| {
+                super::static_limits::is_simple_python_identifier(name.trim())
+                    && !value.starts_with('=')
+            })
+            .map(|(name, value)| (name.trim().to_string(), value.trim().to_string()))
+    };
+    // Positional values in order, then keyword values sorted by name.
+    let values = |arguments: &[&str]| -> (Vec<String>, Vec<(String, String)>) {
+        let mut keywords: Vec<(String, String)> = arguments
+            .iter()
+            .filter_map(|argument| keyword(argument))
+            .collect();
+        keywords.sort();
+        let positional = arguments
+            .iter()
+            .filter(|argument| keyword(argument).is_none())
+            .map(|argument| argument.trim().to_string())
+            .collect();
+        (positional, keywords)
+    };
+    let ((old_positional, old_keywords), (new_positional, new_keywords)) =
+        (values(&old), values(&new));
+    let names = |keywords: &[(String, String)]| -> Vec<String> {
+        keywords.iter().map(|(name, _)| name.clone()).collect()
+    };
+    if old_positional.len() != new_positional.len() || names(&old_keywords) != names(&new_keywords)
+    {
+        return true;
+    }
+    old_positional
+        .iter()
+        .zip(&new_positional)
+        .chain(
+            old_keywords
+                .iter()
+                .map(|(_, value)| value)
+                .zip(new_keywords.iter().map(|(_, value)| value)),
+        )
+        .any(|(old, new)| old != new && !wraps(old, new) && !wraps(new, old))
+}
+
+/// Whether `outer` is one call whose only argument is `inner`: `abs(n)`
+/// around `n`.
+fn wraps(inner: &str, outer: &str) -> bool {
+    let outer = outer.trim();
+    let Some(open) = outer.find('(') else {
+        return false;
+    };
+    let callee = outer[..open].trim_end();
+    !callee.is_empty()
+        && callee
+            .chars()
+            .all(|ch| ch == '.' || is_python_identifier_char(ch))
+        && super::no_behavior::matching_call_paren(outer, open).is_some_and(|close| {
+            close + 1 == outer.len() && outer[open + 1..close].trim() == inner.trim()
+        })
 }
 
 /// Live, identifier-bounded occurrences of `needle`, as (before, after) text.

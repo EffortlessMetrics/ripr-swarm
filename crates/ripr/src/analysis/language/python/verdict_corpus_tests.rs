@@ -1190,3 +1190,104 @@ fn the_callable_form_passes_its_keyword_arguments_on() -> Result<(), String> {
     );
     Ok(())
 }
+
+const ON_PARSE: &str =
+    "def on_parse(text, handler):\n    handler(int(text) + 1)\n    return handler\n";
+const ON_PARSE_OLD: &str = "    handler(int(text))";
+
+fn on_parse_class(
+    owner: &str,
+    line: usize,
+    old: &str,
+    body: &str,
+) -> Result<ExposureClass, String> {
+    classify(
+        owner,
+        line,
+        old,
+        &test_module(
+            "from unittest.mock import Mock\n\nfrom src.shop import on_parse",
+            body,
+        ),
+    )
+}
+
+#[test]
+fn a_mock_passed_for_a_called_parameter_pins_its_arguments() -> Result<(), String> {
+    // #7586, example 9: the owner hands its handler back, so `m` is the mock
+    // the test passed, and the pinned expectation fails on the handed 2.
+    let returned =
+        "def test_on_parse():\n    m = on_parse('1', Mock())\n    m.assert_called_once_with(1)\n";
+    assert_eq!(
+        on_parse_class(ON_PARSE, 2, ON_PARSE_OLD, returned)?,
+        ExposureClass::Exposed
+    );
+    // The same mock reached through the local the test passed.
+    assert_eq!(
+        on_parse_class(
+            ON_PARSE,
+            2,
+            ON_PARSE_OLD,
+            "def test_on_parse():\n    h = Mock()\n    on_parse('1', h)\n    h.assert_called_once_with(1)\n"
+        )?,
+        ExposureClass::Exposed
+    );
+    // A wrapping call can return its argument unchanged at the test's input
+    // (`abs(1) == 1`), so the expectation may still hold.
+    let wrapped = "def on_parse(text, handler):\n    handler(abs(int(text)))\n    return handler\n";
+    assert_eq!(
+        on_parse_class(wrapped, 2, ON_PARSE_OLD, returned)?,
+        ExposureClass::WeaklyExposed
+    );
+    // An owner that returns something else, or rebinds the parameter first,
+    // does not hand the mock back.
+    for owner in [
+        "def on_parse(text, handler):\n    handler(int(text) + 1)\n    return text\n",
+        "def on_parse(text, handler):\n    handler(int(text) + 1)\n    handler = Mock()\n    return handler\n",
+        "def on_parse(text, handler):\n    handler(int(text) + 1)\n    if text:\n        return None\n    return handler\n",
+    ] {
+        assert_eq!(
+            on_parse_class(owner, 2, ON_PARSE_OLD, returned)?,
+            ExposureClass::WeaklyExposed,
+            "{owner}"
+        );
+    }
+    // Rule 17's argument rules still apply: an unpinned or last-call-only
+    // expectation does not credit.
+    for check in ["m.assert_called_once()", "m.assert_called_with(1)"] {
+        assert_eq!(
+            on_parse_class(
+                ON_PARSE,
+                2,
+                ON_PARSE_OLD,
+                &format!("def test_on_parse():\n    m = on_parse('1', Mock())\n    {check}\n")
+            )?,
+            ExposureClass::WeaklyExposed,
+            "{check}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_wrapped_argument_does_not_credit_a_mocked_collaborator() -> Result<(), String> {
+    // The gate applies to `p.m(...)` too: `abs(user)` may hand the mock the
+    // same value, while a scaled or added argument differs at a nonzero input.
+    let class = |new: &str, old: &str| {
+        classify(
+            &format!("def notify(client, user):\n    client.send({new})\n"),
+            2,
+            &format!("    client.send({old})"),
+            &test_module(
+                "from unittest.mock import Mock\n\nfrom src.shop import notify",
+                "def test_notify():\n    client = Mock()\n    notify(client, 3)\n    client.send.assert_called_once_with(3)\n",
+            ),
+        )
+    };
+    assert_eq!(class("abs(user)", "user")?, ExposureClass::WeaklyExposed);
+    assert_eq!(class("user", "int(user)")?, ExposureClass::WeaklyExposed);
+    assert_eq!(class("user * 100", "user")?, ExposureClass::Exposed);
+    assert_eq!(class("user, 1", "user")?, ExposureClass::Exposed);
+    assert_eq!(class("abs(user), 1", "user, 2")?, ExposureClass::Exposed);
+    Ok(())
+}
