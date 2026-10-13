@@ -1,0 +1,51 @@
+ripr static RIPR exposure analysis
+mode: fast
+root: fixtures/rust_commented_module_orphan/input
+
+Summary: 1 probe(s), 0 exposed, 0 weakly_exposed, 0 reachable_unrevealed, 1 no_static_path, 0 infection_unknown, 0 propagation_unknown, 0 static_unknown; 1 of 1 finding(s) unsuppressed
+
+Analysis outcome: findings below (analysis complete; complete_with_findings).
+  Counts: 1 changed file(s), 2 changed line(s), 1 candidate line(s), 1 probe(s), 1 finding(s).
+
+WARNING ./src/used.rs:2
+  id: probe:src_used.rs:predicate:729097f7
+
+Changed
+  before: total >= 100
+  after:  total > 100
+
+Probe
+  family: predicate
+  delta:  control
+  owner:  src/used.rs::discount
+  canonical gap: gap:rust:src/used.rs:discount:predicate_boundary:predicate:total==100
+
+Static exposure
+  no_static_path (warning, confidence 0.48)
+
+Evidence
+  - reach no: No static test path found for the changed owner
+  - infection unknown: No tests were found, so activation/infection cannot be estimated
+  - propagation yes: Changed behavior appears to influence returned value: total - 10
+  - observation no: No reachable test oracle found
+  - discriminator no: No assertion can discriminate the changed behavior without a reachable test
+  - local flow reaches returned value: total - 10 (line 2)
+
+Weakness
+  - No detected boundary input for the changed predicate
+  - No relevant oracle was detected
+  - No static test path reaches the changed owner
+  - No strong discriminator was detected
+
+Next step
+  ripr found no static test path to this change — this is not a coverage assessment. A test may already exercise it through macros, helper-call chains, or integration tests that ripr's static model does not yet trace. If none does, add a co-located test that reaches and observes the changed behavior so a discriminator exists.
+Drill in:
+  ripr explain --root <cwd>/fixtures/rust_commented_module_orphan/input --diff <cwd>/fixtures/rust_commented_module_orphan/diff.patch --mode fast probe:src_used.rs:predicate:729097f7
+  ripr context --root <cwd>/fixtures/rust_commented_module_orphan/input --diff <cwd>/fixtures/rust_commented_module_orphan/diff.patch --mode fast --at probe:src_used.rs:predicate:729097f7
+
+
+Note: ripr found no static test path for any of the 1 changed expression(s) in this diff. Scope
+  analyzed: 1 changed Rust file(s), 1 changed expression(s), and 0 statically linked related
+  test(s). This is not a coverage assessment. A test may already exercise these changes through
+  macros, helper-call chains, or integration tests that ripr's static model does not yet trace; if
+  none does, add co-located tests that observe the changed behavior.

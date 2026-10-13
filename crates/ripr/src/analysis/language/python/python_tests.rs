@@ -1139,6 +1139,7 @@ fn body_calls_owner_filters_comments_and_string_mentions() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         class_path: String::new(),
+        term_facts: Default::default(),
     };
 
     let comment_only = "    # apply_discount(100)\n    other()\n";
@@ -1199,6 +1200,9 @@ fn is_test_file_recognizes_file_and_directory_conventions() {
     assert!(is_test_file(Path::new("src/test_thing.py")));
     assert!(is_test_file(Path::new("src/thing_test.py")));
     assert!(is_test_file(Path::new("nested/tests/sub/utility.py")));
+    assert!(is_test_file(Path::new("blog/tests.py")));
+    assert!(is_test_file(Path::new("tests.py")));
+    assert!(is_test_file(Path::new("blog/test.py")));
     assert!(!is_test_file(Path::new("src/pricing.py")));
     assert!(!is_test_file(Path::new("src/testing.py")));
 }
@@ -1586,6 +1590,7 @@ fn imported_module_matches_owner_compares_last_segment_to_owner_stem() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         class_path: String::new(),
+        term_facts: Default::default(),
     };
     let dotted = PythonImport {
         imported: "src.pricing".to_string(),
@@ -1641,6 +1646,7 @@ fn shared_src_layout_module_name_identifies_owner_only_from_its_project() -> Res
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         class_path: String::new(),
+        term_facts: Default::default(),
     };
     let sources = [
         PathBuf::from("a/src/shared/calc.py"),
@@ -1718,6 +1724,7 @@ fn nested_src_layout_rival_claims_tests_under_its_own_root() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         class_path: String::new(),
+        term_facts: Default::default(),
     };
     let sources = [
         PathBuf::from("src/shared/calc.py"),
@@ -1762,6 +1769,7 @@ fn same_stem_related_handles_missing_stems() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         class_path: String::new(),
+        term_facts: Default::default(),
     };
     let test = PythonTest {
         constant_rebinding: Default::default(),
@@ -2220,7 +2228,7 @@ fn collect_workspace_python_files_skips_excluded_directories() -> Result<(), Str
         write_file(&root.join(rel), "x = 1\n")?;
     }
 
-    let files = collect_workspace_python_files(&root);
+    let files = collect_workspace_python_files_with_handwritten(&root, &[]);
     let cleanup = std::fs::remove_dir_all(&root);
 
     for expected in included.iter() {
@@ -2257,7 +2265,54 @@ fn collect_workspace_python_files_returns_empty_for_missing_root() {
             .map(|d| d.as_nanos())
             .unwrap_or(0)
     ));
-    assert!(collect_workspace_python_files(&missing).is_empty());
+    assert!(collect_workspace_python_files_with_handwritten(&missing, &[]).is_empty());
+}
+
+#[test]
+fn declared_handwritten_python_file_under_excluded_dir_is_walked() -> Result<(), String> {
+    // #7386: `[languages.python] handwritten_files` admits an exact
+    // repository-relative path past the built-in excluded-directory
+    // conventions. The declared file is walked; sibling files under the
+    // same excluded directory are still skipped.
+    let root = unique_tempdir("handwritten-python-walk")?;
+    write_file(
+        &root.join("build/lib/pipeline.py"),
+        "def normalize(value):\n    return value\n",
+    )?;
+    write_file(&root.join("build/lib/generated_helper.py"), "x = 1\n")?;
+    write_file(&root.join("src/keep.py"), "y = 2\n")?;
+    let declared = vec!["build/lib/pipeline.py".to_string()];
+
+    let files = collect_workspace_python_files_with_handwritten(&root, &declared);
+    let cleanup = std::fs::remove_dir_all(&root);
+
+    if !files
+        .iter()
+        .any(|path| path == &PathBuf::from("build/lib/pipeline.py"))
+    {
+        let _ = cleanup;
+        return Err(format!(
+            "declared hand-written file must be walked, got {files:?}"
+        ));
+    }
+    if files
+        .iter()
+        .any(|path| path == &PathBuf::from("build/lib/generated_helper.py"))
+    {
+        let _ = cleanup;
+        return Err(format!(
+            "non-declared sibling under the excluded dir must stay skipped, got {files:?}"
+        ));
+    }
+    if !files
+        .iter()
+        .any(|path| path == &PathBuf::from("src/keep.py"))
+    {
+        let _ = cleanup;
+        return Err(format!("ordinary source must stay walked, got {files:?}"));
+    }
+    cleanup.map_err(|err| format!("remove_dir_all({}): {err}", root.display()))?;
+    Ok(())
 }
 
 #[test]
@@ -2270,7 +2325,7 @@ fn vendor_only_tree_neither_enables_python_nor_enters_diff_inputs() -> Result<()
     write_file(&root.join("vendor/dep.py"), "VALUE = 1\n")?;
     write_file(&root.join("src/vendor/dep.py"), "VALUE = 2\n")?;
 
-    let files = collect_workspace_python_files(&root);
+    let files = collect_workspace_python_files_with_handwritten(&root, &[]);
     let detection_enabled = crate::config::detect_python_project(&root);
     let cleanup = std::fs::remove_dir_all(&root);
 
@@ -3479,12 +3534,13 @@ fn assertion_from_expr_returns_none_for_non_call_expressions() -> Result<(), Str
 
 #[test]
 fn visit_workspace_returns_silently_when_directory_is_unreadable() {
-    // Pointing visit_workspace at a non-existent directory must hit
+    // Pointing the workspace walk at a non-existent directory must hit
     // the `Err(_) => return;` early exit without panicking.
     let mut out = Vec::new();
-    visit_workspace(
+    super::workspace::visit_workspace_with_handwritten(
         Path::new("/definitely-not-a-real-dir-ripr"),
         Path::new("/definitely-not-a-real-dir-ripr"),
+        &[],
         &mut out,
     );
     assert!(out.is_empty());
@@ -3694,6 +3750,7 @@ fn strong_oracle_observes_owner_distinguishes_aligned_from_orthogonal() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         class_path: String::new(),
+        term_facts: Default::default(),
     };
     let line = "return retry_state.attempt_number > self.max_attempt_number";
     let strong = |oracle: &str| RelatedTest {
@@ -3764,6 +3821,7 @@ fn strong_oracle_observes_owner_resolves_import_alias() {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         class_path: String::new(),
+        term_facts: Default::default(),
     };
     let line = "return amount + 2";
     let related = [RelatedTest {
@@ -3831,6 +3889,7 @@ fn align_owner(name: &str, qualified: &str) -> PythonOwner {
         module_constants: Vec::new(),
         same_class_callees: Vec::new(),
         class_path: String::new(),
+        term_facts: Default::default(),
     }
 }
 
@@ -3974,17 +4033,17 @@ fn sink_alignment_is_unknown_without_strong_oracle() {
 }
 
 #[test]
-fn sink_alignment_for_module_owner_preserves_observes_decision() {
-    // `<module>` owner with no usable token: the prior boolean returned `true`,
-    // so the derived decision must stay `observes` even though alignment reads
-    // `unknown`. This is the one place `unknown` does not imply not-observed.
+fn sink_alignment_for_module_owner_requires_a_crediting_assertion() {
+    // A strong unrelated row cannot observe a module assignment merely because
+    // the changed line has no usable token. Preserve the original counterexample.
     let owner = align_owner("<module>", "<module>");
     let line = "x = 1";
     let related = [align_strong("assert y == 2")];
     let a = classify_sink_alignment(&owner, line, &related, &[]);
-    assert_eq!(a.oracle_alignment, "unknown");
-    assert_eq!(a.alignment_reason, "module_owner_no_sink_token");
-    assert!(a.observes());
+    assert_eq!(a.oracle_alignment, "orthogonal");
+    assert_eq!(a.alignment_reason, "strong_oracle_observes_different_sink");
+    assert_eq!(a.credited, None);
+    assert!(!a.observes());
 }
 
 #[test]

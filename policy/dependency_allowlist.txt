@@ -23,6 +23,8 @@
 # ra_ap_syntax parsing in the facts index build; the parallel collect preserves
 # input order and byte-identical output. Add the Cargo dependency only in the
 # scoped parallelism PR.
+# home|production_configuration_identity|analysis|#7573 pins Cargo's canonical
+# safe home resolver to 0.5.12 for OS fallback and relative-home configuration.
 
 Cargo.lock|rust_workspace_lockfile|rust|Pinned Cargo dependency graph.
 Cargo.toml|rust_workspace_manifest|rust|Root Cargo workspace manifest.
@@ -42,6 +44,9 @@ fixtures/blind_journey_installed_python/**/pyproject.toml|fixture_input|analysis
 fixtures/first_successful_pr/python-preview-gap/pyproject.toml|fixture_input|analysis-fixtures|First successful PR Python preview fixture needs a project marker as analyzed input.
 fixtures/python/basic/pyproject.toml|fixture_input|analysis-fixtures|Python project detection fixture needs a project marker as analyzed input.
 fixtures/python_no_config_repair_gap/input/pyproject.toml|fixture_input|analysis-fixtures|Python no-config repair-routing fixture needs a project marker as analyzed input.
+fixtures/python_empty_sink_module_comparison/input/pyproject.toml|fixture_input|analysis-fixtures|Python empty-token module comparison honesty control needs the original project marker as analyzed input (#7526).
+fixtures/python_empty_sink_observed_short_function/input/pyproject.toml|fixture_input|analysis-fixtures|Python genuine short-function observation control needs the original project marker as analyzed input (#7526).
+fixtures/python_empty_sink_unrelated_short_function/input/pyproject.toml|fixture_input|analysis-fixtures|Python unrelated short-function oracle honesty control needs the original project marker as analyzed input (#7526).
 fixtures/python_src_layout_repair_gap/input/pyproject.toml|fixture_input|analysis-fixtures|Python src-layout repair-routing fixture needs a project marker as analyzed input.
 fixtures/rust-verdict-corpus/subjects/**/Cargo.lock|fixture_input|verdict-corpus|Authored subjects that pin registry crates retain a hash-checked Cargo.lock so relabel can replay with --locked (#7000).
 fixtures/python-verdict-corpus/subjects/**/pyproject.toml|fixture_input|analysis-fixtures|Python verdict corpus subjects need a project marker so ripr enables Python the way a new user's repository does (RIPR-SPEC-0245).

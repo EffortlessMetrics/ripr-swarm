@@ -1,5 +1,5 @@
 use super::AnalysisStatusNotification;
-use super::actions::{code_action_response, resolve_action};
+use super::actions::{code_action_response, disable_retained_analysis_actions, resolve_action};
 use super::capabilities::{
     ConfigurationMode, WorkspaceRootResolution, initialize_result_for_client,
     root_from_initialize_params, workspace_folder_set_from_initialize_params,
@@ -12,7 +12,7 @@ use super::diagnostics::{
 };
 use super::hover::{
     classified_seam_hover_response, diagnostic_at_position, diagnostic_covers_position,
-    diagnostic_hover_response, finding_hover_response, hover_response, hover_with_snapshot_status,
+    diagnostic_hover_response, finding_hover_response, hover_response, hover_with_analysis_health,
     is_gap_diagnostic, markdown_hover,
 };
 use super::lens::{LensViewIdentity, code_lens_response, lens_view_identity};
@@ -3322,6 +3322,14 @@ impl Backend {
     }
 
     pub(super) fn hover_for_position(&self, params: &HoverParams) -> Option<Hover> {
+        // Capture health before any snapshot lock: completion records health
+        // while reading the snapshot. Every retained-evidence branch uses
+        // this same lifecycle projection without reversing that lock order.
+        let health = self.analysis_health_snapshot();
+        let with_status = |hover, snapshot: &AnalysisSnapshot| {
+            let effective = self.effective_health_for_snapshot(health.clone(), snapshot);
+            hover_with_analysis_health(hover, snapshot, &effective)
+        };
         let uri = &params.text_document_position_params.text_document.uri;
         let position = &params.text_document_position_params.position;
         // A quarantined (dirty-buffer) document has no valid saved-state
@@ -3359,7 +3367,7 @@ impl Backend {
             overlapping.sort_by_key(|d| super::hover::is_line_level_range(&d.range));
             for diagnostic in &overlapping {
                 if let Some(seam) = snapshot.classified_seam_for_diagnostic(diagnostic) {
-                    return Some(hover_with_snapshot_status(
+                    return Some(with_status(
                         classified_seam_hover_response(seam, diagnostic, Some(&snapshot)),
                         &snapshot,
                     ));
@@ -3372,7 +3380,7 @@ impl Backend {
             // evidence as the highest-priority structural projection.
             for diagnostic in &overlapping {
                 if is_gap_diagnostic(diagnostic) {
-                    return Some(hover_with_snapshot_status(
+                    return Some(with_status(
                         diagnostic_hover_response(diagnostic),
                         &snapshot,
                     ));
@@ -3380,14 +3388,14 @@ impl Backend {
             }
             for diagnostic in &overlapping {
                 if let Some(finding) = snapshot.finding_for_diagnostic(diagnostic) {
-                    return Some(hover_with_snapshot_status(
+                    return Some(with_status(
                         finding_hover_response(finding, diagnostic),
                         &snapshot,
                     ));
                 }
             }
             if let Some(diagnostic) = overlapping.first() {
-                return Some(hover_with_snapshot_status(
+                return Some(with_status(
                     diagnostic_hover_response(diagnostic),
                     &snapshot,
                 ));
@@ -3414,7 +3422,7 @@ impl Backend {
                 .filter(|finding| !published.contains(finding.id.as_str()))
                 .collect::<Vec<_>>();
             if !findings.is_empty() {
-                return Some(hover_with_snapshot_status(
+                return Some(with_status(
                     super::hover::line_findings_hover_response(
                         &findings,
                         snapshot.diagnostic_profile,
@@ -5510,9 +5518,6 @@ impl LanguageServer for Backend {
             .and_then(|value| value.clone());
         let health = self.analysis_health_snapshot();
         let root_allows_analysis = self.workspace_root_authority().allows_analysis();
-        let action_snapshot = (health.allows_current_repairs() && root_allows_analysis)
-            .then_some(snapshot)
-            .flatten();
         // Negotiated client-command filter (#1776, RIPR-SPEC-0129): a
         // poisoned profile store fails closed to the unsupported profile,
         // which strips every client-executed command rather than offering
@@ -5522,11 +5527,26 @@ impl LanguageServer for Backend {
             .lock()
             .map(|features| features.clone())
             .unwrap_or_else(|_| ClientFeatureProfile::unsupported());
-        let result = Ok(Some(code_action_response(
+        // A valid-root retained snapshot can name the unavailable actions,
+        // but only for a client that understands the inert disabled form.
+        // Root/missing-snapshot and legacy-client gates stay omit-only.
+        let retained_inert = root_allows_analysis
+            && snapshot.is_some()
+            && !health.allows_current_repairs()
+            && client_features.code_action_disabled;
+        let action_snapshot = (root_allows_analysis
+            && (health.allows_current_repairs() || retained_inert))
+            .then_some(snapshot)
+            .flatten();
+        let mut actions = code_action_response(
             &params,
             action_snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
             &client_features,
-        )));
+        );
+        if retained_inert {
+            disable_retained_analysis_actions(&mut actions, &health);
+        }
+        let result = Ok(Some(actions));
         self.trace_response("textDocument/codeAction", &result)
             .await;
         result

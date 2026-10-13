@@ -1,0 +1,25 @@
+diff --git a/src/cart.py b/src/cart.py
+index 6794733..6f7006b 100644
+--- a/src/cart.py
++++ b/src/cart.py
+@@ -4,17 +4,15 @@ FLOOR = 0
+ 
+ def capped_total(items):
+     total = sum(items)
+-    # keep the cap
+-    total = min(total, CAP)
++# keep the cap
+     return total
+ 
+ 
+ def floored_total(items):
+     total = sum(items)
+-    total = max(total, FLOOR)
+     return total
+ 
+ 
+ def doubled(x):
+-    # twice the input
+-    return x + x
++    # double it
++    return x * 2

@@ -25,6 +25,7 @@ Linked issues:
 - #4103 (default-import and dynamic-import owner credit)
 - #4554 (workspace package-name resolution)
 - #6654 (corpus cases scored false actionable under the first draft)
+- #7315 (literal rejection equality observes the rejected reason)
 
 Linked PRs:
 
@@ -150,6 +151,22 @@ exactly as the bare call does. This covers the node:test ESM form
 `await test("name", fn)`. It extends the `test` root RIPR-SPEC-0027 lists;
 no accepted spec names the awaited form. An awaited subtest
 `await t.test(...)` inside a test body is not a registration.
+Before an awaited registration contributes assertions, the existing admission
+scanner must recognize its runner root at the call site. File-local helpers,
+unrelated imports and enclosing callback/loop bindings cannot turn an unused
+callback into test evidence. This fence applies to the newly supported awaited
+form; it does not change bare-root registration semantics. A sibling suite's
+helper is outside this lexical scope. Re-exports do not create local runner
+bindings, and an ESM namespace object is not a callable registration root.
+The awaited CommonJS exemption requires an immutable runner declaration and
+either ambient `require` syntax or an immutable loader created by a locally
+imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
+or runner bindings and same-spelled helper factories remain uncredited.
+Runtime module-mode and loader resolution are outside this static claim.
+The resolved test/suite kind must agree with the supported local spelling.
+Mismatched aliases (`describe as test` or `test as describe`) receive no trusted
+test record and retain a typed partial-extraction limitation, including an
+assertion-only callback with no nested test call. This does not expand aliases.
 
 ### Assertion collection
 
@@ -237,7 +254,29 @@ falling through to the Jest table. A renamed import (`expect as e`) and
 | `toContain`, `toMatch`, `toBeGreaterThan`, `toBeGreaterThanOrEqual`, `toBeLessThan`, `toBeLessThanOrEqual`, `toHaveLength`, `toHaveProperty`, `toBeInstanceOf` (RIPR-SPEC-0249; strong for a predicate's class split), `toMatchObject` (RIPR-SPEC-0250; strong for a listed returned field) | `relational_check` / weak |
 | any other matcher | `unknown` / unknown, `typescript_custom_matcher_unresolved` |
 
-`.resolves` and `.rejects` use the same table. A snapshot never reaches
+`.resolves` uses the same table. For an unshadowed `expect` import from
+`vitest` or `@jest/globals`, `.rejects.toBe`, `.rejects.toEqual` and
+`.rejects.toStrictEqual` with exactly one concrete literal argument instead
+read `exact_error_variant` / strong: they compare the rejected reason, so
+they match an error path and cannot credit a normal return value (#7315).
+The existing literal admission also accepts safe all-literal objects.
+Their rendered oracle retains `.rejects`. Dynamic arguments, unknown
+bindings and implicit globals retain the existing table and limitations;
+negated forms retain their existing admission rules. This bounded extension
+is pinned by `typescript_rejects_literal_equality` and
+`rejection_equality_tests`.
+
+The rejected literal integrates the #6798 expected-value error-liveness
+owner: `literal_rejection_credits` reads the pinned reason from
+`expected_value_or_variant` (the promoted literal's `error_payload` stays
+`None`). On a message-only change the pinned reason must separate the old
+and new thrown messages; otherwise it must match the changed line's own
+thrown message, so a reason the changed line never produces — the
+unexercised second throw — reads `broad_error` / weak for that change.
+`rejection_literal_cannot_expose_an_unexercised_error_branch` pins this
+verdict.
+
+A snapshot never reaches
 `exposed` by itself, because only a strong oracle does; it carries
 `typescript_snapshot_discriminator_unresolved`. A mock matcher never
 reaches `exposed` either, even with a literal payload.
@@ -295,8 +334,10 @@ mirrors RIPR-SPEC-0238 rule 1.
 
 - Execution-context receiver (AVA, tape, node:test `t`): the table in
   RIPR-SPEC-0085. The receiver is the callback's first parameter whatever
-  its name; no runner import is required. A method outside the table, and
-  `t.assert.equal(...)`, yield no assertion.
+  its name; no runner import is required. A method outside the table
+  yields no assertion. In a test registered through a `test` or `it`
+  bound to `node:test`, `t.assert.<method>(...)` on the callback's first
+  parameter reads as legacy `node:assert` (RIPR-SPEC-0252 rule 1).
 - `node:assert` / chai `assert`: `strictEqual` and `deepStrictEqual` are
   `exact_value` / strong; `equal` is strong only under a strict module or
   the `strict` export; `deepEqual` is strong unless the module is legacy
@@ -790,6 +831,21 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Test Mapping
 
+- #7315: `crates/ripr/src/analysis/language/typescript/rejection_equality_tests.rs`
+  pins literal rejection equality, resolved-value domain separation,
+  unshadowed runner imports and unchanged unresolved forms. Fixture
+  `fixtures/typescript_rejects_literal_equality` exercises the real CLI;
+  the shared evidence-promotion honesty corpus pins both verdict directions.
+- `crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs`:
+  `awaited_roots_retain_call_identity_and_complete_extraction` and
+  `awaited_unwalked_root_keeps_the_partial_extraction_disclosure` cover rule 1.
+- `crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs`: the pinned Nano ID
+  consumer covers bare/awaited registration parity, exact/smoke oracles,
+  qualification options, assertion and runner shadows, sibling-suite isolation,
+  callable local imports, unsupported registration positions,
+  and byte-identical upstream provenance through the actual CLI.
+- `fixtures/javascript_awaited_registration`: genuine JavaScript production
+  source with a separately authored Node consumer and independent runtime contrast.
 - Existing: `crates/ripr/src/analysis/language/typescript/tests.rs`:
   `ts_returnvalue_unrelated_strong_assertion_downgrades`,
   `ts_returnvalue_owner_aliased_local_observation_stays_exposed`,
@@ -813,6 +869,12 @@ to `amount - 20`, and `tests/lib.test.ts` has
 
 ## Implementation Mapping
 
+- #7315: `expect_assertion_from_expression` reads the rejection modifier and
+  concrete expected argument; `TypeScriptAssertionBindings` supplies the
+  explicit runner import and existing scope filter. The existing
+  `ts_oracle_kind_matches_seam` authority handles the resulting error kind,
+  and `literal_rejection_credits` in the shared error-payload guard owner
+  reads the pinned reason for error-branch liveness.
 - `crates/ripr/src/analysis/language/typescript/oracle.rs`: rules 2 to 4, 9
   and 10
   (`expect_call_from_assertion_inner`, `call_expression_is_expect`,

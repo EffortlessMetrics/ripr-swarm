@@ -1,0 +1,51 @@
+{
+  "case_id": "lib-rstest-values-matrix-relational",
+  "subject_id": "authored-lib-rstest",
+  "diff": "cases/lib-rstest-values-matrix-relational.diff",
+  "anchor": {
+    "file": "src/lib.rs",
+    "line": 13
+  },
+  "edit_kind": "behavior_preserving_rewrite",
+  "behavior_family": "return_value",
+  "test_shape": "rstest_values_matrix_relational",
+  "hard_case": null,
+  "truth": {
+    "state": "partially_discriminated",
+    "method": "runtime_mutant_kill",
+    "test_command": "cargo test",
+    "toolchain": "rustc 1.95.0 (59807616e 2026-04-14), x86_64-unknown-linux-gnu",
+    "mutants": [
+      {
+        "replacement": "v.min(99)",
+        "mutated_line": "v.min(99)",
+        "outcome": "tests_passed",
+        "failing_test": null,
+        "equivalence_review": "not equivalent: v=100 gives 99 not 100"
+      },
+      {
+        "replacement": "v.max(100)",
+        "mutated_line": "v.max(100)",
+        "outcome": "tests_failed",
+        "failing_test": "tests::clamp_stays_in_range::v_3_200",
+        "equivalence_review": "not equivalent: v=200 gives 200 not 100 (caught); v=0 gives 100 not 0"
+      }
+    ]
+  },
+  "expected": {
+    "ideal_verdict": "gap",
+    "acceptable_verdicts": [
+      "gap",
+      "limited"
+    ]
+  },
+  "reasoning": "`#[values(0, 50, 200)]` generates three tests that only assert `clamp_pct(v) <= 100`; v.min(99) stays within range and goes undetected, v.max(100) breaks the bound at v=200.",
+  "labeling_observation": {
+    "ripr_commit": "5e385c644",
+    "full_checkout_verdict": "gap",
+    "full_checkout_classifications": [
+      "weakly_exposed"
+    ],
+    "excerpt_parity": "matched"
+  }
+}

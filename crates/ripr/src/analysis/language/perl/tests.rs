@@ -2844,6 +2844,69 @@ fn h2_sink_aligned_oracle_classifies_exposed_and_suppresses_repair_gap() -> Resu
     Ok(())
 }
 
+/// RIPR-SPEC-0235 rule 5 and example 28: sink alignment uses the same oracle
+/// binding as classification. An oracle whose `test_id` is not the relation's
+/// test is absent for that relation, so an aligned sink in another test's
+/// oracle must not make the change `Exposed`.
+#[test]
+fn h2_aligned_sink_on_another_tests_oracle_does_not_promote() -> Result<(), String> {
+    let aligned = EXACT_RETURN_PACKET
+        .replace(
+            "\"changed_text_digest\": \"sha256:return\",",
+            "\"changed_text_digest\": \"sha256:return\",\n      \"changed_observable\": \"$amount / 2\",",
+        )
+        .replace(
+            "\"expression\": \"is($got, 10, 'discount threshold')\",",
+            "\"expression\": \"is($got, 10, 'discount threshold')\",\n      \"observed_sink\": \"$amount / 2\",",
+        );
+    // Control: the same packet with the oracle bound to the relation's test
+    // is Exposed, so the cross-test packet below differs only in the binding.
+    let control = findings_from_packet(&aligned)?;
+    assert_eq!(
+        control.first().map(|finding| &finding.class),
+        Some(&crate::domain::ExposureClass::Exposed),
+        "control: an aligned sink on the relation's own test is Exposed"
+    );
+    let oracle_test = "\"oracle_id\": \"oracle:t/app.t:8:is\",\n      \"test_id\": \"test:t/app.t:test_discount_threshold\",";
+    if !aligned.contains(oracle_test) {
+        return Err("fixture drifted: oracle test_id line not found".to_string());
+    }
+    let cross_test = aligned.replace(
+        oracle_test,
+        "\"oracle_id\": \"oracle:t/app.t:8:is\",\n      \"test_id\": \"test:t/other.t:test_other\",",
+    );
+    let findings = findings_from_packet(&cross_test)?;
+    let finding = findings
+        .first()
+        .ok_or_else(|| "expected one finding".to_string())?;
+    assert_eq!(
+        finding.class,
+        crate::domain::ExposureClass::ReachableUnrevealed,
+        "another test's oracle is absent for the relation"
+    );
+    assert!(
+        !finding
+            .evidence
+            .iter()
+            .any(|e| e.starts_with("perl_already_discriminated:")),
+        "a cross-test oracle must not emit already-discriminated evidence"
+    );
+    let related = finding
+        .related_tests
+        .first()
+        .ok_or_else(|| "expected the relation's related test".to_string())?;
+    assert_eq!(
+        related.oracle, None,
+        "another test's assertion is not displayed as this test's oracle"
+    );
+    assert_eq!(
+        related.oracle_strength,
+        crate::domain::OracleStrength::Unknown,
+        "another test's oracle strength is not credited to this test"
+    );
+    Ok(())
+}
+
 /// A strong-exact oracle whose `observed_sink` does NOT match the change's
 /// `changed_observable` must NOT classify Exposed. Owner-target identity is
 /// not sink observation — this is the cardinal false-exposed guard.
@@ -3509,7 +3572,7 @@ fn h1_boundary_check_is_ordering_independent_across_related_tests() -> Result<()
     Ok(())
 }
 
-const EXACT_RETURN_PACKET: &str = r#"{
+pub(crate) const EXACT_RETURN_PACKET: &str = r#"{
   "schema_version": "ripr-perl-facts-v1",
   "packet_id": "perl-facts:repo:exact-return",
   "packet_status": "complete",
@@ -5010,7 +5073,7 @@ fn all_fact_arrays() -> [&'static str; 8] {
 }
 
 /// Replace the change's digest with a concrete, finding-wide discriminator.
-fn with_concrete_discriminator(text: String) -> String {
+pub(crate) fn with_concrete_discriminator(text: String) -> String {
     text.replace(
         "\"changed_text_digest\": \"sha256:return\"",
         "\"changed_text_digest\": \"discriminator:$amount == 100\"",
@@ -5038,7 +5101,7 @@ fn rows_by_name(finding: &crate::domain::Finding) -> Vec<(String, Option<Related
     rows
 }
 
-fn only_finding(text: &str) -> Result<crate::domain::Finding, String> {
+pub(crate) fn only_finding(text: &str) -> Result<crate::domain::Finding, String> {
     let mut findings = findings_from_packet(text)?;
     if findings.len() != 1 {
         return Err(format!("expected one finding, got {}", findings.len()));
@@ -5271,10 +5334,9 @@ fn perl_unconfirmed_miss_follows_row_identity_not_position() -> Result<(), Strin
 /// Cases 16 and 17: shuffled fact arrays with stable IDs and edited metadata
 /// outside the packet identity keep the same fingerprint, finding identity,
 /// rows, tokens and the inputs the shared sentence is rendered from. Rows are compared by test name: row order, and
-/// the suggested test and verify command read from the first row, follow the
-/// packet's relation order (RIPR-SPEC-0064 asks producers to sort arrays by
-/// ID; the consumer does not re-sort), so they are not asserted under
-/// reordering.
+/// guidance is excluded from this reason-only projection. The independent
+/// recommendation_tests controls require stable direct-test guidance under
+/// reordering, including canonical arrays whose first row is advisory (#6734).
 #[test]
 fn perl_packet_array_order_and_metadata_do_not_move_reasons() -> Result<(), String> {
     fn projection(
@@ -5400,3 +5462,9 @@ fn perl_related_test_miss_is_the_only_field_the_rule_writes() -> Result<(), Stri
     assert_eq!(explained_rows, 5);
     Ok(())
 }
+
+#[path = "recommendation_tests.rs"]
+mod recommendation_tests;
+
+#[path = "composition_tests.rs"]
+mod composition_tests;

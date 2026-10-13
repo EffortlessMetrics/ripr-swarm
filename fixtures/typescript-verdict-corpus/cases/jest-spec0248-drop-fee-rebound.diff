@@ -1,0 +1,11 @@
+diff --git a/src/priceFeeRebound.ts b/src/priceFeeRebound.ts
+index 0000000..1111111 100644
+--- a/src/priceFeeRebound.ts
++++ b/src/priceFeeRebound.ts
+@@ -2,5 +2,5 @@
+ 
+ export function priceFeeRebound(subtotal: number, fee: number): number {
+   fee=fee-5;
+-  return subtotal + fee + FLAT;
++  return subtotal + FLAT;
+ }

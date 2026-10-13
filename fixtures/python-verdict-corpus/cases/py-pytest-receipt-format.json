@@ -33,7 +33,7 @@
       "silent"
     ]
   },
-  "reasoning": "test_receipt_prints_dollars compares capsys.readouterr().out exactly, an output oracle under RIPR-SPEC-0028, so printing 12.5 instead of 12.50 fails it. The test reaches the owner as `pricing.print_receipt`, through the package re-export. ripr reports weakly_exposed, a false actionable verdict.",
+  "reasoning": "test_receipt_prints_dollars compares capsys.readouterr().out exactly, an output oracle under RIPR-SPEC-0028, so printing 12.5 instead of 12.50 fails it. The test reaches the owner as `pricing.print_receipt`, through the package re-export. ripr reports weakly_exposed, a false actionable verdict. This reasoning describes ripr at labeling (commit 127309619); the current verdict is the row under expected/rows/.",
   "labeling_observation": {
     "ripr_commit": "127309619",
     "full_checkout_verdict": "gap",

@@ -196,9 +196,9 @@ mod tests {
 }
 
 #[test]
-fn a_test_calling_the_owner_keeps_the_gap_despite_a_macro_witness() -> Result<(), String> {
+fn a_weak_direct_test_preserves_the_unresolved_macro_witness() -> Result<(), String> {
     // The same macro witness exists, but a test calls the owner directly:
-    // reach is established, so the weak oracle stays a gap.
+    // direct reach is established, but its weak oracle cannot erase the unresolved macro witness.
     let fixture = Fixture::new(
         "direct",
         &format!(
@@ -215,7 +215,12 @@ fn a_test_calling_the_owner_keeps_the_gap_despite_a_macro_witness() -> Result<()
         finding.related_tests
     );
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
-    assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    assert_eq!(
+        finding.static_limit_kind,
+        Some(StaticLimitKind::RustMacroReachUnresolved),
+        "{:?}",
+        finding.evidence
+    );
     Ok(())
 }
 
@@ -403,6 +408,57 @@ fn a_generator_with_a_second_same_named_definition_names_no_limit() -> Result<()
     let finding = fixture.rate_finding()?;
     assert_eq!(finding.class, ExposureClass::WeaklyExposed);
     assert_eq!(finding.static_limit_kind, None, "{:?}", finding.evidence);
+    Ok(())
+}
+
+/// Weak classification can coexist with a confirmed discriminator when an
+/// infection or propagation stage is weak. Do not replace that discriminator
+/// with a macro limit. These are gate-boundary states, not runtime evidence.
+#[test]
+fn mixed_macro_limit_preserves_confirmed_discrimination_and_examined_misses() -> Result<(), String>
+{
+    let fixture = Fixture::new(
+        "mixed-guard",
+        &format!(
+            "{MACRO_ROUTED}    #[test]\n    fn rate_is_positive() {{ assert!(inner_rate(2) > 0); }}\n}}\n"
+        ),
+    )?;
+    let mut finding = fixture.rate_finding()?;
+    finding.static_limit_kind = None;
+    assert!(super::needs_mixed_macro_reach_limit(&finding));
+    let before = finding.clone();
+    for state in [StageState::Weak, StageState::No] {
+        let mut confirmed = before.clone();
+        confirmed.ripr.reveal.discriminate.state = StageState::Yes;
+        confirmed.ripr.infect.state = state.clone();
+        assert!(!super::needs_mixed_macro_reach_limit(&confirmed));
+        confirmed.ripr.infect.state = StageState::Yes;
+        confirmed.ripr.propagate.state = state;
+        assert!(!super::needs_mixed_macro_reach_limit(&confirmed));
+    }
+    let mut miss = before.clone();
+    let mut direct_count = 0;
+    for test in &mut miss.related_tests {
+        if test.relation_reason == Some(RelationReason::DirectOwnerCall) {
+            direct_count += 1;
+            test.miss = Some(crate::domain::RelatedTestMiss::AssertionNotObserving);
+        }
+    }
+    assert_eq!(direct_count, 1);
+    assert!(!super::needs_mixed_macro_reach_limit(&miss));
+    let mut no_direct_oracle = before.clone();
+    let mut direct_count = 0;
+    for test in &mut no_direct_oracle.related_tests {
+        if test.relation_reason == Some(RelationReason::DirectOwnerCall) {
+            direct_count += 1;
+            assert!(test.oracle.is_some());
+            test.oracle = None;
+        }
+    }
+    assert_eq!(direct_count, 1);
+    assert!(!super::needs_mixed_macro_reach_limit(&no_direct_oracle));
+    finding.static_limit_kind = Some(StaticLimitKind::RustAssertionContextUnresolved);
+    assert!(!super::needs_mixed_macro_reach_limit(&finding));
     Ok(())
 }
 

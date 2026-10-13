@@ -61,6 +61,9 @@ mod boundary_input_tests;
 mod bounded_read;
 mod bun_bridge;
 mod classifier;
+mod deleted_lines;
+#[cfg(test)]
+mod deleted_lines_tests;
 mod discovery;
 mod dropped_term_guard;
 mod error_payload_guard;
@@ -68,6 +71,7 @@ mod instance_class_guard;
 #[cfg(test)]
 mod line_index_tests;
 mod literal_matcher_guard;
+mod lookup_table_guard;
 mod match_object_guard;
 mod mock_payload_guard;
 mod module_entries;
@@ -86,6 +90,8 @@ mod ambient_declaration_tests;
 mod parse;
 mod paths;
 mod probe_shape;
+#[cfg(test)]
+mod rejection_equality_tests;
 mod related_tests;
 #[cfg(test)]
 mod replaced_block_tests;
@@ -116,6 +122,7 @@ pub(crate) use dropped_term_guard::*;
 pub(crate) use error_payload_guard::*;
 pub(crate) use instance_class_guard::*;
 pub(crate) use literal_matcher_guard::*;
+pub(crate) use lookup_table_guard::*;
 pub(crate) use match_object_guard::*;
 pub(crate) use mock_payload_guard::*;
 pub(crate) use module_entries::*;
@@ -220,6 +227,44 @@ impl TypeScriptAdapter {
         file_read_limit: u64,
         workspace_read_budget: u64,
     ) -> Result<LanguageDiffResult, String> {
+        Self::analyze_diff_with_read_limits_and_handwritten(
+            options,
+            changed_files,
+            file_read_limit,
+            workspace_read_budget,
+            &[],
+        )
+    }
+
+    /// [`analyze_diff_with_read_limits_and_handwritten`] with the
+    /// environment-resolved read caps, for callers outside the TypeScript
+    /// module (the pipeline).
+    pub(crate) fn analyze_diff_with_handwritten_env(
+        options: &AnalysisOptions,
+        changed_files: &[ChangedFile],
+        handwritten: &[String],
+    ) -> Result<LanguageDiffResult, String> {
+        Self::analyze_diff_with_read_limits_and_handwritten(
+            options,
+            changed_files,
+            ts_file_read_limit(),
+            ts_workspace_read_budget(),
+            handwritten,
+        )
+    }
+
+    /// [`analyze_diff_with_read_limits`] plus the `[languages.typescript]
+    /// handwritten_files` declarations (#7386): exact repository-relative
+    /// paths admitted past the built-in excluded-directory conventions, so a
+    /// hand-written source under a `dist/`, `build/` or `out/` directory is
+    /// walked, read and counted instead of silently dropped.
+    pub(in crate::analysis::language::typescript) fn analyze_diff_with_read_limits_and_handwritten(
+        options: &AnalysisOptions,
+        changed_files: &[ChangedFile],
+        file_read_limit: u64,
+        workspace_read_budget: u64,
+        handwritten: &[String],
+    ) -> Result<LanguageDiffResult, String> {
         // Directory-module resolution (#4546) and the tsconfig outDir
         // mapping (#4551) are memoized for this run only (#4638 and #4800
         // reviews); the scope drops the cache when the run returns.
@@ -227,7 +272,8 @@ impl TypeScriptAdapter {
         // Phase 1: discover and index every accepted file in the workspace
         // so we can find related tests for any owner regardless of whether
         // the test file itself changed in this diff.
-        let workspace_scan = collect_workspace_typescript_files(&options.root);
+        let workspace_scan =
+            collect_workspace_typescript_files_with_handwritten(&options.root, handwritten);
         let workspace_files = workspace_scan.files;
         let changed_paths = changed_files
             .iter()
@@ -390,7 +436,11 @@ impl TypeScriptAdapter {
             // would put an uninspected file in the report denominator.
             if !TypeScriptAdapter.accepts_path(&changed.path)
                 || is_detectable_generated_typescript_path(&changed.path)
-                || is_detectable_excluded_typescript_path(&changed.path)
+                || (is_detectable_excluded_typescript_path(&changed.path)
+                    && !crate::config::is_declared_handwritten_typescript_path(
+                        handwritten,
+                        &changed.path,
+                    ))
             {
                 continue;
             }
@@ -586,6 +636,36 @@ impl TypeScriptAdapter {
                     }
                     findings.push(finding);
                 }
+            }
+            let deleted = deleted_lines::deleted_line_findings(
+                changed,
+                &counterparts,
+                source_by_normalized
+                    .get(&normalized_path(&changed.path))
+                    .map(|source| source.as_str()),
+                &all_owners,
+                &findings,
+                |line, text, owner| {
+                    // Only the resolved owner is offered, so the classifier's
+                    // owner lookup cannot land on a different one.
+                    classify_change_with_alias_state(
+                        &changed.path,
+                        line,
+                        text,
+                        None,
+                        std::slice::from_ref(owner),
+                        &all_tests,
+                        Some(&options.root),
+                        &reexport_index,
+                        alias_map_ref,
+                        alias_load_gap.as_ref(),
+                    )
+                },
+            );
+            for mut finding in deleted {
+                test_index_consumed = true;
+                finding.evidence.extend(discovery_evidence.clone());
+                findings.push(finding);
             }
         }
         let mut changed_files_by_language = Vec::new();

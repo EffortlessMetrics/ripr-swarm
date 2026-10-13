@@ -251,6 +251,134 @@ test("resolves an exact native package and confines its executable", () => {
   }
 });
 
+test("distinguishes native resolution failures from missing optional packages", () => {
+  const fixture = nativeFixture({ createExecutable: false });
+  try {
+    for (const code of ["MODULE_NOT_FOUND", "ERR_INVALID_PACKAGE_CONFIG", "ERR_PACKAGE_PATH_NOT_EXPORTED", "EACCES"]) {
+      const cause = Object.assign(new Error(`resolution refused: ${code}`), { code });
+      assert.throws(
+        () => launcher.resolveNativeExecutable({
+          launcherRoot: fixture.launcherRoot,
+          selectedPlatform: fixture.selected,
+          resolver: { resolve() { throw cause; } },
+        }),
+        (error) => {
+          assert.ok(error instanceof launcher.LauncherError);
+          assert.equal(error.code, code === "MODULE_NOT_FOUND" ? "native_package_missing" : "native_package_resolution_failed");
+          assert.equal(error.cause, cause);
+          assert.ok(error.message.includes(`${fixture.selected.package}@${manifest.version}`));
+          assert.ok(error.message.includes(cause.message));
+          assert.ok(error.message.includes(`reinstall ${manifest.name}@${manifest.version}`));
+          return true;
+        },
+      );
+    }
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
+test("public bin retains missing-manifest and missing-exports reasons without claiming package absence", (t) => {
+  const selected = hostPlatformOrSkip(t);
+  if (!selected) {
+    return;
+  }
+  const fixture = nativeFixture({ selected, createExecutable: false });
+  const nativeManifestPath = path.join(fixture.packageRoot, "package.json");
+  const originalManifest = JSON.parse(fs.readFileSync(nativeManifestPath, "utf8"));
+  const bin = path.join(fixture.launcherRoot, "bin", "ripr.cjs");
+  const fakePath = path.join(fixture.root, "decoy");
+  fs.mkdirSync(fakePath);
+  const fakeExecutable = path.join(fakePath, process.platform === "win32" ? "ripr.cmd" : "ripr");
+  fs.writeFileSync(fakeExecutable, process.platform === "win32" ? "@echo PATH-FALLBACK\r\n" : "#!/bin/sh\necho PATH-FALLBACK\n");
+  fs.chmodSync(fakeExecutable, 0o755);
+  try {
+    for (const variant of ["missing manifest", "missing exported target", "absent package"]) {
+      if (variant === "missing manifest") {
+        fs.unlinkSync(nativeManifestPath);
+        assert.ok(fs.statSync(fixture.packageRoot).isDirectory());
+      } else if (variant === "missing exported target") {
+        writeJson(nativeManifestPath, { ...originalManifest, exports: { "./package.json": "./missing-manifest.json" } });
+        assert.ok(fs.statSync(nativeManifestPath).isFile());
+      } else {
+        cleanup(fixture.packageRoot);
+        assert.equal(fs.existsSync(fixture.packageRoot), false);
+      }
+      const result = spawnSync(process.execPath, [bin, "--version"], {
+        cwd: fixture.root,
+        env: { ...process.env, PATH: `${fakePath}${path.delimiter}${process.env.PATH || ""}` },
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 1, variant);
+      assert.equal(result.stdout, "", variant);
+      assert.ok(result.stderr.includes(`cannot resolve required native package ${selected.package}@${manifest.version}`), variant);
+      assert.match(result.stderr, /Cannot find module/, variant);
+      if (variant === "missing exported target") {
+        assert.ok(result.stderr.includes("missing-manifest.json"));
+      }
+      assert.ok(result.stderr.includes(`reinstall ${manifest.name}@${manifest.version} with optional dependencies enabled`), variant);
+      assert.doesNotMatch(result.stderr, /is missing;|PATH-FALLBACK/, variant);
+    }
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
+test("rejects non-object native manifests with a contextual typed error", () => {
+  const fixture = nativeFixture({ createExecutable: false });
+  const nativeManifestPath = path.join(fixture.packageRoot, "package.json");
+  try {
+    for (const value of [null, [], true, 5, "invalid"]) {
+      writeJson(nativeManifestPath, value);
+      assert.throws(
+        () => launcher.resolveNativeExecutable({
+          launcherRoot: fixture.launcherRoot,
+          selectedPlatform: fixture.selected,
+          resolver: { resolve() { return nativeManifestPath; } },
+        }),
+        (error) => {
+          assert.ok(error instanceof launcher.LauncherError);
+          assert.equal(error.code, "manifest_invalid");
+          assert.equal(error.message, `native package ${fixture.selected.package} manifest must be an object`);
+          return true;
+        },
+      );
+    }
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
+test("public bin identifies corrupt package metadata and recovers after restoration", (t) => {
+  const selected = hostPlatformOrSkip(t);
+  if (!selected) {
+    return;
+  }
+  const fixture = nativeFixture({ selected, createExecutable: false });
+  const nativeManifestPath = path.join(fixture.packageRoot, "package.json");
+  const originalManifest = fs.readFileSync(nativeManifestPath);
+  const bin = path.join(fixture.launcherRoot, "bin", "ripr.cjs");
+  try {
+    fs.writeFileSync(nativeManifestPath, "{broken\n");
+    const corrupt = spawnSync(process.execPath, [bin, "--version"], { cwd: fixture.root, encoding: "utf8" });
+    assert.equal(corrupt.status, 1);
+    assert.equal(corrupt.stdout, "");
+    assert.ok(corrupt.stderr.includes(`cannot resolve required native package ${selected.package}@${manifest.version}`));
+    assert.match(corrupt.stderr, /Invalid package|Error parsing/);
+    assert.ok(corrupt.stderr.includes(`reinstall ${manifest.name}@${manifest.version}`));
+    assert.doesNotMatch(corrupt.stderr, /is missing;|Cannot read properties/);
+
+    fs.writeFileSync(nativeManifestPath, originalManifest);
+    const restored = spawnSync(process.execPath, [bin, "--version"], { cwd: fixture.root, encoding: "utf8" });
+    assert.equal(restored.status, 1);
+    assert.equal(restored.stdout, "");
+    assert.ok(restored.stderr.includes(`does not contain ${selected.executable}`));
+    assert.doesNotMatch(restored.stderr, /cannot resolve|is missing;|Cannot read properties/);
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
 test("rejects missing, wrong-version, wrong-target, traversal, symlink, directory, and non-executable payloads", () => {
   const missing = nativeFixture({ createExecutable: false });
   try {
@@ -517,10 +645,150 @@ test("source bin missing-package failure never falls back to PATH or writes stdo
     assert.equal(result.status, 1);
     assert.equal(result.stdout, "");
     assert.doesNotMatch(result.stdout + result.stderr, /PATH-FALLBACK/);
-    assert.match(result.stderr, /required native package .*@0\.11\.0 is missing/);
+    assert.match(result.stderr, /cannot resolve required native package .*@0\.11\.0: Cannot find module/);
+    assert.match(result.stderr, /reinstall .*@0\.11\.0 with optional dependencies enabled/);
   } finally {
     cleanup(fakePath);
     cleanup(foreignCwd);
+  }
+});
+
+test("public bin missing-library failure gives exact recovery after a directory move", (t) => {
+  const selected = hostPlatformOrSkip(t);
+  if (!selected) return;
+  const fixture = nativeFixture({ selected, createExecutable: false });
+  const foreignCwd = fixtureRoot("foreign library 工作 café");
+  const libraryBytes = fs.readFileSync(path.join(fixture.launcherRoot, "lib", "launcher.cjs"));
+  writeJson(path.join(foreignCwd, "package.json"), { name: "foreign-package", version: "9.9.9" });
+  const decoy = path.join(foreignCwd, process.platform === "win32" ? "ripr.cmd" : "ripr");
+  fs.writeFileSync(decoy, process.platform === "win32" ? "@echo PATH-FALLBACK\r\n" : "#!/bin/sh\necho PATH-FALLBACK\n");
+  fs.chmodSync(decoy, 0o755);
+  try {
+    for (const moved of [false, true]) {
+      if (moved) {
+        const newRoot = `${fixture.root} moved 工作 café`;
+        fs.renameSync(fixture.root, newRoot);
+        fixture.root = newRoot;
+        fixture.launcherRoot = path.join(newRoot, "launcher");
+      }
+      const library = path.join(fixture.launcherRoot, "lib", "launcher.cjs");
+      const bin = path.join(fixture.launcherRoot, "bin", "ripr.cjs");
+      fs.unlinkSync(library);
+      const options = {
+        cwd: foreignCwd,
+        env: { ...process.env, PATH: `${foreignCwd}${path.delimiter}${process.env.PATH || ""}` },
+        encoding: "utf8",
+      };
+      const result = spawnSync(process.execPath, [bin, "--version"], options);
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.match(result.stderr, /^ripr npm launcher: cannot resolve packaged launcher library lib\/launcher\.cjs:/);
+      assert.match(result.stderr, /Cannot find module '\.\.\/lib\/launcher\.cjs'/);
+      assert.match(result.stderr, /restore lib\/launcher\.cjs from the matching package tarball/);
+      assert.match(result.stderr, /reinstall @effortlessmetrics\/ripr@0\.11\.0 in its owning npm environment/);
+      assert.doesNotMatch(result.stderr, /node:internal|PATH-FALLBACK|foreign-package|9\.9\.9/);
+      fs.writeFileSync(library, libraryBytes);
+      assert.deepEqual(fs.readFileSync(library), libraryBytes);
+      const restored = spawnSync(process.execPath, [bin, "--version"], options);
+      assert.equal(restored.status, 1);
+      assert.equal(restored.stdout, "");
+      assert.match(restored.stderr, /^ripr npm launcher: native package .*@0\.11\.0 does not contain bin\/ripr/);
+      assert.doesNotMatch(restored.stderr, /packaged launcher library|PATH-FALLBACK/);
+    }
+  } finally {
+    cleanup(fixture.root);
+    cleanup(foreignCwd);
+  }
+});
+
+test("public bin preserves internal import and parser failures without library recovery advice", () => {
+  const fixture = nativeFixture({ createExecutable: false });
+  try {
+    for (const [source, reason] of [
+      ['require("ripr-deliberately-absent-internal-module");\n', /Cannot find module 'ripr-deliberately-absent-internal-module'/],
+      ["module.exports = ;\n", /Unexpected token ';'/],
+    ]) {
+      fs.writeFileSync(path.join(fixture.launcherRoot, "lib", "launcher.cjs"), source);
+      const result = spawnSync(process.execPath, [path.join(fixture.launcherRoot, "bin", "ripr.cjs"), "--version"], {
+        cwd: fixture.root,
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.match(result.stderr, /^ripr npm launcher: /);
+      assert.match(result.stderr, reason);
+      assert.doesNotMatch(result.stderr, /cannot resolve packaged launcher library|restore lib\/launcher\.cjs|reinstall|node:internal/);
+    }
+  } finally {
+    cleanup(fixture.root);
+  }
+});
+
+test("public bin library recovery never guesses a version from invalid or unavailable metadata", () => {
+  const fixture = nativeFixture({ createExecutable: false });
+  try {
+    fs.unlinkSync(path.join(fixture.launcherRoot, "lib", "launcher.cjs"));
+    for (const metadata of [
+      { name: "foreign-package", version: "0.11.0" },
+      { name: manifest.name, version: 11 },
+      { name: manifest.name, version: "" },
+      { name: manifest.name, version: "^0.11.0" },
+      { name: manifest.name, version: "latest" },
+      { name: manifest.name, version: "0.11.0-01" },
+      { name: manifest.name, version: "0.11.0-rc.01" },
+      { name: manifest.name, version: "9007199254740992.0.0" },
+      { name: manifest.name, version: "0.9007199254740992.0" },
+      { name: manifest.name, version: "0.0.9007199254740992" },
+      { name: manifest.name, version: "0.11.0\n" },
+      { name: manifest.name, version: "v0.11.0" },
+      { name: manifest.name, version: `0.11.0-${"a".repeat(250)}` },
+      null,
+      undefined,
+    ]) {
+      const file = path.join(fixture.launcherRoot, "package.json");
+      if (metadata === undefined) fs.unlinkSync(file);
+      else writeJson(file, metadata);
+      const result = spawnSync(process.execPath, [path.join(fixture.launcherRoot, "bin", "ripr.cjs"), "--version"], {
+        cwd: fixture.root,
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      if (metadata === null) {
+        // Node 20 and 24 refuse this shape differently before display lookup.
+        let resolutionFailure;
+        assert.throws(
+          () => createRequire(path.join(fixture.launcherRoot, "bin", "ripr.cjs")).resolve("../lib/launcher.cjs"),
+          (error) => {
+            resolutionFailure = error;
+            return error.code !== "MODULE_NOT_FOUND";
+          },
+        );
+        assert.equal(result.stderr, `ripr npm launcher: ${resolutionFailure.message}\n`);
+        assert.doesNotMatch(result.stderr, /packaged launcher library|restore lib\/launcher\.cjs|reinstall|node:internal/);
+        continue;
+      }
+      assert.match(result.stderr, /^ripr npm launcher: cannot resolve packaged launcher library/);
+      assert.match(result.stderr, /reinstall the exact @effortlessmetrics\/ripr version selected for this npm installation in its owning npm environment/);
+      assert.doesNotMatch(result.stderr, /foreign-package|@ripr@|\^0\.11\.0|latest|node:internal/);
+    }
+    for (const version of [
+      "0.11.0-0", "0.11.0-rc.1", "0.11.0-01alpha", "0.11.0+01", "0.11.0-rc.1+build.02",
+      "9007199254740991.0.0", `0.11.0-${"a".repeat(249)}`,
+    ]) {
+      writeJson(path.join(fixture.launcherRoot, "package.json"), { name: manifest.name, version });
+      const result = spawnSync(process.execPath, [path.join(fixture.launcherRoot, "bin", "ripr.cjs"), "--version"], {
+        cwd: fixture.root,
+        encoding: "utf8",
+      });
+      assert.equal(result.status, 1);
+      assert.equal(result.stdout, "");
+      assert.ok(result.stderr.includes(`reinstall ${manifest.name}@${version} in its owning npm environment`), result.stderr);
+      assert.match(result.stderr, /^ripr npm launcher: cannot resolve packaged launcher library/);
+      assert.doesNotMatch(result.stderr, /node:internal/);
+    }
+  } finally {
+    cleanup(fixture.root);
   }
 });
 

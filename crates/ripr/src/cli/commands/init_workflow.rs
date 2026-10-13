@@ -24,7 +24,7 @@ use advisory_summary::ADVISORY_SUMMARY_STEP;
 /// blank line before it.
 const TEMPLATE_HEAD: &str = r#"name: RIPR
 
-# Each setting and step is explained in docs/CI.md in the ripr repository.
+# CI guide: https://github.com/EffortlessMetrics/ripr/blob/main/docs/CI.md
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
@@ -37,8 +37,8 @@ permissions:
 
 env:
   RIPR_UPLOAD_SARIF: "true"
-  # Repository variables. RIPR_GATE_MODE: empty (advisory), visible-only,
-  # acknowledgeable, baseline-check or calibrated-gate.
+  # Repository variables: Settings > Secrets and variables > Actions > Variables.
+  # RIPR_GATE_MODE: empty (advisory), visible-only, acknowledgeable, baseline-check or calibrated-gate.
   RIPR_GATE_MODE: ${{ vars.RIPR_GATE_MODE || '' }}
   RIPR_GATE_BASELINE: ${{ vars.RIPR_GATE_BASELINE || '' }}
   # RIPR_COMMENT_MODE: off, plan or inline.
@@ -347,7 +347,7 @@ mod template_pin_tests {
     /// first line, and artifact paths, which the `generated_workflow_*` and
     /// `install_version_*` tests pin at the rendered level.
     const TEMPLATE_SHA256: &str =
-        "1126e0e4b728332ff969abb54c422f65ef238e87d8aa0bfa104a8247e5de91b8";
+        "99aa7d203404ac34e93b7a55eead9882a1e04328bc7efa88786bdcf2522ea331";
 
     #[test]
     fn template_matches_the_pinned_bytes() {

@@ -1,0 +1,13 @@
+diff --git a/src/lib.rs b/src/lib.rs
+index 5f23af7..523f4e8 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -25,7 +25,7 @@
+ }
+ 
+ pub fn discount(cents: u64) -> u64 {
+-    cents - cents / 10
++    cents - (cents / 10)
+ }
+ 
+ #[cfg(test)]
