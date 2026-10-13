@@ -44,10 +44,15 @@ def make_wheel(wheelhouse):
 
 with tempfile.TemporaryDirectory(prefix="ripr-wheel-guidance-") as temporary:
     root = pathlib.Path(temporary)
-    for label in ["plain", "consumer tools ü with spaces"]:
+    for label, tool_name, wheelhouse_name in [
+        ("plain", ".ripr-tool", "wheelhouse"),
+        ("consumer tools ü with spaces", "tool environment ü", "reviewed wheels ü"),
+    ]:
         cwd = root / label
         cwd.mkdir()
-        payload = make_wheel(cwd / "wheelhouse")
+        payload = make_wheel(cwd / wheelhouse_name)
+        # Exercise the guide's quoted path-replacement advice as well as its literal recipe.
+        case_recipe = recipe.replace(".ripr-tool", tool_name).replace("./wheelhouse", "./" + wheelhouse_name)
         decoys = cwd / "ambient tools"
         decoys.mkdir()
         decoy_marker = cwd / "ambient-executed"
@@ -73,15 +78,15 @@ with tempfile.TemporaryDirectory(prefix="ripr-wheel-guidance-") as temporary:
             "set -eu\npython() { " + shlex.quote(str(selected / "bin/python")) + ' "$@"; }\n'
             "python3() { " + shlex.quote(sys.executable) + ' "$@"; }\n'
         )
-        result = run(["/bin/bash", "--noprofile", "--norc", "-c", preamble + recipe], cwd, env)
-        installed = cwd / ".ripr-tool/bin/ripr"
+        result = run(["/bin/bash", "--noprofile", "--norc", "-c", preamble + case_recipe], cwd, env)
+        installed = cwd / tool_name / "bin/ripr"
         assert installed.is_file() or (selected / "bin/ripr").is_file(), "wheel installation did not run"
         assert not decoy_marker.exists(), ("recipe executed ambient ripr", result.stdout)
         assert result.stdout.splitlines()[-1] == "selected-wheel-fixture 1.0.0", result.stdout
         assert installed.read_bytes() == payload, "installed fixture bytes changed"
         assert (cwd / installed_marker.read_text().strip()).resolve() == installed.resolve()
         # A new shell still selects the explicit tool path without activation.
-        followup = run(["/bin/bash", "--noprofile", "--norc", "-c", '".ripr-tool/bin/ripr" --version'], cwd, env)
+        followup = run(["/bin/bash", "--noprofile", "--norc", "-c", case_recipe.strip().splitlines()[-1]], cwd, env)
         assert followup.stdout == "selected-wheel-fixture 1.0.0\n"
         assert not decoy_marker.exists()
         print("PASS:", label, "offline documented recipe and fresh-shell selection")
