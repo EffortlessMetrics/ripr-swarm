@@ -1,4 +1,6 @@
-use super::{classify_assertion, extract_assertions, extract_line_scanned_oracles};
+use super::{
+    classify_assertion, extract_assertions, extract_line_scanned_oracles, is_inequality_assertion,
+};
 use crate::analysis::facts::OracleFact;
 use crate::domain::{OracleKind, OracleStrength};
 
@@ -234,4 +236,147 @@ fn scalar_parentheses_do_not_admit_blocks_or_arrays() -> Result<(), String> {
         return Err(format!("nested parentheses lost: {classification:?}"));
     }
     Ok(())
+}
+
+/// #7558, RIPR-SPEC-0231 rule 1: an `ensure!` condition earns exact credit
+/// only from a top-level `==` outside every `||` arm. A disjunction, an
+/// inequality whose operand holds a closure `==`, or an `==` inside a call
+/// argument pins nothing. `assert!` already reads these weak (control).
+#[test]
+fn ensure_disjunctions_and_nested_equalities_are_never_exact() -> Result<(), String> {
+    let weak = (OracleKind::RelationalCheck, OracleStrength::Weak);
+    let exact = (OracleKind::ExactValue, OracleStrength::Strong);
+    let err = (OracleKind::ExactErrorVariant, OracleStrength::Strong);
+    for (text, expected) in [
+        ("ensure!(a != b || c == d);", &weak),
+        ("ensure!(a == b || c == d);", &weak),
+        ("ensure!(xs.iter().position(|x| *x == 1) != None);", &weak),
+        ("ensure!(f(|x| x == 1));", &weak),
+        (
+            "ensure!(r == Err(Error::Denied) || r == Err(Error::Locked));",
+            &weak,
+        ),
+        ("assert!(a != b || c == d);", &weak),
+        // An observer in an `||` arm is optional, so it earns no observer
+        // credit; joined by `&&` it keeps its medium reading.
+        ("assert!(ready || events_sent.contains(&id));", &weak),
+        ("assert!(ready || !events.is_empty());", &weak),
+        ("assert!(ready && (done || mock.was_called()));", &weak),
+        ("assert!(xs.iter().position(|x| *x == 1) != None);", &weak),
+        // A deciding `||`, top-level or in a parenthesized conjunct, gates
+        // the `matches!` and error-variant readings too.
+        (
+            "ensure!(matches!(r, Err(Error::Denied)) || matches!(r, Err(Error::Locked)));",
+            &weak,
+        ),
+        (
+            "ensure!(ready && (matches!(r, Err(Error::Denied)) || matches!(r, Err(Error::Locked))));",
+            &weak,
+        ),
+        ("ensure!((matches!(r, Ok(3)) || fallback));", &weak),
+        ("ensure!(ready && (a == b || c));", &weak),
+        (
+            "assert!(matches!(r, Err(Error::Denied)) || matches!(r, Err(Error::Locked)));",
+            &weak,
+        ),
+        ("assert!(matches!(r, Ok(3)) || fallback);", &weak),
+        ("assert!(ready && (matches!(r, Ok(3)) || fallback));", &weak),
+        ("ensure!(a == b);", &exact),
+        (
+            "assert!(ready && events_sent.contains(&id));",
+            &(OracleKind::MockExpectation, OracleStrength::Medium),
+        ),
+        ("ensure!(a == b, \"total must match\");", &exact),
+        ("ensure!(a != b && c == d);", &exact),
+        ("ensure!((total(&cart) == 42) && ready);", &exact),
+        // Controls: an `||` inside a call or closure operand decides nothing.
+        ("assert!(matches!(r, Ok(3)));", &exact),
+        (
+            "assert!(matches!(pick(|x| x > 1 || x < 0), Ok(3)));",
+            &exact,
+        ),
+        ("ensure!(matches!(r, Err(Error::Denied)) && ready);", &err),
+        (
+            "ensure!(matches!(pick(|x| x > 1 || x < 0), Ok(3)));",
+            &exact,
+        ),
+        // A parenthesized `||` conjunct drops out and the other conjuncts
+        // decide: a required `==` or pattern beside it still pins.
+        ("ensure!(c == d && (a || b));", &exact),
+        ("ensure!((a || b) && c == d);", &exact),
+        ("assert!(matches!(r, Ok(3)) && (a || b));", &exact),
+        ("assert!((a || b) && matches!(r, Ok(3)));", &exact),
+        (
+            "ensure!(matches!(r, Err(Error::Denied)) && (x || y));",
+            &err,
+        ),
+        ("ensure!(ready && /* fallback */ (a == b || c));", &weak),
+        // A leading comment cannot hide the group from the rest step.
+        ("assert!(matches!(r, Ok(3)) && /* c */ (a || b));", &exact),
+        // A deciding group drops out before the negated-pattern and
+        // compared-pattern caps, so a pinning sibling still decides.
+        (
+            "assert!(matches!(r, Ok(3)) && (!matches!(r, Err(E::X)) || y));",
+            &exact,
+        ),
+        ("ensure!(c == d && (!matches!(r, Err(E::X)) || y));", &exact),
+        // An `assert_eq!` inside an `||` arm lends no whole-object kind.
+        (
+            "assert!(flag || helper(|| assert_eq!(x, Foo { a: 1 })));",
+            &weak,
+        ),
+        // The rest keeps its own reading and is never lifted to weak.
+        (
+            "assert!(opt.is_some() && (a == b || c));",
+            &(OracleKind::SmokeOnly, OracleStrength::Smoke),
+        ),
+        // A disjunction with a broad error arm passes without an error.
+        ("assert!(ready || r.is_err());", &weak),
+        ("ensure!(ready || r.is_err());", &weak),
+    ] {
+        let classification = classify_assertion(text);
+        if (&classification.kind, &classification.strength) != (&expected.0, &expected.1) {
+            return Err(format!(
+                "{text}: expected {:?}/{:?}, got {:?}/{:?}",
+                expected.0, expected.1, classification.kind, classification.strength
+            ));
+        }
+    }
+    // A trailing line comment on a kept conjunct must not swallow the rest
+    // or the closing `);` of the rewritten assertion.
+    for (text, expected) in [
+        (
+            "assert!(\n    (a || b) &&\n    matches!(r, Ok(_)) // must succeed\n);",
+            (OracleKind::SmokeOnly, OracleStrength::Smoke),
+        ),
+        (
+            "assert!(\n    matches!(r, Ok(_)) // must succeed\n    && (a || b)\n);",
+            (OracleKind::SmokeOnly, OracleStrength::Smoke),
+        ),
+        (
+            "assert!(\n    !matches!(r, Err(E::X)) &&\n    matches!(r, Ok(_)) // ok\n);",
+            (OracleKind::SmokeOnly, OracleStrength::Smoke),
+        ),
+    ] {
+        let facts = extract_assertions(text, 7558);
+        let Some(fact) = facts.first() else {
+            return Err(format!("{text}: must produce an oracle fact"));
+        };
+        require_kind(fact, expected.0, expected.1)?;
+    }
+    // The inequality predicate reveal reads agrees with the cap order.
+    let dropped = "assert!(matches!(r, Ok(3)) && (!matches!(r, Err(E::X)) || y));";
+    if is_inequality_assertion(dropped) {
+        return Err(format!(
+            "{dropped}: a dropped group must not make it an inequality"
+        ));
+    }
+    if !is_inequality_assertion("assert!(ready || !matches!(r, Err(E::X)));") {
+        return Err("a negated pattern in an `||` arm stays an inequality".to_string());
+    }
+    let facts = extract_assertions("ensure!(a != b || c == d);", 7558);
+    let Some(fact) = facts.first() else {
+        return Err("the ensure! line must produce an oracle fact".to_string());
+    };
+    require_kind(fact, OracleKind::RelationalCheck, OracleStrength::Weak)
 }
