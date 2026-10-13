@@ -150,6 +150,22 @@ exactly as the bare call does. This covers the node:test ESM form
 `await test("name", fn)`. It extends the `test` root RIPR-SPEC-0027 lists;
 no accepted spec names the awaited form. An awaited subtest
 `await t.test(...)` inside a test body is not a registration.
+Before an awaited registration contributes assertions, the existing admission
+scanner must recognize its runner root at the call site. File-local helpers,
+unrelated imports and enclosing callback/loop bindings cannot turn an unused
+callback into test evidence. This fence applies to the newly supported awaited
+form; it does not change bare-root registration semantics. A sibling suite's
+helper is outside this lexical scope. Re-exports do not create local runner
+bindings, and an ESM namespace object is not a callable registration root.
+The awaited CommonJS exemption requires an immutable runner declaration and
+either ambient `require` syntax or an immutable loader created by a locally
+imported `node:module`/`module` `createRequire(import.meta.url)`. Mutable loaders
+or runner bindings and same-spelled helper factories remain uncredited.
+Runtime module-mode and loader resolution are outside this static claim.
+The resolved test/suite kind must agree with the supported local spelling.
+Mismatched aliases (`describe as test` or `test as describe`) receive no trusted
+test record and retain a typed partial-extraction limitation, including an
+assertion-only callback with no nested test call. This does not expand aliases.
 
 ### Assertion collection
 
@@ -791,6 +807,17 @@ to `amount - 20`, and `tests/lib.test.ts` has
     weak (unchanged; no `message`).
 
 ## Test Mapping
+
+- `crates/ripr/src/analysis/language/typescript/tests_extract_tests.rs`:
+  `awaited_roots_retain_call_identity_and_complete_extraction` and
+  `awaited_unwalked_root_keeps_the_partial_extraction_disclosure` cover rule 1.
+- `crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs`: the pinned Nano ID
+  consumer covers bare/awaited registration parity, exact/smoke oracles,
+  qualification options, assertion and runner shadows, sibling-suite isolation,
+  callable local imports, unsupported registration positions,
+  and byte-identical upstream provenance through the actual CLI.
+- `fixtures/javascript_awaited_registration`: genuine JavaScript production
+  source with a separately authored Node consumer and independent runtime contrast.
 
 - Existing: `crates/ripr/src/analysis/language/typescript/tests.rs`:
   `ts_returnvalue_unrelated_strong_assertion_downgrades`,
