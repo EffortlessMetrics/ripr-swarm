@@ -1,0 +1,14 @@
+diff --git a/ledger/account.py b/ledger/account.py
+--- a/ledger/account.py
++++ b/ledger/account.py
+@@ -6,8 +6,8 @@ class Account:
+         self._balance = balance
+ 
+     def balance(self):
+-        # the amount on record
+-        return self._balance
++        # the amount on record, never below zero
++        return max(0, self._balance)
+ 
+ 
+ class Wallet:

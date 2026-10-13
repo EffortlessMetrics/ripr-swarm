@@ -62,7 +62,10 @@ pub(crate) fn probes_for_file_with_relations(
     let mut emitted_parser_shapes = Vec::<(usize, String)>::new();
     let skip_added = structural_lines_covered_by_run(&changed.added_lines);
     let skip_removed = structural_lines_covered_by_run(&changed.removed_lines);
-    let removed_bounds = removed_type_bounds(root, registrations, index, changed);
+    // Rebuilt once per file and shared by every reader of the old file (#7637).
+    let old_source = super::classify::old_source(index, changed);
+    let old_source = old_source.as_deref();
+    let removed_bounds = removed_type_bounds(root, registrations, old_source, changed);
     let old_test_module_ranges = removed_bounds
         .old_index
         .as_ref()
@@ -174,7 +177,7 @@ pub(crate) fn probes_for_file_with_relations(
                             index,
                         )
                     {
-                        return with_old_arm_body(&line, changed, index);
+                        return with_old_arm_body(&line, changed, old_source);
                     }
                     match removed_span_of_shape(text, &canonical_text, &line) {
                         // A cut that is the whole old head line (`1..=9 =>`
@@ -185,7 +188,7 @@ pub(crate) fn probes_for_file_with_relations(
                             if shape.family == ProbeFamily::MatchArm
                                 && head_ends_line(&cut, &line) =>
                         {
-                            old_arm_with_body(&cut, &line, changed, index)
+                            old_arm_with_body(&cut, &line, changed, old_source)
                         }
                         Some(cut) => cut,
                         // An uncut old arm head (`0 =>`, its body on the next
@@ -194,7 +197,7 @@ pub(crate) fn probes_for_file_with_relations(
                         // unchanged (#5992). Joining the old body keeps it
                         // reading as the whole old arm it was.
                         None if shape.family == ProbeFamily::MatchArm => {
-                            with_old_arm_body(&line, changed, index)
+                            with_old_arm_body(&line, changed, old_source)
                         }
                         None => line,
                     }
@@ -213,7 +216,7 @@ pub(crate) fn probes_for_file_with_relations(
         if !parser_shapes.is_empty() {
             for shape in parser_shapes {
                 let before = removed_before(added.new_side_line, text, changed)
-                    .map(|line| arm_before(&shape.family, line, changed, index));
+                    .map(|line| arm_before(&shape.family, line, changed, old_source));
                 probes.push(SeededProbe::from_probe(build_probe(
                     &build_context,
                     added,
@@ -240,7 +243,7 @@ pub(crate) fn probes_for_file_with_relations(
         }
         for family in families {
             let before = removed_before(added.new_side_line, text, changed)
-                .map(|line| arm_before(&family, line, changed, index));
+                .map(|line| arm_before(&family, line, changed, old_source));
             probes.push(SeededProbe::from_probe(build_probe(
                 &build_context,
                 added,
@@ -1085,10 +1088,10 @@ fn arm_before(
     family: &ProbeFamily,
     line: String,
     changed: &ChangedFile,
-    index: &RustIndex,
+    old_source: Option<&str>,
 ) -> String {
     if *family == ProbeFamily::MatchArm {
-        with_old_arm_body(&line, changed, index)
+        with_old_arm_body(&line, changed, old_source)
     } else {
         line
     }
@@ -1138,11 +1141,11 @@ fn another_arm_changed(new_line: usize, changed: &ChangedFile, index: &RustIndex
 /// Arm selection trusts an old text ending at `=>` as a head cut anchored
 /// on this line's unchanged body (#5992), so an uncut head must not reach
 /// it bare. Any other old line comes back as it was.
-fn with_old_arm_body(line: &str, changed: &ChangedFile, index: &RustIndex) -> String {
+fn with_old_arm_body(line: &str, changed: &ChangedFile, old_source: Option<&str>) -> String {
     if !line.trim_end().ends_with("=>") {
         return line.to_string();
     }
-    old_arm_with_body(line.trim(), line, changed, index)
+    old_arm_with_body(line.trim(), line, changed, old_source)
 }
 
 /// Whether the old line holds nothing after the head `cut` but an optional
@@ -1160,19 +1163,22 @@ fn head_ends_line(cut: &str, line: &str) -> bool {
 
 /// The old arm `head`, read from the removed `line`, joined with the old
 /// body on the next old line, or marked unread when that body is unknown.
-fn old_arm_with_body(head: &str, line: &str, changed: &ChangedFile, index: &RustIndex) -> String {
+fn old_arm_with_body(
+    head: &str,
+    line: &str,
+    changed: &ChangedFile,
+    old_source: Option<&str>,
+) -> String {
     let heads = changed
         .removed_lines
         .iter()
         .filter(|removed| removed.text.trim() == line.trim())
         .map(|removed| removed.line)
         .collect::<Vec<_>>();
-    let old_source = super::classify::file_facts(index, &changed.path)
-        .and_then(|facts| crate::analysis::diff::reconstruct_old_source(&facts.source, changed));
     // The paired line's identity is not carried here, so heads with this
     // text elsewhere in the file must all share one old body; otherwise
     // the body may be another arm's, and the head stays unread.
-    let body = old_source.as_deref().and_then(|old| {
+    let body = old_source.and_then(|old| {
         let bodies = heads
             .iter()
             .map(|head| {
@@ -1436,6 +1442,13 @@ mod tests {
         assert_eq!(probe.before.as_deref(), Some("string.len() > MAX_LEN"));
     }
 
+    /// `with_old_arm_body` over the old source rebuilt from `index`, as the
+    /// probe builder shares it per file.
+    fn joined_old_arm(line: &str, changed: &ChangedFile, index: &RustIndex) -> String {
+        let old = super::super::classify::old_source(index, changed);
+        with_old_arm_body(line, changed, old.as_deref())
+    }
+
     /// #5992 review: an uncut old arm head is joined with the next old
     /// line, removed or kept as context, so it never reads as a head cut of
     /// the current line; other old lines come back unchanged.
@@ -1470,32 +1483,29 @@ mod tests {
             ..Default::default()
         });
         // The next old line was removed.
-        assert_eq!(with_old_arm_body("0 =>", &changed, &index), "0 => 0,");
+        assert_eq!(joined_old_arm("0 =>", &changed, &index), "0 => 0,");
         // The next old line was kept as context (review residual).
-        assert_eq!(
-            with_old_arm_body("1..=4 =>", &changed, &index),
-            "1..=4 => 2,"
-        );
-        assert_eq!(with_old_arm_body("_ => 0,", &changed, &index), "_ => 0,");
+        assert_eq!(joined_old_arm("1..=4 =>", &changed, &index), "1..=4 => 2,");
+        assert_eq!(joined_old_arm("_ => 0,", &changed, &index), "_ => 0,");
         // Two heads with this text and different old bodies: which one was
         // paired is not known, so the head is marked unread.
         let mut duplicated = changed.clone();
         duplicated.removed_lines.push(line(6, "    1..=4 =>"));
         assert_eq!(
-            with_old_arm_body("1..=4 =>", &duplicated, &index),
+            joined_old_arm("1..=4 =>", &duplicated, &index),
             "1..=4 => /* old body unread */"
         );
         // One of the duplicated heads has no non-blank next old line.
         let mut blank_after = changed.clone();
         blank_after.removed_lines.push(line(8, "    1..=4 =>"));
         assert_eq!(
-            with_old_arm_body("1..=4 =>", &blank_after, &index),
+            joined_old_arm("1..=4 =>", &blank_after, &index),
             "1..=4 => /* old body unread */"
         );
         // Without the old file the head is marked unread.
         let unindexed = RustIndex::default();
         assert_eq!(
-            with_old_arm_body("1..=4 =>", &changed, &unindexed),
+            joined_old_arm("1..=4 =>", &changed, &unindexed),
             "1..=4 => /* old body unread */"
         );
     }

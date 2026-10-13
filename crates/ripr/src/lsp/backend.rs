@@ -1,5 +1,5 @@
 use super::AnalysisStatusNotification;
-use super::actions::{code_action_response, resolve_action};
+use super::actions::{code_action_response, disable_retained_analysis_actions, resolve_action};
 use super::capabilities::{
     ConfigurationMode, WorkspaceRootResolution, initialize_result_for_client,
     root_from_initialize_params, workspace_folder_set_from_initialize_params,
@@ -5518,9 +5518,6 @@ impl LanguageServer for Backend {
             .and_then(|value| value.clone());
         let health = self.analysis_health_snapshot();
         let root_allows_analysis = self.workspace_root_authority().allows_analysis();
-        let action_snapshot = (health.allows_current_repairs() && root_allows_analysis)
-            .then_some(snapshot)
-            .flatten();
         // Negotiated client-command filter (#1776, RIPR-SPEC-0129): a
         // poisoned profile store fails closed to the unsupported profile,
         // which strips every client-executed command rather than offering
@@ -5530,11 +5527,26 @@ impl LanguageServer for Backend {
             .lock()
             .map(|features| features.clone())
             .unwrap_or_else(|_| ClientFeatureProfile::unsupported());
-        let result = Ok(Some(code_action_response(
+        // A valid-root retained snapshot can name the unavailable actions,
+        // but only for a client that understands the inert disabled form.
+        // Root/missing-snapshot and legacy-client gates stay omit-only.
+        let retained_inert = root_allows_analysis
+            && snapshot.is_some()
+            && !health.allows_current_repairs()
+            && client_features.code_action_disabled;
+        let action_snapshot = (root_allows_analysis
+            && (health.allows_current_repairs() || retained_inert))
+            .then_some(snapshot)
+            .flatten();
+        let mut actions = code_action_response(
             &params,
             action_snapshot.as_ref().map(|snapshot| snapshot.as_ref()),
             &client_features,
-        )));
+        );
+        if retained_inert {
+            disable_retained_analysis_actions(&mut actions, &health);
+        }
+        let result = Ok(Some(actions));
         self.trace_response("textDocument/codeAction", &result)
             .await;
         result

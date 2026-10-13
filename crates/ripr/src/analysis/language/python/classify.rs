@@ -26,6 +26,7 @@ use super::{
     owner_for_changed_line, python_no_family_relevant_missing_summary,
     python_recommended_next_step, python_weak_missing_summary, stop_reason_for_python_static_limit,
 };
+use crate::analysis::diff::lines_look_alike;
 use crate::domain::{
     Confidence, ExposureClass, Finding, LanguageId as DomainLanguageId, LanguageStatus,
     MissingDiscriminatorFact, OracleKind, OracleStrength, Probe, ProbeFamily, RevealEvidence,
@@ -82,6 +83,29 @@ pub(super) struct PythonNoBehaviorContext {
     pub(super) multi_line_def_header_line: bool,
 }
 
+/// An old declaration line (`def`, `async def`, `class` or a decorator) in
+/// the position of a new `def` header makes it a changed declaration, however
+/// few tokens the two share (#7556).
+fn is_python_declaration_line(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    ["def ", "async def ", "class ", "@"]
+        .iter()
+        .any(|prefix| trimmed.starts_with(prefix))
+}
+
+/// Content pairing matches old and new lines on their trimmed text, but in
+/// Python a change of indentation moves the line into or out of a block, which
+/// is behavior of its own. The annotation-only guards suppress a probe, so they
+/// fail closed when the paired lines sit at different depths (#7556).
+fn same_indentation(old: &str, new: &str) -> bool {
+    let leading = |text: &str| {
+        text.chars()
+            .take_while(|c| c.is_whitespace())
+            .collect::<String>()
+    };
+    leading(old) == leading(new)
+}
+
 /// Classify a change from producer-owned owner, relation, and oracle facts.
 /// Discriminator narration follows the final class, not oracle strength alone.
 pub(super) fn classify_change_with_context(
@@ -122,17 +146,22 @@ pub(super) fn classify_change_with_context(
     // reaches the owner. Requires the paired old line; fails closed when anything
     // beyond an annotation differs (e.g. a default-value change, which IS behavioral).
     if let Some(old) = old_line_text
+        && same_indentation(old, line_text)
         && is_annotation_only_def_change(old, line_text)
     {
         return None;
     }
-    // New-declaration guard: an unpaired `def` header that opens a NEW owner
-    // whose body carries its own added lines has no behavior of its own — the
-    // body lines are the probes. Crediting `exposed` here would claim a
-    // discriminator for a line with nothing to discriminate. Fails closed on a
-    // changed header (paired old line), a default value (runtime behavior), a
+    // New-declaration guard: a `def` header that opens a NEW owner whose body
+    // carries its own added lines has no behavior of its own — the body lines
+    // are the probes. Crediting `exposed` here would claim a discriminator for
+    // a line with nothing to discriminate. A replacement block pairs the header
+    // with whatever old line stood in its position, so only an old
+    // declaration line, or an old line that looks like it, marks a changed
+    // header (#7556): a rename that shares few tokens is still a changed header.
+    // Fails closed on a changed header, a default value (runtime behavior), a
     // one-line `def f(x): return x`, and a multi-line header.
-    if old_line_text.is_none()
+    if old_line_text
+        .is_none_or(|old| !is_python_declaration_line(old) && !lines_look_alike(old, line_text))
         && no_behavior.opens_owner_with_added_body
         && is_new_def_header_without_defaults(line_text)
     {
@@ -151,6 +180,7 @@ pub(super) fn classify_change_with_context(
     // line is not a parseable annotated assignment.
     if owner.is_module_owner()
         && let Some(old) = old_line_text
+        && same_indentation(old, line_text)
         && is_annotation_only_var_change(old, line_text)
     {
         return None;

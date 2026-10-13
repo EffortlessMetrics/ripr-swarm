@@ -919,6 +919,17 @@ Implementation and validation obligations:
    blast-radius and focused policy checks before a coherent implementation draft.
    General oracle-strength work (#6764/#6670) remains with its existing owners.
 
+### Same-named module-level functions (#6544)
+
+A bare call used to refuse the pin whenever any other module-level `fn` of
+the owner's name existed. A same-package rival no longer refuses the pin at
+`establish`. Each test must instead settle its bare call on the owner through
+the shared call-identity rule (RIPR-SPEC-0172, "Same-package call identity"):
+`use super::celsius::snap;` pins `celsius::snap`, while a test that imports
+`fahrenheit::snap`, or calls a bare `snap` that nothing in scope binds, pins
+neither. A rival in another package, or one whose container is unknown,
+still refuses the pin outright.
+
 ### Bool-owner pins
 
 An owner whose signature declares `-> bool` has two values, so a bare

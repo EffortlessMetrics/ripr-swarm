@@ -84,6 +84,7 @@ async fn sdk_session(
                 "ripr_prepare_repair",
                 "ripr_get_repair_attempt",
                 "ripr_get_receipt_status",
+                "ripr_list_repair_attempts",
             ] {
                 if !tool_names.contains(&expected) {
                     return Err(format!(
@@ -149,6 +150,27 @@ async fn sdk_session(
             let status = tool
                 .get("structuredContent")
                 .ok_or_else(|| "SDK status omitted structured content".to_string())?;
+            let status_descriptor = tools
+                .tools
+                .iter()
+                .find(|tool| tool.name == "ripr_workspace_status")
+                .ok_or_else(|| "SDK discovery omitted status descriptor".to_string())?;
+            let descriptor =
+                serde_json::to_value(status_descriptor).map_err(|error| error.to_string())?;
+            let actual = status
+                .pointer("/mcp/tools")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "SDK status omitted tool inventory".to_string())?
+                .len() as u64;
+            for bound in ["minItems", "maxItems"] {
+                let pointer =
+                    format!("/outputSchema/oneOf/0/properties/mcp/properties/tools/{bound}");
+                if descriptor.pointer(&pointer).and_then(Value::as_u64) != Some(actual) {
+                    return Err(format!(
+                        "SDK runtime tool inventory violates advertised {bound}: {descriptor}"
+                    ));
+                }
+            }
             if status
                 .pointer("/workspace/workspace_state")
                 .and_then(Value::as_str)
@@ -167,9 +189,9 @@ async fn sdk_session(
                 .pointer("/mcp/tools")
                 .and_then(Value::as_array)
                 .map(Vec::len)
-                != Some(8)
+                != Some(9)
             {
-                return Err("SDK status surface block lost the eight-tool contract".into());
+                return Err("SDK status surface block lost the nine-tool contract".into());
             }
             if status
                 .pointer("/mcp/resource_templates")
