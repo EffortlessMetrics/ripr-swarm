@@ -206,6 +206,54 @@ fn awaited_enclosing_roots_cannot_shadow_the_real_runner_binding() -> TestResult
 }
 
 #[test]
+fn awaited_runner_binding_survives_a_sibling_suite_helper() -> TestResult {
+    let report = Consumer::new(
+        "describe('helper suite', () => { const test = async (_name, _callback) => {}; }); await test('real id', () => { assert.strictEqual(nanoid().length, 21); });",
+    )?
+    .check()?;
+    let finding = &report["findings"][0];
+    assert_eq!(finding["classification"], "exposed", "{finding}");
+    assert_eq!(finding["oracle_kind"], "exact_value");
+    assert_eq!(finding["related_tests_total"], 1);
+    Ok(())
+}
+
+#[test]
+fn awaited_registration_requires_a_local_callable_runner_import() -> TestResult {
+    for (binding, credited) in [
+        (
+            "import { createRequire } from 'node:module'; const require = createRequire(import.meta.url); const { test } = require('node:test');",
+            true,
+        ),
+        ("export { test } from 'node:test';", false),
+        ("import * as test from 'node:test';", false),
+    ] {
+        let consumer =
+            Consumer::new("await test('id', () => { assert.strictEqual(nanoid().length, 21); });")?;
+        let file = consumer.root.join("test/nanoid.test.js");
+        let source = fs::read_to_string(&file)?;
+        fs::write(
+            file,
+            source.replace("import { test, describe } from 'node:test';", binding),
+        )?;
+        let report = consumer.check()?;
+        let finding = &report["findings"][0];
+        assert_eq!(
+            finding["related_tests_total"],
+            usize::from(credited),
+            "{binding}: {finding}"
+        );
+        if credited {
+            assert_eq!(finding["classification"], "exposed");
+            assert_eq!(finding["oracle_kind"], "exact_value");
+        } else {
+            assert_ne!(finding["classification"], "exposed");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn nanoid_upstream_bytes_keep_their_independent_provenance() -> TestResult {
     let fixture = workspace_root().join("fixtures/javascript_awaited_registration");
     let provenance: Value = serde_json::from_slice(&fs::read(fixture.join("provenance.json"))?)?;

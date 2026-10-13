@@ -708,9 +708,17 @@ pub(crate) fn collect_tests_from_statements(
                 scope
                     .levels
                     .iter()
-                    .skip(1)
-                    .flatten()
-                    .map(|(name, _, _)| name.clone()),
+                    .enumerate()
+                    .flat_map(|(depth, level)| {
+                        level.iter().map(move |(name, _, phase)| {
+                            (name.clone(), depth == 0 && *phase == Phase::Declaration)
+                        })
+                    })
+                    .chain(
+                        declared_names
+                            .iter()
+                            .map(|name| (name.clone(), scope.levels.len() == 1)),
+                    ),
             )
         {
             continue;

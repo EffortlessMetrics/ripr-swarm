@@ -107,6 +107,8 @@ pub(crate) struct TypeScriptAdmissionContext {
     /// setup, so a member call on one acts on a value RIPR has seen.
     enclosing: BTreeSet<String>,
     imports: Vec<TypeScriptImport>,
+    /// Actual local imports, excluding re-exports recorded for owner graphs.
+    registration_imports: Vec<TypeScriptImport>,
     /// Directory segments of the test file, relative to the analysis root.
     test_dir: Vec<String>,
     /// Something the runner runs for every test in the file is
@@ -122,6 +124,18 @@ impl TypeScriptAdmissionContext {
     ) -> Self {
         let mut context = Self {
             imports: imports.to_vec(),
+            registration_imports: statements
+                .iter()
+                .filter(|statement| {
+                    matches!(
+                        statement,
+                        Statement::ImportDeclaration(_) | Statement::VariableDeclaration(_)
+                    )
+                })
+                .flat_map(|statement| {
+                    extract_imports_from_statements(std::slice::from_ref(statement))
+                })
+                .collect(),
             test_dir: file
                 .parent()
                 .map(|dir| {
@@ -178,16 +192,45 @@ impl TypeScriptAdmissionContext {
 
     /// Root admission for newly supported awaited registrations. Reuse the
     /// scanner's runner binding decision before a recognized assertion can
-    /// take the shortcut in `admission_of`. Enclosing callback/loop bindings
-    /// are supplied by the extractor's existing lexical scope owner.
+    /// take the shortcut in `admission_of`. The extractor supplies visible
+    /// bindings and marks file-level declarations. File-wide setup uncertainty
+    /// is not lexical authority: a sibling suite's helper cannot shadow this
+    /// call. Only an actual file import can exempt a declaration from shadowing.
     pub(crate) fn registration_is_known(
         &self,
         call: &oxc_ast::ast::CallExpression<'_>,
-        shadowed: impl Iterator<Item = String>,
+        bindings: impl Iterator<Item = (String, bool)>,
     ) -> bool {
-        let mut scan = Scan::new(self, false);
-        scan.scopes
-            .push(shadowed.map(|name| (name, Bound::Local)).collect());
+        let imports: Vec<_> = self
+            .registration_imports
+            .iter()
+            // ESM namespace objects are not callable runner registrations.
+            // A literal CommonJS require has imported = Some("default").
+            .filter(|import| import.imported.is_some())
+            .cloned()
+            .collect();
+        let context = Self {
+            // A graph-only re-export or namespace object must not fall back
+            // to an ambient global registration with the same spelling.
+            enclosing: self
+                .imports
+                .iter()
+                .filter(|import| !imports.iter().any(|local| local.local == import.local))
+                .map(|import| import.local.clone())
+                .collect(),
+            imports,
+            test_dir: self.test_dir.clone(),
+            ..Self::default()
+        };
+        let mut scan = Scan::new(&context, false);
+        scan.scopes.push(
+            bindings
+                .filter(|(name, file_declaration)| {
+                    !file_declaration || !context.imports.iter().any(|import| import.local == *name)
+                })
+                .map(|(name, _)| (name, Bound::Local))
+                .collect(),
+        );
         scan.registration(call).is_some()
     }
 

@@ -4,9 +4,9 @@ generation = 1
 source_issue = "issue:6798"
 design_reference = "RIPR-SPEC-0243"
 change_class = "behavior_change"
-claim_boundary = "Once-awaited statement root registrations use the same TypeScript/JavaScript extraction, qualification-option fence, callback shadows, assertion admission and title masking as bare registrations. Existing unsupported positions remain uncredited and infection/propagation remain unknown. Pinned upstream Nano ID sources and separately authored consumer assertions establish one bounded real-codebase contrast; they are not upstream tests or a population estimate."
+claim_boundary = "Once-awaited statement root registrations use the existing TypeScript/JavaScript extraction, qualification-option fence, callback shadows, assertion admission and title masking. Newly supported awaited roots additionally require known runner registration under actual lexical bindings; bare-root admission is unchanged. Existing unsupported positions remain uncredited and infection/propagation remain unknown. Pinned upstream Nano ID sources and separately authored consumer assertions establish one bounded real-codebase contrast; they are not upstream tests or a population estimate."
 non_goals = [
-  "node:test registration provenance or runner API expansion",
+  "node:test t.assert API/provenance expansion owned by PR #7523, or new runner APIs",
   "initializer/helper registration support or new callback reach",
   "Python sink alignment or Rust macro reach",
   "support-tier promotion, runtime mutation authority or repair-packet expansion",

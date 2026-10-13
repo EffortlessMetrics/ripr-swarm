@@ -154,7 +154,9 @@ Before an awaited registration contributes assertions, the existing admission
 scanner must recognize its runner root at the call site. File-local helpers,
 unrelated imports and enclosing callback/loop bindings cannot turn an unused
 callback into test evidence. This fence applies to the newly supported awaited
-form; it does not change bare-root registration semantics.
+form; it does not change bare-root registration semantics. A sibling suite's
+helper is outside this lexical scope. Re-exports do not create local runner
+bindings, and an ESM namespace object is not a callable registration root.
 
 ### Assertion collection
 
@@ -800,7 +802,8 @@ to `amount - 20`, and `tests/lib.test.ts` has
   `awaited_unwalked_root_keeps_the_partial_extraction_disclosure` cover rule 1.
 - `crates/ripr/tests/cli_smoke/javascript_awaited_roots.rs`: the pinned Nano ID
   consumer covers bare/awaited registration parity, exact/smoke oracles,
-  qualification options, assertion shadows, unsupported registration positions,
+  qualification options, assertion and runner shadows, sibling-suite isolation,
+  callable local imports, unsupported registration positions,
   and byte-identical upstream provenance through the actual CLI.
 - `fixtures/javascript_awaited_registration`: genuine JavaScript production
   source with a separately authored Node consumer and independent runtime contrast.
