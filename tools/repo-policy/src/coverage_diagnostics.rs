@@ -1672,9 +1672,14 @@ mod tests {
                 script,
                 marker.to_string_lossy().into_owned(),
             ];
+            // The deadline only has to separate a parent that exits on its own
+            // from one that sleeps 60 s. A 250 ms deadline also raced Python
+            // startup on a loaded runner (#7551): the early-exit rows timed
+            // out, and the sleeping row could be terminated before writing its
+            // marker. Both bounds stay far below the 60 s sleeps.
             let started = Instant::now();
-            let report = tool_with_deadline(&args, Duration::from_millis(250))?;
-            assert!(started.elapsed() < Duration::from_secs(3));
+            let report = tool_with_deadline(&args, Duration::from_secs(2))?;
+            assert!(started.elapsed() < Duration::from_secs(5));
             assert_eq!(report["timed_out"], expect_timeout);
             assert_eq!(report["descendants_terminated"], true);
             let pid = fs::read_to_string(marker)

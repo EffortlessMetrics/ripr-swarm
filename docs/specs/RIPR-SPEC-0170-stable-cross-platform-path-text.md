@@ -39,6 +39,14 @@ and a literal `%FF` could retain the reserved byte-escape spelling there.
 - native `Path` values remain the authority for filesystem access and lexical
   confinement.
 
+Git's C-quoted path input must preserve native identity before this projection,
+including the named `\a`, `\b`, `\v`, and `\f` escapes for bytes `07`, `08`,
+`0B`, and `0C`. These bytes are legal Unix filename characters; this does not
+extend native Windows filename support. Successfully decoded quoted old/new
+headers remain file boundaries in plain unified input when the previous hunk
+has ended. A header-looking pair still inside a declared hunk remains source
+payload. Unquoted plausibility and native path confinement remain in force.
+
 The `%25` rule reserves `%XX` for the Unix invalid-byte representation. Thus a
 Unix raw byte `0xFF` renders as `%FF`, while a valid path literally containing
 the three characters `%FF` renders as `%25FF`.
@@ -49,6 +57,12 @@ the three characters `%FF` renders as `%25FF`.
 - a Unix unit test proves an invalid byte and literal `%FF` remain distinct;
 - the existing diff-path regression continues to prove native Unix bytes are
   preserved through parsing and downstream path consumers.
+- Real Git CLI fixtures retain named control-byte paths, distinct from unchanged
+  letter mimics, with staged and unstaged edits. Default invocation from a
+  subdirectory and explicit working-tree selection analyze the live predicate;
+  committed selection excludes it, and untracked source stays disclosed.
+- Literal two-section plain patches preserve quoted whitespace paths and each
+  section's exact old/new lines through bounded and unbounded parser entrypoints.
 
 ## Non-Goals
 
@@ -71,6 +85,10 @@ the three characters `%FF` renders as `%25FF`.
 - `crates/ripr/src/analysis/mod.rs::tests::stable_path_text_escapes_reserved_percent_on_every_platform`
 - `crates/ripr/src/analysis/mod.rs::tests::stable_path_text_keeps_invalid_byte_encoding_distinct_from_literal_escape`
 - `crates/ripr/src/analysis/diff/load.rs::tests::given_quote_path_disabled_repo_when_diff_loaded_then_raw_byte_and_mimic_names_stay_distinct`
+- `crates/ripr/src/analysis/diff/path.rs::tests::named_c_control_escapes_keep_native_path_identity`
+- `crates/ripr/src/analysis/diff/path.rs::tests::quoted_whitespace_old_headers_keep_plain_file_sections_separate`
+- `crates/ripr/src/analysis/diff/path.rs::tests::quoted_control_header_pair_inside_declared_hunk_stays_source_payload`
+- `crates/ripr/tests/cli_smoke/diff_selection.rs::git_named_control_paths_select_the_live_predicate_from_root_and_subdirectory`
 
 ## Implementation Mapping
 
