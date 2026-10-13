@@ -169,7 +169,7 @@ pub(in crate::analysis) fn current_path_witness(
     let edge_kind = edge_kind_for_sink(&sink.kind)?;
     let source_identity = normalize_semantic_text(&probe.expression);
     let sink_identity = normalize_semantic_text(&sink.text);
-    let edge_status = if is_question_mark_sink(sink) {
+    let edge_status = if is_question_mark_sink(sink) || returns_itself_on_its_line(probe, sink) {
         EdgeStatus::Established
     } else {
         edge_status_for_kind(&edge_kind, &source_identity, &sink_identity)
@@ -406,13 +406,39 @@ fn edge_status_for_kind(kind: &PropagationEdgeKind, source: &str, sink: &str) ->
 /// stripping it before the identity comparison lets the supported
 /// direct-return path complete instead of staying a candidate. Constructor-
 /// wrapped forms (`return Ok(amount)`, `return Err(error)`) and call results
-/// keep their parentheses and are deliberately not normalized: the wrapper
-/// payload relationship is not established by this adapter, so they fail
-/// closed as candidate edges.
+/// keep their parentheses and are not normalized here, so a sink on another
+/// line fails closed as a candidate edge; [`returns_itself_on_its_line`]
+/// completes a call-free constructor only when the sink is the same
+/// expression on the probe's own line.
 fn direct_return_identity(text: &str) -> Option<String> {
     let normalized = normalize_semantic_text(text);
     let payload = normalized.strip_prefix("return ")?.trim();
     (!payload.is_empty() && !payload.contains('(')).then(|| payload.to_string())
+}
+
+/// RIPR-SPEC-0231 example 23: `return Some(1 + 2);` whose return sink is
+/// `Some(1 + 2)` on the changed line itself is one expression, so the edge is
+/// established as it is for the same tail. Only a `Some(..)`, `Ok(..)` or
+/// `Err(..)` constructor around a call-free payload qualifies: a call result
+/// (`return f(x);`, `return Ok(self.persist(x));`) may not carry the changed
+/// value at all. The sink must sit on the probe's line: an identical
+/// constructor returned elsewhere in the owner is a different exit.
+fn returns_itself_on_its_line(probe: &Probe, sink: &FlowSinkFact) -> bool {
+    let source = normalize_semantic_text(&probe.expression);
+    let call_free_constructor = |payload: &str| {
+        ["Some(", "Ok(", "Err("].iter().any(|head| {
+            payload
+                .strip_prefix(head)
+                .and_then(|rest| rest.strip_suffix(')'))
+                .is_some_and(|inner| !inner.trim().is_empty() && !inner.contains(['(', ')']))
+        })
+    };
+    sink.kind == FlowSinkKind::ReturnValue
+        && sink.line == probe.location.line
+        && source.strip_prefix("return ").is_some_and(|payload| {
+            let payload = payload.trim();
+            call_free_constructor(payload) && payload == normalize_semantic_text(&sink.text)
+        })
 }
 
 fn canonical_error_identity(text: &str) -> String {
@@ -1454,7 +1480,8 @@ mod tests {
     }
 
     #[test]
-    fn unwrapped_direct_return_completes_and_wrapped_stays_candidate() -> Result<(), String> {
+    fn unwrapped_direct_return_completes_and_wrapped_on_another_line_stays_candidate()
+    -> Result<(), String> {
         // `return amount;` is the same value as the `amount` sink: the keyword
         // is normalized before the identity comparison so the supported
         // direct-return path completes (XQFa).
@@ -1469,8 +1496,8 @@ mod tests {
         assert_eq!(witness.completeness, PathCompleteness::Complete);
         assert!(complete_direct_witness(&direct_probe, Some(&witness)));
 
-        // A constructor-wrapped return keeps the adapter fail-closed: the
-        // wrapper payload relationship is not established here.
+        // A constructor-wrapped return whose sink sits on another line keeps
+        // the adapter fail-closed: that sink may be a different exit.
         let wrapped = current_path_witness(
             &probe(ProbeFamily::ReturnValue, "return Ok(amount);"),
             &[sink(FlowSinkKind::ReturnValue, "Ok(amount)", 14)],
@@ -1482,6 +1509,63 @@ mod tests {
             &probe(ProbeFamily::ReturnValue, "return Ok(amount);"),
             Some(&wrapped),
         ));
+        Ok(())
+    }
+
+    #[test]
+    fn a_wrapped_return_completes_only_on_its_own_line() -> Result<(), String> {
+        // RIPR-SPEC-0231 example 23: `return Some(1 + 2);` returns the
+        // `Some(1 + 2)` sink on its own line, so the edge is established.
+        let wrapped = probe(ProbeFamily::ReturnValue, "return Some(1 + 2);");
+        let witness = current_path_witness(
+            &wrapped,
+            &[sink(FlowSinkKind::ReturnValue, "Some(1 + 2)", 10)],
+        )
+        .ok_or_else(|| "same-line wrapped return witness was absent".to_string())?;
+        assert_eq!(witness.edges[0].status, EdgeStatus::Established);
+        assert_eq!(witness.completeness, PathCompleteness::Complete);
+        assert!(complete_direct_witness(&wrapped, Some(&witness)));
+
+        // The same constructor returned on another line is another exit.
+        let elsewhere = current_path_witness(
+            &wrapped,
+            &[sink(FlowSinkKind::ReturnValue, "Some(1 + 2)", 14)],
+        )
+        .ok_or_else(|| "other-line wrapped return witness was absent".to_string())?;
+        assert_eq!(elsewhere.edges[0].status, EdgeStatus::Candidate);
+        assert!(!complete_direct_witness(&wrapped, Some(&elsewhere)));
+
+        // A call result returned on its own line stays a candidate: the
+        // call may not carry the changed value (`propagate_value_returned`).
+        let call_return = probe(ProbeFamily::ReturnValue, "return self.persist(amount * 9);");
+        let call_witness = current_path_witness(
+            &call_return,
+            &[sink(
+                FlowSinkKind::ReturnValue,
+                "self.persist(amount * 9)",
+                10,
+            )],
+        )
+        .ok_or_else(|| "same-line call return witness was absent".to_string())?;
+        assert_eq!(call_witness.edges[0].status, EdgeStatus::Candidate);
+
+        // A call-free constructor completes against itself on its own line.
+        let ok_return = probe(ProbeFamily::ReturnValue, "return Ok(amount);");
+        let ok_witness = current_path_witness(
+            &ok_return,
+            &[sink(FlowSinkKind::ReturnValue, "Ok(amount)", 10)],
+        )
+        .ok_or_else(|| "same-line Ok return witness was absent".to_string())?;
+        assert_eq!(ok_witness.edges[0].status, EdgeStatus::Established);
+        assert!(complete_direct_witness(&ok_return, Some(&ok_witness)));
+
+        // A different payload on the same line stays a candidate.
+        let other = current_path_witness(
+            &wrapped,
+            &[sink(FlowSinkKind::ReturnValue, "Some(1 + 3)", 10)],
+        )
+        .ok_or_else(|| "different-payload witness was absent".to_string())?;
+        assert_eq!(other.edges[0].status, EdgeStatus::Candidate);
         Ok(())
     }
 
