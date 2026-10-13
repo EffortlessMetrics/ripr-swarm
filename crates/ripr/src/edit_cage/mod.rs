@@ -992,7 +992,8 @@ fn git_applies_eol_normalization(root: &Path, path: &str) -> bool {
     // classifies as binary untouched. A forced `text` attribute rewrites
     // line endings regardless of content, so the NUL gate must not apply
     // there (#7537 review).
-    let (configured, automatic) = match attrs.rsplit(':').next().map(str::trim).unwrap_or_default() {
+    let state = attrs.rsplit(':').next().map(str::trim).unwrap_or_default();
+    let (configured, automatic) = match state {
         // `text` rewrites line endings regardless of content or config.
         "set" => (true, false),
         // `-text` never rewrites.
