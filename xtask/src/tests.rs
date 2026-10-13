@@ -29452,7 +29452,121 @@ fn gh_pr_status_readiness_selects_safe_next_action() {
     let mut behind = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
     behind.merge_state_status = "BEHIND".to_string();
     let behind_readiness = gh_pr_status_readiness(&behind, &contexts, true, Vec::new());
-    assert_eq!(gh_pr_safe_next_action(&behind, &behind_readiness), "rebase");
+    assert_eq!(
+        gh_pr_safe_next_action(&behind, &behind_readiness),
+        "inspect integration"
+    );
+}
+
+#[test]
+fn gh_pr_status_behind_preserves_failure_and_wait_routes() {
+    let contexts = vec!["rust".to_string()];
+    for (case, draft, review, status, conclusion, expected) in [
+        (
+            "behind only",
+            false,
+            "APPROVED",
+            "COMPLETED",
+            "SUCCESS",
+            "inspect integration",
+        ),
+        ("draft", true, "APPROVED", "COMPLETED", "SUCCESS", "wait"),
+        (
+            "review required",
+            false,
+            "REVIEW_REQUIRED",
+            "COMPLETED",
+            "SUCCESS",
+            "wait",
+        ),
+        (
+            "running check",
+            false,
+            "APPROVED",
+            "IN_PROGRESS",
+            "",
+            "wait",
+        ),
+        ("queued check", false, "APPROVED", "QUEUED", "", "wait"),
+        (
+            "failed check",
+            false,
+            "APPROVED",
+            "COMPLETED",
+            "FAILURE",
+            "inspect failure",
+        ),
+        (
+            "changes requested",
+            false,
+            "CHANGES_REQUESTED",
+            "COMPLETED",
+            "SUCCESS",
+            "inspect failure",
+        ),
+    ] {
+        let mut pr = gh_pr_status_pr(vec![gh_pr_status_check("rust", status, conclusion)]);
+        pr.is_draft = draft;
+        pr.review_decision = review.to_string();
+        pr.merge_state_status = "bEhInD".to_string();
+        let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
+        assert!(readiness.behind_main, "{case}: setup must exercise BEHIND");
+        assert_eq!(readiness.safe_next_action, expected, "{case}");
+    }
+}
+
+#[test]
+fn gh_pr_status_behind_does_not_hide_a_conflict_or_grant_merge() {
+    let contexts = vec!["rust".to_string()];
+    for (state, expected) in [
+        ("CLEAN", "merge"),
+        ("BEHIND", "inspect integration"),
+        ("DIRTY", "inspect failure"),
+        ("UNKNOWN", "wait"),
+    ] {
+        let mut pr = gh_pr_status_pr(vec![gh_pr_status_check("rust", "COMPLETED", "SUCCESS")]);
+        pr.merge_state_status = state.to_string();
+        let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
+        assert_eq!(readiness.behind_main, state == "BEHIND");
+        assert_eq!(readiness.safe_next_action, expected, "{state}");
+    }
+}
+
+#[test]
+fn gh_pr_status_behind_packet_reports_integration_judgment() -> Result<(), String> {
+    let pr = parse_gh_pr_status_pull_request(
+        r#"{
+            "number": 42,
+            "title": "behind-only observation",
+            "isDraft": false,
+            "mergeStateStatus": "BEHIND",
+            "headRefName": "candidate",
+            "baseRefName": "main",
+            "reviewDecision": "APPROVED",
+            "latestReviews": [],
+            "statusCheckRollup": [
+                {"__typename": "CheckRun", "name": "rust", "status": "COMPLETED", "conclusion": "SUCCESS"}
+            ]
+        }"#,
+    )?;
+    assert_eq!(
+        pr.checks.len(),
+        1,
+        "setup must contain the successful check"
+    );
+    let contexts = vec!["rust".to_string()];
+    let readiness = gh_pr_status_readiness(&pr, &contexts, true, Vec::new());
+    let markdown = gh_pr_status_markdown(&pr, &contexts, &readiness);
+    assert!(markdown.contains("- behind main: `true`"));
+    assert!(markdown.contains("- safe next action: `inspect integration`"));
+    let json: Value = serde_json::from_str(&gh_pr_status_json(&pr, &contexts, &readiness))
+        .map_err(|err| format!("behind PR packet should parse: {err}"))?;
+    assert_eq!(json["schema_version"], "0.1");
+    assert_eq!(json["mode"], "advisory");
+    assert_eq!(json["merge_state"], "BEHIND");
+    assert_eq!(json["behind_main"], true);
+    assert_eq!(json["safe_next_action"], "inspect integration");
+    Ok(())
 }
 
 #[test]

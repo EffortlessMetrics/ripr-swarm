@@ -3317,15 +3317,15 @@ fn gh_pr_safe_next_action(
     {
         return "inspect failure";
     }
-    if readiness.behind_main {
-        return "rebase";
-    }
     if pr.is_draft
         || pr.review_decision.eq_ignore_ascii_case("REVIEW_REQUIRED")
         || !readiness.required_checks_outstanding.is_empty()
         || !readiness.pending_checks.is_empty()
     {
         return "wait";
+    }
+    if readiness.behind_main {
+        return "inspect integration";
     }
     let merge_state = pr.merge_state_status.to_ascii_uppercase();
     match merge_state.as_str() {

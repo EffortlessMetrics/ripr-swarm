@@ -475,8 +475,10 @@ latest reviews, and Droid-related checks, then writes
 `target/ripr/reports/gh-pr-status.md` and
 `target/ripr/reports/gh-pr-status.json` with the merge state, outstanding
 checks, failed checks, behind-main state, review status, Droid status, and a
-safe next action: `wait`, `rebase`, `inspect failure`, or `merge`. It is
-advisory and never updates the branch, comments, approves, or merges.
+safe next action: `wait`, `inspect integration`, `inspect failure`, or `merge`.
+`BEHIND` requests integration judgment after Draft, review-required and pending
+waits; it does not establish that a branch update is needed. It is advisory and
+never updates the branch, comments, approves, or merges.
 Use [Merge freshness and watcher policy](MERGE_WATCH_POLICY.md) for polling
 cadence, branch-refresh decisions, REST status fallback, Droid/advisory-check
 handling, and local worktree merge limitations.
