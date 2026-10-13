@@ -3141,6 +3141,7 @@ mod tests {
                 ("src/textfmt/__init__.py", "def f():\n    return 1\n"),
             ],
         )?;
+        isolate_as_git_root(&root)?;
         let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::Python]);
         let _ = std::fs::remove_dir_all(&root);
         // Python auto-enablement keeps the default `rust` entry, so the skip
@@ -3164,6 +3165,7 @@ mod tests {
                 ("package.json", "{}\n"),
             ],
         )?;
+        isolate_as_git_root(&root)?;
         let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::TypeScript]);
         let _ = std::fs::remove_dir_all(&root);
         assert_rust_toolchain_skipped(&report, &probed, "Rust is not enabled in [languages]")
@@ -3208,6 +3210,7 @@ mod tests {
                 ("package.json", "{}\n"),
             ],
         )?;
+        isolate_as_git_root(&root)?;
         let (report, probed) = evaluate_without_rust_toolchain(&root, &[LanguageId::TypeScript]);
         let _ = std::fs::remove_dir_all(&root);
         assert_rust_toolchain_skipped(&report, &probed, "in scope: typescript")

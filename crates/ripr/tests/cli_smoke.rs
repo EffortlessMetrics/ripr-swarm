@@ -12528,6 +12528,11 @@ fn doctor_passes_python_only_root_without_rust_toolchain() -> Result<(), String>
         "def shout(text):\n    return text.upper()\n",
     )
     .map_err(|error| format!("write python source: {error}"))?;
+    // Bound ancestor Cargo.toml discovery: fixtures live under the ripr
+    // work tree (`target/`), so without a local `.git` the locator would
+    // credit `/workspace/Cargo.toml` (#7506).
+    std::fs::create_dir(workspace.join(".git"))
+        .map_err(|error| format!("mkdir python-only .git: {error}"))?;
     let path = doctor_path_without_rust_toolchain(&workspace)?;
     let result = assert_doctor_passes_without_rust_toolchain(
         &workspace,
@@ -12556,6 +12561,8 @@ fn doctor_passes_typescript_root_without_rust_toolchain() -> Result<(), String> 
         "export const price = (n: number) => n * 2;\n",
     )
     .map_err(|error| format!("write ts source: {error}"))?;
+    std::fs::create_dir(workspace.join(".git"))
+        .map_err(|error| format!("mkdir typescript-only .git: {error}"))?;
     let path = doctor_path_without_rust_toolchain(&workspace)?;
     let result = assert_doctor_passes_without_rust_toolchain(
         &workspace,
