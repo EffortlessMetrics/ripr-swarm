@@ -157,3 +157,15 @@ class Settings:
 
 def fmt(n):
     return f"NO:{n}"
+
+
+def perr_exc_not_none(text):
+    if not text:
+        raise KeyError("empty")
+    return int(text)
+
+
+def perr_exc_length(text):
+    if not text:
+        raise KeyError("empty")
+    return int(text)
