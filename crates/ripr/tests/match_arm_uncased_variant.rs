@@ -448,3 +448,55 @@ fn a_statement_macro_that_may_shadow_the_type_names_no_arm() -> Result<(), Strin
     );
     Ok(())
 }
+
+#[test]
+fn a_path_attribute_spelled_with_spaces_names_no_arm() -> Result<(), String> {
+    // #7686 review: `#[ path = ..]` places the owner at
+    // `src/outer/src/main.rs` below an inline module; `crate::kinds` there
+    // is `src/kinds.rs` (constants).
+    let owner = format!(
+        "use crate::kinds::Kind;\nmod kinds;\n\n{}",
+        body(WILDCARD_ARMS, "i32")
+    );
+    let files = [
+        ("src/kinds.rs", CONSTANTS),
+        ("src/outer/src/kinds.rs", ENUM),
+        ("src/outer/src/main.rs", owner.as_str()),
+        ("src/outer/src/main/kinds.rs", ENUM),
+    ];
+    let lib =
+        "pub mod kinds;\npub mod outer {\n    #[ path = \"src/main.rs\"]\n    pub mod m;\n}\n";
+    let test = "use uncased_variant::{kinds::Kind, outer::m::f};\n\n#[test]\nfn kind_a_is_one() {\n    assert_eq!(f(Kind::A), 1);\n}\n";
+    assert_eq!(
+        changed_wildcard(lib, &files, test, "src/outer/src/main.rs")?,
+        Vec::<String>::new()
+    );
+    Ok(())
+}
+
+#[test]
+fn a_shadowed_std_macro_in_statement_position_names_no_arm() -> Result<(), String> {
+    // #7686 review: a local `macro_rules! assert` takes precedence over the
+    // standard one, so `assert!();` may declare a local `Kind`.
+    let lib = "mod kinds;\npub use kinds::Kind;\n\nmacro_rules! assert {\n    () => {\n        struct Kind;\n        impl Kind {\n            const A: crate::kinds::Kind = crate::kinds::Kind::B;\n        }\n    };\n}\n\npub fn f(k: Kind) -> i32 {\n    assert!();\n    match k {\n        Kind::A => 1,\n        _ => 2,\n    }\n}\n";
+    let kinds = ENUM.replace("PartialEq)", "PartialEq, Eq)");
+    let test = "use uncased_variant::{Kind, f};\n\n#[test]\nfn shadowed_a_is_two() {\n    assert_eq!(f(Kind::A), 2);\n}\n";
+    assert_eq!(
+        changed_wildcard(lib, &[("src/kinds.rs", kinds.as_str())], test, "src/lib.rs")?,
+        Vec::<String>::new()
+    );
+    // The standard `assert!` with nothing rebinding it keeps the read.
+    let plain = lib
+        .replace("macro_rules! assert", "macro_rules! unused")
+        .replace("assert!();", "assert!(true);");
+    assert_eq!(
+        changed_wildcard(
+            &plain,
+            &[("src/kinds.rs", kinds.as_str())],
+            WILDCARD_TEST,
+            "src/lib.rs"
+        )?,
+        vec!["_"]
+    );
+    Ok(())
+}

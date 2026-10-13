@@ -430,11 +430,21 @@ impl ArmSelector {
             .get(&self.owner_file)
             .map(|facts| facts.source.clone());
         self.demote_constant_bindings(owner_source.as_deref());
+        // Scanned once per selector, and only when a statement macro needs it.
+        let rebound = std::cell::OnceCell::new();
+        let std_macros = || {
+            !*rebound.get_or_init(|| {
+                index
+                    .files()
+                    .values()
+                    .any(|facts| std_statement_macros_rebound(&facts.source))
+            })
+        };
         let declared = self.bare_scrutinee_type.as_deref().and_then(|type_name| {
             owner_source
                 .as_deref()
-                .and_then(|source| declared_enum_variants(source, type_name))
-                .or_else(|| imported_enum_variants(index, &self.owner_file, type_name))
+                .and_then(|source| declared_enum_variants(source, type_name, &std_macros))
+                .or_else(|| imported_enum_variants(index, &self.owner_file, type_name, &std_macros))
         });
         self.resolve_uncased_variants(declared);
         let mut imports = std::collections::BTreeMap::new();
@@ -1278,6 +1288,7 @@ fn may_name_constant(source: &str, name: &str) -> bool {
 fn declared_enum_variants(
     source: &str,
     type_name: &str,
+    std_macros: &dyn Fn() -> bool,
 ) -> Option<std::collections::BTreeSet<String>> {
     use ra_ap_syntax::{AstNode, ast, ast::HasName};
     // Cheap text test before the parse: most owner files declare no enum
@@ -1330,7 +1341,7 @@ fn declared_enum_variants(
             || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
             || parent_glob_outside_this_file(&node)
-            || may_expand_to_items(&node)
+            || may_expand_to_items(&node, std_macros)
         {
             return None;
         }
@@ -1338,12 +1349,65 @@ fn declared_enum_variants(
     found
 }
 
+/// Standard macros whose statement-position call expands to an expression
+/// or assertion, never to an item.
+const STD_STATEMENT_MACROS: &[&str] = &[
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "print",
+    "println",
+    "eprint",
+    "eprintln",
+    "panic",
+    "unreachable",
+    "todo",
+    "unimplemented",
+    "write",
+    "writeln",
+    "dbg",
+    "format",
+    "matches",
+    "vec",
+];
+
+/// Whether `source` may rebind a [`STD_STATEMENT_MACROS`] name to a macro
+/// of its own: `macro_rules! assert`, `use shadow as assert;`, or a
+/// `#[macro_use]` import whose macros are not read (#7686 review).
+fn std_statement_macros_rebound(source: &str) -> bool {
+    if source.contains("macro_use") {
+        return true;
+    }
+    let names = STD_STATEMENT_MACROS
+        .iter()
+        .filter(|name| source.contains(**name))
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        return false;
+    }
+    let masked = mask_comments_and_strings(source);
+    names.into_iter().any(|name| {
+        whole_word_offsets(&masked, name).into_iter().any(|offset| {
+            let before = masked[..offset].trim_end();
+            before.ends_with("macro_rules!")
+                || (before.ends_with("as")
+                    && !before[..before.len() - 2]
+                        .ends_with(|ch: char| ch.is_ascii_alphanumeric() || ch == '_'))
+        })
+    })
+}
+
 /// Whether `node` is a macro call whose unread expansion may declare items:
 /// one at file or module item level, or one in statement position in a
 /// block (`shadow!();`, which may expand to `struct Kind;` scoped to the
-/// match) other than a standard expression or assertion macro (#7686
-/// review). A macro in expression position expands to an expression.
-fn may_expand_to_items(node: &ra_ap_syntax::SyntaxNode) -> bool {
+/// match). A standard expression or assertion macro called by its bare name
+/// is exempt only while `std_macros` holds, that is no workspace file
+/// rebinds its name (#7686 review). A macro in expression
+/// position expands to an expression.
+fn may_expand_to_items(node: &ra_ap_syntax::SyntaxNode, std_macros: &dyn Fn() -> bool) -> bool {
     use ra_ap_syntax::{AstNode, ast};
     let Some(call) = ast::MacroCall::cast(node.clone()) else {
         return false;
@@ -1359,35 +1423,18 @@ fn may_expand_to_items(node: &ra_ap_syntax::SyntaxNode) -> bool {
             ast::ExprStmt::can_cast(holder.kind()) || ast::StmtList::can_cast(holder.kind())
         })
         || ast::MacroStmts::can_cast(parent.kind());
+    if !statement {
+        return false;
+    }
+    // Only a bare name: a qualified path (`crate::println!`, or `std::` with
+    // a local `mod std`) may name a workspace macro.
     let name = call
         .path()
+        .filter(|path| path.qualifier().is_none() && path.coloncolon_token().is_none())
         .and_then(|path| path.segment())
         .map(|segment| segment.syntax().text().to_string())
         .unwrap_or_default();
-    statement
-        && !matches!(
-            name.as_str(),
-            "assert"
-                | "assert_eq"
-                | "assert_ne"
-                | "debug_assert"
-                | "debug_assert_eq"
-                | "debug_assert_ne"
-                | "print"
-                | "println"
-                | "eprint"
-                | "eprintln"
-                | "panic"
-                | "unreachable"
-                | "todo"
-                | "unimplemented"
-                | "write"
-                | "writeln"
-                | "dbg"
-                | "format"
-                | "matches"
-                | "vec"
-        )
+    !(STD_STATEMENT_MACROS.contains(&name.as_str()) && std_macros())
 }
 
 /// #7675: the variants of the enum `type_name` when the owner's file binds
@@ -1397,21 +1444,34 @@ fn may_expand_to_items(node: &ra_ap_syntax::SyntaxNode) -> bool {
 /// `use self::..`/`use super::..`), and that file declares the enum
 /// (`declared_enum_variants`). An owner item or item macro that may define
 /// `Kind`, an inline or `cfg`-duplicated module step, a `cfg`-gated import
-/// or step, a chain that does not start at `src/lib.rs` or `src/main.rs`, a
+/// or step, a chain that does not start at a `src/` or `crates/<name>/src/`
+/// crate root, any workspace `#[path]`, a
 /// re-export, an external or package-named root, an `include!` edge, or any
 /// unresolved edge reads nothing, so `Kind::A` stays unreadable.
 fn imported_enum_variants(
     index: &crate::analysis::rust_index::RustIndex,
     owner_file: &std::path::Path,
     type_name: &str,
+    std_macros: &dyn Fn() -> bool,
 ) -> Option<std::collections::BTreeSet<String>> {
     use crate::analysis::facts::SourceRoleProvenanceEdgeKind;
     use ra_ap_syntax::{AstNode, ast, ast::HasAttrs, ast::HasName};
     // A `cfg` or `cfg_attr` on the import or a module step may compile it
     // out, leaving `Kind` to a glob or another item (#7686 review).
+    // The attribute's leading name is read from its text, so a parse that
+    // leaves the path off still counts.
     let cfg_gated = |item: &dyn HasAttrs| {
-        item.attrs()
-            .any(|attr| attr.syntax().text().to_string().contains("cfg"))
+        item.attrs().any(|attr| {
+            let text = attr.syntax().text().to_string();
+            let inner = text.trim_start_matches(|ch: char| {
+                ch == '#' || ch == '!' || ch == '[' || ch.is_whitespace()
+            });
+            let name = inner
+                .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+                .next()
+                .unwrap_or_default();
+            matches!(name, "cfg" | "cfg_attr")
+        })
     };
     let files = index.files();
     let owner = files.get(owner_file)?;
@@ -1427,7 +1487,7 @@ fn imported_enum_variants(
             || ast::Enum::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::TypeAlias::cast(node.clone()).is_some_and(|item| named(&item))
             || ast::Trait::cast(node.clone()).is_some_and(|item| named(&item))
-            || may_expand_to_items(&node)
+            || may_expand_to_items(&node, std_macros)
         {
             return None;
         }
@@ -1482,28 +1542,25 @@ fn imported_enum_variants(
     // chain can start below the crate root; `crate::` and `super::` are
     // read only when it starts at `src/lib.rs` or `src/main.rs`. A file
     // shared by several crates (`tests/common/mod.rs`) never does. A module
-    // file can carry that name below inline modules (`mod outer { mod src
-    // { mod main; } }` places `src/outer/src/main.rs`), so no workspace file
-    // may declare a `mod` of the root's stem or use `#[path]` (#7686 review).
+    // file can carry such a path below inline modules (`mod outer { mod src
+    // { mod main; } }` places `src/outer/src/main.rs`), so the root must be
+    // the workspace's `src/` or a `crates/<name>/src/` root, which default
+    // module resolution never reaches from another crate, and no workspace
+    // file may use `#[path]`, which reaches anywhere (#7686 review).
     let root = owner_chain
         .first()
         .map_or(owner_file, |edge| edge.parent.as_path());
-    let stem = root.file_stem().and_then(|stem| stem.to_str());
-    let crate_root = matches!(stem, Some("lib" | "main"))
-        && root.extension().is_some_and(|extension| extension == "rs")
-        && root
-            .parent()
-            .and_then(|dir| dir.file_name())
-            .is_some_and(|dir| dir == "src")
-        && !files.values().any(|facts| {
-            let masked = mask_comments_and_strings(&facts.source);
-            masked.contains("#[path")
-                || stem.is_some_and(|stem| {
-                    whole_word_offsets(&masked, stem)
-                        .into_iter()
-                        .any(|offset| masked[..offset].trim_end().ends_with("mod"))
-                })
-        });
+    let components = root
+        .components()
+        .map(|component| component.as_os_str().to_str())
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default();
+    let crate_root = matches!(
+        components.as_slice(),
+        ["src", "lib.rs" | "main.rs"] | ["crates", _, "src", "lib.rs" | "main.rs"]
+    ) && !files
+        .values()
+        .any(|facts| super::call_identity::has_path_attribute(&facts.source));
     if !crate_root {
         return None;
     }
@@ -1553,7 +1610,7 @@ fn imported_enum_variants(
     if file == owner_file {
         return None;
     }
-    declared_enum_variants(&files.get(&file)?.source, type_name)
+    declared_enum_variants(&files.get(&file)?.source, type_name, std_macros)
 }
 
 /// Whether a related test file outside the owner's file may bind
@@ -2712,9 +2769,14 @@ mod tests {
 
     fn resolve_with(selector: &ArmSelector, source: Option<&str>) -> ArmSelector {
         let mut selector = selector.clone();
-        let declared = source
-            .zip(selector.bare_scrutinee_type.clone())
-            .and_then(|(source, type_name)| declared_enum_variants(source, &type_name));
+        let declared =
+            source
+                .zip(selector.bare_scrutinee_type.clone())
+                .and_then(|(source, type_name)| {
+                    declared_enum_variants(source, &type_name, &|| {
+                        !std_statement_macros_rebound(source)
+                    })
+                });
         selector.resolve_uncased_variants(declared);
         selector
     }

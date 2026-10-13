@@ -341,8 +341,9 @@ implies but does not spell out:
   that name, glob-import no module (a `use super::*` inside an inline
   module, such as `mod tests`, brings in only that file's items) and call
   no macro at file or module item level, nor one in statement position
-  other than a standard assertion, print or expression macro (its
-  expansion may declare a local `Kind`). Alternatively, the owner's file
+  (its expansion may declare a local `Kind`) other than a standard
+  assertion, print or expression macro called by its bare name while no
+  workspace file rebinds that name (`macro_rules!`, `as`, `#[macro_use]`). Alternatively, the owner's file
   may bind that name through exactly one import, a top-level `use` without
   a rename, whose module path (`kinds::Kind` after `mod kinds;`,
   `crate::a::Kind`, `self::`, `super::`) follows recorded out-of-line `mod`
@@ -350,9 +351,10 @@ implies but does not spell out:
   same declaration rule. The owner's file must then declare no item of
   that name and call no such macro, glob-import no module inside an
   inline module (except `super::*`), and its recorded module chain must
-  start at `src/lib.rs` or `src/main.rs`, with no workspace file declaring
-  a `mod` of that file's stem or using `#[path]` (either could place a
-  module file under that name). Each path step must be the one
+  start at the workspace's `src/lib.rs` or `src/main.rs` or a
+  `crates/<name>/src/` one, with no workspace file using `#[path]`
+  (default module resolution never reaches those paths from another crate;
+  `#[path]` reaches anywhere). Each path step must be the one
   `mod` of that name in its parent file, declared out of line. An inline or
   `cfg`-duplicated module on the path, a `cfg` or `cfg_attr` on the import
   or a module step, a chain below an inline module, a
