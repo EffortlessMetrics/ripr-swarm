@@ -335,6 +335,27 @@ fn optional_tool_arguments_reject_null_and_recover_over_stdio() -> Result<(), St
         ("ripr_list_gaps", "offset", json!({}), json!(0), "integer"),
         ("ripr_list_gaps", "limit", json!({}), json!(1), "integer"),
         (
+            "ripr_list_gaps",
+            "file",
+            json!({}),
+            json!("src/input-control.rs"),
+            "string",
+        ),
+        (
+            "ripr_list_gaps",
+            "class",
+            json!({}),
+            json!("weakly_exposed"),
+            "string",
+        ),
+        (
+            "ripr_list_gaps",
+            "language",
+            json!({}),
+            json!("rust"),
+            "string",
+        ),
+        (
             "ripr_get_gap",
             "snapshot_id",
             json!({"canonical_id": "gap:input-control"}),
